@@ -544,6 +544,15 @@ Default: collector_reward_bps = 50 (0.5%)
 
 This creates a keeper network without requiring off-chain infrastructure. Any bot or user can profitably call `collect_tax()` when vaults are near depletion.
 
+**This feature is optional.** Setting `collector_reward_bps = 0` disables the keeper network entirely. In this mode, only the integrating protocol is economically motivated to call `collect_tax()`, typically via off-chain infrastructure and an `AdminCap`. This is a valid design choice for protocols that prefer full control over when and how tax is collected.
+
+| `collector_reward_bps` | Behavior |
+|---|---|
+| `> 0` | Keeper network active. Any address can call `collect_tax()` and earn a reward. |
+| `= 0` | Keeper network disabled. Tax collection is permissionless but unrewarded — in practice only the integrator will call it. |
+
+The choice between these modes is a conscious design decision by the integrating protocol and should be documented in the integration configuration.
+
 ### 5.4 Price Update Cooldown
 
 After any `buy()` or `set_price()` event, the declared price cannot be modified for a configurable cooldown period.

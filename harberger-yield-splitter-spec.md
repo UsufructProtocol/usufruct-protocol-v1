@@ -671,13 +671,7 @@ After acquisition:
 - The buyer must immediately declare a new price and fund the vault.
 - The asset enters Liquidity State under the new owner.
 
-### 6.4 Holder Exclusion
-
-The original holder (the address that triggered the default) is **excluded from participating in their own Dutch Auction**. This prevents the holder from using a second wallet to reacquire the asset at a discounted price while avoiding the tax debt.
-
-HYS records the defaulting address at auction trigger time and rejects any `buy()` call from that address during the auction period.
-
-### 6.5 penalty_bps — Optional Revenue
+### 6.4 penalty_bps — Optional Revenue
 
 `penalty_bps` is an integrator-defined parameter that can be set to any value including 0. It is no longer the primary anti-abuse mechanism — that role is fulfilled by the tax-first payment priority in section 6.3.
 
@@ -686,7 +680,7 @@ HYS records the defaulting address at auction trigger time and rejects any `buy(
 | `= 0` | No additional penalty. Holder receives full remainder after tax is paid. |
 | `> 0` | Protocol captures an additional percentage on top of tax owed. Remainder to holder is reduced accordingly. |
 
-### 6.6 Yield Right Default — Special Rule
+### 6.5 Yield Right Default — Special Rule
 
 When a YieldRight enters default:
 

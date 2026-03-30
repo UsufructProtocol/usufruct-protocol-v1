@@ -1,6 +1,6 @@
 # Harberger Yield Splitter — Technical Specification
 
-**Version:** 0.1.0-draft
+**Version:** 0.2.0-draft
 **Target Runtime:** Sui Move
 **Authors:** [Protocol Team]
 **Status:** Draft — For Review
@@ -13,7 +13,7 @@ The Harberger Yield Splitter (HYS) is a composable Sui Move module that enables 
 
 The module introduces a dual-state system: **Ownership State**, where the bundle holder enjoys full ownership and tax immunity, and **Liquidity State**, where each separated component is subject to continuous self-assessed pricing and forced-sale mechanics. Either state can be entered or exited at any time, creating a perpetual game-theoretic equilibrium between holders, speculators, and yield seekers.
 
-HYS is designed as a protocol-level primitive — not an application. It can be imported by any Sui protocol to add Harberger-governed yield splitting to its own assets.
+HYS is designed as a protocol-level primitive — not an application. It can be imported by any Sui protocol to add Harberger-governed yield splitting to its own assets. As a primitive, HYS does not impose a specific tax formula — the integrating protocol defines its own `TaxStrategy`, giving full flexibility over how tax accrual is calculated.
 
 ---
 
@@ -37,7 +37,7 @@ HYS is designed as a protocol-level primitive — not an application. It can be 
 
 ## 1. Motivation
 
-Yield-bearing assets (NFTs with royalties, staking positions, LP tokens, IP licenses, DNS domain name, governance seats with fees) share a structural problem: the value of the underlying asset and the value of its future yield are bundled together, making it impossible to price, trade, or speculate on them independently.
+Yield-bearing assets (NFTs with royalties, staking positions, LP tokens, IP licenses, DNS domain names, governance seats with fees) share a structural problem: the value of the underlying asset and the value of its future yield are bundled together, making it impossible to price, trade, or speculate on them independently.
 
 Pendle Finance solved this for DeFi tokens by separating Principal Tokens (PT) from Yield Tokens (YT) and creating AMM pools with fixed expiration dates. However, this approach requires deep liquidity pools, active market making, and imposes temporal limits (expiry dates) on yield rights.
 
@@ -46,7 +46,7 @@ The Harberger Yield Splitter takes a fundamentally different approach:
 - **No liquidity pools required.** The Harberger mechanism creates unilateral liquidity — any asset in Liquidity State can be purchased at its declared price at any time, without a counterparty waiting on the other side.
 - **No expiration dates.** Both Base Token and Yield Right are perpetual instruments. There is no maturity, no rollover, no time decay.
 - **Self-regulating price discovery.** The Harberger tax creates an endogenous cost of holding that forces prices to reflect genuine valuations. Overpricing is punished by excessive tax. Underpricing is punished by forced acquisition.
-- **Composable and generic.** The module operates on any asset type that implements a simple yield trait. The integrating protocol defines what "yield" means; HYS handles everything else.
+- **Composable and generic.** The module operates on any asset type that implements a simple yield trait. The integrating protocol defines what "yield" means and how tax is calculated; HYS handles everything else.
 
 ---
 
@@ -61,6 +61,7 @@ Bundle<T> {
     id: UID,
     asset: T,                          // The underlying yield-bearing asset
     yield_config: YieldConfig,         // How yield is calculated (set by integrator)
+    tax_strategy: TaxStrategy,         // How tax is calculated (set by integrator)
     created_at: u64,                   // Timestamp of wrapping
     original_wrap_price: u64,          // Price at time of wrapping (for reference)
 }
@@ -88,7 +89,7 @@ YieldRight {
     id: UID,
     bundle_id: ID,                     // Reference to the original bundle
     yield_config: YieldConfig,         // Inherited yield parameters
-    Liquidity: LiquidityState,         // Harberger state (price, vault, tax data)
+    liquidity: LiquidityState,         // Harberger state (price, vault, tax data)
     accumulated_yield: u64,            // Unclaimed yield balance
 }
 ```
@@ -100,12 +101,52 @@ The internal state container attached to any asset in Liquidity State (either Ba
 ```
 LiquidityState {
     declared_price: u64,               // Self-assessed price in payment token
-    vault_balance: u64,                 // Deposited funds for tax payment
+    vault_balance: u64,                // Deposited funds for tax payment
     last_tax_collection: u64,          // Timestamp of last tax deduction
     cooldown_until: u64,               // Timestamp until which price cannot be changed
-    tax_rate_bps: u16,                 // Monthly tax rate in basis points (set by config)
+    tax_strategy: TaxStrategy,         // Inherited from Bundle at split time
 }
 ```
+
+### 2.5 TaxStrategy
+
+The `TaxStrategy` is a struct defined and provided by the integrating protocol. It encodes all the logic needed to compute `tax_owed` given the current asset state and elapsed time. HYS does not provide a default implementation — the integrator is fully responsible for this.
+
+```move
+/// Defined by the integrating protocol. Stored inside LiquidityState.
+public struct TaxStrategy has store, copy, drop {
+    params: vector<u8>,                // Encoded parameters for the formula
+    strategy_type: u8,                 // Identifier for the formula variant
+}
+```
+
+HYS calls a single entry point to compute tax, which the integrating protocol must implement:
+
+```move
+/// The integrating protocol implements this function.
+/// HYS calls it whenever tax needs to be calculated.
+public fun compute_tax(
+    strategy: &TaxStrategy,
+    declared_price: u64,
+    last_tax_collection: u64,
+    clock: &Clock,
+): u64  // Returns tax_owed
+```
+
+This design means:
+- HYS never hardcodes a tax formula.
+- Any formula that takes `declared_price` and `elapsed time` and returns a `u64` is valid.
+- The integrator can use seconds, epochs, days, weeks, or any on-chain time source.
+
+#### Invariants enforced by HYS
+
+Regardless of the formula, HYS enforces the following invariants at the module level:
+
+1. `compute_tax()` must return a value ≥ 0. (Trivially guaranteed by `u64`.)
+2. If `declared_price > 0` and time has elapsed, the returned value must be > 0. This is validated at split time with a dry-run check.
+3. The function must be deterministic and depend only on on-chain state — no oracle inputs, no randomness.
+
+These invariants preserve the core Harberger property: holding an asset in Liquidity State always has a real, ongoing cost.
 
 ---
 
@@ -136,7 +177,8 @@ The protocol has exactly three states and four transitions.
               │   (BaseToken)     │     │   (YieldRight)    │
               │                   │     │                   │
               │ • Declared price  │     │ • Declared price  │
-              │ • Monthly tax     │     │ • Monthly tax     │
+              │ • Tax per         │     │ • Tax per         │
+              │   TaxStrategy     │     │   TaxStrategy     │
               │ • Always for sale │     │ • Always for sale │
               │ • Forced buyout   │     │ • Forced buyout   │
               │   at declared $   │     │   at declared $   │
@@ -188,6 +230,7 @@ The protocol has exactly three states and four transitions.
 public fun wrap<T: store + key>(
     asset: T,
     yield_config: YieldConfig,
+    tax_strategy: TaxStrategy,
     initial_reference_price: u64,
     ctx: &mut TxContext
 ): Bundle<T>
@@ -220,13 +263,14 @@ public fun merge<T: store + key>(
 ```
 
 ```move
-/// Forced purchase at declared price. Works on BaseToken or YieldRight.
+/// Forced purchase at declared price. Works on BaseToken.
 /// The buyer must declare a new price and deposit into the vault.
 public fun buy_base<T: store + key>(
     base: &mut BaseToken<T>,
     payment: Coin<PAYMENT>,
     new_declared_price: u64,
     vault_deposit: Coin<PAYMENT>,
+    max_acceptable_price: u64,         // Reverts if current price > this
     config: &HarbergerConfig,
     clock: &Clock,
     ctx: &mut TxContext
@@ -234,11 +278,13 @@ public fun buy_base<T: store + key>(
 ```
 
 ```move
+/// Forced purchase at declared price. Works on YieldRight.
 public fun buy_yield_right(
     yield_right: &mut YieldRight,
     payment: Coin<PAYMENT>,
     new_declared_price: u64,
     vault_deposit: Coin<PAYMENT>,
+    max_acceptable_price: u64,         // Reverts if current price > this
     config: &HarbergerConfig,
     clock: &Clock,
     ctx: &mut TxContext
@@ -310,11 +356,13 @@ public fun pending_tax<T: store + key>(
 ): u64
 
 /// Returns the time remaining before vault depletion at current tax rate.
+/// Since the tax formula is defined by TaxStrategy, this is an estimate
+/// based on projecting the current tax rate forward.
 public fun runway<T: store + key>(
     base: &BaseToken<T>,
     clock: &Clock,
     config: &HarbergerConfig,
-): u64  // Seconds until default
+): u64  // Seconds until default (estimated)
 
 /// Returns whether both components exist in the same wallet (mergeable).
 public fun is_mergeable<T: store + key>(
@@ -329,24 +377,163 @@ public fun is_mergeable<T: store + key>(
 
 ### 5.1 Tax Calculation
 
-Tax accrues continuously from the moment an asset enters Liquidity State. The formula is linear and deterministic:
+Tax accrues from the moment an asset enters Liquidity State. HYS does not define a specific tax formula. Instead, tax is computed by calling `compute_tax()` on the asset's `TaxStrategy`.
 
+```move
+// Internal call within HYS whenever tax needs to be settled:
+let tax_owed = integrator::compute_tax(
+    &liquidity_state.tax_strategy,
+    liquidity_state.declared_price,
+    liquidity_state.last_tax_collection,
+    clock,
+);
 ```
-tax_owed = declared_price × (tax_rate_bps / 10_000) × (elapsed_seconds / seconds_per_month)
 
-Where:
-  seconds_per_month = 2_592_000 (30 days)
-  tax_rate_bps = configurable (default: 200 = 2% monthly)
-```
-
-Tax is not automatically deducted. It is collected when any of these events occur:
+Tax is collected when any of these events occur:
 
 1. **`collect_tax()` is called** (permissionless — anyone can trigger it)
 2. **`buy()` is called** (tax is settled before ownership transfer)
 3. **`set_price()` is called** (tax is settled before price update)
 4. **`merge()` is called** (tax is settled before bundle reconstruction)
 
-### 5.2 Tax Collection Incentive
+### 5.2 TaxStrategy Examples
+
+The following examples illustrate what an integrating protocol might implement. These are not part of HYS itself — they live in the integrating protocol's module.
+
+---
+
+#### Example A — Linear Monthly (equivalent to original HYS default)
+
+The simplest strategy. Tax accrues at a fixed percentage per month, calculated in real seconds.
+
+```move
+public fun compute_tax(
+    strategy: &TaxStrategy,
+    declared_price: u64,
+    last_tax_collection: u64,
+    clock: &Clock,
+): u64 {
+    let tax_rate_bps = decode_u16(strategy.params, 0);  // e.g. 200 = 2% monthly
+    let now = clock::timestamp_ms(clock) / 1000;
+    let elapsed = now - last_tax_collection;
+    let seconds_per_month: u64 = 2_592_000;
+
+    declared_price * (tax_rate_bps as u64) * elapsed
+        / 10_000
+        / seconds_per_month
+}
+```
+
+**Best for:** General-purpose protocols, NFT royalties, IP licenses.
+
+---
+
+#### Example B — Epoch-Based
+
+Tax accrues per Sui epoch instead of per second. Useful when the integrating protocol already tracks epoch-level activity.
+
+```move
+public fun compute_tax(
+    strategy: &TaxStrategy,
+    declared_price: u64,
+    last_tax_collection: u64,  // Epoch number at last collection
+    clock: &Clock,
+): u64 {
+    let tax_rate_bps = decode_u16(strategy.params, 0);  // e.g. 100 = 1% per epoch
+    let current_epoch = tx_context::epoch(ctx);
+    let elapsed_epochs = current_epoch - last_tax_collection;
+
+    declared_price * (tax_rate_bps as u64) * elapsed_epochs / 10_000
+}
+```
+
+**Best for:** Staking protocols, DAO governance seats where epoch rhythm is natural.
+
+---
+
+#### Example C — Quadratic Escalation
+
+Tax grows quadratically with time. Short-term holding is cheap; long-term holding becomes increasingly expensive, strongly incentivizing turnover.
+
+```move
+public fun compute_tax(
+    strategy: &TaxStrategy,
+    declared_price: u64,
+    last_tax_collection: u64,
+    clock: &Clock,
+): u64 {
+    let base_rate_bps = decode_u16(strategy.params, 0);
+    let now = clock::timestamp_ms(clock) / 1000;
+    let elapsed = now - last_tax_collection;
+    let seconds_per_day: u64 = 86_400;
+    let days_elapsed = elapsed / seconds_per_day;
+
+    // Tax = base_rate × price × days²
+    declared_price * (base_rate_bps as u64) * days_elapsed * days_elapsed
+        / 10_000
+        / seconds_per_day
+}
+```
+
+**Best for:** Domain names, governance seats where the protocol wants to strongly discourage long-term speculative holding.
+
+---
+
+#### Example D — Flat Daily Fee
+
+Tax is a fixed daily fee regardless of declared price. Decouples tax from price entirely — a flat recurring cost like a subscription.
+
+```move
+public fun compute_tax(
+    strategy: &TaxStrategy,
+    declared_price: u64,
+    last_tax_collection: u64,
+    clock: &Clock,
+): u64 {
+    let daily_fee = decode_u64(strategy.params, 0);  // e.g. 1_000_000 = 1 USDC/day
+    let now = clock::timestamp_ms(clock) / 1000;
+    let elapsed = now - last_tax_collection;
+    let seconds_per_day: u64 = 86_400;
+
+    daily_fee * elapsed / seconds_per_day
+}
+```
+
+**Best for:** Protocols where price discovery via tax pressure is less important than ensuring any holder pays a minimum cost.
+
+---
+
+#### Example E — Logarithmic Decay
+
+Tax rate decreases logarithmically over time. High initial pressure that softens the longer an asset is held — rewards long-term committed holders.
+
+```move
+public fun compute_tax(
+    strategy: &TaxStrategy,
+    declared_price: u64,
+    last_tax_collection: u64,
+    clock: &Clock,
+): u64 {
+    let base_rate_bps = decode_u16(strategy.params, 0);
+    let now = clock::timestamp_ms(clock) / 1000;
+    let elapsed = now - last_tax_collection;
+
+    // Approximation of log decay using integer math
+    // tax_rate shrinks as total holding time increases
+    let holding_days = elapsed / 86_400 + 1;
+    let adjusted_rate = (base_rate_bps as u64) / holding_days;  // simplified
+
+    declared_price * adjusted_rate * elapsed
+        / 10_000
+        / 2_592_000
+}
+```
+
+**Best for:** Protocols that want to incentivize long-term holders while still maintaining Harberger pressure.
+
+---
+
+### 5.3 Tax Collection Incentive
 
 To incentivize permissionless tax collection (especially near default thresholds), the module rewards the caller with a small percentage of the tax collected:
 
@@ -358,7 +545,7 @@ Default: collector_reward_bps = 50 (0.5%)
 
 This creates a keeper network without requiring off-chain infrastructure. Any bot or user can profitably call `collect_tax()` when vaults are near depletion.
 
-### 5.3 Price Update Cooldown
+### 5.4 Price Update Cooldown
 
 After any `buy()` or `set_price()` event, the declared price cannot be modified for a configurable cooldown period.
 
@@ -463,7 +650,6 @@ The module is initialized with a `HarbergerConfig` object controlled by the inte
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `tax_rate_bps` | u16 | 200 | Monthly tax rate in basis points (2%) |
 | `price_cooldown_seconds` | u64 | 172,800 | Cooldown after price change (48 hours) |
 | `min_vault_runway_seconds` | u64 | 604,800 | Minimum vault deposit = 1 week of tax at declared price |
 | `collector_reward_bps` | u16 | 50 | Reward for permissionless tax collection (0.5%) |
@@ -472,11 +658,12 @@ The module is initialized with a `HarbergerConfig` object controlled by the inte
 | `auction_premium_pct` | u8 | 150 | Dutch Auction starts at 150% of declared price |
 | `protocol_fee_bps` | u16 | 50 | Fee on each `buy()` transaction (0.5%) |
 | `min_declared_price` | u64 | 1 | Minimum declared price (prevents zero-price gaming) |
-| `payment_type` | TypeName | — | The coin type used for payments (e.g., USDC, SUI, $ROLE) |
+| `payment_type` | TypeName | — | The coin type used for payments (e.g., USDC, SUI) |
+
+Note: `tax_rate_bps` is no longer a top-level config parameter. Tax rate logic lives entirely inside the integrator's `TaxStrategy`.
 
 ### 8.1 Parameter Constraints
 
-- `tax_rate_bps` must be in range [10, 1000] (0.1% to 10% monthly).
 - `price_cooldown_seconds` must be ≥ 3600 (1 hour minimum).
 - `min_vault_runway_seconds` must be ≥ 86400 (1 day minimum).
 - `penalty_bps` must be in range [0, 1000].
@@ -494,9 +681,9 @@ Every holder in Liquidity State faces a continuous optimization problem:
 
 **Declare too low →** The tax is cheap, but anyone can buy the asset at the declared price. The holder risks losing a valuable asset for less than its true value.
 
-**Declare too high →** The asset is protected from buyouts, but the monthly tax becomes prohibitive. The holder bleeds capital until they either lower the price or default.
+**Declare too high →** The asset is protected from buyouts, but the tax (per TaxStrategy) becomes prohibitive. The holder bleeds capital until they either lower the price or default.
 
-**The Nash Equilibrium** is to declare a price close to the holder's true private valuation. This is the fundamental insight of Harberger taxation: it creates an incentive-compatible mechanism where truthful price revelation is the dominant strategy.
+**The Nash Equilibrium** is to declare a price close to the holder's true private valuation. This is the fundamental insight of Harberger taxation: it creates an incentive-compatible mechanism where truthful price revelation is the dominant strategy. This property holds regardless of the specific tax formula — as long as `compute_tax()` returns a positive value, the dilemma exists.
 
 ### 9.2 The Peace/Sovereign Dilemma
 
@@ -510,7 +697,7 @@ The bundle holder faces a second-order decision: split or hold?
 **Split (Liquidity State):**
 - Immediate liquidity for one or both components.
 - Ability to sell the YieldRight while keeping the Base (or vice versa).
-- But: continuous tax obligation on both components, forced-sale exposure, monitoring costs.
+- But: continuous tax obligation on both components (per TaxStrategy), forced-sale exposure, monitoring costs.
 
 **Rational split occurs when:**
 ```
@@ -528,7 +715,7 @@ If the market separately prices BaseToken at P_b and YieldRight at P_y, but a Bu
 3. Merge into a Bundle.
 4. Hold in Ownership State (no tax) or sell the Bundle at P_bundle.
 
-This creates a price floor on the separated components: they can never trade below the level where merge arbitrage becomes profitable. This is a healthy, self-regulating mechanism that prevents extreme underpricing.
+This creates a price floor on the separated components: they can never trade below the level where merge arbitrage becomes profitable.
 
 ### 9.4 Equilibrium Summary
 
@@ -555,22 +742,7 @@ This creates a price floor on the separated components: they can never trade bel
 
 **Attack:** Holder sees a `buy()` transaction in the mempool and front-runs with a `set_price()` to increase the cost.
 
-**Mitigation:** On Sui, transaction ordering is handled by the consensus mechanism (Narwhal/Bullshark), which provides more resistance to front-running than EVM chains. Additionally, `set_price()` triggers tax settlement first, meaning the holder pays tax on the higher price for any elapsed time. The cooldown period also limits how frequently prices can change.
-
-**Additional consideration:** The `buy()` function should include a `max_price` parameter to protect buyers from price manipulation between transaction submission and execution.
-
-```move
-public fun buy_base<T: store + key>(
-    base: &mut BaseToken<T>,
-    payment: Coin<PAYMENT>,
-    new_declared_price: u64,
-    vault_deposit: Coin<PAYMENT>,
-    max_acceptable_price: u64,         // Reverts if current price > this
-    config: &HarbergerConfig,
-    clock: &Clock,
-    ctx: &mut TxContext
-): Coin<PAYMENT>
-```
+**Mitigation:** On Sui, transaction ordering is handled by the consensus mechanism (Narwhal/Bullshark), which provides more resistance to front-running than EVM chains. Additionally, `set_price()` triggers tax settlement first. The cooldown period also limits how frequently prices can change. The `max_acceptable_price` parameter on `buy()` protects buyers from price manipulation between transaction submission and execution.
 
 ### 10.3 Dutch Auction Sniping
 
@@ -582,19 +754,25 @@ public fun buy_base<T: store + key>(
 
 **Attack:** YieldRight holder claims all accumulated yield, then intentionally defaults to avoid further tax.
 
-**Mitigation:** The `min_vault_runway_seconds` (7 days minimum deposit) ensures there is always a buffer. Additionally, the penalty on Dutch Auction sale (2.5%) and the immediate suspension of yield upon default reduce the profitability of this strategy. The holder loses their vault deposit, pays the penalty, and forfeits future yield.
+**Mitigation:** The `min_vault_runway_seconds` (7 days minimum deposit) ensures there is always a buffer. Additionally, the penalty on Dutch Auction sale (2.5%) and the immediate suspension of yield upon default reduce the profitability of this strategy.
 
-### 10.5 Price Oracle Manipulation
+### 10.5 Malicious TaxStrategy
 
-**Risk:** The module relies on self-assessed prices, not oracle prices. This is a feature, not a bug — Harberger pricing is designed to work without oracles. However, integrating protocols should be aware that declared prices may not reflect "market price" in the traditional sense.
+**Attack:** An integrating protocol deploys a `TaxStrategy` that always returns 0, effectively disabling the Harberger mechanism.
 
-**Guidance:** Protocols that need oracle-based price feeds for other purposes (e.g., lending collateral) should not use Harberger declared prices as oracle inputs. The declared price reflects the holder's self-assessment under tax pressure, which is economically meaningful but structurally different from a market-clearing price.
+**Mitigation:** HYS validates the TaxStrategy at `split()` time with a dry-run: it calls `compute_tax()` with a small simulated elapsed time and a non-zero declared price. If the result is 0, the split is rejected. This guarantees that the Harberger property cannot be silently removed by the integrator.
 
-### 10.6 Grief Attack on Ownership State
+### 10.6 Price Oracle Manipulation
+
+**Risk:** The module relies on self-assessed prices, not oracle prices. This is a feature, not a bug. However, integrating protocols should be aware that declared prices may not reflect "market price" in the traditional sense.
+
+**Guidance:** Protocols that need oracle-based price feeds for other purposes (e.g., lending collateral) should not use Harberger declared prices as oracle inputs.
+
+### 10.7 Grief Attack on Ownership State
 
 **Attack:** A malicious actor wraps a worthless asset, splits it, declares very low prices, and forces the protocol to process Dutch Auctions repeatedly without meaningful economic activity.
 
-**Mitigation:** The `min_declared_price` prevents zero-value declarations. The `min_vault_runway_seconds` imposes a minimum capital commitment. The `protocol_fee_bps` on `buy()` transactions means each cycle costs the attacker real money. This attack is economically irrational unless the protocol fee is zero.
+**Mitigation:** The `min_declared_price` prevents zero-value declarations. The `min_vault_runway_seconds` imposes a minimum capital commitment. The `protocol_fee_bps` on `buy()` transactions means each cycle costs the attacker real money.
 
 ---
 
@@ -602,7 +780,7 @@ public fun buy_base<T: store + key>(
 
 ### 11.1 Minimal Integration
 
-A protocol needs to do three things to integrate HYS:
+A protocol needs to do four things to integrate HYS:
 
 **Step 1 — Define the asset type.** The asset must have `store + key` abilities in Move.
 
@@ -615,7 +793,17 @@ public struct MyNFT has key, store {
 }
 ```
 
-**Step 2 — Configure yield.** Define how yield is generated and at what rate.
+**Step 2 — Define the TaxStrategy.** Choose a formula and encode its parameters.
+
+```move
+// Example: linear monthly tax at 2%
+let tax_strategy = TaxStrategy {
+    strategy_type: LINEAR_MONTHLY,
+    params: encode_u16(200),           // 200 bps = 2% monthly
+};
+```
+
+**Step 3 — Configure yield.** Define how yield is generated and at what rate.
 
 ```move
 let yield_config = harberger::new_yield_config(
@@ -626,23 +814,22 @@ let yield_config = harberger::new_yield_config(
 );
 ```
 
-**Step 3 — Wrap assets.** When an asset is created or first registered, wrap it.
+**Step 4 — Wrap assets.** When an asset is created or first registered, wrap it.
 
 ```move
 let bundle = harberger::wrap(
     my_nft,
     yield_config,
+    tax_strategy,
     initial_price,
     ctx
 );
-// Transfer bundle to the owner
 transfer::transfer(bundle, owner);
 ```
 
-**Step 4 — Route yield.** When a yield-generating event occurs in the integrating protocol, call the yield distribution function.
+**Step 5 — Route yield.** When a yield-generating event occurs in the integrating protocol, call the yield distribution function.
 
 ```move
-// On secondary sale of the linked NFT:
 harberger::distribute_yield(
     yield_right_id,
     yield_amount,
@@ -656,7 +843,6 @@ harberger::distribute_yield(
 
 ```move
 let config = harberger::new_config(
-    tax_rate_bps: 200,
     price_cooldown_seconds: 172_800,
     min_vault_runway_seconds: 604_800,
     collector_reward_bps: 50,
@@ -668,6 +854,8 @@ let config = harberger::new_config(
     ctx
 );
 ```
+
+Note: `tax_rate_bps` is no longer a config parameter — it lives inside the `TaxStrategy`.
 
 ### 11.3 Events
 
@@ -697,6 +885,7 @@ An NFT protocol creates digital artworks with 5% secondary royalties. Using HYS:
 
 - The NFT is wrapped as the Base asset.
 - The 4% royalty claim becomes the YieldRight (1% retained by artist as soulbound).
+- TaxStrategy: Linear monthly at 2% — simple and predictable.
 - Collectors who want the art hold the Bundle (Ownership State).
 - Yield speculators buy the YieldRight and earn royalties from resales.
 - Flippers buy the BaseToken and trade the art without the yield claim.
@@ -707,8 +896,8 @@ A naming service (e.g., SuiNS) integrates HYS to prevent domain squatting:
 
 - The domain itself is the Base asset.
 - If the domain generates revenue (e.g., resolves to a dApp with fees), the revenue claim is the YieldRight.
+- TaxStrategy: Quadratic escalation — the longer a speculator holds a domain without using it, the more expensive it becomes.
 - Holders who actively use the domain keep the Bundle (Ownership State = no tax, no forced sale).
-- Squatters who split (to sell the revenue rights) enter Liquidity State and face Harberger tax, making squatting economically unsustainable.
 
 ### 12.3 Governance Seats
 
@@ -716,9 +905,9 @@ A DAO assigns governance seats as yield-bearing assets (the seat earns a share o
 
 - The seat is the Base asset.
 - The treasury distribution claim is the YieldRight.
+- TaxStrategy: Epoch-based — aligns tax collection with DAO voting cycles.
 - An active governor keeps the Bundle — voting power + revenue, no tax.
-- If a governor becomes inactive and splits (selling the yield), the seat enters Liquidity State and can be purchased by anyone at the declared price.
-- This creates a self-regulating governance market where inactive seats are automatically reallocated.
+- If a governor becomes inactive and splits, the seat enters Liquidity State and can be purchased by anyone.
 
 ### 12.4 Intellectual Property Licenses
 
@@ -726,9 +915,8 @@ A music protocol tokenizes song rights:
 
 - The master recording ownership is the Base asset.
 - The streaming revenue claim is the YieldRight.
-- The original artist can hold the Bundle in Peace (full rights, no tax).
-- A label can buy the Base (master) while the artist retains the YieldRight (perpetual streaming income).
-- If the label doesn't promote the song (low streaming revenue), the YieldRight price drops, and someone else can buy it cheaply and promote the song more aggressively.
+- TaxStrategy: Logarithmic decay — high initial pressure discourages flipping; long-term committed label gets progressively lower tax.
+- The original artist can hold the Bundle in Ownership State (full rights, no tax).
 
 ### 12.5 Staking Positions
 
@@ -736,6 +924,7 @@ A liquid staking protocol uses HYS to separate principal from yield:
 
 - The staked asset (e.g., staked SUI) is the Base.
 - The staking rewards claim is the YieldRight.
+- TaxStrategy: Epoch-based, aligned with Sui's native staking epoch rhythm.
 - Unlike Pendle, there is no expiration — the yield claim is perpetual.
 - Unlike Pendle, there is no AMM pool needed — the Harberger market provides liquidity.
 
@@ -773,6 +962,8 @@ These fees are hardcoded in the module and cannot be modified by integrating pro
 | **Merge Arbitrage** | Buying both components below bundle value and merging for profit |
 | **Keeper** | Any address that calls `collect_tax()` for a reward |
 | **Runway** | Time remaining before vault depletion at current tax rate |
+| **TaxStrategy** | Integrator-defined struct that encodes the tax formula for a specific protocol |
+| **compute_tax()** | The function the integrator implements; called by HYS to determine tax owed |
 
 ---
 
@@ -780,11 +971,13 @@ These fees are hardcoded in the module and cannot be modified by integrating pro
 
 1. **Reentrancy:** All state mutations must be completed before external calls (Coin transfers). Sui's object model provides natural reentrancy protection, but integrating protocols should be aware of cross-module interactions.
 
-2. **Integer Overflow:** Tax calculations use u64 arithmetic. For assets with extremely high declared prices and long collection intervals, overflow checks must be enforced. The module should use checked arithmetic throughout.
+2. **Integer Overflow:** Tax calculations use u64 arithmetic. For assets with extremely high declared prices and long collection intervals, overflow checks must be enforced. The module should use checked arithmetic throughout. This is especially important for non-linear TaxStrategy implementations (e.g., quadratic) where large values can overflow faster.
 
 3. **Clock Manipulation:** The module depends on `sui::clock::Clock` for timestamps. On Sui, the clock is a system object updated by validators and is resistant to manipulation. However, integrators should be aware that clock granularity is at the consensus round level (sub-second), not block level.
 
-4. **Upgrade Safety:** The module should be published as an immutable package (no upgrade capability) to guarantee that the rules cannot be changed post-deployment. Alternatively, if upgradability is desired, parameter changes should be governed by a timelock DAO with minimum delay of 7 days.
+4. **TaxStrategy Validation:** HYS validates every TaxStrategy at `split()` time via a dry-run call to `compute_tax()`. Integrators must ensure their implementation does not panic on edge cases (e.g., zero elapsed time, minimum declared price). A panicking `compute_tax()` will cause `split()` to abort, rendering the Bundle unsplittable.
+
+5. **Upgrade Safety:** The module should be published as an immutable package (no upgrade capability) to guarantee that the rules cannot be changed post-deployment. Alternatively, if upgradability is desired, parameter changes should be governed by a timelock DAO with minimum delay of 7 days.
 
 ---
 

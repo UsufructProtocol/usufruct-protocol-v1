@@ -142,9 +142,8 @@ This design means:
 
 Regardless of the formula, HYS enforces the following invariants at the module level:
 
-1. `compute_tax()` must return a value ≥ 0. (Trivially guaranteed by `u64`.)
-2. If `declared_price > 0` and time has elapsed, the returned value must be > 0. This is validated at split time with a dry-run check.
-3. The function must be deterministic and depend only on on-chain state — no oracle inputs, no randomness.
+1. If `declared_price > 0` and `elapsed_time > 0`, then `compute_tax()` must return a value > 0. This is validated at split time with a dry-run check.
+2. The function must be deterministic and depend only on on-chain state — no oracle inputs, no randomness.
 
 These invariants preserve the core Harberger property: holding an asset in Liquidity State always has a real, ongoing cost.
 
@@ -377,7 +376,7 @@ public fun is_mergeable<T: store + key>(
 
 ### 5.1 Tax Calculation
 
-Tax accrues from the moment an asset enters Liquidity State. HYS does not define a specific tax formula. Instead, tax is computed by calling `compute_tax()` on the asset's `TaxStrategy`.
+Tax accrues from the moment an asset enters Liquidity State. Unlike the previous version of this spec, HYS does not define a specific tax formula. Instead, tax is computed by calling `compute_tax()` on the asset's `TaxStrategy`.
 
 ```move
 // Internal call within HYS whenever tax needs to be settled:

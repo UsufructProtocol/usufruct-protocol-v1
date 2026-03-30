@@ -1,6 +1,6 @@
 # Harberger Yield Splitter — Technical Specification
 
-**Version:** 0.2.0-draft
+**Version:** 0.3.0-draft
 **Target Runtime:** Sui Move
 **Authors:** [Protocol Team]
 **Status:** Draft — For Review
@@ -13,7 +13,7 @@ The Harberger Yield Splitter (HYS) is a composable Sui Move module that enables 
 
 The module introduces a dual-state system: **Ownership State**, where the bundle holder enjoys full ownership and tax immunity, and **Liquidity State**, where each separated component is subject to continuous self-assessed pricing and forced-sale mechanics. Either state can be entered or exited at any time, creating a perpetual game-theoretic equilibrium between holders, speculators, and yield seekers.
 
-HYS is designed as a protocol-level primitive — not an application. It can be imported by any Sui protocol to add Harberger-governed yield splitting to its own assets. As a primitive, HYS does not impose a specific tax formula — the integrating protocol defines its own `TaxStrategy`, giving full flexibility over how tax accrual is calculated.
+HYS is designed as a protocol-level primitive — not an application. It can be imported by any Sui protocol to add Harberger-governed yield splitting to its own assets. As a primitive, HYS does not impose a specific tax formula nor a specific liquidation curve — the integrating protocol defines its own `TaxStrategy` and `AuctionStrategy`, giving full flexibility over how tax accrual and Dutch Auction price descent are calculated.
 
 ---
 
@@ -105,6 +105,9 @@ LiquidityState {
     last_tax_collection: u64,          // Timestamp of last tax deduction
     cooldown_until: u64,               // Timestamp until which price cannot be changed
     tax_strategy: TaxStrategy,         // Inherited from Bundle at split time
+    auction_strategy: AuctionStrategy, // Inherited from Bundle at split time
+    in_auction: bool,                  // Whether a Dutch Auction is currently active
+    auction_start_time: u64,           // Timestamp when the auction was triggered
 }
 ```
 
@@ -146,6 +149,33 @@ Regardless of the formula, HYS enforces the following invariants at the module l
 2. The function must be deterministic and depend only on on-chain state — no oracle inputs, no randomness.
 
 These invariants preserve the core Harberger property: holding an asset in Liquidity State always has a real, ongoing cost.
+
+### 2.6 AuctionStrategy
+
+The `AuctionStrategy` is a struct defined and provided by the integrating protocol. It encodes the price descent curve of the Dutch Auction. HYS does not provide a default implementation — the integrator is fully responsible for this.
+
+```move
+/// Defined by the integrating protocol. Stored inside LiquidityState.
+public struct AuctionStrategy has store, copy, drop {
+    params: vector<u8>,                // Encoded parameters for the descent curve
+    strategy_type: u8,                 // Identifier for the curve variant
+}
+```
+
+HYS calls a single entry point to compute the current auction price, which the integrating protocol must implement:
+
+```move
+/// The integrating protocol implements this function.
+/// HYS calls it to determine the current price at any point during the auction.
+public fun compute_auction_price(
+    strategy: &AuctionStrategy,
+    declared_price: u64,
+    auction_start_time: u64,
+    clock: &Clock,
+): u64  // Returns current auction price
+```
+
+The auction always starts at `declared_price`. The integrator controls how fast it descends from there.
 
 ---
 
@@ -571,29 +601,92 @@ Default: price_cooldown_seconds = 172_800 (48 hours)
 
 ### 6.1 Trigger
 
-A Dutch Auction is triggered automatically when `collect_tax()` determines that the vault balance is insufficient to cover the owed tax.
+A Dutch Auction is triggered automatically when `collect_tax()` determines that the vault balance is insufficient to cover the owed tax. Once triggered, the auction is **irrevocable** — the holder cannot cancel it by refilling the vault.
 
 ### 6.2 Mechanism
 
+The auction starts at `declared_price` and descends according to the asset's `AuctionStrategy`. The integrating protocol defines the speed and curve of the descent.
+
+```move
+// Internal call within HYS to get the current auction price:
+let current_price = integrator::compute_auction_price(
+    &liquidity_state.auction_strategy,
+    liquidity_state.declared_price,
+    liquidity_state.auction_start_time,
+    clock,
+);
 ```
-auction_start_price = declared_price × auction_premium_pct / 100
-auction_end_price = 0
-auction_duration = dutch_auction_duration_seconds (default: 86_400 = 24 hours)
 
-current_price(t) = auction_start_price × (1 - t / auction_duration)
+Example AuctionStrategy implementations:
 
-Where t = seconds elapsed since auction start
+**Linear descent** — price drops at a constant rate per second:
+```move
+public fun compute_auction_price(
+    strategy: &AuctionStrategy,
+    declared_price: u64,
+    auction_start_time: u64,
+    clock: &Clock,
+): u64 {
+    let duration = decode_u64(strategy.params, 0);  // e.g. 86_400 = 24 hours
+    let now = clock::timestamp_ms(clock) / 1000;
+    let elapsed = now - auction_start_time;
+    if (elapsed >= duration) return 0;
+    declared_price * (duration - elapsed) / duration
+}
 ```
 
-The first buyer to accept the current price acquires the asset. Upon acquisition:
+**Stepped descent** — price drops in fixed intervals (more predictable for buyers):
+```move
+public fun compute_auction_price(
+    strategy: &AuctionStrategy,
+    declared_price: u64,
+    auction_start_time: u64,
+    clock: &Clock,
+): u64 {
+    let step_duration = decode_u64(strategy.params, 0);  // e.g. 3_600 = 1 hour per step
+    let step_pct = decode_u8(strategy.params, 8);        // e.g. 10 = drop 10% per step
+    let now = clock::timestamp_ms(clock) / 1000;
+    let steps_elapsed = (now - auction_start_time) / step_duration;
+    let discount = steps_elapsed * (step_pct as u64);
+    if (discount >= 100) return 0;
+    declared_price * (100 - discount) / 100
+}
+```
 
-1. The buyer pays `current_price(t)`.
-2. A penalty of `penalty_bps` (default: 250 = 2.5%) is deducted and sent to the protocol's treasury.
-3. The remainder is sent to the defaulting holder.
-4. The buyer must immediately declare a new price and fund the vault.
-5. The asset enters Liquidity State under the new owner.
+### 6.3 Payment Flow on Acquisition
 
-### 6.3 Yield Right Default — Special Rule
+The first buyer to accept the current price acquires the asset. Upon acquisition, HYS distributes the payment in strict priority order:
+
+```
+Buyer pays current_price(t)
+  │
+  ├── 1st: tax_owed (full accumulated tax debt) → integrator treasury
+  ├── 2nd: penalty_bps (optional, integrator-defined) → integrator treasury
+  └── 3rd: remainder → defaulting holder (may be zero)
+```
+
+**Priority order is enforced by HYS.** The protocol always collects what it is owed before the holder receives anything. If `current_price(t)` is less than `tax_owed`, the protocol receives everything and the holder receives nothing.
+
+After acquisition:
+- The buyer must immediately declare a new price and fund the vault.
+- The asset enters Liquidity State under the new owner.
+
+### 6.4 Holder Exclusion
+
+The original holder (the address that triggered the default) is **excluded from participating in their own Dutch Auction**. This prevents the holder from using a second wallet to reacquire the asset at a discounted price while avoiding the tax debt.
+
+HYS records the defaulting address at auction trigger time and rejects any `buy()` call from that address during the auction period.
+
+### 6.5 penalty_bps — Optional Revenue
+
+`penalty_bps` is an integrator-defined parameter that can be set to any value including 0. It is no longer the primary anti-abuse mechanism — that role is fulfilled by the tax-first payment priority in section 6.3.
+
+| `penalty_bps` | Behavior |
+|---|---|
+| `= 0` | No additional penalty. Holder receives full remainder after tax is paid. |
+| `> 0` | Protocol captures an additional percentage on top of tax owed. Remainder to holder is reduced accordingly. |
+
+### 6.6 Yield Right Default — Special Rule
 
 When a YieldRight enters default:
 
@@ -658,17 +751,15 @@ The module is initialized with a `HarbergerConfig` object controlled by the inte
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `price_cooldown_seconds` | u64 | 172,800 | Cooldown after price change (48 hours) |
+| `price_cooldown_seconds` | u64 | 172,800 | Cooldown after price change or purchase (48 hours) |
 | `min_vault_runway_seconds` | u64 | 604,800 | Minimum vault deposit = 1 week of tax at declared price |
-| `collector_reward_bps` | u16 | 50 | Reward for permissionless tax collection (0.5%) |
-| `penalty_bps` | u16 | 250 | Penalty on Dutch Auction sale (2.5%) |
-| `dutch_auction_duration_seconds` | u64 | 86,400 | Duration of liquidation auction (24 hours) |
-| `auction_premium_pct` | u8 | 150 | Dutch Auction starts at 150% of declared price |
+| `collector_reward_bps` | u16 | 50 | Reward for permissionless tax collection (0.5%). Set to 0 to disable keeper network. |
+| `penalty_bps` | u16 | 0 | Optional additional penalty on Dutch Auction sale. Set to 0 for no penalty beyond tax owed. |
 | `protocol_fee_bps` | u16 | 50 | Fee on each `buy()` transaction (0.5%) |
 | `min_declared_price` | u64 | 1 | Minimum declared price (prevents zero-price gaming) |
 | `payment_type` | TypeName | — | The coin type used for payments (e.g., USDC, SUI) |
 
-Note: `tax_rate_bps` is no longer a top-level config parameter. Tax rate logic lives entirely inside the integrator's `TaxStrategy`.
+Note: `tax_rate_bps` and `auction_premium_pct` are no longer top-level config parameters. Tax rate logic lives inside the integrator's `TaxStrategy`. Auction descent logic lives inside the integrator's `AuctionStrategy`.
 
 ### 8.1 Parameter Constraints
 
@@ -725,7 +816,36 @@ If the market separately prices BaseToken at P_b and YieldRight at P_y, but a Bu
 
 This creates a price floor on the separated components: they can never trade below the level where merge arbitrage becomes profitable.
 
-### 9.4 Equilibrium Summary
+### 9.4 The Default Dilemma — Paying Tax is Always Dominant
+
+A critical property of HYS is that intentional default must never be a rational strategy. If a holder can profit by letting the vault deplete and reacquiring the asset via Dutch Auction, the Harberger pricing mechanism breaks down — holders stop declaring honest prices and start gaming the liquidation cycle.
+
+HYS makes paying tax the dominant strategy through the tax-first payment priority in the Dutch Auction (section 6.3). The math makes this clear:
+
+**Scenario:** Asset declared at 1,000 USDC. Tax rate 2%/month. Holder holds for 6 months without paying.
+
+```
+Tax accumulated: 1,000 × 2% × 6 = 120 USDC
+
+Option A — Pay the tax:
+  Cost = 120 USDC
+
+Option B — Default and reacquire via second wallet:
+  Auction starts at 1,000 USDC (declared_price)
+  Suppose buyer waits and acquires at 300 USDC
+  Payment distribution:
+    → Tax owed (120 USDC) → protocol
+    → penalty_bps (optional) → protocol
+    → Remainder (180 USDC) → holder original
+
+  Net cost to holder = 300 USDC paid − 180 USDC received = 120 USDC
+  Plus: penalty_bps on top if configured
+  Plus: must fund a new vault immediately after reacquiring
+```
+
+The net cost of defaulting equals or exceeds the cost of paying tax — and is always worse once `penalty_bps > 0` or vault refunding is accounted for. There is no financial gain from gaming the auction.
+
+### 9.5 Equilibrium Summary
 
 | Actor | Optimal Strategy | Protocol Benefit |
 |---|---|---|
@@ -756,27 +876,33 @@ This creates a price floor on the separated components: they can never trade bel
 
 **Attack:** Waiting until the Dutch Auction price approaches zero to acquire assets for near-nothing.
 
-**Mitigation:** The auction starts at 150% of declared price and descends linearly over 24 hours. The `collector_reward_bps` incentivizes keepers to trigger liquidation early, and the penalty mechanism ensures the protocol captures value even at low prices. If consistently problematic, the `auction_premium_pct` can be increased or a reserve price (e.g., 10% of declared price) can be set as the floor.
+**Mitigation:** The `AuctionStrategy` controls the descent speed. Integrators can configure a slower descent, a price floor, or a stepped curve to prevent the price from reaching zero too quickly. Additionally, the tax-first payment priority means the protocol always recovers the tax owed regardless of how low the auction price falls — the only person hurt by sniping is the defaulting holder, not the protocol.
 
-### 10.4 Yield Extraction Before Default
+### 10.4 Intentional Default to Avoid Tax
+
+**Attack:** Holder intentionally lets the vault deplete, then reacquires the asset via Dutch Auction with a second wallet, paying less than the accumulated tax.
+
+**Mitigation:** This attack is structurally eliminated by the tax-first payment priority (section 6.3). When the auction clears, the protocol takes the full tax owed before any remainder reaches the holder. The net cost to the holder of defaulting always equals or exceeds the cost of simply paying the tax. See section 9.4 for the full mathematical proof.
+
+### 10.5 Yield Extraction Before Default
 
 **Attack:** YieldRight holder claims all accumulated yield, then intentionally defaults to avoid further tax.
 
-**Mitigation:** The `min_vault_runway_seconds` (7 days minimum deposit) ensures there is always a buffer. Additionally, the penalty on Dutch Auction sale (2.5%) and the immediate suspension of yield upon default reduce the profitability of this strategy.
+**Mitigation:** The `min_vault_runway_seconds` (7 days minimum deposit) ensures there is always a buffer. Additionally, yield accumulation is suspended immediately upon default — the holder forfeits all future yield during the auction period. The tax-first payment priority ensures the protocol recovers what it is owed from the auction proceeds.
 
-### 10.5 Malicious TaxStrategy
+### 10.6 Malicious TaxStrategy
 
 **Attack:** An integrating protocol deploys a `TaxStrategy` that always returns 0, effectively disabling the Harberger mechanism.
 
 **Mitigation:** HYS validates the TaxStrategy at `split()` time with a dry-run: it calls `compute_tax()` with a small simulated elapsed time and a non-zero declared price. If the result is 0, the split is rejected. This guarantees that the Harberger property cannot be silently removed by the integrator.
 
-### 10.6 Price Oracle Manipulation
+### 10.7 Price Oracle Manipulation
 
 **Risk:** The module relies on self-assessed prices, not oracle prices. This is a feature, not a bug. However, integrating protocols should be aware that declared prices may not reflect "market price" in the traditional sense.
 
 **Guidance:** Protocols that need oracle-based price feeds for other purposes (e.g., lending collateral) should not use Harberger declared prices as oracle inputs.
 
-### 10.7 Grief Attack on Ownership State
+### 10.8 Grief Attack on Ownership State
 
 **Attack:** A malicious actor wraps a worthless asset, splits it, declares very low prices, and forces the protocol to process Dutch Auctions repeatedly without meaningful economic activity.
 
@@ -811,7 +937,17 @@ let tax_strategy = TaxStrategy {
 };
 ```
 
-**Step 3 — Configure yield.** Define how yield is generated and at what rate.
+**Step 3 — Define the AuctionStrategy.** Choose a descent curve and encode its parameters.
+
+```move
+// Example: linear descent over 24 hours
+let auction_strategy = AuctionStrategy {
+    strategy_type: LINEAR_DESCENT,
+    params: encode_u64(86_400),        // 24 hours in seconds
+};
+```
+
+**Step 4 — Configure yield.** Define how yield is generated and at what rate.
 
 ```move
 let yield_config = harberger::new_yield_config(
@@ -822,20 +958,21 @@ let yield_config = harberger::new_yield_config(
 );
 ```
 
-**Step 4 — Wrap assets.** When an asset is created or first registered, wrap it.
+**Step 5 — Wrap assets.** When an asset is created or first registered, wrap it.
 
 ```move
 let bundle = harberger::wrap(
     my_nft,
     yield_config,
     tax_strategy,
+    auction_strategy,
     initial_price,
     ctx
 );
 transfer::transfer(bundle, owner);
 ```
 
-**Step 5 — Route yield.** When a yield-generating event occurs in the integrating protocol, call the yield distribution function.
+**Step 6 — Route yield.** When a yield-generating event occurs in the integrating protocol, call the yield distribution function.
 
 ```move
 harberger::distribute_yield(
@@ -854,16 +991,14 @@ let config = harberger::new_config(
     price_cooldown_seconds: 172_800,
     min_vault_runway_seconds: 604_800,
     collector_reward_bps: 50,
-    penalty_bps: 250,
-    dutch_auction_duration_seconds: 86_400,
-    auction_premium_pct: 150,
+    penalty_bps: 0,                    // No additional penalty — tax-first priority handles anti-abuse
     protocol_fee_bps: 50,
     min_declared_price: 1_000_000,     // e.g., 1 USDC (6 decimals)
     ctx
 );
 ```
 
-Note: `tax_rate_bps` is no longer a config parameter — it lives inside the `TaxStrategy`.
+Note: `tax_rate_bps`, `auction_premium_pct`, and `dutch_auction_duration_seconds` are no longer config parameters — they live inside `TaxStrategy` and `AuctionStrategy` respectively.
 
 ### 11.3 Events
 
@@ -972,6 +1107,9 @@ These fees are hardcoded in the module and cannot be modified by integrating pro
 | **Runway** | Time remaining before vault depletion at current tax rate |
 | **TaxStrategy** | Integrator-defined struct that encodes the tax formula for a specific protocol |
 | **compute_tax()** | The function the integrator implements; called by HYS to determine tax owed |
+| **AuctionStrategy** | Integrator-defined struct that encodes the Dutch Auction price descent curve |
+| **compute_auction_price()** | The function the integrator implements; called by HYS to determine the current auction price |
+| **Tax-First Priority** | The rule that accumulated tax debt is always paid before any remainder reaches the defaulting holder |
 
 ---
 
@@ -985,7 +1123,9 @@ These fees are hardcoded in the module and cannot be modified by integrating pro
 
 4. **TaxStrategy Validation:** HYS validates every TaxStrategy at `split()` time via a dry-run call to `compute_tax()`. Integrators must ensure their implementation does not panic on edge cases (e.g., zero elapsed time, minimum declared price). A panicking `compute_tax()` will cause `split()` to abort, rendering the Bundle unsplittable.
 
-5. **Upgrade Safety:** The module should be published as an immutable package (no upgrade capability) to guarantee that the rules cannot be changed post-deployment. Alternatively, if upgradability is desired, parameter changes should be governed by a timelock DAO with minimum delay of 7 days.
+5. **AuctionStrategy Validation:** HYS validates every AuctionStrategy at `split()` time by checking that `compute_auction_price()` returns `declared_price` at `t=0` and a strictly lower value at `t>0`. A strategy that never descends below the starting price would trap assets in perpetual auction. A strategy that immediately returns 0 would allow instant zero-price acquisition — both are rejected at split time.
+
+6. **Upgrade Safety:** The module should be published as an immutable package (no upgrade capability) to guarantee that the rules cannot be changed post-deployment. Alternatively, if upgradability is desired, parameter changes should be governed by a timelock DAO with minimum delay of 7 days.
 
 ---
 

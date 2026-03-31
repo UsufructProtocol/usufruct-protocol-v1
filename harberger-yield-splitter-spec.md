@@ -731,7 +731,13 @@ The worst case. The holder spent 180 USDC on an asset that originally cost 100 U
 
 **Summary:** In every case, the total cost of repurchase equals `buy_price + something`. The holder always ends up paying more than they originally paid. Second-wallet repurchase is structurally irrational because the tax-first payment priority ensures the holder can never extract value from their own auction.
 
-### 6.6 Yield Right During Auction
+### 6.7 When the Auction Reaches Zero With No Buyer
+
+If the auction price descends to zero and no buyer appears, the asset remains in Liquidity State at a declared price of zero. The tax debt goes uncollected. The holder receives nothing.
+
+This outcome simply confirms that the asset has no market at any price. The protocol did its job — it offered the asset at continuously descending prices, giving every potential buyer maximum opportunity to acquire it. The absence of buyers is information about the asset, not a failure of the protocol.
+
+What happens next is the responsibility of the integrating protocol. HYS exposes the state — price at zero, tax debt outstanding, no active auction — and leaves the decision to the integrator. Options include archiving the asset, allowing the original holder to reclaim it by paying the accumulated debt, or leaving it indefinitely at zero. HYS does not mandate any of these outcomes.
 
 When a YieldRight enters Dutch Auction, yield accumulation continues normally. The new buyer acquires the YieldRight with its full accumulated yield intact. This is consistent with the deferred tax model — yield and tax are independent; the tax lien does not affect yield accumulation.
 

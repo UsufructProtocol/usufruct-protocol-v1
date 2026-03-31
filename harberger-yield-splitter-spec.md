@@ -1,6 +1,6 @@
 # Harberger Yield Splitter — Technical Specification
 
-**Version:** 0.4.0-draft
+**Version:** 0.5.0-draft
 **Target Runtime:** Sui Move
 **Authors:** [Protocol Team]
 **Status:** Draft — For Review
@@ -13,7 +13,7 @@ The Harberger Yield Splitter (HYS) is a composable Sui Move module that enables 
 
 The module introduces a dual-state system: **Ownership State**, where the bundle holder enjoys full ownership and tax immunity, and **Liquidity State**, where each separated component is subject to continuous self-assessed pricing and forced-sale mechanics. Either state can be entered or exited at any time, creating a perpetual game-theoretic equilibrium between holders, speculators, and yield seekers.
 
-HYS uses a **deferred tax model**: no vault, no prepayment, no liquidation auctions. Tax accrues silently as a lien on the asset and is deducted from the holder's proceeds at the moment of sale. This makes paying tax structurally unavoidable — not a choice the holder can defer indefinitely — while removing all operational complexity from the holder's experience.
+HYS uses a **deferred tax model**: no vault, no prepayment. Tax accrues silently as a lien on the asset and is deducted from the holder's proceeds at the moment of sale. When the tax lien reaches the declared price — meaning the holder would receive nothing on sale — a Dutch Auction is triggered automatically to guarantee the asset finds a new owner at market price. This makes paying tax structurally unavoidable while keeping the holder experience simple.
 
 HYS is designed as a protocol-level primitive — not an application. It can be imported by any Sui protocol to add Harberger-governed yield splitting to its own assets. As a primitive, HYS does not impose a specific tax formula — the integrating protocol defines its own `TaxStrategy`, giving full flexibility over how tax accrual is calculated.
 
@@ -26,13 +26,14 @@ HYS is designed as a protocol-level primitive — not an application. It can be 
 3. [State Machine](#3-state-machine)
 4. [Module Interface](#4-module-interface)
 5. [Harberger Tax Engine](#5-harberger-tax-engine)
-6. [Yield Distribution](#6-yield-distribution)
-7. [Configurable Parameters](#7-configurable-parameters)
-8. [Game Theory Analysis](#8-game-theory-analysis)
-9. [Edge Cases & Attack Vectors](#9-edge-cases--attack-vectors)
-10. [Integration Guide](#10-integration-guide)
-11. [Application Examples](#11-application-examples)
-12. [Fee Model for the Module](#12-fee-model-for-the-module)
+6. [Dutch Auction](#6-dutch-auction)
+7. [Yield Distribution](#7-yield-distribution)
+8. [Configurable Parameters](#8-configurable-parameters)
+9. [Game Theory Analysis](#9-game-theory-analysis)
+10. [Edge Cases & Attack Vectors](#10-edge-cases--attack-vectors)
+11. [Integration Guide](#11-integration-guide)
+12. [Application Examples](#12-application-examples)
+13. [Fee Model for the Module](#13-fee-model-for-the-module)
 
 ---
 
@@ -47,7 +48,7 @@ The Harberger Yield Splitter takes a fundamentally different approach:
 - **No liquidity pools required.** The Harberger mechanism creates unilateral liquidity — any asset in Liquidity State can be purchased at its declared price at any time, without a counterparty waiting on the other side.
 - **No expiration dates.** Both Base Token and Yield Right are perpetual instruments. There is no maturity, no rollover, no time decay.
 - **Self-regulating price discovery.** The Harberger tax creates an endogenous cost of holding that forces prices to reflect genuine valuations. Overpricing is punished by a larger tax debt deducted on sale. Underpricing is punished by forced acquisition at below-value price.
-- **No vault, no prepayment, no liquidation.** Tax accrues as a lien and is settled at sale time. The holder never needs to manage a vault or fear forced liquidation.
+- **No vault, no prepayment.** Tax accrues as a lien and is settled at sale time. The holder never needs to manage a vault. If the lien reaches the declared price, a Dutch Auction ensures the asset finds a new owner rather than freezing permanently.
 - **Composable and generic.** The module operates on any asset type that implements a simple yield trait. The integrating protocol defines what "yield" means and how tax is calculated; HYS handles everything else.
 
 ---
@@ -104,9 +105,12 @@ The internal state container attached to any asset in Liquidity State (either Ba
 LiquidityState {
     declared_price: u64,               // Self-assessed price in payment token
     entered_liquidity_at: u64,         // Timestamp when asset entered Liquidity State
-    last_sale_at: u64,                 // Timestamp of last sale (tax resets here)
+    last_sale_at: u64,                 // Timestamp of last sale (tax lien resets here)
     cooldown_until: u64,               // Timestamp until which price cannot be changed
     tax_strategy: TaxStrategy,         // Inherited from Bundle at split time
+    auction_strategy: AuctionStrategy, // Inherited from Bundle at split time
+    in_auction: bool,                  // Whether a Dutch Auction is currently active
+    auction_start_time: u64,           // Timestamp when auction was triggered
 }
 ```
 
@@ -143,6 +147,30 @@ Regardless of the formula, HYS enforces the following invariants at the module l
 2. The function must be deterministic and depend only on on-chain state — no oracle inputs, no randomness.
 
 These invariants preserve the core Harberger property: holding an asset in Liquidity State always has a real, ongoing cost — even if that cost is only realized at sale time.
+
+### 2.6 AuctionStrategy
+
+The `AuctionStrategy` is a struct defined and provided by the integrating protocol. It encodes the price descent curve of the Dutch Auction. HYS does not provide a default — the integrator defines it.
+
+```move
+public struct AuctionStrategy has store, copy, drop {
+    params: vector<u8>,                // Encoded parameters for the descent curve
+    strategy_type: u8,                 // Identifier for the curve variant
+}
+```
+
+HYS calls this to compute the current auction price:
+
+```move
+public fun compute_auction_price(
+    strategy: &AuctionStrategy,
+    declared_price: u64,
+    auction_start_time: u64,
+    clock: &Clock,
+): u64
+```
+
+The auction always starts at `declared_price`. The integrator controls how fast it descends.
 
 ---
 
@@ -331,13 +359,14 @@ public fun is_mergeable<T: store + key>(
 
 Tax accrues continuously from the moment an asset enters Liquidity State, but is **never collected in advance**. It exists as an implicit lien on the asset — a debt that grows silently and is settled in full at the next sale or merge.
 
-There is no vault. There is no collect_tax(). There is no default. There is no liquidation auction.
+There is no vault. There is no collect_tax(). The only trigger for forced liquidation is when the tax lien reaches the declared price — at that point a Dutch Auction is initiated (see section 6).
 
 ```
 Tax lien grows silently while asset is held in Liquidity State
               │
-              ├── buy() called         → tax deducted from declared_price before seller is paid
-              └── merge() called       → tax paid by caller before bundle is reconstructed
+              ├── buy() called                    → tax deducted from declared_price before seller is paid
+              ├── merge() called                  → tax paid by caller before bundle is reconstructed
+              └── tax_owed >= declared_price      → Dutch Auction triggered automatically
 ```
 
 ### 5.2 Tax Calculation
@@ -361,12 +390,12 @@ When `buy()` is called, HYS settles the tax lien before distributing proceeds:
 ```
 Buyer pays: declared_price
   │
-  ├── tax_owed  → integrator treasury
-  ├── protocol_fee_bps → HYS treasury
-  └── remainder → seller
+  ├── tax_owed          → integrator treasury
+  ├── protocol_fee_bps  → HYS treasury
+  └── remainder         → seller
 ```
 
-If `tax_owed ≥ declared_price`, the seller receives nothing. The protocol takes everything up to the declared price. This situation can only arise if the asset has not been sold for a very long time relative to its declared price and tax rate — a signal of a misconfigured TaxStrategy by the integrator.
+If `tax_owed >= declared_price`, the normal `buy()` path is no longer available — the asset has entered Dutch Auction (see section 6). The seller receives nothing from the auction proceeds since the full tax debt exceeds the declared price.
 
 ### 5.4 Settlement at Merge
 
@@ -513,7 +542,194 @@ public fun compute_tax(
 
 ---
 
-## 6. Yield Distribution
+## 6. Dutch Auction
+
+### 6.1 Why the Dutch Auction Is Necessary
+
+In the deferred tax model, a holder can declare an inflated price and never sell. The tax lien grows but the asset stays frozen — no buyer will pay an above-market declared price, and the holder has no reason to lower it since they receive nothing on sale anyway once the lien is large enough.
+
+Without a forced liquidation mechanism, overpriced assets become permanently stuck. The Dutch Auction solves this: when the tax lien reaches the declared price, the asset is automatically put up for sale at a descending price until a buyer appears. This guarantees that every asset in Liquidity State will eventually find a market-clearing price, regardless of what the holder declared.
+
+### 6.2 Trigger
+
+A Dutch Auction is triggered automatically when:
+
+```
+tax_owed >= declared_price
+```
+
+This is checked on every `buy()` and `set_price()` call, and can also be triggered permissionlessly by anyone calling `trigger_auction()` if the condition is met.
+
+```move
+/// Permissionless. Anyone can trigger an auction if tax_owed >= declared_price.
+public fun trigger_auction_base<T: store + key>(
+    base: &mut BaseToken<T>,
+    clock: &Clock,
+    config: &HarbergerConfig,
+)
+
+public fun trigger_auction_yield_right(
+    yield_right: &mut YieldRight,
+    clock: &Clock,
+    config: &HarbergerConfig,
+)
+```
+
+Once triggered, the auction is **irrevocable**. The holder cannot cancel it.
+
+### 6.3 Mechanism
+
+The auction starts at `declared_price` and descends according to the asset's `AuctionStrategy`. The integrator defines the speed and curve of descent.
+
+```move
+// Internal call within HYS to get the current auction price:
+let current_price = integrator::compute_auction_price(
+    &liquidity_state.auction_strategy,
+    liquidity_state.declared_price,
+    liquidity_state.auction_start_time,
+    clock,
+);
+```
+
+**AuctionStrategy examples:**
+
+**Linear descent** — price drops at a constant rate:
+```move
+public fun compute_auction_price(
+    strategy: &AuctionStrategy,
+    declared_price: u64,
+    auction_start_time: u64,
+    clock: &Clock,
+): u64 {
+    let duration = decode_u64(strategy.params, 0);  // e.g. 86_400 = 24 hours
+    let now = clock::timestamp_ms(clock) / 1000;
+    let elapsed = now - auction_start_time;
+    if (elapsed >= duration) return 0;
+    declared_price * (duration - elapsed) / duration
+}
+```
+
+**Stepped descent** — price drops in fixed intervals, more predictable for buyers:
+```move
+public fun compute_auction_price(
+    strategy: &AuctionStrategy,
+    declared_price: u64,
+    auction_start_time: u64,
+    clock: &Clock,
+): u64 {
+    let step_duration = decode_u64(strategy.params, 0);  // e.g. 3_600 = 1hr per step
+    let step_pct = decode_u8(strategy.params, 8);        // e.g. 10 = drop 10% per step
+    let now = clock::timestamp_ms(clock) / 1000;
+    let steps_elapsed = (now - auction_start_time) / step_duration;
+    let discount = steps_elapsed * (step_pct as u64);
+    if (discount >= 100) return 0;
+    declared_price * (100 - discount) / 100
+}
+```
+
+### 6.4 Payment Flow on Acquisition
+
+```
+Buyer pays: current_price(t)
+  │
+  ├── tax_owed (up to current_price)  → integrator treasury
+  ├── protocol_fee_bps                → HYS treasury
+  └── remainder                       → seller (may be zero)
+```
+
+Since the auction is triggered precisely when `tax_owed >= declared_price`, and the auction starts at `declared_price`, the seller will receive zero or near-zero in most cases. The entire payment goes to settle the tax debt.
+
+After acquisition, the buyer must declare a new price and the asset re-enters normal Liquidity State with `last_sale_at` reset.
+
+### 6.5 Why Second-Wallet Repurchase Is Always Irrational
+
+A holder might consider using a second wallet to repurchase their own asset during the auction at a lower price. The following four cases prove this is never rational.
+
+In all cases: `buy_price` = what the holder originally paid for the asset.
+
+---
+
+**Case 1 — declared_price < buy_price, tax_owed < declared_price (normal sale)**
+
+```
+buy_price:       100 USDC
+declared_price:   80 USDC
+tax_owed:         20 USDC
+
+Second wallet buys at 80 USDC:
+  → 20 USDC to protocol
+  → 60 USDC to holder
+
+Total spent = 100 (original) + 80 (repurchase) − 60 (received) = 120 USDC
+```
+
+The holder already lost money declaring below buy_price. Repurchase makes it worse.
+
+---
+
+**Case 2 — declared_price < buy_price, tax_owed >= declared_price (auction)**
+
+```
+buy_price:       100 USDC
+declared_price:   80 USDC
+tax_owed:         90 USDC  → auction triggered
+
+Second wallet buys in auction at 50 USDC:
+  → 50 USDC to protocol (100%, tax_owed > auction_price)
+  → 0 USDC to holder
+
+Total spent = 100 + 50 − 0 = 150 USDC
+```
+
+Holder receives nothing and paid 50 USDC extra. Strictly worse than Case 1.
+
+---
+
+**Case 3 — declared_price >= buy_price, tax_owed < declared_price (normal sale)**
+
+```
+buy_price:       100 USDC
+declared_price:  150 USDC
+tax_owed:         30 USDC
+
+Second wallet buys at 150 USDC:
+  → 30 USDC to protocol
+  → 120 USDC to holder
+
+Total spent = 100 + 150 − 120 = 130 USDC
+```
+
+The holder paid exactly the tax they owed (30 USDC net). No gaming advantage — any legitimate buyer would produce the same outcome.
+
+---
+
+**Case 4 — declared_price >= buy_price, tax_owed >= declared_price (auction)**
+
+```
+buy_price:       100 USDC
+declared_price:  150 USDC
+tax_owed:        160 USDC  → auction triggered
+
+Second wallet buys in auction at 80 USDC:
+  → 80 USDC to protocol (100%)
+  → 0 USDC to holder
+
+Total spent = 100 + 80 − 0 = 180 USDC
+```
+
+The worst case. The holder spent 180 USDC on an asset that originally cost 100 USDC.
+
+---
+
+**Summary:** In every case, the total cost of repurchase equals `buy_price + something`. The holder always ends up paying more than they originally paid. Second-wallet repurchase is structurally irrational because the tax-first payment priority ensures the holder can never extract value from their own auction.
+
+### 6.6 Yield Right During Auction
+
+When a YieldRight enters Dutch Auction, yield accumulation continues normally. The new buyer acquires the YieldRight with its full accumulated yield intact. This is consistent with the deferred tax model — yield and tax are independent; the tax lien does not affect yield accumulation.
+
+---
+
+## 7. Yield Distribution
 
 ### 6.1 Yield Config
 
@@ -559,16 +775,18 @@ Yield can be claimed at any time. There is no lock-up or vesting period. The `ac
 
 ---
 
-## 7. Configurable Parameters
+## 8. Configurable Parameters
 
 The module is initialized with a `HarbergerConfig` object controlled by the integrating protocol's governance.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `price_cooldown_seconds` | u64 | 172,800 | Cooldown after price change or purchase (48 hours) |
-| `protocol_fee_bps` | u16 | 50 | Fee on each `buy()` transaction (0.5%), deducted after tax |
+| `protocol_fee_bps` | u16 | 50 | Fee on each `buy()` and auction acquisition (0.5%) |
 | `min_declared_price` | u64 | 1 | Minimum declared price (prevents zero-price gaming) |
 | `payment_type` | TypeName | — | The coin type used for payments (e.g., USDC, SUI) |
+
+Note: `tax_rate_bps` lives inside `TaxStrategy`. Auction descent logic lives inside `AuctionStrategy`. Neither is a top-level config parameter.
 
 The following parameters from previous versions have been removed:
 
@@ -577,20 +795,20 @@ The following parameters from previous versions have been removed:
 | `tax_rate_bps` | Lives inside `TaxStrategy` |
 | `vault_min_runway_seconds` | No vault in deferred tax model |
 | `collector_reward_bps` | No tax collection function |
-| `penalty_bps` | No Dutch Auction |
-| `dutch_auction_duration_seconds` | No Dutch Auction |
-| `auction_premium_pct` | No Dutch Auction |
+| `penalty_bps` | Tax-first priority replaces penalty as anti-abuse mechanism |
+| `dutch_auction_duration_seconds` | Lives inside `AuctionStrategy` |
+| `auction_premium_pct` | Auction starts at declared_price, no premium |
 
-### 7.1 Parameter Constraints
+### 8.1 Parameter Constraints
 
 - `price_cooldown_seconds` must be ≥ 3600 (1 hour minimum).
 - `protocol_fee_bps` must be in range [0, 500].
 
 ---
 
-## 8. Game Theory Analysis
+## 9. Game Theory Analysis
 
-### 8.1 The Pricing Dilemma (Core Mechanism)
+### 9.1 The Pricing Dilemma (Core Mechanism)
 
 Every holder in Liquidity State faces a continuous optimization problem:
 
@@ -600,7 +818,7 @@ Every holder in Liquidity State faces a continuous optimization problem:
 
 **The Nash Equilibrium** is to declare a price close to the holder's true private valuation. This is the fundamental insight of Harberger taxation: it creates an incentive-compatible mechanism where truthful price revelation is the dominant strategy. This property holds regardless of the specific tax formula — as long as `compute_tax()` returns a positive value, the dilemma exists.
 
-### 8.2 The Peace/Sovereign Dilemma
+### 9.2 The Peace/Sovereign Dilemma
 
 The bundle holder faces a second-order decision: split or hold?
 
@@ -619,7 +837,7 @@ The bundle holder faces a second-order decision: split or hold?
 Value(Base alone) + Value(YieldRight alone) - PV(tax lien) > Value(Bundle)
 ```
 
-### 8.3 The Merge Arbitrage
+### 9.3 The Merge Arbitrage
 
 If the market separately prices BaseToken at P_b and YieldRight at P_y, but a Bundle in Ownership State is worth P_bundle > P_b + P_y + tax_savings, then an arbitrageur can:
 
@@ -630,7 +848,7 @@ If the market separately prices BaseToken at P_b and YieldRight at P_y, but a Bu
 
 This creates a price floor on the separated components.
 
-### 8.4 Why Paying Tax Is Structurally Unavoidable
+### 9.4 Why Paying Tax Is Structurally Unavoidable
 
 In the deferred tax model, a holder cannot evade tax by holding indefinitely. Every exit path from Liquidity State triggers tax settlement:
 
@@ -639,7 +857,7 @@ In the deferred tax model, a holder cannot evade tax by holding indefinitely. Ev
 
 There is no path out of Liquidity State that bypasses tax. The holder can delay it, but cannot avoid it. The longer they delay, the larger the lien. The only choice is when to pay, not whether to pay.
 
-### 8.5 Equilibrium Summary
+### 9.5 Equilibrium Summary
 
 | Actor | Optimal Strategy | Protocol Benefit |
 |---|---|---|
@@ -651,7 +869,7 @@ There is no path out of Liquidity State that bypasses tax. The holder can delay 
 
 ---
 
-## 9. Edge Cases & Attack Vectors
+## 10. Edge Cases & Attack Vectors
 
 ### 9.1 Self-Dealing via Secondary Wallet
 
@@ -697,7 +915,7 @@ There is no path out of Liquidity State that bypasses tax. The holder can delay 
 
 ---
 
-## 10. Integration Guide
+## 11. Integration Guide
 
 ### 10.1 Minimal Integration
 
@@ -783,7 +1001,7 @@ let config = harberger::new_config(
 
 ---
 
-## 11. Application Examples
+## 12. Application Examples
 
 ### 11.1 NFT Art with Royalties
 
@@ -821,7 +1039,7 @@ let config = harberger::new_config(
 
 ---
 
-## 12. Fee Model for the Module
+## 13. Fee Model for the Module
 
 | Fee | Rate | Trigger | Recipient |
 |---|---|---|---|

@@ -51,6 +51,14 @@ The Harberger Yield Splitter takes a fundamentally different approach:
 - **No vault, no prepayment.** Tax accrues as a lien and is settled at sale time. The holder never needs to manage a vault. If the lien reaches the declared price, a Dutch Auction ensures the asset finds a new owner rather than freezing permanently.
 - **Composable and generic.** The module operates on any asset type that implements a simple yield trait. The integrating protocol defines what "yield" means and how tax is calculated; HYS handles everything else.
 
+### A Note on Protocol Philosophy
+
+HYS captures value when assets change hands. If an asset never sells, the protocol never collects tax. This is not a flaw — it is an honest reflection of reality.
+
+No protocol can manufacture genuine interest in an asset that the market does not want. HYS is designed for assets that have real demand. When that demand exists, HYS ensures the asset is always priced honestly, always accessible to willing buyers, and always generating tax revenue proportional to the time it has been held. When demand does not exist, no mechanism — Harberger or otherwise — can create it.
+
+The Dutch Auction handles the edge case where a holder declares an inflated price and the market disagrees: it forces a price discovery process that will find the true market-clearing price, even if that price is very low. But it cannot create buyers where none exist. That is a property of the asset, not a limitation of the protocol.
+
 ---
 
 ## 2. Core Concepts

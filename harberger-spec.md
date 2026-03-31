@@ -1,6 +1,6 @@
 # Harberger — Technical Specification
 
-**Version:** 1.0.0-draft
+**Version:** 2.0.0-draft
 **Target Runtime:** Sui Move
 **Authors:** [Protocol Team]
 **Status:** Draft — For Review
@@ -9,9 +9,13 @@
 
 ## Abstract
 
-Harberger is a composable Sui Move module that places any asset under continuous Harberger taxation. Any asset wrapped by the module is always for sale at its declared price. Tax accrues silently as a lien on the asset and is settled automatically at the moment of sale. When the tax lien reaches the declared price, a Dutch Auction is triggered to guarantee the asset finds a new owner at market price.
+Harberger is a composable Sui Move module that places any asset under continuous Harberger taxation. Any asset wrapped by the module is always for sale at its declared price. Tax accrues as a deferred lien on the asset — a growing debt that reduces the holder's proceeds on sale, increases the cost of any price adjustment, and moves the asset toward a Dutch Auction if left unaddressed. The lien is settled automatically at the moment of sale.
 
-The module is designed as a protocol-level primitive — not an application. It can be imported by any Sui protocol to bring Harberger market mechanics to its own assets. The integrating protocol defines its own tax formula and auction descent curve; Harberger handles everything else.
+The declared price is set once at acquisition and cannot be changed for free. The only way to adjust it is to repurchase the asset (even from oneself), which settles the accumulated lien. This makes price changes possible but costly — the cost growing with time, replacing the need for artificial cooldown mechanisms.
+
+When the tax lien reaches the declared price, a Dutch Auction is triggered. The auction is irrevocable and descends until a buyer appears or the price reaches zero. The holder faces total capital loss. This threat — combined with the lien's continuous pressure on proceeds and adjustment cost — disciplines pricing without requiring any prepaid vault or keeper network.
+
+The module is designed as a protocol-level primitive — not an application. It can be imported by any Sui protocol to bring Harberger market mechanics to its own assets. The integrating protocol defines its own tax formula (which determines what holder behavior is penalized) and auction descent curve (which determines how severely). Harberger handles everything else.
 
 The name honors Arnold Harberger, the economist who first proposed self-assessed taxation with forced sale as a mechanism for efficient resource allocation.
 
@@ -40,11 +44,11 @@ Most on-chain assets suffer from the same structural problem: once acquired, the
 
 Harberger taxation solves this elegantly:
 
-- The holder declares a price for their asset.
-- They must pay a recurring tax proportional to that price.
+- The holder declares a price for their asset at the moment of acquisition.
+- A tax accrues proportional to that price, reducing the holder's proceeds on any future sale.
 - Anyone can buy the asset at the declared price at any time.
 
-This creates a continuous dilemma: declare too low and risk losing the asset cheaply; declare too high and pay prohibitive tax. The Nash Equilibrium is honest pricing — the holder declares their true private valuation.
+This creates a one-time, irreversible dilemma: declare too low and risk losing the asset cheaply; declare too high and face a growing lien that erodes proceeds and eventually triggers a forced auction. The optimal strategy is honest pricing — the holder declares close to their true private valuation.
 
 **Why existing solutions fall short:**
 
@@ -55,8 +59,9 @@ This creates a continuous dilemma: declare too low and risk losing the asset che
 **What Harberger the module does differently:**
 
 - **No vault, no prepayment.** Tax accrues as a deferred lien, settled at the moment of sale. The holder manages nothing.
+- **No free price changes.** The declared price is set once. Changing it requires repurchasing the asset, which settles the accumulated lien. This replaces artificial cooldowns with an economic cost that grows with time.
 - **Always for sale.** Every asset in Harberger State is permanently purchasable at its declared price. No listing required.
-- **Dutch Auction as safety valve.** When the tax lien reaches the declared price, a Dutch Auction guarantees price discovery even for assets with inflated declared prices.
+- **Dutch Auction as terminal discipline.** When the tax lien reaches the declared price, a Dutch Auction guarantees the asset confronts the market. The speed of the auction determines whether this functions as price discovery or liquidation — the integrator decides.
 - **Genuine market only.** If an asset has no buyers at any price, the protocol acknowledges this honestly. No mechanism can manufacture interest where none exists — that is a property of the asset, not a limitation of the protocol.
 
 ---
@@ -65,10 +70,10 @@ This creates a continuous dilemma: declare too low and risk losing the asset che
 
 ### 2.1 HarbergerAsset
 
-A `HarbergerAsset<T>` is any asset of type `T` wrapped under Harberger mechanics. Wrapping transfers the asset into the module and attaches a `HarbergerState` to it.
+A `HarbergerAsset<T, PAYMENT>` is any asset of type `T` wrapped under Harberger mechanics, with `PAYMENT` as the coin type for all transactions. Wrapping transfers the asset into the module and attaches a `HarbergerState` to it.
 
 ```
-HarbergerAsset<T> {
+HarbergerAsset<T, PAYMENT> {
     id: UID,
     asset: T,                          // The underlying asset
     state: HarbergerState,             // Harberger mechanics
@@ -78,6 +83,8 @@ HarbergerAsset<T> {
 }
 ```
 
+`T` is the underlying asset type (must have `store + key`). `PAYMENT` is the coin type used for all transactions on this asset (e.g., `USDC`, `SUI`). The payment type is fixed at wrap time and cannot change — all `buy()`, `auction_buy()`, and `unwrap()` calls must use the same coin type.
+
 ### 2.2 HarbergerState
 
 The internal state tracking pricing, tax lien, and auction status.
@@ -86,7 +93,6 @@ The internal state tracking pricing, tax lien, and auction status.
 HarbergerState {
     declared_price: u64,               // Self-assessed price in payment token
     last_sale_at: u64,                 // Timestamp of last sale (lien resets here)
-    cooldown_until: u64,               // Timestamp until price can be changed again
     in_auction: bool,                  // Whether a Dutch Auction is active
     auction_start_time: u64,           // Timestamp when auction was triggered
 }
@@ -103,7 +109,7 @@ public struct TaxStrategy has store, copy, drop {
 }
 ```
 
-HYS calls this at settlement time:
+Harberger calls this at settlement time:
 
 ```move
 /// Implemented by the integrating protocol.
@@ -149,18 +155,17 @@ The auction always starts at `declared_price`. The integrator controls how fast 
 
 ## 3. State Machine
 
-The protocol has exactly two states.
+The protocol has exactly three states.
 
 ```
               ┌─────────────────────────────────────────────────┐
               │              STANDARD STATE                     │
               │                                                 │
-              │  Asset is held. Tax lien accrues silently.      │
+              │  Asset is held. Tax lien accrues.               │
               │  Asset is always purchasable at declared_price. │
               │                                                 │
               │  The holder can:                                │
               │    • Hold indefinitely (lien grows)             │
-              │    • Set a new declared price (cooldown applies)│
               │    • Unwrap the asset (paying the lien)         │
               │                                                 │
               │  Anyone can:                                    │
@@ -181,17 +186,19 @@ The protocol has exactly two states.
               │  Protocol takes tax debt first.                 │
               │  Remainder (if any) to previous holder.         │
               │                                                 │
-              │  If price reaches zero with no buyer:           │
-              │    Asset stays at zero. No market exists.       │
-              │    Integrator decides what happens next.        │
-              │                                                 │
-              └──────────────┬──────────────────────────────────┘
-                             │
-                      buyer acquires
-                             │
-                             ▼
-                      STANDARD STATE
-                    (new owner, lien reset)
+              └────────┬──────────────────────┬────────────────┘
+                       │                      │
+                buyer acquires         price reaches zero
+                       │               (no buyer appeared)
+                       ▼                      │
+                STANDARD STATE                ▼
+              (new owner, lien reset)  ┌──────────────────────┐
+                                       │   EXPIRED STATE      │
+                                       │                      │
+                                       │   No market exists.  │
+                                       │   Tax debt is lost.  │
+                                       │   Integrator resolves│
+                                       └──────────────────────┘
 ```
 
 ### 3.1 Transition Rules
@@ -199,10 +206,11 @@ The protocol has exactly two states.
 | Transition | Trigger | Pre-condition | Post-condition |
 |---|---|---|---|
 | **Wrap** | `wrap()` | Caller owns asset of type `T` | HarbergerAsset created in Standard State |
-| **Buy** | `buy()` | Asset in Standard State. Buyer pays ≥ declared_price. | Tax lien settled. Ownership transfers. Lien resets. |
-| **Set Price** | `set_price()` | Not in auction. Cooldown expired. | declared_price updated. Cooldown restarted. |
+| **Buy** | `buy()` | Asset in Standard State. Buyer pays ≥ declared_price. | Tax lien settled. Ownership transfers. Lien resets. New declared_price set by buyer. |
 | **Trigger Auction** | `trigger_auction()` | `tax_owed >= declared_price` | Asset enters Auction State. Irrevocable. |
-| **Auction Buy** | `auction_buy()` | Asset in Auction State. Buyer pays ≥ current_price(t). | Tax settled. Ownership transfers. Back to Standard State. |
+| **Auction Buy** | `auction_buy()` | Asset in Auction State. Buyer pays ≥ current_price(t). | Tax settled. Ownership transfers. Back to Standard State. New declared_price set by buyer. |
+| **Expire** | `is_expired()` | Auction price has reached zero. No buyer. | Asset enters Expired State. |
+| **Resolve** | `resolve_expired_auction()` | Asset in Expired State. Called by integrator. | HarbergerAsset destroyed. Underlying asset returned to integrator. |
 | **Unwrap** | `unwrap()` | Caller owns asset. Tax lien paid by caller. | HarbergerAsset destroyed. Underlying asset returned. |
 
 ---
@@ -214,7 +222,8 @@ The protocol has exactly two states.
 ```move
 /// Wraps an asset under Harberger mechanics.
 /// The integrator provides TaxStrategy, AuctionStrategy, and initial declared price.
-public fun wrap<T: store + key>(
+/// PAYMENT is the coin type for all future transactions on this asset.
+public fun wrap<T: store + key, PAYMENT>(
     asset: T,
     declared_price: u64,
     tax_strategy: TaxStrategy,
@@ -222,17 +231,20 @@ public fun wrap<T: store + key>(
     config: &HarbergerConfig,
     clock: &Clock,
     ctx: &mut TxContext
-): HarbergerAsset<T>
+): HarbergerAsset<T, PAYMENT>
 ```
 
 ```move
 /// Purchases the asset at its declared price.
 /// Tax lien is deducted from proceeds before seller receives payment.
-public fun buy<T: store + key>(
-    asset: &mut HarbergerAsset<T>,
+/// The buyer must declare a new price — this is irrevocable until the next sale.
+/// There is no set_price(). The only way to change a declared price is to buy the asset
+/// (including from yourself), which settles the accumulated tax lien.
+public fun buy<T: store + key, PAYMENT>(
+    asset: &mut HarbergerAsset<T, PAYMENT>,
     payment: Coin<PAYMENT>,
     new_declared_price: u64,
-    max_acceptable_price: u64,        // Reverts if declared_price > this
+    max_acceptable_price: u64,        // Safety check — reverts if declared_price > this
     config: &HarbergerConfig,
     clock: &Clock,
     ctx: &mut TxContext
@@ -240,20 +252,9 @@ public fun buy<T: store + key>(
 ```
 
 ```move
-/// Updates the declared price. Subject to cooldown.
-/// Cannot be called while asset is in Auction State.
-public fun set_price<T: store + key>(
-    asset: &mut HarbergerAsset<T>,
-    new_price: u64,
-    clock: &Clock,
-    config: &HarbergerConfig,
-)
-```
-
-```move
 /// Permissionless. Anyone can trigger if tax_owed >= declared_price.
-public fun trigger_auction<T: store + key>(
-    asset: &mut HarbergerAsset<T>,
+public fun trigger_auction<T: store + key, PAYMENT>(
+    asset: &mut HarbergerAsset<T, PAYMENT>,
     clock: &Clock,
     config: &HarbergerConfig,
 )
@@ -261,8 +262,8 @@ public fun trigger_auction<T: store + key>(
 
 ```move
 /// Purchases the asset during an active Dutch Auction.
-public fun auction_buy<T: store + key>(
-    asset: &mut HarbergerAsset<T>,
+public fun auction_buy<T: store + key, PAYMENT>(
+    asset: &mut HarbergerAsset<T, PAYMENT>,
     payment: Coin<PAYMENT>,
     new_declared_price: u64,
     config: &HarbergerConfig,
@@ -274,42 +275,59 @@ public fun auction_buy<T: store + key>(
 ```move
 /// Unwraps the asset. Caller must pay the outstanding tax lien.
 /// Returns the underlying asset and any change from tax_payment.
-public fun unwrap<T: store + key>(
-    asset: HarbergerAsset<T>,
+public fun unwrap<T: store + key, PAYMENT>(
+    asset: HarbergerAsset<T, PAYMENT>,
     tax_payment: Coin<PAYMENT>,
     clock: &Clock,
     ctx: &mut TxContext
 ): (T, Coin<PAYMENT>)
 ```
 
+```move
+/// Resolves an expired auction (price reached zero, no buyer).
+/// Only callable by the integrator. Returns the underlying asset.
+/// The integrator decides the asset's fate: re-wrap, archive, destroy, etc.
+public fun resolve_expired_auction<T: store + key, PAYMENT>(
+    asset: HarbergerAsset<T, PAYMENT>,
+    clock: &Clock,
+    ctx: &mut TxContext
+): T
+```
+
 ### 4.2 View Functions
 
 ```move
 /// Returns the current tax lien (accrued since last sale).
-public fun pending_tax<T: store + key>(
-    asset: &HarbergerAsset<T>,
+public fun pending_tax<T: store + key, PAYMENT>(
+    asset: &HarbergerAsset<T, PAYMENT>,
     clock: &Clock,
     config: &HarbergerConfig,
 ): u64
 
 /// Returns what the seller would receive if sold right now.
-public fun net_proceeds<T: store + key>(
-    asset: &HarbergerAsset<T>,
+public fun net_proceeds<T: store + key, PAYMENT>(
+    asset: &HarbergerAsset<T, PAYMENT>,
     clock: &Clock,
     config: &HarbergerConfig,
 ): u64  // declared_price - pending_tax (0 if in auction)
 
 /// Returns the current auction price. Aborts if not in auction.
-public fun current_auction_price<T: store + key>(
-    asset: &HarbergerAsset<T>,
+public fun current_auction_price<T: store + key, PAYMENT>(
+    asset: &HarbergerAsset<T, PAYMENT>,
     clock: &Clock,
 ): u64
 
 /// Returns whether the auction trigger condition is met.
-public fun is_auctionable<T: store + key>(
-    asset: &HarbergerAsset<T>,
+public fun is_auctionable<T: store + key, PAYMENT>(
+    asset: &HarbergerAsset<T, PAYMENT>,
     clock: &Clock,
     config: &HarbergerConfig,
+): bool
+
+/// Returns whether the auction has expired (price reached zero, no buyer).
+public fun is_expired<T: store + key, PAYMENT>(
+    asset: &HarbergerAsset<T, PAYMENT>,
+    clock: &Clock,
 ): bool
 ```
 
@@ -319,17 +337,39 @@ public fun is_auctionable<T: store + key>(
 
 ### 5.1 Deferred Lien Model
 
-Tax accrues continuously while an asset is in Standard State, but is never collected in advance. It exists as an implicit lien — a debt that grows silently and is settled at the next sale or unwrap.
+Tax accrues continuously while an asset is in Standard State, but is never collected in advance. It exists as an implicit lien — a debt that grows over time and is settled at the next sale or unwrap.
 
 ```
-Lien grows silently in Standard State
+Lien grows in Standard State
           │
           ├── buy()            → lien deducted from declared_price, remainder to seller
           ├── auction_buy()    → lien deducted from auction price, remainder to seller
           └── unwrap()         → caller pays lien explicitly before asset is returned
 ```
 
-There is no vault. There is no collect_tax(). There is no keeper network.
+There is no vault. There is no `collect_tax()`. There is no keeper network. There is no `set_price()`.
+
+#### Why the Lien Is Not "Zero Cost"
+
+The absence of upfront payment does not mean the absence of pressure. The growing lien exerts continuous force through three simultaneous channels:
+
+1. **Reduced proceeds.** Every second that passes, the seller receives less if someone buys. The lien eats into the declared price in real time.
+
+2. **Costly price adjustment.** There is no free way to change a declared price. The only mechanism is to repurchase the asset via `buy()`, which settles the accumulated lien. The longer the holder waits to adjust, the more expensive the adjustment becomes. This replaces the traditional cooldown with an economic cost that grows with time — a strictly superior anti-manipulation mechanism.
+
+3. **Approaching auction threshold.** The lien moves monotonically toward the declared price. Once it reaches it, a Dutch Auction is triggered and the holder faces total capital loss. This deadline cannot be moved without paying the lien (via self-repurchase).
+
+The combination of these three pressures is equivalent in effect — though not in form — to a prepaid vault. The vault makes the holder feel cost through balance depletion. The deferred lien makes the holder feel cost through shrinking proceeds, growing adjustment cost, and an approaching deadline.
+
+#### Price Changes via Self-Repurchase
+
+Since there is no `set_price()`, the only way to change a declared price is to buy the asset from yourself via `buy()`. This:
+
+- Settles the full accumulated lien at the moment of repurchase.
+- Resets `last_sale_at` to the current timestamp, starting a new lien cycle.
+- Allows the buyer (the holder themselves) to declare a new price.
+
+The cost of changing price is exactly the tax owed — not an arbitrary penalty, but the liquidation of real fiscal debt. This makes frequent adjustments expensive (lien accumulates between each) and infrequent adjustments cheap. The system self-regulates the frequency of price changes without any configurable cooldown parameter.
 
 ### 5.2 Settlement at Sale
 
@@ -354,9 +394,20 @@ Caller provides: tax_payment
   └── change    → returned to caller
 ```
 
-### 5.4 TaxStrategy Examples
+### 5.4 TaxStrategy as Behavioral Design
 
-These are illustrative implementations. They live in the integrating protocol's module, not in Harberger.
+The choice of tax curve is not merely a financial parameter — it is a behavioral design decision. Each curve shape penalizes a different type of holder behavior. The integrator should choose based on what conduct they want to discourage, not just what rate feels appropriate.
+
+| Curve Shape | Behavior Penalized | Behavior Rewarded | Anti-Wash-Trading |
+|---|---|---|---|
+| **Linear** | Neutral — proportional cost over time | None specifically | Neutral — each reset costs the same per unit time |
+| **Quadratic (escalating)** | Long-term holding / squatting | Short-term active trading | Weak — resets actually help the holder by restarting at the cheap part of the curve |
+| **Logarithmic (decaying)** | Rotation / wash trading | Long-term committed holding | Strong — each reset restarts at the most expensive point of the curve |
+| **Flat fee** | Holding regardless of declared price | None — pure time cost | Neutral — fixed cost per period regardless of behavior |
+
+**The logarithmic curve and wash trading:** With a decaying tax curve, the effective rate is highest immediately after acquisition and decreases over time. A holder who self-repurchases to reset their price restarts at the peak of the curve every time. This creates a third layer of defense against self-dealing (in addition to the structural irrationality proven in section 6.5 and the lien settlement cost at each repurchase). A holder rotating the asset between their own wallets pays strictly more than one who simply holds without intervention.
+
+The following are illustrative implementations. They live in the integrating protocol's module, not in Harberger. All examples use simplified arithmetic for clarity — production implementations must use checked arithmetic to prevent overflow (see section 9.5).
 
 ---
 
@@ -377,7 +428,7 @@ public fun compute_tax(
 }
 ```
 
-Best for: General-purpose assets, NFTs, IP licenses.
+Neutral on holding duration. Cost grows linearly with time. Best for general-purpose assets where no specific behavior needs to be penalized or rewarded.
 
 ---
 
@@ -397,7 +448,7 @@ public fun compute_tax(
 }
 ```
 
-Best for: Governance seats, staking positions, DAO-aligned assets.
+Discrete-time variant of linear. Aligns tax cycles with on-chain governance epochs. Best for governance seats, staking positions, DAO-aligned assets.
 
 ---
 
@@ -417,7 +468,7 @@ public fun compute_tax(
 }
 ```
 
-Best for: Domain names, usernames — where long-term squatting should be increasingly expensive.
+Penalizes squatting aggressively — each additional day costs more than the previous one. Caution: self-repurchase resets the holder to the cheap part of the curve, so this shape weakly incentivizes wash trading. Appropriate only for assets where squatting is a bigger problem than rotation (e.g., domain names, usernames).
 
 ---
 
@@ -436,7 +487,7 @@ public fun compute_tax(
 }
 ```
 
-Best for: Assets where a minimum holding cost matters more than price-proportional pressure.
+Independent of declared price. Pure holding cost based on time. Best for assets where a minimum cost of occupation matters more than price-proportional pressure.
 
 ---
 
@@ -458,7 +509,7 @@ public fun compute_tax(
 }
 ```
 
-Best for: Assets where long-term committed holders should pay progressively less.
+Rewards committed holders — the effective rate decreases over time. Strongly discourages wash trading because each self-repurchase resets the holder to peak cost. Best for assets where long-term commitment should be rewarded (IP licenses, community memberships).
 
 ---
 
@@ -468,7 +519,17 @@ Best for: Assets where long-term committed holders should pay progressively less
 
 In the deferred tax model, a holder can declare an inflated price and never sell. The tax lien grows but since the holder receives nothing on sale once the lien exceeds the declared price, there is no natural incentive to lower the price. The asset freezes — overpriced, unsellable, permanently stuck in Standard State.
 
-The Dutch Auction is the safety valve. When the tax lien reaches the declared price, the asset is automatically put up for sale at a descending price until a buyer appears. This guarantees that every asset will eventually find a market-clearing price, regardless of what the holder declared.
+The Dutch Auction breaks this deadlock. When the tax lien reaches the declared price, the asset is put up for sale at a descending price until a buyer appears. This guarantees that every asset will eventually confront the market, regardless of what the holder declared.
+
+#### The Auction's Function Depends on Its Speed
+
+The `AuctionStrategy` does not just control "how fast" — it determines what the auction fundamentally does:
+
+- **Slow descent** (days to weeks): The auction becomes a genuine price discovery mechanism. The market has time to evaluate the asset. Buyers enter at the price that reflects their valuation. The resulting sale price is meaningful market information.
+
+- **Fast descent** (minutes to hours): The auction becomes a liquidation mechanism. It clears abandoned or overpriced assets quickly. The resulting price is a distressed sale, not a market signal.
+
+The integrator should choose auction speed based on whether the goal is to discover the asset's market price or to recycle it quickly. For most assets, slower is better — the auction is often the only moment where a true market price is expressed.
 
 ### 6.2 Trigger
 
@@ -591,11 +652,38 @@ The worst case. The holder spent 180 USDC on an asset that cost 100 USDC.
 
 ### 6.6 When the Auction Reaches Zero With No Buyer
 
-If the price descends to zero and no buyer appears, the asset remains at zero. The tax debt goes uncollected. The previous holder receives nothing.
+If the price descends to zero and no buyer appears, the auction enters **Expired State**. The tax debt goes uncollected. The previous holder receives nothing.
 
 This is not a protocol failure — it confirms the asset has no market at any price. The protocol did its job: it offered the asset at continuously descending prices, giving every potential buyer full opportunity. The absence of buyers is information about the asset.
 
-What happens next is the integrator's decision. HYS exposes the state — price at zero, tax debt outstanding — and does not mandate the outcome. The integrator may archive the asset, allow the holder to reclaim it by paying the debt, or leave it indefinitely. No protocol can create market interest where none exists.
+```move
+/// Returns whether the auction has expired (price reached zero, no buyer).
+public fun is_expired<T: store + key, PAYMENT>(
+    asset: &HarbergerAsset<T, PAYMENT>,
+    clock: &Clock,
+): bool
+
+/// Resolves an expired auction. Only callable by the integrator.
+/// The integrator decides what happens to the asset: reclaim, archive, or destroy.
+public fun resolve_expired_auction<T: store + key, PAYMENT>(
+    asset: HarbergerAsset<T, PAYMENT>,
+    clock: &Clock,
+    ctx: &mut TxContext
+): T                                   // Returns the underlying asset to the integrator
+```
+
+The integrator receives the underlying asset and decides its fate: archive it, allow the previous holder to reclaim it (possibly by paying the debt), destroy it, or re-wrap it under new terms. Harberger does not mandate the outcome — it returns control to the integrator. No protocol can create market interest where none exists.
+
+### 6.7 The Incentive Field: Tax Speed × Auction Speed
+
+The `TaxStrategy` controls how quickly the lien reaches the declared price (time to auction). The `AuctionStrategy` controls how quickly the price descends once the auction starts (severity of loss). These are not independent parameters — their interaction defines the incentive landscape the holder operates in.
+
+| | Slow Auction | Fast Auction |
+|---|---|---|
+| **Fast Tax** | **Price discovery.** Holder confronts the market frequently. Slow auction gives the market time to find a real price. Produces the highest-quality price signals. Best for: assets where honest pricing is the primary goal. | **Maximum rotation.** Holder reaches the edge quickly and falls fast. Hostile to long-term holding. Best for: time-limited resources (bandwidth, ad slots, temporary access). |
+| **Slow Tax** | **Maximum stability.** Long holding periods before the auction threshold. Slow descent if it arrives. Minimally disruptive. Best for: governance seats, assets where continuity has value. | **Deferred guillotine.** Long calm period, then sudden destruction. Rewards sophisticated holders who monitor their position. Punishes passive abandonment harshly. Best for: assets where neglect (not holding) is the problem. |
+
+The integrator selects a position in this matrix — combined with the tax curve shape (section 5.4) — to construct a three-dimensional incentive system: **what behavior to penalize** (curve shape) × **when to penalize** (tax speed) × **how severely to penalize** (auction speed).
 
 ---
 
@@ -603,16 +691,13 @@ What happens next is the integrator's decision. HYS exposes the state — price 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `price_cooldown_seconds` | u64 | 172,800 | Cooldown after price change or purchase (48 hours) |
 | `protocol_fee_bps` | u16 | 50 | Fee on each `buy()` and `auction_buy()` (0.5%) |
 | `min_declared_price` | u64 | 1 | Minimum declared price (prevents zero-price gaming) |
-| `payment_type` | TypeName | — | Coin type for payments (e.g., USDC, SUI) |
 
-Note: Tax formula lives in `TaxStrategy`. Auction descent lives in `AuctionStrategy`. Neither is a top-level config parameter — they are integrator decisions.
+Note: The payment coin type is a generic type parameter (`PAYMENT`) on `HarbergerAsset`, not a config field. Tax formula lives in `TaxStrategy`. Auction descent lives in `AuctionStrategy`. Neither is a top-level config parameter — they are integrator decisions.
 
 ### 7.1 Parameter Constraints
 
-- `price_cooldown_seconds` must be ≥ 3600 (1 hour minimum).
 - `protocol_fee_bps` must be in range [0, 500].
 
 ---
@@ -621,17 +706,25 @@ Note: Tax formula lives in `TaxStrategy`. Auction descent lives in `AuctionStrat
 
 ### 8.1 The Pricing Dilemma
 
-Every holder faces a continuous optimization problem:
+Every holder faces a one-time, irreversible optimization problem at the moment of acquisition:
 
-**Declare too low →** Tax lien grows slowly, but anyone can buy the asset cheaply. Risk of losing a valuable asset below its true value.
+**Declare too low →** Tax lien grows slowly, but anyone can buy the asset cheaply. Risk of losing a valuable asset below its true value. Since the price cannot be raised afterward, the holder is permanently exposed.
 
-**Declare too high →** Asset is protected from buyouts, but the lien grows faster. When sold, the holder receives less. If the lien reaches the declared price, a Dutch Auction is triggered.
+**Declare too high →** Asset is protected from buyouts, but the lien grows faster. When sold, the holder receives less. If the lien reaches the declared price, a Dutch Auction is triggered and the holder faces total capital loss. Since the price cannot be lowered without self-repurchasing (which settles the lien), the holder is locked into the high-cost trajectory.
 
-**Nash Equilibrium:** Declare close to true private valuation. This is Harberger's fundamental insight — self-assessed taxation with forced sale creates an incentive-compatible mechanism where honest pricing is the dominant strategy.
+**Equilibrium:** Declare close to true private valuation. This is Harberger's fundamental insight — self-assessed taxation with forced sale creates an incentive-compatible mechanism where honest pricing is the optimal strategy. The irrevocability of the declared price strengthens this: with no ability to adjust costlessly, the holder's only rational anchor is their genuine valuation.
+
+#### The Equilibrium Is Conditional
+
+Honest pricing as the dominant strategy depends on market density — the presence of active buyers scanning for underpriced assets. In dense markets, sub-declaring is dangerous because a buyer will exploit the gap quickly. The equilibrium converges tightly to the true valuation.
+
+In thin markets, the probability of a buyer appearing at any given price is low. The risk of sub-declaring is smaller and more probabilistic. The equilibrium still exists but converges to a wider range rather than a precise point. The Dutch Auction guarantees this range has an upper bound — no declared price can survive forever — but the lower bound depends on external market activity that the protocol cannot create.
+
+This is not a weakness. No mechanism can produce precise price discovery without a market. Harberger guarantees the best possible outcome given the market that exists: tight prices in liquid markets, bounded prices in thin ones, and asset recycling when there is no market at all.
 
 ### 8.2 Ownership State vs Harberger State
 
-Some protocols may allow holders to hold assets outside Harberger mechanics (e.g., in a bundled form as in the HYS Split module). For this core module, all wrapped assets are always in Harberger State. The holder's only choice is what price to declare.
+For this core module, all wrapped assets are always in Harberger State. The holder's only choice is what price to declare at the moment of acquisition.
 
 ### 8.3 Why Tax Payment Is Structurally Unavoidable
 
@@ -647,7 +740,13 @@ There is no exit that bypasses tax. The holder can delay settlement, but cannot 
 
 If no buyer ever appears, the protocol never collects. This is not a flaw. No protocol can manufacture genuine interest in an asset the market does not want. Harberger is designed for assets with real demand. When that demand exists, the mechanism guarantees honest pricing and continuous liquidity. When it does not, no mechanism can create it — that is a property of the asset, not the protocol.
 
-### 8.5 Equilibrium Summary
+### 8.5 Revenue Is Event-Driven
+
+Tax revenue (for both the integrator and the Harberger treasury) is collected only at the moment of a transaction: `buy()`, `auction_buy()`, or `unwrap()`. There is no periodic collection, no streaming payment, no predictable revenue schedule.
+
+If an asset is held indefinitely and eventually enters auction at zero with no buyer, all accumulated tax debt is lost. The integrator should not treat Harberger tax revenue as a reliable or continuous income stream. It is event-driven and depends entirely on market activity.
+
+### 8.6 Equilibrium Summary
 
 | Actor | Optimal Strategy | Protocol Benefit |
 |---|---|---|
@@ -662,15 +761,15 @@ If no buyer ever appears, the protocol never collects. This is not a flaw. No pr
 
 ### 9.1 Self-Dealing via Secondary Wallet
 
-**Attack:** Holder uses a second wallet to buy at a low declared price, then re-declares even lower.
+**Attack:** Holder uses a second wallet to buy their own asset, resetting the lien and declaring a new price.
 
-**Mitigation:** The 48-hour cooldown means the new owner is exposed at the low price for 2 days — any genuine buyer can front-run. The holder pays the full tax lien regardless of who buys. See section 6.5 for proof that self-dealing is never economically rational.
+**Mitigation:** Self-dealing is structurally irrational. Every repurchase settles the full accumulated lien — the holder pays their tax debt regardless of which wallet buys. There is no economic shortcut. See section 6.5 for formal proof across all cases. Additionally, with a decaying tax curve (e.g., logarithmic), each reset restarts the holder at the most expensive point of the curve, making repeated self-dealing progressively more costly than simply holding.
 
 ### 9.2 Front-Running Buy Transactions
 
 **Attack:** Holder sees a `buy()` in the mempool and raises the price before it executes.
 
-**Mitigation:** Sui's consensus mechanism (Narwhal/Bullshark) is more resistant to front-running than EVM. The `max_acceptable_price` parameter on `buy()` protects buyers from price manipulation between submission and execution.
+**Mitigation:** This attack is structurally impossible. There is no `set_price()` function — the declared price is immutable once set. The holder cannot change their price between the buyer's submission and execution. The `max_acceptable_price` parameter on `buy()` remains as a safety check against user error, but is no longer a critical defense against manipulation.
 
 ### 9.3 Price Freezing via Inflated Declaration
 
@@ -733,7 +832,7 @@ let auction_strategy = AuctionStrategy {
 **Step 4 — Wrap the asset.**
 
 ```move
-let harberger_asset = harberger::wrap(
+let harberger_asset = harberger::wrap<MyAsset, USDC>(
     my_asset,
     initial_declared_price,
     tax_strategy,
@@ -749,7 +848,6 @@ transfer::transfer(harberger_asset, owner);
 
 ```move
 let config = harberger::new_config(
-    price_cooldown_seconds: 172_800,
     protocol_fee_bps: 50,
     min_declared_price: 1_000_000,     // 1 USDC (6 decimals)
     ctx
@@ -762,30 +860,61 @@ let config = harberger::new_config(
 |---|---|---|
 | `AssetWrapped` | asset_id, asset_type, owner, declared_price | `wrap()` |
 | `AssetPurchased` | asset_id, seller, buyer, price, tax_deducted, seller_proceeds, new_declared_price | `buy()` |
-| `PriceUpdated` | asset_id, old_price, new_price, cooldown_until | `set_price()` |
 | `AuctionTriggered` | asset_id, declared_price, tax_owed, auction_start_time | `trigger_auction()` |
 | `AuctionPurchased` | asset_id, buyer, price, tax_deducted, seller_proceeds, new_declared_price | `auction_buy()` |
+| `AuctionExpired` | asset_id, declared_price, tax_owed_lost | Auction price reaches zero with no buyer |
+| `AuctionResolved` | asset_id, integrator | `resolve_expired_auction()` |
 | `AssetUnwrapped` | asset_id, owner, tax_paid | `unwrap()` |
+
+### 10.4 Choosing Your Incentive Configuration
+
+The integrator makes three decisions that together define the holder's incentive landscape:
+
+1. **Tax curve shape** (section 5.4) — What behavior to penalize. Linear is neutral; quadratic punishes squatting; logarithmic rewards commitment and penalizes wash trading.
+
+2. **Tax speed** — How quickly the lien reaches the declared price (time to auction). This is controlled by the rate parameters in the TaxStrategy. Fast tax means frequent confrontation with the market. Slow tax means long holding periods before consequences arrive.
+
+3. **Auction speed** — How severely the holder loses when the auction triggers. This is controlled by the duration parameter in the AuctionStrategy. Slow descent produces price discovery. Fast descent produces liquidation.
+
+See section 6.7 for the full interaction matrix between tax speed and auction speed.
+
+**Example configurations:**
+
+- **Domain names:** Quadratic tax (penalize squatting) + fast tax (months, not years) + slow auction (7-day descent for price discovery).
+- **Governance seats:** Epoch-based linear tax + slow tax (aligned with governance cycles) + slow auction (orderly transition).
+- **Ad slots / bandwidth:** Linear tax + fast tax + fast auction (maximize rotation).
+- **IP licenses / community memberships:** Logarithmic tax (reward commitment, punish flipping) + slow tax + slow auction.
+
+### 10.5 Revenue Model Warning
+
+Harberger tax revenue is event-driven, not continuous. The integrator collects tax only when `buy()`, `auction_buy()`, or `unwrap()` is called. If an asset is held indefinitely and eventually auctions to zero, all accumulated tax debt is lost.
+
+Do not design protocol economics that depend on Harberger tax as a predictable income stream. Treat it as a byproduct of market activity, not a revenue source.
 
 ---
 
 ## 11. Application Examples
+
+Each example below describes the three-dimensional incentive configuration (see section 10.4): **curve shape** (what behavior to penalize) × **tax speed** (when consequences arrive) × **auction speed** (how severe the consequences are).
 
 ### 11.1 Domain Names
 
 A naming service integrates Harberger to eliminate squatting:
 
 - Each domain is wrapped as a `HarbergerAsset`.
-- TaxStrategy: Quadratic escalation — a squatter holding a domain for years accumulates a massive lien, receiving near-nothing when forced out.
-- AuctionStrategy: Linear descent over 7 days — gives ample time for interested buyers to appear.
-- Active users hold their domain at a fair declared price — the tax is proportional and predictable.
+- **Curve shape:** Quadratic escalation — penalizes long-term holding. A squatter accumulates a massive lien that grows faster each day, receiving near-nothing when forced out. Caution: quadratic curves weakly incentivize wash trading (see section 5.4). For domains, this is acceptable because the cost of self-repurchase still settles the full lien.
+- **Tax speed:** Fast (months). Squatters should confront the market quickly.
+- **Auction speed:** Slow (7-day linear descent). Domains are unique assets — slow descent gives the market time to discover the right price.
+- Active users hold their domain at a fair declared price. If the market shifts, they can adjust via self-repurchase, paying exactly the lien accumulated since their last acquisition.
 
 ### 11.2 Governance Seats
 
 A DAO wraps governance seats under Harberger mechanics:
 
 - Each seat always has a declared price. Inactive governors face growing liens.
-- TaxStrategy: Epoch-based — aligns with DAO voting cycles.
+- **Curve shape:** Epoch-based linear — aligns tax cycles with DAO voting cycles. Neutral on holding duration.
+- **Tax speed:** Slow (aligned with governance cycles). Continuity of governance has value; the mechanism should not disrupt active governors.
+- **Auction speed:** Slow (multi-day descent). Orderly transition of governance power. Gives the DAO community time to identify and fund replacement candidates.
 - If a governor becomes inactive and their lien reaches the seat price, anyone can trigger a Dutch Auction and acquire the seat, bringing active participation back.
 
 ### 11.3 NFT Collections
@@ -793,7 +922,9 @@ A DAO wraps governance seats under Harberger mechanics:
 An NFT marketplace integrates Harberger for continuous price discovery:
 
 - Each NFT is wrapped. Declared prices form a live floor price signal.
-- TaxStrategy: Linear monthly at 1% — light enough to not burden collectors, meaningful enough to force honest pricing.
+- **Curve shape:** Logarithmic decay — rewards committed collectors, penalizes flippers. Each resale restarts the holder at peak tax rate, making rapid flipping expensive.
+- **Tax speed:** Slow (1% monthly linear equivalent). Light enough to not burden genuine collectors, meaningful enough to force honest pricing over time.
+- **Auction speed:** Slow (7–14 day descent). NFTs are subjective assets — slow descent maximizes the chance of finding a buyer at a meaningful price rather than a distressed liquidation.
 - Speculators holding NFTs they don't value pay a growing lien — creating natural sell pressure.
 
 ### 11.4 Intellectual Property Licenses
@@ -801,16 +932,19 @@ An NFT marketplace integrates Harberger for continuous price discovery:
 A music or software protocol wraps licenses under Harberger:
 
 - Each license always has a declared price.
-- TaxStrategy: Logarithmic decay — early holding is expensive (discourages flipping), long-term holding becomes cheaper (rewards commitment).
+- **Curve shape:** Logarithmic decay — early holding is expensive (discourages flipping), long-term holding becomes cheaper (rewards commitment). Strongly discourages wash trading: each self-repurchase resets to peak cost.
+- **Tax speed:** Moderate. Balances access (IP should be transferable) with stability (licensees need predictability to build on the IP).
+- **Auction speed:** Slow. Licenses often have dependencies — slow descent gives existing licensees time to find replacement buyers or negotiate.
 - Anyone can always acquire a license at its declared price, ensuring the IP is always accessible to those who value it most.
 
 ### 11.5 Virtual Real Estate
 
 A metaverse or on-chain map wraps land parcels:
 
-- TaxStrategy: Linear monthly, rate proportional to parcel size or location value.
-- Idle land holders pay continuously. Active builders hold at a fair price.
-- Dutch Auction prevents permanently abandoned parcels from freezing the map.
+- **Curve shape:** Linear — neutral on holding duration. The goal is not to penalize long-term builders, but to ensure idle land can be acquired.
+- **Tax speed:** Moderate, rate proportional to parcel size or location value. Prime locations face faster lien growth. Peripheral parcels are cheaper to hold.
+- **Auction speed:** Fast (24–48 hour descent). Land is relatively fungible within zones — fast liquidation is acceptable and prevents permanently abandoned parcels from freezing the map.
+- Active builders hold at a fair price. Idle land holders face continuous pressure proportional to the value of the location they occupy.
 
 ---
 
@@ -836,14 +970,16 @@ These fees are hardcoded and cannot be modified by integrating protocols.
 | **HarbergerState** | Internal state tracking declared price, lien, and auction status |
 | **Standard State** | Asset is held. Lien accrues. Always purchasable at declared price. |
 | **Auction State** | Dutch Auction active. Price descending. Irrevocable. |
-| **Declared Price** | The self-assessed price at which the asset can be forcibly purchased |
-| **Tax Lien** | The accumulated tax debt, growing silently, settled at sale or unwrap |
+| **Expired State** | Auction reached zero with no buyer. Tax debt lost. Integrator resolves. |
+| **Declared Price** | The self-assessed price at which the asset can be forcibly purchased. Set once at acquisition; can only be changed via self-repurchase. |
+| **Tax Lien** | The accumulated tax debt, growing continuously, settled at sale or unwrap |
 | **Deferred Tax** | Tax is not prepaid — it accrues as a lien and is settled at the moment of sale |
-| **Cooldown** | Period after a price change during which the price cannot be modified again |
-| **TaxStrategy** | Integrator-defined struct encoding the tax accrual formula |
-| **AuctionStrategy** | Integrator-defined struct encoding the Dutch Auction price descent curve |
+| **Self-Repurchase** | The only mechanism to change a declared price. The holder buys their own asset via `buy()`, settling the accumulated lien and declaring a new price. |
+| **TaxStrategy** | Integrator-defined struct encoding the tax accrual formula. The curve shape determines which holder behavior is penalized (see section 5.4). |
+| **AuctionStrategy** | Integrator-defined struct encoding the Dutch Auction price descent curve. The descent speed determines whether the auction functions as price discovery or liquidation (see section 6.1). |
 | **compute_tax()** | Integrator-implemented function called by Harberger at settlement time |
 | **compute_auction_price()** | Integrator-implemented function called by Harberger during an active auction |
+| **resolve_expired_auction()** | Integrator-callable function to reclaim the underlying asset after an auction expires with no buyer |
 
 ---
 

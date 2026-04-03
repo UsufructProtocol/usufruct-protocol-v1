@@ -219,3 +219,47 @@ If no T(n+1) arrives before Tn's time expires, `consumed_rent_credit` reaches `P
 At this point, the Dutch Auction is triggered. It carries no stake of its own. Its sole function is to prevent the last known price Pn from freezing as the market entry barrier, allowing the price to descend until a new tenant finds it attractive and injects liquidity, restarting the cycle.
 
 > **TODO:** Define exact `notice_period` semantics: does T(n+1)'s time block begin counting at payment or at physical handover? What guarantees does T(n+1) have during the notice window?
+
+---
+
+## 6. Incentive-driven Functions
+
+The Liquid Renting Protocol exposes a set of pluggable functions that govern the economic behavior of the protocol without prescribing a single strategy. Each function must satisfy a set of formal constraints, but its exact shape is left to the integrating protocol, which selects it according to the market behavior it wishes to incentivize.
+
+---
+
+### 6.1 `f_consumption_rent_credit(t_rented)`
+
+#### Purpose
+
+This function defines the rate at which a tenant's rental credit is consumed over the duration of their rental period. It is the mechanism that couples time and economic stake into a single unified variable.
+
+#### Formal Definition
+
+```
+f_consumption_rent_credit : [0, rental_time_fixed] → [0, last_renting_price]
+```
+
+#### Constraints
+
+The function must satisfy the following conditions:
+
+1. **Origin:** `f(0) = 0` — at the start of the rental, no credit has been consumed.
+2. **Termination:** `f(rental_time_fixed) = last_renting_price` — at the end of the rental period, all credit is exactly exhausted.
+3. **Boundedness:** `∀ t ∈ [0, rental_time_fixed] : 0 ≤ f(t) ≤ last_renting_price` — the function is always contained within the bounding rectangle.
+
+Any function satisfying these three constraints is a valid implementation. The protocol imposes no further restriction on its shape.
+
+#### The Dutch Auction Trigger as a Corollary
+
+Constraints (1), (2), and (3) together imply that time exhaustion and credit exhaustion are the same event. When `t = rental_time_fixed`, `f(t) = last_renting_price` by definition — meaning `unconsumed_rent_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(rental_time_fixed, last_renting_price)`. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
+
+#### Incentive Implications of Curve Shape
+
+The integrating protocol selects the curve shape to incentivize a specific market behavior:
+
+**Concave curve (e.g., `f(t) = Pn · √(t / T)`):** Credit is consumed rapidly at the start and slowly toward the end. A tenant displaced early recovers little `unconsumed_rent_credit`. This penalizes speculative entry — entering with the expectation of a quick takeover and a large refund is costly, since the curve has already consumed most of the credit. Suited for protocols that want to discourage high-frequency rotation and reward sustained usage.
+
+**Linear curve (`f(t) = Pn · (t / T)`):** Credit is consumed proportionally to time. The protocol takes no position on when rotation is more or less convenient. Agnostic and neutral.
+
+**Convex curve (e.g., `f(t) = Pn · (t / T)²`):** Credit is consumed slowly at the start and accelerates toward the end. A tenant displaced early still holds a large `unconsumed_rent_credit`, making entry safer. This incentivizes rotation — the cost of entering is partially recoverable at any early point, lowering the risk of taking a position. Suited for protocols that want high liquidity and active price discovery.

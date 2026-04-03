@@ -226,6 +226,16 @@ At this point, the Dutch Auction is triggered. It carries no stake of its own. I
 
 The Liquid Renting Protocol exposes a set of pluggable functions that govern the economic behavior of the protocol without prescribing a single strategy. Each function must satisfy a set of formal constraints, but its exact shape is left to the integrating protocol, which selects it according to the market behavior it wishes to incentivize.
 
+The three functions are the only configuration points of the protocol. Their responsibilities are exclusive and non-overlapping — the integrating protocol selects each one independently without risk of interference between them:
+
+| Function | Active state | Price direction | Independent variable |
+|---|---|---|---|
+| `f_consumption_rent_credit` | Rented | — (consumes credit) | time |
+| `f_price_discovery` | At Dutch Auction | descends only | time |
+| `f_next_renting_price` | Rented (takeover) | ascends only | price |
+
+Price can only descend in one place in the protocol: the Dutch Auction. Everywhere else, it ascends or holds.
+
 ---
 
 ### 6.1 `f_consumption_rent_credit(t_rented)`

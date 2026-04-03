@@ -310,3 +310,51 @@ The shape of the decay curve determines when buyers are incentivized to act duri
 **Linear curve:** Price decays at a constant rate. Neutral. No moment in the auction is structurally more attractive than another.
 
 **Convex curve (e.g., `f(t) = last_renting_price - (last_renting_price - min_renting_price) · (t / T)²`):** Price remains high for most of the auction and falls steeply at the end. Incentivizes patient buyers to wait — the largest discounts arrive late. Creates a "cliff" dynamic near `t_at_auction_fixed`.
+
+---
+
+### 6.3 `f_next_renting_price(last_renting_price)`
+
+#### Purpose
+
+This function defines the minimum price a new tenant must inject to legally displace the current one. It is the protocol's sole anti-penny-jumping and anti-griefing mechanism, and the only force that drives prices upward during the Rented state.
+
+#### Formal Definition
+
+```
+f_next_renting_price : last_renting_price → next_renting_price
+```
+
+The function is strictly one-dimensional. The only input is `last_renting_price`. No time variable, no state dependency.
+
+#### Constraints
+
+1. **Strict increase:** `f(last_renting_price) > last_renting_price` — the next price must always be strictly greater than the last.
+
+Any function satisfying this constraint is a valid implementation.
+
+#### Design Rationale: Why One Dimension
+
+Two alternative designs were considered and rejected:
+
+A time-dependent minimum increment — where the required premium decreases as the tenant's block is consumed — was discarded because it introduces a second price-lowering mechanism during the Rented state, competing directly with `f_price_discovery`. In this protocol, price descent has exactly one owner: the Dutch Auction. During the Rented state, price only moves upward.
+
+A minimum increment dependent on `unconsumed_rent_credit` was rejected for the same reason: as `unconsumed_rent_credit → 0`, the required increment approaches zero, implicitly encoding a time-based price reduction. Same redundancy, different variable.
+
+The one-dimensional form is not a simplification — it is the correct design. Each function in the protocol has a single, non-overlapping responsibility.
+
+#### The Renewal Mechanism as an Implicit Consequence
+
+The protocol places no restriction on the identity of the new tenant. `f_next_renting_price` is evaluated against a price, not a party. This means the current tenant Tn is free to invoke a takeover against themselves, paying `P(n+1) = f_next_renting_price(Pn)`.
+
+The mathematics of the compensation mechanism then produce a striking result. Tn pays `P(n+1)` and simultaneously receives, as the displaced tenant, `unconsumed_rent_credit + (P(n+1) - Pn)`. Their net cost is:
+
+```
+P(n+1) - unconsumed_rent_credit - (P(n+1) - Pn)
+= Pn - unconsumed_rent_credit
+= consumed_rent_credit
+```
+
+**The tenant pays exactly and only for what they have already consumed.** No more. The unconsumed portion is returned, the block resets to `P(n+1)`, and the clock starts over.
+
+This renewal mechanism was never explicitly designed into the protocol. It is a free consequence of the compensation invariant and the identity-agnostic takeover rule. When simple rules produce emergent behaviors that are both useful and mathematically clean, it is a signal that the underlying design is sound.

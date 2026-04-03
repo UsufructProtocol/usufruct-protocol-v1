@@ -165,4 +165,57 @@ When the entry barrier (the price) proves too high for current demand and the la
 
 ---
 
-------------------TODO---------------Incentive-driven functions
+## 5. Tenant Compensation Mechanism
+
+The compensation mechanism is the economic guarantee that makes liquid renting viable. It ensures that no tenant ever suffers a net loss from being displaced, and that the incentive to enter the rental market remains rational at every price level.
+
+### 1. The Consumption Function
+
+At the core of the mechanism lies the `consumption_rent_credit` function. This function couples time and credit into a single unified variable: as time elapses, the consumed credit grows, and the unconsumed credit shrinks. The function is defined to pass through two fixed points:
+
+- `(t = 0, consumed = 0)` — at the start of a rental, no credit has been consumed.
+- `(t = T_rent, consumed = Pn)` — at the end of the rental period, all credit is exhausted.
+
+This means time and credit are not independent: **when the clock runs out, the credit is exactly zero**. The two conditions are one and the same event seen from two dimensions. The exact shape of the curve between these two points (linear, convex, concave) is defined by the `consumption_credit_strategy` and will be detailed in the Incentive-driven Functions section.
+
+At any moment during an active rental, the following invariant holds:
+
+```
+consumed_rent_credit + unconsumed_rent_credit = Pn
+```
+
+### 2. Takeover and Compensation
+
+While a tenant Tn holds the usus at price Pn, the asset remains liquid. Any market participant may displace Tn by injecting a new price `P(n+1) > Pn`. When this occurs:
+
+**Tn receives:**
+- `unconsumed_rent_credit` — the unused portion of their own locked payment, returned directly from the protocol.
+- `(P(n+1) - Pn)` — 100% of the price delta, funded by T(n+1)'s injection.
+
+**The asset owner (integrating protocol) receives:**
+- `consumed_rent_credit` — the portion of Pn that corresponds to time already consumed. This is the rent earned for the usus already delivered.
+
+**T(n+1)'s new rental block:**
+- T(n+1) injects `P(n+1)`, which becomes their full rental stake. The `consumption_rent_credit` function resets and runs from `(t=0, 0)` to `(t=T_rent, P(n+1))`.
+
+### 3. Invariants and Guarantees
+
+**No tenant loses money on takeover.** Since the takeover can only occur while `unconsumed_rent_credit > 0` (i.e., before time expires and the Dutch Auction is triggered), Tn always receives a strictly positive refund of their unused time, plus a premium on the price appreciation.
+
+**The pattern is symmetric.** For any sequence of tenants T1, T2, ..., Tn at prices P1 < P2 < ... < Pn:
+
+| Event | Tenant receives | Owner receives |
+|---|---|---|
+| T2 displaces T1 at P2 | `unconsumed_T1 + (P2 - P1)` | `consumed_T1` |
+| T3 displaces T2 at P3 | `unconsumed_T2 + (P3 - P2)` | `consumed_T2` |
+| Tn displaces T(n-1) at Pn | `unconsumed_T(n-1) + (Pn - P(n-1))` | `consumed_T(n-1)` |
+
+**Each new block is fully funded.** T(n+1) injects `P(n+1)`. Of that, `(P(n+1) - Pn)` is the delta paid to Tn. The protocol retains the remainder as T(n+1)'s effective stake, against which the consumption function runs up to `P(n+1)`.
+
+### 4. Dutch Auction as Boundary Condition
+
+If no T(n+1) arrives before Tn's time expires, `consumed_rent_credit` reaches `Pn` and `unconsumed_rent_credit` reaches zero simultaneously. There is no remaining stake to return to Tn — it has been fully delivered to the owner as earned rent.
+
+At this point, the Dutch Auction is triggered. It carries no stake of its own. Its sole function is to prevent the last known price Pn from freezing as the market entry barrier, allowing the price to descend until a new tenant finds it attractive and injects liquidity, restarting the cycle.
+
+> **TODO:** Define exact `notice_period` semantics: does T(n+1)'s time block begin counting at payment or at physical handover? What guarantees does T(n+1) have during the notice window?

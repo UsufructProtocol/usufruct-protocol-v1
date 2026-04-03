@@ -263,3 +263,50 @@ The integrating protocol selects the curve shape to incentivize a specific marke
 **Linear curve (`f(t) = Pn · (t / T)`):** Credit is consumed proportionally to time. The protocol takes no position on when rotation is more or less convenient. Agnostic and neutral.
 
 **Convex curve (e.g., `f(t) = Pn · (t / T)²`):** Credit is consumed slowly at the start and accelerates toward the end. A tenant displaced early still holds a large `unconsumed_rent_credit`, making entry safer. This incentivizes rotation — the cost of entering is partially recoverable at any early point, lowering the risk of taking a position. Suited for protocols that want high liquidity and active price discovery.
+
+---
+
+### 6.2 `f_price_discovery(t_at_auction)`
+
+#### Purpose
+
+This function defines the rate at which the `current_renting_price` decays during a Dutch Auction. It is the symmetric counterpart to `f_consumption_rent_credit`: where the first function drives a value upward from zero to a ceiling, this function drives a value downward from a ceiling to a floor.
+
+#### Formal Definition
+
+```
+f_price_discovery : [0, t_at_auction_fixed] → [min_renting_price, last_renting_price]
+```
+
+#### Constraints
+
+The function must satisfy the following conditions:
+
+1. **Origin:** `f(0) = last_renting_price` — the auction begins at the last known rental price, the barrier the market failed to validate.
+2. **Termination:** `f(t_at_auction_fixed) = min_renting_price` — if no buyer is found, the price reaches the floor and the asset returns to Idle.
+3. **Boundedness:** `∀ t ∈ [0, t_at_auction_fixed] : min_renting_price ≤ f(t) ≤ last_renting_price` — the function is always contained within the bounding rectangle.
+
+The function is monotonically non-increasing — the price can only descend during a Dutch Auction.
+
+#### Symmetry with `f_consumption_rent_credit`
+
+Both functions share an identical structural contract: two fixed endpoints and a boundedness constraint. The protocol prescribes no curve shape beyond these. The symmetry is exact:
+
+| | `f_consumption_rent_credit` | `f_price_discovery` |
+|---|---|---|
+| Fixed point at t=0 | `f(0) = 0` | `f(0) = last_renting_price` |
+| Fixed point at t=T | `f(T_rent) = last_renting_price` | `f(T_auction) = min_renting_price` |
+| Bounded by | `[0, last_renting_price]` | `[min_renting_price, last_renting_price]` |
+| Direction | Monotonically non-decreasing | Monotonically non-increasing |
+
+This design decision — fixing both endpoints and leaving the interior free — is deliberate. The space of valid curves between two fixed points is already vast enough to express any incentive behavior the integrating protocol may require. Adding discontinuities or free starting points would introduce complexity without expanding expressive power.
+
+#### Incentive Implications of Curve Shape
+
+The shape of the decay curve determines when buyers are incentivized to act during the auction:
+
+**Concave curve (e.g., `f(t) = last_renting_price - (last_renting_price - min_renting_price) · √(t / T)`):** Price drops sharply at the start and flattens toward the end. Most of the discount is captured early. Incentivizes buyers to act quickly — waiting yields diminishing returns.
+
+**Linear curve:** Price decays at a constant rate. Neutral. No moment in the auction is structurally more attractive than another.
+
+**Convex curve (e.g., `f(t) = last_renting_price - (last_renting_price - min_renting_price) · (t / T)²`):** Price remains high for most of the auction and falls steeply at the end. Incentivizes patient buyers to wait — the largest discounts arrive late. Creates a "cliff" dynamic near `t_at_auction_fixed`.

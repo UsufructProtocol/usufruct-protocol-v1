@@ -39,6 +39,7 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 7. [Glossary](#7-glossary)
 8. [Integration Parameters](#8-integration-parameters)
 9. [Asset Custody and Transfer Model](#9-asset-custody-and-transfer-model)
+10. [The Renewal Mechanism](#10-the-renewal-mechanism)
 
 ---
 
@@ -548,3 +549,88 @@ The protocol executes an asset transfer at exactly four moments:
 Because tenants hold the asset directly, fructus flows to them without any protocol intervention. If the asset generates yield, accrues rewards, or produces any on-chain output while held, the tenant captures it naturally by virtue of ownership. The protocol never intermediates fructus — it only intermediates the asset itself.
 
 > **TODO:** Define behavior for yield or fructus that accrues while the asset is in protocol escrow (Idle and At Dutch Auction states). Options: (a) yield accrues to the protocol and is forwarded to the integrating protocol on retirement, (b) yield is ignored/burned, (c) yield is forwarded to the last known tenant. Each option has different incentive implications.
+
+---
+
+## 10. The Renewal Mechanism
+
+### Origin
+
+The renewal mechanism was never designed. It appears nowhere in the protocol's intent. It is a free consequence of three rules that were designed for entirely different purposes:
+
+1. **The protocol is identity-agnostic.** `f_next_renting_price` is evaluated against a price, not a party. The protocol has no concept of "same address" or "different address."
+2. **The last valid bidder wins.** During `rented_handover_confirmed`, the asset transfers to the last tenant who placed a valid bid before the `handover_countdown` expired.
+3. **The displaced tenant is always compensated.** Any tenant displaced by a takeover receives `remaining_credit + (P_new - P_old)`, funded from their own locked stake and the incoming bid.
+
+From these three rules alone, a complete renewal system emerges.
+
+### The Mathematics of Self-Renewal
+
+Suppose Tn holds the asset at price Pn, with some `used_credit` already accumulated. At any moment, Tn may invoke a takeover against themselves — paying `P(n+1) = f_next_renting_price(Pn)`.
+
+The compensation mechanism processes this identically to any takeover. Tn pays P(n+1) and simultaneously receives, as the displaced tenant:
+
+```
+remaining_credit + (P(n+1) - Pn)
+```
+
+Their net cost is:
+
+```
+P(n+1) - remaining_credit - (P(n+1) - Pn)
+= Pn - remaining_credit
+= used_credit
+```
+
+**The tenant pays exactly and only for what they have already consumed.** The remaining portion is returned, the block resets to `P(n+1)`, and the clock starts over from zero.
+
+### The Structural Asymmetry
+
+The renewal mechanism creates a structural cost asymmetry between the current tenant and any external competitor — without the protocol encoding it.
+
+When an external actor T(m) pays `P(m+1)` and wins the asset, their net cost is `P(m+1)` — the full price of entry. They have purchased a new block at market price.
+
+When the current tenant Tn self-renews at the same price, their net cost is only `used_credit` — the rent already earned by the owner for time already consumed. The rest of their payment returns to them.
+
+This asymmetry is not a privilege granted by the protocol. It is a mathematical consequence of the fact that Tn is simultaneously the payer and the displaced party in the same transaction.
+
+### Identity-Agnosticism and the Second-Wallet Game
+
+Because the protocol does not verify identity, a single actor operating two addresses is indistinguishable from two competing actors. Tn may place a renewal bid from a second wallet — the protocol processes it as a standard takeover. The effect is identical: Tn pays `used_credit` net, the block resets, the price rises by the minimum increment.
+
+This is not a loophole. It is the correct behavior. The protocol has no reason to distinguish between a self-renewal and a competitive takeover — both result in a valid new tenant paying a higher price. The market outcome is the same; only the identity of the recipient changes.
+
+### Renewal as a Defensive Mechanism
+
+The renewal mechanism is equally available during `rented_handover_confirmed`. If an external actor T(m) has already placed a bid — initiating the `handover_countdown` — Tn may counter-bid at `P(m+2) = f_next_renting_price(P(m+1))`.
+
+When Tn counter-bids:
+- T(m) receives their full `P(m+1)` injection back immediately — they are superseded.
+- Tn, as the displaced tenant at Pn, receives `remaining_credit + (P(m+2) - Pn)`.
+- Tn, as the new winning bidder at P(m+2), will receive the asset when the `handover_countdown` expires.
+- Tn's net cost: `P(m+2) - remaining_credit - (P(m+2) - Pn) = used_credit`.
+
+The current tenant can always neutralize a takeover attempt at a net cost of only `used_credit`. No matter how many competing bids arrive during the countdown window, Tn retains the ability to reclaim their position by being the last to bid — paying only for what they have already consumed.
+
+### The Competitive Bidding Window
+
+The `handover_countdown` is not merely a grace period for the current tenant. It is an open competitive window during which any number of actors may bid for the asset. The rules are simple:
+
+- Each new valid bid supersedes the previous one.
+- The superseded bidder is refunded immediately and in full.
+- The `handover_countdown` keeps running from its original start — it does not reset.
+- The asset transfers to whoever holds the winning bid when the countdown expires.
+
+This creates a transparent ascending auction of bounded duration. The current tenant participates in this auction with a structural cost advantage — they can always be the last bidder at net cost `used_credit`. External bidders must pay the full market price. The market resolves who values the position more.
+
+### What the Protocol Did Not Build
+
+The following behaviors exist in the protocol without being explicitly implemented:
+
+- **A renewal system** — tenants can extend their position indefinitely by paying only consumed rent.
+- **A right of first refusal** — the current tenant can always match and exceed any incoming bid.
+- **A cost floor for the incumbent** — displacement is never free; it requires paying at least `f_next_renting_price` above the current barrier.
+- **A competitive takeover market** — multiple actors can compete for the asset during the `handover_countdown` window.
+- **A self-correcting price ladder** — every renewal raises the floor, ensuring prices only move upward during the Rented state.
+
+None of these were designed. They are the natural output of identity-agnosticism, the last-bidder-wins rule, and the compensation invariant operating together. When simple primitives produce emergent behaviors that are both economically rational and mathematically clean, it is a signal that the underlying design is sound.

@@ -37,6 +37,7 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 5. [Tenant Compensation Mechanism](#5-tenant-compensation-mechanism)
 6. [Incentive-driven Functions](#6-incentive-driven-functions)
 7. [Glossary](#7-glossary)
+8. [Integration Parameters](#8-integration-parameters)
 
 ---
 
@@ -493,3 +494,24 @@ This renewal mechanism was never explicitly designed into the protocol. It is a 
 **Takeover:** The act of displacing the current tenant by paying `next_renting_price`. Transitions the asset to `rented_handover_confirmed` and starts the `handover_countdown`.
 
 **Handover:** The physical transfer of usus and fructus from the outgoing tenant to the incoming tenant when `handover_countdown` expires.
+
+---
+
+## 8. Integration Parameters
+
+The following parameters must be provided by any protocol integrating Liquid Renting. They are the complete configuration surface of the protocol — nothing else is required.
+
+| Parameter | Type | Description | Constraints |
+|---|---|---|---|
+| `asset` | Object | The asset to be placed under the Liquid Renting protocol. | Must not already be under an active rental position. |
+| `min_renting_price` | Amount | The price floor. The lowest valid rental price and the lower bound of `f_price_descent`. | `min_renting_price > 0` |
+| `tenure_ceiling` | Duration | Maximum duration of a single rental block. | `tenure_ceiling > 0` ; `handover_floor ≤ tenure_ceiling` |
+| `handover_floor` | Duration | Minimum guaranteed usage window for the current tenant after a takeover is initiated. | `0 ≤ handover_floor ≤ tenure_ceiling` |
+| `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_renting_price` and the asset returns to Idle. | `descent_ceiling > 0` |
+| `f_credit_ascent` | Function | Shape of the credit consumption curve during the Rented state. | `f(0) = 0` ; `f(tenure_ceiling) = last_renting_price` ; `∀ t : 0 ≤ f(t) ≤ last_renting_price` |
+| `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_renting_price` ; `f(descent_ceiling) = min_renting_price` ; monotonically non-increasing |
+| `f_next_renting_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_renting_price) > last_renting_price` |
+| `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
+| `usus_fructus_hook` | Callback | The mechanism by which the protocol grants and revokes usus and fructus on the integrated asset. Invoked at rental start, handover, and expiry. | — (see TODO below) |
+
+> **TODO:** Define the exact interface for `usus_fructus_hook` — what callbacks are required (grant, revoke, fructus distribution), when each is invoked, and what guarantees the protocol provides to the hook implementation.

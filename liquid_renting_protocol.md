@@ -623,6 +623,20 @@ The `handover_countdown` is not merely a grace period for the current tenant. It
 
 This creates a transparent ascending auction of bounded duration. The current tenant participates in this auction with a structural cost advantage — they can always be the last bidder at net cost `used_credit`. External bidders must pay the full market price. The market resolves who values the position more.
 
+### The Cost of Abusing the Defense
+
+The structural advantage of the current tenant is real, but it is self-limiting. Each defensive counter-bid invokes `f_next_renting_price`, raising `last_renting_price` by the minimum increment. The tenant neutralizes the competitor — but anchors their new block to a progressively higher price.
+
+If Tn counter-bids repeatedly against successive challengers, arriving at `P(n+k)`:
+
+- Tn is now the last to have established `last_renting_price = P(n+k)` — the asset is in `rented_handover_open`.
+- Their `f_credit_ascent` runs from `0` to `P(n+k)`, a ceiling far above their original entry.
+- If the market does not validate this elevated price — if no new bidder arrives — Tn consumes their full block alone at the higher cost.
+
+The price ladder that Tn used as a defensive weapon becomes the cost they bear if the market refuses to follow. The protocol does not punish defensive overuse — the price does. A tenant who counter-bids beyond what the market genuinely supports will find themselves holding an expensive position with no successor to compensate them.
+
+This creates a natural discipline: the defensive mechanism is rational to use when the tenant believes the market will continue to validate the higher price, and irrational when it will not. The protocol need not encode this judgment — it falls out automatically from the price-only-ascends rule during the Rented state.
+
 ### What the Protocol Did Not Build
 
 The following behaviors exist in the protocol without being explicitly implemented:
@@ -632,5 +646,6 @@ The following behaviors exist in the protocol without being explicitly implement
 - **A cost floor for the incumbent** — displacement is never free; it requires paying at least `f_next_renting_price` above the current barrier.
 - **A competitive takeover market** — multiple actors can compete for the asset during the `handover_countdown` window.
 - **A self-correcting price ladder** — every renewal raises the floor, ensuring prices only move upward during the Rented state.
+- **A self-limiting defense** — abusing the counter-bid mechanism raises the tenant's own cost floor. The protocol does not punish overuse; the price does.
 
 None of these were designed. They are the natural output of identity-agnosticism, the last-bidder-wins rule, and the compensation invariant operating together. When simple primitives produce emergent behaviors that are both economically rational and mathematically clean, it is a signal that the underlying design is sound.

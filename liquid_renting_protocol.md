@@ -84,7 +84,10 @@ The following details the state machine through which any integrated asset trans
 The entry or resting state. The asset is available at the base rental price. No usage right is committed. The usus and fructus are waiting for a first tenant to inject the liquidity necessary to activate the protocol.
 
 **State 1: Rented (Position Secured):**
-The tenant has acquired the monopoly over usus and fructus through upfront liquidity injection. In this state, the tenant does not trade the asset — they enjoy its utility while their position remains active. The injected liquidity is bound to the asset, and the tenant enjoys use of the asset until a new renter pays a higher price for it, at which point the usus is revoked from the previous tenant through a compensation mechanism explained below.
+The tenant has acquired the monopoly over usus and fructus through upfront liquidity injection. In this state, the tenant does not trade the asset — they enjoy its utility while their position remains active. The injected liquidity is bound to the asset. This state has two sub-states:
+
+- **rented_unconfirmed_handover:** No next tenant has paid yet. The current tenant holds usus and fructus with no pending displacement.
+- **rented_confirmed_handover:** A new tenant has paid `next_renting_price`. The `handover_countdown` is running. The current tenant retains usus and fructus until the countdown expires, at which point the asset transfers to the last tenant who placed a valid bid.
 
 **State 2: At Dutch Auction (Price Discovery):**
 A market rebalancing mechanism. If the asset is no longer rented and the market does not validate the last known rental price, a descending Dutch Auction is triggered. The goal is to perform a dynamic liquidation of the rental price until a new equilibrium is found where demand once again absorbs the usus of the asset.
@@ -106,10 +109,10 @@ Even while the asset is rented, its usus remains liquid. If the market values th
 - A new full time block is initialized for the new tenant.
 - The displaced tenant is economically compensated: they receive the full value of their unconsumed_rent_credit (the value of unused time) plus 100% of the difference between their entry price and the new price.
 
-Note: The physical transfer of the right is governed by a notice_period that determines the exact time of the handover, calculated as min(notice_period_parameter, remaining_time). Notice_period >= 0.
+The physical transfer of the right is governed by the `handover_countdown`, detailed in Section 5.
 
 **Rented ➔ At Dutch Auction (Exhaustion and Liquidation):**
-This transition is triggered when the current tenant's time block ends (all their unconsumed_rent_credit is exhausted) and the market has not validated or exceeded the last known price. The protocol sends the asset to auction to initiate a descending price curve that attracts new demand.
+This transition requires two conditions to be true simultaneously: the current tenant's time block is exhausted (`unconsumed_rent_credit = 0`) AND the asset is in the `rented_unconfirmed_handover` sub-state. If a next tenant has already paid (`rented_confirmed_handover`), the asset transfers directly to them — the Dutch Auction is bypassed entirely, as demand is already confirmed.
 
 **At Dutch Auction ➔ Rented (Price Discovery):**
 During the auction, a new buyer accepts the current descending price and injects the required liquidity. They automatically assume the usus of the asset, initiating a new time block and returning the system to State 1.
@@ -218,7 +221,56 @@ If no T(n+1) arrives before Tn's time expires, `consumed_rent_credit` reaches `P
 
 At this point, the Dutch Auction is triggered. It carries no stake of its own. Its sole function is to prevent the last known price Pn from freezing as the market entry barrier, allowing the price to descend until a new tenant finds it attractive and injects liquidity, restarting the cycle.
 
-> **TODO:** Define exact `notice_period` semantics: does T(n+1)'s time block begin counting at payment or at physical handover? What guarantees does T(n+1) have during the notice window?
+### 5. The Handover Countdown
+
+#### Definition
+
+When a new tenant T(n+1) pays `next_renting_price`, the asset transitions to `rented_confirmed_handover` and a countdown begins:
+
+```
+handover_countdown = min(handover_floor, remaining_rent_time)
+```
+
+Where `handover_floor` is a protocol-level parameter constrained by:
+
+```
+0 ≤ handover_floor ≤ rental_time_fixed
+```
+
+The `handover_countdown` is fixed at the moment the first bid arrives. Subsequent bids during the countdown do not restart it — it keeps running from the moment it began.
+
+#### Dual Guarantee
+
+The `handover_countdown` serves two roles simultaneously:
+
+- **For the current tenant Tn:** a guaranteed minimum window of usus and fructus after being displaced. The protocol cannot transfer the asset before this countdown expires.
+- **For the asset owner:** a guaranteed minimum `consumed_rent_credit`. Since the consumption function keeps running during the countdown, the owner earns rent for every second of Tn's remaining use.
+
+#### Consumption During the Countdown
+
+The `f_consumption_rent_credit` function continues running throughout the `handover_countdown`. Tn retains full usus and fructus until the physical handover. As a consequence, Tn's `unconsumed_rent_credit` at the moment of handover is lower than at the moment T(n+1) paid — the difference is additional earned rent for the owner.
+
+#### Multiple Bids During the Countdown
+
+The asset continues accepting new bids while in `rented_confirmed_handover`. If T(n+1), T(n+2), ... all pay during the same countdown window:
+
+- The countdown does not restart — it keeps running from the original start.
+- Each intermediate bidder (all except the last) receives their full injection returned immediately.
+- The asset transfers to the **last** tenant who placed a valid bid before the countdown expired.
+- Tn's compensation is calculated at the moment of physical handover: `unconsumed_rent_credit_at_handover + (P_final - Pn)`, where `P_final` is the last winning price.
+
+#### New Tenant's Cycle
+
+T(n+1)'s rental cycle — and their `f_consumption_rent_credit` clock — begins at physical handover, not at payment. The time between payment and handover is the `handover_countdown` itself, during which T(n+1) holds a confirmed position but has not yet received the usus.
+
+#### Dutch Auction Bypass
+
+If the `handover_countdown` exhausts Tn's remaining time (`handover_countdown = remaining_rent_time`), then `unconsumed_rent_credit` reaches zero exactly at handover. In this case the asset passes directly to the confirmed next tenant — the Dutch Auction is never triggered. The `rented_confirmed_handover` sub-state is proof of existing demand, making the price discovery mechanism unnecessary.
+
+#### Edge Cases
+
+- **`handover_floor = 0`:** The handover is instantaneous. The moment T(n+1) pays, Tn loses the asset with no guaranteed window.
+- **`handover_floor = rental_time_fixed`:** The countdown equals the full rental block. The current tenant is guaranteed the entirety of their remaining time before any handover — equivalent in behavior to a traditional fixed-term lease, with the liquid renting compensation mechanics preserved.
 
 ---
 

@@ -86,8 +86,8 @@ The entry or resting state. The asset is available at the base rental price. No 
 **State 1: Rented (Position Secured):**
 The tenant has acquired the monopoly over usus and fructus through upfront liquidity injection. In this state, the tenant does not trade the asset — they enjoy its utility while their position remains active. The injected liquidity is bound to the asset. This state has two sub-states:
 
-- **rented_unconfirmed_handover:** No next tenant has paid yet. The current tenant holds usus and fructus with no pending displacement.
-- **rented_confirmed_handover:** A new tenant has paid `next_renting_price`. The `handover_countdown` is running. The current tenant retains usus and fructus until the countdown expires, at which point the asset transfers to the last tenant who placed a valid bid.
+- **rented_handover_open:** No next tenant has paid yet. The current tenant holds usus and fructus with no pending displacement.
+- **rented_handover_confirmed:** A new tenant has paid `next_renting_price`. The `handover_countdown` is running. The current tenant retains usus and fructus until the countdown expires, at which point the asset transfers to the last tenant who placed a valid bid.
 
 **State 2: At Dutch Auction (Price Discovery):**
 A market rebalancing mechanism. If the asset is no longer rented and the market does not validate the last known rental price, a descending Dutch Auction is triggered. The goal is to perform a dynamic liquidation of the rental price until a new equilibrium is found where demand once again absorbs the usus of the asset.
@@ -107,12 +107,12 @@ Even while the asset is rented, its usus remains liquid. If the market values th
 
 - The last known rental price in the protocol is updated.
 - A new full time block is initialized for the new tenant.
-- The displaced tenant is economically compensated: they receive the full value of their unconsumed_rent_credit (the value of unused time) plus 100% of the difference between their entry price and the new price.
+- The displaced tenant is economically compensated: they receive the full value of their remaining_credit (the value of unused time) plus 100% of the difference between their entry price and the new price.
 
 The physical transfer of the right is governed by the `handover_countdown`, detailed in Section 5.
 
 **Rented ➔ At Dutch Auction (Exhaustion and Liquidation):**
-This transition requires two conditions to be true simultaneously: the current tenant's time block is exhausted (`unconsumed_rent_credit = 0`) AND the asset is in the `rented_unconfirmed_handover` sub-state. If a next tenant has already paid (`rented_confirmed_handover`), the asset transfers directly to them — the Dutch Auction is bypassed entirely, as demand is already confirmed.
+This transition requires two conditions to be true simultaneously: the current tenant's time block is exhausted (`remaining_credit = 0`) AND the asset is in the `rented_handover_open` sub-state. If a next tenant has already paid (`rented_handover_confirmed`), the asset transfers directly to them — the Dutch Auction is bypassed entirely, as demand is already confirmed.
 
 **At Dutch Auction ➔ Rented (Price Discovery):**
 During the auction, a new buyer accepts the current descending price and injects the required liquidity. They automatically assume the usus of the asset, initiating a new time block and returning the system to State 1.
@@ -149,9 +149,9 @@ Once a user injects liquidity, the asset enters a state of active utilization th
 
 - The new price becomes the new "barrier" (asset_last_renting_price).
 - The consumption vector (Red Arrow) — consumption_credit_strategy — resets to zero.
-- The new tenant receives a full block of unconsumed_rent_credit.
+- The new tenant receives a full block of remaining_credit.
 
-**The Trigger:** The transition to auction only occurs if the market does not validate the asset_last_renting_price known. That is, if no one clears the barrier established by the last tenant before their consumed_rent_credit reaches the limit of asset_last_renting_price. In practice, the current tenant only reaches the end of the road if they were the last one to establish asset_last_renting_price.
+**The Trigger:** The transition to auction only occurs if the market does not validate the asset_last_renting_price known. That is, if no one clears the barrier established by the last tenant before their used_credit reaches the limit of asset_last_renting_price. In practice, the current tenant only reaches the end of the road if they were the last one to establish asset_last_renting_price.
 
 
 ### 3. Price Discovery (State 2: At Dutch Auction)
@@ -160,7 +160,7 @@ Once a user injects liquidity, the asset enters a state of active utilization th
 ![Asset State Transition Flow](./media/6.png "Asset State Transition Flow")
 ![Asset State Transition Flow](./media/7.png "Asset State Transition Flow")
 
-When the entry barrier (the price) proves too high for current demand and the last tenant's consumed_rent_credit is exhausted, the protocol initiates the liquidation:
+When the entry barrier (the price) proves too high for current demand and the last tenant's used_credit is exhausted, the protocol initiates the liquidation:
 
 **Descent Strategy (Green Arrow):** The price_discovery_strategy begins eroding the entry barrier. The asset_current_renting_price descends from the last known maximum.
 
@@ -174,7 +174,7 @@ The compensation mechanism is the economic guarantee that makes liquid renting v
 
 ### 1. The Consumption Function
 
-At the core of the mechanism lies the `consumption_rent_credit` function. This function couples time and credit into a single unified variable: as time elapses, the consumed credit grows, and the unconsumed credit shrinks. The function is defined to pass through two fixed points:
+At the core of the mechanism lies the `consumption_rent_credit` function. This function couples time and credit into a single unified variable: as time elapses, the used credit grows, and the remaining credit shrinks. The function is defined to pass through two fixed points:
 
 - `(t = 0, consumed = 0)` — at the start of a rental, no credit has been consumed.
 - `(t = T_rent, consumed = Pn)` — at the end of the rental period, all credit is exhausted.
@@ -184,7 +184,7 @@ This means time and credit are not independent: **when the clock runs out, the c
 At any moment during an active rental, the following invariant holds:
 
 ```
-consumed_rent_credit + unconsumed_rent_credit = Pn
+used_credit + remaining_credit = Pn
 ```
 
 ### 2. Takeover and Compensation
@@ -192,32 +192,32 @@ consumed_rent_credit + unconsumed_rent_credit = Pn
 While a tenant Tn holds the usus at price Pn, the asset remains liquid. Any market participant may displace Tn by injecting a new price `P(n+1) > Pn`. When this occurs:
 
 **Tn receives:**
-- `unconsumed_rent_credit` — the unused portion of their own locked payment, returned directly from the protocol.
+- `remaining_credit` — the unused portion of their own locked payment, returned directly from the protocol.
 - `(P(n+1) - Pn)` — 100% of the price delta, funded by T(n+1)'s injection.
 
 **The asset owner (integrating protocol) receives:**
-- `consumed_rent_credit` — the portion of Pn that corresponds to time already consumed. This is the rent earned for the usus already delivered.
+- `used_credit` — the portion of Pn that corresponds to time already consumed. This is the rent earned for the usus already delivered.
 
 **T(n+1)'s new rental block:**
 - T(n+1) injects `P(n+1)`, which becomes their full rental stake. The `consumption_rent_credit` function resets and runs from `(t=0, 0)` to `(t=T_rent, P(n+1))`.
 
 ### 3. Invariants and Guarantees
 
-**No tenant loses money on takeover.** Since the takeover can only occur while `unconsumed_rent_credit > 0` (i.e., before time expires and the Dutch Auction is triggered), Tn always receives a strictly positive refund of their unused time, plus a premium on the price appreciation.
+**No tenant loses money on takeover.** Since the takeover can only occur while `remaining_credit > 0` (i.e., before time expires and the Dutch Auction is triggered), Tn always receives a strictly positive refund of their unused time, plus a premium on the price appreciation.
 
 **The pattern is symmetric.** For any sequence of tenants T1, T2, ..., Tn at prices P1 < P2 < ... < Pn:
 
 | Event | Tenant receives | Owner receives |
 |---|---|---|
-| T2 displaces T1 at P2 | `unconsumed_T1 + (P2 - P1)` | `consumed_T1` |
-| T3 displaces T2 at P3 | `unconsumed_T2 + (P3 - P2)` | `consumed_T2` |
-| Tn displaces T(n-1) at Pn | `unconsumed_T(n-1) + (Pn - P(n-1))` | `consumed_T(n-1)` |
+| T2 displaces T1 at P2 | `remaining_T1 + (P2 - P1)` | `used_T1` |
+| T3 displaces T2 at P3 | `remaining_T2 + (P3 - P2)` | `used_T2` |
+| Tn displaces T(n-1) at Pn | `remaining_T(n-1) + (Pn - P(n-1))` | `used_T(n-1)` |
 
 **Each new block is fully funded.** T(n+1) injects `P(n+1)`. Of that, `(P(n+1) - Pn)` is the delta paid to Tn. The protocol retains the remainder as T(n+1)'s effective stake, against which the consumption function runs up to `P(n+1)`.
 
 ### 4. Dutch Auction as Boundary Condition
 
-If no T(n+1) arrives before Tn's time expires, `consumed_rent_credit` reaches `Pn` and `unconsumed_rent_credit` reaches zero simultaneously. There is no remaining stake to return to Tn — it has been fully delivered to the owner as earned rent.
+If no T(n+1) arrives before Tn's time expires, `used_credit` reaches `Pn` and `remaining_credit` reaches zero simultaneously. There is no remaining stake to return to Tn — it has been fully delivered to the owner as earned rent.
 
 At this point, the Dutch Auction is triggered. It carries no stake of its own. Its sole function is to prevent the last known price Pn from freezing as the market entry barrier, allowing the price to descend until a new tenant finds it attractive and injects liquidity, restarting the cycle.
 
@@ -225,7 +225,7 @@ At this point, the Dutch Auction is triggered. It carries no stake of its own. I
 
 #### Definition
 
-When a new tenant T(n+1) pays `next_renting_price`, the asset transitions to `rented_confirmed_handover` and a countdown begins:
+When a new tenant T(n+1) pays `next_renting_price`, the asset transitions to `rented_handover_confirmed` and a countdown begins:
 
 ```
 handover_countdown = min(handover_floor, remaining_rent_time)
@@ -234,7 +234,7 @@ handover_countdown = min(handover_floor, remaining_rent_time)
 Where `handover_floor` is a protocol-level parameter constrained by:
 
 ```
-0 ≤ handover_floor ≤ rental_time_fixed
+0 ≤ handover_floor ≤ tenure_ceiling
 ```
 
 The `handover_countdown` is fixed at the moment the first bid arrives. Subsequent bids during the countdown do not restart it — it keeps running from the moment it began.
@@ -244,33 +244,33 @@ The `handover_countdown` is fixed at the moment the first bid arrives. Subsequen
 The `handover_countdown` serves two roles simultaneously:
 
 - **For the current tenant Tn:** a guaranteed minimum window of usus and fructus after being displaced. The protocol cannot transfer the asset before this countdown expires.
-- **For the asset owner:** a guaranteed minimum `consumed_rent_credit`. Since the consumption function keeps running during the countdown, the owner earns rent for every second of Tn's remaining use.
+- **For the asset owner:** a guaranteed minimum `used_credit`. Since the consumption function keeps running during the countdown, the owner earns rent for every second of Tn's remaining use.
 
 #### Consumption During the Countdown
 
-The `f_consumption_rent_credit` function continues running throughout the `handover_countdown`. Tn retains full usus and fructus until the physical handover. As a consequence, Tn's `unconsumed_rent_credit` at the moment of handover is lower than at the moment T(n+1) paid — the difference is additional earned rent for the owner.
+The `f_credit_ascent` function continues running throughout the `handover_countdown`. Tn retains full usus and fructus until the physical handover. As a consequence, Tn's `remaining_credit` at the moment of handover is lower than at the moment T(n+1) paid — the difference is additional earned rent for the owner.
 
 #### Multiple Bids During the Countdown
 
-The asset continues accepting new bids while in `rented_confirmed_handover`. If T(n+1), T(n+2), ... all pay during the same countdown window:
+The asset continues accepting new bids while in `rented_handover_confirmed`. If T(n+1), T(n+2), ... all pay during the same countdown window:
 
 - The countdown does not restart — it keeps running from the original start.
 - Each intermediate bidder (all except the last) receives their full injection returned immediately.
 - The asset transfers to the **last** tenant who placed a valid bid before the countdown expired.
-- Tn's compensation is calculated at the moment of physical handover: `unconsumed_rent_credit_at_handover + (P_final - Pn)`, where `P_final` is the last winning price.
+- Tn's compensation is calculated at the moment of physical handover: `remaining_credit_at_handover + (P_final - Pn)`, where `P_final` is the last winning price.
 
 #### New Tenant's Cycle
 
-T(n+1)'s rental cycle — and their `f_consumption_rent_credit` clock — begins at physical handover, not at payment. The time between payment and handover is the `handover_countdown` itself, during which T(n+1) holds a confirmed position but has not yet received the usus.
+T(n+1)'s rental cycle — and their `f_credit_ascent` clock — begins at physical handover, not at payment. The time between payment and handover is the `handover_countdown` itself, during which T(n+1) holds a confirmed position but has not yet received the usus.
 
 #### Dutch Auction Bypass
 
-If the `handover_countdown` exhausts Tn's remaining time (`handover_countdown = remaining_rent_time`), then `unconsumed_rent_credit` reaches zero exactly at handover. In this case the asset passes directly to the confirmed next tenant — the Dutch Auction is never triggered. The `rented_confirmed_handover` sub-state is proof of existing demand, making the price discovery mechanism unnecessary.
+If the `handover_countdown` exhausts Tn's remaining time (`handover_countdown = remaining_rent_time`), then `remaining_credit` reaches zero exactly at handover. In this case the asset passes directly to the confirmed next tenant — the Dutch Auction is never triggered. The `rented_handover_confirmed` sub-state is proof of existing demand, making the price discovery mechanism unnecessary.
 
 #### Edge Cases
 
 - **`handover_floor = 0`:** The handover is instantaneous. The moment T(n+1) pays, Tn loses the asset with no guaranteed window.
-- **`handover_floor = rental_time_fixed`:** The countdown equals the full rental block. The current tenant is guaranteed the entirety of their remaining time before any handover — equivalent in behavior to a traditional fixed-term lease, with the liquid renting compensation mechanics preserved.
+- **`handover_floor = tenure_ceiling`:** The countdown equals the full rental block. The current tenant is guaranteed the entirety of their remaining time before any handover — equivalent in behavior to a traditional fixed-term lease, with the liquid renting compensation mechanics preserved.
 
 ---
 
@@ -282,15 +282,15 @@ The three functions are the only configuration points of the protocol. Their res
 
 | Function | Active state | Price direction | Independent variable |
 |---|---|---|---|
-| `f_consumption_rent_credit` | Rented | — (consumes credit) | time |
-| `f_price_discovery` | At Dutch Auction | descends only | time |
+| `f_credit_ascent` | Rented | — (consumes credit) | time |
+| `f_price_descent` | At Dutch Auction | descends only | time |
 | `f_next_renting_price` | Rented (takeover) | ascends only | price |
 
 Price can only descend in one place in the protocol: the Dutch Auction. Everywhere else, it ascends or holds.
 
 ---
 
-### 6.1 `f_consumption_rent_credit(t_rented)`
+### 6.1 `f_credit_ascent(t_rented)`
 
 #### Purpose
 
@@ -299,7 +299,7 @@ This function defines the rate at which a tenant's rental credit is consumed ove
 #### Formal Definition
 
 ```
-f_consumption_rent_credit : [0, rental_time_fixed] → [0, last_renting_price]
+f_credit_ascent : [0, tenure_ceiling] → [0, last_renting_price]
 ```
 
 #### Constraints
@@ -307,37 +307,37 @@ f_consumption_rent_credit : [0, rental_time_fixed] → [0, last_renting_price]
 The function must satisfy the following conditions:
 
 1. **Origin:** `f(0) = 0` — at the start of the rental, no credit has been consumed.
-2. **Termination:** `f(rental_time_fixed) = last_renting_price` — at the end of the rental period, all credit is exactly exhausted.
-3. **Boundedness:** `∀ t ∈ [0, rental_time_fixed] : 0 ≤ f(t) ≤ last_renting_price` — the function is always contained within the bounding rectangle.
+2. **Termination:** `f(tenure_ceiling) = last_renting_price` — at the end of the rental period, all credit is exactly exhausted.
+3. **Boundedness:** `∀ t ∈ [0, tenure_ceiling] : 0 ≤ f(t) ≤ last_renting_price` — the function is always contained within the bounding rectangle.
 
 Any function satisfying these three constraints is a valid implementation. The protocol imposes no further restriction on its shape.
 
 #### The Dutch Auction Trigger as a Corollary
 
-Constraints (1), (2), and (3) together imply that time exhaustion and credit exhaustion are the same event. When `t = rental_time_fixed`, `f(t) = last_renting_price` by definition — meaning `unconsumed_rent_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(rental_time_fixed, last_renting_price)`. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
+Constraints (1), (2), and (3) together imply that time exhaustion and credit exhaustion are the same event. When `t = tenure_ceiling`, `f(t) = last_renting_price` by definition — meaning `remaining_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(tenure_ceiling, last_renting_price)`. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
 
 #### Incentive Implications of Curve Shape
 
 The integrating protocol selects the curve shape to incentivize a specific market behavior:
 
-**Concave curve (e.g., `f(t) = Pn · √(t / T)`):** Credit is consumed rapidly at the start and slowly toward the end. A tenant displaced early recovers little `unconsumed_rent_credit`. This penalizes speculative entry — entering with the expectation of a quick takeover and a large refund is costly, since the curve has already consumed most of the credit. Suited for protocols that want to discourage high-frequency rotation and reward sustained usage.
+**Concave curve (e.g., `f(t) = Pn · √(t / T)`):** Credit is consumed rapidly at the start and slowly toward the end. A tenant displaced early recovers little `remaining_credit`. This penalizes speculative entry — entering with the expectation of a quick takeover and a large refund is costly, since the curve has already consumed most of the credit. Suited for protocols that want to discourage high-frequency rotation and reward sustained usage.
 
 **Linear curve (`f(t) = Pn · (t / T)`):** Credit is consumed proportionally to time. The protocol takes no position on when rotation is more or less convenient. Agnostic and neutral.
 
-**Convex curve (e.g., `f(t) = Pn · (t / T)²`):** Credit is consumed slowly at the start and accelerates toward the end. A tenant displaced early still holds a large `unconsumed_rent_credit`, making entry safer. This incentivizes rotation — the cost of entering is partially recoverable at any early point, lowering the risk of taking a position. Suited for protocols that want high liquidity and active price discovery.
+**Convex curve (e.g., `f(t) = Pn · (t / T)²`):** Credit is consumed slowly at the start and accelerates toward the end. A tenant displaced early still holds a large `remaining_credit`, making entry safer. This incentivizes rotation — the cost of entering is partially recoverable at any early point, lowering the risk of taking a position. Suited for protocols that want high liquidity and active price discovery.
 
 ---
 
-### 6.2 `f_price_discovery(t_at_auction)`
+### 6.2 `f_price_descent(t_at_auction)`
 
 #### Purpose
 
-This function defines the rate at which the `current_renting_price` decays during a Dutch Auction. It is the symmetric counterpart to `f_consumption_rent_credit`: where the first function drives a value upward from zero to a ceiling, this function drives a value downward from a ceiling to a floor.
+This function defines the rate at which the `current_renting_price` decays during a Dutch Auction. It is the symmetric counterpart to `f_credit_ascent`: where the first function drives a value upward from zero to a ceiling, this function drives a value downward from a ceiling to a floor.
 
 #### Formal Definition
 
 ```
-f_price_discovery : [0, t_at_auction_fixed] → [min_renting_price, last_renting_price]
+f_price_descent : [0, t_at_auction_fixed] → [min_renting_price, last_renting_price]
 ```
 
 #### Constraints
@@ -350,11 +350,11 @@ The function must satisfy the following conditions:
 
 The function is monotonically non-increasing — the price can only descend during a Dutch Auction.
 
-#### Symmetry with `f_consumption_rent_credit`
+#### Symmetry with `f_credit_ascent`
 
 Both functions share an identical structural contract: two fixed endpoints and a boundedness constraint. The protocol prescribes no curve shape beyond these. The symmetry is exact:
 
-| | `f_consumption_rent_credit` | `f_price_discovery` |
+| | `f_credit_ascent` | `f_price_descent` |
 |---|---|---|
 | Fixed point at t=0 | `f(0) = 0` | `f(0) = last_renting_price` |
 | Fixed point at t=T | `f(T_rent) = last_renting_price` | `f(T_auction) = min_renting_price` |
@@ -399,9 +399,9 @@ Any function satisfying this constraint is a valid implementation.
 
 Two alternative designs were considered and rejected:
 
-A time-dependent minimum increment — where the required premium decreases as the tenant's block is consumed — was discarded because it introduces a second price-lowering mechanism during the Rented state, competing directly with `f_price_discovery`. In this protocol, price descent has exactly one owner: the Dutch Auction. During the Rented state, price only moves upward.
+A time-dependent minimum increment — where the required premium decreases as the tenant's block is consumed — was discarded because it introduces a second price-lowering mechanism during the Rented state, competing directly with `f_price_descent`. In this protocol, price descent has exactly one owner: the Dutch Auction. During the Rented state, price only moves upward.
 
-A minimum increment dependent on `unconsumed_rent_credit` was rejected for the same reason: as `unconsumed_rent_credit → 0`, the required increment approaches zero, implicitly encoding a time-based price reduction. Same redundancy, different variable.
+A minimum increment dependent on `remaining_credit` was rejected for the same reason: as `remaining_credit → 0`, the required increment approaches zero, implicitly encoding a time-based price reduction. Same redundancy, different variable.
 
 The one-dimensional form is not a simplification — it is the correct design. Each function in the protocol has a single, non-overlapping responsibility.
 
@@ -409,12 +409,12 @@ The one-dimensional form is not a simplification — it is the correct design. E
 
 The protocol places no restriction on the identity of the new tenant. `f_next_renting_price` is evaluated against a price, not a party. This means the current tenant Tn is free to invoke a takeover against themselves, paying `P(n+1) = f_next_renting_price(Pn)`.
 
-The mathematics of the compensation mechanism then produce a striking result. Tn pays `P(n+1)` and simultaneously receives, as the displaced tenant, `unconsumed_rent_credit + (P(n+1) - Pn)`. Their net cost is:
+The mathematics of the compensation mechanism then produce a striking result. Tn pays `P(n+1)` and simultaneously receives, as the displaced tenant, `remaining_credit + (P(n+1) - Pn)`. Their net cost is:
 
 ```
-P(n+1) - unconsumed_rent_credit - (P(n+1) - Pn)
-= Pn - unconsumed_rent_credit
-= consumed_rent_credit
+P(n+1) - remaining_credit - (P(n+1) - Pn)
+= Pn - remaining_credit
+= used_credit
 ```
 
 **The tenant pays exactly and only for what they have already consumed.** No more. The unconsumed portion is returned, the block resets to `P(n+1)`, and the clock starts over.

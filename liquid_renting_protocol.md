@@ -34,7 +34,9 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 2. [Core Principles](#2-core-principles)
 3. [Asset State Flow - High Level](#3-asset-state-flow-high-level)
 4. [Asset State Flow - Low Level](#4-asset-state-flow-low-level)
-5. [Incentive-driven Functions](#5-incentive-driven-functions)
+5. [Tenant Compensation Mechanism](#5-tenant-compensation-mechanism)
+6. [Incentive-driven Functions](#6-incentive-driven-functions)
+7. [Glossary](#7-glossary)
 
 ---
 
@@ -133,7 +135,7 @@ At a deeper level, the Liquid Renting architecture operates as a dynamic equilib
 
 ![Asset State Transition Flow](./media/1.png "Asset State Transition Flow")
 
-The initial equilibrium point. The asset_current_renting_price equals the asset_min_renting_price. The asset is "open" with no liquidity barrier protecting its usus.
+The initial equilibrium point. The asset_descent_price equals the asset_min_renting_price. The asset is "open" with no liquidity barrier protecting its usus.
 
 ### 2. The Consumption and Competition Cycle (State 1: Rented)
 
@@ -162,9 +164,9 @@ Once a user injects liquidity, the asset enters a state of active utilization th
 
 When the entry barrier (the price) proves too high for current demand and the last tenant's used_credit is exhausted, the protocol initiates the liquidation:
 
-**Descent Strategy (Green Arrow):** The price_discovery_strategy begins eroding the entry barrier. The asset_current_renting_price descends from the last known maximum.
+**Descent Strategy (Green Arrow):** The price_discovery_strategy begins eroding the entry barrier. The asset_descent_price descends from the last known maximum.
 
-**Resolution:** The moment the descending price reaches a point the market finds attractive, a new user injects that liquidity, the asset returns to State 1, and a new entry barrier is established — restarting the utility cycle. Otherwise, the asset_current_renting_price equals the asset_min_renting_price and the asset enters the Idle state.
+**Resolution:** The moment the descending price reaches a point the market finds attractive, a new user injects that liquidity, the asset returns to State 1, and a new entry barrier is established — restarting the utility cycle. Otherwise, the asset_descent_price equals the asset_min_renting_price and the asset enters the Idle state.
 
 ---
 
@@ -332,12 +334,12 @@ The integrating protocol selects the curve shape to incentivize a specific marke
 
 #### Purpose
 
-This function defines the rate at which the `current_renting_price` decays during a Dutch Auction. It is the symmetric counterpart to `f_credit_ascent`: where the first function drives a value upward from zero to a ceiling, this function drives a value downward from a ceiling to a floor.
+This function defines the rate at which the `descent_price` decays during a Dutch Auction. It is the symmetric counterpart to `f_credit_ascent`: where the first function drives a value upward from zero to a ceiling, this function drives a value downward from a ceiling to a floor.
 
 #### Formal Definition
 
 ```
-f_price_descent : [0, t_at_auction_fixed] → [min_renting_price, last_renting_price]
+f_price_descent : [0, descent_ceiling] → [min_renting_price, last_renting_price]
 ```
 
 #### Constraints
@@ -345,8 +347,8 @@ f_price_descent : [0, t_at_auction_fixed] → [min_renting_price, last_renting_p
 The function must satisfy the following conditions:
 
 1. **Origin:** `f(0) = last_renting_price` — the auction begins at the last known rental price, the barrier the market failed to validate.
-2. **Termination:** `f(t_at_auction_fixed) = min_renting_price` — if no buyer is found, the price reaches the floor and the asset returns to Idle.
-3. **Boundedness:** `∀ t ∈ [0, t_at_auction_fixed] : min_renting_price ≤ f(t) ≤ last_renting_price` — the function is always contained within the bounding rectangle.
+2. **Termination:** `f(descent_ceiling) = min_renting_price` — if no buyer is found, the price reaches the floor and the asset returns to Idle.
+3. **Boundedness:** `∀ t ∈ [0, descent_ceiling] : min_renting_price ≤ f(t) ≤ last_renting_price` — the function is always contained within the bounding rectangle.
 
 The function is monotonically non-increasing — the price can only descend during a Dutch Auction.
 
@@ -371,7 +373,7 @@ The shape of the decay curve determines when buyers are incentivized to act duri
 
 **Linear curve:** Price decays at a constant rate. Neutral. No moment in the auction is structurally more attractive than another.
 
-**Convex curve (e.g., `f(t) = last_renting_price - (last_renting_price - min_renting_price) · (t / T)²`):** Price remains high for most of the auction and falls steeply at the end. Incentivizes patient buyers to wait — the largest discounts arrive late. Creates a "cliff" dynamic near `t_at_auction_fixed`.
+**Convex curve (e.g., `f(t) = last_renting_price - (last_renting_price - min_renting_price) · (t / T)²`):** Price remains high for most of the auction and falls steeply at the end. Incentivizes patient buyers to wait — the largest discounts arrive late. Creates a "cliff" dynamic near `descent_ceiling`.
 
 ---
 
@@ -420,3 +422,74 @@ P(n+1) - remaining_credit - (P(n+1) - Pn)
 **The tenant pays exactly and only for what they have already consumed.** No more. The unconsumed portion is returned, the block resets to `P(n+1)`, and the clock starts over.
 
 This renewal mechanism was never explicitly designed into the protocol. It is a free consequence of the compensation invariant and the identity-agnostic takeover rule. When simple rules produce emergent behaviors that are both useful and mathematically clean, it is a signal that the underlying design is sound.
+
+---
+
+## 7. Glossary
+
+### Actors
+
+**Tenant (Tn):** The party that holds the usus and fructus of an asset at price Pn. Identified by their position in the sequence T1, T2, ..., Tn.
+
+**Owner:** The integrating protocol that issued the asset. Receives `used_credit` as earned rent for every consumed time unit.
+
+### Roman Law Concepts
+
+**Usus:** The right to use the asset without altering its essence. The faculty the protocol transfers temporarily to each tenant.
+
+**Fructus:** The right to receive the yields or cash flows the asset produces. Held by the current tenant alongside usus.
+
+**Abusus:** The right to dispose of the asset — sell, modify, or destroy it. Retained by the owner at all times. Never transferred by this protocol.
+
+### Asset States
+
+**Idle:** The resting state. The asset is available at `min_renting_price` with no active usage commitment.
+
+**Rented:** The active state. A tenant holds usus and fructus. Has two sub-states:
+
+- **`rented_handover_open`:** No next tenant has paid yet. The current tenant holds the position with no pending displacement.
+- **`rented_handover_confirmed`:** A next tenant has paid `next_renting_price`. The `handover_countdown` is running toward physical transfer.
+
+**At Dutch Auction:** The price discovery state. Triggered when `used_credit = Pn` (time exhausted) and the asset is in `rented_handover_open`. The `descent_price` descends via `f_price_descent` until a new tenant enters or the floor is reached.
+
+**Retired:** The terminal state. The asset exits the protocol permanently from Idle. Usus and fructus are reabsorbed into the owner's abusus.
+
+### Prices
+
+**`min_renting_price`:** The price floor. The lowest valid rental price and the lower bound of the Dutch Auction descent.
+
+**`last_renting_price`:** The price paid by the current tenant. Acts as the entry barrier — any takeover must exceed this value via `f_next_renting_price`.
+
+**`next_renting_price`:** The minimum price required to legally displace the current tenant. Always strictly greater than `last_renting_price`. Defined by `f_next_renting_price`.
+
+**`descent_price`:** The live price during a Dutch Auction. Descends from `last_renting_price` to `min_renting_price` via `f_price_descent`.
+
+### Credit
+
+**`used_credit`:** The portion of a tenant's locked payment that has been earned by the owner. Grows monotonically from 0 to `last_renting_price` over the rental period.
+
+**`remaining_credit`:** The portion of a tenant's locked payment not yet consumed. Returned to the tenant on takeover. At any moment: `used_credit + remaining_credit = last_renting_price`.
+
+### Time Parameters
+
+**`tenure_ceiling`:** The fixed duration of each rental block. The maximum time any tenant can hold the asset in a single position. Constraint: `handover_floor ≤ tenure_ceiling`.
+
+**`handover_floor`:** The minimum guaranteed usage window for the current tenant after a takeover is initiated. Protocol parameter constrained by `0 ≤ handover_floor ≤ tenure_ceiling`.
+
+**`handover_countdown`:** The actual countdown to physical transfer, calculated at the moment the first bid arrives: `min(handover_floor, remaining_rent_time)`. Fixed once started — subsequent bids do not restart it.
+
+**`descent_ceiling`:** The maximum duration of a Dutch Auction. If no buyer is found within this window, the price reaches `min_renting_price` and the asset returns to Idle.
+
+### Incentive-driven Functions
+
+**`f_credit_ascent(t_rented)`:** Defines how `used_credit` grows over time during a rental. Must pass through `(0, 0)` and `(tenure_ceiling, last_renting_price)`, bounded within the rectangle. Shape is chosen by the integrating protocol.
+
+**`f_price_descent(t_at_auction)`:** Defines how `descent_price` decays during a Dutch Auction. Must pass through `(0, last_renting_price)` and `(descent_ceiling, min_renting_price)`, monotonically non-increasing. Symmetric counterpart to `f_credit_ascent`.
+
+**`f_next_renting_price(last_renting_price)`:** Defines the minimum price to displace the current tenant. Strictly one-dimensional. Must satisfy `f(last_renting_price) > last_renting_price`.
+
+### Actions
+
+**Takeover:** The act of displacing the current tenant by paying `next_renting_price`. Transitions the asset to `rented_handover_confirmed` and starts the `handover_countdown`.
+
+**Handover:** The physical transfer of usus and fructus from the outgoing tenant to the incoming tenant when `handover_countdown` expires.

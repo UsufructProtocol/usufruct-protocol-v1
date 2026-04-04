@@ -38,6 +38,7 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 6. [Incentive-driven Functions](#6-incentive-driven-functions)
 7. [Glossary](#7-glossary)
 8. [Integration Parameters](#8-integration-parameters)
+9. [Asset Custody and Transfer Model](#9-asset-custody-and-transfer-model)
 
 ---
 
@@ -512,6 +513,38 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_renting_price` ; `f(descent_ceiling) = min_renting_price` ; monotonically non-increasing |
 | `f_next_renting_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_renting_price) > last_renting_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
-| `usus_fructus_hook` | Callback | The mechanism by which the protocol grants and revokes usus and fructus on the integrated asset. Invoked at rental start, handover, and expiry. | — (see TODO below) |
 
-> **TODO:** Define the exact interface for `usus_fructus_hook` — what callbacks are required (grant, revoke, fructus distribution), when each is invoked, and what guarantees the protocol provides to the hook implementation.
+---
+
+## 9. Asset Custody and Transfer Model
+
+### The Protocol as Escrow
+
+The Liquid Renting Protocol takes full custody of the asset at the moment of integration. From that point, the protocol acts as the authoritative escrow — it is the sole entity responsible for determining who holds the asset at any given moment, based strictly on the state machine.
+
+This design eliminates the need for any external hook or callback to deliver usus and fructus. **Holding the asset is the delivery mechanism.** Whoever has custody of the asset has the usus and fructus. The protocol does not need to know what the asset produces or how it is used — it only needs to know who should hold it.
+
+### Custody by State
+
+| State | Asset held by |
+|---|---|
+| `Idle` | Protocol (escrow) |
+| `Rented` (`rented_handover_open`) | Current tenant |
+| `Rented` (`rented_handover_confirmed`) | Current tenant (until `handover_countdown` expires) |
+| `At Dutch Auction` | Protocol (escrow) |
+| `Retired` | Integrating protocol (returned) |
+
+### Transfer Events
+
+The protocol executes an asset transfer at exactly four moments:
+
+1. **Idle → Rented:** The first tenant pays `min_renting_price`. The protocol transfers the asset from escrow to the tenant.
+2. **Takeover → Handover:** When `handover_countdown` expires, the protocol transfers the asset from the outgoing tenant to the incoming tenant.
+3. **Rented → At Dutch Auction:** The tenant's `used_credit` exhausts their stake in `rented_handover_open`. The protocol reclaims the asset into escrow.
+4. **Idle → Retired:** The integrating protocol requests retirement. The protocol returns the asset from escrow to the integrating protocol.
+
+### Fructus as a Natural Consequence
+
+Because tenants hold the asset directly, fructus flows to them without any protocol intervention. If the asset generates yield, accrues rewards, or produces any on-chain output while held, the tenant captures it naturally by virtue of ownership. The protocol never intermediates fructus — it only intermediates the asset itself.
+
+> **TODO:** Define behavior for yield or fructus that accrues while the asset is in protocol escrow (Idle and At Dutch Auction states). Options: (a) yield accrues to the protocol and is forwarded to the integrating protocol on retirement, (b) yield is ignored/burned, (c) yield is forwarded to the last known tenant. Each option has different incentive implications.

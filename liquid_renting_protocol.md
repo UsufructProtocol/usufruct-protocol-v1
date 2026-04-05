@@ -515,6 +515,40 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `f_next_renting_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_renting_price) > last_renting_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
 
+### Parameter Immutability
+
+All parameters are set once at integration time and are permanently immutable for the lifetime of that integration instance. There is no mechanism to modify them mid-lifecycle — not even during `Idle`.
+
+**The asset lifecycle is:**
+
+```
+integrate (enter Idle with fixed params)
+    → Idle → Rented → ... → Idle → ...   (params never change)
+    → Retired
+```
+
+**To change any parameter, the owner must:**
+
+1. Wait for the asset to reach `Idle` — the only state from which retirement is possible.
+2. Execute retirement (`Idle → Retired`) — the asset exits the protocol and returns to the owner.
+3. Re-introduce the asset as a fresh integration with the new parameters — the asset enters `Idle` again under the new configuration.
+
+This constraint is a trust guarantee for tenants: the rules under which a tenant entered cannot be altered while their position is active, or at any point during the integration instance. The owner retains the abusus — they may retire the asset — but they may not change the conditions of use while the protocol is live.
+
+### Graceful Exit: the `to_retire` Flag
+
+The integrating protocol may set a `to_retire` flag on the asset at any time, regardless of the current state. The flag does not interrupt any active rental or auction — it is a deferred instruction.
+
+When the asset next reaches `Idle` — the only path being a Dutch Auction that exhausted `descent_ceiling` without finding a new tenant — the protocol checks the `to_retire` flag. If set, the asset is transferred directly to the owner and marked `Retired`, bypassing the normal re-entry into the rental cycle.
+
+This gives the owner a graceful, non-disruptive exit path:
+
+- No active tenant is interrupted.
+- No auction is aborted.
+- The asset simply does not re-enter the market at the next natural resting point.
+
+The `to_retire` flag may also be unset by the owner at any time before the asset reaches `Idle`, cancelling the deferred retirement.
+
 ---
 
 ## 9. Asset Custody and Transfer Model

@@ -549,6 +549,12 @@ This gives the owner a graceful, non-disruptive exit path:
 
 The `to_retire` flag may also be unset by the owner at any time before the asset reaches `Idle`, cancelling the deferred retirement.
 
+If the asset never reaches `Idle` — because the market perpetually validates its price through continuous takeovers or Dutch Auctions that always find a buyer — the `to_retire` flag never executes. The owner cannot force an exit while demand is active. This is not a limitation of the protocol; it is the signal of a successful asset. An asset that never reaches `Idle` is an asset that never stops generating `used_credit` for its owner. The market has the final word — and a market that never goes quiet is precisely the outcome the protocol was designed to produce.
+
+> **Keep in mind:** Since an asset can only be retired when it reaches `Idle`, the integrating protocol should study carefully what incentive behaviors it wants to produce before setting its parameters. The success of an asset in this protocol is measured by exactly one metric: how rarely it sits idle. Parameters are the only lever the owner has to shape that outcome. Choose them with intention.
+>
+> **Don't panic** if the asset reaches `Idle` frequently — it simply means the owner can retire and re-integrate often, adjusting parameters with each cycle. Frequent idle periods are not failure; they are an invitation to experiment. The protocol is forgiving by design: wrong parameters surface quickly, and the retire → re-integrate cycle is the natural feedback loop for finding the right configuration.
+
 ---
 
 ## 9. Asset Custody and Transfer Model

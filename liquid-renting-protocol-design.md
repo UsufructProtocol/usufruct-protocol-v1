@@ -158,7 +158,7 @@ Once a user injects liquidity, the asset enters a state of active utilization th
 
 - The new price becomes the new "barrier" (asset_last_renting_price).
 - The consumption vector (Red Arrow) — consumption_credit_strategy — resets to zero.
-- The new tenant receives a full block of remaining_credit.
+- The new tenant's credit block is initialized at their full entry price P(n+1) — unconsumed, starting from zero.
 
 **The Trigger:** The transition to auction only occurs if the market does not validate the asset_last_renting_price known. That is, if no one clears the barrier established by the last tenant before their used_credit reaches the limit of asset_last_renting_price. In practice, the current tenant only reaches the end of the road if they were the last one to establish asset_last_renting_price.
 
@@ -751,9 +751,9 @@ The following vectors were identified and analyzed against the protocol's design
 
 ### 3. Flash Takeover for Fructus Extraction
 
-**Vector:** An actor takes over the asset, extracts available fructus, then is displaced by an accomplice. Net cost: `used_credit` for the interval. If fructus exceeds that cost, the attack is profitable.
+**Vector:** An actor takes over the asset, extracts available fructus, then is displaced by an accomplice. Net cost: `used_credit + (P_entry - P_prev)` for the interval — the rent consumed plus the minimum price increment. If fructus exceeds that cost, the attack is profitable.
 
-**Resolution:** The current tenant holds the structural asymmetric advantage — they can counter-bid at a net cost of `P_counter - remaining_credit`, always less than the full price the attacker must pay, immediately returning the attacker's payment and retaining their position. If the tenant does not defend, it is because they do not value the usus sufficiently — the market found a better use for the asset. If the asset generates enough yield to make the attack attractive, it is a signal of real demand: the price rises and the owner earns `used_credit`. The protocol functions correctly in both cases.
+**Resolution:** The minimum cost of any takeover is the price increment — even a flash takeover at t≈0 costs at least `P_entry - P_prev`. A sufficiently large increment configured in `f_next_renting_price` raises the floor for this attack. Additionally, the current tenant holds the structural asymmetric advantage — they can counter-bid at a net cost of `P_counter - remaining_credit`, always less than the full price the attacker must pay, immediately returning the attacker's payment and retaining their position. If the tenant does not defend, it is because they do not value the usus sufficiently — the market found a better use for the asset. If the asset generates enough yield to make the attack attractive, it is a signal of real demand: the price rises and the owner earns `used_credit`. The protocol functions correctly in both cases.
 
 ---
 

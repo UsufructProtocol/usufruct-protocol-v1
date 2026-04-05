@@ -386,11 +386,13 @@ Where `g` and `h` are the normalized shape functions mapping `[0,1] → [0,1]`, 
 
 As `last_renting_price` grows through successive takeovers, both functions scale accordingly:
 
-- **`f_credit_ascent`** consumes more credit in absolute terms at any given `t_rented`. The fraction consumed at any time fraction `t/T` is identical across all price levels — only the absolute value changes. A tenant who paid twice the price pays twice the rent per unit of time.
+Both functions have a fixed range within their active state — the range does not change during execution. What grows across successive cycles is the amplitude of each function, because `last_renting_price` rises with each takeover:
 
-- **`f_price_descent`** covers a larger absolute range. Its variable component `(last_renting_price - min_renting_price)` grows with the price, while `min_renting_price` remains fixed. The auction descends from a higher ceiling and must travel further to reach the floor — the market faces a proportionally larger gap to bridge before the asset returns to `Idle`.
+- **`f_credit_ascent`** has amplitude `last_renting_price` (floor fixed at 0). At any given time fraction `t/T`, the absolute credit consumed scales proportionally with `last_renting_price`. A tenant who paid twice the price pays twice the rent per unit of time.
 
-This scaling is a coherent property of the protocol. A higher `last_renting_price` reflects a market that has validated increasing value — and both mechanisms respond proportionally: the active tenant pays more per unit time, and the price discovery mechanism must work harder to find a new equilibrium if the market withdraws.
+- **`f_price_descent`** has amplitude `last_renting_price - min_renting_price` (floor fixed at `min_renting_price`). As `last_renting_price` grows across cycles, the auction spans a larger absolute distance. The market must bridge a proportionally wider gap to reactivate the asset.
+
+The duality is symmetric: both functions are anchored by a fixed floor (0 and `min_renting_price` respectively) and a moving ceiling (`last_renting_price`). As the protocol's price history rises, both mechanisms scale their amplitude by the same reference point.
 
 #### Incentive Implications of Curve Shape
 

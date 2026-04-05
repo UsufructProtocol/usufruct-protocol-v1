@@ -640,7 +640,7 @@ P(n+1) - remaining_credit - (P(n+1) - Pn)
 
 **The tenant pays exactly and only for what they have already consumed.** The remaining portion is returned, the block resets to `P(n+1)`, and the clock starts over from zero.
 
-### The Structural Asymmetry
+### The Structural Asymmetry — The Current Asset Tenant's Advantage
 
 The renewal mechanism creates a structural cost asymmetry between the current tenant and any external competitor — without the protocol encoding it.
 

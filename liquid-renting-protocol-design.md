@@ -390,7 +390,7 @@ Both functions have a fixed range within their active state — the range does n
 
 - **`f_credit_ascent`** has amplitude `last_renting_price` (floor fixed at 0). At any given time fraction `t/T`, the absolute credit consumed scales proportionally with `last_renting_price`. A tenant who paid twice the price pays twice the rent per unit of time.
 
-- **`f_price_descent`** has amplitude `last_renting_price - min_renting_price` (floor fixed at `min_renting_price`). As `last_renting_price` grows across cycles, the auction spans a larger absolute distance. The market must bridge a proportionally wider gap to reactivate the asset.
+- **`f_price_descent`** has amplitude `last_renting_price - min_renting_price` (floor fixed at `min_renting_price`). At any given time fraction `t/T`, the absolute price shed scales proportionally with `last_renting_price - min_renting_price`. An auction that starts twice as high descends twice as fast in absolute terms per unit of time — the market must absorb proportionally larger price drops to find a new equilibrium.
 
 The duality is symmetric: both functions are anchored by a fixed floor (0 and `min_renting_price` respectively) and a moving ceiling (`last_renting_price`). As the protocol's price history rises, both mechanisms scale their amplitude by the same reference point.
 

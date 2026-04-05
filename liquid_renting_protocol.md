@@ -113,7 +113,7 @@ Even while the asset is rented, its usus remains liquid. If the market values th
 
 - The last known rental price in the protocol is updated.
 - A new full time block is initialized for the new tenant.
-- The displaced tenant is economically compensated: they receive the full value of their remaining_credit (the value of unused time) plus 100% of the difference between their entry price and the new price.
+- The displaced tenant is economically compensated: they receive their `remaining_credit` — the value of unused time still locked in the protocol.
 
 The physical transfer of the right is governed by the `handover_countdown`, detailed in Section 5.
 
@@ -179,7 +179,7 @@ When the entry barrier (the price) proves too high for current demand and the la
 
 ## 5. Tenant Compensation Mechanism
 
-The compensation mechanism is the economic guarantee that makes liquid renting viable. It ensures that no tenant ever suffers a net loss from being displaced, and that the incentive to enter the rental market remains rational at every price level.
+The compensation mechanism is the economic guarantee that makes liquid renting viable. It ensures that any displaced tenant always recovers the unused portion of their payment, and that the incentive to enter the rental market remains rational at every price level.
 
 ### 1. The Consumption Function
 
@@ -202,27 +202,26 @@ While a tenant Tn holds the usus at price Pn, the asset remains liquid. Any mark
 
 **Tn receives:**
 - `remaining_credit` — the unused portion of their own locked payment, returned directly from the protocol.
-- `(P(n+1) - Pn)` — 100% of the price delta, funded by T(n+1)'s injection.
 
 **The asset owner (integrating protocol) receives:**
 - `used_credit` — the portion of Pn that corresponds to time already consumed. This is the rent earned for the usus already delivered.
 
 **T(n+1)'s new rental block:**
-- T(n+1) injects `P(n+1)`, which becomes their full rental stake. The `consumption_rent_credit` function resets and runs from `(t=0, 0)` to `(t=T_rent, P(n+1))`.
+- T(n+1) injects `P(n+1)`, which is locked in full as their rental stake. The `consumption_rent_credit` function resets and runs from `(t=0, 0)` to `(t=T_rent, P(n+1))`.
 
 ### 3. Invariants and Guarantees
 
-**No tenant loses money on takeover.** Since the takeover can only occur while `remaining_credit > 0` (i.e., before time expires and the Dutch Auction is triggered), Tn always receives a strictly positive refund of their unused time, plus a premium on the price appreciation.
+**The displaced tenant always recovers unused time.** Since the takeover can only occur while `remaining_credit > 0` (i.e., before time expires and the Dutch Auction is triggered), Tn always receives a strictly positive refund. A net loss relative to the entry price is possible when significant credit has already been consumed — the guarantee is that the displaced tenant always receives something, not that they profit from displacement.
 
 **The pattern is symmetric.** For any sequence of tenants T1, T2, ..., Tn at prices P1 < P2 < ... < Pn:
 
 | Event | Tenant receives | Owner receives |
 |---|---|---|
-| T2 displaces T1 at P2 | `remaining_T1 + (P2 - P1)` | `used_T1` |
-| T3 displaces T2 at P3 | `remaining_T2 + (P3 - P2)` | `used_T2` |
-| Tn displaces T(n-1) at Pn | `remaining_T(n-1) + (Pn - P(n-1))` | `used_T(n-1)` |
+| T2 displaces T1 at P2 | `remaining_T1` | `used_T1` |
+| T3 displaces T2 at P3 | `remaining_T2` | `used_T2` |
+| Tn displaces T(n-1) at Pn | `remaining_T(n-1)` | `used_T(n-1)` |
 
-**Each new block is fully funded.** T(n+1) injects `P(n+1)`. Of that, `(P(n+1) - Pn)` is the delta paid to Tn. The protocol retains the remainder as T(n+1)'s effective stake, against which the consumption function runs up to `P(n+1)`.
+**Each new block is fully funded.** T(n+1) injects `P(n+1)`, which is locked in full as their rental stake. The consumption function runs from `(t=0, 0)` to `(t=T_rent, P(n+1))`. The displaced tenant Tn receives only their `remaining_credit` from their own previously locked stake — no delta flows from the incoming payment. The arithmetic is exact: Tn's `used_credit` goes to the owner, Tn's `remaining_credit` returns to Tn, and T(n+1)'s `P(n+1)` is held in full as their new stake.
 
 ### 4. Dutch Auction as Boundary Condition
 
@@ -266,7 +265,7 @@ The asset continues accepting new bids while in `rented_handover_confirmed`. If 
 - The countdown does not restart — it keeps running from the original start.
 - Each intermediate bidder (all except the last) receives their full injection returned immediately.
 - The asset transfers to the **last** tenant who placed a valid bid before the countdown expired.
-- Tn's compensation is calculated at the moment of physical handover: `remaining_credit_at_handover + (P_final - Pn)`, where `P_final` is the last winning price.
+- Tn's compensation is calculated at the moment of physical handover: `remaining_credit_at_handover` — the unused portion of their stake at the time of physical transfer.
 
 #### New Tenant's Cycle
 
@@ -418,15 +417,14 @@ The one-dimensional form is not a simplification — it is the correct design. E
 
 The protocol places no restriction on the identity of the new tenant. `f_next_renting_price` is evaluated against a price, not a party. This means the current tenant Tn is free to invoke a takeover against themselves, paying `P(n+1) = f_next_renting_price(Pn)`.
 
-The mathematics of the compensation mechanism then produce a striking result. Tn pays `P(n+1)` and simultaneously receives, as the displaced tenant, `remaining_credit + (P(n+1) - Pn)`. Their net cost is:
+The mathematics of the compensation mechanism produce a clean result. Tn pays `P(n+1)` and simultaneously receives, as the displaced tenant, `remaining_credit`. Their net cost is:
 
 ```
-P(n+1) - remaining_credit - (P(n+1) - Pn)
-= Pn - remaining_credit
-= used_credit
+P(n+1) - remaining_credit
+= P(n+1) - Pn + used_credit
 ```
 
-**The tenant pays exactly and only for what they have already consumed.** No more. The unconsumed portion is returned, the block resets to `P(n+1)`, and the clock starts over.
+**The tenant pays the minimum increment plus what they have already consumed.** The unconsumed portion is returned, the block resets to `P(n+1)`, and the clock starts over.
 
 This renewal mechanism was never explicitly designed into the protocol. It is a free consequence of the compensation invariant and the identity-agnostic takeover rule. When simple rules produce emergent behaviors that are both useful and mathematically clean, it is a signal that the underlying design is sound.
 
@@ -620,7 +618,7 @@ The renewal mechanism was never designed. It appears nowhere in the protocol's i
 
 1. **The protocol is identity-agnostic.** `f_next_renting_price` is evaluated against a price, not a party. The protocol has no concept of "same address" or "different address."
 2. **The last valid bidder wins.** During `rented_handover_confirmed`, the asset transfers to the last tenant who placed a valid bid before the `handover_countdown` expired.
-3. **The displaced tenant is always compensated.** Any tenant displaced by a takeover receives `remaining_credit + (P_new - P_old)`, funded from their own locked stake and the incoming bid.
+3. **The displaced tenant always recovers unused time.** Any tenant displaced by a takeover receives `remaining_credit`, returned from their own locked stake.
 
 From these three rules alone, a complete renewal system emerges.
 
@@ -631,18 +629,17 @@ Suppose Tn holds the asset at price Pn, with some `used_credit` already accumula
 The compensation mechanism processes this identically to any takeover. Tn pays P(n+1) and simultaneously receives, as the displaced tenant:
 
 ```
-remaining_credit + (P(n+1) - Pn)
+remaining_credit
 ```
 
 Their net cost is:
 
 ```
-P(n+1) - remaining_credit - (P(n+1) - Pn)
-= Pn - remaining_credit
-= used_credit
+P(n+1) - remaining_credit
+= P(n+1) - Pn + used_credit
 ```
 
-**The tenant pays exactly and only for what they have already consumed.** The remaining portion is returned, the block resets to `P(n+1)`, and the clock starts over from zero.
+**The tenant pays the minimum increment plus what they have already consumed.** The unconsumed portion is returned, the block resets to `P(n+1)`, and the clock starts over from zero.
 
 ### The Structural Asymmetry — The Current Asset Tenant's Advantage
 
@@ -650,13 +647,13 @@ The renewal mechanism creates a structural cost asymmetry between the current te
 
 When an external actor T(m) pays `P(m+1)` and wins the asset, their net cost is `P(m+1)` — the full price of entry. They have purchased a new block at market price.
 
-When the current tenant Tn self-renews at the same price, their net cost is only `used_credit` — the rent already earned by the owner for time already consumed. The rest of their payment returns to them.
+When the current tenant Tn self-renews at the same price, their net cost is `P(n+1) - remaining_credit` — the minimum increment plus the rent already consumed. Their advantage over an external competitor is exactly `remaining_credit`: the unused portion of their existing stake that returns to them, a discount no external actor can access.
 
 This asymmetry is not a privilege granted by the protocol. It is a mathematical consequence of the fact that Tn is simultaneously the payer and the displaced party in the same transaction.
 
 ### Identity-Agnosticism and the Second-Wallet Game
 
-Because the protocol does not verify identity, a single actor operating two addresses is indistinguishable from two competing actors. Tn may place a renewal bid from a second wallet — the protocol processes it as a standard takeover. The effect is identical: Tn pays `used_credit` net, the block resets, the price rises by the minimum increment.
+Because the protocol does not verify identity, a single actor operating two addresses is indistinguishable from two competing actors. Tn may place a renewal bid from a second wallet — the protocol processes it as a standard takeover. The effect is identical: Tn pays `P(n+1) - remaining_credit` net, the block resets, the price rises by the minimum increment.
 
 This is not a loophole. It is the correct behavior. The protocol has no reason to distinguish between a self-renewal and a competitive takeover — both result in a valid new tenant paying a higher price. The market outcome is the same; only the identity of the recipient changes.
 
@@ -666,11 +663,11 @@ The renewal mechanism is equally available during `rented_handover_confirmed`. I
 
 When Tn counter-bids:
 - T(m) receives their full `P(m+1)` injection back immediately — they are superseded.
-- Tn, as the displaced tenant at Pn, receives `remaining_credit + (P(m+2) - Pn)`.
+- Tn, as the displaced tenant at Pn, receives `remaining_credit`.
 - Tn, as the new winning bidder at P(m+2), will receive the asset when the `handover_countdown` expires.
-- Tn's net cost: `P(m+2) - remaining_credit - (P(m+2) - Pn) = used_credit`.
+- Tn's net cost: `P(m+2) - remaining_credit`.
 
-The current tenant can always neutralize a takeover attempt at a net cost of only `used_credit`. No matter how many competing bids arrive during the countdown window, Tn retains the ability to reclaim their position by being the last to bid — paying only for what they have already consumed.
+The current tenant can always neutralize a takeover attempt. Their structural advantage — `remaining_credit` — is the discount they hold over any external competitor who must pay `P(m+2)` in full. This advantage is largest at the start of the block and shrinks as credit is consumed.
 
 ### The Competitive Bidding Window
 
@@ -681,7 +678,7 @@ The `handover_countdown` is not merely a grace period for the current tenant. It
 - The `handover_countdown` keeps running from its original start — it does not reset.
 - The asset transfers to whoever holds the winning bid when the countdown expires.
 
-This creates a transparent ascending auction of bounded duration. The current tenant participates in this auction with a structural cost advantage — they can always be the last bidder at net cost `used_credit`. External bidders must pay the full market price. The market resolves who values the position more.
+This creates a transparent ascending auction of bounded duration. The current tenant participates in this auction with a structural cost advantage — their net cost is always `P_bid - remaining_credit`, strictly less than the full price any external bidder must pay. The advantage is proportional to `remaining_credit`: maximum at the start of a block, approaching zero as the block nears expiry. The market resolves who values the position more.
 
 ### The Cost of Abusing the Defense
 
@@ -701,7 +698,7 @@ This creates a natural discipline: the defensive mechanism is rational to use wh
 
 The following behaviors exist in the protocol without being explicitly implemented:
 
-- **A renewal system** — tenants can extend their position indefinitely by paying only consumed rent.
+- **A renewal system** — tenants can extend their position indefinitely by paying the minimum increment plus consumed rent.
 - **A right of first refusal** — the current tenant can always match and exceed any incoming bid.
 - **A cost floor for the incumbent** — displacement is never free; it requires paying at least `f_next_renting_price` above the current barrier.
 - **A competitive takeover market** — multiple actors can compete for the asset during the `handover_countdown` window.
@@ -728,7 +725,7 @@ The following vectors were identified and analyzed against the protocol's design
 
 ### 2. Perpetual Self-Renewal as Monopoly
 
-**Vector:** A well-capitalized actor self-renews indefinitely, paying only `used_credit` per cycle. The price rises at the minimum increment but never discovers the real market price. Competition is blocked.
+**Vector:** A well-capitalized actor self-renews indefinitely, paying `used_credit + (P(n+1) - Pn)` per cycle — consumed rent plus the minimum increment. The price rises with each cycle but never discovers the real market price. Competition is blocked.
 
 **Resolution:** Reframed — this is the protocol's success scenario, not an attack. The protocol is identity-agnostic: a self-renewing actor is indistinguishable from one who genuinely values the usus and never stops paying for it. In both cases the owner continuously earns `used_credit` and the price rises with each cycle. "Blocked competition" is simply the market correctly pricing the position.
 
@@ -738,7 +735,7 @@ The following vectors were identified and analyzed against the protocol's design
 
 **Vector:** An actor takes over the asset, extracts available fructus, then is displaced by an accomplice. Net cost: `used_credit` for the interval. If fructus exceeds that cost, the attack is profitable.
 
-**Resolution:** The current tenant holds the structural asymmetric advantage — they can counter-bid at net cost of only `used_credit`, immediately returning the attacker's payment and retaining their position. If the tenant does not defend, it is because they do not value the usus sufficiently — the market found a better use for the asset. If the asset generates enough yield to make the attack attractive, it is a signal of real demand: the price rises and the owner earns `used_credit`. The protocol functions correctly in both cases.
+**Resolution:** The current tenant holds the structural asymmetric advantage — they can counter-bid at a net cost of `P_counter - remaining_credit`, always less than the full price the attacker must pay, immediately returning the attacker's payment and retaining their position. If the tenant does not defend, it is because they do not value the usus sufficiently — the market found a better use for the asset. If the asset generates enough yield to make the attack attractive, it is a signal of real demand: the price rises and the owner earns `used_credit`. The protocol functions correctly in both cases.
 
 ---
 
@@ -754,7 +751,7 @@ The following vectors were identified and analyzed against the protocol's design
 
 **Vector:** Multiple actors wait for the `descent_price` to reach the floor before entering, seeking the minimum possible entry price.
 
-**Resolution:** Waiting while `descent_price` falls is inherently risky — another actor may enter first, capturing the current tenant's structural advantage and securing a position with net cost = `used_credit`. The actor who waits potentially surrenders that advantage entirely. The shape of `f_price_descent` directly mitigates this: a concave curve concentrates discounts early in the auction, eliminating the incentive to wait for the end. Integrator's choice.
+**Resolution:** Waiting while `descent_price` falls is inherently risky — another actor may enter first, gaining the incumbent's structural advantage: the ability to renew at a discount of `remaining_credit` relative to any external competitor. The actor who waits potentially surrenders that advantage entirely. The shape of `f_price_descent` directly mitigates this: a concave curve concentrates discounts early in the auction, eliminating the incentive to wait for the end. Integrator's choice.
 
 ---
 

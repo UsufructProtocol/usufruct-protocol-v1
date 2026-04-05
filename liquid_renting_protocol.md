@@ -588,7 +588,23 @@ The protocol executes an asset transfer at exactly four moments:
 
 Because tenants hold the asset directly, fructus flows to them without any protocol intervention. If the asset generates yield, accrues rewards, or produces any on-chain output while held, the tenant captures it naturally by virtue of ownership. The protocol never intermediates fructus — it only intermediates the asset itself.
 
-> **TODO:** Define behavior for yield or fructus that accrues while the asset is in protocol escrow (Idle and At Dutch Auction states). Options: (a) yield accrues to the protocol and is forwarded to the integrating protocol on retirement, (b) yield is ignored/burned, (c) yield is forwarded to the last known tenant. Each option has different incentive implications.
+### Yield During Escrow
+
+Not all assets generate yield while in escrow. Many assets are purely utility-based — they produce nothing while held by the protocol during `Idle` or `At Dutch Auction`. For these assets, escrow yield is a non-issue: there is nothing to distribute.
+
+This section applies exclusively to **yield-bearing assets** — assets that continue to accrue rewards, interest, or any on-chain output regardless of who holds them. For these assets, yield accumulates in the protocol's escrow during vacant periods and must be handled explicitly.
+
+The protocol adopts the following rule: **accumulated escrow yield is delivered to the first tenant who takes the asset out of escrow.**
+
+When a new tenant pays to enter from `Idle` or wins the asset during a Dutch Auction, they receive the full yield accumulated since the asset entered escrow, in addition to the usus and fructus of the asset itself.
+
+This design produces the following incentive properties:
+
+**Urgency to end vacant periods.** The longer the asset sits in escrow, the larger the yield bonus for whoever claims it. This creates positive market pressure to exit vacant states quickly — not through punishment of the owner, but through reward for the incoming tenant.
+
+**Double incentive during Dutch Auction.** As the `descent_price` falls via `f_price_descent`, the accumulated yield bonus grows simultaneously. The combination makes the entry point more attractive than the descending price alone. Actors who would not enter at a given price might be drawn in by the growing yield bonus, resolving the auction earlier.
+
+**Aligned with the owner's interest.** The owner does not receive the escrow yield directly. However, the incentive it creates — faster re-entry into the Rented state — means `used_credit` starts flowing sooner. The owner earns more through occupancy than they would through passive yield accumulation.
 
 ---
 

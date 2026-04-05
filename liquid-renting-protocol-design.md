@@ -146,9 +146,9 @@ The initial equilibrium point. The asset_descent_price equals the asset_min_rent
 
 ### 2. The Consumption and Competition Cycle (State 1: Rented)
 
-![Asset State Transition Flow](./media/2.png "Asset State Transition Flow")
-![Asset State Transition Flow](./media/3.png "Asset State Transition Flow")
-![Asset State Transition Flow](./media/4.png "Asset State Transition Flow")
+![Asset State Transition Flow](./media/rent-start-cycle.png "Asset State Transition Flow")
+![Asset State Transition Flow](./media/rent-some-time.png "Asset State Transition Flow")
+![Asset State Transition Flow](./media/rent-time-exhuasted.png "Asset State Transition Flow")
 
 Once a user injects liquidity, the asset enters a state of active utilization that is, by definition, a renewable cycle:
 

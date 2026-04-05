@@ -129,6 +129,9 @@ If the auction descends to the lower bound (price floor) and the market does not
 **Idle ➔ Retired (Delisting):**
 From the resting state, the integration module evaluates the asset's situation. If it determines that no real market or genuine interest exists to justify its continued presence, it executes the asset's permanent withdrawal from the protocol.
 
+**Idle ↺ Retired (Parameter Reconfiguration):**
+The retire → re-integrate cycle is the protocol's only mechanism for changing integration parameters. The owner retires the asset from `Idle`, adjusting any parameters, and re-introduces it — which places the asset back into `Idle` under the new configuration. This cycle is the natural feedback loop for integrators experimenting with incentive shapes: poor parameters drive the asset to `Idle` frequently, making reconfiguration fast and low-cost. The protocol is forgiving by design — wrong parameters surface quickly and the correction path is always available.
+
 ---
 
 ## 4. Asset State Flow (Low-Level View)

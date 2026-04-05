@@ -394,6 +394,16 @@ Both functions have a fixed range within their active state — the range does n
 
 The duality is symmetric: both functions are anchored by a fixed floor (0 and `min_renting_price` respectively) and a moving ceiling (`last_renting_price`). As the protocol's price history rises, both mechanisms scale their amplitude by the same reference point.
 
+#### Consequences of the Scaling Behavior
+
+**Owner revenue scales with market validation.** Since `used_credit` scales with `last_renting_price`, the owner earns proportionally more per block as the price rises through successive takeovers. Each cycle in which the market validates a higher price directly increases the rent generated for the owner. The protocol's revenue is self-calibrating: it is always proportional to the value the market assigns to the usus.
+
+**The incumbent's burn rate rises with the price.** A tenant who entered at a higher `last_renting_price` consumes their stake faster in absolute terms per unit of time. Holding a more expensive position costs more per second — not just in total, but in the rate at which credit is earned by the owner. The cost of occupying the position is always proportional to its market price.
+
+**The Dutch Auction is more aggressive at higher prices.** When `last_renting_price` is high, the auction sheds larger absolute amounts per unit of time. The market is not given more time to find equilibrium — it faces proportionally larger price drops within the same `descent_ceiling` window. An asset that the market priced high but then abandoned requires a more aggressive correction to return to activity.
+
+**The protocol responds symmetrically to market activity and inactivity.** When the market actively validates prices through successive takeovers, `f_credit_ascent` scales up — the owner earns more and the incumbent pays more per unit of time. When the market withdraws and a Dutch Auction begins, `f_price_descent` scales up by the same reference point — the correction is as large as the ascent was. The two mechanisms are calibrated to the same price history, so the protocol's response to demand is always proportional to its own prior peak.
+
 #### Incentive Implications of Curve Shape
 
 The shape of the decay curve determines when buyers are incentivized to act during the auction:

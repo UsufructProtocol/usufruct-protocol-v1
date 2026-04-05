@@ -40,6 +40,7 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 8. [Integration Parameters](#8-integration-parameters)
 9. [Asset Custody and Transfer Model](#9-asset-custody-and-transfer-model)
 10. [The Renewal Mechanism](#10-the-renewal-mechanism)
+11. [Attack Vectors and Protocol Resilience](#11-attack-vectors-and-protocol-resilience)
 
 ---
 
@@ -705,3 +706,97 @@ The following behaviors exist in the protocol without being explicitly implement
 - **A self-limiting defense** — abusing the counter-bid mechanism raises the tenant's own cost floor. The protocol does not punish overuse; the price does.
 
 None of these were designed. They are the natural output of identity-agnosticism, the last-bidder-wins rule, and the compensation invariant operating together. When simple primitives produce emergent behaviors that are both economically rational and mathematically clean, it is a signal that the underlying design is sound.
+
+---
+
+## 11. Attack Vectors and Protocol Resilience
+
+The following vectors were identified and analyzed against the protocol's design. Each is resolved either by a formal constraint, an emergent property, or by being correctly identified as integrator responsibility rather than a protocol flaw.
+
+---
+
+### 1. Griefing via Trivial Minimum Increment
+
+**Vector:** An integrator configures `f_next_renting_price` with δ ≈ 0. A well-funded actor can execute repeated takeovers paying a negligible premium, continuously disrupting tenants at low cost.
+
+**Resolution:** Not a protocol flaw. The protocol only enforces `f(last_renting_price) > last_renting_price`. The responsibility of choosing an increment that disincentivizes griefing falls entirely on the integrator. A trivial function is a misconfiguration, not a vulnerability.
+
+---
+
+### 2. Perpetual Self-Renewal as Monopoly
+
+**Vector:** A well-capitalized actor self-renews indefinitely, paying only `used_credit` per cycle. The price rises at the minimum increment but never discovers the real market price. Competition is blocked.
+
+**Resolution:** Reframed — this is the protocol's success scenario, not an attack. The protocol is identity-agnostic: a self-renewing actor is indistinguishable from one who genuinely values the usus and never stops paying for it. In both cases the owner continuously earns `used_credit` and the price rises with each cycle. "Blocked competition" is simply the market correctly pricing the position.
+
+---
+
+### 3. Flash Takeover for Fructus Extraction
+
+**Vector:** An actor takes over the asset, extracts available fructus, then is displaced by an accomplice. Net cost: `used_credit` for the interval. If fructus exceeds that cost, the attack is profitable.
+
+**Resolution:** The current tenant holds the structural asymmetric advantage — they can counter-bid at net cost of only `used_credit`, immediately returning the attacker's payment and retaining their position. If the tenant does not defend, it is because they do not value the usus sufficiently — the market found a better use for the asset. If the asset generates enough yield to make the attack attractive, it is a signal of real demand: the price rises and the owner earns `used_credit`. The protocol functions correctly in both cases.
+
+---
+
+### 4. Artificial Price Inflation to Block Access
+
+**Vector:** An actor abuses the current tenant's structural advantage, inflating the price through coordinated takeovers between their own wallets, making the asset inaccessible to organic demand.
+
+**Resolution:** This is the self-limiting defense property operating at its perverse extreme. Each escalation raises `last_renting_price` via `f_next_renting_price`. If the market does not validate the inflated price and no external competitor arrives, the attacker is trapped consuming an expensive block alone — paying `used_credit` at prices they themselves inflated. The protocol does not need to punish this behavior: the price does. The cost of the attack is proportional to its own aggressiveness.
+
+---
+
+### 5. Dutch Auction Sniping
+
+**Vector:** Multiple actors wait for the `descent_price` to reach the floor before entering, seeking the minimum possible entry price.
+
+**Resolution:** Waiting while `descent_price` falls is inherently risky — another actor may enter first, capturing the current tenant's structural advantage and securing a position with net cost = `used_credit`. The actor who waits potentially surrenders that advantage entirely. The shape of `f_price_descent` directly mitigates this: a concave curve concentrates discounts early in the auction, eliminating the incentive to wait for the end. Integrator's choice.
+
+---
+
+### 6. Fructus Extraction During `handover_countdown`
+
+**Vector:** The outgoing tenant retains usus and fructus during the `handover_countdown`. If they can extract disproportionate value during this window, there is a perverse incentive.
+
+**Resolution:** The `handover_countdown` is not free for the outgoing tenant. `f_credit_ascent` continues running throughout — `used_credit` keeps accruing and flowing to the owner. The tenant pays for every second they retain the asset. Any fructus extracted during the countdown is implicitly paid for via `used_credit`. There is no free extraction.
+
+---
+
+### 7. Indefinite Takeover Queue During `handover_countdown`
+
+**Vector:** If T3 arrives during the T1→T2 `handover_countdown`, an attacker could create an arbitrarily deep queue of pending takeovers, indefinitely delaying physical transfer.
+
+**Resolution:** The `handover_countdown` does not restart with new bids. There is only ever one pending recipient — the last bidder. No queue is possible by construction.
+
+---
+
+### 8. Step Function for `f_credit_ascent`
+
+**Vector:** An integrator configures `f_credit_ascent` as a step function: `f(t) = 0` for all `t < tenure_ceiling`, jumping to `Pn` at the last instant. `remaining_credit ≈ Pn` for almost the entire block. The owner earns almost nothing, and any takeover returns nearly the full stake to the displaced tenant. The asset is effectively shielded from market competition.
+
+**Resolution:** Not a vulnerability — it is a self-punishing misconfiguration. The owner earns almost no `used_credit`, the price does not rise, and when the block expires with no successor the asset goes straight to Dutch Auction → Idle. The protocol is self-regulating: bad configurations drive the asset to Idle quickly, allowing the owner to retire and reconfigure. The feedback loop is immediate.
+
+---
+
+### 9. Perverse Coordination on Escrow Yield
+
+**Vector:** If yield accumulates at a known rate during `Idle`/`At Dutch Auction`, actors may coordinate to withhold entry until the accumulated bonus is large enough — paradoxically extending the vacant period instead of shortening it.
+
+**Resolution:** Waiting surrenders the current tenant's structural advantage. The first actor to enter captures both the accumulated yield and the structural protection of the tenant position. The actor who waited loses both simultaneously. The protocol permits the waiting strategy but does not make it free: competition between actors is the natural mitigation. No one can guarantee the optimal entry moment without risking that another actor claims it first.
+
+---
+
+### 10. `to_retire` as Market Manipulation Signal
+
+**Vector:** The `to_retire` flag is publicly visible. The owner can set and unset it to signal that the asset is "about to be retired," discouraging new tenants and manufacturing artificial `Idle` periods to change parameters faster.
+
+**Resolution:** The owner can mark `to_retire` but cannot control the market. If the asset generates real value, tenants will continue competing for it regardless of the flag. If the market cools in response to the signal, that is a rational market decision — not manipulation. The owner also has an incentive against abusing the flag: setting it reduces rental activity and therefore their own `used_credit` earnings. This is a reversible market signal whose effectiveness depends entirely on whether the market validates it.
+
+---
+
+### 11. Rapid Retire/Re-integrate for Parameter Manipulation
+
+**Vector:** With a low `min_renting_price` and short `descent_ceiling`, an owner can engineer rapid `Idle` cycles to re-integrate the asset with different parameters frequently — effectively changing the rules of the game at high frequency while formally respecting immutability per instance.
+
+**Resolution:** This falls outside the protocol's control and is the owner's responsibility. The protocol guarantees immutability per instance — nothing more. Each `Idle` cycle is time without `used_credit` and without rent. An asset with constantly changing parameters loses market trust. The strategy is self-defeating: the owner pays the price of their own instability.

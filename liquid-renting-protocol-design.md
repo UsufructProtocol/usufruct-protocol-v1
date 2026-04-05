@@ -64,7 +64,7 @@ This is possible, and it is called **Liquid Renting**.
 
 The Liquid Renting model is designed to apply fundamentally to rental assets that meet the following non-negotiable principles:
 
-**Utility-grounded value:** The intrinsic value of the asset must reside strictly in its capacity to be used (usus) and in the yields or cash flows derived from it (fructus), rather than in mere speculation over its ownership.
+**Utility-grounded value:** The intrinsic value of the asset must reside strictly in its capacity to be used (usus) and in the yields or cash flows derived from it (fructus), rather than in mere speculation over its ownership. This principle extends to market participation: the rational motive for entering the rental market is the value derived from holding and using the asset, not the expectation of a profit on displacement. The protocol does not reward speculation — a displaced tenant recovers only the unused portion of their payment, never a gain from price appreciation.
 
 **Proven organic demand:** The asset must generate genuine interest and possess real traction. The protocol optimizes liquidity, fractions time, and eliminates friction — but operates under an immutable economic premise: no technology or protocol can create sustainable demand for an asset that lacks a market.
 
@@ -180,6 +180,8 @@ When the entry barrier (the price) proves too high for current demand and the la
 ## 5. Tenant Compensation Mechanism
 
 The compensation mechanism is the economic guarantee that makes liquid renting viable. It ensures that any displaced tenant always recovers the unused portion of their payment, and that the incentive to enter the rental market remains rational at every price level.
+
+The compensation is strictly bounded by the tenant's own stake. No price appreciation flows to displaced tenants — the protocol deliberately excludes this. Displacement is a neutral-to-negative economic event for the outgoing tenant: they recover `remaining_credit` and absorb `used_credit` as the cost of the time they held the asset. This design is a direct consequence of the utility-grounded value principle: if a tenant's motivation is the usus and fructus of the asset, displacement interrupts that utility and the partial refund is fair compensation. If a tenant's motivation is speculation on price appreciation, the protocol offers no support for that strategy.
 
 ### 1. The Consumption Function
 
@@ -412,6 +414,22 @@ A time-dependent minimum increment — where the required premium decreases as t
 A minimum increment dependent on `remaining_credit` was rejected for the same reason: as `remaining_credit → 0`, the required increment approaches zero, implicitly encoding a time-based price reduction. Same redundancy, different variable.
 
 The one-dimensional form is not a simplification — it is the correct design. Each function in the protocol has a single, non-overlapping responsibility.
+
+#### The Increment as a Critical Design Parameter
+
+The size of the increment defined by `f_next_renting_price` carries more weight in this protocol than it might initially appear. The self-renewal cost for the current tenant is:
+
+```
+renewal_cost = used_credit + (P(n+1) - Pn)
+```
+
+Where `(P(n+1) - Pn)` is the increment. This means the increment is **a direct component of the incumbent's defense cost**, not merely a barrier against external competitors. The integrating protocol must balance two competing forces:
+
+**A small increment** (δ → 0): Self-renewal is cheap — the incumbent pays nearly `used_credit` to reset their block. However, a small increment also exposes the protocol to griefing — a well-funded actor can execute repeated takeovers at negligible cost, continuously disrupting tenants (Attack Vector 1).
+
+**A large increment**: Self-renewal is expensive — the incumbent must pay significantly above `used_credit` to maintain their position. This weakens the structural advantage and makes sustained hold more capital-intensive. On the other hand, it accelerates genuine price discovery and makes the asset more accessible to competing market participants.
+
+There is no universally correct increment. The integrating protocol must select a `f_next_renting_price` that reflects the specific competitive dynamics of the asset: how actively it is contested, the capital profile of expected participants, and how aggressively genuine price discovery should be driven.
 
 #### The Renewal Mechanism as an Implicit Consequence
 

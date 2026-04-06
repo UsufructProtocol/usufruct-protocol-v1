@@ -727,6 +727,42 @@ If the asset never reaches `Idle` — because the market perpetually validates i
 >
 > **Don't panic** if the asset reaches `Idle` frequently — it simply means the owner can retire and re-integrate often, adjusting parameters with each cycle. Frequent idle periods are not failure; they are an invitation to experiment. The protocol is forgiving by design: wrong parameters surface quickly, and the retire → re-integrate cycle is the natural feedback loop for finding the right configuration.
 
+### Forced Exit: the `force_retire()` Call
+
+The `to_retire` flag is the correct and preferred exit path. However, a structural edge case exists that can prevent it from ever executing.
+
+During `At Dutch Auction`, yield-bearing assets continue to accrue yield in escrow. This accumulated yield is delivered as a bonus to the first tenant who pulls the asset out of escrow — an incentive designed to accelerate re-entry into the `Rented` state. If the asset generates substantial yield and the bonus grows large enough, the Dutch Auction will always find a buyer regardless of `price_descent`. The `Idle` state becomes unreachable. The `to_retire` flag is set but never fires. The owner cannot exit.
+
+`force_retire()` is the owner's guarantee that this situation never becomes permanent.
+
+#### Behavior by State
+
+**From `At Dutch Auction`:**
+The auction terminates immediately. The yield accumulated in escrow is delivered to the owner — there is no active tenant and the incentive has no legitimate recipient. The asset passes to `Retired`.
+
+This is the primary use case for `force_retire()`. It is the only state where the kidnapping scenario can occur, and the only state where the call acts with immediate effect.
+
+**From `Rented` (`rent_handover_open`):**
+There is no escrow yield — the tenant holds the asset directly and captures yield naturally. The owner cannot interrupt an active rental block without violating the tenant's guarantee. `force_retire()` sets a deferred exit: when the current block expires at `tenure_ceiling`, the asset transitions to `Retired` instead of triggering a Dutch Auction. The tenant completes their block in full. No disruption occurs.
+
+**From `Rented` (`rent_handover_confirmed`):**
+The incoming tenant's payment is returned to them immediately. The current tenant retains usus and fructus until the `handover_countdown` expires, at which point they receive their `remain_credit` and the asset passes to `Retired`. Both parties are made whole.
+
+**From `Idle`:**
+Equivalent to `to_retire` executing immediately. The asset passes to `Retired` without re-entering the rental cycle.
+
+#### The Tenant Guarantee Is Preserved
+
+In every `Rented` state, the tenant's block is not cut short. Their `remain_credit` is honoured at the natural end of their position. The protocol's foundational promise to tenants — *if displaced, recover unused credit* — holds unconditionally across all `force_retire()` paths.
+
+#### A Tool of Last Resort
+
+`force_retire()` should be invoked only when the natural exit path is genuinely blocked. Using it as a routine management tool — to reconfigure parameters, respond to market conditions, or accelerate re-integration — sends an unambiguous signal to the market: the asset's protocol instance can be terminated unilaterally at any time.
+
+The consequences are direct. Tenants who price their position rationally will discount the risk of forced interruption. Competition for the asset weakens. The Dutch Auction loses depth as potential buyers wait rather than commit. The owner earns less `used_credit` than they would have by allowing the protocol to run its natural course.
+
+The protocol does not penalise the abuse of `force_retire()`. The market does. An asset whose owner treats forced exit as a lever will, over time, cease to attract the organic competition the protocol was designed to produce. The mechanism exists to guarantee that no owner is permanently trapped. Its correct use is exceptional.
+
 ---
 
 ## 10. On-Chain State Derivability

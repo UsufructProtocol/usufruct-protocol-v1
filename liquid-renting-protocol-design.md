@@ -965,7 +965,7 @@ The asset is always non-fungible — liquid renting operates on unique, indivisi
 
 ### The Asset Axis
 
-**Nonfungible-open:** The asset is freely transferable. Any actor can hold it, rent it, or compete for it without restriction. This covers collectibles, digital art, gaming assets, virtual real estate — any object whose value derives from its usus in an open market.
+**Nonfungible-open:** The asset is freely transferable. Any actor can hold it, rent it, or compete for it without restriction. This covers collectibles, digital art, gaming assets, virtual real estate — any object whose value derives from its usus in an open market. Once integrated, the protocol takes custody and the asset's free transferability is suspended for the duration — it can only move according to the state machine. Integration naturally wraps a nonfungible-open asset into closed behavior, preventing it from escaping the protocol's logic.
 
 **Nonfungible-closed:** The asset's transfer is gated by conditions — identity, authorization, membership, or protocol-defined rules. This covers credentials, usage licenses, access rights, or any object whose value derives from what it proves or enables rather than what it represents. The liquid renting logic applies without modification: the protocol does not evaluate the conditions of the asset's closure — it only governs who holds it and for how long.
 

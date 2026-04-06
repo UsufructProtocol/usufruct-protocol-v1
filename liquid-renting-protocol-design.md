@@ -355,6 +355,8 @@ The integrating protocol selects the curve shape to incentivize a specific marke
 
 **Convex curve (e.g., `f(t) = Pn · (t / T)²`):** Credit is consumed slowly at the start and accelerates toward the end. A tenant displaced early still holds a large `remain_credit`, making entry safer. This incentivizes rotation — the cost of entering is partially recoverable at any early point, lowering the risk of taking a position. Suited for protocols that want high liquidity and active price discovery.
 
+> **Note:** The three families above — concave, linear, and convex — are not a simplification. They are the complete design space. Any continuous, strictly monotonically increasing function between two fixed endpoints has a well-defined curvature at every point: positive (convex), negative (concave), or zero (linear). The diagram above is not a metaphor — it is the full space of valid implementations. The two boundary curves are the extreme cases; the diagonal is the linear. Every valid `f_credit_ascent` is an interpolation within that region.
+
 ---
 
 ### 6.2 `f_price_descent(t_auction)`

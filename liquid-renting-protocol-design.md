@@ -248,7 +248,7 @@ handover_countdown = min(handover_floor, remaining_rent_time)
 Where `handover_floor` is a protocol-level parameter constrained by:
 
 ```
-0 ≤ handover_floor ≤ tenure_ceiling
+0 < handover_floor ≤ tenure_ceiling
 ```
 
 The `handover_countdown` is fixed at the moment the first bid arrives. Subsequent bids during the countdown do not restart it — it keeps running from the moment it began.
@@ -283,7 +283,6 @@ If the `handover_countdown` exhausts Tn's remaining time (`handover_countdown = 
 
 #### Edge Cases
 
-- **`handover_floor = 0`:** The handover is instantaneous. The moment T(n+1) pays, Tn loses the asset with no guaranteed window.
 - **`handover_floor = tenure_ceiling`:** The countdown equals the full rental block. The current tenant is guaranteed the entirety of their remaining time before any handover — equivalent in behavior to a traditional fixed-term lease, with the liquid renting compensation mechanics preserved.
 
 ---
@@ -567,7 +566,7 @@ This renewal mechanism was never explicitly designed into the protocol. It is a 
 
 **`tenure_ceiling`:** The fixed duration of each rental block. The maximum time any tenant can hold the asset in a single position. Constraint: `handover_floor ≤ tenure_ceiling`.
 
-**`handover_floor`:** The minimum guaranteed usage window for the current tenant after a takeover is initiated. Protocol parameter constrained by `0 ≤ handover_floor ≤ tenure_ceiling`.
+**`handover_floor`:** The minimum guaranteed usage window for the current tenant after a takeover is initiated. Protocol parameter constrained by `0 < handover_floor ≤ tenure_ceiling`.
 
 **`handover_countdown`:** The actual countdown to physical transfer, calculated at the moment the first bid arrives: `min(handover_floor, remaining_rent_time)`. Fixed once started — subsequent bids do not restart it.
 
@@ -598,7 +597,7 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `asset` | Object | The asset to be placed under the Liquid Renting protocol. | Must not already be under an active rental position. |
 | `min_rent_price` | Amount | The price floor. The lowest valid rental price and the lower bound of `f_price_descent`. | `min_rent_price > 0` |
 | `tenure_ceiling` | Duration | Maximum duration of a single rental block. | `tenure_ceiling > 0` ; `handover_floor ≤ tenure_ceiling` |
-| `handover_floor` | Duration | Minimum guaranteed usage window for the current tenant after a takeover is initiated. | `0 ≤ handover_floor ≤ tenure_ceiling` |
+| `handover_floor` | Duration | Minimum guaranteed usage window for the current tenant after a takeover is initiated. | `0 < handover_floor ≤ tenure_ceiling` |
 | `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. | `descent_ceiling > 0` |
 | `f_credit_ascent` | Function | Shape of the credit consumption curve during the Rented state. | `f(0) = 0` ; `f(tenure_ceiling) = last_rent_price` ; `∀ t : 0 ≤ f(t) ≤ last_rent_price` ; strictly monotonically increasing |
 | `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_rent_price` ; `f(descent_ceiling) = min_rent_price` ; strictly monotonically decreasing |

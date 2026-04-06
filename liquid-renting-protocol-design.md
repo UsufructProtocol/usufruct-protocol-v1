@@ -1036,6 +1036,12 @@ A liquidity position NFT in an AMM represents a deployed capital allocation that
 
 The protocol applies because the fructus — trading fees — flows to whoever holds the position by virtue of custody. The protocol does not need to intermediate yield; it only needs to transfer the NFT. The yield optimizer rents the position, captures fees during their tenure, and returns `used_credit` to the owner as rent. If a better optimizer is willing to pay a higher price for the same position, the takeover displaces the current one with full compensation — the market continuously allocates the position to whoever extracts the most value from it.
 
+**4. Tokenized ad slots**
+
+A protocol, virtual world, or content platform tokenizes its advertising inventory — banner positions, sponsored feed slots, in-world billboards — as open NFTs. Any advertiser can compete for a slot, paying in standard currency. The usus is the exclusive right to display content in that position; the fructus is the stream of impressions, clicks, or engagement generated while holding it.
+
+The protocol applies because advertising value is among the most time-sensitive and volatile in any market. A slot worth little on a quiet Tuesday may be worth orders of magnitude more during a product launch, a protocol upgrade announcement, or a viral event. A static lease cannot reprice in real time — it either underprices the slot during peak demand or overprices it during slow periods. The takeover mechanism handles this naturally: a high-value campaign willing to pay a premium displaces a lower-value one mid-flight, with the displaced advertiser recovering the unused portion of their stake. The Dutch Auction finds the market floor during low-traffic periods, ensuring inventory never sits idle at a stale price. The result is a self-calibrating ad market where price always reflects current demand — without a centralized auctioneer.
+
 ---
 
 ### NF-open + F-closed — Closed Economy

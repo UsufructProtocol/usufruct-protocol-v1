@@ -323,7 +323,7 @@ The function must satisfy the following conditions:
 1. **Origin:** `f(0) = 0` — at the start of the rental, no credit has been consumed.
 2. **Termination:** `f(tenure_ceiling) = last_rent_price` — at the end of the rental period, all credit is exactly exhausted.
 3. **Boundedness:** `∀ t ∈ [0, tenure_ceiling] : 0 ≤ f(t) ≤ last_rent_price` — the function is always contained within the bounding rectangle.
-4. **Monotonicity:** `f` is monotonically non-decreasing — `used_credit` can only grow, never decrease.
+4. **Monotonicity:** `f` is strictly monotonically increasing — `used_credit` can only grow, never decrease.
 
 Any function satisfying these four constraints is a valid implementation. The protocol imposes no further restriction on its shape.
 
@@ -363,7 +363,7 @@ The function must satisfy the following conditions:
 2. **Termination:** `f(descent_ceiling) = min_rent_price` — if no buyer is found, the price reaches the floor and the asset returns to Idle.
 3. **Boundedness:** `∀ t ∈ [0, descent_ceiling] : min_rent_price ≤ f(t) ≤ last_rent_price` — the function is always contained within the bounding rectangle.
 
-The function is monotonically non-increasing — the price can only descend during a Dutch Auction.
+The function is strictly monotonically decreasing — the price can only descend during a Dutch Auction.
 
 #### Symmetry with `f_credit_ascent`
 
@@ -374,7 +374,7 @@ Both functions share an identical structural contract: two fixed endpoints, a bo
 | Fixed point at t=0 | `f(0) = 0` | `f(0) = last_rent_price` |
 | Fixed point at t=T | `f(T_rent) = last_rent_price` | `f(T_auction) = min_rent_price` |
 | Bounded by | `[0, last_rent_price]` | `[min_rent_price, last_rent_price]` |
-| Direction | Monotonically non-decreasing | Monotonically non-increasing |
+| Direction | Strictly monotonically increasing | Strictly monotonically decreasing |
 
 This design decision — fixing both endpoints and leaving the interior free — is deliberate. The space of valid curves between two fixed points is already vast enough to express any incentive behavior the integrating protocol may require. Adding discontinuities or free starting points would introduce complexity without expanding expressive power.
 
@@ -541,9 +541,9 @@ This renewal mechanism was never explicitly designed into the protocol. It is a 
 
 ### Incentive-driven Functions
 
-**`f_credit_ascent(t_rent)`:** Defines how `used_credit` grows over time during a rental. Must pass through `(0, 0)` and `(tenure_ceiling, last_rent_price)`, bounded within the rectangle, monotonically non-decreasing. Shape is chosen by the integrating protocol.
+**`f_credit_ascent(t_rent)`:** Defines how `used_credit` grows over time during a rental. Must pass through `(0, 0)` and `(tenure_ceiling, last_rent_price)`, bounded within the rectangle, strictly monotonically increasing. Shape is chosen by the integrating protocol.
 
-**`f_price_descent(t_auction)`:** Defines how `price_descent` decays during a Dutch Auction. Must pass through `(0, last_rent_price)` and `(descent_ceiling, min_rent_price)`, monotonically non-increasing. Symmetric counterpart to `f_credit_ascent`.
+**`f_price_descent(t_auction)`:** Defines how `price_descent` decays during a Dutch Auction. Must pass through `(0, last_rent_price)` and `(descent_ceiling, min_rent_price)`, strictly monotonically decreasing. Symmetric counterpart to `f_credit_ascent`.
 
 **`f_next_rent_price(last_rent_price)`:** Defines the minimum price to displace the current tenant. Strictly one-dimensional. Must satisfy `f(last_rent_price) > last_rent_price`.
 
@@ -566,8 +566,8 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `tenure_ceiling` | Duration | Maximum duration of a single rental block. | `tenure_ceiling > 0` ; `handover_floor ≤ tenure_ceiling` |
 | `handover_floor` | Duration | Minimum guaranteed usage window for the current tenant after a takeover is initiated. | `0 ≤ handover_floor ≤ tenure_ceiling` |
 | `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. | `descent_ceiling > 0` |
-| `f_credit_ascent` | Function | Shape of the credit consumption curve during the Rented state. | `f(0) = 0` ; `f(tenure_ceiling) = last_rent_price` ; `∀ t : 0 ≤ f(t) ≤ last_rent_price` ; monotonically non-decreasing |
-| `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_rent_price` ; `f(descent_ceiling) = min_rent_price` ; monotonically non-increasing |
+| `f_credit_ascent` | Function | Shape of the credit consumption curve during the Rented state. | `f(0) = 0` ; `f(tenure_ceiling) = last_rent_price` ; `∀ t : 0 ≤ f(t) ≤ last_rent_price` ; strictly monotonically increasing |
+| `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_rent_price` ; `f(descent_ceiling) = min_rent_price` ; strictly monotonically decreasing |
 | `f_next_rent_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
 
@@ -827,9 +827,9 @@ The following vectors were identified and analyzed against the protocol's design
 
 ### 8. Step Function for `f_credit_ascent`
 
-**Vector:** An integrator configures `f_credit_ascent` as a step function: `f(t) = 0` for all `t < tenure_ceiling`, jumping to `Pn` at the last instant. `remain_credit ≈ Pn` for almost the entire block. The owner earns almost nothing, and any takeover returns nearly the full stake to the displaced tenant. The asset is effectively shielded from market competition.
+**Vector:** An integrator attempts to configure `f_credit_ascent` as a step function: `f(t) = 0` for all `t < tenure_ceiling`, jumping to `Pn` at the last instant. The intent is to keep `remain_credit ≈ Pn` for almost the entire block, shielding the asset from takeovers and earning the owner almost nothing.
 
-**Resolution:** Not a vulnerability — it is a self-punishing misconfiguration. The owner earns almost no `used_credit`, the price does not rise, and when the block expires with no successor the asset goes straight to Dutch Auction → Idle. The protocol is self-regulating: bad configurations drive the asset to Idle quickly, allowing the owner to retire and reconfigure. The feedback loop is immediate.
+**Resolution:** This configuration is invalid. The strict monotonicity constraint requires `f` to be strictly increasing at every point in its domain — a step function violates this by holding constant across the interval `[0, tenure_ceiling)`. The protocol rejects it at integration time. An integrator seeking similar behavior must use a strictly increasing approximation, which inherently eliminates the flat region and restores continuous rent accrual to the owner.
 
 ---
 

@@ -90,7 +90,7 @@ The following details the state machine through which any integrated asset trans
 ### 1. State Definitions (Asset States)
 
 **State 0: Idle (Baseline / Price Floor):**
-The entry or resting state. The asset is available at the base rental price. No usage right is committed. The usus and fructus are waiting for a first tenant to inject the liquidity necessary to activate the protocol.
+The entry or resting state. The asset is available at or above `min_rent_price`. No usage right is committed. The usus and fructus are waiting for a first tenant to inject the liquidity necessary to activate the protocol.
 
 **State 1: Rented (Position Secured):**
 The tenant has acquired the monopoly over usus and fructus through upfront liquidity injection. In this state, the tenant does not trade the asset — they enjoy its utility while their position remains active. The injected liquidity is bound to the asset. This state has two sub-states:
@@ -109,7 +109,7 @@ The exit state from the protocol. An asset can only be retired when it is in the
 The flow of the asset between states obeys strict rules of liquidity and time, ensuring the market always has the final word on the value of the usus.
 
 **Idle ➔ Rented (Initial Activation):**
-A user injects the initial liquidity corresponding to the asset's base rental fee. The protocol assigns the usus and fructus, initiating a rental time block that is fixed and immovable by the protocol's architecture.
+A user injects any amount `P_entry ≥ min_rent_price`. This amount becomes the new `last_rent_price`. The protocol assigns the usus and fructus, initiating a rental time block that is fixed and immovable by the protocol's architecture.
 
 **Rented ↺ (Takeover / Market Relay):**
 Even while the asset is rented, its usus remains liquid. If the market values the asset above the current price, a new tenant can inject liquidity at a higher price. In doing so:
@@ -148,7 +148,7 @@ At a deeper level, the Liquid Renting architecture operates as a dynamic equilib
 
 ![Asset State Transition Flow](./media/idle-state.png "Asset State Transition Flow")
 
-The initial equilibrium point. The price_descent equals the min_rent_price. The asset is "open" with no liquidity barrier protecting its usus.
+The initial equilibrium point. The asset is "open" with no incumbent and no liquidity barrier protecting its usus. Any amount `P_entry ≥ min_rent_price` is a valid entry price; `min_rent_price` is the floor, not a forced price.
 
 ### 2. The Credit Ascent and Takeover Cycle (State 1: Rented)
 
@@ -210,7 +210,7 @@ This design eliminates the need for any external hook or callback to deliver usu
 
 The protocol executes an asset transfer at exactly five moments:
 
-1. **Idle → Rented:** The first tenant pays `min_rent_price`. The protocol transfers the asset from escrow to the tenant.
+1. **Idle → Rented:** The first tenant pays any amount `P_entry ≥ min_rent_price`, which becomes `last_rent_price`. The protocol transfers the asset from escrow to the tenant.
 2. **Takeover → Handover:** When `handover_countdown` expires and T(n+1) calls `claim_handover()` within `claim_window`, the protocol transfers the asset from the outgoing tenant to the incoming tenant.
 3. **Rented → At Dutch Auction (Exhaustion):** The tenant's `used_credit` exhausts their stake in `rent_handover_open`. The protocol reclaims the asset into escrow.
 4. **Rented → At Dutch Auction (Claim Abandonment):** T(n+1)'s `claim_window` expires without `claim_handover()` being called. The protocol reclaims the asset from Tn into escrow. T(n+1)'s `P(n+1)` enters escrow as Dutch Auction bonus.
@@ -1189,7 +1189,7 @@ The protocol applies because research access has a project lifecycle that rarely
 
 ### Asset States
 
-**Idle:** The resting state. The asset is available at `min_rent_price` with no active usage commitment.
+**Idle:** The resting state. The asset is available with no active usage commitment. Any amount `P_entry ≥ min_rent_price` is a valid entry price.
 
 **Rented:** The active state. A tenant holds usus and fructus. Has two sub-states:
 

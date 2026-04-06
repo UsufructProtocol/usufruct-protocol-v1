@@ -123,6 +123,9 @@ The physical transfer of the right is governed by the `handover_countdown`, deta
 **Rented ➔ At Dutch Auction (Exhaustion and Liquidation):**
 This transition requires two conditions to be true simultaneously: the current tenant's time block is exhausted (`remain_credit = 0`) AND the asset is in the `rent_handover_open` sub-state. If a next tenant has already paid (`rent_handover_confirmed`), the asset transfers directly to them — the Dutch Auction is bypassed entirely, as demand is already confirmed.
 
+**Rented (`rent_handover_confirmed`) ➔ At Dutch Auction (Claim Abandonment):**
+A secondary path from `rent_handover_confirmed` to the Dutch Auction. When the `handover_countdown` expires and T(n+1) holds the claim permission but fails to call `claim_handover()` within the `claim_window` parameter, the confirmed position is considered abandoned. T(n+1)'s locked payment `P(n+1)` is forfeited and enters the Dutch Auction as an accumulated bonus for the next incoming tenant. Tn's `remain_credit` was settled at `handover_countdown` expiry and is unaffected by the abandonment.
+
 **At Dutch Auction ➔ Rented (Price Discovery):**
 During the auction, a new buyer accepts the current descending price and injects the required liquidity. They automatically assume the usus of the asset, initiating a new time block and returning the system to State 1.
 
@@ -199,17 +202,19 @@ This design eliminates the need for any external hook or callback to deliver usu
 | `Idle` | Protocol (escrow) |
 | `Rented` (`rent_handover_open`) | Current tenant |
 | `Rented` (`rent_handover_confirmed`) | Current tenant (until `handover_countdown` expires) |
+| `Rented` (`claim_window` active) | Current tenant Tn (credit settled; pending physical handover to T(n+1)) |
 | `At Dutch Auction` | Protocol (escrow) |
 | `Retired` | Integrating protocol (returned) |
 
 ### Transfer Events
 
-The protocol executes an asset transfer at exactly four moments:
+The protocol executes an asset transfer at exactly five moments:
 
 1. **Idle → Rented:** The first tenant pays `min_rent_price`. The protocol transfers the asset from escrow to the tenant.
-2. **Takeover → Handover:** When `handover_countdown` expires, the protocol transfers the asset from the outgoing tenant to the incoming tenant.
-3. **Rented → At Dutch Auction:** The tenant's `used_credit` exhausts their stake in `rent_handover_open`. The protocol reclaims the asset into escrow.
-4. **Idle → Retired:** The integrating protocol requests retirement. The protocol returns the asset from escrow to the integrating protocol.
+2. **Takeover → Handover:** When `handover_countdown` expires and T(n+1) calls `claim_handover()` within `claim_window`, the protocol transfers the asset from the outgoing tenant to the incoming tenant.
+3. **Rented → At Dutch Auction (Exhaustion):** The tenant's `used_credit` exhausts their stake in `rent_handover_open`. The protocol reclaims the asset into escrow.
+4. **Rented → At Dutch Auction (Claim Abandonment):** T(n+1)'s `claim_window` expires without `claim_handover()` being called. The protocol reclaims the asset from Tn into escrow. T(n+1)'s `P(n+1)` enters escrow as Dutch Auction bonus.
+5. **Idle → Retired:** The integrating protocol requests retirement. The protocol returns the asset from escrow to the integrating protocol.
 
 ### Fructus as a Natural Consequence
 
@@ -338,6 +343,63 @@ If the `handover_countdown` exhausts Tn's remaining time (`handover_countdown = 
 #### Edge Cases
 
 - **`handover_floor = tenure_ceiling`:** The countdown equals the full rental block. The current tenant is guaranteed the entirety of their remaining time before any handover — equivalent in behavior to a traditional fixed-term lease, with the liquid renting compensation mechanics preserved.
+
+---
+
+### 6. The Claim Window
+
+#### Why the Liveness Assumption Was a Gap
+
+The `handover_countdown` ends by transferring the exclusive right to claim the asset to T(n+1). The assumption is that T(n+1) — having paid `P(n+1)` and awaiting custody — will call `claim_handover()` promptly. Their incentive is direct and proportional to the value of the asset.
+
+However, an incentive is not a guarantee. If T(n+1) fails to act for any reason — wallet loss, inactivity, or a position that has become economically unattractive since payment — the protocol reaches a state with no forward path: Tn's block has expired and T(n+1) has not claimed. No subsequent transaction can advance the state.
+
+This is a **liveness assumption**: the protocol's progress depends on a specific private actor being online and willing to act. It is a form of external coordination dependency — exactly the kind the protocol was designed to eliminate (§10). The `claim_window` parameter closes this gap.
+
+#### Definition
+
+After the `handover_countdown` expires, the protocol immediately settles Tn's credit position:
+
+- Tn's `remain_credit` is calculated at this moment and returned to Tn.
+- The owner receives Tn's `used_credit` up to this point.
+- `f_credit_ascent` stops for Tn — their economic position is fully closed.
+
+Tn retains physical custody of the asset during `claim_window`. Any fructus the asset generates while Tn holds it continues to flow to them naturally — the protocol does not intermediate this. Their credit position, however, is settled and does not accrue further.
+
+T(n+1) then has `claim_window` duration to call `claim_handover()` and receive physical custody.
+
+#### Resolution Paths
+
+**T(n+1) claims within `claim_window`:** Physical handover executes. T(n+1) receives the asset. T(n+1)'s `f_credit_ascent` clock begins at the moment of physical receipt, not at the moment of payment.
+
+**`claim_window` expires without a claim:** The confirmed position is abandoned. T(n+1)'s `P(n+1)` is forfeited — it enters the protocol as accumulated bonus for the Dutch Auction that follows, consistent with the escrow yield mechanism of §5. The asset transitions to `At Dutch Auction`. Tn, already made whole at `handover_countdown` expiry, is unaffected.
+
+#### Derivability Preserved
+
+```
+claim_deadline = handover_countdown_start + handover_countdown + claim_window
+```
+
+All three values are fixed at the moment the first bid arrives: `handover_countdown_start` is a phase anchor, `handover_countdown` and `claim_window` are immutable parameters. At any subsequent transaction:
+
+```
+current_time > claim_deadline AND claim_handover() not executed
+    → Dutch Auction (lazily resolved)
+```
+
+No external party needs to observe or trigger this transition. The state is fully computable from (immutable_params, phase_anchors, clock) — identical in structure to every other state transition in the protocol. The liveness gap is closed without introducing any coordination dependency.
+
+#### Integration with the Escrow Yield Mechanism
+
+The forfeited `P(n+1)` enters the Dutch Auction as accumulated bonus, consistent with §5's rule: the first tenant to pull the asset out of escrow receives accumulated value. The bonus from claim abandonment behaves identically to yield accumulated during any other vacant period — it creates urgency to enter, pulling the auction toward resolution earlier than price alone would.
+
+#### Constraint
+
+```
+claim_window > 0
+```
+
+A `claim_window` of zero would give T(n+1) no time to act after `handover_countdown` expires — effectively making the confirmed handover uncollectable by design. The parameter must be strictly positive.
 
 ---
 
@@ -680,6 +742,7 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `min_rent_price` | Amount | The price floor. The lowest valid rental price and the lower bound of `f_price_descent`. | `min_rent_price > 0` |
 | `tenure_ceiling` | Duration | Maximum duration of a single rental block. | `tenure_ceiling > 0` ; `handover_floor ≤ tenure_ceiling` |
 | `handover_floor` | Duration | Minimum guaranteed usage window for the current tenant after a takeover is initiated. | `0 < handover_floor ≤ tenure_ceiling` |
+| `claim_window` | Duration | Bounded window after `handover_countdown` expiry during which T(n+1) may call `claim_handover()`. If the window expires without a claim, T(n+1)'s payment is forfeited as Dutch Auction bonus and the asset transitions to `At Dutch Auction`. Ensures the protocol can always progress without depending on T(n+1)'s liveness. | `claim_window > 0` |
 | `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. | `descent_ceiling > 0` |
 | `f_credit_ascent` | Function | Shape of the credit consumption curve during the Rented state. | `f(0) = 0` ; `f(tenure_ceiling) = last_rent_price` ; `∀ t : 0 ≤ f(t) ≤ last_rent_price` ; strictly monotonically increasing |
 | `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_rent_price` ; `f(descent_ceiling) = min_rent_price` ; strictly monotonically decreasing |
@@ -805,11 +868,15 @@ This means:
 - The protocol is never "stale." The moment a transaction arrives, the state is current.
 - Gas for state resolution is paid by whoever initiates the next interaction — the party with direct economic interest in doing so.
 
-### The Handover: Resolved by Direct Incentive
+### The Handover: Bounded by Design
 
 The one transition that requires an active, explicit call is the physical handover: when `handover_countdown` expires, the asset must be transferred from the outgoing tenant to the incoming one. This does not happen automatically — someone must call `claim_handover()`.
 
-No coordination mechanism is needed here either. T(n+1) — the incoming tenant — has already paid and is waiting to receive the asset. Calling `claim_handover()` is the act of claiming what they purchased. The incentive is direct, immediate, and proportional to the value of the asset. The protocol does not need to arrange for this call; the market already has.
+The incentive for T(n+1) to act is direct: they have paid `P(n+1)` and are waiting to receive the asset. However, an incentive is not a guarantee. If T(n+1) fails to act — due to inactivity, wallet loss, or a position that has become economically unattractive since payment — the protocol reaches a state with no forward path. Assuming that a private actor will always act when incentivized is a **liveness assumption** — a form of external coordination dependency incompatible with the property this section claims.
+
+The `claim_window` parameter closes this gap. It bounds the time T(n+1) has to act after `handover_countdown` expiry. If the window expires without `claim_handover()` being called, the protocol resolves the state autonomously: Tn's credit was already settled at `handover_countdown` expiry, T(n+1)'s `P(n+1)` is forfeited as Dutch Auction bonus, and the asset transitions to `At Dutch Auction`. The full resolution path is described in §6.6.
+
+**The transition remains lazily evaluable.** The `claim_deadline = handover_countdown_start + handover_countdown + claim_window` is a fixed timestamp derivable from immutable parameters and phase anchors. At any subsequent transaction, the protocol computes whether the deadline has passed and resolves the state accordingly — no keeper, no observer, no external coordinator required.
 
 At the moment of payment, T(n+1) receives a permission that represents their exclusive right to claim the handover. This permission is the proof of their position — only its holder may call `claim_handover()` once the countdown has expired. No other actor can exercise it. The permission is non-transferable: the right to claim the handover belongs to the party that earned it by paying, and cannot be delegated or assigned to a third party.
 
@@ -818,7 +885,7 @@ At the moment of payment, T(n+1) receives a permission that represents their exc
 By being lazily evaluable by construction, the protocol eliminates:
 
 - **Keeper dependencies:** no off-chain process needs to monitor or advance the protocol state.
-- **Liveness assumptions:** no external party needs to be online for the protocol to function correctly.
+- **Liveness assumptions:** no external party needs to be online for the protocol to function correctly. The `claim_window` parameter ensures that even the handover — the one transition requiring an explicit call — has a bounded, autonomously resolvable fallback if the incoming tenant fails to act.
 - **Coordination overhead:** the integrating protocol needs no additional infrastructure beyond a standard Sui Move module.
 
 This property was not designed into the protocol as an explicit goal. It emerged from the decision to require bijectivity in the incentive functions — a constraint motivated entirely by economic correctness. The on-chain execution model inherited it for free.
@@ -1128,6 +1195,8 @@ The protocol applies because research access has a project lifecycle that rarely
 **`handover_floor`:** The minimum guaranteed usage window for the current tenant after a takeover is initiated. Protocol parameter constrained by `0 < handover_floor ≤ tenure_ceiling`.
 
 **`handover_countdown`:** The actual countdown to physical transfer, calculated at the moment the first bid arrives: `min(handover_floor, remaining_rent_time)`. Fixed once started — subsequent bids do not restart it.
+
+**`claim_window`:** The bounded window after `handover_countdown` expiry during which T(n+1) may call `claim_handover()`. If the window expires without a claim, T(n+1)'s payment is forfeited as Dutch Auction bonus and the asset transitions to `At Dutch Auction`. Ensures the protocol can always progress without depending on T(n+1)'s liveness. Constraint: `claim_window > 0`.
 
 **`descent_ceiling`:** The maximum duration of a Dutch Auction. If no buyer is found within this window, the price reaches `min_rent_price` and the asset returns to Idle.
 

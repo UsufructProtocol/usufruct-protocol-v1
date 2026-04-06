@@ -39,8 +39,9 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 7. [Glossary](#7-glossary)
 8. [Integration Parameters](#8-integration-parameters)
 9. [Asset Custody and Transfer Model](#9-asset-custody-and-transfer-model)
-10. [The Renewal Mechanism](#10-the-renewal-mechanism)
-11. [Attack Vectors and Protocol Resilience](#11-attack-vectors-and-protocol-resilience)
+10. [On-Chain State Derivability](#10-on-chain-state-derivability)
+11. [The Renewal Mechanism](#11-the-renewal-mechanism)
+12. [Attack Vectors and Protocol Resilience](#12-attack-vectors-and-protocol-resilience)
 
 ---
 
@@ -698,7 +699,64 @@ This design produces the following incentive properties:
 
 ---
 
-## 10. The Renewal Mechanism
+## 10. On-Chain State Derivability
+
+In any blockchain runtime, state changes only when a transaction is submitted and executed. There is no background execution, no implicit timer, and no automatic state transition. This raises a natural question for a protocol governed by time-dependent functions: how are state transitions coordinated?
+
+The answer is that the Liquid Renting Protocol requires no external coordination. This is not an implementation choice — it is a consequence of the protocol's mathematical structure.
+
+### State is Always Derivable from First Principles
+
+The protocol stores only two classes of data per asset:
+
+- **Immutable parameters:** set at integration time, never modified.
+- **Phase anchors:** the price and timestamp at which the current phase began — specifically, `last_rent_price` and the start time of the active state (Rented or At Dutch Auction).
+
+Given these two inputs plus the current timestamp — available in any Sui transaction via the `Clock` object — the complete asset state is computable at any moment:
+
+```
+current_state = f(immutable_params, phase_anchors, clock::timestamp_ms())
+```
+
+This is possible because the three incentive functions are **pure and deterministic**. `f_credit_ascent` and `f_price_descent` take a single time argument and return a single value — no external oracle, no accumulated state, no intermediate checkpoints. Any observer with access to the chain can reconstruct the exact economic state of any asset at any point in time without having witnessed the transitions in between.
+
+### Bijectivity as the Structural Guarantee
+
+The bijectivity of `f_credit_ascent` and `f_price_descent` — proven in §6.1 and §6.2 — is the property that makes this possible. Because both functions are strictly monotonic with fixed endpoints, time and economic value are equivalent representations of the same state. Given `used_credit`, there is exactly one `t_rent` that produced it. Given `price_descent`, there is exactly one `t_auction` that produced it.
+
+This collapses the state space: the protocol never needs to persist intermediate values or execute transitions eagerly. The current state is always the same whether computed now or ten minutes from now — the derivation is exact, not approximate.
+
+### Lazy Evaluation as the Natural Execution Model
+
+Because state is always derivable, no transaction needs to "push" the protocol forward between interactions. Any transaction that touches the asset — a takeover attempt, a price query, a Dutch Auction entry — computes the current state as its first step, resolves any elapsed phase transitions in order, and then executes the requested action.
+
+This means:
+
+- No keeper or off-chain coordinator is required for routine state transitions.
+- The protocol is never "stale." The moment a transaction arrives, the state is current.
+- Gas for state resolution is paid by whoever initiates the next interaction — the party with direct economic interest in doing so.
+
+### The Handover: Resolved by Direct Incentive
+
+The one transition that requires an active, explicit call is the physical handover: when `handover_countdown` expires, the asset must be transferred from the outgoing tenant to the incoming one. This does not happen automatically — someone must call `claim_handover()`.
+
+No coordination mechanism is needed here either. T(n+1) — the incoming tenant — has already paid and is waiting to receive the asset. Calling `claim_handover()` is the act of claiming what they purchased. The incentive is direct, immediate, and proportional to the value of the asset. The protocol does not need to arrange for this call; the market already has.
+
+The function is permissionless — any actor may call it once the countdown has expired — but in practice it will be called by T(n+1) themselves, at the earliest moment they are able to do so.
+
+### What This Property Eliminates
+
+By being lazily evaluable by construction, the protocol eliminates:
+
+- **Keeper dependencies:** no off-chain process needs to monitor or advance the protocol state.
+- **Liveness assumptions:** no external party needs to be online for the protocol to function correctly.
+- **Coordination overhead:** the integrating protocol needs no additional infrastructure beyond a standard Sui Move module.
+
+This property was not designed into the protocol as an explicit goal. It emerged from the decision to require bijectivity in the incentive functions — a constraint motivated entirely by economic correctness. The on-chain execution model inherited it for free.
+
+---
+
+## 11. The Renewal Mechanism
 
 ### Origin
 
@@ -797,7 +855,7 @@ None of these were designed. They are the natural output of identity-agnosticism
 
 ---
 
-## 11. Attack Vectors and Protocol Resilience
+## 12. Attack Vectors and Protocol Resilience
 
 The following vectors were identified and analyzed against the protocol's design. Each is resolved either by a formal constraint, an emergent property, or by being correctly identified as integrator responsibility rather than a protocol flaw.
 

@@ -982,6 +982,24 @@ The asset is always non-fungible — liquid renting operates on unique, indivisi
 | **Nonfungible-open asset** | Open market liquid renting. Collectibles, digital art, gaming assets rented and traded in a permissionless economy. | Closed-economy liquid renting. Assets from an open market rented within a bounded ecosystem — a game that accepts external NFTs but prices in its own currency. |
 | **Nonfungible-closed asset** | Credentialed access in an open economy. Usage licenses or access rights rented for standard currency — the credential gates the right, the market sets the price. | Fully enclosed liquid renting. Credentials and rights rented within a closed system using its own currency — an enterprise platform, a regulated environment, or a self-contained digital economy. |
 
+### Direct and Advanced Integrations
+
+Not all quadrants carry the same integration cost. The protocol stratifies naturally into two tiers.
+
+**Direct integrations** are those where both axes are open. The protocol operates without external authorization dependencies — asset transfers execute freely, currency flows unconditionally, and the liquid renting logic is the only layer the integrator must reason about.
+
+| Combination | Profile |
+|---|---|
+| NF-open + F-open | Direct. No authorization dependencies on either axis. |
+
+**Advanced integrations** involve one or both closed axes. The liquid renting logic does not change, but the integrator must satisfy a set of conditions before the protocol can operate correctly. The complexity does not belong to liquid renting — it belongs to the closed systems being integrated. The protocol exposes it honestly.
+
+| Combination | Integrator conditions |
+|---|---|
+| NF-open + F-closed | (1) Authorize the liquid renting module to operate with the closed currency at integration time. (2) Guarantee that currency transfers within the protocol's scope — `remain_credit` returns, `used_credit` deliveries — are unconditional and non-blocking. |
+| NF-closed + F-open | (1) Register the liquid renting module as an authorized asset holder at integration time. (2) Design the asset's authorization system to recognize liquid renting as a trusted intermediary, permitting transfers at every state transition. (3) Enforce tenant eligibility verification before accepting a takeover — the integrator is responsible for this check, not the protocol. (4) Identity-bound assets — where the asset's semantic value is tied to a specific holder — must not be integrated. The protocol is identity-agnostic by design; this conflict has no resolution. |
+| NF-closed + F-closed | All conditions from both closed rows above. Both the asset and currency systems must independently authorize the liquid renting module at integration time. |
+
 ### One Protocol, Four Markets
 
 The liquid renting logic — state machine, compensation invariant, incentive functions, handover mechanics — is identical across all four quadrants. The protocol does not adapt to each context; it operates correctly in all of them from first principles.

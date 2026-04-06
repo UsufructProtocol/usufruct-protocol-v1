@@ -327,6 +327,8 @@ The function must satisfy the following conditions:
 
 Any function satisfying these four constraints is a valid implementation. The protocol imposes no further restriction on its shape.
 
+![f_credit_ascent constraints](./media/f-credit-ascent-constraints.png "f_credit_ascent constraints")
+
 #### The Dutch Auction Trigger as a Corollary
 
 Constraints (1), (2), (3), and (4) together imply that time exhaustion and credit exhaustion are the same event. When `t = tenure_ceiling`, `f(t) = last_rent_price` by definition — meaning `remain_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(tenure_ceiling, last_rent_price)`. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
@@ -377,6 +379,8 @@ The function must satisfy the following conditions:
 4. **Monotonicity:** `f` is strictly monotonically decreasing — `price_descent` can only fall, never rise or hold.
 
 Any function satisfying these four constraints is a valid implementation. The protocol imposes no further restriction on its shape.
+
+![f_price_descent constraints](./media/f-price-descent-constraints.png "f_price_descent constraints")
 
 #### Symmetry with `f_credit_ascent`
 

@@ -1007,3 +1007,97 @@ The liquid renting logic — state machine, compensation invariant, incentive fu
 This is the definition of a genuine primitive. A primitive is not a solution designed for one problem that happens to generalize. It is a mechanism whose correctness is independent of the domain in which it operates. The four quadrants are not four use cases — they are four natural instantiations of the same underlying structure.
 
 The integrating protocol selects its position on each axis independently. The liquid renting layer does not change.
+
+---
+
+## 14. The Protocol in Practice
+
+The four markets of the integration design space are not hypothetical. Each quadrant has natural, existing asset classes that the liquid renting logic maps to directly. The following instantiations illustrate why the protocol applies in each case — which mechanic does the work, and what problem it solves that a static rental model could not.
+
+---
+
+### NF-open + F-open — Open Market
+
+**1. Gaming items**
+
+A weapon, mount, or cosmetic skin exists as a freely transferable NFT. Its owner holds it for its collection or resale value — the abusus — but may not actively use it. Players who want it for a tournament, a ranked season, or a specific game mode rent it for the duration they need, paying in standard currency.
+
+The protocol applies naturally here because gaming items have a clear usus — competitive advantage or aesthetic — that is temporally bounded by the activity it serves. High-frequency rotation is the expected behavior, not an edge case: items change hands between sessions, prices rise during peak demand and fall during off-seasons. The Dutch Auction ensures items never sit idle at a stale price — if a season ends and demand drops, the price descends until a new tenant finds the item attractive at the current market rate. The compensation mechanism means a player displaced mid-tournament recovers the unused portion of their rental stake, making entry rational even for short windows.
+
+**2. Virtual real estate**
+
+A parcel in a virtual world is a prime location — foot traffic, advertising surface, event space. Its owner may hold it as a long-term investment without having the operational capacity to run it continuously. Brands, event organizers, or content creators rent the location for a defined period to capture its commercial usus.
+
+The protocol applies because virtual real estate has cyclical demand: high during events, low between them. A static lease would lock the parcel at a fixed price through both peaks and troughs. The liquid renting model lets the market reprice continuously — a brand pays a premium for the week of a major event; a smaller operator takes it at a lower price during quiet periods. The Dutch Auction handles the transitions between tenants without manual negotiation. The owner earns `used_credit` proportionally to occupancy — the asset never stops generating revenue as long as the market values its location.
+
+**3. DeFi liquidity positions**
+
+A liquidity position NFT in an AMM represents a deployed capital allocation that generates trading fees — a natural fructus. Its owner may want to temporarily delegate the management of that position to a yield optimizer or strategy protocol, without surrendering the underlying capital or the position's ownership.
+
+The protocol applies because the fructus — trading fees — flows to whoever holds the position by virtue of custody. The protocol does not need to intermediate yield; it only needs to transfer the NFT. The yield optimizer rents the position, captures fees during their tenure, and returns `used_credit` to the owner as rent. If a better optimizer is willing to pay a higher price for the same position, the takeover displaces the current one with full compensation — the market continuously allocates the position to whoever extracts the most value from it.
+
+---
+
+### NF-open + F-closed — Closed Economy
+
+**1. In-game items priced in game currency**
+
+A blockchain game operates its own token economy. Its items exist as open NFTs — tradeable on external markets — but the rental market within the game runs entirely in the game's native currency. Players compete for high-tier weapons or mounts using the tokens they earn through gameplay, not external capital.
+
+The protocol applies because the game's internal economy has its own supply, demand, and price dynamics that are independent of external markets. Using a closed currency keeps the rental economy within the game's context — prices are denominated in units meaningful to players, inflation and deflation are contained within the game's own monetary policy, and the owner earns revenue in the same currency they spend within the game. The liquid renting logic — takeovers, Dutch Auction, compensation — operates identically; only the denomination changes.
+
+**2. Metaverse land in platform credits**
+
+A virtual world platform issues its own credit token. Land parcels are open NFTs — they could be traded externally — but the platform's rental market operates in platform credits. A commercial tenant rents a prime location for a seasonal event, paying in credits earned through platform activity.
+
+The protocol applies because the platform wants its rental economy to reinforce internal engagement rather than extract value to external markets. Credits earned through platform participation flow back into the rental market, creating a self-reinforcing economic loop. The liquid renting mechanics — continuous price discovery, compensation for displaced tenants, Dutch Auction for idle parcels — operate within that loop, driving occupancy and credit circulation simultaneously.
+
+**3. DAO membership access in governance tokens**
+
+A DAO issues membership NFTs that grant voting rights and access to internal resources — a direct fructus in the form of governance influence and shared tools. Long-term contributors hold permanent membership; temporary contributors rent it for a governance cycle, paying in the DAO's governance token.
+
+The protocol applies because DAO participation has a natural temporal structure: governance cycles, proposal windows, funding rounds. A contributor hired for a specific initiative needs membership for the duration of that initiative, not permanently. The renewal mechanism — an emergent consequence of the protocol's identity-agnostic takeover rule — allows contributors who want to stay to self-renew each cycle by paying the minimum increment plus consumed credit. Contributors who leave simply let their block expire; the Dutch Auction returns the membership to the market at the correct price for the next cycle.
+
+---
+
+### NF-closed + F-open — Credentialed Access
+
+**1. API and data feed credentials**
+
+A protocol issues on-chain credentials granting access to a premium data feed, oracle service, or API. The credential is authorization-gated — only vetted parties can hold it — but the rental price is discovered by the open market in standard currency. Projects rent access for a sprint, an analytics campaign, or a product launch, paying in USDC.
+
+The protocol applies because data access has a clear usus — the ability to query the feed — that is bounded by the project that needs it. A project that needs price data for three months should not be required to purchase a perpetual license. The takeover mechanism ensures the credential flows to whoever values the access most at any given moment: a high-urgency project can displace a lower-priority one by paying a higher price, with the displaced project recovering its unused access time. The Dutch Auction finds the clearing price during low-demand periods, ensuring the credential never sits idle.
+
+**2. Software licenses**
+
+An on-chain software license NFT grants the right to deploy or use a specific protocol, tool, or SDK. The license is authorization-gated — restricted to registered integrators or verified organizations — but priced in open-market currency. Companies rent it for the duration of a project rather than purchasing perpetually.
+
+The protocol applies because software usage has a natural project lifecycle. A company integrating a protocol for a client engagement needs the license for the engagement duration, not indefinitely. The compensation mechanism allows a company to recover the unused portion of their license if the project concludes early and another party needs the access. The owner — the software issuer — earns `used_credit` proportional to actual usage duration, aligning revenue with real consumption rather than one-time sales.
+
+**3. Network operator credentials**
+
+A decentralized network issues credentials granting the right to operate as a validator, sequencer, relayer, or node. Operating a role in a network requires capital, infrastructure, and active participation — the usus here is the right to perform the role and earn the associated rewards (fructus). Operators rent slots for a defined period, paying in standard currency.
+
+The protocol applies because network roles have high operational demand variability: some periods see intense competition for slots, others see them underutilized. The Dutch Auction ensures slots are never idle at a stale price — if an operator lets their position expire without a successor, the price descends until a new operator finds the role attractive at the current market rate. The renewal mechanism allows operators who are performing well to extend their position at minimal cost, while the takeover mechanism ensures a better-resourced operator can always displace an underperforming one by paying a higher price.
+
+---
+
+### NF-closed + F-closed — Fully Enclosed
+
+**1. Enterprise platform feature access**
+
+A B2B SaaS platform issues feature-access NFTs gated to verified enterprise accounts and priced in platform credits. Companies rent premium features — advanced analytics, elevated API limits, priority support tiers — for the duration of a project or fiscal quarter, without committing to a permanent upgrade.
+
+The protocol applies because enterprise software consumption is project-driven. A company running a one-quarter data migration needs elevated API limits for that quarter, not permanently. The compensation mechanism allows the company to recover unused feature access if the project concludes ahead of schedule. The platform earns `used_credit` proportional to actual feature consumption — a more honest revenue model than flat annual licensing. The fully enclosed environment — both asset and currency gated — ensures the rental economy stays within the verified enterprise context.
+
+**2. Regulated financial instrument access**
+
+A compliant financial platform issues KYC-gated NFTs granting access to a private fund, structured product, or regulated investment vehicle. Access is restricted to verified participants; payments are denominated in a regulated stablecoin restricted to the same participant set. The liquid renting logic drives fair price discovery within the fully compliant, enclosed environment.
+
+The protocol applies because regulated access has genuine temporal demand: an investor may want exposure to a specific fund for a defined fiscal period without a permanent allocation. The takeover mechanism allows a higher-conviction investor to displace a lower-priority participant by paying a higher price — both within the regulatory perimeter. The compensation invariant ensures the displaced participant recovers unused access time, making participation rational even for short windows. The Dutch Auction prevents access slots from sitting idle when demand temporarily recedes.
+
+**3. Research data access credentials**
+
+A research institution issues credentials granting access to sensitive datasets — clinical records, proprietary models, confidential longitudinal studies. Credentials are gated to verified researchers and institutions; payments are denominated in the institution's internal token, ensuring the economy stays within the research community.
+
+The protocol applies because research access has a project lifecycle that rarely aligns with fixed licensing periods. A team analyzing a dataset for a six-month study should not be locked into an annual license. The compensation mechanism returns unused access time to the researcher if the project concludes early. If a second research team urgently needs the same dataset and is willing to pay a higher price, the takeover displaces the first team — with compensation — and the dataset flows to the party that values it most at that moment. The institution earns `used_credit` proportional to actual research consumption, creating a fair and self-calibrating access economy.

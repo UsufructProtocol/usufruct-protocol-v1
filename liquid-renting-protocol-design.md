@@ -686,6 +686,7 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `f_next_rent_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
 | `to_retire` | Flag (mutable) | Deferred retirement instruction. When set, the asset exits the protocol at the next `Idle` transition instead of re-entering the rental cycle. May be set or unset by the owner at any time, regardless of the current state. | Not set by default. Setting it does not interrupt any active rental or auction. |
+| `force_retire_floor` | Duration | Minimum time that must elapse since integration before `force_retire()` may be invoked. A public, on-chain commitment by the owner: during this window, no forced exit is possible and the only exit path is the deferred `to_retire` flag. | `force_retire_floor ≥ 0`. A value of `0` imposes no restriction. |
 
 ### Parameter Immutability
 
@@ -762,6 +763,8 @@ In every `Rented` state, the tenant's block is not cut short. Their `remain_cred
 The consequences are direct. Tenants who price their position rationally will discount the risk of forced interruption. Competition for the asset weakens. The Dutch Auction loses depth as potential buyers wait rather than commit. The owner earns less `used_credit` than they would have by allowing the protocol to run its natural course.
 
 The protocol does not penalise the abuse of `force_retire()`. The market does. An asset whose owner treats forced exit as a lever will, over time, cease to attract the organic competition the protocol was designed to produce. The mechanism exists to guarantee that no owner is permanently trapped. Its correct use is exceptional.
+
+The `force_retire_floor` parameter is the owner's public, binding commitment against this abuse. By setting a non-zero value at integration time, the owner declares a minimum period during which `force_retire()` cannot be invoked — regardless of circumstances. Tenants can read this value on-chain and price their position with the knowledge that forced exit is structurally impossible until the floor expires. The longer the `force_retire_floor`, the stronger the commitment signal and the more confident the market can be in committing capital.
 
 ---
 
@@ -1127,6 +1130,8 @@ The protocol applies because research access has a project lifecycle that rarely
 **`handover_countdown`:** The actual countdown to physical transfer, calculated at the moment the first bid arrives: `min(handover_floor, remaining_rent_time)`. Fixed once started — subsequent bids do not restart it.
 
 **`descent_ceiling`:** The maximum duration of a Dutch Auction. If no buyer is found within this window, the price reaches `min_rent_price` and the asset returns to Idle.
+
+**`force_retire_floor`:** The minimum time that must elapse since integration before `force_retire()` may be invoked. A binding, on-chain commitment by the owner. During this window, the only exit path is the deferred `to_retire` flag. A value of `0` imposes no restriction.
 
 ### Incentive-driven Functions
 

@@ -685,8 +685,8 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_rent_price` ; `f(descent_ceiling) = min_rent_price` ; strictly monotonically decreasing |
 | `f_next_rent_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
-| `to_retire` | Flag (mutable) | Deferred retirement instruction. When set, the asset exits the protocol at the next `Idle` transition instead of re-entering the rental cycle. May be set or unset by the owner at any time, regardless of the current state. | Not set by default. Setting it does not interrupt any active rental or auction. |
-| `force_retire_floor` | Duration | Minimum time that must elapse since integration before `force_retire()` may be invoked. A public, on-chain commitment by the owner: during this window, no forced exit is possible and the only exit path is the deferred `to_retire` flag. | `force_retire_floor ≥ 0`. A value of `0` imposes no restriction. |
+| `to_retire` | Flag (mutable) | Deferred retirement instruction. When set, the asset exits the protocol at the next `Idle` transition instead of re-entering the rental cycle. May be set or unset by the owner at any time, regardless of the current state. Setting the flag does not interrupt any active rental or auction. Execution is additionally gated by `retire_floor`. | Not set by default. |
+| `retire_floor` | Duration | Minimum time that must elapse since integration before any retirement path may execute — whether via `to_retire` or `force_retire()`. A public, on-chain commitment by the owner: during this window, the asset cannot exit the protocol by any means. | `retire_floor ≥ 0`. A value of `0` imposes no restriction. |
 
 ### Parameter Immutability
 
@@ -712,7 +712,7 @@ This constraint is a trust guarantee for tenants: the rules under which a tenant
 
 The integrating protocol may set a `to_retire` flag on the asset at any time, regardless of the current state. The flag does not interrupt any active rental or auction — it is a deferred instruction.
 
-When the asset next reaches `Idle` — the only path being a Dutch Auction that exhausted `descent_ceiling` without finding a new tenant — the protocol checks the `to_retire` flag. If set, the asset is transferred directly to the owner and marked `Retired`, bypassing the normal re-entry into the rental cycle.
+When the asset next reaches `Idle` — the only path being a Dutch Auction that exhausted `descent_ceiling` without finding a new tenant — the protocol checks both the `to_retire` flag and the `retire_floor`. If the flag is set and `retire_floor` has elapsed since integration, the asset is transferred directly to the owner and marked `Retired`, bypassing the normal re-entry into the rental cycle. If `retire_floor` has not yet elapsed, the asset re-enters the rental cycle as normal and the flag remains pending for the next `Idle` transition.
 
 This gives the owner a graceful, non-disruptive exit path:
 
@@ -720,7 +720,7 @@ This gives the owner a graceful, non-disruptive exit path:
 - No auction is aborted.
 - The asset simply does not re-enter the market at the next natural resting point.
 
-The `to_retire` flag may also be unset by the owner at any time before the asset reaches `Idle`, cancelling the deferred retirement.
+The `to_retire` flag may be set or unset by the owner at any time, regardless of `retire_floor` — the flag is a signal of intent. Only its execution is gated.
 
 If the asset never reaches `Idle` — because the market perpetually validates its price through continuous takeovers or Dutch Auctions that always find a buyer — the `to_retire` flag never executes. The owner cannot force an exit while demand is active. This is not a limitation of the protocol; it is the signal of a successful asset. An asset that never reaches `Idle` is an asset that never stops generating `used_credit` for its owner. The market has the final word — and a market that never goes quiet is precisely the outcome the protocol was designed to produce.
 
@@ -734,7 +734,7 @@ The `to_retire` flag is the correct and preferred exit path. However, a structur
 
 During `At Dutch Auction`, yield-bearing assets continue to accrue yield in escrow. This accumulated yield is delivered as a bonus to the first tenant who pulls the asset out of escrow — an incentive designed to accelerate re-entry into the `Rented` state. If the asset generates substantial yield and the bonus grows large enough, the Dutch Auction will always find a buyer regardless of `price_descent`. The `Idle` state becomes unreachable. The `to_retire` flag is set but never fires. The owner cannot exit.
 
-`force_retire()` is the owner's guarantee that this situation never becomes permanent.
+`force_retire()` is the owner's guarantee that this situation never becomes permanent. Like `to_retire`, it is gated by `retire_floor` — it cannot be invoked until the minimum committed period has elapsed.
 
 #### Behavior by State
 
@@ -764,7 +764,7 @@ The consequences are direct. Tenants who price their position rationally will di
 
 The protocol does not penalise the abuse of `force_retire()`. The market does. An asset whose owner treats forced exit as a lever will, over time, cease to attract the organic competition the protocol was designed to produce. The mechanism exists to guarantee that no owner is permanently trapped. Its correct use is exceptional.
 
-The `force_retire_floor` parameter is the owner's public, binding commitment against this abuse. By setting a non-zero value at integration time, the owner declares a minimum period during which `force_retire()` cannot be invoked — regardless of circumstances. Tenants can read this value on-chain and price their position with the knowledge that forced exit is structurally impossible until the floor expires. The longer the `force_retire_floor`, the stronger the commitment signal and the more confident the market can be in committing capital.
+The `retire_floor` parameter is the owner's public, binding commitment against this abuse. By setting a non-zero value at integration time, the owner declares a minimum period during which neither `to_retire` nor `force_retire()` may execute — regardless of circumstances. Tenants can read this value on-chain and price their position with the knowledge that no retirement path is available until the floor expires. The longer the `retire_floor`, the stronger the commitment signal and the more confident the market can be in committing capital.
 
 ---
 
@@ -1131,7 +1131,7 @@ The protocol applies because research access has a project lifecycle that rarely
 
 **`descent_ceiling`:** The maximum duration of a Dutch Auction. If no buyer is found within this window, the price reaches `min_rent_price` and the asset returns to Idle.
 
-**`force_retire_floor`:** The minimum time that must elapse since integration before `force_retire()` may be invoked. A binding, on-chain commitment by the owner. During this window, the only exit path is the deferred `to_retire` flag. A value of `0` imposes no restriction.
+**`retire_floor`:** The minimum time that must elapse since integration before any retirement path may execute — whether via `to_retire` or `force_retire()`. A binding, on-chain commitment by the owner: during this window, the asset cannot exit the protocol by any means. A value of `0` imposes no restriction.
 
 ### Incentive-driven Functions
 

@@ -323,12 +323,13 @@ The function must satisfy the following conditions:
 1. **Origin:** `f(0) = 0` — at the start of the rental, no credit has been consumed.
 2. **Termination:** `f(tenure_ceiling) = last_rent_price` — at the end of the rental period, all credit is exactly exhausted.
 3. **Boundedness:** `∀ t ∈ [0, tenure_ceiling] : 0 ≤ f(t) ≤ last_rent_price` — the function is always contained within the bounding rectangle.
+4. **Monotonicity:** `f` is monotonically non-decreasing — `used_credit` can only grow, never decrease.
 
-Any function satisfying these three constraints is a valid implementation. The protocol imposes no further restriction on its shape.
+Any function satisfying these four constraints is a valid implementation. The protocol imposes no further restriction on its shape.
 
 #### The Dutch Auction Trigger as a Corollary
 
-Constraints (1), (2), and (3) together imply that time exhaustion and credit exhaustion are the same event. When `t = tenure_ceiling`, `f(t) = last_rent_price` by definition — meaning `remain_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(tenure_ceiling, last_rent_price)`. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
+Constraints (1), (2), (3), and (4) together imply that time exhaustion and credit exhaustion are the same event. When `t = tenure_ceiling`, `f(t) = last_rent_price` by definition — meaning `remain_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(tenure_ceiling, last_rent_price)`. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
 
 #### Incentive Implications of Curve Shape
 
@@ -366,7 +367,7 @@ The function is monotonically non-increasing — the price can only descend duri
 
 #### Symmetry with `f_credit_ascent`
 
-Both functions share an identical structural contract: two fixed endpoints and a boundedness constraint. The protocol prescribes no curve shape beyond these. The symmetry is exact:
+Both functions share an identical structural contract: two fixed endpoints, a boundedness constraint, and a monotonicity direction. The protocol prescribes no curve shape beyond these. The symmetry is exact:
 
 | | `f_credit_ascent` | `f_price_descent` |
 |---|---|---|
@@ -540,7 +541,7 @@ This renewal mechanism was never explicitly designed into the protocol. It is a 
 
 ### Incentive-driven Functions
 
-**`f_credit_ascent(t_rent)`:** Defines how `used_credit` grows over time during a rental. Must pass through `(0, 0)` and `(tenure_ceiling, last_rent_price)`, bounded within the rectangle. Shape is chosen by the integrating protocol.
+**`f_credit_ascent(t_rent)`:** Defines how `used_credit` grows over time during a rental. Must pass through `(0, 0)` and `(tenure_ceiling, last_rent_price)`, bounded within the rectangle, monotonically non-decreasing. Shape is chosen by the integrating protocol.
 
 **`f_price_descent(t_auction)`:** Defines how `price_descent` decays during a Dutch Auction. Must pass through `(0, last_rent_price)` and `(descent_ceiling, min_rent_price)`, monotonically non-increasing. Symmetric counterpart to `f_credit_ascent`.
 
@@ -565,7 +566,7 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `tenure_ceiling` | Duration | Maximum duration of a single rental block. | `tenure_ceiling > 0` ; `handover_floor ≤ tenure_ceiling` |
 | `handover_floor` | Duration | Minimum guaranteed usage window for the current tenant after a takeover is initiated. | `0 ≤ handover_floor ≤ tenure_ceiling` |
 | `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. | `descent_ceiling > 0` |
-| `f_credit_ascent` | Function | Shape of the credit consumption curve during the Rented state. | `f(0) = 0` ; `f(tenure_ceiling) = last_rent_price` ; `∀ t : 0 ≤ f(t) ≤ last_rent_price` |
+| `f_credit_ascent` | Function | Shape of the credit consumption curve during the Rented state. | `f(0) = 0` ; `f(tenure_ceiling) = last_rent_price` ; `∀ t : 0 ≤ f(t) ≤ last_rent_price` ; monotonically non-decreasing |
 | `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_rent_price` ; `f(descent_ceiling) = min_rent_price` ; monotonically non-increasing |
 | `f_next_rent_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |

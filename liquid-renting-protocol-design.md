@@ -427,30 +427,46 @@ This function defines the rate at which a tenant's rental credit is consumed ove
 
 #### Formal Definition
 
+The integrating protocol provides a normalized shape function:
+
 ```
-f_credit_ascent : [0, tenure_ceiling] → [0, last_rent_price]
+g : [0, 1] → [0, 1]
 ```
+
+The protocol scales it to the current price and time parameters to compute credit consumption at any moment:
+
+```
+used_credit(t) = last_rent_price · g(t / tenure_ceiling)
+```
+
+This separation is the correct interface. Parameters are fixed at integration time but `last_rent_price` varies with each takeover cycle — the integrator cannot specify a function with a price-dependent codomain at integration time. What the integrator controls is the shape; the protocol handles the scaling.
 
 #### Constraints
 
-The function must satisfy the following conditions:
+The shape function `g` must satisfy the following conditions:
 
-1. **Origin:** `f(0) = 0` — at the start of the rental, no credit has been consumed.
-2. **Termination:** `f(tenure_ceiling) = last_rent_price` — at the end of the rental period, all credit is exactly exhausted.
-3. **Boundedness:** `∀ t ∈ [0, tenure_ceiling] : 0 ≤ f(t) ≤ last_rent_price` — the function is always contained within the bounding rectangle.
-4. **Monotonicity:** `f` is strictly monotonically increasing — `used_credit` can only grow, never decrease.
+1. **Origin:** `g(0) = 0` — at the start of the rental, no credit has been consumed.
+2. **Termination:** `g(1) = 1` — at the end of the normalized period, all relative credit is exhausted.
+3. **Boundedness:** `∀ x ∈ [0, 1] : 0 ≤ g(x) ≤ 1` — the function is always contained within the unit square.
+4. **Monotonicity:** `g` is strictly monotonically increasing.
 
-Any function satisfying these four constraints is a valid implementation. The protocol imposes no further restriction on its shape.
+Any function satisfying these four constraints is a valid implementation. The constraints are price-independent: the integrator can verify them once at integration time, without knowledge of any future `last_rent_price`.
 
 ![f_credit_ascent constraints](./media/f-credit-ascent-constraints.png "f_credit_ascent constraints")
 
 #### The Dutch Auction Trigger as a Corollary
 
-Constraints (1), (2), (3), and (4) together imply that time exhaustion and credit exhaustion are the same event. When `t = tenure_ceiling`, `f(t) = last_rent_price` by definition — meaning `remain_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(tenure_ceiling, last_rent_price)`. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
+Constraints (1), (2), (3), and (4) together imply that time exhaustion and credit exhaustion are the same event. When `t = tenure_ceiling`, `g(1) = 1` by constraint (2), so `used_credit = last_rent_price · 1 = last_rent_price` — meaning `remain_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(1, 1)` in the normalized space, scaled to `(tenure_ceiling, last_rent_price)` by the protocol. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
 
 #### Bijectivity as a Consequence
 
-A strictly monotonically increasing function with fixed endpoints is a bijection between its domain and codomain. By the Inverse Function Theorem, `f_credit_ascent` is therefore a bijection:
+`g` is a strictly monotonically increasing function with fixed endpoints on `[0, 1]` — it is therefore a bijection:
+
+```
+g : [0, 1] ↔ [0, 1]
+```
+
+By the linearity of the scaling, the composed function inherits this bijectivity:
 
 ```
 f_credit_ascent : [0, tenure_ceiling] ↔ [0, last_rent_price]
@@ -458,19 +474,19 @@ f_credit_ascent : [0, tenure_ceiling] ↔ [0, last_rent_price]
 
 This means **time and `used_credit` are equivalent representations of the same state**. For any value of `used_credit` there is exactly one `t_rent` that produced it, and vice versa. The protocol can express any condition indifferently in terms of time or credit — both descriptions always have a unique, well-defined answer.
 
-The inverse `f_credit_ascent⁻¹ : [0, last_rent_price] → [0, tenure_ceiling]` is therefore guaranteed to exist.
+The inverse is guaranteed to exist for both `g` and the scaled function.
 
 #### Incentive Implications of Curve Shape
 
 The integrating protocol selects the curve shape to incentivize a specific market behavior:
 
-**Concave curve (e.g., `f(t) = Pn · √(t / T)`):** Credit is consumed rapidly at the start and slowly toward the end. A tenant displaced early recovers little `remain_credit`. This penalizes speculative entry — entering with the expectation of a quick takeover and a large refund is costly, since the curve has already consumed most of the credit. Suited for protocols that want to discourage high-frequency rotation and reward sustained usage.
+**Concave curve (e.g., `g(x) = √x`):** Credit is consumed rapidly at the start and slowly toward the end. A tenant displaced early recovers little `remain_credit`. This penalizes speculative entry — entering with the expectation of a quick takeover and a large refund is costly, since the curve has already consumed most of the credit. Suited for protocols that want to discourage high-frequency rotation and reward sustained usage.
 
-**Linear curve (`f(t) = Pn · (t / T)`):** Credit is consumed proportionally to time. The protocol takes no position on when rotation is more or less convenient. Agnostic and neutral.
+**Linear curve (`g(x) = x`):** Credit is consumed proportionally to time. The protocol takes no position on when rotation is more or less convenient. Agnostic and neutral.
 
-**Convex curve (e.g., `f(t) = Pn · (t / T)²`):** Credit is consumed slowly at the start and accelerates toward the end. A tenant displaced early still holds a large `remain_credit`, making entry safer. This incentivizes rotation — the cost of entering is partially recoverable at any early point, lowering the risk of taking a position. Suited for protocols that want high liquidity and active price discovery.
+**Convex curve (e.g., `g(x) = x²`):** Credit is consumed slowly at the start and accelerates toward the end. A tenant displaced early still holds a large `remain_credit`, making entry safer. This incentivizes rotation — the cost of entering is partially recoverable at any early point, lowering the risk of taking a position. Suited for protocols that want high liquidity and active price discovery.
 
-> **Note:** The three families above — concave, linear, and convex — are not a simplification. They are the complete design space. Any continuous, strictly monotonically increasing function between two fixed endpoints has a well-defined curvature at every point: positive (convex), negative (concave), or zero (linear). The diagram above is not a metaphor — it is the full space of valid implementations. The two boundary curves are the extreme cases; the diagonal is the linear. Every valid `f_credit_ascent` is an interpolation within that region.
+> **Note:** The three families above — concave, linear, and convex — are not a simplification. They are the complete design space. Any continuous, strictly monotonically increasing function between two fixed endpoints on `[0,1]` has a well-defined curvature at every point: positive (convex), negative (concave), or zero (linear). The diagram above is not a metaphor — it is the full space of valid implementations of `g`. The two boundary curves are the extreme cases; the diagonal is the linear. Every valid `g` is an interpolation within that region.
 
 ---
 
@@ -482,61 +498,73 @@ This function defines the rate at which the `price_descent` decays during a Dutc
 
 #### Formal Definition
 
+The integrating protocol provides a normalized shape function:
+
 ```
-f_price_descent : [0, descent_ceiling] → [min_rent_price, last_rent_price]
+h : [0, 1] → [0, 1]
 ```
+
+The protocol applies it to the current price parameters to compute the auction price at each moment:
+
+```
+price_descent(t) = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)
+```
+
+`h` encodes how deep into the discount range the auction has progressed at any normalized time `x = t / descent_ceiling`. At `x = 0`, `h(0) = 0` — no discount yet. At `x = 1`, `h(1) = 1` — the full discount is applied and the price reaches `min_rent_price`.
 
 #### Constraints
 
-The function must satisfy the following conditions:
+The shape function `h` must satisfy the following conditions:
 
-1. **Origin:** `f(0) = last_rent_price` — the auction begins at the last known rental price, the barrier the market failed to validate.
-2. **Termination:** `f(descent_ceiling) = min_rent_price` — if no buyer is found, the price reaches the floor and the asset returns to Idle.
-3. **Boundedness:** `∀ t ∈ [0, descent_ceiling] : min_rent_price ≤ f(t) ≤ last_rent_price` — the function is always contained within the bounding rectangle.
-4. **Monotonicity:** `f` is strictly monotonically decreasing — `price_descent` can only fall, never rise or hold.
+1. **Origin:** `h(0) = 0` — the auction begins with no discount applied; the entry price equals `last_rent_price`.
+2. **Termination:** `h(1) = 1` — if no buyer is found, the full discount is applied and the price reaches `min_rent_price`.
+3. **Boundedness:** `∀ x ∈ [0, 1] : 0 ≤ h(x) ≤ 1` — the function is always contained within the unit square.
+4. **Monotonicity:** `h` is strictly monotonically increasing — the discount only deepens, never reverses.
 
-Any function satisfying these four constraints is a valid implementation. The protocol imposes no further restriction on its shape.
+Any function satisfying these four constraints is a valid implementation. As with `g`, the constraints are price-independent and can be verified once at integration time.
 
 ![f_price_descent constraints](./media/f-price-descent-constraints.png "f_price_descent constraints")
 
-#### Symmetry with `f_credit_ascent`
+#### Symmetry with `g`
 
-Both functions share an identical structural contract: two fixed endpoints, a boundedness constraint, and a monotonicity direction. The protocol prescribes no curve shape beyond these. The symmetry is exact:
+`g` and `h` are the same type of object. The integrator provides two normalized shape functions with an identical structural contract:
 
-| | `f_credit_ascent` | `f_price_descent` |
+| | `g` (credit shape) | `h` (descent shape) |
 |---|---|---|
-| Fixed point at t=0 | `f(0) = 0` | `f(0) = last_rent_price` |
-| Fixed point at t=T | `f(T_rent) = last_rent_price` | `f(T_auction) = min_rent_price` |
-| Bounded by | `[0, last_rent_price]` | `[min_rent_price, last_rent_price]` |
-| Direction | Strictly monotonically increasing | Strictly monotonically decreasing |
+| Type | `[0, 1] → [0, 1]` | `[0, 1] → [0, 1]` |
+| Fixed point at 0 | `g(0) = 0` | `h(0) = 0` |
+| Fixed point at 1 | `g(1) = 1` | `h(1) = 1` |
+| Monotonicity | Strictly increasing | Strictly increasing |
+| Protocol applies as | `last_rent_price · g(x)` | `last_rent_price - (last_rent_price - min_rent_price) · h(x)` |
+| Economic effect | Credit consumed ascends | Auction price descends |
 
-This design decision — fixing both endpoints and leaving the interior free — is deliberate. The space of valid curves between two fixed points is already vast enough to express any incentive behavior the integrating protocol may require. Adding discontinuities or free starting points would introduce complexity without expanding expressive power.
+The direction of the economic effect — ascent vs. descent — comes entirely from how the protocol applies the shape, not from the shape itself. Both `g` and `h` are increasing functions. The asymmetry between credit and price lives in the protocol, not in the integrator's input.
+
+This design decision — a shared type with identical constraints — is deliberate. The integrator reasons about one kind of object in both cases. The space of valid curves between two fixed points on `[0,1]` is already vast enough to express any incentive behavior the integrating protocol may require. Adding asymmetric constraint sets would increase cognitive load without expanding expressive power.
 
 #### Bijectivity as a Shared Property
 
-Both functions are strictly monotonic with fixed endpoints, and are therefore bijections between their respective domains and codomains:
+Both `g` and `h` are strictly monotonically increasing functions with fixed endpoints on `[0, 1]` — they are therefore bijections:
+
+```
+g : [0, 1] ↔ [0, 1]
+h : [0, 1] ↔ [0, 1]
+```
+
+By the linearity of the respective scalings, the composed functions inherit this bijectivity:
 
 ```
 f_credit_ascent  : [0, tenure_ceiling]  ↔ [0, last_rent_price]
 f_price_descent  : [0, descent_ceiling] ↔ [min_rent_price, last_rent_price]
 ```
 
-In both cases, **time and economic value are equivalent representations of the same state**. For `f_credit_ascent`, any `used_credit` value uniquely identifies an elapsed `t_rent`. For `f_price_descent`, any `price_descent` value uniquely identifies an elapsed `t_auction`. The inverse of each function is guaranteed to exist.
+In both cases, **time and economic value are equivalent representations of the same state**. For `f_credit_ascent`, any `used_credit` value uniquely identifies an elapsed `t_rent`. For `f_price_descent`, any `price_descent` value uniquely identifies an elapsed `t_auction`. The inverse of each function is guaranteed to exist at both the normalized and scaled levels.
 
 This collapses the state space: the protocol never needs to track both time and value independently — one always determines the other. Implementations can store whichever representation is cheaper on-chain and derive the other on demand.
 
 #### Scaling Behavior and the Role of `last_rent_price`
 
-Both functions can be decomposed into a pure shape component and a price-dependent scale factor:
-
-```
-f_credit_ascent(t)  = last_rent_price · g(t / tenure_ceiling)
-f_price_descent(t)  = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)
-```
-
-Where `g` and `h` are the normalized shape functions mapping `[0,1] → [0,1]`, chosen freely by the integrator.
-
-As `last_rent_price` grows through successive takeovers, both functions scale accordingly:
+Because the integrator provides the normalized shape functions `g` and `h`, scaling is the protocol's exclusive responsibility. As `last_rent_price` grows through successive takeovers, both applied functions scale accordingly — without any action from the integrator and without any change to `g` or `h`.
 
 Both functions have a fixed range within their active state — the range does not change during execution. What grows across successive cycles is the amplitude of each function, because `last_rent_price` rises with each takeover:
 
@@ -560,13 +588,13 @@ The duality is symmetric: both functions are anchored by a fixed floor (0 and `m
 
 The shape of the decay curve determines when buyers are incentivized to act during the auction:
 
-**Concave curve (e.g., `f(t) = last_rent_price - (last_rent_price - min_rent_price) · √(t / T)`):** Price drops sharply at the start and flattens toward the end. Most of the discount is captured early. Incentivizes buyers to act quickly — waiting yields diminishing returns.
+**Concave curve (e.g., `h(x) = √x`):** The discount deepens sharply at the start and flattens toward the end. Most of the price reduction is captured early. Incentivizes buyers to act quickly — waiting yields diminishing returns.
 
-**Linear curve:** Price decays at a constant rate. Neutral. No moment in the auction is structurally more attractive than another.
+**Linear curve (`h(x) = x`):** The discount deepens at a constant rate. Neutral. No moment in the auction is structurally more attractive than another.
 
-**Convex curve (e.g., `f(t) = last_rent_price - (last_rent_price - min_rent_price) · (t / T)²`):** Price remains high for most of the auction and falls steeply at the end. Incentivizes patient buyers to wait — the largest discounts arrive late. Creates a "cliff" dynamic near `descent_ceiling`.
+**Convex curve (e.g., `h(x) = x²`):** The discount remains shallow for most of the auction and deepens steeply at the end. Incentivizes patient buyers to wait — the largest discounts arrive late. Creates a "cliff" dynamic near `descent_ceiling`.
 
-> **Note:** The three families above — concave, linear, and convex — are not a simplification. They are the complete design space. Any continuous, strictly monotonically decreasing function between two fixed endpoints has a well-defined curvature at every point: positive (convex), negative (concave), or zero (linear). The diagram above is not a metaphor — it is the full space of valid implementations. The two boundary curves are the extreme cases; the diagonal is the linear. Every valid `f_price_descent` is an interpolation within that region.
+> **Note:** The three families above — concave, linear, and convex — are not a simplification. They are the complete design space. Any continuous, strictly monotonically increasing function between two fixed endpoints on `[0,1]` has a well-defined curvature at every point: positive (convex), negative (concave), or zero (linear). The diagram above is not a metaphor — it is the full space of valid implementations of `h`. The two boundary curves are the extreme cases; the diagonal is the linear. Every valid `h` is an interpolation within that region.
 
 ---
 
@@ -744,8 +772,8 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `handover_floor` | Duration | Minimum guaranteed usage window for the current tenant after a takeover is initiated. | `0 < handover_floor ≤ tenure_ceiling` |
 | `claim_window` | Duration | Bounded window after `handover_countdown` expiry during which T(n+1) may call `claim_handover()`. If the window expires without a claim, T(n+1)'s payment is forfeited as Dutch Auction bonus and the asset transitions to `At Dutch Auction`. Ensures the protocol can always progress without depending on T(n+1)'s liveness. | `claim_window > 0` |
 | `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. | `descent_ceiling > 0` |
-| `f_credit_ascent` | Function | Shape of the credit consumption curve during the Rented state. | `f(0) = 0` ; `f(tenure_ceiling) = last_rent_price` ; `∀ t : 0 ≤ f(t) ≤ last_rent_price` ; strictly monotonically increasing |
-| `f_price_descent` | Function | Shape of the auction price decay curve during the Dutch Auction state. | `f(0) = last_rent_price` ; `f(descent_ceiling) = min_rent_price` ; strictly monotonically decreasing |
+| `f_credit_ascent` | Normalized shape function `g` | Defines how credit is consumed. The integrator provides `g : [0,1] → [0,1]`; the protocol computes `used_credit(t) = last_rent_price · g(t / tenure_ceiling)`. | `g(0) = 0` ; `g(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ g(x) ≤ 1` ; strictly monotonically increasing |
+| `f_price_descent` | Normalized shape function `h` | Defines how the auction discount deepens. The integrator provides `h : [0,1] → [0,1]`; the protocol computes `price_descent(t) = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)`. | `h(0) = 0` ; `h(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ h(x) ≤ 1` ; strictly monotonically increasing |
 | `f_next_rent_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
 | `to_retire` | Flag (mutable) | Deferred retirement instruction. When set, the asset exits the protocol at the next `Idle` transition instead of re-entering the rental cycle. May be set or unset by the owner at any time, regardless of the current state. Setting the flag does not interrupt any active rental or auction. Execution is additionally gated by `retire_floor`. | Not set by default. |
@@ -1204,9 +1232,9 @@ The protocol applies because research access has a project lifecycle that rarely
 
 ### Incentive-driven Functions
 
-**`f_credit_ascent(t_rent)`:** Defines how `used_credit` grows over time during a rental. Must pass through `(0, 0)` and `(tenure_ceiling, last_rent_price)`, bounded within the rectangle, strictly monotonically increasing. Shape is chosen by the integrating protocol.
+**`f_credit_ascent` / `g`:** The normalized shape function `g : [0,1] → [0,1]` provided by the integrator. The protocol computes `used_credit(t) = last_rent_price · g(t / tenure_ceiling)`. Must satisfy `g(0) = 0`, `g(1) = 1`, bounded within the unit square, strictly monotonically increasing. Shape is chosen by the integrating protocol; scaling is handled by the protocol.
 
-**`f_price_descent(t_auction)`:** Defines how `price_descent` decays during a Dutch Auction. Must pass through `(0, last_rent_price)` and `(descent_ceiling, min_rent_price)`, strictly monotonically decreasing. Symmetric counterpart to `f_credit_ascent`.
+**`f_price_descent` / `h`:** The normalized shape function `h : [0,1] → [0,1]` provided by the integrator. The protocol computes `price_descent(t) = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)`. Must satisfy `h(0) = 0`, `h(1) = 1`, bounded within the unit square, strictly monotonically increasing. `g` and `h` share the same type and constraints; the economic direction (ascent vs. descent) comes from the protocol's application, not from the shape itself.
 
 **`f_next_rent_price(last_rent_price)`:** Defines the minimum price to displace the current tenant. Strictly one-dimensional. Must satisfy `f(last_rent_price) > last_rent_price`.
 

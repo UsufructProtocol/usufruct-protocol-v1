@@ -142,7 +142,7 @@ At a deeper level, the Liquid Renting architecture operates as a dynamic equilib
 
 ![Asset State Transition Flow](./media/1.png "Asset State Transition Flow")
 
-The initial equilibrium point. The asset_descent_price equals the asset_min_rent_price. The asset is "open" with no liquidity barrier protecting its usus.
+The initial equilibrium point. The price_descent equals the min_rent_price. The asset is "open" with no liquidity barrier protecting its usus.
 
 ### 2. The Consumption and Competition Cycle (State 1: Rented)
 
@@ -152,15 +152,15 @@ The initial equilibrium point. The asset_descent_price equals the asset_min_rent
 
 Once a user injects liquidity, the asset enters a state of active utilization that is, by definition, a renewable cycle:
 
-**Price as Entry Barrier:** When renting the asset, the user purchases at next_rent_price(), establishing a new asset_last_rent_price. This value acts as a physical liquidity barrier: any other actor wishing to access the usus of the asset must "clear" this barrier by injecting capital greater than next_rent_price(). A higher price than next_rent_price() is allowed.
+**Price as Entry Barrier:** When renting the asset, the user purchases at next_rent_price(), establishing a new last_rent_price. This value acts as a physical liquidity barrier: any other actor wishing to access the usus of the asset must "clear" this barrier by injecting capital greater than next_rent_price(). A higher price than next_rent_price() is allowed.
 
 **The Takeover Dynamic (Cycle Reactivation):** If a new renter pays a higher price before the time runs out, the cycle restarts instantaneously:
 
-- The new price becomes the new "barrier" (asset_last_rent_price).
+- The new price becomes the new "barrier" (last_rent_price).
 - The consumption vector (Red Arrow) — consumption_credit_strategy — resets to zero.
 - The new tenant's credit block is initialized at their full entry price P(n+1) — unconsumed, starting from zero.
 
-**The Trigger:** The transition to auction only occurs if the market does not validate the asset_last_rent_price known. That is, if no one clears the barrier established by the last tenant before their used_credit reaches the limit of asset_last_rent_price. In practice, the current tenant only reaches the end of the road if they were the last one to establish asset_last_rent_price.
+**The Trigger:** The transition to auction only occurs if the market does not validate the last_rent_price known. That is, if no one clears the barrier established by the last tenant before their used_credit reaches the limit of last_rent_price. In practice, the current tenant only reaches the end of the road if they were the last one to establish last_rent_price.
 
 
 ### 3. Price Discovery (State 2: At Dutch Auction)
@@ -171,9 +171,9 @@ Once a user injects liquidity, the asset enters a state of active utilization th
 
 When the entry barrier (the price) proves too high for current demand and the last tenant's used_credit is exhausted, the protocol initiates the liquidation:
 
-**Descent Strategy (Green Arrow):** The price_discovery_strategy begins eroding the entry barrier. The asset_descent_price descends from the last known maximum.
+**Descent Strategy (Green Arrow):** The price_discovery_strategy begins eroding the entry barrier. The price_descent descends from the last known maximum.
 
-**Resolution:** The moment the descending price reaches a point the market finds attractive, a new user injects that liquidity, the asset returns to State 1, and a new entry barrier is established — restarting the utility cycle. Otherwise, the asset_descent_price equals the asset_min_rent_price and the asset enters the Idle state.
+**Resolution:** The moment the descending price reaches a point the market finds attractive, a new user injects that liquidity, the asset returns to State 1, and a new entry barrier is established — restarting the utility cycle. Otherwise, the price_descent equals the min_rent_price and the asset enters the Idle state.
 
 ---
 
@@ -338,11 +338,11 @@ The integrating protocol selects the curve shape to incentivize a specific marke
 
 ---
 
-### 6.2 `f_price_descent(t_at_auction)`
+### 6.2 `f_price_descent(t_auction)`
 
 #### Purpose
 
-This function defines the rate at which the `descent_price` decays during a Dutch Auction. It is the symmetric counterpart to `f_credit_ascent`: where the first function drives a value upward from zero to a ceiling, this function drives a value downward from a ceiling to a floor.
+This function defines the rate at which the `price_descent` decays during a Dutch Auction. It is the symmetric counterpart to `f_credit_ascent`: where the first function drives a value upward from zero to a ceiling, this function drives a value downward from a ceiling to a floor.
 
 #### Formal Definition
 
@@ -504,7 +504,7 @@ This renewal mechanism was never explicitly designed into the protocol. It is a 
 - **`rent_handover_open`:** No next tenant has paid yet. The current tenant holds the position with no pending displacement.
 - **`rent_handover_confirmed`:** A next tenant has paid `next_rent_price`. The `handover_countdown` is running toward physical transfer.
 
-**At Dutch Auction:** The price discovery state. Triggered when `used_credit = Pn` (time exhausted) and the asset is in `rent_handover_open`. The `descent_price` descends via `f_price_descent` until a new tenant enters or the floor is reached.
+**At Dutch Auction:** The price discovery state. Triggered when `used_credit = Pn` (time exhausted) and the asset is in `rent_handover_open`. The `price_descent` descends via `f_price_descent` until a new tenant enters or the floor is reached.
 
 **Retired:** The terminal state. The asset exits the protocol permanently from Idle. Usus and fructus are reabsorbed into the owner's abusus.
 
@@ -516,7 +516,7 @@ This renewal mechanism was never explicitly designed into the protocol. It is a 
 
 **`next_rent_price`:** The minimum price required to legally displace the current tenant. Always strictly greater than `last_rent_price`. Defined by `f_next_rent_price`.
 
-**`descent_price`:** The live price during a Dutch Auction. Descends from `last_rent_price` to `min_rent_price` via `f_price_descent`.
+**`price_descent`:** The live price during a Dutch Auction. Descends from `last_rent_price` to `min_rent_price` via `f_price_descent`.
 
 ### Credit
 
@@ -538,7 +538,7 @@ This renewal mechanism was never explicitly designed into the protocol. It is a 
 
 **`f_credit_ascent(t_rent)`:** Defines how `used_credit` grows over time during a rental. Must pass through `(0, 0)` and `(tenure_ceiling, last_rent_price)`, bounded within the rectangle. Shape is chosen by the integrating protocol.
 
-**`f_price_descent(t_at_auction)`:** Defines how `descent_price` decays during a Dutch Auction. Must pass through `(0, last_rent_price)` and `(descent_ceiling, min_rent_price)`, monotonically non-increasing. Symmetric counterpart to `f_credit_ascent`.
+**`f_price_descent(t_auction)`:** Defines how `price_descent` decays during a Dutch Auction. Must pass through `(0, last_rent_price)` and `(descent_ceiling, min_rent_price)`, monotonically non-increasing. Symmetric counterpart to `f_credit_ascent`.
 
 **`f_next_rent_price(last_rent_price)`:** Defines the minimum price to displace the current tenant. Strictly one-dimensional. Must satisfy `f(last_rent_price) > last_rent_price`.
 
@@ -653,7 +653,7 @@ This design produces the following incentive properties:
 
 **Urgency to end vacant periods.** The longer the asset sits in escrow, the larger the yield bonus for whoever claims it. This creates positive market pressure to exit vacant states quickly — not through punishment of the owner, but through reward for the incoming tenant.
 
-**Double incentive during Dutch Auction.** As the `descent_price` falls via `f_price_descent`, the accumulated yield bonus grows simultaneously. The combination makes the entry point more attractive than the descending price alone. Actors who would not enter at a given price might be drawn in by the growing yield bonus, resolving the auction earlier.
+**Double incentive during Dutch Auction.** As the `price_descent` falls via `f_price_descent`, the accumulated yield bonus grows simultaneously. The combination makes the entry point more attractive than the descending price alone. Actors who would not enter at a given price might be drawn in by the growing yield bonus, resolving the auction earlier.
 
 **Aligned with the owner's interest.** The owner does not receive the escrow yield directly. However, the incentive it creates — faster re-entry into the Rented state — means `used_credit` starts flowing sooner. The owner earns more through occupancy than they would through passive yield accumulation.
 
@@ -798,9 +798,9 @@ The following vectors were identified and analyzed against the protocol's design
 
 ### 5. Dutch Auction Sniping
 
-**Vector:** Multiple actors wait for the `descent_price` to reach the floor before entering, seeking the minimum possible entry price.
+**Vector:** Multiple actors wait for the `price_descent` to reach the floor before entering, seeking the minimum possible entry price.
 
-**Resolution:** Waiting while `descent_price` falls is inherently risky — another actor may enter first, gaining the incumbent's structural advantage: the ability to renew at a discount of `remain_credit` relative to any external competitor. The actor who waits potentially surrenders that advantage entirely. The shape of `f_price_descent` directly mitigates this: a concave curve concentrates discounts early in the auction, eliminating the incentive to wait for the end. Integrator's choice.
+**Resolution:** Waiting while `price_descent` falls is inherently risky — another actor may enter first, gaining the incumbent's structural advantage: the ability to renew at a discount of `remain_credit` relative to any external competitor. The actor who waits potentially surrenders that advantage entirely. The shape of `f_price_descent` directly mitigates this: a concave curve concentrates discounts early in the auction, eliminating the incentive to wait for the end. Integrator's choice.
 
 ---
 

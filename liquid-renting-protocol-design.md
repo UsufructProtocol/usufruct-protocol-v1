@@ -742,7 +742,7 @@ The one transition that requires an active, explicit call is the physical handov
 
 No coordination mechanism is needed here either. T(n+1) — the incoming tenant — has already paid and is waiting to receive the asset. Calling `claim_handover()` is the act of claiming what they purchased. The incentive is direct, immediate, and proportional to the value of the asset. The protocol does not need to arrange for this call; the market already has.
 
-The function is permissionless — any actor may call it once the countdown has expired — but in practice it will be called by T(n+1) themselves, at the earliest moment they are able to do so.
+At the moment of payment, T(n+1) receives a permission that represents their exclusive right to claim the handover. This permission is the proof of their position — only its holder may call `claim_handover()` once the countdown has expired. No other actor can exercise it. The permission is non-transferable: the right to claim the handover belongs to the party that earned it by paying, and cannot be delegated or assigned to a third party.
 
 ### What This Property Eliminates
 

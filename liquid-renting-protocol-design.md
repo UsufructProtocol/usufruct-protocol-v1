@@ -78,7 +78,7 @@ By importing this module, developers can equip their native assets with a liquid
 
 ## 3. Asset State Flow (High-Level View)
 
-![Asset State Transition Flow](./media/8.png "Asset State Transition Flow")
+![Asset State Transition Flow](./media/state-transitions.png "Asset State Transition Flow")
 
 The lifecycle of an asset within the Liquid Renting protocol is governed by a strict state flow. This model ensures that the transfer of usus and fructus executes predictably, maintaining continuous liquidity of the asset.
 
@@ -140,19 +140,19 @@ At a deeper level, the Liquid Renting architecture operates as a dynamic equilib
 
 ### 1. The Resting State (State 0: Idle)
 
-![Asset State Transition Flow](./media/1.png "Asset State Transition Flow")
+![Asset State Transition Flow](./media/idle-state.png "Asset State Transition Flow")
 
 The initial equilibrium point. The price_descent equals the min_rent_price. The asset is "open" with no liquidity barrier protecting its usus.
 
 ### 2. The Consumption and Competition Cycle (State 1: Rented)
 
-![Asset State Transition Flow](./media/rent-start-cycle.png "Asset State Transition Flow")
-![Asset State Transition Flow](./media/rent-some-time.png "Asset State Transition Flow")
-![Asset State Transition Flow](./media/rent-time-exhuasted.png "Asset State Transition Flow")
+![Asset State Transition Flow](./media/rent-start.png "Asset State Transition Flow")
 
 Once a user injects liquidity, the asset enters a state of active utilization that is, by definition, a renewable cycle:
 
 **Price as Entry Barrier:** When renting the asset, the user purchases at next_rent_price(), establishing a new last_rent_price. This value acts as a physical liquidity barrier: any other actor wishing to access the usus of the asset must "clear" this barrier by injecting capital greater than next_rent_price(). A higher price than next_rent_price() is allowed.
+
+![Asset State Transition Flow](./media/rent-in-progress.png "Asset State Transition Flow")
 
 **The Takeover Dynamic (Cycle Reactivation):** If a new renter pays a higher price before the time runs out, the cycle restarts instantaneously:
 
@@ -160,20 +160,24 @@ Once a user injects liquidity, the asset enters a state of active utilization th
 - The consumption vector (Red Arrow) — consumption_credit_strategy — resets to zero.
 - The new tenant's credit block is initialized at their full entry price P(n+1) — unconsumed, starting from zero.
 
+![Asset State Transition Flow](./media/rent-finish.png "Asset State Transition Flow")
+
 **The Trigger:** The transition to auction only occurs if the market does not validate the last_rent_price known. That is, if no one clears the barrier established by the last tenant before their used_credit reaches the limit of last_rent_price. In practice, the current tenant only reaches the end of the road if they were the last one to establish last_rent_price.
 
 
 ### 3. Price Discovery (State 2: At Dutch Auction)
 
-![Asset State Transition Flow](./media/5.png "Asset State Transition Flow")
-![Asset State Transition Flow](./media/6.png "Asset State Transition Flow")
-![Asset State Transition Flow](./media/7.png "Asset State Transition Flow")
+![Asset State Transition Flow](./media/auction-start.png "Asset State Transition Flow")
 
 When the entry barrier (the price) proves too high for current demand and the last tenant's used_credit is exhausted, the protocol initiates the liquidation:
 
 **Descent Strategy (Green Arrow):** The price_discovery_strategy begins eroding the entry barrier. The price_descent descends from the last known maximum.
 
+![Asset State Transition Flow](./media/auction-in-progress.png "Asset State Transition Flow")
+
 **Resolution:** The moment the descending price reaches a point the market finds attractive, a new user injects that liquidity, the asset returns to State 1, and a new entry barrier is established — restarting the utility cycle. Otherwise, the price_descent equals the min_rent_price and the asset enters the Idle state.
+
+![Asset State Transition Flow](./media/auction-finish.png "Asset State Transition Flow")
 
 ---
 

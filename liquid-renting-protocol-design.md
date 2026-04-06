@@ -331,6 +331,18 @@ Any function satisfying these four constraints is a valid implementation. The pr
 
 Constraints (1), (2), (3), and (4) together imply that time exhaustion and credit exhaustion are the same event. When `t = tenure_ceiling`, `f(t) = last_rent_price` by definition — meaning `remain_credit = 0` at the exact moment the clock reaches zero. These two conditions are not independent; they are two projections of the same point `(tenure_ceiling, last_rent_price)`. The Dutch Auction is therefore triggered when either description is satisfied — they are equivalent.
 
+#### Bijectivity as a Consequence
+
+A strictly monotonically increasing function with fixed endpoints is a bijection between its domain and codomain. By the Inverse Function Theorem, `f_credit_ascent` is therefore a bijection:
+
+```
+f_credit_ascent : [0, tenure_ceiling] ↔ [0, last_rent_price]
+```
+
+This means **time and `used_credit` are equivalent representations of the same state**. For any value of `used_credit` there is exactly one `t_rent` that produced it, and vice versa. The protocol can express any condition indifferently in terms of time or credit — both descriptions always have a unique, well-defined answer.
+
+The inverse `f_credit_ascent⁻¹ : [0, last_rent_price] → [0, tenure_ceiling]` is therefore guaranteed to exist.
+
 #### Incentive Implications of Curve Shape
 
 The integrating protocol selects the curve shape to incentivize a specific market behavior:
@@ -362,8 +374,9 @@ The function must satisfy the following conditions:
 1. **Origin:** `f(0) = last_rent_price` — the auction begins at the last known rental price, the barrier the market failed to validate.
 2. **Termination:** `f(descent_ceiling) = min_rent_price` — if no buyer is found, the price reaches the floor and the asset returns to Idle.
 3. **Boundedness:** `∀ t ∈ [0, descent_ceiling] : min_rent_price ≤ f(t) ≤ last_rent_price` — the function is always contained within the bounding rectangle.
+4. **Monotonicity:** `f` is strictly monotonically decreasing — `price_descent` can only fall, never rise or hold.
 
-The function is strictly monotonically decreasing — the price can only descend during a Dutch Auction.
+Any function satisfying these four constraints is a valid implementation. The protocol imposes no further restriction on its shape.
 
 #### Symmetry with `f_credit_ascent`
 
@@ -377,6 +390,19 @@ Both functions share an identical structural contract: two fixed endpoints, a bo
 | Direction | Strictly monotonically increasing | Strictly monotonically decreasing |
 
 This design decision — fixing both endpoints and leaving the interior free — is deliberate. The space of valid curves between two fixed points is already vast enough to express any incentive behavior the integrating protocol may require. Adding discontinuities or free starting points would introduce complexity without expanding expressive power.
+
+#### Bijectivity as a Shared Property
+
+Both functions are strictly monotonic with fixed endpoints, and are therefore bijections between their respective domains and codomains:
+
+```
+f_credit_ascent  : [0, tenure_ceiling]  ↔ [0, last_rent_price]
+f_price_descent  : [0, descent_ceiling] ↔ [min_rent_price, last_rent_price]
+```
+
+In both cases, **time and economic value are equivalent representations of the same state**. For `f_credit_ascent`, any `used_credit` value uniquely identifies an elapsed `t_rent`. For `f_price_descent`, any `price_descent` value uniquely identifies an elapsed `t_auction`. The inverse of each function is guaranteed to exist.
+
+This collapses the state space: the protocol never needs to track both time and value independently — one always determines the other. Implementations can store whichever representation is cheaper on-chain and derive the other on demand.
 
 #### Scaling Behavior and the Role of `last_rent_price`
 

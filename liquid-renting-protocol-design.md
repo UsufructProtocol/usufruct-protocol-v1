@@ -451,6 +451,8 @@ The shape of the decay curve determines when buyers are incentivized to act duri
 
 **Convex curve (e.g., `f(t) = last_rent_price - (last_rent_price - min_rent_price) · (t / T)²`):** Price remains high for most of the auction and falls steeply at the end. Incentivizes patient buyers to wait — the largest discounts arrive late. Creates a "cliff" dynamic near `descent_ceiling`.
 
+> **Note:** The three families above — concave, linear, and convex — are not a simplification. They are the complete design space. Any continuous, strictly monotonically decreasing function between two fixed endpoints has a well-defined curvature at every point: positive (convex), negative (concave), or zero (linear). The diagram above is not a metaphor — it is the full space of valid implementations. The two boundary curves are the extreme cases; the diagonal is the linear. Every valid `f_price_descent` is an interpolation within that region.
+
 ---
 
 ### 6.3 `f_next_rent_price(last_rent_price)`

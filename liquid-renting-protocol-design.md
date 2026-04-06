@@ -144,7 +144,7 @@ At a deeper level, the Liquid Renting architecture operates as a dynamic equilib
 
 The initial equilibrium point. The price_descent equals the min_rent_price. The asset is "open" with no liquidity barrier protecting its usus.
 
-### 2. The Consumption and Competition Cycle (State 1: Rented)
+### 2. The Credit Ascent and Takeover Cycle (State 1: Rented)
 
 ![Asset State Transition Flow](./media/rent-start.png "Asset State Transition Flow")
 
@@ -157,7 +157,7 @@ Once a user injects liquidity, the asset enters a state of active utilization th
 **The Takeover Dynamic (Cycle Reactivation):** If a new renter pays a higher price before the time runs out, the cycle restarts instantaneously:
 
 - The new price becomes the new "barrier" (last_rent_price).
-- The consumption vector (Red Arrow) — consumption_credit_strategy — resets to zero.
+- `f_credit_ascent` resets to zero.
 - The new tenant's credit block is initialized at their full entry price P(n+1) — unconsumed, starting from zero.
 
 ![Asset State Transition Flow](./media/rent-finish.png "Asset State Transition Flow")
@@ -189,12 +189,12 @@ The compensation is strictly bounded by the tenant's own stake. No price appreci
 
 ### 1. The Consumption Function
 
-At the core of the mechanism lies the `consumption_rent_credit` function. This function couples time and credit into a single unified variable: as time elapses, the used credit grows, and the remaining credit shrinks. The function is defined to pass through two fixed points:
+At the core of the mechanism lies the `f_credit_ascent` function. This function couples time and credit into a single unified variable: as time elapses, the used credit grows, and the remaining credit shrinks. The function is defined to pass through two fixed points:
 
 - `(t = 0, consumed = 0)` — at the start of a rental, no credit has been consumed.
 - `(t = T_rent, consumed = Pn)` — at the end of the rental period, all credit is exhausted.
 
-This means time and credit are not independent: **when the clock runs out, the credit is exactly zero**. The two conditions are one and the same event seen from two dimensions. The exact shape of the curve between these two points (linear, convex, concave) is defined by the `consumption_credit_strategy` and will be detailed in the Incentive-driven Functions section.
+This means time and credit are not independent: **when the clock runs out, the credit is exactly zero**. The two conditions are one and the same event seen from two dimensions. The exact shape of the curve between these two points (linear, convex, concave) is defined by the `f_credit_ascent` and will be detailed in the Incentive-driven Functions section.
 
 At any moment during an active rental, the following invariant holds:
 
@@ -213,7 +213,7 @@ While a tenant Tn holds the usus at price Pn, the asset remains liquid. Any mark
 - `used_credit` — the portion of Pn that corresponds to time already consumed. This is the rent earned for the usus already delivered.
 
 **T(n+1)'s new rental block:**
-- T(n+1) injects `P(n+1)`, which is locked in full as their rental stake. The `consumption_rent_credit` function resets and runs from `(t=0, 0)` to `(t=T_rent, P(n+1))`.
+- T(n+1) injects `P(n+1)`, which is locked in full as their rental stake. The `f_credit_ascent` function resets and runs from `(t=0, 0)` to `(t=T_rent, P(n+1))`.
 
 ### 3. Invariants and Guarantees
 

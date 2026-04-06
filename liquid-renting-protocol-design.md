@@ -42,6 +42,7 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 10. [On-Chain State Derivability](#10-on-chain-state-derivability)
 11. [The Renewal Mechanism](#11-the-renewal-mechanism)
 12. [Attack Vectors and Protocol Resilience](#12-attack-vectors-and-protocol-resilience)
+13. [Integration Design Space](#13-integration-design-space)
 
 ---
 
@@ -946,3 +947,45 @@ The following vectors were identified and analyzed against the protocol's design
 **Vector:** With a low `min_rent_price` and short `descent_ceiling`, an owner can engineer rapid `Idle` cycles to re-integrate the asset with different parameters frequently — effectively changing the rules of the game at high frequency while formally respecting immutability per instance.
 
 **Resolution:** This falls outside the protocol's control and is the owner's responsibility. The protocol guarantees immutability per instance — nothing more. Each `Idle` cycle is time without `used_credit` and without rent. An asset with constantly changing parameters loses market trust. The strategy is self-defeating: the owner pays the price of their own instability.
+
+---
+
+## 13. Integration Design Space
+
+The protocol operates across two independent axes. The first governs the **asset** — the object whose usus and fructus are placed under the liquid renting logic. The second governs the **currency** — the token in which all prices, payments, and compensations are denominated.
+
+Each axis has two modes:
+
+| | **Open** (freely transferable) | **Closed** (transfer with restrictions) |
+|---|---|---|
+| **Fungible** | Standard currency. (e.g. SUI, USDC) | Restricted currency. (e.g. in-game token, ecosystem token) |
+| **Non-Fungible** | Standard NFT. (e.g. collectible, digital art) | Restricted NFT. (e.g. credential, usage license) |
+
+The asset is always non-fungible — liquid renting operates on unique, indivisible rights. The currency is always fungible — economic value must be divisible and comparable. The protocol operates at their intersection.
+
+### The Asset Axis
+
+**Nonfungible-open:** The asset is freely transferable. Any actor can hold it, rent it, or compete for it without restriction. This covers collectibles, digital art, gaming assets, virtual real estate — any object whose value derives from its usus in an open market.
+
+**Nonfungible-closed:** The asset's transfer is gated by conditions — identity, authorization, membership, or protocol-defined rules. This covers credentials, usage licenses, access rights, or any object whose value derives from what it proves or enables rather than what it represents. The liquid renting logic applies without modification: the protocol does not evaluate the conditions of the asset's closure — it only governs who holds it and for how long.
+
+### The Currency Axis
+
+**Fungible-open:** Payment in a standard, freely transferable token. Any participant can acquire and use it without restriction. This covers public DeFi markets operating in open, permissionless ecosystems.
+
+**Fungible-closed:** Payment in a token whose circulation is bounded — an in-game economy, a platform credit, an ecosystem-specific unit of account. The token carries real value within its context, but that context is defined by a closed system. From the protocol's perspective, it is indistinguishable from any other fungible token with deterministic value.
+
+### The Four Quadrants
+
+| | **Fungible-open currency** | **Fungible-closed currency** |
+|---|---|---|
+| **Nonfungible-open asset** | Open market liquid renting. Collectibles, digital art, gaming assets rented and traded in a permissionless economy. | Closed-economy liquid renting. Assets from an open market rented within a bounded ecosystem — a game that accepts external NFTs but prices in its own currency. |
+| **Nonfungible-closed asset** | Credentialed access in an open economy. Usage licenses or access rights rented for standard currency — the credential gates the right, the market sets the price. | Fully enclosed liquid renting. Credentials and rights rented within a closed system using its own currency — an enterprise platform, a regulated environment, or a self-contained digital economy. |
+
+### One Protocol, Four Markets
+
+The liquid renting logic — state machine, compensation invariant, incentive functions, handover mechanics — is identical across all four quadrants. The protocol does not adapt to each context; it operates correctly in all of them from first principles.
+
+This is the definition of a genuine primitive. A primitive is not a solution designed for one problem that happens to generalize. It is a mechanism whose correctness is independent of the domain in which it operates. The four quadrants are not four use cases — they are four natural instantiations of the same underlying structure.
+
+The integrating protocol selects its position on each axis independently. The liquid renting layer does not change.

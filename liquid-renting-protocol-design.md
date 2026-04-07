@@ -237,7 +237,9 @@ The asset physically moves only twice in its entire lifecycle: when it enters th
 
 ### Fructus as a Natural Consequence
 
-Because the protocol maintains an unambiguous `current_tenant` designation at every moment, access to the asset's fructus is always well-defined. The tenant exercises fructus directly against the asset during the bounded access window described below — the protocol does not intermediate yield, it only determines who holds access at each moment. For assets that generate fructus passively, yield accumulates in the shared object and is attributed to whoever holds access at that moment. The protocol does not exercise discretion over fructus — the state machine determines who captures it, and the tenant captures it by virtue of their designated access.
+Because the protocol maintains an unambiguous `current_tenant` designation at every moment, access to the asset's fructus is always well-defined. The tenant exercises fructus by calling the integrating protocol's functions directly, using the asset as the legitimate holder during the bounded access window. Fructus is always an active operation — the tenant must initiate it. The protocol does not intermediate or accumulate yield; it only determines who holds access and for how long. The state machine determines who may capture fructus; the tenant captures it by exercising that access.
+
+**Yield-bearing assets are supported naturally by this model.** For assets whose integrating protocol accumulates yield over time — fees, interest, rewards — that yield accrues in the integrating protocol's own state, not in the Liquid Renting escrow. The Liquid Renting Protocol has no visibility into this accumulation and requires none. When a tenant holds access, they may call the integrating protocol's yield-claiming functions at any moment, recovering all yield accumulated since the previous claim — including yield that accrued during vacant periods (`Idle` or `At Dutch Auction`) when no tenant was present to claim it. The first tenant to gain access after a vacant period therefore captures the full accumulated yield as a natural consequence of being the first legitimate holder of the asset key. This creates an incentive to end vacant periods — price and accumulated yield move in opposite directions during a Dutch Auction, making entry increasingly attractive over time — without the Liquid Renting Protocol tracking, distributing, or reasoning about yield at any point.
 
 ### The Escrow as Custodian with Bounded Access
 
@@ -250,24 +252,6 @@ When the current tenant wants to exercise the usus of the asset, the escrow rele
 The escrow exercises no judgment over what the tenant does during this window. It knows nothing about the integrating protocol's functions, the nature of the usus, or what the operation produces. Its role is prior and posterior to the operation: *who may access*, and *that access ends*.
 
 This is what makes the protocol a genuine primitive. The escrow's ignorance of the asset's semantics is not a limitation — it is the design. Any asset whose usus is exercisable by its holder is integrable, regardless of domain or complexity. The integrating protocol defines the semantics of the asset; the Liquid Renting Protocol defines who holds it and for how long.
-
-### Yield During Escrow
-
-Not all assets generate yield while in escrow. Many assets are purely utility-based — they produce nothing while held by the protocol during `Idle` or `At Dutch Auction`. For these assets, escrow yield is a non-issue: there is nothing to distribute.
-
-This section applies exclusively to **yield-bearing assets** — assets that continue to accrue rewards, interest, or any on-chain output regardless of who holds them. For these assets, yield accumulates in the protocol's escrow during vacant periods and must be handled explicitly.
-
-The protocol adopts the following rule: **accumulated escrow yield is delivered to the first tenant who activates access from a vacant state.**
-
-When a new tenant pays to enter from `Idle` or gains access during a Dutch Auction, they receive the full yield accumulated since the asset became vacant, in addition to the usus and fructus of the asset itself.
-
-This design produces the following incentive properties:
-
-**Urgency to end vacant periods.** The longer the asset sits in escrow, the larger the yield bonus for whoever claims it. This creates positive market pressure to exit vacant states quickly — not through punishment of the owner, but through reward for the incoming tenant.
-
-**Double incentive during Dutch Auction.** As the `price_descent` falls via `f_price_descent`, the accumulated yield bonus grows simultaneously. The combination makes the entry point more attractive than the descending price alone. Actors who would not enter at a given price might be drawn in by the growing yield bonus, resolving the auction earlier.
-
-**Aligned with the owner's interest.** The owner does not receive the escrow yield directly. However, the incentive it creates — faster re-entry into the Rented state — means `used_credit` starts flowing sooner. The owner earns more through occupancy than they would through passive yield accumulation.
 
 ---
 
@@ -796,16 +780,16 @@ If the asset never reaches `Idle` — because the market perpetually validates i
 
 The `to_retire` flag is the correct and preferred exit path. However, a structural edge case exists that can prevent it from ever executing.
 
-During `At Dutch Auction`, yield-bearing assets continue to accrue yield in escrow. This accumulated yield is delivered as a bonus to the first tenant who activates access from the auction — an incentive designed to accelerate re-entry into the `Rented` state. If the asset generates substantial yield and the bonus grows large enough, the Dutch Auction will always find a buyer regardless of `price_descent`. The `Idle` state becomes unreachable. The `to_retire` flag is set but never fires. The owner cannot exit.
+An asset that the market perpetually values will cycle continuously through `Rented` and `At Dutch Auction` without ever reaching `Idle` — the only state from which `to_retire` can execute. If every Dutch Auction finds a buyer before `price_descent` reaches `min_rent_price`, the `Idle` state becomes unreachable. The `to_retire` flag is set but never fires. The owner cannot exit.
 
 `force_retire()` is the owner's guarantee that this situation never becomes permanent. Like `to_retire`, it is gated by `retire_floor` — it cannot be invoked until the minimum committed period has elapsed.
 
 #### Behavior by State
 
 **From `At Dutch Auction`:**
-The auction terminates immediately. The yield accumulated in escrow is delivered to the owner — there is no active tenant and the incentive has no legitimate recipient. The asset passes to `Retired`.
+The auction terminates immediately. The asset passes to `Retired`.
 
-This is the primary use case for `force_retire()`. It is the only state where the kidnapping scenario can occur, and the only state where the call acts with immediate effect.
+This is the primary use case for `force_retire()`. It is the only state where the blocking scenario can occur, and the only state where the call acts with immediate effect.
 
 **From `Rented` (`rent_handover_open`):**
 `force_retire()` sets the `force_retire` flag. From this point the asset does not accept new bids — the transition to `rent_handover_confirmed` is blocked. The current tenant completes their block in full until `tenure_ceiling`. At expiry, instead of triggering a Dutch Auction, the asset passes to `Retired`. No disruption to the active block occurs.
@@ -959,15 +943,7 @@ The following vectors were identified and analyzed against the protocol's design
 
 ---
 
-### 9. Perverse Coordination on Escrow Yield
-
-**Vector:** If yield accumulates at a known rate during `Idle`/`At Dutch Auction`, actors may coordinate to withhold entry until the accumulated bonus is large enough — paradoxically extending the vacant period instead of shortening it.
-
-**Resolution:** Waiting surrenders the current tenant's structural advantage. The first actor to enter captures both the accumulated yield and the structural protection of the tenant position. The actor who waited loses both simultaneously. The protocol permits the waiting strategy but does not make it free: competition between actors is the natural mitigation. No one can guarantee the optimal entry moment without risking that another actor claims it first.
-
----
-
-### 10. `to_retire` as Market Manipulation Signal
+### 9. `to_retire` as Market Manipulation Signal
 
 **Vector:** The `to_retire` flag is publicly visible. The owner can set and unset it to signal that the asset is "about to be retired," discouraging new tenants and manufacturing artificial `Idle` periods to change parameters faster.
 
@@ -975,7 +951,7 @@ The following vectors were identified and analyzed against the protocol's design
 
 ---
 
-### 11. Rapid Retire/Re-integrate for Parameter Manipulation
+### 10. Rapid Retire/Re-integrate for Parameter Manipulation
 
 **Vector:** With a low `min_rent_price` and short `descent_ceiling`, an owner can engineer rapid `Idle` cycles to re-integrate the asset with different parameters frequently — effectively changing the rules of the game at high frequency while formally respecting immutability per instance.
 

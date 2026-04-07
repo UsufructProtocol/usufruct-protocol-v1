@@ -219,6 +219,21 @@ The asset physically moves only twice in its entire lifecycle: when it enters th
 
 Because the protocol maintains an unambiguous `current_tenant` designation at every moment, access to the asset's fructus is always well-defined. For assets where fructus requires an explicit claim — the common case in DeFi: LP fees, staking rewards, yield distributions — the tenant calls the relevant function through the shared escrow. For assets that generate fructus passively, yield accumulates in the shared object and is attributed to whoever holds access at that moment. The protocol does not exercise discretion over fructus — the state machine determines who captures it, and the tenant captures it by virtue of their designated access.
 
+### The Escrow as Proxy
+
+The shared object escrow is not a passive vault — it is an active proxy between the tenant and the integrating protocol's asset.
+
+The integrating protocol defines an asset with its own set of functions: operations that encode what it means to *use* that asset — claiming fees, exercising governance rights, accessing a data feed, deploying capital. These functions are callable only by whoever legitimately holds the asset. The escrow becomes the legitimate holder at integration time and never relinquishes that position.
+
+When a tenant wants to exercise the usus of the asset, they do not call the integrating protocol directly. They call the escrow, which:
+
+1. Verifies that the caller is the designated `current_tenant`.
+2. Forwards the call to the integrating protocol's asset on their behalf.
+
+The escrow knows nothing about what the asset does or what the call produces. It only enforces one rule: *is the caller the current tenant?* The integrating protocol defines the semantics of the asset; the Liquid Renting Protocol defines who can access it and when.
+
+This separation is what makes the protocol a genuine primitive. It does not need to understand the assets it governs — it only needs to govern access to them. Any asset whose usus is encoded as callable functions is a valid target for integration, regardless of its domain, purpose, or complexity.
+
 ### Yield During Escrow
 
 Not all assets generate yield while in escrow. Many assets are purely utility-based — they produce nothing while held by the protocol during `Idle` or `At Dutch Auction`. For these assets, escrow yield is a non-issue: there is nothing to distribute.

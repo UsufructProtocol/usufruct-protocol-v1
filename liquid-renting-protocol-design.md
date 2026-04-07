@@ -93,6 +93,10 @@ This separation is the protocol's core value. An integrating protocol does not g
 
 By adopting this layer, any protocol equips its assets with a liquid rental market — without building one.
 
+The following sequence illustrates a complete rental cycle — from integration through market, bounded access, and usus — showing how the three actors interact and where each layer's responsibility begins and ends.
+
+![Rental Cycle Sequence](./media/rental-cycle-sequence.png "Rental Cycle Sequence")
+
 ---
 
 ## 3. Asset State Flow (High-Level View)

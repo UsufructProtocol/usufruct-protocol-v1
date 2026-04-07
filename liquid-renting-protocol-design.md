@@ -615,21 +615,15 @@ P(n+1) - remain_credit
 
 **The tenant pays the minimum increment plus what they have already consumed.** The unconsumed portion is returned, the block resets to `P(n+1)`, and the clock starts over.
 
-This renewal mechanism was never explicitly designed into the protocol. It is a free consequence of the compensation invariant and the identity-agnostic takeover rule. When simple rules produce emergent behaviors that are both useful and mathematically clean, it is a signal that the underlying design is sound.
-
 ---
 
 ## 8. The Renewal Mechanism
 
-### Origin
-
-The renewal mechanism was never designed. It appears nowhere in the protocol's intent. It is a free consequence of three rules that were designed for entirely different purposes:
+The renewal mechanism follows directly from three rules:
 
 1. **The protocol is identity-agnostic.** `f_next_rent_price` is evaluated against a price, not a party. The protocol has no concept of "same address" or "different address."
 2. **The last valid bidder wins.** During `rent_handover_confirmed`, the asset transfers to the last tenant who placed a valid bid before the `handover_countdown` expired.
 3. **The displaced tenant always recovers unused time.** Any tenant displaced by a takeover receives `remain_credit`, returned from their own locked stake.
-
-From these three rules alone, a complete renewal system emerges.
 
 ### The Mathematics of Self-Renewal
 
@@ -703,9 +697,9 @@ The price ladder that Tn used as a defensive weapon becomes the cost they bear i
 
 This creates a natural discipline: the defensive mechanism is rational to use when the tenant believes the market will continue to validate the higher price, and irrational when it will not. The protocol need not encode this judgment — it falls out automatically from the price-only-ascends rule during the Rented state.
 
-### What the Protocol Did Not Build
+### Derived Behaviors
 
-The following behaviors exist in the protocol without being explicitly implemented:
+The following behaviors are direct consequences of the three rules above operating together:
 
 - **A renewal system** — tenants can extend their position indefinitely by paying the minimum increment plus consumed rent.
 - **A right of first refusal** — the current tenant can always match and exceed any incoming bid.
@@ -713,8 +707,6 @@ The following behaviors exist in the protocol without being explicitly implement
 - **A competitive takeover market** — multiple actors can compete for the asset during the `handover_countdown` window.
 - **A self-correcting price ladder** — every renewal raises the floor, ensuring prices only move upward during the Rented state.
 - **A self-limiting defense** — abusing the counter-bid mechanism raises the tenant's own cost floor. The protocol does not punish overuse; the price does.
-
-None of these were designed. They are the natural output of identity-agnosticism, the last-bidder-wins rule, and the compensation invariant operating together. When simple primitives produce emergent behaviors that are both economically rational and mathematically clean, it is a signal that the underlying design is sound.
 
 ---
 

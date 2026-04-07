@@ -835,23 +835,23 @@ The auction terminates immediately. The yield accumulated in escrow is delivered
 This is the primary use case for `force_retire()`. It is the only state where the kidnapping scenario can occur, and the only state where the call acts with immediate effect.
 
 **From `Rented` (`rent_handover_open`):**
-There is no escrow yield — the tenant holds the asset directly and captures yield naturally. The owner cannot interrupt an active rental block without violating the tenant's guarantee. `force_retire()` sets a deferred exit: when the current block expires at `tenure_ceiling`, the asset transitions to `Retired` instead of triggering a Dutch Auction. The tenant completes their block in full. No disruption occurs.
+`force_retire()` sets the `force_retire` flag. From this point the asset does not accept new bids — the transition to `rent_handover_confirmed` is blocked. The current tenant completes their block in full until `tenure_ceiling`. At expiry, instead of triggering a Dutch Auction, the asset passes to `Retired`. No disruption to the active block occurs.
 
 **From `Rented` (`rent_handover_confirmed`):**
-The incoming tenant's payment is returned to them immediately. The current tenant retains usus and fructus until the `handover_countdown` expires, at which point they receive their `remain_credit` and the asset passes to `Retired`. Both parties are made whole.
+`force_retire()` sets the `force_retire` flag. The active `handover_countdown` runs to completion uninterrupted — no refunds, no changes to the current flow. T(n+1) receives the asset at handover and begins their rental cycle in `rent_handover_open`. With the flag active, their `rent_handover_open` does not accept new bids. T(n+1) completes their block in full until `tenure_ceiling`. At expiry, the asset passes to `Retired`.
 
 **From `Idle`:**
 Equivalent to `to_retire` executing immediately. The asset passes to `Retired` without re-entering the rental cycle.
 
 #### The Tenant Guarantee Is Preserved
 
-In every `Rented` state, the tenant's block is not cut short. Their `remain_credit` is honoured at the natural end of their position. The protocol's foundational promise to tenants — *if displaced, recover unused credit* — holds unconditionally across all `force_retire()` paths.
+In every `Rented` state, the tenant's block is not cut short and no payment is ever refunded mid-flight. Every actor who paid for a position receives their full block — the `force_retire` flag only gates future transitions, never current ones. The protocol's foundational promise to tenants — *if displaced, recover unused credit* — holds unconditionally across all `force_retire()` paths.
 
 #### A Tool of Last Resort
 
 `force_retire()` should be invoked only when the natural exit path is genuinely blocked. Using it as a routine management tool — to reconfigure parameters, respond to market conditions, or accelerate re-integration — sends an unambiguous signal to the market: the asset's protocol instance can be terminated unilaterally at any time.
 
-The consequences are direct. Tenants who price their position rationally will discount the risk of forced interruption. Competition for the asset weakens. The Dutch Auction loses depth as potential buyers wait rather than commit. The owner earns less `used_credit` than they would have by allowing the protocol to run its natural course.
+The consequences are direct. Tenants who price their position rationally will discount the value of a position that cannot be renewed or taken over — the `force_retire` flag eliminates the competitive dynamics that make the asset valuable to hold. Competition for the asset weakens. The Dutch Auction loses depth as potential buyers wait rather than commit. The owner earns less `used_credit` than they would have by allowing the protocol to run its natural course.
 
 The protocol does not penalise the abuse of `force_retire()`. The market does. An asset whose owner treats forced exit as a lever will, over time, cease to attract the organic competition the protocol was designed to produce. The mechanism exists to guarantee that no owner is permanently trapped. Its correct use is exceptional.
 

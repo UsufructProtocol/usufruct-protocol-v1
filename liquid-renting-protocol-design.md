@@ -73,9 +73,25 @@ The Liquid Renting model is designed to apply fundamentally to rental assets tha
 
 ## Protocol Purpose
 
-The protocol has been designed as a new modular DeFi infrastructure primitive. Its goal is to provide a standardized Liquid Renting logic layer that can be integrated agnostically by any ecosystem.
+The Liquid Renting Protocol is a **market layer** — a self-contained infrastructure that any protocol can adopt to make the access rights to its assets liquid, without modifying its own logic.
 
-By importing this module, developers can equip their native assets with a liquid rental architecture, allowing utility (usus) and yield (fructus) to flow programmatically without compromising the asset's availability in the market.
+The integrating protocol defines the asset and its functions. The tenant uses the asset. Between them, the Liquid Renting Protocol handles everything the market requires: price discovery, custody, access control, tenant compensation, and state transitions. Neither party needs to build or reason about that infrastructure — they plug into it.
+
+This separation is the protocol's core value. An integrating protocol does not gain a feature — it gains a market. The asset's usus becomes continuously liquid, its price self-calibrating, and its access rights tradeable in real time. The integrator's own logic remains untouched.
+
+```
+┌─────────────────────────────────┐
+│      Integrating Protocol       │  defines asset + usus functions
+├─────────────────────────────────┤
+│   Liquid Renting Protocol       │  market layer
+│   · price discovery             │  · tenant compensation
+│   · custody + access control    │  · state machine
+├─────────────────────────────────┤
+│         Runtime                 │  execution layer
+└─────────────────────────────────┘
+```
+
+By adopting this layer, any protocol equips its assets with a liquid rental market — without building one.
 
 ---
 

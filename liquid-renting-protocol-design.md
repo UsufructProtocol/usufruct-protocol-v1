@@ -225,9 +225,9 @@ Not all assets generate yield while in escrow. Many assets are purely utility-ba
 
 This section applies exclusively to **yield-bearing assets** — assets that continue to accrue rewards, interest, or any on-chain output regardless of who holds them. For these assets, yield accumulates in the protocol's escrow during vacant periods and must be handled explicitly.
 
-The protocol adopts the following rule: **accumulated escrow yield is delivered to the first tenant who takes the asset out of escrow.**
+The protocol adopts the following rule: **accumulated escrow yield is delivered to the first tenant who activates access from a vacant state.**
 
-When a new tenant pays to enter from `Idle` or wins the asset during a Dutch Auction, they receive the full yield accumulated since the asset entered escrow, in addition to the usus and fructus of the asset itself.
+When a new tenant pays to enter from `Idle` or gains access during a Dutch Auction, they receive the full yield accumulated since the asset became vacant, in addition to the usus and fructus of the asset itself.
 
 This design produces the following incentive properties:
 
@@ -657,7 +657,7 @@ The renewal mechanism is equally available during `rent_handover_confirmed`. If 
 When Tn counter-bids:
 - T(m) receives their full `P(m+1)` injection back immediately — they are superseded.
 - Tn, as the displaced tenant at Pn, receives `remain_credit`.
-- Tn, as the new winning bidder at P(m+2), will receive the asset when the `handover_countdown` expires.
+- Tn, as the new winning bidder at P(m+2), will be designated `current_tenant` when the `handover_countdown` expires.
 - Tn's net cost: `P(m+2) - remain_credit`.
 
 The current tenant can always neutralize a takeover attempt. Their structural advantage — `remain_credit` — is the discount they hold over any external competitor who must pay `P(m+2)` in full. This advantage is largest at the start of the block and shrinks as credit is consumed.
@@ -764,7 +764,7 @@ If the asset never reaches `Idle` — because the market perpetually validates i
 
 The `to_retire` flag is the correct and preferred exit path. However, a structural edge case exists that can prevent it from ever executing.
 
-During `At Dutch Auction`, yield-bearing assets continue to accrue yield in escrow. This accumulated yield is delivered as a bonus to the first tenant who pulls the asset out of escrow — an incentive designed to accelerate re-entry into the `Rented` state. If the asset generates substantial yield and the bonus grows large enough, the Dutch Auction will always find a buyer regardless of `price_descent`. The `Idle` state becomes unreachable. The `to_retire` flag is set but never fires. The owner cannot exit.
+During `At Dutch Auction`, yield-bearing assets continue to accrue yield in escrow. This accumulated yield is delivered as a bonus to the first tenant who activates access from the auction — an incentive designed to accelerate re-entry into the `Rented` state. If the asset generates substantial yield and the bonus grows large enough, the Dutch Auction will always find a buyer regardless of `price_descent`. The `Idle` state becomes unreachable. The `to_retire` flag is set but never fires. The owner cannot exit.
 
 `force_retire()` is the owner's guarantee that this situation never becomes permanent. Like `to_retire`, it is gated by `retire_floor` — it cannot be invoked until the minimum committed period has elapsed.
 

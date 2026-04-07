@@ -34,7 +34,7 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 2. [Core Principles](#core-principles)
 3. [Asset State Flow - High Level](#3-asset-state-flow-high-level-view)
 4. [Asset State Flow - Low Level](#4-asset-state-flow-low-level-view)
-5. [Asset Custody and Transfer Model](#5-asset-custody-and-transfer-model)
+5. [Asset Custody and Access Model](#5-asset-custody-and-access-model)
 6. [Tenant Compensation Mechanism](#6-tenant-compensation-mechanism)
 7. [Incentive-driven Functions](#7-incentive-driven-functions)
 8. [The Renewal Mechanism](#8-the-renewal-mechanism)
@@ -184,7 +184,7 @@ When the entry barrier (the price) proves too high for current demand and the la
 
 ---
 
-## 5. Asset Custody and Transfer Model
+## 5. Asset Custody and Access Model
 
 ### The Protocol as Escrow
 
@@ -217,22 +217,19 @@ The asset physically moves only twice in its entire lifecycle: when it enters th
 
 ### Fructus as a Natural Consequence
 
-Because the protocol maintains an unambiguous `current_tenant` designation at every moment, access to the asset's fructus is always well-defined. For assets where fructus requires an explicit claim — the common case in DeFi: LP fees, staking rewards, yield distributions — the tenant calls the relevant function through the shared escrow. For assets that generate fructus passively, yield accumulates in the shared object and is attributed to whoever holds access at that moment. The protocol does not exercise discretion over fructus — the state machine determines who captures it, and the tenant captures it by virtue of their designated access.
+Because the protocol maintains an unambiguous `current_tenant` designation at every moment, access to the asset's fructus is always well-defined. The tenant exercises fructus directly against the asset during the bounded access window described below — the protocol does not intermediate yield, it only determines who holds access at each moment. For assets that generate fructus passively, yield accumulates in the shared object and is attributed to whoever holds access at that moment. The protocol does not exercise discretion over fructus — the state machine determines who captures it, and the tenant captures it by virtue of their designated access.
 
-### The Escrow as Proxy
+### The Escrow as Custodian with Bounded Access
 
-The shared object escrow is not a passive vault — it is an active proxy between the tenant and the integrating protocol's asset.
+The shared object escrow is not a passive vault, nor does it forward or intermediate calls. It grants and reclaims.
 
-The integrating protocol defines an asset with its own set of functions: operations that encode what it means to *use* that asset — claiming fees, exercising governance rights, accessing a data feed, deploying capital. These functions are callable only by whoever legitimately holds the asset. The escrow becomes the legitimate holder at integration time and never relinquishes that position.
+The integrating protocol defines an asset with its own set of functions: operations that encode what it means to *use* that asset — claiming fees, exercising governance rights, accessing a data feed, deploying capital. These functions are callable only by whoever legitimately holds the asset. The escrow becomes the legitimate holder at integration time and never relinquishes that position between operations.
 
-When a tenant wants to exercise the usus of the asset, they do not call the integrating protocol directly. They call the escrow, which:
+When the current tenant wants to exercise the usus of the asset, the escrow releases it temporarily under a binding obligation of return. The tenant interacts with the integrating protocol directly, using the asset as its legitimate holder for the duration of the operation. At the close of the operation, the asset returns to escrow — not by negotiation, but by the structural guarantee of the access mechanism itself.
 
-1. Verifies that the caller is the designated `current_tenant`.
-2. Forwards the call to the integrating protocol's asset on their behalf.
+The escrow exercises no judgment over what the tenant does during this window. It knows nothing about the integrating protocol's functions, the nature of the usus, or what the operation produces. Its role is prior and posterior to the operation: *who may access*, and *that access ends*.
 
-The escrow knows nothing about what the asset does or what the call produces. It only enforces one rule: *is the caller the current tenant?* The integrating protocol defines the semantics of the asset; the Liquid Renting Protocol defines who can access it and when.
-
-This separation is what makes the protocol a genuine primitive. It does not need to understand the assets it governs — it only needs to govern access to them. Any asset whose usus is encoded as callable functions is a valid target for integration, regardless of its domain, purpose, or complexity.
+This is what makes the protocol a genuine primitive. The escrow's ignorance of the asset's semantics is not a limitation — it is the design. Any asset whose usus is exercisable by its holder is integrable, regardless of domain or complexity. The integrating protocol defines the semantics of the asset; the Liquid Renting Protocol defines who holds it and for how long.
 
 ### Yield During Escrow
 

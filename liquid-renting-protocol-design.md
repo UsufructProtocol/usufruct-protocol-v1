@@ -467,7 +467,45 @@ The integrating protocol selects the curve shape to incentivize a specific marke
 
 **Convex curve (e.g., `g(x) = x²`):** Credit is consumed slowly at the start and accelerates toward the end. A tenant displaced early still holds a large `remain_credit`, making entry safer. This incentivizes rotation — the cost of entering is partially recoverable at any early point, lowering the risk of taking a position. Suited for protocols that want high liquidity and active price discovery.
 
-> **Note:** The three families above — concave, linear, and convex — are not a simplification. They are the complete design space. Any continuous, strictly monotonically increasing function between two fixed endpoints on `[0,1]` has a well-defined curvature at every point: positive (convex), negative (concave), or zero (linear). The diagram above is not a metaphor — it is the full space of valid implementations of `g`. The two boundary curves are the extreme cases; the diagonal is the linear. Every valid `g` is an interpolation within that region.
+> **Note:** The three behaviors above — concave, linear, and convex — cover the space of functions with constant curvature sign. They are the natural anchors for reasoning about incentive direction. Functions with an inflection point — such as the sigmoidal family described below — combine convex and concave segments and are not captured by this framing.
+
+#### Concrete Function Families
+
+Any function satisfying the four constraints is a valid implementation of `g`. The following families cover the practical design space and serve as concrete starting points for integrators.
+
+**Power-law family: `g(x) = xᵅ`, α > 0**
+
+The simplest parametric family. A single parameter controls the curvature continuously: `α < 1` produces a concave curve, `α = 1` is linear, `α > 1` is convex. The examples `g(x) = √x` (`α = 0.5`) and `g(x) = x²` (`α = 2`) from the incentive implications above are members of this family. Easy to reason about, easy to verify, and cheap to evaluate on-chain.
+
+**Exponential family: `g(x) = (eᵅˣ − 1) / (eᵅ − 1)`, α ≠ 0**
+
+A single parameter interpolates continuously between concave (`α < 0`), linear (`α → 0`), and convex (`α > 0`) behavior — the same curvature regimes as the power-law family, but with a different profile. Convex members of this family accelerate more sharply near `x = 1` than power-law equivalents with similar curvature near `x = 0`. For large `|α|`, the curve approaches the boundaries of the feasible region — valid by the constraints but approaching the degenerate step-function behavior described in Attack Vector 8.
+
+**Sigmoidal family (S-curve): `g(x) = 3x² − 2x³`**
+
+The canonical member is the cubic smoothstep. More generally, any strictly increasing function with a single interior inflection point. A parametric form via `tanh`:
+
+```
+g(x) = [tanh(α(x − 0.5)) − tanh(−α/2)] / [tanh(α/2) − tanh(−α/2)],  α > 0
+```
+
+As `α → 0`, this approaches linear. For finite `α`, the curve is convex on `[0, 0.5)` and concave on `(0.5, 1]`.
+
+This family is not reachable by any member of the power-law or exponential families — its defining property is the inflection point. The curvature changes sign, so the curve is neither globally convex nor globally concave.
+
+*Economic interpretation:* credit consumption is slow at the start of the block, accelerates through the middle, and slows again near the end. A tenant displaced early or late recovers most of their credit; a tenant displaced mid-block recovers the least. This structure suits protocols where the usus is most valuable at the boundaries of a block — governance epochs where decisions are made at the start and close, seasonal campaigns with a warm-up and wind-down, or any cycle where mid-period activity is operationally routine and displacement is least costly.
+
+**Bernstein polynomial family**
+
+For maximum expressiveness, any valid `g` can be approximated to arbitrary precision as a Bernstein polynomial of degree `n`:
+
+```
+g(x) = Σₖ₌₀ⁿ cₖ · Bₖ,ₙ(x)
+
+Bₖ,ₙ(x) = C(n,k) · xᵏ · (1−x)ⁿ⁻ᵏ
+```
+
+The four constraints translate directly to conditions on the coefficient vector: `c₀ = 0`, `cₙ = 1`, and `c₀ < c₁ < c₂ < ··· < cₙ` (strictly increasing). Any desired credit-consumption profile can be expressed as a Bernstein polynomial of sufficient degree, with constraint satisfaction guaranteed by construction from the coefficient conditions alone. This is the correct family when an integrator's incentive requirements are complex enough that no single-parameter family suffices.
 
 ---
 
@@ -575,7 +613,24 @@ The shape of the decay curve determines when buyers are incentivized to act duri
 
 **Convex curve (e.g., `h(x) = x²`):** The discount remains shallow for most of the auction and deepens steeply at the end. Incentivizes patient buyers to wait — the largest discounts arrive late. Creates a "cliff" dynamic near `descent_ceiling`.
 
-> **Note:** The three families above — concave, linear, and convex — are not a simplification. They are the complete design space. Any continuous, strictly monotonically increasing function between two fixed endpoints on `[0,1]` has a well-defined curvature at every point: positive (convex), negative (concave), or zero (linear). The diagram above is not a metaphor — it is the full space of valid implementations of `h`. The two boundary curves are the extreme cases; the diagonal is the linear. Every valid `h` is an interpolation within that region.
+> **Note:** The three behaviors above — concave, linear, and convex — cover the space of functions with constant curvature sign. Functions with an inflection point — such as the sigmoidal family — are not captured by this framing.
+
+#### Concrete Function Families
+
+`g` and `h` share the same type and the same constraints. Every family valid for `g` is equally valid for `h`. The power-law, exponential, sigmoidal, and Bernstein polynomial families defined in §6.1 apply without modification.
+
+The economic reinterpretation for `h` is symmetric: where `g` governs *how fast credit is consumed by the tenant*, `h` governs *how fast the discount deepens toward the buyer*. The incentive shapes map as follows:
+
+| Family | As `g` (credit ascent) | As `h` (price descent) |
+|---|---|---|
+| Power-law `xᵅ`, α < 1 (concave) | Credit consumed fast early — penalizes speculative entry | Discount deepens fast early — rewards acting quickly in the auction |
+| Power-law `xᵅ`, α > 1 (convex) | Credit consumed slow early — incentivizes rotation | Discount deepens slow early — cliff dynamic, rewards patience |
+| Exponential, α < 0 (concave) | Same as concave power-law, steeper deceleration near end | Same as concave power-law, steeper deceleration near end |
+| Exponential, α > 0 (convex) | Same as convex power-law, sharper acceleration near end | Same as convex power-law, sharper acceleration near end |
+| Sigmoidal | Displacement cheapest at block boundaries | Entry cheapest early and late in the auction; steepest discount mid-auction |
+| Bernstein | Arbitrary profile, coefficient-specified | Arbitrary profile, coefficient-specified |
+
+The sigmoidal family applied to `h` creates a "mid-auction cliff": the discount accumulates slowly at the start, accelerates sharply through the middle of the auction window, then flattens again near the end. Buyers who miss the mid-auction window see diminishing additional discount — a structure suited to protocols that want to concentrate competitive pressure in the middle of the price discovery window.
 
 ---
 

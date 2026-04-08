@@ -1032,83 +1032,34 @@ The following vectors were identified and analyzed against the protocol's design
 
 ## 12. Integration Design Space
 
-The protocol operates across two independent axes. The first governs the **asset** — the object whose usus and fructus are placed under the liquid renting logic. The second governs the **currency** — the token in which all prices, payments, and compensations are denominated.
+The protocol operates on a single, well-defined integration profile.
 
-Each axis has two modes:
+**Asset:** must have `key + store` abilities — freely transferable, stored directly as a field inside the shared escrow object. This covers any standard NFT: collectibles, gaming items, virtual real estate, DeFi position tokens, or any unique on-chain object whose value derives from its usus and fructus.
 
-| | **Open** (freely transferable) | **Closed** (transfer with restrictions) |
-|---|---|---|
-| **Fungible** | Standard currency. (e.g. SUI, USDC) | Restricted currency. (e.g. in-game token, ecosystem token) |
-| **Non-Fungible** | Standard NFT. (e.g. collectible, digital art) | Restricted NFT. (e.g. credential, usage license) |
+**Currency:** any standard `Coin<T>` token. The protocol handles all fund flows as `Balance<CoinType>` internally — prices, payments, tenant stakes, `remain_credit`, `used_credit`, and owner earnings are all denominated and settled in the same fungible type. This covers open currencies (SUI, USDC) and restricted-mint currencies alike: any token issued as a standard `Coin<T>`, regardless of who controls the mint, integrates without modification.
 
-The asset is always non-fungible — liquid renting operates on unique, indivisible rights. The currency is always fungible — economic value must be divisible and comparable. The protocol operates at their intersection.
+### The Escrow Model
 
-### The Protocol as Escrow
+The asset is deposited into the escrow at integration time and held there for its entire lifecycle. It is never transferred to a tenant. Tenants access the asset's usus through Sui's Programmable Transaction Block mechanism — the asset is borrowed by value, used within the same atomic transaction, and returned unconditionally by the hot potato pattern.
 
-Before examining each axis, there is a structural property of the protocol that determines the shape of every integration: **the protocol holds the asset in custody at all times.**
+Physical transfers occur at two moments only: deposit at integration, and withdrawal at retirement. The rental cycle involves no asset movement. Takeovers, the Dutch Auction, and the handover countdown update only who is authorized to borrow the asset. The escrow is always the holder; the designation of the authorized accessor is what changes.
 
-The asset is deposited into the escrow at integration time and withdrawn only at retirement. It never transfers to a tenant. Instead, tenants access the asset's usus through Sui's Programmable Transaction Block mechanism — the asset is borrowed, used within a single atomic transaction, and returned to the escrow unconditionally by the hot potato pattern. The escrow is always the holder. The tenant is always the authorized accessor.
+### Integration Requirements
 
-This has a direct consequence for integration complexity. The asset's transfer restrictions — whatever conditions a closed system imposes on who can hold it — are only relevant at two moments: when the owner deposits the asset into the escrow, and when the owner withdraws it at retirement. During the entire rental lifecycle, no transfer occurs. The takeover mechanism, the Dutch Auction, the handover countdown — none of these move the asset. They only update who is authorized to borrow it.
+An integration requires:
+- An asset with `key + store` abilities
+- A payment token issued as `Coin<T>`
+- Configuration of the integration parameters (§9)
 
-The four quadrants that follow reflect this architecture.
-
-### The Asset Axis
-
-**Nonfungible-open:** The asset is freely transferable. Any actor can hold it, rent it, or compete for it without restriction. This covers collectibles, digital art, gaming assets, virtual real estate — any object whose value derives from its usus in an open market. Deposit and withdrawal execute without preconditions.
-
-**Nonfungible-closed:** The asset's transfer is gated by conditions — authorization, membership, or protocol-defined rules. This covers credentials, usage licenses, access rights, or any object whose value derives from what it proves or enables rather than what it represents. Because the protocol holds the asset in escrow and tenants access it without receiving it, the closure conditions apply only at deposit and withdrawal. The rental cycle itself is unaffected by them.
-
-### The Currency Axis
-
-**Fungible-open:** Payment in a standard, freely transferable token. Any participant can acquire and use it without restriction. This covers public DeFi markets operating in open, permissionless ecosystems.
-
-**Fungible-closed:** Payment in a token whose circulation is bounded — an in-game economy, a platform credit, an ecosystem-specific unit of account. The token carries real value within its context, but that context is defined by a closed system. From the protocol's perspective, it is indistinguishable from any other fungible token with deterministic value. The escrow must be authorized to receive, hold, and send the closed currency on behalf of its participants.
-
-### The Four Quadrants
-
-| | **Fungible-open currency** | **Fungible-closed currency** |
-|---|---|---|
-| **Nonfungible-open asset** | Open market liquid renting. Collectibles, digital art, gaming assets rented and traded in a permissionless economy. | Closed-economy liquid renting. Assets from an open market rented within a bounded ecosystem — a game that accepts external NFTs but prices in its own currency. |
-| **Nonfungible-closed asset** | Credentialed access in an open economy. Usage licenses or access rights rented for standard currency — the credential gates the right, the market sets the price. | Fully enclosed liquid renting. Credentials and rights rented within a closed system using its own currency — an enterprise platform, a regulated environment, or a self-contained digital economy. |
-
-### Direct and Advanced Integrations
-
-Not all quadrants carry the same integration cost. The protocol stratifies naturally into two tiers.
-
-**Direct integrations** are those where both axes are open. The protocol operates without external authorization dependencies — the asset deposits and withdraws freely, currency flows unconditionally, and the liquid renting logic is the only layer the integrator must reason about.
-
-| Combination | Profile |
-|---|---|
-| NF-open + F-open | Direct. No authorization dependencies on either axis. |
-
-**Advanced integrations** involve one or both closed axes. The liquid renting logic does not change, but the owner must satisfy a set of conditions before the protocol can operate correctly. Because the escrow is the permanent holder of the asset and tenants never receive it, the conditions are narrow and concern only the two moments where the escrow interacts with a closed system: deposit and withdrawal for the asset, and the three credit flows for the currency.
-
-| Combination | Owner conditions |
-|---|---|
-| NF-closed + F-open | (1) Authorize the escrow as a valid asset holder at integration time. (2) Authorize the escrow to return the asset to the owner at retirement. |
-| NF-open + F-closed | (1) Authorize the escrow to receive the closed currency from tenants. (2) Authorize the escrow to send the closed currency to the owner (`used_credit`) and to prior tenants (`remain_credit`). |
-| NF-closed + F-closed | All conditions from both closed rows above. The asset system and the currency system must each independently authorize the escrow at integration time. |
-
-The complexity does not belong to liquid renting — it belongs to the closed systems being integrated. The protocol exposes it honestly, and the escrow model ensures it remains contained.
-
-### One Protocol, Four Markets
-
-The liquid renting logic — state machine, compensation invariant, incentive functions, handover mechanics — is identical across all four quadrants. The protocol does not adapt to each context; it operates correctly in all of them from first principles.
-
-This is the definition of a genuine primitive. A primitive is not a solution designed for one problem that happens to generalize. It is a mechanism whose correctness is independent of the domain in which it operates. The four quadrants are not four use cases — they are four natural instantiations of the same underlying structure.
-
-The integrating protocol selects its position on each axis independently. The liquid renting layer does not change.
+No external authorization from asset systems or currency systems is required. The protocol is fully self-contained.
 
 ---
 
 ## 13. The Protocol in Practice
 
-The four markets of the integration design space are not hypothetical. Each quadrant has natural, existing asset classes that the liquid renting logic maps to directly. The following instantiations illustrate why the protocol applies in each case — which mechanic does the work, and what problem it solves that a static rental model could not.
+The following instantiations illustrate which protocol mechanic does the work, and what problem it solves that a static rental model could not.
 
 ---
-
-### NF-open + F-open — Open Market
 
 **1. Gaming items**
 
@@ -1136,69 +1087,6 @@ The protocol applies because advertising value is among the most time-sensitive 
 
 ---
 
-### NF-open + F-closed — Closed Economy
-
-**1. In-game items priced in game currency**
-
-A blockchain game operates its own token economy. Its items exist as open NFTs — tradeable on external markets — but the rental market within the game runs entirely in the game's native currency. Players compete for high-tier weapons or mounts using the tokens they earn through gameplay, not external capital.
-
-The protocol applies because the game's internal economy has its own supply, demand, and price dynamics that are independent of external markets. Using a closed currency keeps the rental economy within the game's context — prices are denominated in units meaningful to players, inflation and deflation are contained within the game's own monetary policy, and the owner earns revenue in the same currency they spend within the game. The liquid renting logic — takeovers, Dutch Auction, compensation — operates identically; only the denomination changes.
-
-**2. Metaverse land in platform credits**
-
-A virtual world platform issues its own credit token. Land parcels are open NFTs — they could be traded externally — but the platform's rental market operates in platform credits. A commercial tenant rents a prime location for a seasonal event, paying in credits earned through platform activity.
-
-The protocol applies because the platform wants its rental economy to reinforce internal engagement rather than extract value to external markets. Credits earned through platform participation flow back into the rental market, creating a self-reinforcing economic loop. The liquid renting mechanics — continuous price discovery, compensation for displaced tenants, Dutch Auction for idle parcels — operate within that loop, driving occupancy and credit circulation simultaneously.
-
-**3. DAO membership access in governance tokens**
-
-A DAO issues membership NFTs that grant voting rights and access to internal resources — a direct fructus in the form of governance influence and shared tools. Long-term contributors hold permanent membership; temporary contributors rent it for a governance cycle, paying in the DAO's governance token.
-
-The protocol applies because DAO participation has a natural temporal structure: governance cycles, proposal windows, funding rounds. A contributor hired for a specific initiative needs membership for the duration of that initiative, not permanently. The renewal mechanism — an emergent consequence of the protocol's identity-agnostic takeover rule — allows contributors who want to stay to self-renew each cycle by paying the minimum increment plus consumed credit. Contributors who leave simply let their block expire; the Dutch Auction returns the membership to the market at the correct price for the next cycle.
-
----
-
-### NF-closed + F-open — Credentialed Access
-
-**1. API and data feed credentials**
-
-A protocol issues on-chain credentials granting access to a premium data feed, oracle service, or API. The credential is authorization-gated — only vetted parties can hold it — but the rental price is discovered by the open market in standard currency. Projects rent access for a sprint, an analytics campaign, or a product launch, paying in USDC.
-
-The protocol applies because data access has a clear usus — the ability to query the feed — that is bounded by the project that needs it. A project that needs price data for three months should not be required to purchase a perpetual license. The takeover mechanism ensures the credential flows to whoever values the access most at any given moment: a high-urgency project can displace a lower-priority one by paying a higher price, with the displaced project recovering its unused access time. The Dutch Auction finds the clearing price during low-demand periods, ensuring the credential never sits idle.
-
-**2. Software licenses**
-
-An on-chain software license NFT grants the right to deploy or use a specific protocol, tool, or SDK. The license is authorization-gated — restricted to registered integrators or verified organizations — but priced in open-market currency. Companies rent it for the duration of a project rather than purchasing perpetually.
-
-The protocol applies because software usage has a natural project lifecycle. A company integrating a protocol for a client engagement needs the license for the engagement duration, not indefinitely. The compensation mechanism allows a company to recover the unused portion of their license if the project concludes early and another party needs the access. The owner — the software issuer — earns `used_credit` proportional to actual usage duration, aligning revenue with real consumption rather than one-time sales.
-
-**3. Network operator credentials**
-
-A decentralized network issues credentials granting the right to operate as a validator, sequencer, relayer, or node. Operating a role in a network requires capital, infrastructure, and active participation — the usus here is the right to perform the role and earn the associated rewards (fructus). Operators rent slots for a defined period, paying in standard currency.
-
-The protocol applies because network roles have high operational demand variability: some periods see intense competition for slots, others see them underutilized. The Dutch Auction ensures slots are never idle at a stale price — if an operator lets their position expire without a successor, the price descends until a new operator finds the role attractive at the current market rate. The renewal mechanism allows operators who are performing well to extend their position at minimal cost, while the takeover mechanism ensures a better-resourced operator can always displace an underperforming one by paying a higher price.
-
----
-
-### NF-closed + F-closed — Fully Enclosed
-
-**1. Enterprise platform feature access**
-
-A B2B SaaS platform issues feature-access NFTs gated to verified enterprise accounts and priced in platform credits. Companies rent premium features — advanced analytics, elevated API limits, priority support tiers — for the duration of a project or fiscal quarter, without committing to a permanent upgrade.
-
-The protocol applies because enterprise software consumption is project-driven. A company running a one-quarter data migration needs elevated API limits for that quarter, not permanently. The compensation mechanism allows the company to recover unused feature access if the project concludes ahead of schedule. The platform earns `used_credit` proportional to actual feature consumption — a more honest revenue model than flat annual licensing. The fully enclosed environment — both asset and currency gated — ensures the rental economy stays within the verified enterprise context.
-
-**2. Regulated financial instrument access**
-
-A compliant financial platform issues KYC-gated NFTs granting access to a private fund, structured product, or regulated investment vehicle. Access is restricted to verified participants; payments are denominated in a regulated stablecoin restricted to the same participant set. The liquid renting logic drives fair price discovery within the fully compliant, enclosed environment.
-
-The protocol applies because regulated access has genuine temporal demand: an investor may want exposure to a specific fund for a defined fiscal period without a permanent allocation. The takeover mechanism allows a higher-conviction investor to displace a lower-priority participant by paying a higher price — both within the regulatory perimeter. The compensation invariant ensures the displaced participant recovers unused access time, making participation rational even for short windows. The Dutch Auction prevents access slots from sitting idle when demand temporarily recedes.
-
-**3. Research data access credentials**
-
-A research institution issues credentials granting access to sensitive datasets — clinical records, proprietary models, confidential longitudinal studies. Credentials are gated to verified researchers and institutions; payments are denominated in the institution's internal token, ensuring the economy stays within the research community.
-
-The protocol applies because research access has a project lifecycle that rarely aligns with fixed licensing periods. A team analyzing a dataset for a six-month study should not be locked into an annual license. The compensation mechanism returns unused access time to the researcher if the project concludes early. If a second research team urgently needs the same dataset and is willing to pay a higher price, the takeover displaces the first team — with compensation — and the dataset flows to the party that values it most at that moment. The institution earns `used_credit` proportional to actual research consumption, creating a fair and self-calibrating access economy.
 ## 14. Glossary
 
 ### Actors

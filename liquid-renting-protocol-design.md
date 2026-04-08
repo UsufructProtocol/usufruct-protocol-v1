@@ -1043,17 +1043,27 @@ Each axis has two modes:
 
 The asset is always non-fungible — liquid renting operates on unique, indivisible rights. The currency is always fungible — economic value must be divisible and comparable. The protocol operates at their intersection.
 
+### The Protocol as Escrow
+
+Before examining each axis, there is a structural property of the protocol that determines the shape of every integration: **the protocol holds the asset in custody at all times.**
+
+The asset is deposited into the escrow at integration time and withdrawn only at retirement. It never transfers to a tenant. Instead, tenants access the asset's usus through Sui's Programmable Transaction Block mechanism — the asset is borrowed, used within a single atomic transaction, and returned to the escrow unconditionally by the hot potato pattern. The escrow is always the holder. The tenant is always the authorized accessor.
+
+This has a direct consequence for integration complexity. The asset's transfer restrictions — whatever conditions a closed system imposes on who can hold it — are only relevant at two moments: when the owner deposits the asset into the escrow, and when the owner withdraws it at retirement. During the entire rental lifecycle, no transfer occurs. The takeover mechanism, the Dutch Auction, the handover countdown — none of these move the asset. They only update who is authorized to borrow it.
+
+The four quadrants that follow reflect this architecture.
+
 ### The Asset Axis
 
-**Nonfungible-open:** The asset is freely transferable. Any actor can hold it, rent it, or compete for it without restriction. This covers collectibles, digital art, gaming assets, virtual real estate — any object whose value derives from its usus in an open market. Once integrated, the protocol takes custody and the asset's free transferability is suspended for the duration — it can only move according to the state machine. Integration naturally wraps a nonfungible-open asset into closed behavior, preventing it from escaping the protocol's logic.
+**Nonfungible-open:** The asset is freely transferable. Any actor can hold it, rent it, or compete for it without restriction. This covers collectibles, digital art, gaming assets, virtual real estate — any object whose value derives from its usus in an open market. Deposit and withdrawal execute without preconditions.
 
-**Nonfungible-closed:** The asset's transfer is gated by conditions — identity, authorization, membership, or protocol-defined rules. This covers credentials, usage licenses, access rights, or any object whose value derives from what it proves or enables rather than what it represents. The liquid renting logic applies without modification: the protocol does not evaluate the conditions of the asset's closure — it only governs who holds it and for how long.
+**Nonfungible-closed:** The asset's transfer is gated by conditions — authorization, membership, or protocol-defined rules. This covers credentials, usage licenses, access rights, or any object whose value derives from what it proves or enables rather than what it represents. Because the protocol holds the asset in escrow and tenants access it without receiving it, the closure conditions apply only at deposit and withdrawal. The rental cycle itself is unaffected by them.
 
 ### The Currency Axis
 
 **Fungible-open:** Payment in a standard, freely transferable token. Any participant can acquire and use it without restriction. This covers public DeFi markets operating in open, permissionless ecosystems.
 
-**Fungible-closed:** Payment in a token whose circulation is bounded — an in-game economy, a platform credit, an ecosystem-specific unit of account. The token carries real value within its context, but that context is defined by a closed system. From the protocol's perspective, it is indistinguishable from any other fungible token with deterministic value.
+**Fungible-closed:** Payment in a token whose circulation is bounded — an in-game economy, a platform credit, an ecosystem-specific unit of account. The token carries real value within its context, but that context is defined by a closed system. From the protocol's perspective, it is indistinguishable from any other fungible token with deterministic value. The escrow must be authorized to receive, hold, and send the closed currency on behalf of its participants.
 
 ### The Four Quadrants
 
@@ -1066,19 +1076,21 @@ The asset is always non-fungible — liquid renting operates on unique, indivisi
 
 Not all quadrants carry the same integration cost. The protocol stratifies naturally into two tiers.
 
-**Direct integrations** are those where both axes are open. The protocol operates without external authorization dependencies — asset transfers execute freely, currency flows unconditionally, and the liquid renting logic is the only layer the integrator must reason about.
+**Direct integrations** are those where both axes are open. The protocol operates without external authorization dependencies — the asset deposits and withdraws freely, currency flows unconditionally, and the liquid renting logic is the only layer the integrator must reason about.
 
 | Combination | Profile |
 |---|---|
 | NF-open + F-open | Direct. No authorization dependencies on either axis. |
 
-**Advanced integrations** involve one or both closed axes. The liquid renting logic does not change, but the integrator must satisfy a set of conditions before the protocol can operate correctly. The complexity does not belong to liquid renting — it belongs to the closed systems being integrated. The protocol exposes it honestly.
+**Advanced integrations** involve one or both closed axes. The liquid renting logic does not change, but the owner must satisfy a set of conditions before the protocol can operate correctly. Because the escrow is the permanent holder of the asset and tenants never receive it, the conditions are narrow and concern only the two moments where the escrow interacts with a closed system: deposit and withdrawal for the asset, and the three credit flows for the currency.
 
-| Combination | Integrator conditions |
+| Combination | Owner conditions |
 |---|---|
-| NF-open + F-closed | (1) Authorize the liquid renting module to operate with the closed currency at integration time. (2) Guarantee that currency transfers within the protocol's scope — `remain_credit` returns, `used_credit` deliveries — are unconditional and non-blocking. |
-| NF-closed + F-open | (1) Register the liquid renting module as an authorized asset holder at integration time. (2) Design the asset's authorization system to recognize liquid renting as a trusted intermediary, permitting transfers at every state transition. (3) Enforce tenant eligibility verification before accepting a takeover — the integrator is responsible for this check, not the protocol. (4) Identity-bound assets — where the asset's semantic value is tied to a specific holder — must not be integrated. The protocol is identity-agnostic by design; this conflict has no resolution. |
-| NF-closed + F-closed | All conditions from both closed rows above. Both the asset and currency systems must independently authorize the liquid renting module at integration time. |
+| NF-closed + F-open | (1) Authorize the escrow as a valid asset holder at integration time. (2) Authorize the escrow to return the asset to the owner at retirement. |
+| NF-open + F-closed | (1) Authorize the escrow to receive the closed currency from tenants. (2) Authorize the escrow to send the closed currency to the owner (`used_credit`) and to prior tenants (`remain_credit`). |
+| NF-closed + F-closed | All conditions from both closed rows above. The asset system and the currency system must each independently authorize the escrow at integration time. |
+
+The complexity does not belong to liquid renting — it belongs to the closed systems being integrated. The protocol exposes it honestly, and the escrow model ensures it remains contained.
 
 ### One Protocol, Four Markets
 

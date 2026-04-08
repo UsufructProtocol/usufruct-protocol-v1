@@ -86,6 +86,32 @@ All variants must satisfy:
 
 where `bps` is basis points (100 bps = 1%, 10000 bps = 100%).
 
+### How CurveShape is used
+
+All `CurveShape` variants are evaluated via a single dispatcher function:
+
+```move
+fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64) -> u64
+```
+
+**Semantics:** Given a curve shape, a time point `t`, and max duration `t_max`, 
+returns the normalized curve value `g(t/t_max) * SCALE` in [0, SCALE].
+
+Each variant has its own implementation logic (§5–§8); the caller does not need 
+to know which variant is stored — the function handles the dispatch.
+
+**Example usage:**
+
+```move
+let config = IntegrationConfig { 
+    credit_curve: CurveShape::PowerLaw { alpha_num: 1, alpha_den: 2 },
+    // ... other fields ...
+};
+
+let g_x = evaluate_curve(&config.credit_curve, elapsed_ms, config.tenure_ceiling);
+// Returns g(elapsed/tenure) * SCALE where g(x) = sqrt(x)
+```
+
 
 3. MUL_DIV
 ----------

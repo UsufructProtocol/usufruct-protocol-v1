@@ -58,6 +58,25 @@ Where each construct lives in Sui's object model.
 ║  │  Balance<C>      │                                               ║
 ║  └──────────────────┘                                               ║
 ╚══════════════════════════════════════════════════════════════════════╝
+                            ▲
+                            │  reads + mutates
+                            │
+┌───────────────────────────────────────────────────────────────────┐
+│  resolve_state(escrow, clock)           [INTERNAL — pure logic]   │
+│                                                                    │
+│  Reads: AssetState + phase anchors + IntegrationConfig + clock    │
+│  Calls: compute_used_credit / compute_price_descent  (§4)         │
+│                                                                    │
+│  Resolves up to 3 lazy transitions in order:                      │
+│  1. HandoverConfirmed + expiry passed  → execute handover         │
+│  2. Rented + tenure expired            → AtDutchAuction/Retired   │
+│  3. AtDutchAuction + descent expired  → Idle/Retired              │
+│                                                                    │
+│  Mutates: AssetState, phase anchors, Balance<C> fields            │
+└───────────────────────────────────────────────────────────────────┘
+                            ▲
+                            │  called first by every public function
+                            │
        ▲            ▲               ▲                  ▲
        │            │               │                  │
   rent()       takeover()    return_asset()    withdraw_earnings()

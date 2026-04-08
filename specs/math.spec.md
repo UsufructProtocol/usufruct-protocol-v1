@@ -47,7 +47,7 @@ enum CurveShape {
 |---------|----------|-------|------------|
 | `Linear` | `g(x) = x` | — | N/A |
 | `Smoothstep` | `g(x) = 3x² - 2x³` | — | N/A |
-| `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num` | `>= 1` |
+| `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num` | `∈ [1, 16]` |
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_den` | `∈ {1, 2, 3, 4}` |
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num, alpha_den` | `alpha_num != alpha_den` (degenerate linear — use `Linear` instead) |
 | `Exponential` | `g(x) = (e^(alpha·x) - 1) / (e^alpha - 1)` | `alpha` | `∈ [-8, -1] ∪ [1, 8]` (nonzero) |
@@ -450,7 +450,7 @@ Called inside `integrate()` to reject invalid configs before creating the escrow
 | `handover_ceiling <= tenure_ceiling`         | handover exceeds tenure        |
 | `descent_ceiling > 0`                        | zero descent period            |
 | PowerLaw: `alpha_den in {1,2,3,4}`           | unsupported root               |
-| PowerLaw: `alpha_num >= 1`                   | zero exponent                  |
+| PowerLaw: `alpha_num in [1, 16]`             | zero or out-of-range exponent  |
 | PowerLaw: `alpha_num != alpha_den`           | degenerate linear — use `Linear` |
 | Exponential: `alpha in [-8,-1] ∪ [1,8]`     | zero or out-of-range alpha     |
 | `compute_next_rent_price(fn, min_rent_price) > min_rent_price` | price fn non-increasing |

@@ -20,7 +20,74 @@ Intermediates use u128 to avoid overflow. Final results are cast back to u64.
 Rounding: floor throughout (truncation), unless stated otherwise.
 
 
-2. MUL_DIV
+2. TYPES
+--------
+
+### CurveShape — enum
+
+Defines the functional form of `f_credit_ascent` or `f_price_descent`.
+
+```move
+enum CurveShape {
+    Linear,
+    Smoothstep,
+    PowerLaw {
+        alpha_num: u8,
+        alpha_den: u8,
+    },
+    Exponential {
+        alpha: i8,
+    },
+}
+```
+
+**Constraints (validated at integration time, §12):**
+
+| Variant | Field | Constraint |
+|---------|-------|-----------|
+| `Linear` | — | N/A |
+| `Smoothstep` | — | N/A |
+| `PowerLaw` | `alpha_num` | `>= 1` |
+| `PowerLaw` | `alpha_den` | `∈ {1, 2, 3, 4}` |
+| `Exponential` | `alpha` | `∈ [-8, -1] ∪ [1, 8]` (nonzero) |
+
+### PriceFunction — enum
+
+Defines the functional form of `f_next_rent_price`.
+
+```move
+enum PriceFunction {
+    FixedDelta {
+        delta: u64,
+    },
+    Percentage {
+        bps: u64,
+    },
+    CompoundDelta {
+        bps: u64,
+        delta: u64,
+    },
+}
+```
+
+**Constraints (validated at integration time, §12):**
+
+All variants must satisfy:
+- `compute_next_rent_price(fn, min_rent_price) > min_rent_price`
+- No u64 overflow on computation
+
+**Semantics:**
+
+| Variant | Formula |
+|---------|---------|
+| `FixedDelta { delta }` | `f(x) = x + delta` |
+| `Percentage { bps }` | `f(x) = mul_div(x, 10000 + bps, 10000)` |
+| `CompoundDelta { bps, delta }` | `f(x) = mul_div(x, 10000 + bps, 10000) + delta` |
+
+where `bps` is basis points (100 bps = 1%, 10000 bps = 100%).
+
+
+3. MUL_DIV
 ----------
 
 ### Signature
@@ -45,7 +112,7 @@ Rounding: floor throughout (truncation), unless stated otherwise.
 - Used as the primitive for all other computations in this module
 
 
-3. EVALUATE_CURVE
+4. EVALUATE_CURVE
 -----------------
 
 ### Signature
@@ -70,7 +137,7 @@ Delegates to the variant-specific function below.
 `t_max > 0` is guaranteed by `IntegrationConfig` constraints.
 
 
-4. LINEAR VARIANT
+5. LINEAR VARIANT
 -----------------
 
     g(x) = x
@@ -82,7 +149,7 @@ Delegates to the variant-specific function below.
 Exact. No approximation.
 
 
-5. SMOOTHSTEP VARIANT
+6. SMOOTHSTEP VARIANT
 ---------------------
 
     g(x) = 3x² - 2x³
@@ -120,7 +187,7 @@ g''(x) > 0 for x < 0.5 (convex), g''(x) < 0 for x > 0.5 (concave).
 Not a substitute for pure concavity or convexity — distinct incentive profile.
 
 
-6. POWERLAW VARIANT
+7. POWERLAW VARIANT
 -------------------
 
     g(x) = x^(alpha_num / alpha_den)
@@ -193,7 +260,7 @@ This is why alpha_den is restricted to {1, 2, 3, 4}.
     Step 2 is skipped. Return acc directly.
 
 
-7. EXPONENTIAL VARIANT
+8. EXPONENTIAL VARIANT
 ----------------------
 
     g(x) = (e^(α·x) - 1) / (e^α - 1)
@@ -256,7 +323,7 @@ Alpha = 0 is rejected because it makes the denominator zero (limit is linear,
 use Linear variant instead).
 
 
-8. COMPUTE_USED_CREDIT
+9. COMPUTE_USED_CREDIT
 -----------------------
 
 ### Signature
@@ -289,7 +356,7 @@ If `now_ms < phase_start_ms` (clock skew): elapsed underflows — caller must
 ensure now_ms >= phase_start_ms before calling. Abort otherwise.
 
 
-9. COMPUTE_PRICE_DESCENT
+10. COMPUTE_PRICE_DESCENT
 -------------------------
 
 ### Signature
@@ -321,7 +388,7 @@ If `now_ms >= phase_start_ms + descent_ceiling`, evaluate_curve returns SCALE
 and price = min_rent_price.
 
 
-10. COMPUTE_NEXT_RENT_PRICE
+11. COMPUTE_NEXT_RENT_PRICE
 ----------------------------
 
 ### Signature
@@ -342,7 +409,7 @@ All additions use checked arithmetic — abort on u64 overflow.
 Guaranteed result > last_rent_price by integration-time constraint validation.
 
 
-11. INTEGRATION-TIME VALIDATION
+12. INTEGRATION-TIME VALIDATION
 --------------------------------
 
 Called inside `integrate()` to reject invalid configs before creating the escrow.
@@ -361,7 +428,7 @@ Called inside `integrate()` to reject invalid configs before creating the escrow
 | `compute_next_rent_price(fn, min_rent_price) > min_rent_price` | price fn non-increasing |
 
 
-12. MODULE BOUNDARY
+13. MODULE BOUNDARY
 --------------------
 
 `math.move` exports:

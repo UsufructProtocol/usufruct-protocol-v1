@@ -9,6 +9,92 @@ Grouped by concern — module boundaries are a spec-level decision.
 
 ---
 
+## 0. Object Model Diagram
+
+Where each construct lives in Sui's object model.
+
+```
+ OWNER'S WALLET                        TENANT'S WALLET (current / pending)
+ ┌───────────────────┐                 ┌──────────────────────┐
+ │   IntegratorCap   │                 │      TenantCap        │
+ │   · escrow_id: ID │                 │   · escrow_id: ID     │
+ └─────────┬─────────┘                 └──────────┬────────────┘
+           │                                       │
+           │ set_to_retire / unset_to_retire        │ borrow_asset()
+           │ force_retire / retire                  │
+           │ withdraw_earnings                      │
+           ▼                                       ▼
+╔══════════════════════════════════════════════════════════════════════╗
+║  RentalEscrow<Asset, CoinType>            [SHARED OBJECT]           ║
+║                                                                      ║
+║  ┌────────────────────────┐  ┌──────────────────────────────────┐  ║
+║  │  Asset (key + store)   │  │  IntegrationConfig  (immutable)  │  ║
+║  │                        │  │  · min_rent_price                │  ║
+║  │  ← lives here always   │  │  · tenure_ceiling                │  ║
+║  │    except during a PTB │  │  · handover_floor/ceiling        │  ║
+║  │    borrow (see below)  │  │  · descent_ceiling               │  ║
+║  └────────────────────────┘  │  · retire_floor                  │  ║
+║                               │  · CurveShape g  (credit)       │  ║
+║  ┌────────────────────────┐  │  · CurveShape h  (descent)       │  ║
+║  │  AssetState            │  │  · PriceFunction                 │  ║
+║  │  Idle                  │  └──────────────────────────────────┘  ║
+║  │  Rented                │                                         ║
+║  │    HandoverOpen        │  ┌───────────────────────────────────┐ ║
+║  │    HandoverConfirmed   │  │  Phase anchors                    │ ║
+║  │  AtDutchAuction        │  │  · last_rent_price: u64           │ ║
+║  │  Retired               │  │  · phase_start_ms: u64           │ ║
+║  └────────────────────────┘  │  · handover_countdown_expiry     │ ║
+║                               │  · current_tenant_cap_id         │ ║
+║  ┌──────────────────┐         │  · pending_tenant_cap_id         │ ║
+║  │  tenant_stake    │         └───────────────────────────────────┘ ║
+║  │  Balance<C>      │                                               ║
+║  └──────────────────┘         ┌───────────────────────────────────┐ ║
+║  ┌──────────────────┐         │  Flags                            │ ║
+║  │  pending_bid     │         │  · to_retire: bool                │ ║
+║  │  Balance<C>      │         │  · force_retire: bool             │ ║
+║  └──────────────────┘         │  · integrated_at_ms: u64         │ ║
+║  ┌──────────────────┐         └───────────────────────────────────┘ ║
+║  │  owner_earnings  │                                               ║
+║  │  Balance<C>      │                                               ║
+║  └──────────────────┘                                               ║
+╚══════════════════════════════════════════════════════════════════════╝
+       ▲            ▲               ▲                  ▲
+       │            │               │                  │
+  rent()       takeover()    return_asset()    withdraw_earnings()
+  Coin<C> in   Coin<C> in    Asset back in     Coin<C> out
+  → tenant_    → pending_
+    stake        bid
+
+
+ PTB SCOPE ONLY  (hot potato — no abilities)
+ ┌──────────────────────────────────────────────────────────────────┐
+ │                                                                  │
+ │   borrow_asset() ──→  Asset (out of escrow)  +  AssetReceipt   │
+ │                              │                       │           │
+ │                    used by tenant                 consumed by   │
+ │                    in integrating protocol        return_asset() │
+ │                              │                       │           │
+ │   return_asset() ◀──  Asset (back to escrow) ◀──────┘           │
+ │                                                                  │
+ └──────────────────────────────────────────────────────────────────┘
+
+
+ COIN FLOWS SUMMARY
+ ──────────────────
+ rent() / auction entry  →  Coin<C>      →  tenant_stake
+ takeover()              →  Coin<C>      →  pending_bid
+   (if superseded)       ←  Coin<C>      ←  pending_bid  (refund)
+ handover fires          :  pending_bid  →  tenant_stake (new tenant)
+                         :  used_credit  →  owner_earnings
+                         ←  Coin<C>      ←  remain_credit (to old tenant)
+ tenure expiry           :  tenant_stake →  owner_earnings (full)
+ withdraw_earnings()     ←  Coin<C>      ←  owner_earnings
+ retire()                ←  Asset        ←  escrow (unwrapped, deleted)
+```
+
+
+---
+
 ## 1. Core State
 
 ### [ ] 1.1 `RentalEscrow<Asset, CoinType>` — shared object

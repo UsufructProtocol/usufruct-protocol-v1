@@ -43,13 +43,13 @@ enum CurveShape {
 
 **Constraints (validated at integration time, §12):**
 
-| Variant | Field | Constraint |
-|---------|-------|-----------|
-| `Linear` | — | N/A |
-| `Smoothstep` | — | N/A |
-| `PowerLaw` | `alpha_num` | `>= 1` |
-| `PowerLaw` | `alpha_den` | `∈ {1, 2, 3, 4}` |
-| `Exponential` | `alpha` | `∈ [-8, -1] ∪ [1, 8]` (nonzero) |
+| Variant | Function | Field | Constraint |
+|---------|----------|-------|------------|
+| `Linear` | `g(x) = x` | — | N/A |
+| `Smoothstep` | `g(x) = 3x² - 2x³` | — | N/A |
+| `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num` | `>= 1` |
+| `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_den` | `∈ {1, 2, 3, 4}` |
+| `Exponential` | `g(x) = (e^(alpha·x) - 1) / (e^alpha - 1)` | `alpha` | `∈ [-8, -1] ∪ [1, 8]` (nonzero) |
 
 ### PriceFunction — enum
 

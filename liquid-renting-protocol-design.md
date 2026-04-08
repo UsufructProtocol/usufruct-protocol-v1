@@ -116,7 +116,7 @@ The entry or resting state. The asset is available at or above `min_rent_price`.
 The tenant has acquired the monopoly over usus and fructus through upfront liquidity injection. In this state, the tenant does not trade the asset — they enjoy its utility while their position remains active. The injected liquidity is bound to the asset. This state has two sub-states:
 
 - **rent_handover_open:** No next tenant has paid yet. The current tenant holds usus and fructus with no pending displacement.
-- **rent_handover_confirmed:** A new tenant has paid `next_rent_price`. The `handover_countdown` is running. The current tenant retains usus and fructus until the countdown expires, at which point the asset transfers to the last tenant who placed a valid bid.
+- **rent_handover_confirmed:** A new tenant has paid `next_rent_price`. The `handover_countdown` is running. The current tenant retains usus and fructus until the countdown expires, at which point access transfers to the last tenant who placed a valid bid.
 
 **State 2: At Dutch Auction (Price Discovery):**
 A market rebalancing mechanism. If the asset is no longer rented and the market does not validate the last known rental price, a descending Dutch Auction is triggered. The goal is to perform a dynamic liquidation of the rental price until a new equilibrium is found where demand once again absorbs the usus of the asset.
@@ -700,7 +700,7 @@ P(n+1) - remain_credit
 The renewal mechanism follows directly from three rules:
 
 1. **The protocol is identity-agnostic.** `f_next_rent_price` is evaluated against a price, not a party. The protocol has no concept of "same address" or "different address."
-2. **The last valid bidder wins.** During `rent_handover_confirmed`, the asset transfers to the last tenant who placed a valid bid before the `handover_countdown` expired.
+2. **The last valid bidder wins.** During `rent_handover_confirmed`, access transfers to the last tenant who placed a valid bid before the `handover_countdown` expired.
 3. **The displaced tenant always recovers unused time.** Any tenant displaced by a takeover receives `remain_credit`, returned from their own locked stake.
 
 ### The Mathematics of Self-Renewal
@@ -757,7 +757,7 @@ The `handover_countdown` is not merely a grace period for the current tenant. It
 - Each new valid bid supersedes the previous one.
 - The superseded bidder is refunded immediately and in full.
 - `handover_countdown_expiry` is fixed at the moment of the first bid and does not change with subsequent bids.
-- The asset transfers to whoever holds the winning bid when the candle fires.
+- Access transfers to whoever holds the winning bid when the candle fires.
 
 Because `handover_countdown_expiry` is unknown to all participants, there is no optimal moment to delay a bid. This creates a competitive window with bids distributed across its full duration rather than concentrated at a known deadline. The current tenant participates with a structural cost advantage — their net cost is always `P_bid - remain_credit`, strictly less than the full price any external bidder must pay. The advantage is proportional to `remain_credit`: maximum at the start of a block, approaching zero as the block nears expiry. The market resolves who values the position more.
 
@@ -866,7 +866,7 @@ This is the primary use case for `force_retire()`. It is the only state where th
 `force_retire()` sets the `force_retire` flag. From this point the asset does not accept new bids — the transition to `rent_handover_confirmed` is blocked. The current tenant completes their block in full until `tenure_ceiling`. At expiry, instead of triggering a Dutch Auction, the asset passes to `Retired`. No disruption to the active block occurs.
 
 **From `Rented` (`rent_handover_confirmed`):**
-`force_retire()` sets the `force_retire` flag. The active `handover_countdown` runs to completion uninterrupted — no refunds, no changes to the current flow. T(n+1) receives the asset at handover and begins their rental cycle in `rent_handover_open`. With the flag active, their `rent_handover_open` does not accept new bids. T(n+1) completes their block in full until `tenure_ceiling`. At expiry, the asset passes to `Retired`.
+`force_retire()` sets the `force_retire` flag. The active `handover_countdown` runs to completion uninterrupted — no refunds, no changes to the current flow. T(n+1) receives access at handover and begins their rental cycle in `rent_handover_open`. With the flag active, their `rent_handover_open` does not accept new bids. T(n+1) completes their block in full until `tenure_ceiling`. At expiry, the asset passes to `Retired`.
 
 **From `Idle`:**
 Equivalent to `to_retire` executing immediately. The asset passes to `Retired` without re-entering the rental cycle.

@@ -224,6 +224,22 @@ At integration time, the protocol mints an `OwnerCap` object with `key + store` 
 
 **Loss of the `OwnerCap`.** If the `OwnerCap` is lost or destroyed, all owner-privileged operations become permanently inaccessible. The asset remains locked in escrow for the duration of its rental lifecycle — tenants continue to hold and use it normally — but no retirement path can execute and accumulated `used_credit` cannot be withdrawn. This risk is the owner's to manage; it is the natural consequence of a capability-based access model and falls outside the protocol's control.
 
+### The OwnerCap as Asset: The Recursive Property That Allows Emergent Sale
+
+Because the `OwnerCap` carries `key + store` abilities, it satisfies the integration requirements of the protocol — it is a freely transferable object with an exercisable usus. This makes it a valid asset in a new escrow instance, producing a composable pattern that emerges naturally from the capability model.
+
+**Level 1 — the base case.** An external asset enters the escrow. The protocol issues `OwnerCap_1` to the integrating party. Tenants compete for the usus of the asset. `OwnerCap_1` floats freely in the market, representing the right to claim accumulated `used_credit` and control the asset's lifecycle.
+
+**Level 2 — the emergent case.** `OwnerCap_1` itself may be deposited into a new escrow instance. Tenants compete for its usus — the temporary right to act as owner of the level 1 escrow: withdrawing accumulated `used_credit` and exercising retirement rights. The level 2 tenant holds, for the duration of their block, the full administrative authority over the level 1 escrow.
+
+**Implicit sale of the underlying asset.** When the level 1 escrow is in `Idle` or `At Dutch Auction`, a level 2 tenant may borrow `OwnerCap_1`, call `retire()` or `force_retire()`, and receive the underlying asset directly within a single Programmable Transaction Block — atomic and immediate. `OwnerCap_1` is returned to the level 2 escrow, now governing an empty instance. When the level 1 asset is in `Rented` state, `force_retire()` is deferred: the flag is set but the asset does not exit until the active block concludes. In this case, the tenant who initiated the retirement and the tenant who ultimately receives the asset may be different actors — a property explored in the subsection below. In all cases the operation is protocol-valid: the protocol cannot distinguish between a tenant exercising the usus to claim `used_credit` and a tenant exercising it to retire the asset. Both are legitimate uses of the same capability.
+
+What has occurred is a de facto transfer of the abusus — and with it, the full dominium over the underlying asset. The protocol was designed to leave the abusus with the owner at all times. No rule has been violated: the owner of `OwnerCap_1` freely chose to make it available as a rentable asset, knowing that its usus includes retirement rights. The transfer of the abusus emerged from that choice, mediated by the market. The protocol did not design for sale — it discovered that ownership transfer is a special case of capability transfer.
+
+**The depth restriction.** The pattern is valid at depth 2 — an `OwnerCap` whose escrow contains a real asset. It is prohibited at depth 3 — an `OwnerCap` whose escrow asset is itself another `OwnerCap`. The protocol enforces this at integration time: if the asset being integrated is an `OwnerCap`, the protocol verifies that its underlying escrow asset is not itself an `OwnerCap`. Integration is rejected otherwise.
+
+The rationale is direct. At depth 3, the level 3 tenant could retire `OwnerCap_2` from its escrow — obtaining a capability that governs a level 1 escrow whose own underlying asset may already have been extracted, retired, or decoupled. The chain of value becomes opaque: the level 3 escrow makes claims about an asset it cannot directly observe. The depth restriction is not a constraint against composability — it is a guarantee that every escrow in the protocol is always one level of indirection from a real asset. The market can only price what it can observe.
+
 ### Access by State
 
 The asset lives inside the protocol's shared object for its entire lifecycle. What changes across states is not the asset's location but who the protocol designates as `current_tenant`.

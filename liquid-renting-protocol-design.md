@@ -41,10 +41,11 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 9. [The Renewal Mechanism](#9-the-renewal-mechanism)
 10. [Integration Parameters](#10-integration-parameters)
 11. [On-Chain State Derivability](#11-on-chain-state-derivability)
-12. [Attack Vectors and Protocol Resilience](#12-attack-vectors-and-protocol-resilience)
-13. [Integration Design Space](#13-integration-design-space)
-14. [The Protocol in Practice](#14-the-protocol-in-practice)
-15. [Glossary](#15-glossary)
+12. [Protocol Value Capture](#12-protocol-value-capture)
+13. [Attack Vectors and Protocol Resilience](#13-attack-vectors-and-protocol-resilience)
+14. [Integration Design Space](#14-integration-design-space)
+15. [The Protocol in Practice](#15-the-protocol-in-practice)
+16. [Glossary](#16-glossary)
 
 ---
 
@@ -1001,7 +1002,57 @@ This property was not designed into the protocol as an explicit goal. It emerged
 
 ---
 
-## 12. Attack Vectors and Protocol Resilience
+## 12. Protocol Value Capture
+
+The protocol sustains itself by taking a fixed share of `used_credit` at the moment it flows — before reaching the owner's vault. This is the sole revenue mechanism of the protocol: no listing fee, no withdrawal fee, no per-integration charge.
+
+### The Insertion Point
+
+Every event that generates `used_credit` passes through a single split:
+
+```
+owner_earnings  = used_credit × (1 − protocol_fee_rate)
+protocol_fee    = used_credit × protocol_fee_rate
+```
+
+Both events that generate `used_credit` are subject to this split:
+
+| Event | `used_credit` source |
+|---|---|
+| Takeover / Handover | The consumed portion of the outgoing tenant's stake at the moment of handover |
+| Tenure expiry with no successor | The full `tenant_stake`, exhausted at `tenure_ceiling` |
+
+The split is applied inside the state transition itself — not deferred to any subsequent withdrawal.
+
+### Why at the Flow Moment
+
+Two properties follow from deducting at the flow rather than at withdrawal.
+
+**Treasury independence from owner activity.** The protocol's share is extracted before `owner_earnings` reaches the vault. The treasury accumulates passively regardless of whether the `OwnerCap` holder ever calls `withdraw_earnings()`. No actor's inaction can block protocol revenue.
+
+**`OwnerCap` loss does not strand protocol fees.** If the `OwnerCap` is lost, the capital that becomes inaccessible is the accumulated `owner_earnings` not yet withdrawn — the portion already in the owner's vault. The protocol's share was extracted at each state transition and is already in the treasury. There is no scenario in which a lost `OwnerCap` causes protocol fees to be stranded.
+
+This makes the insertion point structurally correct: a single location, triggered at the moment of value flow, with no dependency on any actor's subsequent behavior.
+
+### Revenue Properties
+
+**Scales with market validation.** `protocol_fee` is proportional to `used_credit`, which is proportional to `last_rent_price`. As successive takeovers drive the price upward, the protocol earns proportionally more per unit of time. Protocol revenue is self-calibrating alongside owner revenue — both are always proportional to the value the market assigns to the usus.
+
+**Zero during vacant periods.** Neither `Idle` nor `At Dutch Auction` generate `used_credit`. The protocol earns nothing during price discovery or inactivity — the same alignment that governs owner revenue. Protocol and owner share the same economic interest: minimize time spent outside the `Rented` state.
+
+**Passive and continuous.** The treasury accumulates with each state transition. No keeper, no epoch, no claim required. Any transaction that triggers a `used_credit` event — a takeover, a handover, a block expiry — deposits the protocol's share into the treasury atomically.
+
+### Protocol Fee Rate
+
+The protocol fee rate is **5%**, hardcoded at the module level and identical across all integration instances. It is not configurable by integrators and not subject to per-instance variation.
+
+**Rationale for 5%.** The fee is charged on earned rent — value the market confirmed as consumed — not on locked stake or gross payment. At 5%, the owner retains 95% of the rent their asset generates. This is competitive with comparable DeFi protocol fees on realized yield (typically 5–20%) and low enough that it does not distort the integrator's economic model. At high `last_rent_price` and sustained rotation, 5% of `used_credit` compounds into a significant treasury balance without placing a perceptible drag on any individual transaction.
+
+**Hardcoded, not governable.** A configurable fee rate introduces a governance attack surface: whoever controls the governance mechanism controls the fee. Hardcoding eliminates this surface entirely. Integrators and tenants know the exact protocol economics at integration time, with no risk of mid-lifecycle modification. If the fee rate must change, it changes in a new version of the module — applicable only to future integrations. Existing instances run under the rate they entered with, consistent with the immutability guarantee that governs all other protocol parameters.
+
+---
+
+## 13. Attack Vectors and Protocol Resilience
 
 The following vectors were identified and analyzed against the protocol's design. Each is resolved either by a formal constraint, an emergent property, or by being correctly identified as integrator responsibility rather than a protocol flaw.
 
@@ -1079,7 +1130,7 @@ The following vectors were identified and analyzed against the protocol's design
 
 ---
 
-## 13. Integration Design Space
+## 14. Integration Design Space
 
 The protocol operates on a single, well-defined integration profile.
 
@@ -1104,7 +1155,7 @@ No external authorization from asset systems or currency systems is required. Th
 
 ---
 
-## 14. The Protocol in Practice
+## 15. The Protocol in Practice
 
 The following instantiations illustrate which protocol mechanic does the work, and what problem it solves that a static rental model could not.
 
@@ -1148,7 +1199,7 @@ The protocol applies because yield optimization is a competitive service: multip
 
 ---
 
-## 15. Glossary
+## 16. Glossary
 
 ### Actors
 

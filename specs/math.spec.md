@@ -36,7 +36,8 @@ enum CurveShape {
         alpha_den: u8,
     },
     Exponential {
-        alpha: i8,
+        alpha_abs: u8,
+        alpha_neg: bool,
     },
     Logistic {
         k: u8,
@@ -54,7 +55,8 @@ enum CurveShape {
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num` | `∈ [1, 8]` |
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_den` | `∈ {1, 2, 3, 4}` |
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num, alpha_den` | `alpha_num != alpha_den` (degenerate linear — use `Linear` instead) |
-| `Exponential` | `g(x) = (e^(alpha·x) - 1) / (e^alpha - 1)` | `alpha` | `∈ [-8, -1] ∪ [1, 8]` (nonzero) |
+| `Exponential` | `g(x) = (e^(α·x) - 1) / (e^α - 1)` | `alpha_abs` | `∈ [1, 8]` |
+| `Exponential` | `g(x) = (e^(α·x) - 1) / (e^α - 1)` | `alpha_neg` | `false` → convex (α > 0), `true` → concave (α < 0) |
 | `Logistic` | `g(x) = (σ(k·(x−0.5)) − σ(−k/2)) / denom` | `k` | `∈ [10, 16]` |
 
 ### PriceFunction — enum
@@ -308,62 +310,66 @@ This is why alpha_den is restricted to {1, 2, 3, 4}.
 
     g(x) = (e^(α·x) - 1) / (e^α - 1)
 
-    alpha: i8   — signed integer, range [-8, 8], ≠ 0
+    alpha_abs: u8   — magnitude of exponent, ∈ [1, 8]
+    alpha_neg: bool — sign: false → α > 0 (convex), true → α < 0 (concave)
 
-`alpha` is stored as a plain signed integer (no fractional part in v1).
+Move has no native signed integer types. Sign is represented as magnitude + flag.
 
 ### Sign and shape
 
-    alpha < 0  →  concave
-    alpha > 0  →  convex
+    alpha_neg = false  →  convex  (e.g. α = 2: slow start, fast finish)
+    alpha_neg = true   →  concave (e.g. α = -2: fast start, slow finish)
 
 ### Representation of e^y via Taylor series
 
     e^y = Σ(k=0..K) y^k / k!
 
-For y = α·x with α ∈ [-8, 8] and x ∈ [0, 1], |y| ≤ 8.
-K = 20 terms yields relative error < 10^-9 for all |y| ≤ 8.
+For |y| ≤ 8 and x ∈ [0, 1], K = 20 terms yields relative error < 10^-9.
 
 ### Scaling approach
 
 Work in a scaled integer domain with precision TAYLOR_SCALE = 10^18 (fits u128):
 
-    // Compute e^y * TAYLOR_SCALE using Taylor series
-    fn exp_scaled(y_num: i64, y_den: u64) -> u128
-        // y = y_num / y_den, represents the exponent
-        // returns floor(e^y * TAYLOR_SCALE)
+    // Compute e^(±y_num/y_den) * TAYLOR_SCALE using Taylor series
+    fn exp_scaled(y_num: u64, y_den: u64, neg: bool) -> u128
+        // if neg=false: returns floor(e^(y_num/y_den) * TAYLOR_SCALE)
+        // if neg=true:  returns floor(e^(-y_num/y_den) * TAYLOR_SCALE)
 
-    Each term: term_k = term_{k-1} * y / k  (iterative, avoids factorial)
+    Each term: term_k = term_{k-1} * y_num / (k * y_den)  (iterative)
+    For neg=true, odd-power terms are subtracted instead of added.
     Accumulate into u128. Stop when term < 1 or after K=20 terms.
 
 ### Full algorithm for Exponential variant
 
-    let alpha = shape.alpha as i64;      // ∈ [-8, 8]
+    let a  = shape.alpha_abs as u64;   // ∈ [1, 8]
+    let neg = shape.alpha_neg;
 
-    // Compute numerator: e^(alpha * x) - 1
-    // x = t / t_max, so alpha*x = alpha*t / t_max
-    let num_raw = exp_scaled(alpha * t as i64, t_max) - TAYLOR_SCALE;
+    // e^(α·x): y_num = a*t, y_den = t_max, sign = neg
+    let exp_ax = exp_scaled(a * t, t_max, neg);
 
-    // Compute denominator: e^alpha - 1
-    let den_raw = exp_scaled(alpha, 1) - TAYLOR_SCALE;
+    // e^α: y_num = a, y_den = 1, sign = neg
+    let exp_a  = exp_scaled(a, 1, neg);
 
-    // Result: (num_raw / den_raw) * SCALE
-    // = num_raw * SCALE / den_raw
-    let result_u128 = (num_raw as u128) * (SCALE as u128) / (den_raw as u128);
-    result_u128 as u64
-
-### Sign handling
-
-When alpha < 0, both num_raw and den_raw are negative (e^y < 1 for y < 0).
-Their ratio is positive. Implementation uses signed i128 or absolute values with
-explicit sign tracking. TBD at implementation time.
+    if !neg {
+        // α > 0: both exp_ax > TS and exp_a > TS
+        let num = exp_ax - TAYLOR_SCALE;
+        let den = exp_a  - TAYLOR_SCALE;
+        (num * SCALE as u128 / den) as u64
+    } else {
+        // α < 0: both exp_ax < TS and exp_a < TS
+        // (e^(α·x) - 1) and (e^α - 1) are both negative — ratio is positive
+        let num = TAYLOR_SCALE - exp_ax;   // magnitude of numerator
+        let den = TAYLOR_SCALE - exp_a;    // magnitude of denominator
+        (num * SCALE as u128 / den) as u64
+    }
 
 ### Constraints at integration time
 
-    alpha ∈ [-8, -1] ∪ [1, 8]      (i8, but 0 is rejected)
+    alpha_abs ∈ [1, 8]     (0 is rejected: denominator would be zero)
+    alpha_neg ∈ {true, false}
 
-Alpha = 0 is rejected because it makes the denominator zero (limit is linear,
-use Linear variant instead).
+alpha_abs = 0 is rejected because e^0 - 1 = 0 makes the denominator zero
+(the limit at α → 0 is linear — use Linear variant instead).
 
 
 9. LOGISTIC VARIANT
@@ -388,8 +394,8 @@ Use `Logistic` only when a steep, parameterizable sigmoid is required.
 
 ### Precomputing denom (at integration time, stored in variant)
 
-    let TS: u128 = TAYLOR_SCALE;             // 10^18
-    let ek2: u128 = exp_scaled(k as i64, 2); // e^(k/2) * TS
+    let TS: u128 = TAYLOR_SCALE;                      // 10^18
+    let ek2: u128 = exp_scaled(k as u64, 2, false);   // e^(k/2) * TS  (always positive)
     // σ(k/2)  = ek2 / (ek2 + TS)
     // σ(−k/2) = TS  / (ek2 + TS)
     // σ(k/2) − σ(−k/2) = (ek2 − TS) / (ek2 + TS)
@@ -401,11 +407,16 @@ Use `Logistic` only when a steep, parameterizable sigmoid is required.
     let S:  u128 = SCALE as u128;
 
     // y = k · (x − 0.5) = k · (t − t_max/2) / t_max
-    // Rational form: y_num = k · (2t − t_max),  y_den = 2 · t_max
-    let y_num: i64 = (k as i64) * (2 * t as i64 - t_max as i64);
+    // y_num_abs = k · |2t − t_max|,  y_den = 2 · t_max,  y_neg = (t < t_max/2)
+    let two_t = 2 * t;
+    let (y_num_abs, y_neg) = if two_t >= t_max {
+        (k as u64 * (two_t - t_max), false)
+    } else {
+        (k as u64 * (t_max - two_t), true)
+    };
     let y_den: u64 = 2 * t_max;   // safe for practical tenure values (≤ centuries)
 
-    let ey: u128 = exp_scaled(y_num, y_den);  // e^y * TS
+    let ey: u128 = exp_scaled(y_num_abs, y_den, y_neg);  // e^y * TS
     let sigma_y: u128 = ey * S / (ey + TS);   // σ(y) * SCALE
 
     // σ(−k/2) * SCALE = (SCALE − denom) / 2   [derived from stored denom]
@@ -528,7 +539,7 @@ Called inside `integrate()` to reject invalid configs before creating the escrow
 | PowerLaw: `alpha_num in [1, 8]`              | zero or out-of-range exponent  |
 | PowerLaw: `alpha_num != alpha_den`           | degenerate linear — use `Linear` |
 | PowerLaw: normalize `alpha_num /= gcd(alpha_num, alpha_den)`, `alpha_den /= gcd` | store reduced form |
-| Exponential: `alpha in [-8,-1] ∪ [1,8]`     | zero or out-of-range alpha     |
+| Exponential: `alpha_abs in [1, 8]`           | zero or out-of-range alpha_abs |
 | Logistic: `k in [10, 16]`                    | out-of-range k (use Linear or Smoothstep for k < 10) |
 | `compute_next_rent_price(fn, min_rent_price) > min_rent_price` | price fn non-increasing |
 

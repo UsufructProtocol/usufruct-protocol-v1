@@ -212,6 +212,18 @@ The Liquid Renting Protocol takes full custody of the asset at the moment of int
 
 **Access to the asset is the delivery mechanism.** The protocol maintains a `current_tenant` designation that updates lazily with each state transition. Whoever the state machine designates as `current_tenant` has the usus and fructus. The protocol does not need to know what the asset produces or how it is used — it only needs to govern who can access it and when.
 
+### The OwnerCap
+
+At integration time, the protocol mints an `OwnerCap` object with `key + store` abilities — freely transferable by its holder. Possession of the `OwnerCap` is the sole verification mechanism for all owner-privileged operations: withdrawing accumulated `used_credit`, setting or unsetting the `to_retire` flag, and invoking `force_retire()`.
+
+**`used_credit` accumulates, not flows.** Rather than pushing earned rent to an owner address at each takeover — which would require the protocol to track who holds the `OwnerCap` at every state transition — `used_credit` accumulates as a balance inside the escrow. The `OwnerCap` holder withdraws it actively at any time by presenting the cap in a dedicated withdrawal call. This decouples takeover execution from owner wallet state entirely: the protocol never needs to know who the owner is.
+
+**Mutual exclusivity.** The `OwnerCap` and the asset can never be held simultaneously by the same actor. At integration, the asset enters the escrow and the `OwnerCap` is issued to the integrating party — from that moment, the escrow holds the asset and the cap circulates freely. At retirement, the asset is returned to the caller and the `OwnerCap` is burned unconditionally. No retired asset retains a live `OwnerCap`; no live `OwnerCap` exists without its asset in escrow.
+
+**Transferability and the delegation model.** Because the `OwnerCap` has `key + store`, the owner role is freely assignable — the cap can be sold, delegated, or transferred independently of any underlying asset system. Whoever holds it at the moment of a withdrawal or retirement call is the legitimate owner for that operation. The protocol has no concept of "original integrator" — only current cap holder.
+
+**Loss of the `OwnerCap`.** If the `OwnerCap` is lost or destroyed, all owner-privileged operations become permanently inaccessible. The asset remains locked in escrow for the duration of its rental lifecycle — tenants continue to hold and use it normally — but no retirement path can execute and accumulated `used_credit` cannot be withdrawn. This risk is the owner's to manage; it is the natural consequence of a capability-based access model and falls outside the protocol's control.
+
 ### Access by State
 
 The asset lives inside the protocol's shared object for its entire lifecycle. What changes across states is not the asset's location but who the protocol designates as `current_tenant`.

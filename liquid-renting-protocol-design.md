@@ -254,6 +254,20 @@ The level 1 retirement timestamp is observable from the level 1 phase anchors �
 
 The protocol does not treat this as an anomaly. It is the natural consequence of two independent state machines operating concurrently — each governed by its own parameters and its own phase anchors. The protocol cannot synchronize them, and it does not attempt to. The temporal gap between initiation and receipt is a market condition, not a flaw.
 
+### The TenantCap
+
+For every valid bid, the protocol mints a `TenantCap` object with `key` ability only — no `store`. The `TenantCap` is non-transferable: without `store`, it cannot be moved to another address or placed inside another object. It is soul-bound to whoever received it at mint time. The escrow registers the object ID of the current `TenantCap` and, during `rent_handover_confirmed`, the object ID of the next `TenantCap`. Verification is by ID: when a tenant presents their `TenantCap` to exercise usus, the escrow checks that its ID matches `current_tenant_cap_id`. If it does not, access is denied.
+
+**Push, not pull.** Because the tenant's address is known at mint time — captured at the moment of the bid — the protocol can push funds directly without any active claim from the tenant. On displacement, `remain_credit` is pushed immediately to the address that minted the current `TenantCap`. On supersession during `rent_handover_confirmed`, the full liquidity injection of the superseded bidder is pushed back immediately to their registered address. No action is required from the tenant to recover their funds.
+
+This is the deliberate asymmetry with the `OwnerCap`. The owner's address is unknown to the protocol at each state transition — the `OwnerCap` is freely transferable and may have changed hands since integration. The pull model is the only correct design in that case. The tenant's address, by contrast, is fixed at bid time and never changes for the duration of that position. Push is both possible and immediate.
+
+**Lifecycle.** The `TenantCap` is minted at bid time, not at access time. During `rent_handover_confirmed`, T(n+1) already holds their `TenantCap` — but it is registered as `next_tenant_cap_id`, not `current_tenant_cap_id`. Access is not yet granted. At `handover_countdown_expiry`, the escrow promotes `next_tenant_cap_id` to `current_tenant_cap_id` and Tn's `TenantCap` becomes stale. If multiple bids arrive during the competitive window, each superseded `TenantCap` has its liquidity returned immediately and its ID is replaced in `next_tenant_cap_id` by the new bidder's. Only the last valid bidder's `TenantCap` survives as `next_tenant_cap_id` when the candle fires.
+
+**Stale TenantCaps.** A displaced tenant's `TenantCap` remains in their wallet after displacement — its ID no longer matches any registered position in the escrow and will fail any access verification. The protocol exposes a burn function allowing the holder to destroy a stale `TenantCap` voluntarily, recovering the storage deposit. This is not a protocol operation — it is a convenience. The stale cap carries no rights and imposes no cost beyond the storage it occupies.
+
+**Why non-transferable.** The `TenantCap` represents a time-bounded, expirable position. A secondary market on a position that is consumed by time and terminates on displacement would offer no structural value — it would only introduce sub-leasing dynamics the protocol has no interest in intermediating. The non-transferability is enforced at the type level: without `store`, the `TenantCap` cannot be used as an asset in any escrow — including the Liquid Renting Protocol's own. The type system forecloses the recursive pattern at no additional verification cost. No integration-time check is needed; the constraint is structural.
+
 ### Access by State
 
 The asset lives inside the protocol's shared object for its entire lifecycle. What changes across states is not the asset's location but who the protocol designates as `current_tenant`.

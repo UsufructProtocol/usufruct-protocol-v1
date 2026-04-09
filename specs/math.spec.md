@@ -51,7 +51,7 @@ enum CurveShape {
 |---------|----------|-------|------------|
 | `Linear` | `g(x) = x` | — | N/A |
 | `Smoothstep` | `g(x) = 3x² - 2x³` | — | N/A |
-| `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num` | `∈ [1, 16]` |
+| `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num` | `∈ [1, 8]` |
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_den` | `∈ {1, 2, 3, 4}` |
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num, alpha_den` | `alpha_num != alpha_den` (degenerate linear — use `Linear` instead) |
 | `Exponential` | `g(x) = (e^(alpha·x) - 1) / (e^alpha - 1)` | `alpha` | `∈ [-8, -1] ∪ [1, 8]` (nonzero) |
@@ -224,7 +224,7 @@ Not a substitute for pure concavity or convexity — distinct incentive profile.
 
     g(x) = x^(alpha_num / alpha_den)
 
-    alpha_num: u8   — numerator of exponent,   >= 1
+    alpha_num: u8   — numerator of exponent,   ∈ [1, 8]
     alpha_den: u8   — denominator of exponent, >= 1, in {1, 2, 3, 4}
 
 ### Constraint at integration time
@@ -514,7 +514,7 @@ Called inside `integrate()` to reject invalid configs before creating the escrow
 | `handover_ceiling <= tenure_ceiling`         | handover exceeds tenure        |
 | `descent_ceiling > 0`                        | zero descent period            |
 | PowerLaw: `alpha_den in {1,2,3,4}`           | unsupported root               |
-| PowerLaw: `alpha_num in [1, 16]`             | zero or out-of-range exponent  |
+| PowerLaw: `alpha_num in [1, 8]`              | zero or out-of-range exponent  |
 | PowerLaw: `alpha_num != alpha_den`           | degenerate linear — use `Linear` |
 | Exponential: `alpha in [-8,-1] ∪ [1,8]`     | zero or out-of-range alpha     |
 | Logistic: `k in [10, 16]`                    | out-of-range k (use Linear or Smoothstep for k < 10) |

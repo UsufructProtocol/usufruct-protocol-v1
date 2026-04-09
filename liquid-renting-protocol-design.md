@@ -35,15 +35,16 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 3. [Asset State Flow - High Level](#3-asset-state-flow-high-level-view)
 4. [Asset State Flow - Low Level](#4-asset-state-flow-low-level-view)
 5. [Asset Custody and Access Model](#5-asset-custody-and-access-model)
-6. [Tenant Compensation Mechanism](#6-tenant-compensation-mechanism)
-7. [Incentive-driven Functions](#7-incentive-driven-functions)
-8. [The Renewal Mechanism](#8-the-renewal-mechanism)
-9. [Integration Parameters](#9-integration-parameters)
-10. [On-Chain State Derivability](#10-on-chain-state-derivability)
-11. [Attack Vectors and Protocol Resilience](#11-attack-vectors-and-protocol-resilience)
-12. [Integration Design Space](#12-integration-design-space)
-13. [The Protocol in Practice](#13-the-protocol-in-practice)
-14. [Glossary](#14-glossary)
+6. [Owner Revenue Model](#6-owner-revenue-model)
+7. [Tenant Compensation Mechanism](#7-tenant-compensation-mechanism)
+8. [Incentive-driven Functions](#8-incentive-driven-functions)
+9. [The Renewal Mechanism](#9-the-renewal-mechanism)
+10. [Integration Parameters](#10-integration-parameters)
+11. [On-Chain State Derivability](#11-on-chain-state-derivability)
+12. [Attack Vectors and Protocol Resilience](#12-attack-vectors-and-protocol-resilience)
+13. [Integration Design Space](#13-integration-design-space)
+14. [The Protocol in Practice](#14-the-protocol-in-practice)
+15. [Glossary](#15-glossary)
 
 ---
 
@@ -311,7 +312,31 @@ This is what makes the protocol a genuine primitive. The escrow's ignorance of t
 
 ---
 
-## 6. Tenant Compensation Mechanism
+## 6. Owner Revenue Model
+
+The owner earns `used_credit` — the portion of a tenant's locked payment consumed by time. This accumulates inside the escrow as `owner_earnings` and is withdrawn actively by the `OwnerCap` holder at any time via `withdraw_earnings()`. The protocol never pushes funds to the owner; the balance accumulates passively and the owner claims it at their discretion.
+
+### Revenue Events
+
+Two events generate owner revenue:
+
+**Takeover / Handover:** When a new tenant displaces the current one, `used_credit` at the moment of handover flows to `owner_earnings`. The remainder — `remain_credit` — returns to the displaced tenant. The owner earns exactly the rent corresponding to the time the outgoing tenant held the asset.
+
+**Tenure expiry with no successor:** When a tenant's block exhausts in `rent_handover_open`, the full `tenant_stake` (equal to `last_rent_price`) flows to `owner_earnings`. The block was fully consumed — the owner earned the entire rental price for that period.
+
+### Revenue Properties
+
+**Proportional to market validation.** `used_credit` scales with `last_rent_price`. As successive takeovers drive the price upward, the owner earns proportionally more per unit of time. Revenue is self-calibrating: it is always proportional to the value the market assigns to the usus.
+
+**Passive accumulation.** Revenue accumulates in the escrow regardless of owner activity. The `OwnerCap` need not be held continuously — the balance grows with each state transition and is available for withdrawal at any moment.
+
+**No revenue during vacant periods.** Neither `Idle` nor `At Dutch Auction` generate `owner_earnings` — both are escrow states with no active tenant stake. The owner's direct economic interest is to minimize time spent in these states, which aligns naturally with the protocol's incentive design.
+
+**Withdrawal is identity-agnostic.** Because the `OwnerCap` is transferable, whoever holds it at the moment of withdrawal claims the accumulated balance. This makes `owner_earnings` the primary source of value for the `OwnerCap` itself — and, by extension, for the `OwnerCap` rental market at level 2, where tenants temporarily hold the right to claim this revenue stream.
+
+---
+
+## 7. Tenant Compensation Mechanism
 
 The compensation mechanism is the economic guarantee that makes liquid renting viable. It ensures that any displaced tenant always recovers the unused portion of their payment, and that the incentive to enter the rental market remains rational at every price level.
 
@@ -440,7 +465,7 @@ When `r_min = r_max` — which occurs when `remaining_rent_time ≤ handover_flo
 
 ---
 
-## 7. Incentive-driven Functions
+## 8. Incentive-driven Functions
 
 The Liquid Renting Protocol exposes a set of pluggable functions that govern the economic behavior of the protocol without prescribing a single strategy. Each function must satisfy a set of formal constraints, but its exact shape is left to the integrating protocol, which selects it according to the market behavior it wishes to incentivize.
 
@@ -673,7 +698,7 @@ The shape of the decay curve determines when buyers are incentivized to act duri
 
 #### Concrete Function Families
 
-`g` and `h` share the same type and the same constraints. Every family valid for `g` is equally valid for `h`. The power-law, exponential, sigmoidal, and Bernstein polynomial families defined in §6.1 apply without modification.
+`g` and `h` share the same type and the same constraints. Every family valid for `g` is equally valid for `h`. The power-law, exponential, sigmoidal, and Bernstein polynomial families defined in §8.1 apply without modification.
 
 The economic reinterpretation for `h` is symmetric: where `g` governs *how fast credit is consumed by the tenant*, `h` governs *how fast the discount deepens toward the buyer*. The incentive shapes map as follows:
 
@@ -751,7 +776,7 @@ P(n+1) - remain_credit
 
 ---
 
-## 8. The Renewal Mechanism
+## 9. The Renewal Mechanism
 
 The renewal mechanism follows directly from three rules:
 
@@ -844,7 +869,7 @@ The following behaviors are direct consequences of the three rules above operati
 
 ---
 
-## 9. Integration Parameters
+## 10. Integration Parameters
 
 The following parameters must be provided by any protocol integrating Liquid Renting. They are the complete configuration surface of the protocol — nothing else is required.
 
@@ -910,7 +935,7 @@ In every `Rented` state, the tenant's block is not cut short and no payment is e
 
 ---
 
-## 10. On-Chain State Derivability
+## 11. On-Chain State Derivability
 
 In any blockchain runtime, state changes only when a transaction is submitted and executed. There is no background execution, no implicit timer, and no automatic state transition. This raises a natural question for a protocol governed by time-dependent functions: how are state transitions coordinated?
 
@@ -933,7 +958,7 @@ This is possible because the three incentive functions are **pure and determinis
 
 ### Bijectivity as the Structural Guarantee
 
-The bijectivity of `f_credit_ascent` and `f_price_descent` — proven in §6.1 and §6.2 — is the property that makes this possible. Because both functions are strictly monotonic with fixed endpoints, time and economic value are equivalent representations of the same state. Given `used_credit`, there is exactly one `t_rent` that produced it. Given `price_descent`, there is exactly one `t_auction` that produced it.
+The bijectivity of `f_credit_ascent` and `f_price_descent` — proven in §8.1 and §8.2 — is the property that makes this possible. Because both functions are strictly monotonic with fixed endpoints, time and economic value are equivalent representations of the same state. Given `used_credit`, there is exactly one `t_rent` that produced it. Given `price_descent`, there is exactly one `t_auction` that produced it.
 
 This collapses the state space: the protocol never needs to persist intermediate values or execute transitions eagerly. The current state is always the same whether computed now or ten minutes from now — the derivation is exact, not approximate.
 
@@ -967,7 +992,7 @@ This property was not designed into the protocol as an explicit goal. It emerged
 
 ---
 
-## 11. Attack Vectors and Protocol Resilience
+## 12. Attack Vectors and Protocol Resilience
 
 The following vectors were identified and analyzed against the protocol's design. Each is resolved either by a formal constraint, an emergent property, or by being correctly identified as integrator responsibility rather than a protocol flaw.
 
@@ -1045,7 +1070,7 @@ The following vectors were identified and analyzed against the protocol's design
 
 ---
 
-## 12. Integration Design Space
+## 13. Integration Design Space
 
 The protocol operates on a single, well-defined integration profile.
 
@@ -1064,13 +1089,13 @@ Physical transfers occur at two moments only: deposit at integration, and withdr
 An integration requires:
 - An asset with `key + store` abilities
 - A payment token issued as `Coin<T>`
-- Configuration of the integration parameters (§9)
+- Configuration of the integration parameters (§10)
 
 No external authorization from asset systems or currency systems is required. The protocol is fully self-contained.
 
 ---
 
-## 13. The Protocol in Practice
+## 14. The Protocol in Practice
 
 The following instantiations illustrate which protocol mechanic does the work, and what problem it solves that a static rental model could not.
 
@@ -1114,7 +1139,7 @@ The protocol applies because yield optimization is a competitive service: multip
 
 ---
 
-## 14. Glossary
+## 15. Glossary
 
 ### Actors
 

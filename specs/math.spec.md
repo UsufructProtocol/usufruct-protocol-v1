@@ -330,14 +330,39 @@ For |y| ≤ 8 and x ∈ [0, 1], K = 20 terms yields relative error < 10^-9.
 
 Work in a scaled integer domain with precision TAYLOR_SCALE = 10^18 (fits u128):
 
-    // Compute e^(±y_num/y_den) * TAYLOR_SCALE using Taylor series
-    fn exp_scaled(y_num: u64, y_den: u64, neg: bool) -> u128
-        // if neg=false: returns floor(e^(y_num/y_den) * TAYLOR_SCALE)
-        // if neg=true:  returns floor(e^(-y_num/y_den) * TAYLOR_SCALE)
+    TAYLOR_SCALE: u128 = 1_000_000_000_000_000_000   (10^18)
+    TAYLOR_SCALE_SQ: u128 = TAYLOR_SCALE * TAYLOR_SCALE  (10^36, fits u128 ✓)
 
-    Each term: term_k = term_{k-1} * y_num / (k * y_den)  (iterative)
-    For neg=true, odd-power terms are subtracted instead of added.
-    Accumulate into u128. Stop when term < 1 or after K=20 terms.
+Two functions:
+
+    // Public entry point — handles sign via reciprocal identity
+    fn exp_scaled(y_num: u64, y_den: u64, neg: bool) -> u128
+        if !neg { exp_scaled_pos(y_num, y_den) }
+        else    { TAYLOR_SCALE_SQ / exp_scaled_pos(y_num, y_den) }
+
+    // Inner — Taylor series for e^y, y = y_num/y_den > 0
+    fn exp_scaled_pos(y_num: u64, y_den: u64) -> u128
+        // returns floor(e^(y_num/y_den) * TAYLOR_SCALE)
+
+Reciprocal identity: e^(-y) = 1/e^y, so:
+    floor(e^(-y) · TS) = floor(TS² / floor(e^y · TS))
+
+This avoids alternating-sign Taylor series entirely (which would underflow u128).
+Error introduced by the integer division is at most 1 ULP — within the 10^-9 budget.
+
+Taylor series algorithm for exp_scaled_pos:
+
+    acc: u128 = TAYLOR_SCALE   // term_0 = 1 * TS
+    term: u128 = TAYLOR_SCALE  // running term
+
+    for k in 1..=K:            // K = 20
+        term = term * (y_num as u128) / (k as u128 * y_den as u128)
+        acc  = acc + term
+        if term == 0: break    // early exit
+
+    return acc
+
+Note: divisor `k * y_den` computed in u128 to avoid u64 overflow for large y_den.
 
 ### Full algorithm for Exponential variant
 
@@ -381,7 +406,10 @@ alpha_abs = 0 is rejected because e^0 - 1 = 0 makes the denominator zero
     and   denom = (σ(k/2) − σ(−k/2)) * SCALE   [precomputed at integration time]
 
     k: u8      — steepness, ∈ [10, 16]. Inflection fixed at x = 0.5.
-    denom: u64 — stored in the variant, computed once in integrate().
+    denom: u64 — precomputed normalization constant. Never set manually.
+
+**Construction:** always use `math::new_logistic(k)` — never construct `Logistic { k, denom }` directly.
+`new_logistic` validates k ∈ [10, 16], computes denom via `exp_scaled`, and returns the variant.
 
 ### Shape by k value
 
@@ -552,9 +580,10 @@ Called inside `integrate()` to reject invalid configs before creating the escrow
   - `compute_used_credit` (public)
   - `compute_price_descent` (public)
   - `compute_next_rent_price` (public)
+  - `new_logistic(k: u8): CurveShape` (public) — only valid constructor for `Logistic`
   - `validate_config` (public, called by integrate())
   - `mul_div` (public, usable by other modules)
-  - `nth_root_u128`, `exp_scaled` (private)
+  - `nth_root_u128`, `exp_scaled`, `exp_scaled_pos` (private)
 
 `CurveShape` and `PriceFunction` types are defined in this module
 and re-exported as part of `IntegrationConfig`.

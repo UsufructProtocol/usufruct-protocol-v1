@@ -240,6 +240,20 @@ What has occurred is a de facto transfer of the abusus — and with it, the full
 
 The rationale is direct. At depth 3, the level 3 tenant could retire `OwnerCap_2` from its escrow — obtaining a capability that governs a level 1 escrow whose own underlying asset may already have been extracted, retired, or decoupled. The chain of value becomes opaque: the level 3 escrow makes claims about an asset it cannot directly observe. The depth restriction is not a constraint against composability — it is a guarantee that every escrow in the protocol is always one level of indirection from a real asset. The market can only price what it can observe.
 
+### Retirement Initiation vs. Asset Receipt: A Temporal Decoupling
+
+When `force_retire()` is called on the level 1 escrow while the asset is in a `Rented` state, the retirement is deferred — the flag is set but the asset does not exit until the active rental block reaches `tenure_ceiling`. During this interval, the level 2 escrow continues running its own state machine independently, with its own phase anchors and its own `handover_countdown`.
+
+If the level 2 `handover_countdown` expires before the level 1 asset reaches `Retired`, the level 2 tenant who initiated the retirement (T_A) loses their position. A new level 2 tenant (T_B) takes over `OwnerCap_1`. When the level 1 asset finally retires, whoever is the current level 2 tenant at that moment — whoever can present `OwnerCap_1` — is the one who receives the underlying asset. T_A initiated the retirement. T_B receives the asset.
+
+This decoupling has direct market implications. Once `force_retire()` has been called, the level 2 position acquires an additional dimension of value: whoever holds `OwnerCap_1` when the level 1 asset reaches `Retired` receives the asset. The level 2 market will price this expectation — competition for the level 2 position intensifies as the level 1 retirement approaches, because the asset transfer is imminent and deterministic. The tenant who initiated the retirement paid to set the process in motion; the market determines who ultimately receives the result.
+
+T_A is not without structural recourse. The Renewal Mechanism (§8) gives the current level 2 tenant a cost advantage over any external competitor: T_A's net cost to renew their position is `increment + used_credit`, strictly less than the full price any external bidder must pay. This asymmetry increases T_A's probability of retaining the `OwnerCap_1` position through to the level 1 retirement — making it more likely that the initiator and the receiver are the same actor. The advantage is largest at the start of T_A's level 2 block and shrinks as credit is consumed.
+
+The level 1 retirement timestamp is observable from the level 1 phase anchors — it is deterministic once `force_retire()` has been called and the active block's `tenure_ceiling` is known. A sniper knows exactly when the underlying asset will be available. However, knowing when to receive the asset is not sufficient — what matters is holding `OwnerCap_1` at that moment, and `OwnerCap_1` is gated by the level 2 `handover_countdown_expiry`, which is unknown to all participants. The sniper cannot align two timings when one of them is invisible. Bidding too early exposes them to a counter-bid from T_A; bidding too late risks the candle firing without them. The candle auction at level 2 eliminates last-second sniping entirely — by the same mechanism it does everywhere in the protocol: there is no optimal moment to act.
+
+The protocol does not treat this as an anomaly. It is the natural consequence of two independent state machines operating concurrently — each governed by its own parameters and its own phase anchors. The protocol cannot synchronize them, and it does not attempt to. The temporal gap between initiation and receipt is a market condition, not a flaw.
+
 ### Access by State
 
 The asset lives inside the protocol's shared object for its entire lifecycle. What changes across states is not the asset's location but who the protocol designates as `current_tenant`.

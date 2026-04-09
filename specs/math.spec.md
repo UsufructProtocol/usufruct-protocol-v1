@@ -243,6 +243,16 @@ Not a substitute for pure concavity or convexity — distinct incentive profile.
 
 Let n = alpha_num, d = alpha_den.
 
+Step 0 — reduce n/d to lowest terms (done once at integration time, stored):
+
+    let g = gcd(n, d);
+    n = n / g;
+    d = d / g;
+
+This minimizes loop iterations in Step 1 and may eliminate Step 2 entirely
+(e.g., 6/2 → 3/1: x^3 with no root vs x^6 + square root).
+Guaranteed by §13: stored alpha_num and alpha_den are always coprime.
+
 Step 1 — compute x^n scaled:
 
     // Start with x = t/t_max scaled by SCALE
@@ -516,6 +526,7 @@ Called inside `integrate()` to reject invalid configs before creating the escrow
 | PowerLaw: `alpha_den in {1,2,3,4}`           | unsupported root               |
 | PowerLaw: `alpha_num in [1, 8]`              | zero or out-of-range exponent  |
 | PowerLaw: `alpha_num != alpha_den`           | degenerate linear — use `Linear` |
+| PowerLaw: normalize `alpha_num /= gcd(alpha_num, alpha_den)`, `alpha_den /= gcd` | store reduced form |
 | Exponential: `alpha in [-8,-1] ∪ [1,8]`     | zero or out-of-range alpha     |
 | Logistic: `k in [10, 16]`                    | out-of-range k (use Linear or Smoothstep for k < 10) |
 | `compute_next_rent_price(fn, min_rent_price) > min_rent_price` | price fn non-increasing |

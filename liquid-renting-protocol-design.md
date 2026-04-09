@@ -336,6 +336,10 @@ Two events generate owner revenue:
 
 **Revenue rate is shaped by `f_credit_ascent`.** The owner does not earn at a constant rate throughout a rental block. The rate at which `used_credit` accrues per unit of time is determined by the derivative of `f_credit_ascent` — the same curve that governs tenant compensation. A concave curve concentrates earnings early in the block; a convex curve concentrates them late. The integrator's choice of curve shape is therefore not only a tenant-facing incentive decision — it directly determines the temporal distribution of owner revenue within each block. The total earned over a full block is always `last_rent_price`, but when it is earned varies with the curve.
 
+### The OwnerCap Entering the Protocol: Implicit Sale of the Asset
+
+As described in §5, the `OwnerCap` is freely transferable and may itself be integrated into the protocol as a level 2 asset. When this occurs, the owner has effectively converted their revenue stream into a rentable position: level 2 tenants compete for the temporary right to claim `owner_earnings` and exercise retirement rights over the level 1 escrow. The level 2 tenant who calls `retire()` during their block receives the underlying asset directly — an implicit sale of the level 1 asset, mediated entirely by the rental market. The owner who integrates their `OwnerCap` into a level 2 escrow has chosen to let the market determine who ultimately acquires both the revenue stream and the ownership of the level 1 asset itself.
+
 ---
 
 ## 7. Tenant Compensation Mechanism

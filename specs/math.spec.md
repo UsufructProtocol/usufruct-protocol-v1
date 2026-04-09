@@ -230,6 +230,7 @@ Not a substitute for pure concavity or convexity — distinct incentive profile.
 ### Constraint at integration time
 
     alpha_num >= 1, alpha_den >= 1
+    alpha_num in {1, 2, 3, 4, 5, 6, 7, 8}
     alpha_den in {1, 2, 3, 4}       — restricts to square, cube, 4th root
     alpha_num / alpha_den > 0       — always satisfied by above
 
@@ -420,8 +421,8 @@ Use `Logistic` only when a steep, parameterizable sigmoid is required.
 
 ### Constraint at integration time
 
-    k ∈ [1, 16]
-    denom > 0   (guaranteed: k ≥ 1 ensures σ(k/2) > σ(−k/2))
+    k ∈ [10, 16]
+    denom > 0   (guaranteed: k ≥ 10 ensures σ(k/2) > σ(−k/2))
 
 
 10. COMPUTE_USED_CREDIT

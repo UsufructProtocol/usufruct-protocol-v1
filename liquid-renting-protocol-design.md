@@ -334,6 +334,8 @@ Two events generate owner revenue:
 
 **Withdrawal is identity-agnostic.** Because the `OwnerCap` is transferable, whoever holds it at the moment of withdrawal claims the accumulated balance. This makes `owner_earnings` the primary source of value for the `OwnerCap` itself — and, by extension, for the `OwnerCap` rental market at level 2, where tenants temporarily hold the right to claim this revenue stream.
 
+**Revenue rate is shaped by `f_credit_ascent`.** The owner does not earn at a constant rate throughout a rental block. The rate at which `used_credit` accrues per unit of time is determined by the derivative of `f_credit_ascent` — the same curve that governs tenant compensation. A concave curve concentrates earnings early in the block; a convex curve concentrates them late. The integrator's choice of curve shape is therefore not only a tenant-facing incentive decision — it directly determines the temporal distribution of owner revenue within each block. The total earned over a full block is always `last_rent_price`, but when it is earned varies with the curve.
+
 ---
 
 ## 7. Tenant Compensation Mechanism

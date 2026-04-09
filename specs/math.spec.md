@@ -38,10 +38,14 @@ enum CurveShape {
     Exponential {
         alpha: i8,
     },
+    Logistic {
+        k: u8,
+        denom: u64,
+    },
 }
 ```
 
-**Constraints (validated at integration time, §12):**
+**Constraints (validated at integration time, §13):**
 
 | Variant | Function | Field | Constraint |
 |---------|----------|-------|------------|
@@ -51,6 +55,7 @@ enum CurveShape {
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_den` | `∈ {1, 2, 3, 4}` |
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num, alpha_den` | `alpha_num != alpha_den` (degenerate linear — use `Linear` instead) |
 | `Exponential` | `g(x) = (e^(alpha·x) - 1) / (e^alpha - 1)` | `alpha` | `∈ [-8, -1] ∪ [1, 8]` (nonzero) |
+| `Logistic` | `g(x) = (σ(k·(x−0.5)) − σ(−k/2)) / denom` | `k` | `∈ [10, 16]` |
 
 ### PriceFunction — enum
 
@@ -71,7 +76,7 @@ enum PriceFunction {
 }
 ```
 
-**Constraints (validated at integration time, §12):**
+**Constraints (validated at integration time, §13):**
 
 All variants must satisfy:
 - `compute_next_rent_price(fn, min_rent_price) > min_rent_price`
@@ -98,7 +103,7 @@ fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64) -> u64
 **Semantics:** Given a curve shape, a time point `t`, and max duration `t_max`, 
 returns the normalized curve value `g(t/t_max) * SCALE` in [0, SCALE].
 
-Each variant has its own implementation logic (§5–§8); the caller does not need 
+Each variant has its own implementation logic (§5–§9); the caller does not need 
 to know which variant is stored — the function handles the dispatch.
 
 **Example usage:**
@@ -350,7 +355,66 @@ Alpha = 0 is rejected because it makes the denominator zero (limit is linear,
 use Linear variant instead).
 
 
-9. COMPUTE_USED_CREDIT
+9. LOGISTIC VARIANT
+--------------------
+
+    g(x) = (σ(k·(x − 0.5)) − σ(−k/2)) / denom
+
+    where σ(y) = e^y / (e^y + 1)
+    and   denom = (σ(k/2) − σ(−k/2)) * SCALE   [precomputed at integration time]
+
+    k: u8      — steepness, ∈ [10, 16]. Inflection fixed at x = 0.5.
+    denom: u64 — stored in the variant, computed once in integrate().
+
+### Shape by k value
+
+    k ∈ [10, 12]  →  pronounced S-curve, distinctly steeper than Smoothstep
+    k ∈ [13, 16]  →  steep cliff near x = 0.5
+
+k < 10 produces curves indistinguishable from Linear or Smoothstep — use those
+variants instead (exact computation, negligible gas cost).
+Use `Logistic` only when a steep, parameterizable sigmoid is required.
+
+### Precomputing denom (at integration time, stored in variant)
+
+    let TS: u128 = TAYLOR_SCALE;             // 10^18
+    let ek2: u128 = exp_scaled(k as i64, 2); // e^(k/2) * TS
+    // σ(k/2)  = ek2 / (ek2 + TS)
+    // σ(−k/2) = TS  / (ek2 + TS)
+    // σ(k/2) − σ(−k/2) = (ek2 − TS) / (ek2 + TS)
+    denom = ((ek2 - TS) * SCALE as u128 / (ek2 + TS)) as u64;
+
+### Runtime algorithm
+
+    let TS: u128 = TAYLOR_SCALE;
+    let S:  u128 = SCALE as u128;
+
+    // y = k · (x − 0.5) = k · (t − t_max/2) / t_max
+    // Rational form: y_num = k · (2t − t_max),  y_den = 2 · t_max
+    let y_num: i64 = (k as i64) * (2 * t as i64 - t_max as i64);
+    let y_den: u64 = 2 * t_max;   // safe for practical tenure values (≤ centuries)
+
+    let ey: u128 = exp_scaled(y_num, y_den);  // e^y * TS
+    let sigma_y: u128 = ey * S / (ey + TS);   // σ(y) * SCALE
+
+    // σ(−k/2) * SCALE = (SCALE − denom) / 2   [derived from stored denom]
+    let sigma_floor: u128 = (S - denom as u128) / 2;
+
+    ((sigma_y - sigma_floor) * S / denom as u128) as u64
+
+### Overflow analysis
+
+    ey          ≤ e^8 · TS ≈ 2981 · 10^18 ≈ 3×10^21   fits u128 ✓
+    ey · S      ≤ 3×10^21 · 10^9 = 3×10^30             fits u128 ✓
+    (σ_y − σ_floor) · S  ≤ S · S = 10^18               fits u128 ✓
+
+### Constraint at integration time
+
+    k ∈ [1, 16]
+    denom > 0   (guaranteed: k ≥ 1 ensures σ(k/2) > σ(−k/2))
+
+
+10. COMPUTE_USED_CREDIT
 -----------------------
 
 ### Signature
@@ -383,7 +447,7 @@ If `now_ms < phase_start_ms` (clock skew): elapsed underflows — caller must
 ensure now_ms >= phase_start_ms before calling. Abort otherwise.
 
 
-10. COMPUTE_PRICE_DESCENT
+11. COMPUTE_PRICE_DESCENT
 -------------------------
 
 ### Signature
@@ -415,7 +479,7 @@ If `now_ms >= phase_start_ms + descent_ceiling`, evaluate_curve returns SCALE
 and price = min_rent_price.
 
 
-11. COMPUTE_NEXT_RENT_PRICE
+12. COMPUTE_NEXT_RENT_PRICE
 ----------------------------
 
 ### Signature
@@ -436,7 +500,7 @@ All additions use checked arithmetic — abort on u64 overflow.
 Guaranteed result > last_rent_price by integration-time constraint validation.
 
 
-12. INTEGRATION-TIME VALIDATION
+13. INTEGRATION-TIME VALIDATION
 --------------------------------
 
 Called inside `integrate()` to reject invalid configs before creating the escrow.
@@ -453,10 +517,11 @@ Called inside `integrate()` to reject invalid configs before creating the escrow
 | PowerLaw: `alpha_num in [1, 16]`             | zero or out-of-range exponent  |
 | PowerLaw: `alpha_num != alpha_den`           | degenerate linear — use `Linear` |
 | Exponential: `alpha in [-8,-1] ∪ [1,8]`     | zero or out-of-range alpha     |
+| Logistic: `k in [10, 16]`                    | out-of-range k (use Linear or Smoothstep for k < 10) |
 | `compute_next_rent_price(fn, min_rent_price) > min_rent_price` | price fn non-increasing |
 
 
-13. MODULE BOUNDARY
+14. MODULE BOUNDARY
 --------------------
 
 `math.move` exports:

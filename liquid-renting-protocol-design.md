@@ -214,7 +214,7 @@ The Liquid Renting Protocol takes full custody of the asset at the moment of int
 
 ### The OwnerCap
 
-At integration time, the protocol mints an `OwnerCap` object with `key + store` abilities — freely transferable by its holder. Possession of the `OwnerCap` is the sole verification mechanism for all owner-privileged operations: withdrawing accumulated `used_credit`, setting or unsetting the `to_retire` flag, and invoking `force_retire()`.
+At integration time, the protocol mints an `OwnerCap` object with `key + store` abilities — freely transferable by its holder. Possession of the `OwnerCap` is the sole verification mechanism for all owner-privileged operations: withdrawing accumulated `used_credit` and invoking `retire()`.
 
 **`used_credit` accumulates, not flows.** Rather than pushing earned rent to an owner address at each takeover — which would require the protocol to track who holds the `OwnerCap` at every state transition — `used_credit` accumulates as a balance inside the escrow. The `OwnerCap` holder withdraws it actively at any time by presenting the cap in a dedicated withdrawal call. This decouples takeover execution from owner wallet state entirely: the protocol never needs to know who the owner is.
 
@@ -232,7 +232,7 @@ Because the `OwnerCap` carries `key + store` abilities, it satisfies the integra
 
 **Level 2 — the emergent case.** `OwnerCap_1` itself may be deposited into a new escrow instance. Tenants compete for its usus — the temporary right to act as owner of the level 1 escrow: withdrawing accumulated `used_credit` and exercising retirement rights. The level 2 tenant holds, for the duration of their block, the full administrative authority over the level 1 escrow.
 
-**Implicit sale of the underlying asset.** When the level 1 escrow is in `Idle` or `At Dutch Auction`, a level 2 tenant may borrow `OwnerCap_1`, call `retire()` or `force_retire()`, and receive the underlying asset directly within a single Programmable Transaction Block — atomic and immediate. `OwnerCap_1` is returned to the level 2 escrow, now governing an empty instance. When the level 1 asset is in `Rented` state, `force_retire()` is deferred: the flag is set but the asset does not exit until the active block concludes. In this case, the tenant who initiated the retirement and the tenant who ultimately receives the asset may be different actors — a property explored in the subsection below. In all cases the operation is protocol-valid: the protocol cannot distinguish between a tenant exercising the usus to claim `used_credit` and a tenant exercising it to retire the asset. Both are legitimate uses of the same capability.
+**Implicit sale of the underlying asset.** When the level 1 escrow is in `Idle` or `At Dutch Auction`, a level 2 tenant may borrow `OwnerCap_1`, call `retire()`, and receive the underlying asset directly within a single Programmable Transaction Block — atomic and immediate. `OwnerCap_1` is returned to the level 2 escrow, now governing an empty instance. When the level 1 asset is in `Rented` state, `retire()` is deferred: the flag is set but the asset does not exit until the active block concludes. In this case, the tenant who initiated the retirement and the tenant who ultimately receives the asset may be different actors — a property explored in the subsection below. In all cases the operation is protocol-valid: the protocol cannot distinguish between a tenant exercising the usus to claim `used_credit` and a tenant exercising it to retire the asset. Both are legitimate uses of the same capability.
 
 What has occurred is a de facto transfer of the abusus — and with it, the full dominium over the underlying asset. The protocol was designed to leave the abusus with the owner at all times. No rule has been violated: the owner of `OwnerCap_1` freely chose to make it available as a rentable asset, knowing that its usus includes retirement rights. The transfer of the abusus emerged from that choice, mediated by the market. The protocol did not design for sale — it discovered that ownership transfer is a special case of capability transfer.
 
@@ -242,15 +242,15 @@ The rationale is direct. At depth 3, the level 3 tenant could retire `OwnerCap_2
 
 ### Retirement Initiation vs. Asset Receipt: A Temporal Decoupling
 
-When `force_retire()` is called on the level 1 escrow while the asset is in a `Rented` state, the retirement is deferred — the flag is set but the asset does not exit until the active rental block reaches `tenure_ceiling`. During this interval, the level 2 escrow continues running its own state machine independently, with its own phase anchors and its own `handover_countdown`.
+When `retire()` is called on the level 1 escrow while the asset is in a `Rented` state, the retirement is deferred — the flag is set but the asset does not exit until the active rental block reaches `tenure_ceiling`. During this interval, the level 2 escrow continues running its own state machine independently, with its own phase anchors and its own `handover_countdown`.
 
 If the level 2 `handover_countdown` expires before the level 1 asset reaches `Retired`, the level 2 tenant who initiated the retirement (T_A) loses their position. A new level 2 tenant (T_B) takes over `OwnerCap_1`. When the level 1 asset finally retires, whoever is the current level 2 tenant at that moment — whoever can present `OwnerCap_1` — is the one who receives the underlying asset. T_A initiated the retirement. T_B receives the asset.
 
-This decoupling has direct market implications. Once `force_retire()` has been called, the level 2 position acquires an additional dimension of value: whoever holds `OwnerCap_1` when the level 1 asset reaches `Retired` receives the asset. The level 2 market will price this expectation — competition for the level 2 position intensifies as the level 1 retirement approaches, because the asset transfer is imminent and deterministic. The tenant who initiated the retirement paid to set the process in motion; the market determines who ultimately receives the result.
+This decoupling has direct market implications. Once `retire()` has been called, the level 2 position acquires an additional dimension of value: whoever holds `OwnerCap_1` when the level 1 asset reaches `Retired` receives the asset. The level 2 market will price this expectation — competition for the level 2 position intensifies as the level 1 retirement approaches, because the asset transfer is imminent and deterministic. The tenant who initiated the retirement paid to set the process in motion; the market determines who ultimately receives the result.
 
 T_A is not without structural recourse. The Renewal Mechanism (§8) gives the current level 2 tenant a cost advantage over any external competitor: T_A's net cost to renew their position is `increment + used_credit`, strictly less than the full price any external bidder must pay. This asymmetry increases T_A's probability of retaining the `OwnerCap_1` position through to the level 1 retirement — making it more likely that the initiator and the receiver are the same actor. The advantage is largest at the start of T_A's level 2 block and shrinks as credit is consumed.
 
-The level 1 retirement timestamp is observable from the level 1 phase anchors — it is deterministic once `force_retire()` has been called and the active block's `tenure_ceiling` is known. A sniper knows exactly when the underlying asset will be available. However, knowing when to receive the asset is not sufficient — what matters is holding `OwnerCap_1` at that moment, and `OwnerCap_1` is gated by the level 2 `handover_countdown_expiry`, which is unknown to all participants. The sniper cannot align two timings when one of them is invisible. Bidding too early exposes them to a counter-bid from T_A; bidding too late risks the candle firing without them. The candle auction at level 2 eliminates last-second sniping entirely — by the same mechanism it does everywhere in the protocol: there is no optimal moment to act.
+The level 1 retirement timestamp is observable from the level 1 phase anchors — it is deterministic once `retire()` has been called and the active block's `tenure_ceiling` is known. A sniper knows exactly when the underlying asset will be available. However, knowing when to receive the asset is not sufficient — what matters is holding `OwnerCap_1` at that moment, and `OwnerCap_1` is gated by the level 2 `handover_countdown_expiry`, which is unknown to all participants. The sniper cannot align two timings when one of them is invisible. Bidding too early exposes them to a counter-bid from T_A; bidding too late risks the candle firing without them. The candle auction at level 2 eliminates last-second sniping entirely — by the same mechanism it does everywhere in the protocol: there is no optimal moment to act.
 
 The protocol does not treat this as an anomaly. It is the natural consequence of two independent state machines operating concurrently — each governed by its own parameters and its own phase anchors. The protocol cannot synchronize them, and it does not attempt to. The temporal gap between initiation and receipt is a market condition, not a flaw.
 
@@ -860,8 +860,7 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `f_price_descent` | Normalized shape function `h` | Defines how the auction discount deepens. The integrator provides `h : [0,1] → [0,1]`; the protocol computes `price_descent(t) = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)`. | `h(0) = 0` ; `h(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ h(x) ≤ 1` ; strictly monotonically increasing |
 | `f_next_rent_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
-| `to_retire` | Flag (mutable) | Deferred retirement instruction. When set, the asset exits the protocol at the next `Idle` transition instead of re-entering the rental cycle. May be set or unset by the owner at any time, regardless of the current state. Setting the flag does not interrupt any active rental or auction. Execution is additionally gated by `retire_floor`. | Not set by default. |
-| `retire_floor` | Duration | Minimum time that must elapse since integration before any retirement path may execute — whether via `to_retire` or `force_retire()`. A public, on-chain commitment by the owner: during this window, the asset cannot exit the protocol by any means. | `retire_floor ≥ 0`. A value of `0` imposes no restriction. |
+| `retire_floor` | Duration | Minimum time that must elapse since integration before `retire()` may execute. A public, on-chain commitment by the owner: during this window, the asset cannot exit the protocol by any means. | `retire_floor ≥ 0`. A value of `0` imposes no restriction. |
 
 ### Parameter Immutability
 
@@ -883,63 +882,43 @@ integrate (enter Idle with fixed params)
 
 This constraint is a trust guarantee for tenants: the rules under which a tenant entered cannot be altered while their position is active, or at any point during the integration instance. The owner retains the abusus — they may retire the asset — but they may not change the conditions of use while the protocol is live.
 
-### Graceful Exit: the `to_retire` Flag
-
-The integrating protocol may set a `to_retire` flag on the asset at any time, regardless of the current state. The flag does not interrupt any active rental or auction — it is a deferred instruction.
-
-When the asset next reaches `Idle` — the only path being a Dutch Auction that exhausted `descent_ceiling` without finding a new tenant — the protocol checks both the `to_retire` flag and the `retire_floor`. If the flag is set and `retire_floor` has elapsed since integration, the asset is transferred directly to the owner and marked `Retired`, bypassing the normal re-entry into the rental cycle. If `retire_floor` has not yet elapsed, the asset re-enters the rental cycle as normal and the flag remains pending for the next `Idle` transition.
-
-This gives the owner a graceful, non-disruptive exit path:
-
-- No active tenant is interrupted.
-- No auction is aborted.
-- The asset simply does not re-enter the market at the next natural resting point.
-
-The `to_retire` flag may be set or unset by the owner at any time, regardless of `retire_floor` — the flag is a signal of intent. Only its execution is gated.
-
-If the asset never reaches `Idle` — because the market perpetually validates its price through continuous takeovers or Dutch Auctions that always find a buyer — the `to_retire` flag never executes on its own. In that case, `force_retire()` is available to the owner once `retire_floor` has elapsed. An asset that never reaches `Idle` is an asset that never stops generating `used_credit` for its owner — a market that never goes quiet is precisely the outcome the protocol was designed to produce, and the owner has no reason to exit it.
-
-> **Keep in mind:** Since an asset can only be retired when it reaches `Idle`, the integrating protocol should study carefully what incentive behaviors it wants to produce before setting its parameters. The success of an asset in this protocol is measured by exactly one metric: how rarely it sits outside the Rented state — that is, how little time it spends in `Idle` or `At Dutch Auction` combined. Both are escrow states in which no `used_credit` flows to the owner. Parameters are the only lever the owner has to shape that outcome. Choose them with intention.
+> **Keep in mind:** The success of an asset in this protocol is measured by exactly one metric: how rarely it sits outside the Rented state — that is, how little time it spends in `Idle` or `At Dutch Auction` combined. Both are escrow states in which no `used_credit` flows to the owner. Parameters are the only lever the owner has to shape that outcome. Choose them with intention.
 >
 > **Don't panic** if the asset reaches `Idle` frequently — it simply means the owner can retire and re-integrate often, adjusting parameters with each cycle. Frequent idle periods are not failure; they are an invitation to experiment. The protocol is forgiving by design: wrong parameters surface quickly, and the retire → re-integrate cycle is the natural feedback loop for finding the right configuration.
 
-### Forced Exit: the `force_retire()` Call
+### Exit: the `retire()` Call
 
-The `to_retire` flag is the correct and preferred exit path. However, a structural edge case exists that can prevent it from ever executing.
-
-An asset that the market perpetually values will cycle continuously through `Rented` and `At Dutch Auction` without ever reaching `Idle` — the only state from which `to_retire` can execute. If every Dutch Auction finds a buyer before `price_descent` reaches `min_rent_price`, the `Idle` state becomes unreachable. The `to_retire` flag is set but never fires. The owner cannot exit.
-
-`force_retire()` is the owner's guarantee that this situation never becomes permanent. Like `to_retire`, it is gated by `retire_floor` — it cannot be invoked until the minimum committed period has elapsed.
+`retire()` is the owner's sole exit mechanism. It is gated by `retire_floor` — it cannot be invoked until the minimum committed period has elapsed. An asset that the market perpetually values will cycle continuously through `Rented` and `At Dutch Auction` without ever reaching `Idle`. `retire()` is the owner's guarantee that this situation never becomes a permanent trap.
 
 #### Behavior by State
 
 **From `At Dutch Auction`:**
 The auction terminates immediately. The asset passes to `Retired`.
 
-This is the primary use case for `force_retire()`. It is the only state where the blocking scenario can occur, and the only state where the call acts with immediate effect.
+This is the primary use case for `retire()`. It is the only state where the blocking scenario can occur, and the only state where the call acts with immediate effect.
 
 **From `Rented` (`rent_handover_open`):**
-`force_retire()` sets the `force_retire` flag. From this point the asset does not accept new bids — the transition to `rent_handover_confirmed` is blocked. The current tenant completes their block in full until `tenure_ceiling`. At expiry, instead of triggering a Dutch Auction, the asset passes to `Retired`. No disruption to the active block occurs.
+`retire()` sets the `retire` flag. From this point the asset does not accept new bids — the transition to `rent_handover_confirmed` is blocked. The current tenant completes their block in full until `tenure_ceiling`. At expiry, instead of triggering a Dutch Auction, the asset passes to `Retired`. No disruption to the active block occurs.
 
 **From `Rented` (`rent_handover_confirmed`):**
-`force_retire()` sets the `force_retire` flag. The active `handover_countdown` runs to completion uninterrupted — no refunds, no changes to the current flow. T(n+1) receives access at handover and begins their rental cycle in `rent_handover_open`. With the flag active, their `rent_handover_open` does not accept new bids. T(n+1) completes their block in full until `tenure_ceiling`. At expiry, the asset passes to `Retired`.
+`retire()` sets the `retire` flag. The active `handover_countdown` runs to completion uninterrupted — no refunds, no changes to the current flow. T(n+1) receives access at handover and begins their rental cycle in `rent_handover_open`. With the flag active, their `rent_handover_open` does not accept new bids. T(n+1) completes their block in full until `tenure_ceiling`. At expiry, the asset passes to `Retired`.
 
 **From `Idle`:**
-Equivalent to `to_retire` executing immediately. The asset passes to `Retired` without re-entering the rental cycle.
+The asset passes to `Retired` without re-entering the rental cycle.
 
 #### The Tenant Guarantee Is Preserved
 
-In every `Rented` state, the tenant's block is not cut short and no payment is ever refunded mid-flight. Every actor who paid for a position receives their full block — the `force_retire` flag only gates future transitions, never current ones. The protocol's foundational promise to tenants — *if displaced, recover unused credit* — holds unconditionally across all `force_retire()` paths.
+In every `Rented` state, the tenant's block is not cut short and no payment is ever refunded mid-flight. Every actor who paid for a position receives their full block — the `retire` flag only gates future transitions, never current ones. The protocol's foundational promise to tenants — *if displaced, recover unused credit* — holds unconditionally across all `retire()` paths.
 
 #### A Tool of Last Resort
 
-`force_retire()` should be invoked only when the natural exit path is genuinely blocked. Using it as a routine management tool — to reconfigure parameters, respond to market conditions, or accelerate re-integration — sends an unambiguous signal to the market: the asset's protocol instance can be terminated unilaterally at any time.
+`retire()` should be invoked only when the natural exit path is genuinely blocked. Using it as a routine management tool — to reconfigure parameters, respond to market conditions, or accelerate re-integration — sends an unambiguous signal to the market: the asset's protocol instance can be terminated unilaterally at any time.
 
-The consequences are direct. Tenants who price their position rationally will discount the value of a position that cannot be renewed or taken over — the `force_retire` flag eliminates the competitive dynamics that make the asset valuable to hold. Competition for the asset weakens. The Dutch Auction loses depth as potential buyers wait rather than commit. The owner earns less `used_credit` than they would have by allowing the protocol to run its natural course.
+The consequences are direct. Tenants who price their position rationally will discount the value of a position that cannot be renewed or taken over — the `retire` flag eliminates the competitive dynamics that make the asset valuable to hold. Competition for the asset weakens. The Dutch Auction loses depth as potential buyers wait rather than commit. The owner earns less `used_credit` than they would have by allowing the protocol to run its natural course.
 
-The protocol does not penalise the abuse of `force_retire()`. The market does. An asset whose owner treats forced exit as a lever will, over time, cease to attract the organic competition the protocol was designed to produce. The mechanism exists to guarantee that no owner is permanently trapped. Its correct use is exceptional.
+The protocol does not penalise the abuse of `retire()`. The market does. An asset whose owner treats exit as a lever will, over time, cease to attract the organic competition the protocol was designed to produce. The mechanism exists to guarantee that no owner is permanently trapped. Its correct use is exceptional.
 
-The `retire_floor` parameter is the owner's public, binding commitment against this abuse. By setting a non-zero value at integration time, the owner declares a minimum period during which neither `to_retire` nor `force_retire()` may execute — regardless of circumstances. Tenants can read this value on-chain and price their position with the knowledge that no retirement path is available until the floor expires. The longer the `retire_floor`, the stronger the commitment signal and the more confident the market can be in committing capital.
+The `retire_floor` parameter is the owner's public, binding commitment against this abuse. By setting a non-zero value at integration time, the owner declares a minimum period during which `retire()` may not execute — regardless of circumstances. Tenants can read this value on-chain and price their position with the knowledge that no retirement path is available until the floor expires. The longer the `retire_floor`, the stronger the commitment signal and the more confident the market can be in committing capital.
 
 ---
 
@@ -1070,15 +1049,7 @@ The following vectors were identified and analyzed against the protocol's design
 
 ---
 
-### 9. `to_retire` as Market Manipulation Signal
-
-**Vector:** The `to_retire` flag is publicly visible. The owner can set and unset it to signal that the asset is "about to be retired," discouraging new tenants and manufacturing artificial `Idle` periods to change parameters faster.
-
-**Resolution:** The owner can mark `to_retire` but cannot control the market. If the asset generates real value, tenants will continue competing for it regardless of the flag. If the market cools in response to the signal, that is a rational market decision — not manipulation. The owner also has an incentive against abusing the flag: setting it reduces rental activity and therefore their own `used_credit` earnings. This is a reversible market signal whose effectiveness depends entirely on whether the market validates it.
-
----
-
-### 10. Rapid Retire/Re-integrate for Parameter Manipulation
+### 9. Rapid Retire/Re-integrate for Parameter Manipulation
 
 **Vector:** With a low `min_rent_price` and short `descent_ceiling`, an owner can engineer rapid `Idle` cycles to re-integrate the asset with different parameters frequently — effectively changing the rules of the game at high frequency while formally respecting immutability per instance.
 
@@ -1212,7 +1183,7 @@ The protocol applies because yield optimization is a competitive service: multip
 
 **`descent_ceiling`:** The maximum duration of a Dutch Auction. If no buyer is found within this window, the price reaches `min_rent_price` and the asset returns to Idle.
 
-**`retire_floor`:** The minimum time that must elapse since integration before any retirement path may execute — whether via `to_retire` or `force_retire()`. A binding, on-chain commitment by the owner: during this window, the asset cannot exit the protocol by any means. A value of `0` imposes no restriction.
+**`retire_floor`:** The minimum time that must elapse since integration before `retire()` may execute. A binding, on-chain commitment by the owner: during this window, the asset cannot exit the protocol by any means. A value of `0` imposes no restriction.
 
 ### Incentive-driven Functions
 

@@ -67,7 +67,7 @@ This is possible, and it is called **Liquid Renting**.
 
 The Liquid Renting model is designed to apply fundamentally to rental assets that meet the following non-negotiable principles:
 
-**Utility-grounded value:** The intrinsic value of the asset must reside strictly in its capacity to be used (usus) and in the yields or cash flows derived from it (fructus), rather than in mere speculation over its ownership. This principle extends to market participation: the rational motive for entering the rental market is the value derived from holding and using the asset, not the expectation of a profit on displacement. The protocol does not reward speculation — a displaced tenant recovers only the unused portion of their payment, never a gain from price appreciation.
+**Utility-grounded value:** The asset must carry genuine intrinsic value across the three faculties: in its usus — the capacity to be used — in its fructus — the yields or cash flows it produces — and potentially in its abusus — the right of ownership itself. The protocol does not reward speculation on price: a displaced tenant recovers only the unused portion of their payment, never a gain from price appreciation. What drives rational market participation is the value of holding and exercising the asset, not the expectation of a windfall on exit.
 
 **Proven organic demand:** The asset must generate genuine interest and possess real traction. The protocol optimizes liquidity, fractions time, and eliminates friction — but operates under an immutable economic premise: no technology or protocol can create sustainable demand for an asset that lacks a market.
 
@@ -122,7 +122,7 @@ The tenant has acquired the monopoly over usus and fructus through upfront liqui
 A market rebalancing mechanism. If the asset is no longer rented and the market does not validate the last known rental price, a descending Dutch Auction is triggered. The goal is to perform a dynamic liquidation of the rental price until a new equilibrium is found where demand once again absorbs the usus of the asset.
 
 **State 3: Retired (Off-boarding):**
-The exit state from the protocol. An asset can only be retired when it is in the Idle state (no active usage commitments). At this point, the integration module revokes rental permissions and the usus/fructus is reintegrated into the absolute domain (abusus) of the original issuer or owner, exiting the protocol's liquidity circuit.
+The terminal state. The owner calls `retire()`, which may act immediately (from `Idle` or `At Dutch Auction`) or deferred (from `Rented`, once the active block concludes). At retirement, the asset is unwrapped from the escrow, the `OwnerCap` is burned, and the escrow object is deleted. The usus and fructus are reabsorbed into the abusus of whoever holds the `OwnerCap` at the moment of execution — not necessarily the original integrator. The asset exits the protocol's liquidity circuit permanently.
 
 ### 2. State Transitions
 
@@ -149,11 +149,11 @@ During the auction, a new buyer accepts the current descending price and injects
 **At Dutch Auction ➔ Idle (Lack of Demand):**
 If the auction descends to the lower bound (price floor) and the market does not absorb the asset, it returns to the Idle state, waiting for reactivation.
 
-**Idle ➔ Retired (Delisting):**
-From the resting state, the integration module evaluates the asset's situation. If it determines that no real market or genuine interest exists to justify its continued presence, it executes the asset's permanent withdrawal from the protocol.
+**→ Retired (Delisting):**
+The owner calls `retire()` to permanently withdraw the asset from the protocol. The call may be made from any state — immediately effective from `Idle` or `At Dutch Auction`, deferred until the active block concludes from `Rented`. No automatic evaluation occurs; the decision is entirely the owner's.
 
-**Idle ↺ Retired (Parameter Reconfiguration):**
-The retire → re-integrate cycle is the protocol's only mechanism for changing integration parameters. The owner retires the asset from `Idle`, adjusting any parameters, and re-introduces it — which places the asset back into `Idle` under the new configuration. This cycle is the natural feedback loop for integrators experimenting with incentive shapes: poor parameters drive the asset to `Idle` frequently, making reconfiguration fast and low-cost. The protocol is forgiving by design — wrong parameters surface quickly and the correction path is always available.
+**Asset Entry ➔ Idle (Parameter Configuration):**
+Parameters are set once at integration time and are immutable for the lifetime of that instance. The only way to change them is to retire the asset and re-introduce it as a fresh integration — which places it back into `Idle` under the new configuration. This is the natural feedback loop for integrators experimenting with incentive shapes: poor parameters surface quickly, and the correction path is always a new entry into the protocol.
 
 ---
 
@@ -876,15 +876,13 @@ integrate (enter Idle with fixed params)
 
 **To change any parameter, the owner must:**
 
-1. Wait for the asset to reach `Idle` — the only state from which retirement is possible.
-2. Execute retirement (`Idle → Retired`) — the asset exits the protocol and returns to the owner.
+1. Call `retire()` — effective immediately from `Idle` or `At Dutch Auction`; deferred until the active block concludes from `Rented`.
+2. Receive the asset once the escrow is dissolved — the asset exits the protocol and returns to the owner.
 3. Re-introduce the asset as a fresh integration with the new parameters — the asset enters `Idle` again under the new configuration.
 
 This constraint is a trust guarantee for tenants: the rules under which a tenant entered cannot be altered while their position is active, or at any point during the integration instance. The owner retains the abusus — they may retire the asset — but they may not change the conditions of use while the protocol is live.
 
 > **Keep in mind:** The success of an asset in this protocol is measured by exactly one metric: how rarely it sits outside the Rented state — that is, how little time it spends in `Idle` or `At Dutch Auction` combined. Both are escrow states in which no `used_credit` flows to the owner. Parameters are the only lever the owner has to shape that outcome. Choose them with intention.
->
-> **Don't panic** if the asset reaches `Idle` frequently — it simply means the owner can retire and re-integrate often, adjusting parameters with each cycle. Frequent idle periods are not failure; they are an invitation to experiment. The protocol is forgiving by design: wrong parameters surface quickly, and the retire → re-integrate cycle is the natural feedback loop for finding the right configuration.
 
 ### Exit: the `retire()` Call
 
@@ -909,16 +907,6 @@ The asset passes to `Retired` without re-entering the rental cycle.
 #### The Tenant Guarantee Is Preserved
 
 In every `Rented` state, the tenant's block is not cut short and no payment is ever refunded mid-flight. Every actor who paid for a position receives their full block — the `retire` flag only gates future transitions, never current ones. The protocol's foundational promise to tenants — *if displaced, recover unused credit* — holds unconditionally across all `retire()` paths.
-
-#### A Tool of Last Resort
-
-`retire()` should be invoked only when the natural exit path is genuinely blocked. Using it as a routine management tool — to reconfigure parameters, respond to market conditions, or accelerate re-integration — sends an unambiguous signal to the market: the asset's protocol instance can be terminated unilaterally at any time.
-
-The consequences are direct. Tenants who price their position rationally will discount the value of a position that cannot be renewed or taken over — the `retire` flag eliminates the competitive dynamics that make the asset valuable to hold. Competition for the asset weakens. The Dutch Auction loses depth as potential buyers wait rather than commit. The owner earns less `used_credit` than they would have by allowing the protocol to run its natural course.
-
-The protocol does not penalise the abuse of `retire()`. The market does. An asset whose owner treats exit as a lever will, over time, cease to attract the organic competition the protocol was designed to produce. The mechanism exists to guarantee that no owner is permanently trapped. Its correct use is exceptional.
-
-The `retire_floor` parameter is the owner's public, binding commitment against this abuse. By setting a non-zero value at integration time, the owner declares a minimum period during which `retire()` may not execute — regardless of circumstances. Tenants can read this value on-chain and price their position with the knowledge that no retirement path is available until the floor expires. The longer the `retire_floor`, the stronger the commitment signal and the more confident the market can be in committing capital.
 
 ---
 

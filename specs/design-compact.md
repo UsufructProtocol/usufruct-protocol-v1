@@ -85,15 +85,27 @@ Asset lives in the shared escrow for its entire lifecycle. Only access designati
 used_credit + remain_credit = last_rent_price
 ```
 
+### Protocol fee
+
+A fixed 5% fee is deducted from `used_credit` at the moment it flows — before reaching `owner_earnings`. This is the sole revenue mechanism of the protocol and applies to both events that generate `used_credit`:
+
+```
+owner_share    = used_credit × 0.95  →  owner_earnings
+protocol_fee   = used_credit × 0.05  →  protocol_treasury
+```
+
+The fee rate is hardcoded at the module level. Not configurable per integration.
+
 ### At handover (handover_countdown_expiry reached)
 
 ```
-used_credit_at_handover  = last_rent_price · g(t_handover / tenure_ceiling)
+used_credit_at_handover   = last_rent_price · g(t_handover / tenure_ceiling)
 remain_credit_at_handover = last_rent_price - used_credit_at_handover
 
-remain_credit_at_handover  → returned to displaced tenant (Tn)
-used_credit_at_handover    → owner_earnings
-pending_bid                → becomes new tenant_stake (for T(n+1))
+remain_credit_at_handover            → returned to displaced tenant (Tn)
+used_credit_at_handover × 0.95       → owner_earnings
+used_credit_at_handover × 0.05       → protocol_treasury
+pending_bid                          → becomes new tenant_stake (for T(n+1))
 ```
 
 T(n+1)'s cycle starts at `handover_countdown_expiry`. Their `f_credit_ascent` runs from `(0, 0)` to `(tenure_ceiling, P(n+1))`.
@@ -101,7 +113,8 @@ T(n+1)'s cycle starts at `handover_countdown_expiry`. Their `f_credit_ascent` ru
 ### At tenure expiry (used_credit = last_rent_price, handover_open)
 
 ```
-tenant_stake (= last_rent_price)  → owner_earnings (fully consumed)
+tenant_stake × 0.95  →  owner_earnings (fully consumed, minus fee)
+tenant_stake × 0.05  →  protocol_treasury
 ```
 
 Triggers Dutch Auction. No stake carried into auction.

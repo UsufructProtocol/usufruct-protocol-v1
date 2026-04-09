@@ -98,15 +98,17 @@ Where each construct lives in Sui's object model.
 
  COIN FLOWS SUMMARY
  ──────────────────
- rent() / auction entry  →  Coin<C>      →  tenant_stake
- takeover()              →  Coin<C>      →  pending_bid
-   (if superseded)       ←  Coin<C>      ←  pending_bid  (refund)
- handover fires          :  pending_bid  →  tenant_stake (new tenant)
-                         :  used_credit  →  owner_earnings
-                         ←  Coin<C>      ←  remain_credit (to old tenant)
- tenure expiry           :  tenant_stake →  owner_earnings (full)
- withdraw_earnings()     ←  Coin<C>      ←  owner_earnings
- retire()                ←  Asset        ←  escrow (unwrapped, deleted)
+ rent() / auction entry  →  Coin<C>           →  tenant_stake
+ takeover()              →  Coin<C>           →  pending_bid
+   (if superseded)       ←  Coin<C>           ←  pending_bid  (refund)
+ handover fires          :  pending_bid       →  tenant_stake (new tenant)
+                         :  used_credit×0.95  →  owner_earnings
+                         :  used_credit×0.05  →  protocol_treasury
+                         ←  Coin<C>           ←  remain_credit (to old tenant)
+ tenure expiry           :  stake×0.95        →  owner_earnings (full)
+                         :  stake×0.05        →  protocol_treasury
+ withdraw_earnings()     ←  Coin<C>           ←  owner_earnings
+ retire()                ←  Asset             ←  escrow (unwrapped, deleted)
 ```
 
 
@@ -134,6 +136,7 @@ Fields:
 - `handover_countdown_expiry: Option<u64>`
 - `tenant_stake: Balance<CoinType>`
 - `owner_earnings: Balance<CoinType>`
+- `protocol_treasury: Balance<CoinType>`
 - `retire: bool`
 - `integrated_at_ms: u64`
 
@@ -328,6 +331,12 @@ Returns the storage deposit. No protocol state is mutated.
 
 Owner claims accumulated `used_credit` from `owner_earnings` balance.
 
+### [ ] 5.10 `withdraw_treasury<CoinType>(escrow, admin_cap) -> Coin<CoinType>`
+
+Protocol admin claims accumulated fees from `protocol_treasury` balance.
+Requires a `ProtocolAdminCap` (one-time witness pattern, held by protocol deployer).
+No effect on rental state.
+
 
 ---
 
@@ -356,8 +365,8 @@ At most 3 transitions resolve in a single `resolve_state` call.
 
 | Boundary | Distribution |
 |---|---|
-| Handover | `remain_credit → current tenant (Coin)`, `used_credit → owner_earnings`. `pending_bid → tenant_stake`. |
-| Tenure expiry | Full `tenant_stake → owner_earnings`. |
+| Handover | `remain_credit → current tenant (Coin)`. `used_credit × 0.95 → owner_earnings`. `used_credit × 0.05 → protocol_treasury`. `pending_bid → tenant_stake`. |
+| Tenure expiry | `tenant_stake × 0.95 → owner_earnings`. `tenant_stake × 0.05 → protocol_treasury`. |
 | Auction expiry | No funds to move. |
 
 
@@ -371,8 +380,8 @@ At most 3 transitions resolve in a single `resolve_state` call.
 | 7.2 | `RentalStarted` | `escrow_id, tenant_cap_id, price` |
 | 7.3 | `TakeoverInitiated` | `escrow_id, outgoing_cap_id, incoming_cap_id, new_price, handover_expiry` |
 | 7.4 | `BidSuperseded` | `escrow_id, refunded_cap_id, refunded_amount` |
-| 7.5 | `HandoverCompleted` | `escrow_id, from_cap_id, to_cap_id, remain_credit_returned, used_credit_earned` |
-| 7.6 | `TenureExpired` | `escrow_id, cap_id, total_rent_earned` |
+| 7.5 | `HandoverCompleted` | `escrow_id, from_cap_id, to_cap_id, remain_credit_returned, owner_earned, protocol_fee` |
+| 7.6 | `TenureExpired` | `escrow_id, cap_id, owner_earned, protocol_fee` |
 | 7.7 | `DutchAuctionStarted` | `escrow_id, start_price, floor_price` |
 | 7.8 | `DutchAuctionEntry` | `escrow_id, tenant_cap_id, entry_price` |
 | 7.9 | `AssetIdled` | `escrow_id` |
@@ -399,9 +408,16 @@ At handover: becomes new `tenant_stake`.
 
 ### [ ] 8.3 Owner earnings lifecycle
 
-Accumulated from `used_credit` at each transition.
+Accumulated from `used_credit × 0.95` at each transition.
 Held as `Balance<CoinType>` inside escrow.
 Withdrawn by owner via `withdraw_earnings()` → `Coin`.
+
+### [ ] 8.4 Protocol treasury lifecycle
+
+Accumulated from `used_credit × 0.05` at each transition (handover and tenure expiry).
+Held as `Balance<CoinType>` inside each escrow instance.
+Withdrawn by protocol admin via `withdraw_treasury()` with `ProtocolAdminCap`.
+Accumulates passively — no dependency on owner activity or `OwnerCap` state.
 
 
 ---

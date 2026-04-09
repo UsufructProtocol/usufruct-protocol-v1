@@ -70,6 +70,9 @@ The Liquid Renting model is designed to apply fundamentally to rental assets tha
 
 **Utility-grounded value:** The asset must carry genuine intrinsic value across the three faculties: in its usus — the capacity to be used — in its fructus — the yields or cash flows it produces — and potentially in its abusus — the right of ownership itself. The protocol does not reward speculation on price: a displaced tenant recovers only the unused portion of their payment, never a gain from price appreciation. What drives rational market participation is the value of holding and exercising the asset, not the expectation of a windfall on exit.
 
+
+**Always for sale:** The right to use the asset — its usus — is always on the market. There is no moment in which the asset is locked away from potential buyers. While a tenant holds the position, a higher bid can displace them. While the asset sits idle, anyone may enter at or above the price floor. While a Dutch Auction runs, the price descends until the market finds a buyer. The protocol never closes. The usus is always acquirable at some price.
+
 **Proven organic demand:** The asset must generate genuine interest and possess real traction. The protocol optimizes liquidity, fractions time, and eliminates friction — but operates under an immutable economic premise: no technology or protocol can create sustainable demand for an asset that lacks a market.
 
 ## Protocol Purpose
@@ -174,7 +177,7 @@ The initial equilibrium point. The asset is "open" with no incumbent and no liqu
 
 Once a user injects liquidity, the asset enters a state of active utilization that is, by definition, a renewable cycle:
 
-**Price as Entry Barrier:** When renting the asset, the user purchases at next_rent_price(), establishing a new last_rent_price. This value acts as a physical liquidity barrier: any other actor wishing to access the usus of the asset must "clear" this barrier by injecting capital greater than next_rent_price(). A higher price than next_rent_price() is allowed.
+**Price as Entry Barrier:** When renting the asset, the user purchases at next_rent_price(), establishing a new last_rent_price. This value acts as a physical liquidity barrier: any other actor wishing to access the usus of the asset must "clear" this barrier by injecting capital greater or equals than next_rent_price().
 
 ![Asset State Transition Flow](./media/rent-in-progress.png "Asset State Transition Flow")
 

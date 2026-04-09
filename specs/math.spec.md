@@ -276,7 +276,14 @@ We want R such that (R / SCALE)^d = x^n.
 Equivalently: R = floor( nth_root(acc * SCALE^(d-1), d) )
 
     // target = acc * SCALE^(d-1), in u128
-    let target: u128 = (acc as u128) * SCALE.pow(d - 1);
+    // .pow() does not exist in Move — dispatch on d explicitly:
+    let scale_pow: u128 = match d {
+        1 => 1,
+        2 => SCALE as u128,
+        3 => (SCALE as u128) * (SCALE as u128),
+        _ => (SCALE as u128) * (SCALE as u128) * (SCALE as u128),  // d=4
+    };
+    let target: u128 = (acc as u128) * scale_pow;
     let R: u64 = nth_root_u128(target, d) as u64;
 
 ### nth_root_u128(N, d) — Newton-Raphson
@@ -293,7 +300,12 @@ Equivalently: R = floor( nth_root(acc * SCALE^(d-1), d) )
     let mut x: u128 = 1 << shift;          // guaranteed x0 >= N^(1/d)
 
     loop:
-        let x_pow = x.pow(d - 1);          // x^(d-1), fits u128 for d≤4, x≤N^(1/d)
+        // .pow() does not exist in Move — dispatch on d explicitly:
+        let x_pow: u128 = match d {
+            2 => x,
+            3 => x * x,
+            _ => x * x * x,   // d=4
+        };
         let x_new = ((d as u128 - 1) * x + N / x_pow) / (d as u128);
         if x_new >= x: return x            // converged — x is the floor
         x = x_new
@@ -385,6 +397,17 @@ Taylor series algorithm for exp_scaled_pos:
 
 Note: divisor `k * y_den` computed in u128 to avoid u64 overflow for large y_den.
 
+### Overflow analysis for exp_scaled_pos
+
+    acc     ≤ e^8 · TS ≈ 2981 · 10^18 ≈ 3×10^21          fits u128 ✓
+    term    ≤ peak ≈ e^8 · TS / √(2π·8) ≈ 4.2×10^20      fits u128 ✓
+    term · y_num:
+      Exponential: y_num = alpha_abs · t ≤ 8 · tenure_ceiling
+      Logistic:    y_num = k · |2t - t_max| ≤ 16 · tenure_ceiling
+      For tenure_ceiling ≤ 10^13 ms (~317 years):
+        term · y_num ≤ 4.2×10^20 · 16 · 10^13 = 6.7×10^34  fits u128 ✓
+      u128 max ≈ 3.4×10^38 — safe margin of ~3 orders of magnitude.
+
 ### Full algorithm for Exponential variant
 
     let a  = shape.alpha_abs as u64;   // ∈ [1, 8]
@@ -463,7 +486,9 @@ Use `Logistic` only when a steep, parameterizable sigmoid is required.
     } else {
         (k as u64 * (t_max - two_t), true)
     };
-    let y_den: u64 = 2 * t_max;   // safe for practical tenure values (≤ centuries)
+    let y_den: u64 = 2 * t_max;
+    // two_t and y_den require tenure_ceiling ≤ u64::MAX / 2 ≈ 9.2×10^18 ms (~292 million years)
+    // Enforced by §13 note — no protocol use case approaches this.
 
     let ey: u128 = exp_scaled(y_num_abs, y_den, y_neg);  // e^y * TS
     let sigma_y: u128 = ey * S / (ey + TS);   // σ(y) * SCALE
@@ -587,6 +612,8 @@ Two phases: first validate (abort on failure), then normalize (mutate stored val
 | `handover_floor <= handover_ceiling`         | floor exceeds ceiling          |
 | `handover_ceiling <= tenure_ceiling`         | handover exceeds tenure        |
 | `descent_ceiling > 0`                        | zero descent period            |
+| `tenure_ceiling <= u64::MAX / 2`             | prevents overflow in Logistic (`2 * t`) |
+| `tenure_ceiling <= u64::MAX / 8`             | prevents overflow in Exponential (`alpha_abs * t`, alpha_abs ≤ 8) |
 | PowerLaw: `alpha_den in {1,2,3,4}`           | unsupported root               |
 | PowerLaw: `alpha_num in [1, 8]`              | zero or out-of-range exponent  |
 | PowerLaw: `alpha_num != alpha_den`           | degenerate linear — use `Linear` |

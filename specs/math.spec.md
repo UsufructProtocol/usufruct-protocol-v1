@@ -84,6 +84,11 @@ All variants must satisfy:
 - `compute_next_rent_price(fn, min_rent_price) > min_rent_price`
 - No u64 overflow on computation
 
+Per-variant overflow constraints:
+- `FixedDelta`:  `delta > 0` (enforced by the > check above)
+- `Percentage`:  `bps ∈ [1, u64::MAX - 10000]` so `10000 + bps` does not overflow u64
+- `CompoundDelta`: same `bps` bound as Percentage; `delta` unconstrained (> check handles it)
+
 **Semantics:**
 
 | Variant | Formula |
@@ -278,14 +283,30 @@ Equivalently: R = floor( nth_root(acc * SCALE^(d-1), d) )
 
     // Returns floor(N^(1/d))
     if N == 0: return 0
-    initial guess: x = N >> ((N.leading_zeros() as u32 / d) ... )  // shift-based
+    if N == 1: return 1
+
+    // Initial guess: bit-shift based on bit-length of N
+    // bits(N) = 128 - N.leading_zeros()
+    // x0 = 1 << ceil(bits(N) / d)
+    let bits = 128u32 - (N.leading_zeros() as u32);
+    let shift = (bits + d - 1) / d;        // ceil(bits / d)
+    let mut x: u128 = 1 << shift;          // guaranteed x0 >= N^(1/d)
+
     loop:
-        x_new = ((d-1)*x + N / x^(d-1)) / d
-        if x_new >= x: return x
+        let x_pow = x.pow(d - 1);          // x^(d-1), fits u128 for d≤4, x≤N^(1/d)
+        let x_new = ((d as u128 - 1) * x + N / x_pow) / (d as u128);
+        if x_new >= x: return x            // converged — x is the floor
         x = x_new
 
 Convergence: quadratic. For u128 inputs and d ≤ 4, at most ~13 iterations.
 Gas cost: bounded and low (~100-200 operations).
+
+### Overflow note for x.pow(d-1)
+
+x converges toward N^(1/d). At worst x0 = 1 << ceil(128/d).
+For d=2: x0 ≤ 2^64, x0^1 = x0 fits u128 ✓
+For d=3: x0 ≤ 2^43, x0^2 ≤ 2^86 fits u128 ✓
+For d=4: x0 ≤ 2^32, x0^3 ≤ 2^96 fits u128 ✓
 
 ### Overflow analysis for Step 2
 
@@ -554,6 +575,9 @@ Guaranteed result > last_rent_price by integration-time constraint validation.
 --------------------------------
 
 Called inside `integrate()` to reject invalid configs before creating the escrow.
+Two phases: first validate (abort on failure), then normalize (mutate stored values).
+
+### Phase 1 — Validation (abort on failure)
 
 | Check                                        | Abort reason                   |
 |----------------------------------------------|--------------------------------|
@@ -566,10 +590,16 @@ Called inside `integrate()` to reject invalid configs before creating the escrow
 | PowerLaw: `alpha_den in {1,2,3,4}`           | unsupported root               |
 | PowerLaw: `alpha_num in [1, 8]`              | zero or out-of-range exponent  |
 | PowerLaw: `alpha_num != alpha_den`           | degenerate linear — use `Linear` |
-| PowerLaw: normalize `alpha_num /= gcd(alpha_num, alpha_den)`, `alpha_den /= gcd` | store reduced form |
 | Exponential: `alpha_abs in [1, 8]`           | zero or out-of-range alpha_abs |
-| Logistic: `k in [10, 16]`                    | out-of-range k (use Linear or Smoothstep for k < 10) |
+| Logistic: `k in [10, 16]`                    | out-of-range k                 |
+| Percentage/CompoundDelta: `bps <= u64::MAX - 10000` | `10000 + bps` overflow  |
 | `compute_next_rent_price(fn, min_rent_price) > min_rent_price` | price fn non-increasing |
+
+### Phase 2 — Normalization (mutate, never aborts)
+
+| Mutation                                                        | Purpose                  |
+|-----------------------------------------------------------------|--------------------------|
+| PowerLaw: `let g = gcd(alpha_num, alpha_den); alpha_num /= g; alpha_den /= g` | reduce to lowest terms |
 
 
 14. MODULE BOUNDARY

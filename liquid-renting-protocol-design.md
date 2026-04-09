@@ -55,7 +55,7 @@ How can the usus and fructus of a rented asset be kept liquid and on the market 
 
 **Continuous and uninterrupted liquidity:** Transforming a static market into a dynamic one, where usage rights can be traded in real time without requiring the termination of the original contract.
 
-**Efficient secondary markets:** Allowing the current tenant to transfer, sell, or delegate their position to a third party without friction, giving them a fair exit path and recovering the value of unused time.
+**Fair displacement:** When a new tenant displaces the current one, the outgoing tenant automatically recovers the unused portion of their payment — no negotiation, no secondary market required. The exit is built into the protocol. A tenant's stake is never trapped; its unconsumed value is always recoverable.
 
 **Maximization of capital efficiency:** The asset is never economically immobilized. The market can continue discovering the real rental price based on current supply and demand, not past estimates.
 

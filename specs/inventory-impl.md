@@ -16,12 +16,11 @@ Where each construct lives in Sui's object model.
 ```
  OWNER'S WALLET                        TENANT'S WALLET (current / pending)
  ┌───────────────────┐                 ┌──────────────────────┐
- │   IntegratorCap   │                 │      TenantCap        │
+ │    OwnerCap       │                 │      TenantCap        │
  │   · escrow_id: ID │                 │   · escrow_id: ID     │
  └─────────┬─────────┘                 └──────────┬────────────┘
            │                                       │
-           │ set_to_retire / unset_to_retire        │ borrow_asset()
-           │ force_retire / retire                  │
+           │ retire()                               │ borrow_asset()
            │ withdraw_earnings                      │
            ▼                                       ▼
 ╔══════════════════════════════════════════════════════════════════════╗
@@ -50,9 +49,8 @@ Where each construct lives in Sui's object model.
 ║  │  Balance<C>      │                                               ║
 ║  └──────────────────┘         ┌───────────────────────────────────┐ ║
 ║  ┌──────────────────┐         │  Flags                            │ ║
-║  │  pending_bid     │         │  · to_retire: bool                │ ║
-║  │  Balance<C>      │         │  · force_retire: bool             │ ║
-║  └──────────────────┘         │  · integrated_at_ms: u64         │ ║
+║  │  pending_bid     │         │  · retire: bool                   │ ║
+║  │  Balance<C>      │         │  · integrated_at_ms: u64         │ ║
 ║  ┌──────────────────┐         └───────────────────────────────────┘ ║
 ║  │  owner_earnings  │                                               ║
 ║  │  Balance<C>      │                                               ║
@@ -129,13 +127,14 @@ Fields:
 - `last_rent_price: u64`
 - `phase_start_ms: u64` — timestamp at which the current phase began
 - `current_tenant_cap_id: Option<ID>`
+- `current_tenant_address: Option<address>`
 - `pending_tenant_cap_id: Option<ID>`
+- `pending_tenant_address: Option<address>`
 - `pending_bid: Balance<CoinType>`
 - `handover_countdown_expiry: Option<u64>`
 - `tenant_stake: Balance<CoinType>`
 - `owner_earnings: Balance<CoinType>`
-- `to_retire: bool`
-- `force_retire: bool`
+- `retire: bool`
 - `integrated_at_ms: u64`
 
 ### [ ] 1.2 `AssetState` — enum
@@ -194,20 +193,23 @@ All members must satisfy: `f(0)=0`, `f(1)=1`, strictly increasing, bounded in `[
 
 ## 3. Access Control
 
-### [ ] 3.1 `IntegratorCap` — owned object (transferable)
+### [ ] 3.1 `OwnerCap` — owned object (`key + store`, transferable)
 
 Capability proving authority over the integration instance.
 Linked to a specific `RentalEscrow` by ID.
-Required for: `set_to_retire`, `unset_to_retire`, `force_retire`, `retire`, `withdraw_earnings`.
+Required for: `retire()`, `withdraw_earnings()`.
 Authorization check: `cap.escrow_id == object::id(escrow)`.
+Burned unconditionally at retirement. Mutual exclusivity: `OwnerCap` exists ↔ asset is in escrow.
 
-### [ ] 3.2 `TenantCap` — owned object (transferable)
+### [ ] 3.2 `TenantCap` — owned object (`key` only, non-transferable)
 
 Capability proving tenancy over a specific `RentalEscrow`.
-Minted on every valid bid. Valid only if its ID matches `escrow.current_tenant_cap_id`.
-Superseded caps remain in the holder's wallet but are inert.
-Required for: `borrow_asset`.
+Minted on every valid bid. The holder's address is recorded in the escrow at mint time for push fund flows.
+Valid only if its ID matches `escrow.current_tenant_cap_id`.
+Superseded or displaced caps remain in the holder's wallet but are inert — they fail the ID check.
+Required for: `borrow_asset()`.
 Authorization check: `object::id(cap) == escrow.current_tenant_cap_id`.
+A `burn_tenant_cap()` function is exposed for voluntary destruction of stale caps (gas recovery).
 
 ### [ ] 3.3 `AssetReceipt` — hot potato (no abilities)
 
@@ -269,11 +271,11 @@ Guarantees result `> last_rent_price` (checked at integration time).
 
 ## 5. Protocol Functions (public API)
 
-### [ ] 5.1 `integrate<Asset, CoinType>(asset, config_params...) -> IntegratorCap`
+### [ ] 5.1 `integrate<Asset, CoinType>(asset, config_params...) -> OwnerCap`
 
 Wraps asset into a new `RentalEscrow` (shared object).
 Validates all config constraints. Asset enters Idle.
-Stores `integrated_at_ms` from Clock. Mints and returns `IntegratorCap`.
+Stores `integrated_at_ms` from Clock. Mints and returns `OwnerCap`.
 
 ### [ ] 5.2 `rent<Asset, CoinType>(escrow, payment, clock)`
 
@@ -306,26 +308,21 @@ Runs `resolve_state` first.
 Consumes `AssetReceipt`. Verifies `receipt.escrow_id` matches escrow.
 Places asset back into escrow.
 
-### [ ] 5.6 `set_to_retire(escrow, cap)` / `unset_to_retire(escrow, cap)`
+### [ ] 5.6 `retire<Asset, CoinType>(escrow, cap, clock) -> Asset`
 
-Owner sets/unsets deferred retirement flag.
-Callable at any time, any state.
-
-### [ ] 5.7 `force_retire<Asset, CoinType>(escrow, cap, clock)`
-
-Emergency exit. Requires `retire_floor` elapsed.
+Sole exit mechanism. Requires `retire_floor` elapsed. Consumes `OwnerCap`.
 
 | State | Effect |
 |---|---|
-| `AtDutchAuction` | Immediate → Retired. Asset extracted. Escrow deleted. |
-| `Rented(HandoverOpen)` | Sets `force_retire` flag. Blocks new bids. Tenant completes full block. At tenure expiry → Retired. |
-| `Rented(HandoverConfirmed)` | Sets `force_retire` flag. Handover completes normally. T(n+1) finishes their block. At tenure expiry → Retired. |
-| `Idle` | Immediate → Retired. Asset extracted. Escrow deleted. |
+| `Idle` | Immediate → Retired. Asset unwrapped. `OwnerCap` burned. `RentalEscrow` deleted. |
+| `AtDutchAuction` | Immediate → Retired. Asset unwrapped. `OwnerCap` burned. `RentalEscrow` deleted. |
+| `Rented(HandoverOpen)` | Sets `retire` flag. Blocks new bids. Current tenant completes full block. At tenure expiry → Retired. |
+| `Rented(HandoverConfirmed)` | Sets `retire` flag. Handover completes normally. T(n+1) enters `HandoverOpen` with flag active (no new bids). T(n+1) completes full block. At tenure expiry → Retired. |
 
-### [ ] 5.8 `retire<Asset, CoinType>(escrow, cap, clock) -> Asset`
+### [ ] 5.8 `burn_tenant_cap(cap)`
 
-Graceful exit from Idle only. Requires `retire_floor` elapsed.
-Unwraps asset. Deletes `RentalEscrow`. Consumes `IntegratorCap`.
+Voluntarily destroys a stale `TenantCap` (one whose ID no longer matches any active escrow position).
+Returns the storage deposit. No protocol state is mutated.
 
 ### [ ] 5.9 `withdraw_earnings<CoinType>(escrow, cap) -> Coin<CoinType>`
 
@@ -347,12 +344,11 @@ Given `(config, phase_anchors, clock)`, resolves all elapsed transitions.
    → execute handover: update `current_tenant_cap_id`, distribute funds,
      set `phase_start_ms = handover_countdown_expiry`. Transition to `HandoverOpen`.
 2. `Rented` + tenure expired (`phase_start_ms + tenure_ceiling` passed)
-   → if `force_retire`: → Retired
+   → if `retire` flag: → Retired
    → else: → `AtDutchAuction` (set `phase_start_ms = phase_start_ms + tenure_ceiling`)
    → full `tenant_stake → owner_earnings`
 3. `AtDutchAuction` + `descent_ceiling` passed
-   → if `to_retire` && `retire_floor` elapsed: → Retired
-   → else: → Idle
+   → Idle
 
 At most 3 transitions resolve in a single `resolve_state` call.
 
@@ -380,10 +376,8 @@ At most 3 transitions resolve in a single `resolve_state` call.
 | 7.7 | `DutchAuctionStarted` | `escrow_id, start_price, floor_price` |
 | 7.8 | `DutchAuctionEntry` | `escrow_id, tenant_cap_id, entry_price` |
 | 7.9 | `AssetIdled` | `escrow_id` |
-| 7.10 | `RetireFlagSet` | `escrow_id` |
-| 7.11 | `RetireFlagUnset` | `escrow_id` |
-| 7.12 | `ForceRetireInitiated` | `escrow_id, current_state` |
-| 7.13 | `AssetRetired` | `escrow_id` |
+| 7.10 | `RetireInitiated` | `escrow_id, current_state` |
+| 7.11 | `AssetRetired` | `escrow_id` |
 
 
 ---

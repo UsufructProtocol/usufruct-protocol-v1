@@ -31,9 +31,9 @@ For rationale, incentive analysis, and examples see liquid-renting-protocol-desi
 | Rented (handover_confirmed) | Rented (new tenant) | If handover fires at or after tenure expiry: Dutch Auction bypassed, demand already confirmed. |
 | At Dutch Auction | Rented | Buyer pays current `price_descent`. New cycle begins. |
 | At Dutch Auction | Idle | `descent_ceiling` elapsed, no buyer. Price reached `min_rent_price`. |
-| Idle | Retired | Owner retires. `retire_floor` must have elapsed. If `to_retire` flag: executes at next Idle transition. |
-| At Dutch Auction | Retired | `force_retire()` from auction: immediate termination. |
-| Rented (handover_open) | Retired | Only via `force_retire` flag: current tenant complete their block, then Retired instead of Dutch Auction. |
+| Idle | Retired | Owner calls `retire()`. `retire_floor` must have elapsed. |
+| At Dutch Auction | Retired | Owner calls `retire()`: immediate termination. |
+| Rented (handover_open) | Retired | Owner calls `retire()`: sets `retire` flag. Blocks new bids. Tenant completes full block. At tenure expiry → Retired. |
 
 ### Transition constraints
 
@@ -43,6 +43,23 @@ For rationale, incentive analysis, and examples see liquid-renting-protocol-desi
 
 2. ACCESS MODEL
 ---------------
+
+### Capability objects
+
+| Cap | Abilities | Holder | Granted at | Burned at |
+|---|---|---|---|---|
+| `OwnerCap` | `key + store` (transferable) | Asset owner | Integration | Retirement |
+| `TenantCap` | `key` only (non-transferable) | Current / next tenant | Each valid bid | Never forced — holder burns voluntarily |
+
+**OwnerCap:** Sole verification for owner-privileged operations: `withdraw_earnings()`, `retire()`. `used_credit` accumulates as a balance inside the escrow — the `OwnerCap` holder withdraws it actively. The protocol never tracks who holds the cap. Mutual exclusivity: `OwnerCap` exists ↔ asset is in escrow; at retirement, asset is returned and `OwnerCap` is burned.
+
+**TenantCap:** Minted on every valid bid. Non-transferable by type (`key` only — no `store`, no module transfer function). The escrow registers `current_tenant_cap_id` and `pending_tenant_cap_id` (IDs, not addresses). Verification: `object::id(cap) == escrow.current_tenant_cap_id`. The escrow also stores the tenant's **address** at mint time to enable push fund flows. Stale caps (superseded or displaced) remain in the holder's wallet — inert, failing ID check. A burn function is provided for voluntary gas recovery.
+
+**Fund flow asymmetry:**
+- Owner: **pull** — `used_credit` accumulates in escrow, withdrawn actively with `OwnerCap`.
+- Tenant: **push** — `remain_credit` and superseded bid refunds pushed immediately to the address registered at mint time.
+
+**OwnerCap recursive property:** Because `OwnerCap` has `key + store`, it satisfies the integration requirements and may itself be deposited into a new escrow (level 2). The level 2 tenant holds temporary administrative authority over the level 1 escrow — including `retire()`. This enables implicit sale of the underlying asset. Maximum nesting depth: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.
 
 Asset lives in the shared escrow for its entire lifecycle. Only access designation changes:
 
@@ -227,21 +244,19 @@ All set once at integration time. Immutable for the lifetime of that instance. T
 | `handover_floor` | `0 < handover_floor <= handover_ceiling` |
 | `handover_ceiling` | `handover_floor <= handover_ceiling <= tenure_ceiling` |
 | `descent_ceiling` | `> 0` |
-| `retire_floor` | `>= 0` (0 = no restriction) |
+| `retire_floor` | `>= 0` (0 = no restriction). Minimum time since integration before `retire()` may execute. |
 | `g` (credit shape) | `g(0)=0, g(1)=1, bounded [0,1], strictly increasing` |
 | `h` (descent shape) | same constraints as `g` |
 | `f_next_rent_price` | `f(x) > x` for all valid x |
 | `payment_token` | Fungible token with deterministic value |
 
-**`to_retire` flag:** Mutable. Set/unset by owner at any time. Deferred — executes at next Idle transition if `retire_floor` elapsed. Does not interrupt active rental or auction.
-
-**`force_retire()`:** Gated by `retire_floor`. Behavior by state:
+**`retire()`:** Sole exit mechanism. Gated by `retire_floor`. Behavior by state:
 
 | State | Effect |
 |---|---|
 | At Dutch Auction | Immediate → Retired |
-| Rented (handover_open) | Sets `force_retire` flag. Blocks new bids. Tenant completes full block. At tenure expiry → Retired (not Dutch Auction). |
-| Rented (handover_confirmed) | Sets `force_retire` flag. Handover completes normally. T(n+1) enters `handover_open` with flag active (no new bids). T(n+1) completes full block. At tenure expiry → Retired. |
+| Rented (handover_open) | Sets `retire` flag. Blocks new bids. Tenant completes full block. At tenure expiry → Retired (not Dutch Auction). |
+| Rented (handover_confirmed) | Sets `retire` flag. Handover completes normally. T(n+1) enters `handover_open` with flag active (no new bids). T(n+1) completes full block. At tenure expiry → Retired. |
 | Idle | Immediate → Retired |
 
 

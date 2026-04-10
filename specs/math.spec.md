@@ -6,6 +6,41 @@ Design reference: design-compact.md §5
 Inventory reference: inventory-impl.md §4
 
 
+0. MODULE RESPONSIBILITY
+------------------------
+
+`math` is the pure computational layer of the protocol. It owns every
+numeric operation and type definition that is shared across modules — no
+protocol state, no object model, no fund movements.
+
+**Owns:**
+
+- `CurveShape` and `PriceFunction` — the enumerated functional forms used
+  in `IntegrationConfig`. All dispatch on these types lives here.
+- Fixed-point arithmetic primitives (`mul_div`, `nth_root_u128`,
+  `exp_scaled`, `exp_scaled_pos`) used exclusively by this module.
+- `evaluate_curve` — single entry point for evaluating any `CurveShape`
+  at a given (t, t_max) pair. Returns a value in [0, SCALE].
+- `compute_used_credit`, `compute_price_descent`,
+  `compute_next_rent_price` — protocol-level wrappers that apply the
+  relevant curve or price function to raw protocol inputs.
+- `new_logistic` — the only valid constructor for the `Logistic` variant
+  (precomputes `denom` at construction time).
+- `validate_config` — integration-time validation called by `integrate()`.
+  Aborts on any constraint violation; normalises `PowerLaw` to lowest
+  terms in-place.
+
+**Does not own:**
+
+- Protocol state (`RentalEscrow`, `AssetState`, phase anchors).
+- Fund movements (`Balance`, `Coin`).
+- Access control (`OwnerCap`, `TenantCap`).
+- Event emission.
+
+**Dependency direction:** `rental_escrow` and `curve` call into `math`;
+`math` calls nothing outside its own module boundary.
+
+
 1. PRECISION MODEL
 ------------------
 

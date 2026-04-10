@@ -26,9 +26,10 @@ to minimize contention between independent operations.
 ║                                                                      ║
 ║  ┌────────────────────────┐  ┌──────────────────────────────────┐  ║
 ║  │  Asset (key + store)   │  │  IntegrationConfig  (immutable)  │  ║
-║  │  ← lives here always   │  │  · min_rent_price                │  ║
-║  │    except PTB borrow   │  │  · tenure_ceiling                │  ║
-║  └────────────────────────┘  │  · handover_floor                │  ║
+║  │  ← always present;     │  │  · min_rent_price                │  ║
+║  │    escrow exists ↔     │  │  · tenure_ceiling                │  ║
+║  │    asset exists        │  │  · handover_floor                │  ║
+║  └────────────────────────┘  │  · descent_ceiling               │  ║
 ║                               │  · descent_ceiling               │  ║
 ║  ┌────────────────────────┐  │  · retire_floor                  │  ║
 ║  │  AssetState            │  │  · CurveShape g  (credit)        │  ║
@@ -473,7 +474,7 @@ The state machine logic that mutates them remains private.
 
 **`RentalEscrow` fields:**
 - `id: UID`
-- `asset: Option<Asset>` (None only during PTB borrow)
+- `asset: Asset`
 - `config: IntegrationConfig`
 - `state: AssetState`
 - `last_rent_price: u64`
@@ -595,6 +596,7 @@ Admin batches withdrawals across all instances in a single PTB.
 - All prices in base token units (no decimals at protocol level).
 - Asset requires `key + store` abilities to live inside `RentalEscrow`.
 - `integrate()` creates and shares 3 objects atomically: `RentalEscrow`, `IntegratorTreasury`, `ProtocolTreasury`.
+- `asset: Asset` — the asset is always present while the escrow exists. There is no valid persistent state where the escrow exists without the asset. `claim_asset()` extracts the asset and deletes the escrow atomically. The PTB borrow mechanism (`borrow_asset`/`return_asset`) is an implementation detail — the temporary extraction never persists across transaction boundaries.
 - Fund flows are asymmetric: owner and admin pull from their own objects; tenants receive pushes to the address registered at mint time.
 - Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.
 - Maximum nesting depth for `OwnerCap` as asset: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.

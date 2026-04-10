@@ -255,7 +255,7 @@ This decoupling has direct market implications. Once `retire()` has been called,
 
 T_A is not without structural recourse. The Renewal Mechanism (§8) gives the current level 2 tenant a cost advantage over any external competitor: T_A's net cost to renew their position is `increment + used_credit`, strictly less than the full price any external bidder must pay. This asymmetry increases T_A's probability of retaining the `OwnerCap_1` position through to the level 1 retirement — making it more likely that the initiator and the receiver are the same actor. The advantage is largest at the start of T_A's level 2 block and shrinks as credit is consumed.
 
-The level 1 retirement timestamp is observable from the level 1 phase anchors — it is deterministic once `retire()` has been called and the active block's `tenure_ceiling` is known. A sniper knows exactly when the underlying asset will be available. However, knowing when to receive the asset is not sufficient — what matters is holding `OwnerCap_1` at that moment, and `OwnerCap_1` is gated by the level 2 `handover_countdown_expiry`, which is unknown to all participants. The sniper cannot align two timings when one of them is invisible. Bidding too early exposes them to a counter-bid from T_A; bidding too late risks the candle firing without them. The candle auction at level 2 eliminates last-second sniping entirely — by the same mechanism it does everywhere in the protocol: there is no optimal moment to act.
+The level 1 retirement timestamp is observable from the level 1 phase anchors — it is deterministic once `retire()` has been called and the active block's `tenure_ceiling` is known. A sniper knows exactly when the underlying asset will be available. However, knowing when to receive the asset is not sufficient — what matters is holding `OwnerCap_1` at that moment, and `OwnerCap_1` is gated by the level 2 `handover_countdown_expiry`, which is deterministic and public. Any bidder who attempts a last-second displacement of T_A faces the same structural asymmetry as in any other competitive window: T_A's net counter-bid cost is `increment + used_credit`, strictly less than the full price any external bidder must pay. The protection against displacement is economic, not temporal.
 
 The protocol does not treat this as an anomaly. It is the natural consequence of two independent state machines operating concurrently — each governed by its own parameters and its own phase anchors. The protocol cannot synchronize them, and it does not attempt to. The temporal gap between initiation and receipt is a market condition, not a flaw.
 
@@ -404,46 +404,24 @@ At this point, the Dutch Auction is triggered. It carries no stake of its own. I
 
 #### Definition
 
-When a new tenant T(n+1) pays `next_rent_price`, the asset transitions to `rent_handover_confirmed`. At that moment, the protocol draws a random duration `r` from Sui's on-chain randomness module and stores `handover_countdown_expiry`:
+When a new tenant T(n+1) pays `next_rent_price`, the asset transitions to `rent_handover_confirmed`. At that moment, the protocol computes and stores `handover_countdown_expiry`:
 
 ```
-r       ~ Uniform[r_min, r_max]
-r_min   = min(handover_floor, remaining_rent_time)
-r_max   = min(handover_ceiling, remaining_rent_time)
-
-handover_countdown_expiry = t_bid + r
+handover_countdown_expiry = t_bid + min(handover_floor, remaining_rent_time)
 ```
 
-Where `handover_floor` and `handover_ceiling` are protocol-level parameters constrained by:
+`handover_floor` is a protocol-level parameter constrained by `0 < handover_floor ≤ tenure_ceiling`. `handover_countdown_expiry` is computed deterministically at bid time and stored as a phase anchor. Subsequent bids during the window do not alter it.
 
-```
-0 < handover_floor ≤ handover_ceiling ≤ tenure_ceiling
-```
+#### Design Rationale
 
-Once sampled, `handover_countdown_expiry` is a fixed timestamp — a phase anchor stored in the shared object at bid time. Subsequent bids during the window do not resample it.
-
-#### Design Rationale: The Candle Auction
-
-The random expiry is a deliberate design choice to eliminate last-second sniping.
-
-In an auction with a known, fixed deadline, rational actors have a structural incentive to time their bids at the last possible moment — minimizing the window in which opponents can respond. This concentrates bid activity at the deadline, collapsing the competitive window to its final instants. Actors with lower-latency infrastructure gain an advantage unrelated to their valuation of the asset.
-
-The candle auction removes this incentive entirely. Because `handover_countdown_expiry` is unknown to all participants at the time of their bid, there is no optimal moment to delay. An actor who waits risks the candle firing before their bid arrives. The rational strategy is to bid when you decide to participate — not when the clock forces you to.
-
-This produces three market properties:
-
-- **Higher bid volume:** bids are distributed across the full competitive window rather than concentrated at the deadline.
-- **Level playing field:** capital is the only structural advantage. Infrastructure speed confers no benefit.
-- **Heterogeneity of actors:** the market is accessible to all participants regardless of technical sophistication.
-
-`handover_floor` and `handover_ceiling` give the integrator control over the shape of the competitive window: a narrow window (`handover_floor ≈ handover_ceiling`) approaches deterministic behavior; a wide window maximizes the candle's anti-sniping effect at the cost of greater uncertainty for both Tn and T(n+1).
+The fixed countdown serves three purposes simultaneously: it gives the current tenant a guaranteed window to exercise their remaining usus and fructus, it ensures the owner earns `used_credit` for the full duration of the countdown, and it opens a competitive bidding window during which any actor may displace the pending next tenant. The duration is deterministic and publicly observable from the moment the first bid arrives. The protection against last-second displacement is structural — the economic asymmetry of `remain_credit` — not temporal.
 
 #### Dual Guarantee
 
 The `handover_countdown` serves two roles simultaneously:
 
-- **For the current tenant Tn:** a guaranteed minimum window of usus and fructus after being displaced. The candle cannot fire before `handover_floor` — the protocol cannot transfer access before this point, regardless of where the random sample falls. Tn knows they will retain access for at least `handover_floor`; they may retain it longer.
-- **For the asset owner:** a guaranteed minimum `used_credit`. Since `f_credit_ascent` keeps running throughout the countdown, the owner earns at least the rent corresponding to `handover_floor`. If the candle fires later, the owner earns proportionally more.
+- **For the current tenant Tn:** a guaranteed window of usus and fructus after being displaced. Access cannot transfer before `handover_floor` elapses (bounded by `remaining_rent_time`). The duration is exact and known to all parties from the moment of the first bid.
+- **For the asset owner:** a guaranteed `used_credit` for the countdown duration. Since `f_credit_ascent` keeps running throughout the countdown, the owner earns exactly the rent corresponding to the elapsed countdown window.
 
 #### Consumption During the Countdown
 
@@ -453,25 +431,24 @@ The `f_credit_ascent` function continues running throughout the `handover_countd
 
 The asset continues accepting new bids while in `rent_handover_confirmed`. If T(n+1), T(n+2), ... all pay during the competitive window:
 
-- `handover_countdown_expiry` does not change — it was fixed at the moment of the first bid and is not resampled.
-- Each intermediate bidder (all except the last at the moment the candle fires) receives their full injection returned immediately.
-- Access transfers to the **last** tenant who placed a valid bid before the candle fired.
+- `handover_countdown_expiry` does not change — it was computed at the moment of the first bid.
+- Each intermediate bidder (all except the last at the moment of expiry) receives their full injection returned immediately.
+- Access transfers to the **last** tenant who placed a valid bid before `handover_countdown_expiry`.
 - Tn's compensation is calculated at `handover_countdown_expiry`: `remain_credit_at_handover` — the unused portion of their stake at the moment access transfers.
 
 #### New Tenant's Cycle
 
-T(n+1)'s rental cycle — and their `f_credit_ascent` clock — begins at `handover_countdown_expiry`, not at payment. This timestamp is fixed at the moment T(n+1) pays and stored as a phase anchor — it is not known to T(n+1) in advance, but is deterministic from that point onward. The state machine automatically designates T(n+1) as `current_tenant` at that timestamp. No explicit claim is required — the transition is resolved lazily by the next transaction that touches the shared object.
+T(n+1)'s rental cycle — and their `f_credit_ascent` clock — begins at `handover_countdown_expiry`, not at payment. This timestamp is computed and stored as a phase anchor at the moment T(n+1) pays — deterministic and observable by all parties from that point. The state machine automatically designates T(n+1) as `current_tenant` at that timestamp. No explicit claim is required — the transition is resolved lazily by the next transaction that touches the shared object.
 
-T(n+1) has direct economic incentive to interact as soon as possible after the candle fires: their `f_credit_ascent` clock begins at `handover_countdown_expiry`, not at the moment of their first transaction. Every second they delay is a second of their paid tenure that passes without access.
+T(n+1) has direct economic incentive to interact as soon as possible after `handover_countdown_expiry`: their `f_credit_ascent` clock begins at that timestamp, not at the moment of their first transaction. Every second they delay is a second of their paid tenure that passes without access.
 
 #### Dutch Auction Bypass
 
-When `r_min = r_max` — which occurs when `remaining_rent_time ≤ handover_floor` — the candle range collapses to a single point and `handover_countdown_expiry` is deterministic: `t_bid + remaining_rent_time`. The countdown exhausts Tn's remaining time exactly, `remain_credit` reaches zero at handover, and the asset passes directly to the confirmed next tenant — the Dutch Auction is never triggered. The `rent_handover_confirmed` sub-state is proof of existing demand, making price discovery unnecessary.
+When `remaining_rent_time ≤ handover_floor`, `handover_countdown_expiry = t_bid + remaining_rent_time`. The countdown exhausts Tn's remaining time exactly, `remain_credit` reaches zero at handover, and the asset passes directly to the confirmed next tenant — the Dutch Auction is never triggered. The `rent_handover_confirmed` sub-state is proof of existing demand, making price discovery unnecessary.
 
-#### Edge Cases
+#### Edge Case
 
-- **`handover_floor = handover_ceiling`:** The candle range collapses to a single point. The countdown duration is deterministic — equivalent in behavior to the fixed-countdown design, with no randomness exercised.
-- **`handover_floor = handover_ceiling = tenure_ceiling`:** The countdown equals the full rental block. The current tenant is guaranteed the entirety of their remaining time before any handover — equivalent in behavior to a traditional fixed-term lease, with the liquid renting compensation mechanics preserved.
+- **`handover_floor = tenure_ceiling`:** The countdown equals the full rental block. The current tenant is guaranteed the entirety of their remaining time before any handover — equivalent in behavior to a traditional fixed-term lease, with the liquid renting compensation mechanics preserved.
 
 ---
 
@@ -848,9 +825,9 @@ The `handover_countdown` is not merely a grace period for the current tenant. It
 - Each new valid bid supersedes the previous one.
 - The superseded bidder is refunded immediately and in full.
 - `handover_countdown_expiry` is fixed at the moment of the first bid and does not change with subsequent bids.
-- Access transfers to whoever holds the winning bid when the candle fires.
+- Access transfers to whoever holds the winning bid when `handover_countdown_expiry` is reached.
 
-Because `handover_countdown_expiry` is unknown to all participants, there is no optimal moment to delay a bid. This creates a competitive window with bids distributed across its full duration rather than concentrated at a known deadline. The current tenant participates with a structural cost advantage — their net cost is always `P_bid - remain_credit`, strictly less than the full price any external bidder must pay. The advantage is proportional to `remain_credit`: maximum at the start of a block, approaching zero as the block nears expiry. The market resolves who values the position more.
+The current tenant participates with a structural cost advantage — their net cost is always `P_bid - remain_credit`, strictly less than the full price any external bidder must pay. The advantage is proportional to `remain_credit`: maximum at the start of a block, approaching zero as the block nears expiry. The market resolves who values the position more.
 
 ### The Cost of Abusing the Defense
 
@@ -887,9 +864,8 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 |---|---|---|---|
 | `asset` | Object | The asset to be placed under the Liquid Renting protocol. | Must not already be under an active rental position. |
 | `min_rent_price` | Amount | The price floor. The lowest valid rental price and the lower bound of `f_price_descent`. | `min_rent_price > 0` |
-| `tenure_ceiling` | Duration | Maximum duration of a single rental block. | `tenure_ceiling > 0` ; `handover_ceiling ≤ tenure_ceiling` |
-| `handover_floor` | Duration | Minimum guaranteed usage window for the current tenant after a takeover is initiated. The candle cannot fire before this duration has elapsed. | `0 < handover_floor ≤ handover_ceiling` |
-| `handover_ceiling` | Duration | Maximum duration of the competitive bidding window. The candle fires at a uniformly random moment within `[handover_floor, handover_ceiling]` (bounded by `remaining_rent_time`). Setting `handover_ceiling = handover_floor` produces deterministic behavior with no randomness. | `handover_floor ≤ handover_ceiling ≤ tenure_ceiling` |
+| `tenure_ceiling` | Duration | Maximum duration of a single rental block. | `tenure_ceiling > 0` ; `handover_floor ≤ tenure_ceiling` |
+| `handover_floor` | Duration | Fixed duration of the competitive bidding window after a takeover is initiated. The current tenant retains access for exactly this duration (bounded by `remaining_rent_time`). | `0 < handover_floor ≤ tenure_ceiling` |
 | `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. | `descent_ceiling > 0` |
 | `f_credit_ascent` | Normalized shape function `g` | Defines how credit is consumed. The integrator provides `g : [0,1] → [0,1]`; the protocol computes `used_credit(t) = last_rent_price · g(t / tenure_ceiling)`. | `g(0) = 0` ; `g(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ g(x) ≤ 1` ; strictly monotonically increasing |
 | `f_price_descent` | Normalized shape function `h` | Defines how the auction discount deepens. The integrator provides `h : [0,1] → [0,1]`; the protocol computes `price_descent(t) = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)`. | `h(0) = 0` ; `h(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ h(x) ≤ 1` ; strictly monotonically increasing |
@@ -956,7 +932,7 @@ The answer is that the Liquid Renting Protocol requires no external coordination
 The protocol stores only two classes of data per asset:
 
 - **Immutable parameters:** set at integration time, never modified.
-- **Phase anchors:** the price and timestamp at which the current phase began — specifically, `last_rent_price` and the start time of the active state (Rented or At Dutch Auction). During `rent_handover_confirmed`, the stored `handover_countdown_expiry` is an additional phase anchor, sampled once at bid time from Sui's on-chain randomness module and fixed from that point.
+- **Phase anchors:** the price and timestamp at which the current phase began — specifically, `last_rent_price` and the start time of the active state (Rented or At Dutch Auction). During `rent_handover_confirmed`, the stored `handover_countdown_expiry` is an additional phase anchor, computed deterministically at bid time and fixed from that point.
 
 Given these two inputs plus the current timestamp — available in any Sui transaction via the `Clock` object — the complete asset state is computable at any moment:
 
@@ -1246,13 +1222,11 @@ The protocol applies because yield optimization is a competitive service: multip
 
 ### Time Parameters
 
-**`tenure_ceiling`:** The fixed duration of each rental block. The maximum time any tenant can hold the asset in a single position. Constraint: `handover_ceiling ≤ tenure_ceiling`.
+**`tenure_ceiling`:** The fixed duration of each rental block. The maximum time any tenant can hold the asset in a single position. Constraint: `handover_floor ≤ tenure_ceiling`.
 
-**`handover_floor`:** The minimum guaranteed usage window for the current tenant after a takeover is initiated. The candle cannot fire before this duration has elapsed. Constrained by `0 < handover_floor ≤ handover_ceiling`.
+**`handover_floor`:** The fixed duration of the competitive bidding window after a takeover is initiated. The current tenant retains access for exactly this duration (bounded by `remaining_rent_time`). Constrained by `0 < handover_floor ≤ tenure_ceiling`.
 
-**`handover_ceiling`:** The upper bound of the competitive bidding window. The candle fires at a uniformly random moment within `[r_min, r_max]` where `r_min = min(handover_floor, remaining_rent_time)` and `r_max = min(handover_ceiling, remaining_rent_time)`. Constrained by `handover_floor ≤ handover_ceiling ≤ tenure_ceiling`.
-
-**`handover_countdown_expiry`:** The timestamp at which access transfers from Tn to the last valid bidder. Sampled from Sui's on-chain randomness module at the moment the first bid arrives and stored as a phase anchor. Fixed from that point — subsequent bids do not resample it. At expiry, the state machine designates the last bidder as `current_tenant`.
+**`handover_countdown_expiry`:** The timestamp at which access transfers from Tn to the last valid bidder. Computed deterministically as `t_bid + min(handover_floor, remaining_rent_time)` at the moment the first bid arrives and stored as a phase anchor. Subsequent bids do not alter it. At expiry, the state machine designates the last bidder as `current_tenant`.
 
 **`descent_ceiling`:** The maximum duration of a Dutch Auction. If no buyer is found within this window, the price reaches `min_rent_price` and the asset returns to Idle.
 

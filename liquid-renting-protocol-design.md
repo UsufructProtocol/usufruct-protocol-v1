@@ -829,6 +829,16 @@ The `handover_countdown` is not merely a grace period for the current tenant. It
 
 The current tenant participates with a structural cost advantage — their net cost is always `P_bid - remain_credit`, strictly less than the full price any external bidder must pay. The advantage is proportional to `remain_credit`: maximum at the start of a block, approaching zero as the block nears expiry. The market resolves who values the position more.
 
+### Anti-Sniping: Economic, Not Temporal
+
+The protocol provides no temporal protection against last-second bids — `handover_countdown_expiry` is deterministic and publicly observable from the moment it is established. The protection against displacement is entirely economic.
+
+Any actor — whether the current tenant Tn, the pending next tenant T(n+1), or an external competitor — must post `next_rent_price` in full to place a valid bid. The protocol is identity-agnostic: it does not distinguish between the current holder and a new entrant. No actor receives a protocol-level discount at bid time. The only discount that exists is `remain_credit`, and it is returned to Tn atomically at the moment of displacement — not before.
+
+This creates a meaningful capital asymmetry in practice. A pending next tenant T(n+1) who wishes to counter-bid against a sniper while their original bid P(n+1) is still locked must post P(n+2) = `f_next_rent_price(P(n+1))` from their available wallet balance. Although P(n+1) is returned atomically in the same transaction, the gross capital required at the moment of execution is `P(n+1) + P(n+2)`. An actor whose capital is already substantially locked in the position is at a practical disadvantage relative to a liquid competitor posting P(n+2) from free funds.
+
+This introduces natural heterogeneity among actors: capital availability, not only valuation of the usus, shapes who can sustain an escalation. The self-limiting property is symmetric — each counter-bid by any actor raises `last_rent_price` via `f_next_rent_price`, increasing the gross capital requirement for the next move. The escalation terminates when one actor reaches their capital ceiling or concludes the position is no longer worth defending at the prevailing price. The protocol does not enforce this ceiling — the price does.
+
 ### The Cost of Abusing the Defense
 
 The structural advantage of the current tenant is real, but it is self-limiting. Each defensive counter-bid invokes `f_next_rent_price`, raising `last_rent_price` by the minimum increment. The tenant neutralizes the competitor — but anchors their new block to a progressively higher price.

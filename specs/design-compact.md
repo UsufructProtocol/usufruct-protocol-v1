@@ -24,7 +24,7 @@ For rationale, incentive analysis, and examples see liquid-renting-protocol-desi
 | From | To | Trigger |
 |---|---|---|
 | Idle | Rented | User pays `P_entry >= min_rent_price`. Sets `last_rent_price = P_entry`, `current_tenant`, `phase_start = now`. |
-| Rented (handover_open) | Rented (handover_confirmed) | New tenant pays `>= next_rent_price`. Samples `handover_countdown_expiry`. Stores `pending_tenant` + `pending_bid`. |
+| Rented (handover_open) | Rented (handover_confirmed) | New tenant pays `>= next_rent_price`. Computes `handover_countdown_expiry`. Stores `pending_tenant` + `pending_bid`. |
 | Rented (handover_confirmed) | Rented (handover_confirmed) | Another bid arrives. Previous pending tenant refunded immediately in full. Replaced by new pending tenant. `handover_countdown_expiry` unchanged. |
 | Rented (handover_confirmed) | Rented (handover_open) | `handover_countdown_expiry` reached. Handover executes: access transfers to last bidder, funds distributed (see §3). New tenant's cycle starts at `handover_countdown_expiry`. |
 | Rented (handover_open) | At Dutch Auction | `used_credit = last_rent_price` (time exhausted) AND asset in `handover_open`. Full `tenant_stake` → `owner_earnings`. |
@@ -144,27 +144,23 @@ net_cost = P(n+1) - remain_credit
 Tn's structural advantage over external competitor: `remain_credit` (the discount no external actor can access).
 
 
-4. THE HANDOVER COUNTDOWN (CANDLE AUCTION)
--------------------------------------------
+4. THE HANDOVER COUNTDOWN
+--------------------------
 
-### Sampling
+### Formula
 
 When first bid arrives during `rent_handover_open`:
 
 ```
-r       ~ Uniform[r_min, r_max]
-r_min   = min(handover_floor, remaining_rent_time)
-r_max   = min(handover_ceiling, remaining_rent_time)
-
-handover_countdown_expiry = t_bid + r
+handover_countdown_expiry = t_bid + min(handover_floor, remaining_rent_time)
 ```
 
-Sampled once from Sui on-chain randomness. Fixed from that point. Subsequent bids do NOT resample.
+Computed deterministically at bid time. Fixed from that point. Subsequent bids do NOT alter it.
 
-### Constraints
+### Constraint
 
 ```
-0 < handover_floor <= handover_ceiling <= tenure_ceiling
+0 < handover_floor <= tenure_ceiling
 ```
 
 ### Behavior during countdown
@@ -172,16 +168,15 @@ Sampled once from Sui on-chain randomness. Fixed from that point. Subsequent bid
 - `f_credit_ascent` continues running — Tn pays for every second retained.
 - Asset accepts new bids. Each supersedes the previous; superseded bidder refunded immediately.
 - `handover_countdown_expiry` does not change with new bids.
-- Access transfers to the **last** valid bidder when candle fires.
+- Access transfers to the **last** valid bidder when `handover_countdown_expiry` is reached.
 
 ### Dutch Auction bypass
 
-When `r_min = r_max` (i.e., `remaining_rent_time <= handover_floor`): countdown is deterministic, exhausts Tn's remaining time exactly, `remain_credit = 0` at handover. Dutch Auction never triggered. 
+When `remaining_rent_time <= handover_floor`: `handover_countdown_expiry = t_bid + remaining_rent_time`. Countdown exhausts Tn's remaining time exactly, `remain_credit = 0` at handover. Dutch Auction never triggered.
 
-### Edge cases
+### Edge case
 
-- `handover_floor = handover_ceiling`: deterministic countdown, no randomness.
-- `handover_floor = handover_ceiling = tenure_ceiling`: full block guaranteed before handover — equivalent to fixed-term lease with compensation mechanics.
+- `handover_floor = tenure_ceiling`: full block guaranteed before handover — equivalent to fixed-term lease with compensation mechanics.
 
 
 5. INCENTIVE-DRIVEN FUNCTIONS
@@ -253,9 +248,8 @@ All set once at integration time. Immutable for the lifetime of that instance. T
 | Parameter | Constraints |
 |---|---|
 | `min_rent_price` | `> 0` |
-| `tenure_ceiling` | `> 0`, `handover_ceiling <= tenure_ceiling` |
-| `handover_floor` | `0 < handover_floor <= handover_ceiling` |
-| `handover_ceiling` | `handover_floor <= handover_ceiling <= tenure_ceiling` |
+| `tenure_ceiling` | `> 0`, `handover_floor <= tenure_ceiling` |
+| `handover_floor` | `0 < handover_floor <= tenure_ceiling` |
 | `descent_ceiling` | `> 0` |
 | `retire_floor` | `>= 0` (0 = no restriction). Minimum time since integration before `retire()` may execute. |
 | `g` (credit shape) | `g(0)=0, g(1)=1, bounded [0,1], strictly increasing` |
@@ -313,9 +307,8 @@ Functions are pure and deterministic. No keeper, no off-chain coordinator, no li
 | Term | Meaning |
 |---|---|
 | `tenure_ceiling` | Fixed duration of each rental block. |
-| `handover_floor` | Minimum guaranteed window for Tn after takeover bid. Candle cannot fire before. |
-| `handover_ceiling` | Upper bound of competitive bidding window. |
-| `handover_countdown_expiry` | Timestamp of access transfer. Sampled once, fixed. |
+| `handover_floor` | Fixed duration of competitive bidding window after takeover bid. |
+| `handover_countdown_expiry` | Timestamp of access transfer. Computed deterministically at first bid, fixed. |
 | `descent_ceiling` | Max Dutch Auction duration. |
 | `retire_floor` | Minimum time since integration before any retirement may execute. |
 

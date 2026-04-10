@@ -109,7 +109,6 @@ No UID, no object identity — this is a plain data struct embedded inside `Rent
 - `min_rent_price: u64`
 - `tenure_ceiling: u64`
 - `handover_floor: u64`
-- `handover_ceiling: u64`
 - `descent_ceiling: u64`
 - `retire_floor: u64`
 - `credit_curve: CurveShape`
@@ -120,14 +119,14 @@ No UID, no object identity — this is a plain data struct embedded inside `Rent
 
 | Function | Purpose |
 |---|---|
-| `new(min_rent_price, tenure_ceiling, handover_floor, handover_ceiling, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
+| `new(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
 | One getter per field | Immutable access |
 
 **Validation constraints (enforced in `new`):**
 ```
 min_rent_price   > 0
 tenure_ceiling   > 0
-0 < handover_floor <= handover_ceiling <= tenure_ceiling
+0 < handover_floor <= tenure_ceiling
 descent_ceiling  > 0
 retire_floor     >= 0   (always true for u64)
 ```
@@ -294,7 +293,7 @@ in public function signatures — external code only interacts through the publi
 |---|---|---|---|
 | `integrate` | `public` | — | Wrap asset, create shared escrow, return `OwnerCap`. |
 | `rent` | `public` | Idle | Pay `>= min_rent_price`. Mint `TenantCap` (transferred to sender). Enter Rented. |
-| `takeover` | `public` | Rented, `!retire_flag` | Pay `>= next_rent_price`. Mint `TenantCap`. Start/update handover. |
+| `takeover` | `public` | Rented, `!retire_flag` | Pay `>= next_rent_price`. Mint `TenantCap`. Compute/update handover. |
 | `rent_auction` | `public` | AtDutchAuction | Pay current descent price. Mint `TenantCap`. Enter Rented. |
 | `borrow_asset` | `public` | Rented (current tenant) | Extract asset + `AssetReceipt`. |
 | `return_asset` | `public` | — | Consume `AssetReceipt`, return asset to escrow. |

@@ -30,7 +30,7 @@ Where each construct lives in Sui's object model.
 ║  │  Asset (key + store)   │  │  IntegrationConfig  (immutable)  │  ║
 ║  │                        │  │  · min_rent_price                │  ║
 ║  │  ← lives here always   │  │  · tenure_ceiling                │  ║
-║  │    except during a PTB │  │  · handover_floor/ceiling        │  ║
+║  │    except during a PTB │  │  · handover_floor                │  ║
 ║  │    borrow (see below)  │  │  · descent_ceiling               │  ║
 ║  └────────────────────────┘  │  · retire_floor                  │  ║
 ║                               │  · CurveShape g  (credit)       │  ║
@@ -162,7 +162,6 @@ All parameters set once at integration time:
 - `min_rent_price: u64`
 - `tenure_ceiling: u64` — ms
 - `handover_floor: u64` — ms
-- `handover_ceiling: u64` — ms
 - `descent_ceiling: u64` — ms
 - `retire_floor: u64` — ms
 - `credit_curve: CurveShape` — g, for `f_credit_ascent`
@@ -291,7 +290,7 @@ Asset enters `Rented(HandoverOpen)`.
 From Rented only. Payment `>= next_rent_price`. Mints `TenantCap` for incoming bidder.
 
 If `HandoverOpen`:
-- Samples `handover_countdown_expiry` from on-chain randomness.
+- Computes `handover_countdown_expiry = t_bid + min(handover_floor, remaining_rent_time)`.
 - Sets `pending_tenant_cap_id`, stores `pending_bid`.
 - Transitions to `HandoverConfirmed`.
 
@@ -428,7 +427,7 @@ Accumulates passively — no dependency on owner activity or `OwnerCap` state.
 - All prices in base token units (no decimals at protocol level).
 - Asset requires `key + store` abilities to live inside the shared object.
 - `CoinType` is constrained via `Balance<CoinType>` (Coin framework).
-- Randomness for candle auction via `sui::random::Random` (Sui mainnet).
+- `handover_countdown_expiry` is deterministic: `t_bid + min(handover_floor, remaining_rent_time)`. No randomness dependency.
 - Module boundaries (likely split):
   - `rental_escrow.move` — core state, entry functions, `resolve_state`
   - `curve.move` — `CurveShape`, `PriceFunction`, `evaluate_curve`, `compute_*`

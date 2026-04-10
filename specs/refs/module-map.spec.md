@@ -58,7 +58,7 @@ to minimize contention between independent operations.
            │
            ▼
 ╔══════════════════════════════════════════╗
-║  IntegratorEscrow<CoinType>              ║  [SHARED — per asset]
+║  IntegratorTreasury<CoinType>              ║  [SHARED — per asset]
 ║  · id: UID                               ║
 ║  · escrow_id: ID                         ║
 ║  · earnings: Balance<CoinType>           ║
@@ -102,12 +102,12 @@ to minimize contention between independent operations.
  takeover()               →  Coin<C>           →  RentalEscrow.pending_bid
    (if superseded)        ←  Coin<C>           ←  RentalEscrow.pending_bid  (refund, push)
  handover fires           :  pending_bid       →  tenant_stake (new tenant)
-                          :  used_credit×0.95  →  IntegratorEscrow.earnings
+                          :  used_credit×0.95  →  IntegratorTreasury.earnings
                           :  used_credit×0.05  →  ProtocolTreasury.balance
                           ←  Coin<C>           ←  remain_credit (to old tenant, push)
- tenure expiry            :  stake×0.95        →  IntegratorEscrow.earnings
+ tenure expiry            :  stake×0.95        →  IntegratorTreasury.earnings
                           :  stake×0.05        →  ProtocolTreasury.balance
- IntegratorEscrow.withdraw()  ←  Coin<C>  ←  earnings  (pull, OwnerCap)
+ IntegratorTreasury.withdraw()  ←  Coin<C>  ←  earnings  (pull, OwnerCap)
  ProtocolTreasury.withdraw()  ←  Coin<C>  ←  balance   (pull, ProtocolAdminCap, batch PTB)
  retire()                 ←  Asset             ←  RentalEscrow (unwrapped, deleted)
 ```
@@ -118,11 +118,11 @@ to minimize contention between independent operations.
 
 | Operation | Objects touched | Parallel with |
 |---|---|---|
-| `rent`, `takeover`, `rent_auction` | RentalEscrow only (normal flow) | IntegratorEscrow.withdraw, ProtocolTreasury.withdraw |
-| boundary transition fires | RentalEscrow + IntegratorEscrow + ProtocolTreasury | nothing (already serial on RentalEscrow) |
-| `borrow_asset`, `return_asset` | RentalEscrow only | IntegratorEscrow.withdraw, ProtocolTreasury.withdraw |
+| `rent`, `takeover`, `rent_auction` | RentalEscrow only (normal flow) | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
+| boundary transition fires | RentalEscrow + IntegratorTreasury + ProtocolTreasury | nothing (already serial on RentalEscrow) |
+| `borrow_asset`, `return_asset` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
 | `resolve_state` | RentalEscrow read-only | everything |
-| `IntegratorEscrow.withdraw` | IntegratorEscrow only | all RentalEscrow operations |
+| `IntegratorTreasury.withdraw` | IntegratorTreasury only | all RentalEscrow operations |
 | `ProtocolTreasury.withdraw` | ProtocolTreasury only | all RentalEscrow operations |
 
 ---
@@ -155,7 +155,7 @@ liquid_renting = "0x0"
   owner_cap   tenant_cap   events   admin
        ^                              ^
        |                              |
-  integrator_escrow          protocol_treasury
+  integrator_treasury          protocol_treasury
        \                              /
         \                            /
          v                          v
@@ -164,7 +164,7 @@ liquid_renting = "0x0"
 
 Arrows point from dependency to dependent.
 `rental_escrow` is the integration point.
-`integrator_escrow` depends on `owner_cap` (authorization check).
+`integrator_treasury` depends on `owner_cap` (authorization check).
 `protocol_treasury` depends on `admin` (authorization check).
 
 ---
@@ -270,7 +270,7 @@ retire_floor     >= 0   (always true for u64)
 ### 4. `owner_cap.move` — Owner capability
 
 **Responsibility:** `OwnerCap` object. One per integration instance.
-Proves authority for `retire()` and `IntegratorEscrow::withdraw()`.
+Proves authority for `retire()` and `IntegratorTreasury::withdraw()`.
 
 **Types:**
 
@@ -342,7 +342,7 @@ No logic, no state. Pure data carriers.
 
 | Event | Key Fields |
 |---|---|
-| `AssetIntegrated` | `escrow_id, owner_cap_id, min_rent_price, tenure_ceiling` |
+| `AssetIntegrated` | `escrow_id, owner_cap_id, integrator_treasury_id, protocol_treasury_id, min_rent_price, tenure_ceiling` |
 | `RentalStarted` | `escrow_id, tenant_cap_id, price` |
 | `TakeoverInitiated` | `escrow_id, outgoing_cap_id, incoming_cap_id, new_price, handover_expiry` |
 | `BidSuperseded` | `escrow_id, refunded_cap_id, refunded_amount` |
@@ -391,9 +391,9 @@ Required for `ProtocolTreasury::withdraw()`.
 
 ---
 
-### 8. `integrator_escrow.move` — Integrator earnings
+### 8. `integrator_treasury.move` — Integrator earnings
 
-**Responsibility:** `IntegratorEscrow` shared object. Receives the owner's 95% share
+**Responsibility:** `IntegratorTreasury` shared object. Receives the owner's 95% share
 of `used_credit` at each boundary transition. Fully decoupled from `RentalEscrow`
 so owner earnings withdrawals never contend with rental operations.
 
@@ -401,7 +401,7 @@ so owner earnings withdrawals never contend with rental operations.
 
 | Type | Abilities | Notes |
 |---|---|---|
-| `IntegratorEscrow<phantom CoinType>` | `key` | Shared object. One per asset instance. |
+| `IntegratorTreasury<phantom CoinType>` | `key` | Shared object. One per asset instance. |
 
 **Fields:**
 - `id: UID`
@@ -412,11 +412,11 @@ so owner earnings withdrawals never contend with rental operations.
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `new(escrow_id, ctx): IntegratorEscrow<C>` | `public(package)` | Create and share. Called only by `rental_escrow::integrate`. |
+| `new(escrow_id, ctx): IntegratorTreasury<C>` | `public(package)` | Create and share. Called only by `rental_escrow::integrate`. |
 | `deposit(self, amount: Balance<C>)` | `public(package)` | Push earnings in. Called by `rental_escrow` at boundaries. |
 | `withdraw(self, cap: &OwnerCap, ctx): Coin<C>` | `public` | Drain all earnings. Verifies `cap.escrow_id == self.escrow_id`. |
 
-**Status:** [ ] `IntegratorEscrow` · [ ] `new` · [ ] `deposit` · [ ] `withdraw`
+**Status:** [ ] `IntegratorTreasury` · [ ] `new` · [ ] `deposit` · [ ] `withdraw`
 
 **Depends on:** `owner_cap`.
 
@@ -492,7 +492,7 @@ The state machine logic that mutates them remains private.
 
 | Function | Visibility | Objects required | Summary |
 |---|---|---|---|
-| `integrate` | `public` | — | Creates RentalEscrow + IntegratorEscrow + ProtocolTreasury (all shared). Returns `OwnerCap`. |
+| `integrate` | `public` | — | Creates RentalEscrow + IntegratorTreasury + ProtocolTreasury (all shared). Returns `OwnerCap`. |
 | `rent` | `public` | RentalEscrow | Pay exactly `min_rent_price`. Mint `TenantCap`. Enter Rented. |
 | `takeover` | `public` | RentalEscrow | Pay exactly `next_rent_price`. Mint `TenantCap`. Compute/update handover. |
 | `rent_auction` | `public` | RentalEscrow | Pay current descent price. Mint `TenantCap`. Enter Rented. |
@@ -501,7 +501,7 @@ The state machine logic that mutates them remains private.
 | `retire` | `public` | RentalEscrow | Consumes `OwnerCap`. Behavior depends on state. |
 | `resolve_state` | `public` | RentalEscrow (read) | Pure read. Derives current logical state from anchors + clock. |
 
-`withdraw_earnings` → `integrator_escrow::withdraw` (on `IntegratorEscrow`)
+`withdraw_earnings` → `integrator_treasury::withdraw` (on `IntegratorTreasury`)
 `withdraw_treasury` → `protocol_treasury::withdraw` (on `ProtocolTreasury`)
 
 **Status:** [ ] `integrate` · [ ] `rent` · [ ] `takeover` · [ ] `rent_auction` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `resolve_state`
@@ -510,12 +510,12 @@ The state machine logic that mutates them remains private.
 
 | Function | Objects mutated | Purpose |
 |---|---|---|
-| `execute_handover` | RentalEscrow + IntegratorEscrow + ProtocolTreasury | Rotate cap IDs. Push `remain_credit` to displaced tenant. Split `used_credit` via `deposit()`. Move `pending_bid` → `tenant_stake`. |
-| `execute_tenure_expiry` | RentalEscrow + IntegratorEscrow + ProtocolTreasury | Split full `tenant_stake` via `deposit()`. Transition to `AtDutchAuction` or `Retired`. |
+| `execute_handover` | RentalEscrow + IntegratorTreasury + ProtocolTreasury | Rotate cap IDs. Push `remain_credit` to displaced tenant. Split `used_credit` via `deposit()`. Move `pending_bid` → `tenant_stake`. |
+| `execute_tenure_expiry` | RentalEscrow + IntegratorTreasury + ProtocolTreasury | Split full `tenant_stake` via `deposit()`. Transition to `AtDutchAuction` or `Retired`. |
 | `execute_auction_expiry` | RentalEscrow | Transition to `Idle`. No funds to move. |
 | `split_fee` | — | Pure: splits amount into (95%, 5%) tuple. |
 
-**Depends on:** `math`, `curve`, `config`, `owner_cap`, `tenant_cap`, `events`, `admin`, `integrator_escrow`, `protocol_treasury`.
+**Depends on:** `math`, `curve`, `config`, `owner_cap`, `tenant_cap`, `events`, `admin`, `integrator_treasury`, `protocol_treasury`.
 
 ---
 
@@ -565,7 +565,7 @@ replicating the state machine logic off-chain.
 Payment enters as `Coin<CoinType>` → split exact amount → `Balance` in `RentalEscrow.tenant_stake`.
 At handover: split into `used_credit` + `remain_credit`.
 `remain_credit` → pushed immediately to displaced tenant as `Coin`.
-`used_credit` → split 95/5 → deposited into `IntegratorEscrow` and `ProtocolTreasury`.
+`used_credit` → split 95/5 → deposited into `IntegratorTreasury` and `ProtocolTreasury`.
 
 ### Pending bid lifecycle
 
@@ -575,8 +575,8 @@ At handover: becomes new `tenant_stake`.
 
 ### Integrator earnings lifecycle
 
-Accumulated via `IntegratorEscrow::deposit()` at each handover and tenure expiry (95% share).
-Withdrawn by owner via `IntegratorEscrow::withdraw()` → `Coin` (pull, requires `OwnerCap`).
+Accumulated via `IntegratorTreasury::deposit()` at each handover and tenure expiry (95% share).
+Withdrawn by owner via `IntegratorTreasury::withdraw()` → `Coin` (pull, requires `OwnerCap`).
 Never touches `RentalEscrow` — fully decoupled.
 
 ### Protocol fee lifecycle
@@ -593,11 +593,12 @@ Admin batches withdrawals across all instances in a single PTB.
 - All timestamps in milliseconds (`sui::clock::Clock::timestamp_ms`).
 - All prices in base token units (no decimals at protocol level).
 - Asset requires `key + store` abilities to live inside `RentalEscrow`.
-- `integrate()` creates and shares 3 objects atomically: `RentalEscrow`, `IntegratorEscrow`, `ProtocolTreasury`.
+- `integrate()` creates and shares 3 objects atomically: `RentalEscrow`, `IntegratorTreasury`, `ProtocolTreasury`.
 - Fund flows are asymmetric: owner and admin pull from their own objects; tenants receive pushes to the address registered at mint time.
 - Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.
 - Maximum nesting depth for `OwnerCap` as asset: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.
 - `ProtocolTreasury` is per-asset (not global) to avoid cross-escrow contention on boundary transitions.
+- Object discovery: `AssetIntegrated` includes `integrator_treasury_id` and `protocol_treasury_id` so off-chain consumers can track all instances from events. Sui RPC (`suix_queryObjects` by type) serves as a bootstrap fallback.
 
 ---
 
@@ -612,7 +613,7 @@ sources/
     tenant_cap.move          §5  — TenantCap + AssetReceipt objects
     events.move              §6  — event structs + emit helpers
     admin.move               §7  — ProtocolAdminCap + init (OTW)
-    integrator_escrow.move   §8  — IntegratorEscrow shared object + withdraw
+    integrator_treasury.move   §8  — IntegratorTreasury shared object + withdraw
     protocol_treasury.move   §9  — ProtocolTreasury shared object + withdraw
     rental_escrow.move       §10 — RentalEscrow shared object + full public API
 tests/
@@ -630,7 +631,7 @@ Move.lock
 
 ### Three shared objects per instance
 
-`RentalEscrow`, `IntegratorEscrow`, and `ProtocolTreasury` are separate shared objects
+`RentalEscrow`, `IntegratorTreasury`, and `ProtocolTreasury` are separate shared objects
 grouped by function access pattern. `withdraw_earnings` and `withdraw_treasury` only
 touch their respective objects — they never contend with rental operations on
 `RentalEscrow`. Boundary transitions (handover, tenure expiry) touch all three, but
@@ -706,7 +707,7 @@ Build bottom-up following the dependency graph:
 5. tenant_cap            (leaf)
 6. events                (leaf)
 7. admin                 (leaf)
-8. integrator_escrow     (depends on owner_cap)
+8. integrator_treasury     (depends on owner_cap)
 9. protocol_treasury     (depends on admin)
 10. rental_escrow        (depends on all above)
 ```

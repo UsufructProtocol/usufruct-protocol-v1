@@ -72,7 +72,7 @@ The Liquid Renting model is designed to apply fundamentally to rental assets tha
 **Utility-grounded value:** The asset must carry genuine intrinsic value across the three faculties: in its usus — the capacity to be used — in its fructus — the yields or cash flows it produces — and potentially in its abusus — the right of ownership itself. The protocol does not reward speculation on price: a displaced tenant recovers only the unused portion of their payment, never a gain from price appreciation. What drives rational market participation is the value of holding and exercising the asset, not the expectation of a windfall on exit.
 
 
-**Always for sale:** The right to use the asset — its usus — is always on the market. There is no moment in which the asset is locked away from potential buyers. While a tenant holds the position, a higher bid can displace them. While the asset sits idle, anyone may enter at or above the price floor. While a Dutch Auction runs, the price descends until the market finds a buyer. The protocol never closes. The usus is always acquirable at some price.
+**Always for sale:** The right to use the asset — its usus — is always on the market. There is no moment in which the asset is locked away from potential buyers. While a tenant holds the position, a higher bid can displace them. While the asset sits idle, anyone may enter at the price floor. While a Dutch Auction runs, the price descends until the market finds a buyer. The protocol never closes. The usus is always acquirable at some price.
 
 **Proven organic demand:** The asset must generate genuine interest and possess real traction. The protocol optimizes liquidity, fractions time, and eliminates friction — but operates under an immutable economic premise: no technology or protocol can create sustainable demand for an asset that lacks a market.
 
@@ -115,7 +115,7 @@ The following details the state machine through which any integrated asset trans
 ### 1. State Definitions (Asset States)
 
 **State 0: Idle (Baseline / Price Floor):**
-The entry or resting state. The asset is available at or above `min_rent_price`. No usage right is committed. The usus and fructus are waiting for a first tenant to inject the liquidity necessary to activate the protocol.
+The entry or resting state. The asset is available at exactly `min_rent_price`. No usage right is committed. The usus and fructus are waiting for a first tenant to inject the liquidity necessary to activate the protocol.
 
 **State 1: Rented (Position Secured):**
 The tenant has acquired the monopoly over usus and fructus through upfront liquidity injection. In this state, the tenant does not trade the asset — they enjoy its utility while their position remains active. The injected liquidity is bound to the asset. This state has two sub-states:
@@ -134,7 +134,7 @@ The terminal state. The owner calls `retire()`, which may act immediately (from 
 The flow of the asset between states obeys strict rules of liquidity and time, ensuring the market always has the final word on the value of the usus.
 
 **Idle ➔ Rented (Initial Activation):**
-A user injects any amount `P_entry ≥ min_rent_price`. This amount becomes the new `last_rent_price`. The protocol assigns the usus and fructus, initiating a rental time block that is fixed and immovable by the protocol's architecture.
+A user pays exactly `min_rent_price`. This amount becomes the new `last_rent_price`. The protocol assigns the usus and fructus, initiating a rental time block that is fixed and immovable by the protocol's architecture.
 
 **Rented ↺ (Takeover / Market Relay):**
 Even while the asset is rented, its usus remains liquid. If the market values the asset above the current price, a new tenant can inject liquidity at a higher price. In doing so:
@@ -170,7 +170,7 @@ At a deeper level, the Liquid Renting architecture operates as a dynamic equilib
 
 ![Asset State Transition Flow](./media/idle-state.png "Asset State Transition Flow")
 
-The initial equilibrium point. The asset is "open" with no incumbent and no liquidity barrier protecting its usus. Any amount `P_entry ≥ min_rent_price` is a valid entry price; `min_rent_price` is the floor, not a forced price.
+The initial equilibrium point. The asset is "open" with no incumbent and no liquidity barrier protecting its usus. The entry price is exactly `min_rent_price`.
 
 ### 2. The Credit Ascent and Takeover Cycle (State 1: Rented)
 
@@ -178,7 +178,7 @@ The initial equilibrium point. The asset is "open" with no incumbent and no liqu
 
 Once a user injects liquidity, the asset enters a state of active utilization that is, by definition, a renewable cycle:
 
-**Price as Entry Barrier:** When renting the asset, the user purchases at next_rent_price(), establishing a new last_rent_price. This value acts as a physical liquidity barrier: any other actor wishing to access the usus of the asset must "clear" this barrier by injecting capital greater or equals than next_rent_price().
+**Price as Entry Barrier:** When renting the asset, the user purchases at next_rent_price(), establishing a new last_rent_price. This value acts as a physical liquidity barrier: any other actor wishing to access the usus of the asset must pay exactly next_rent_price().
 
 ![Asset State Transition Flow](./media/rent-in-progress.png "Asset State Transition Flow")
 
@@ -290,7 +290,7 @@ The asset lives inside the protocol's shared object for its entire lifecycle. Wh
 The asset physically moves only twice in its entire lifecycle: when it enters the escrow at integration and when it exits at retirement. Every other transition is an access control update resolved lazily within the shared object.
 
 1. **Integration:** The owner wraps the asset into the protocol's shared escrow. The asset enters the shared object — this is the only physical ingress.
-2. **Idle → Rented:** The first tenant pays `P_entry ≥ min_rent_price`. The protocol designates them as `current_tenant`. Access is granted.
+2. **Idle → Rented:** The first tenant pays exactly `min_rent_price`. The protocol designates them as `current_tenant`. Access is granted.
 3. **Handover at `handover_countdown_expiry`:** The state machine automatically transfers `current_tenant` from Tn to the last bidder T(n+1). No explicit call is required — any subsequent transaction that touches the shared object resolves this lazily.
 4. **Rented → At Dutch Auction:** Tn's `used_credit` exhausts in `rent_handover_open`. The protocol clears `current_tenant` and begins the Dutch Auction.
 5. **At Dutch Auction → Rented:** A new tenant pays the current `price_descent`. The protocol designates them as `current_tenant`. Access is granted.
@@ -369,7 +369,7 @@ used_credit + remain_credit = Pn
 
 ### 2. Takeover and Compensation
 
-While a tenant Tn holds the usus at price Pn, the asset remains liquid. Any market participant may displace Tn by injecting a new price `P(n+1) > Pn`. When this occurs:
+While a tenant Tn holds the usus at price Pn, the asset remains liquid. Any market participant may displace Tn by paying exactly `P(n+1) = next_rent_price(Pn)`. When this occurs:
 
 **Tn receives:**
 - `remain_credit` — the unused portion of their own locked payment, returned directly from the protocol.
@@ -859,7 +859,7 @@ The following behaviors are direct consequences of the three rules above operati
 
 - **A renewal system** — tenants can extend their position indefinitely by paying the minimum increment plus consumed rent.
 - **A right of first refusal** — the current tenant can always match and exceed any incoming bid.
-- **A cost floor for the incumbent** — displacement is never free; it requires paying at least `f_next_rent_price` above the current barrier.
+- **A cost floor for the incumbent** — displacement is never free; it requires paying exactly `next_rent_price`.
 - **A competitive takeover market** — multiple actors can compete for the asset during the `handover_countdown` window.
 - **A self-correcting price ladder** — every renewal raises the floor, ensuring prices only move upward during the Rented state.
 - **A self-limiting defense** — abusing the counter-bid mechanism raises the tenant's own cost floor. The protocol does not punish overuse; the price does.
@@ -879,7 +879,7 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. | `descent_ceiling > 0` |
 | `f_credit_ascent` | Normalized shape function `g` | Defines how credit is consumed. The integrator provides `g : [0,1] → [0,1]`; the protocol computes `used_credit(t) = last_rent_price · g(t / tenure_ceiling)`. | `g(0) = 0` ; `g(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ g(x) ≤ 1` ; strictly monotonically increasing |
 | `f_price_descent` | Normalized shape function `h` | Defines how the auction discount deepens. The integrator provides `h : [0,1] → [0,1]`; the protocol computes `price_descent(t) = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)`. | `h(0) = 0` ; `h(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ h(x) ≤ 1` ; strictly monotonically increasing |
-| `f_next_rent_price` | Function | Defines the minimum price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
+| `f_next_rent_price` | Function | Defines the exact price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
 | `payment_token` | Token type | The currency in which all prices and payments are denominated. | Must be a fungible token with deterministic value. |
 | `retire_floor` | Duration | Minimum time that must elapse since integration before `retire()` may execute. A public, on-chain commitment by the owner: during this window, the asset cannot exit the protocol by any means. | `retire_floor ≥ 0`. A value of `0` imposes no restriction. |
 
@@ -1203,7 +1203,7 @@ The protocol applies because yield optimization is a competitive service: multip
 
 ### Asset States
 
-**Idle:** The resting state. The asset is available with no active usage commitment. Any amount `P_entry ≥ min_rent_price` is a valid entry price.
+**Idle:** The resting state. The asset is available with no active usage commitment. Entry price is exactly `min_rent_price`.
 
 **Rented:** The active state. A tenant holds usus and fructus. Has two sub-states:
 
@@ -1218,9 +1218,9 @@ The protocol applies because yield optimization is a competitive service: multip
 
 **`min_rent_price`:** The price floor. The lowest valid rental price and the lower bound of the Dutch Auction descent.
 
-**`last_rent_price`:** The price paid by the current tenant. Acts as the entry barrier — any takeover must exceed this value via `f_next_rent_price`.
+**`last_rent_price`:** The price paid by the current tenant. Acts as the entry barrier — the exact takeover price is `next_rent_price = f_next_rent_price(last_rent_price)`.
 
-**`next_rent_price`:** The minimum price required to legally displace the current tenant. Always strictly greater than `last_rent_price`. Defined by `f_next_rent_price`.
+**`next_rent_price`:** The exact price required to legally displace the current tenant. Always strictly greater than `last_rent_price`. Defined by `f_next_rent_price`.
 
 **`price_descent`:** The live price during a Dutch Auction. Descends from `last_rent_price` to `min_rent_price` via `f_price_descent`.
 
@@ -1248,7 +1248,7 @@ The protocol applies because yield optimization is a competitive service: multip
 
 **`f_price_descent` / `h`:** The normalized shape function `h : [0,1] → [0,1]` provided by the integrator. The protocol computes `price_descent(t) = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)`. Must satisfy `h(0) = 0`, `h(1) = 1`, bounded within the unit square, strictly monotonically increasing. `g` and `h` share the same type and constraints; the economic direction (ascent vs. descent) comes from the protocol's application, not from the shape itself.
 
-**`f_next_rent_price(last_rent_price)`:** Defines the minimum price to displace the current tenant. Strictly one-dimensional. Must satisfy `f(last_rent_price) > last_rent_price`.
+**`f_next_rent_price(last_rent_price)`:** Defines the exact price to displace the current tenant. Strictly one-dimensional. Must satisfy `f(last_rent_price) > last_rent_price`.
 
 ### Actions
 

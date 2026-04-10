@@ -281,13 +281,13 @@ Stores `integrated_at_ms` from Clock. Mints and returns `OwnerCap`.
 
 ### [ ] 5.2 `rent<Asset, CoinType>(escrow, payment, clock)`
 
-Entry from Idle only. Tenant pays `P >= min_rent_price`.
-Mints `TenantCap`, sets `current_tenant_cap_id`, `last_rent_price = P`, `phase_start_ms = now`.
+Entry from Idle only. Tenant pays exactly `min_rent_price`.
+Mints `TenantCap`, sets `current_tenant_cap_id`, `last_rent_price = min_rent_price`, `phase_start_ms = now`.
 Asset enters `Rented(HandoverOpen)`.
 
 ### [ ] 5.3 `takeover<Asset, CoinType>(escrow, payment, clock, random)`
 
-From Rented only. Payment `>= next_rent_price`. Mints `TenantCap` for incoming bidder.
+From Rented only. Payment is exactly `next_rent_price`. Mints `TenantCap` for incoming bidder.
 
 If `HandoverOpen`:
 - Computes `handover_countdown_expiry = t_bid + min(handover_floor, remaining_rent_time)`.

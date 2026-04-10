@@ -292,8 +292,8 @@ in public function signatures — external code only interacts through the publi
 | Function | Visibility | State pre-condition | Summary |
 |---|---|---|---|
 | `integrate` | `public` | — | Wrap asset, create shared escrow, return `OwnerCap`. |
-| `rent` | `public` | Idle | Pay `>= min_rent_price`. Mint `TenantCap` (transferred to sender). Enter Rented. |
-| `takeover` | `public` | Rented, `!retire_flag` | Pay `>= next_rent_price`. Mint `TenantCap`. Compute/update handover. |
+| `rent` | `public` | Idle | Pay exactly `min_rent_price`. Mint `TenantCap` (transferred to sender). Enter Rented. |
+| `takeover` | `public` | Rented, `!retire_flag` | Pay exactly `next_rent_price`. Mint `TenantCap`. Compute/update handover. |
 | `rent_auction` | `public` | AtDutchAuction | Pay current descent price. Mint `TenantCap`. Enter Rented. |
 | `borrow_asset` | `public` | Rented (current tenant) | Extract asset + `AssetReceipt`. |
 | `return_asset` | `public` | — | Consume `AssetReceipt`, return asset to escrow. |

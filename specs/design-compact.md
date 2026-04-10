@@ -12,7 +12,7 @@ For rationale, incentive analysis, and examples see liquid-renting-protocol-desi
 
 | State | Description |
 |---|---|
-| **Idle** | Resting state. Asset available at `P_entry >= min_rent_price`. No usage commitment. |
+| **Idle** | Resting state. Asset available at exactly `min_rent_price`. No usage commitment. |
 | **Rented** | Tenant holds usus + fructus. Two sub-states: |
 |  — `rent_handover_open` | No pending displacement. Current tenant holds position. |
 |  — `rent_handover_confirmed` | A new tenant has paid `next_rent_price`. `handover_countdown` running. Current tenant retains access until expiry; asset transfers to last valid bidder. |
@@ -23,8 +23,8 @@ For rationale, incentive analysis, and examples see liquid-renting-protocol-desi
 
 | From | To | Trigger |
 |---|---|---|
-| Idle | Rented | User pays `P_entry >= min_rent_price`. Sets `last_rent_price = P_entry`, `current_tenant`, `phase_start = now`. |
-| Rented (handover_open) | Rented (handover_confirmed) | New tenant pays `>= next_rent_price`. Computes `handover_countdown_expiry`. Stores `pending_tenant` + `pending_bid`. |
+| Idle | Rented | User pays exactly `min_rent_price`. Sets `last_rent_price = min_rent_price`, `current_tenant`, `phase_start = now`. |
+| Rented (handover_open) | Rented (handover_confirmed) | New tenant pays exactly `next_rent_price`. Computes `handover_countdown_expiry`. Stores `pending_tenant` + `pending_bid`. |
 | Rented (handover_confirmed) | Rented (handover_confirmed) | Another bid arrives. Previous pending tenant refunded immediately in full. Replaced by new pending tenant. `handover_countdown_expiry` unchanged. |
 | Rented (handover_confirmed) | Rented (handover_open) | `handover_countdown_expiry` reached. Handover executes: access transfers to last bidder, funds distributed (see §3). New tenant's cycle starts at `handover_countdown_expiry`. |
 | Rented (handover_open) | At Dutch Auction | `used_credit = last_rent_price` (time exhausted) AND asset in `handover_open`. Full `tenant_stake` → `owner_earnings`. |
@@ -292,7 +292,7 @@ Functions are pure and deterministic. No keeper, no off-chain coordinator, no li
 |---|---|
 | `min_rent_price` | Floor. Lowest valid rental price. Lower bound of Dutch Auction. |
 | `last_rent_price` | Price paid by current tenant. Entry barrier for takeover. |
-| `next_rent_price` | `f_next_rent_price(last_rent_price)`. Minimum to displace. Always > `last_rent_price`. |
+| `next_rent_price` | `f_next_rent_price(last_rent_price)`. Exact price to displace. Always > `last_rent_price`. |
 | `price_descent` | Live Dutch Auction price. Descends from `last_rent_price` to `min_rent_price`. |
 
 ### Credit

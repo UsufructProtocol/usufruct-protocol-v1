@@ -498,13 +498,14 @@ The state machine logic that mutates them remains private.
 | `rent_auction` | `public` | RentalEscrow | Pay current descent price. Mint `TenantCap`. Enter Rented. |
 | `borrow_asset` | `public` | RentalEscrow | Extract asset + `AssetReceipt`. Requires current `TenantCap`. |
 | `return_asset` | `public` | RentalEscrow | Consume `AssetReceipt`, return asset to escrow. |
-| `retire` | `public` | RentalEscrow | Consumes `OwnerCap`. Behavior depends on state. |
+| `retire` | `public` | RentalEscrow | Requires `OwnerCap`. Initiates retirement — sets `retire_flag`, blocks new bids. Never returns asset. Valid from any non-Retired state after `retire_floor` elapsed. |
+| `claim_asset` | `public` | RentalEscrow | Requires `OwnerCap`. Finalizes retirement — state must be `Retired`. Extracts asset, burns `OwnerCap`, then deletes `RentalEscrow` (UID consumed internally). Returns asset to caller. Object deletion is an internal side effect of the owner's claim — no separate cleanup call required. |
 | `resolve_state` | `public` | RentalEscrow (read) | Pure read. Derives current logical state from anchors + clock. |
 
 `withdraw_earnings` → `integrator_treasury::withdraw` (on `IntegratorTreasury`)
 `withdraw_treasury` → `protocol_treasury::withdraw` (on `ProtocolTreasury`)
 
-**Status:** [ ] `integrate` · [ ] `rent` · [ ] `takeover` · [ ] `rent_auction` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `resolve_state`
+**Status:** [ ] `integrate` · [ ] `rent` · [ ] `takeover` · [ ] `rent_auction` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `resolve_state`
 
 **Internal functions (private):**
 
@@ -685,6 +686,23 @@ Sui's OTW pattern requires the witness type name to match the module name.
 Placing the package `init` in `admin.move` yields the `ADMIN` witness, creating
 `ProtocolAdminCap` at publish time. This keeps governance concerns out of
 `rental_escrow` and makes the admin cap trivially locatable.
+
+### Why `retire` and `claim_asset` are separate functions
+
+`retire()` initiates retirement — it sets `retire_flag` and blocks new bids,
+but never returns the asset. `claim_asset()` finalizes retirement — it requires
+state `Retired`, extracts the asset, burns the `OwnerCap`, and deletes the escrow.
+
+The owner always makes two calls regardless of the prior state:
+- `retire()` on Idle or AtDutchAuction: state transitions to Retired immediately
+  (no active tenant). Owner then calls `claim_asset()` to collect.
+- `retire()` on Rented: sets flag, tenant completes their block. Owner calls
+  `claim_asset()` after tenure expires and state has lazily resolved to Retired.
+
+Consistent two-step flow for all cases. `retire()` never returns an asset.
+`claim_asset()` always does — and always deletes the `RentalEscrow` internally
+as part of the same call, taking advantage of the owner already being present.
+No separate cleanup step required.
 
 ### Why `rent_auction` is a separate function from `rent`
 

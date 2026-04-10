@@ -110,7 +110,11 @@ to minimize contention between independent operations.
                           :  stake×0.05        →  ProtocolTreasury.balance
  IntegratorTreasury.withdraw()  ←  Coin<C>  ←  earnings  (pull, OwnerCap)
  ProtocolTreasury.withdraw()  ←  Coin<C>  ←  balance   (pull, ProtocolAdminCap, batch PTB)
- retire()                 ←  Asset             ←  RentalEscrow (unwrapped, deleted)
+ retire()                 —  sets retire_flag only, no asset movement
+ claim_asset()           ←  Coin<C>           ←  IntegratorTreasury.earnings (sweep, if any)
+                         ←  Asset             ←  RentalEscrow (unwrapped)
+                            IntegratorTreasury deleted
+                            RentalEscrow deleted
 ```
 
 ---
@@ -122,6 +126,8 @@ to minimize contention between independent operations.
 | `rent`, `takeover`, `rent_auction` | RentalEscrow only (normal flow) | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
 | boundary transition fires | RentalEscrow + IntegratorTreasury + ProtocolTreasury | nothing (already serial on RentalEscrow) |
 | `borrow_asset`, `return_asset` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
+| `retire` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
+| `claim_asset` | RentalEscrow + IntegratorTreasury | ProtocolTreasury.withdraw |
 | `resolve_state` | RentalEscrow read-only | everything |
 | `IntegratorTreasury.withdraw` | IntegratorTreasury only | all RentalEscrow operations |
 | `ProtocolTreasury.withdraw` | ProtocolTreasury only | all RentalEscrow operations |
@@ -500,7 +506,7 @@ The state machine logic that mutates them remains private.
 | `borrow_asset` | `public` | RentalEscrow | Extract asset + `AssetReceipt`. Requires current `TenantCap`. |
 | `return_asset` | `public` | RentalEscrow | Consume `AssetReceipt`, return asset to escrow. |
 | `retire` | `public` | RentalEscrow | Requires `OwnerCap`. Initiates retirement — sets `retire_flag`, blocks new bids. Never returns asset. Valid from any non-Retired state after `retire_floor` elapsed. |
-| `claim_asset` | `public` | RentalEscrow | Requires `OwnerCap`. Finalizes retirement — state must be `Retired`. Extracts asset, burns `OwnerCap`, then deletes `RentalEscrow` (UID consumed internally). Returns asset to caller. Object deletion is an internal side effect of the owner's claim — no separate cleanup call required. |
+| `claim_asset` | `public` | RentalEscrow + IntegratorTreasury | Requires `OwnerCap`. Finalizes retirement — state must be `Retired`. In order: sweeps any remaining `IntegratorTreasury.earnings` to caller, deletes `IntegratorTreasury`, burns `OwnerCap`, deletes `RentalEscrow`, returns asset. No orphaned objects. No locked funds. |
 | `resolve_state` | `public` | RentalEscrow (read) | Pure read. Derives current logical state from anchors + clock. |
 
 `withdraw_earnings` → `integrator_treasury::withdraw` (on `IntegratorTreasury`)
@@ -702,9 +708,13 @@ The owner always makes two calls regardless of the prior state:
   `claim_asset()` after tenure expires and state has lazily resolved to Retired.
 
 Consistent two-step flow for all cases. `retire()` never returns an asset.
-`claim_asset()` always does — and always deletes the `RentalEscrow` internally
-as part of the same call, taking advantage of the owner already being present.
-No separate cleanup step required.
+`claim_asset()` always does — and in the same call: sweeps any remaining earnings
+from `IntegratorTreasury` to the owner, deletes `IntegratorTreasury`, burns
+`OwnerCap`, and deletes `RentalEscrow`. Taking advantage of the owner already
+being present to leave no orphaned objects and no locked funds.
+
+`ProtocolTreasury` is not included — `ProtocolAdminCap` is never burned, so the
+admin can drain it independently before or after retirement.
 
 ### Why `rent_auction` is a separate function from `rent`
 

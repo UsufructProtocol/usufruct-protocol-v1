@@ -122,10 +122,9 @@ to minimize contention between independent operations.
 
 | Operation | Objects touched | Parallel with |
 |---|---|---|
-| `rent`, `rent_auction` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
-| `takeover` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
+| `rent` (sin lazy transition) | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
+| `rent` (con lazy transition) | RentalEscrow + IntegratorTreasury + ProtocolTreasury | nothing (serial on RentalEscrow) |
 | `execute_handover` | RentalEscrow + IntegratorTreasury + ProtocolTreasury | nothing (serial on RentalEscrow) |
-| boundary transition fires (inside other fns) | RentalEscrow + IntegratorTreasury + ProtocolTreasury | nothing (already serial on RentalEscrow) |
 | `borrow_asset`, `return_asset` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
 | `retire` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
 | `claim_asset` | RentalEscrow + IntegratorTreasury | ProtocolTreasury.withdraw |
@@ -329,7 +328,7 @@ Proves authority for `retire()` and `IntegratorTreasury::withdraw()`.
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::{rent, takeover, rent_auction}`. |
+| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::{rent, execute_handover}`. |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 | `new_receipt(escrow_id): AssetReceipt` | `public(package)` | Create hot potato. Called by `rental_escrow::borrow_asset`. |
@@ -501,9 +500,7 @@ The state machine logic that mutates them remains private.
 | Function | Visibility | Objects required | Summary |
 |---|---|---|---|
 | `integrate` | `public` | — | Creates RentalEscrow + IntegratorTreasury + ProtocolTreasury (all shared). Returns `OwnerCap`. |
-| `rent` | `public` | RentalEscrow | Pay exactly `min_rent_price`. Mint `TenantCap`. Enter Rented. |
-| `takeover` | `public` | RentalEscrow | Pay exactly `next_rent_price`. Stores `pending_tenant_address`. Does NOT mint `TenantCap` (lazy minting). Computes `handover_countdown_expiry`. |
-| `rent_auction` | `public` | RentalEscrow | Pay current descent price. Mint `TenantCap`. Enter Rented. |
+| `rent` | `public` | RentalEscrow + IntegratorTreasury + ProtocolTreasury | Single entry point to become tenant. Calls `resolve_state` and applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap` immediately. **AtDutchAuction** — pays `compute_price_descent()`, mints + pushes `TenantCap` immediately. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, lazy mint, computes `handover_countdown_expiry`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`, `handover_countdown_expiry` unchanged. **Retired** — aborts. `retire_flag` set — aborts on Rented. IntegratorTreasury + ProtocolTreasury required for lazy transitions that may fire. |
 | `borrow_asset` | `public` | RentalEscrow | Extract asset + `AssetReceipt`. Requires current `TenantCap`. |
 | `return_asset` | `public` | RentalEscrow | Consume `AssetReceipt`, return asset to escrow. |
 | `retire` | `public` | RentalEscrow | Requires `OwnerCap`. Initiates retirement — sets `retire_flag`, blocks new bids. Never returns asset. Valid from any non-Retired state after `retire_floor` elapsed. |
@@ -514,7 +511,7 @@ The state machine logic that mutates them remains private.
 `withdraw_earnings` → `integrator_treasury::withdraw` (on `IntegratorTreasury`)
 `withdraw_treasury` → `protocol_treasury::withdraw` (on `ProtocolTreasury`)
 
-**Status:** [ ] `integrate` · [ ] `rent` · [ ] `takeover` · [ ] `rent_auction` · [ ] `execute_handover` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `resolve_state`
+**Status:** [ ] `integrate` · [ ] `rent` · [ ] `execute_handover` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `resolve_state`
 
 **Internal functions (private):**
 
@@ -697,10 +694,22 @@ Placing the package `init` in `admin.move` yields the `ADMIN` witness, creating
 `ProtocolAdminCap` at publish time. This keeps governance concerns out of
 `rental_escrow` and makes the admin cap trivially locatable.
 
+### Why `rent()` is the single entry point
+
+All paths to becoming a tenant go through `rent()`. The function calls
+`resolve_state()` and applies the appropriate sub-logic based on the current state:
+Idle, AtDutchAuction, Rented(HandoverOpen), or Rented(HandoverConfirmed).
+
+One responsibility: pay for access. The state determines the price and the mechanics.
+The API surface is minimal — no `takeover()`, no `rent_auction()`.
+
+The caller queries the current state and price off-chain via `devInspectTransactionBlock`
+before constructing the PTB with the exact payment amount.
+
 ### Lazy minting of TenantCap and execute_handover
 
 `TenantCap` is minted only when someone actually becomes the current tenant —
-not at bid time. `takeover()` stores `pending_tenant_address` but mints nothing.
+not at bid time. `rent()` in Rented states stores `pending_tenant_address` but mints nothing.
 
 This eliminates the entire class of orphaned caps from superseded bidders.
 The only unavoidable orphan is one per completed handover: the displaced tenant's
@@ -749,12 +758,6 @@ being present to leave no orphaned objects and no locked funds.
 `ProtocolTreasury` is not included — `ProtocolAdminCap` is never burned, so the
 admin can drain it independently before or after retirement.
 
-### Why `rent_auction` is a separate function from `rent`
-
-`rent` operates from Idle — no prior state beyond a possible auction expiry.
-`rent_auction` operates from AtDutchAuction and must read the current descent
-price from the clock. Different pre-conditions, different fund sources, different
-events. A single function with mode branching would obscure the state machine.
 
 ---
 

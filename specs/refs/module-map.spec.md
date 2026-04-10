@@ -30,7 +30,6 @@ to minimize contention between independent operations.
 ║  │    escrow exists ↔     │  │  · tenure_ceiling                │  ║
 ║  │    asset exists        │  │  · handover_floor                │  ║
 ║  └────────────────────────┘  │  · descent_ceiling               │  ║
-║                               │  · descent_ceiling               │  ║
 ║  ┌────────────────────────┐  │  · retire_floor                  │  ║
 ║  │  AssetState            │  │  · CurveShape g  (credit)        │  ║
 ║  │  Idle                  │  │  · CurveShape h  (descent)       │  ║
@@ -123,8 +122,10 @@ to minimize contention between independent operations.
 
 | Operation | Objects touched | Parallel with |
 |---|---|---|
-| `rent`, `takeover`, `rent_auction` | RentalEscrow only (normal flow) | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
-| boundary transition fires | RentalEscrow + IntegratorTreasury + ProtocolTreasury | nothing (already serial on RentalEscrow) |
+| `rent`, `rent_auction` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
+| `takeover` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
+| `execute_handover` | RentalEscrow + IntegratorTreasury + ProtocolTreasury | nothing (serial on RentalEscrow) |
+| boundary transition fires (inside other fns) | RentalEscrow + IntegratorTreasury + ProtocolTreasury | nothing (already serial on RentalEscrow) |
 | `borrow_asset`, `return_asset` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
 | `retire` | RentalEscrow only | IntegratorTreasury.withdraw, ProtocolTreasury.withdraw |
 | `claim_asset` | RentalEscrow + IntegratorTreasury | ProtocolTreasury.withdraw |
@@ -501,18 +502,19 @@ The state machine logic that mutates them remains private.
 |---|---|---|---|
 | `integrate` | `public` | — | Creates RentalEscrow + IntegratorTreasury + ProtocolTreasury (all shared). Returns `OwnerCap`. |
 | `rent` | `public` | RentalEscrow | Pay exactly `min_rent_price`. Mint `TenantCap`. Enter Rented. |
-| `takeover` | `public` | RentalEscrow | Pay exactly `next_rent_price`. Mint `TenantCap`. Compute/update handover. |
+| `takeover` | `public` | RentalEscrow | Pay exactly `next_rent_price`. Stores `pending_tenant_address`. Does NOT mint `TenantCap` (lazy minting). Computes `handover_countdown_expiry`. |
 | `rent_auction` | `public` | RentalEscrow | Pay current descent price. Mint `TenantCap`. Enter Rented. |
 | `borrow_asset` | `public` | RentalEscrow | Extract asset + `AssetReceipt`. Requires current `TenantCap`. |
 | `return_asset` | `public` | RentalEscrow | Consume `AssetReceipt`, return asset to escrow. |
 | `retire` | `public` | RentalEscrow | Requires `OwnerCap`. Initiates retirement — sets `retire_flag`, blocks new bids. Never returns asset. Valid from any non-Retired state after `retire_floor` elapsed. |
 | `claim_asset` | `public` | RentalEscrow + IntegratorTreasury | Requires `OwnerCap`. Finalizes retirement — state must be `Retired`. In order: sweeps any remaining `IntegratorTreasury.earnings` to caller, deletes `IntegratorTreasury`, burns `OwnerCap`, deletes `RentalEscrow`, returns asset. No orphaned objects. No locked funds. |
+| `execute_handover` | `public` | RentalEscrow + IntegratorTreasury + ProtocolTreasury | Permissionless. Time-gated: aborts if `handover_countdown_expiry` not yet passed. Executes the handover in strict order: (1) push `remain_credit` to `current_tenant_address`, (2) deposit `used_credit` splits into IntegratorTreasury and ProtocolTreasury, (3) mint `TenantCap` and push to `pending_tenant_address`, (4) rotate addresses and cap IDs, (5) move `pending_bid` → `tenant_stake`, (6) set `phase_start_ms = handover_countdown_expiry`. Pushes before rotations — invariant. Natural actor: new tenant (wants cap) or displaced tenant (wants remain_credit). |
 | `resolve_state` | `public` | RentalEscrow (read) | Pure read. Derives current logical state from anchors + clock. |
 
 `withdraw_earnings` → `integrator_treasury::withdraw` (on `IntegratorTreasury`)
 `withdraw_treasury` → `protocol_treasury::withdraw` (on `ProtocolTreasury`)
 
-**Status:** [ ] `integrate` · [ ] `rent` · [ ] `takeover` · [ ] `rent_auction` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `resolve_state`
+**Status:** [ ] `integrate` · [ ] `rent` · [ ] `takeover` · [ ] `rent_auction` · [ ] `execute_handover` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `resolve_state`
 
 **Internal functions (private):**
 
@@ -694,6 +696,37 @@ Sui's OTW pattern requires the witness type name to match the module name.
 Placing the package `init` in `admin.move` yields the `ADMIN` witness, creating
 `ProtocolAdminCap` at publish time. This keeps governance concerns out of
 `rental_escrow` and makes the admin cap trivially locatable.
+
+### Lazy minting of TenantCap and execute_handover
+
+`TenantCap` is minted only when someone actually becomes the current tenant —
+not at bid time. `takeover()` stores `pending_tenant_address` but mints nothing.
+
+This eliminates the entire class of orphaned caps from superseded bidders.
+The only unavoidable orphan is one per completed handover: the displaced tenant's
+cap, whose storage cost they paid themselves and whose rebate is theirs to claim.
+
+`execute_handover()` is the permissionless function that triggers the handover
+execution and delivers the `TenantCap` to the winner via push. Two incentivized
+actors exist: the new tenant (wants cap and access) and the displaced tenant
+(wants remain_credit). Either can trigger it. No cooperative dependency between
+them — the displaced tenant receives remain_credit as a push regardless of who
+calls the function.
+
+**Push ordering invariant:** balances are pushed before addresses are rotated.
+`remain_credit` goes to `current_tenant_address` before that field is overwritten.
+`TenantCap` is pushed to `pending_tenant_address` before that field is cleared.
+
+**TenantCap as signal:** the cap appearing in the wallet is the clearest possible
+notification of tenancy. No indexer query, no event subscription needed —
+the object in the wallet says everything.
+
+**Edge case — both actors inactive:** if neither actor calls `execute_handover()`
+and the new tenant's tenure expires, `resolve_state()` correctly derives the full
+lazy chain (handover → tenure expiry → AtDutchAuction). The next actor to touch
+the escrow (a new renter, owner calling retire) triggers execution. No funds are
+permanently lost. The new tenant bears the cost of inaction — their stake is
+consumed for time they held exclusive rights but did not exercise.
 
 ### Why `retire` and `claim_asset` are separate functions
 

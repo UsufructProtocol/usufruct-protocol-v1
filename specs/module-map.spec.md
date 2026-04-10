@@ -1,8 +1,95 @@
 # Module Map — Sui Move Implementation
 
-Authoritative map of every module in the `liquid_renting` package.
-Derived from the design compact, implementation inventory, and
-Sui Move best-practice guidelines (one module = one object / one responsibility).
+Single reference for implementation design.
+For protocol rationale and incentive analysis see `design-compact.md`.
+
+**Status key:** `[ ]` pending · `[~]` speccing · `[x]` specced · `[*]` coded
+
+---
+
+## Object Model
+
+```
+ OWNER'S WALLET                        TENANT'S WALLET (current / pending)
+ ┌───────────────────┐                 ┌──────────────────────┐
+ │    OwnerCap       │                 │      TenantCap        │
+ │   · escrow_id: ID │                 │   · escrow_id: ID     │
+ └─────────┬─────────┘                 └──────────┬────────────┘
+           │                                       │
+           │ retire()                               │ borrow_asset()
+           │ withdraw_earnings()                    │
+           ▼                                       ▼
+╔══════════════════════════════════════════════════════════════════════╗
+║  RentalEscrow<Asset, CoinType>            [SHARED OBJECT]           ║
+║                                                                      ║
+║  ┌────────────────────────┐  ┌──────────────────────────────────┐  ║
+║  │  Asset (key + store)   │  │  IntegrationConfig  (immutable)  │  ║
+║  │                        │  │  · min_rent_price                │  ║
+║  │  ← lives here always   │  │  · tenure_ceiling                │  ║
+║  │    except during a PTB │  │  · handover_floor                │  ║
+║  │    borrow (see below)  │  │  · descent_ceiling               │  ║
+║  └────────────────────────┘  │  · retire_floor                  │  ║
+║                               │  · CurveShape g  (credit)       │  ║
+║  ┌────────────────────────┐  │  · CurveShape h  (descent)       │  ║
+║  │  AssetState            │  │  · PriceFunction                 │  ║
+║  │  Idle                  │  └──────────────────────────────────┘  ║
+║  │  Rented                │                                         ║
+║  │    HandoverOpen        │  ┌───────────────────────────────────┐ ║
+║  │    HandoverConfirmed   │  │  Phase anchors                    │ ║
+║  │  AtDutchAuction        │  │  · last_rent_price: u64           │ ║
+║  │  Retired               │  │  · phase_start_ms: u64            │ ║
+║  └────────────────────────┘  │  · handover_countdown_expiry      │ ║
+║                               │  · current_tenant_cap_id         │ ║
+║  ┌──────────────────┐         │  · pending_tenant_cap_id         │ ║
+║  │  tenant_stake    │         └───────────────────────────────────┘ ║
+║  │  Balance<C>      │                                               ║
+║  └──────────────────┘         ┌───────────────────────────────────┐ ║
+║  ┌──────────────────┐         │  Flags                            │ ║
+║  │  pending_bid     │         │  · retire_flag: bool              │ ║
+║  │  Balance<C>      │         │  · integrated_at_ms: u64          │ ║
+║  └──────────────────┘         └───────────────────────────────────┘ ║
+║  ┌──────────────────┐                                               ║
+║  │  owner_earnings  │                                               ║
+║  │  Balance<C>      │                                               ║
+║  └──────────────────┘                                               ║
+║  ┌──────────────────┐                                               ║
+║  │ protocol_treasury│                                               ║
+║  │  Balance<C>      │                                               ║
+║  └──────────────────┘                                               ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+
+ PTB SCOPE ONLY  (hot potato — no abilities)
+ ┌──────────────────────────────────────────────────────────────────┐
+ │                                                                  │
+ │   borrow_asset() ──→  Asset (out of escrow)  +  AssetReceipt   │
+ │                              │                       │           │
+ │                    used by tenant                 consumed by   │
+ │                    in integrating protocol        return_asset() │
+ │                              │                       │           │
+ │   return_asset() ◀──  Asset (back to escrow) ◀──────┘           │
+ │                                                                  │
+ └──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Coin Flows
+
+```
+ rent() / rent_auction()  →  Coin<C>           →  tenant_stake
+ takeover()               →  Coin<C>           →  pending_bid
+   (if superseded)        ←  Coin<C>           ←  pending_bid  (refund, push)
+ handover fires           :  pending_bid       →  tenant_stake (new tenant)
+                          :  used_credit×0.95  →  owner_earnings
+                          :  used_credit×0.05  →  protocol_treasury
+                          ←  Coin<C>           ←  remain_credit (to old tenant, push)
+ tenure expiry            :  stake×0.95        →  owner_earnings
+                          :  stake×0.05        →  protocol_treasury
+ withdraw_earnings()      ←  Coin<C>           ←  owner_earnings  (pull)
+ withdraw_treasury()      ←  Coin<C>           ←  protocol_treasury  (pull)
+ retire()                 ←  Asset             ←  escrow (unwrapped, deleted)
+```
 
 ---
 
@@ -59,6 +146,8 @@ No protocol types, no objects, no Sui framework dependencies.
 | `exp_scaled` | `(alpha: u64, x_num: u64, x_den: u64, scale: u64): u64` | `(e^(ax)-1)/(e^a-1)` for Exponential curves |
 | `smoothstep` | `(x_num: u64, x_den: u64, scale: u64): u64` | `3x^2 - 2x^3` for Smoothstep curves |
 
+**Status:** [ ] `mul_div` · [ ] `pow_frac` · [ ] `exp_scaled` · [ ] `smoothstep`
+
 **Depends on:** nothing.
 
 ---
@@ -86,8 +175,10 @@ All functions are pure — no objects, no mutation, no Sui state.
 | `compute_next_rent_price` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
 
 **Constructors (public):** One `new_*` per variant for each type, with validation:
-- `CurveShape`: PowerLaw requires `alpha_num > 0, alpha_den > 0`.
-- `PriceFunction`: FixedDelta requires `delta > 0`; Percentage requires `bps > 0`; CompoundDelta requires `bps > 0 \|\| delta > 0`.
+- `CurveShape`: `PowerLaw` requires `alpha_num > 0, alpha_den > 0`.
+- `PriceFunction`: `FixedDelta` requires `delta > 0`; `Percentage` requires `bps > 0`; `CompoundDelta` requires `bps > 0 || delta > 0`.
+
+**Status:** [ ] `CurveShape` · [ ] `PriceFunction` · [ ] `evaluate` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
 
 **Depends on:** `math`.
 
@@ -97,7 +188,7 @@ All functions are pure — no objects, no mutation, no Sui state.
 
 **Responsibility:** `IntegrationConfig` struct and its validated constructor.
 Bundles all immutable parameters set once at integration time.
-No UID, no object identity — this is a plain data struct embedded inside `RentalEscrow`.
+No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 
 **Types:**
 
@@ -107,13 +198,13 @@ No UID, no object identity — this is a plain data struct embedded inside `Rent
 
 **Fields:**
 - `min_rent_price: u64`
-- `tenure_ceiling: u64`
-- `handover_floor: u64`
-- `descent_ceiling: u64`
-- `retire_floor: u64`
-- `credit_curve: CurveShape`
-- `descent_curve: CurveShape`
-- `price_function: PriceFunction`
+- `tenure_ceiling: u64` — ms
+- `handover_floor: u64` — ms
+- `descent_ceiling: u64` — ms
+- `retire_floor: u64` — ms
+- `credit_curve: CurveShape` — g, for `f_credit_ascent`
+- `descent_curve: CurveShape` — h, for `f_price_descent`
+- `price_function: PriceFunction` — for `f_next_rent_price`
 
 **Exports (public):**
 
@@ -131,7 +222,9 @@ descent_ceiling  > 0
 retire_floor     >= 0   (always true for u64)
 ```
 
-**Depends on:** `curve` (owns `CurveShape`, `PriceFunction`).
+**Status:** [ ] `IntegrationConfig` · [ ] `new` · [ ] getters
+
+**Depends on:** `curve`.
 
 ---
 
@@ -158,6 +251,8 @@ Proves authority for `retire()` and `withdraw_earnings()`.
 | `burn(cap)` | `public(package)` | Destroy. Called only by `rental_escrow::retire`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 | `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts if `cap.escrow_id != escrow_id`. |
+
+**Status:** [ ] `OwnerCap` · [ ] `new` · [ ] `burn` · [ ] `escrow_id` · [ ] `assert_escrow`
 
 **Depends on:** nothing (only `sui::object`).
 
@@ -187,11 +282,13 @@ Proves authority for `retire()` and `withdraw_earnings()`.
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::{rent, takeover}`. |
+| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::{rent, takeover, rent_auction}`. |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 | `new_receipt(escrow_id): AssetReceipt` | `public(package)` | Create hot potato. Called by `rental_escrow::borrow_asset`. |
 | `consume_receipt(receipt, escrow_id)` | `public(package)` | Destroy receipt. Aborts if `receipt.escrow_id != escrow_id`. |
+
+**Status:** [ ] `TenantCap` · [ ] `AssetReceipt` · [ ] `new` · [ ] `burn` · [ ] `escrow_id` · [ ] `new_receipt` · [ ] `consume_receipt`
 
 **Depends on:** nothing (only `sui::object`).
 
@@ -220,6 +317,8 @@ No logic, no state. Pure data carriers.
 
 **Exports:** One `emit_*` function per event (`public(package)`), so only `rental_escrow` can fire them.
 
+**Status:** [ ] all event structs · [ ] all `emit_*` helpers
+
 **Depends on:** nothing (only `sui::event`).
 
 ---
@@ -246,6 +345,8 @@ Required for `withdraw_treasury`.
 |---|---|---|
 | `init(witness, ctx)` | private | Creates `ProtocolAdminCap`, transfers to sender. |
 | `assert_admin(cap)` | `public(package)` | Type-level check (receiving `&ProtocolAdminCap` is sufficient). |
+
+**Status:** [ ] `ADMIN` OTW · [ ] `ProtocolAdminCap` · [ ] `init` · [ ] `assert_admin`
 
 **Depends on:** nothing.
 
@@ -300,19 +401,100 @@ in public function signatures — external code only interacts through the publi
 | `retire` | `public` | See design §6 | Consumes `OwnerCap`. Behavior depends on state. |
 | `withdraw_earnings` | `public` | Any (owner pull) | Drain `owner_earnings` → `Coin`. Requires `OwnerCap`. |
 | `withdraw_treasury` | `public` | Any (admin pull) | Drain `protocol_treasury` → `Coin`. Requires `ProtocolAdminCap`. |
-| `burn_tenant_cap` | — | — | Delegated to `tenant_cap::burn` (re-exported or called directly by user). |
+| `resolve_state` | `public` | — | Pure read. Derives current logical state from anchors + clock. See §State Resolution. |
+
+**Status:** [ ] `integrate` · [ ] `rent` · [ ] `takeover` · [ ] `rent_auction` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `resolve_state`
 
 **Internal functions (private):**
 
 | Function | Purpose |
 |---|---|
-| `resolve_state` | Lazy evaluation engine. Resolves up to 3 elapsed transitions. Called first by every public function that reads/mutates state. |
-| `execute_handover` | Distributes funds at handover boundary. |
-| `execute_tenure_expiry` | Distributes funds at tenure expiry boundary. |
-| `execute_auction_expiry` | Transitions to Idle. |
-| `split_fee` | Splits `used_credit` into owner (95%) and treasury (5%). |
+| `execute_handover` | Distributes funds at handover boundary. Rotates cap IDs. Pushes `remain_credit` to displaced tenant. |
+| `execute_tenure_expiry` | Distributes full `tenant_stake` at tenure boundary. Transitions to `AtDutchAuction` or `Retired`. |
+| `execute_auction_expiry` | Transitions to `Idle`. No funds to move. |
+| `split_fee` | Splits an amount into owner (95%) and treasury (5%). |
 
 **Depends on:** `math`, `curve`, `config`, `owner_cap`, `tenant_cap`, `events`, `admin`.
+
+---
+
+## State Resolution
+
+`resolve_state` is the single point of truth for the current logical state of any escrow.
+
+**Signature:** `public fun resolve_state<A, C>(escrow: &RentalEscrow<A, C>, clock: &Clock): AssetState`
+
+Pure derivation from phase anchors and the clock. No mutation, no fund movement, no side effects.
+
+**Derivation logic** (boundaries evaluated in order):
+
+1. If stored state is `Rented(HandoverConfirmed)` and `handover_countdown_expiry` has passed:
+   → logical state advances to `Rented(HandoverOpen)` for the pending tenant.
+   → continue to check tenure boundary.
+2. If logical state is `Rented` and `phase_start_ms + tenure_ceiling` has passed:
+   → if `retire_flag`: → `Retired`.
+   → else: → `AtDutchAuction`.
+3. If logical state is `AtDutchAuction` and `phase_start_ms + descent_ceiling` has passed:
+   → `Idle`.
+
+At most 3 boundaries evaluated per call.
+
+**How public functions use it:**
+
+Each public function that reads or mutates state calls `resolve_state` first to derive
+the current logical state, asserts its pre-condition, then calls the appropriate
+`execute_*` helpers to apply any elapsed transitions before performing its own operation.
+The protocol is fully deterministic — incentivized actors (tenants, owners, new renters)
+drive all state advancement. No keeper required.
+
+**Off-chain use:**
+
+Because `resolve_state` takes only immutable references, it can be called via
+`devInspectTransactionBlock` with no gas cost. Frontend and indexers can derive
+the current state without replicating the state machine logic off-chain.
+
+---
+
+## Fund Flows
+
+### Tenant stake lifecycle
+
+Payment enters as `Coin<CoinType>` → split exact amount → `Balance` in `tenant_stake`.
+At handover: split into `used_credit` + `remain_credit`.
+`remain_credit` → pushed immediately to displaced tenant as `Coin`.
+`used_credit` → split into `owner_earnings` (95%) and `protocol_treasury` (5%).
+
+### Pending bid lifecycle
+
+Incoming bid enters as `Coin<CoinType>` → `Balance` in `pending_bid`.
+If superseded: refunded immediately as `Coin` (push to registered address).
+At handover: becomes new `tenant_stake`.
+
+### Owner earnings lifecycle
+
+Accumulated from `used_credit × 0.95` at each handover and tenure expiry.
+Held as `Balance<CoinType>` inside escrow.
+Withdrawn by owner via `withdraw_earnings()` → `Coin` (pull, requires `OwnerCap`).
+
+### Protocol treasury lifecycle
+
+Accumulated from `used_credit × 0.05` at each handover and tenure expiry.
+Held as `Balance<CoinType>` inside each escrow instance.
+Withdrawn by protocol admin via `withdraw_treasury()` with `ProtocolAdminCap` (pull).
+Accumulates passively — no dependency on owner activity or `OwnerCap` state.
+
+---
+
+## Notes
+
+- All timestamps in milliseconds (`sui::clock::Clock::timestamp_ms`).
+- All prices in base token units (no decimals at protocol level).
+- Asset requires `key + store` abilities to live inside the shared escrow object.
+- `CoinType` is constrained via `Balance<CoinType>` (Coin framework).
+- `handover_countdown_expiry` is deterministic: `t_bid + min(handover_floor, remaining_rent_time)`. No randomness.
+- Fund flows are asymmetric: owner pulls (`OwnerCap`), tenants receive pushes to the address registered at mint time.
+- Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.
+- Maximum nesting depth for `OwnerCap` as asset: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.
 
 ---
 
@@ -341,23 +523,28 @@ Move.lock
 
 ## Design Decisions
 
+### Why `resolve_state` is public
+
+The protocol is deterministic and lazy — state is always derivable from
+`(immutable_params, phase_anchors, clock)`. Making `resolve_state` public
+with only immutable references allows off-chain consumers to call it via
+`devInspectTransactionBlock` without gas. Frontend and indexers derive current
+state without replicating the state machine. Internal public functions use
+the same function to determine state before acting.
+
 ### Why `AssetState` and `RentPhase` live inside `rental_escrow`
 
-The best practice says "a variant structure should have its own module."
-However, `AssetState` and `RentPhase` are *internal* to the escrow's state machine.
+`AssetState` and `RentPhase` are internal to the escrow's state machine.
 They never appear in any public function signature — no external module needs to
 construct, pattern-match, or hold them. Extracting them would create a module
-with no public API whose sole consumer is `rental_escrow`, adding indirection
-without reducing complexity. They stay private.
+with no public API whose sole consumer is `rental_escrow`. They stay private.
 
 ### Why `OwnerCap` and `TenantCap` are separate modules
 
 Each is an independent Sui object with its own lifecycle, abilities, and
-authorization semantics. The escrow mints and burns them via `public(package)`
-functions. Separating them:
-- Makes abilities and transfer rules immediately visible from the type definition.
-- Prevents the escrow module from growing beyond readable size.
-- Follows the one-module-one-object principle for objects that *do* leave the module.
+authorization semantics. Separating them makes abilities and transfer rules
+immediately visible from the type definition, and follows the one-module-one-object
+principle for objects that leave the module.
 
 ### Why `config` is its own module
 
@@ -375,10 +562,10 @@ Placing the package `init` in `admin.move` yields the `ADMIN` witness, creating
 
 ### Why `rent_auction` is a separate function from `rent`
 
-`rent` operates from Idle (no prior state, no lazy transitions beyond auction expiry).
-`rent_auction` operates from AtDutchAuction (must read current descent price from
-the clock). Different pre-conditions, different fund sources, different events.
-A single function with mode branching would obscure the state machine.
+`rent` operates from Idle — no prior state beyond a possible auction expiry.
+`rent_auction` operates from AtDutchAuction and must read the current descent
+price from the clock. Different pre-conditions, different fund sources, different
+events. A single function with mode branching would obscure the state machine.
 
 ---
 
@@ -397,5 +584,5 @@ Build bottom-up following the dependency graph:
 8. rental_escrow (depends on all above)
 ```
 
-Steps 4-7 are independent of each other and of steps 1-3.
+Steps 4–7 are independent of each other and of steps 1–3.
 They can be specced and implemented in any order or in parallel.

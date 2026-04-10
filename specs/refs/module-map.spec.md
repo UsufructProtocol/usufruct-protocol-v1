@@ -363,11 +363,13 @@ This is the integration point — it consumes every other module.
 | Type | Abilities | Notes |
 |---|---|---|
 | `RentalEscrow<phantom Asset, phantom CoinType>` | `key` | Shared object. One per integrated asset. |
-| `AssetState` | `copy, drop, store` | Enum: `Idle`, `Rented { phase: RentPhase }`, `AtDutchAuction`, `Retired` |
-| `RentPhase` | `copy, drop, store` | Enum: `HandoverOpen`, `HandoverConfirmed` |
+| `AssetState` | `copy, drop, store` | Public enum: `Idle`, `Rented { phase: RentPhase }`, `AtDutchAuction`, `Retired` |
+| `RentPhase` | `copy, drop, store` | Public enum: `HandoverOpen`, `HandoverConfirmed` |
 
-`AssetState` and `RentPhase` are internal to this module. They are never exposed
-in public function signatures — external code only interacts through the public API.
+`AssetState` and `RentPhase` are defined in this module and must be public because
+`resolve_state` returns `AssetState` in its public signature. External callers
+(frontend, indexers) need to pattern-match on the variants to act on the result.
+The state machine logic that mutates them remains private.
 
 **`RentalEscrow` fields:**
 - `id: UID`
@@ -424,34 +426,36 @@ in public function signatures — external code only interacts through the publi
 
 **Signature:** `public fun resolve_state<A, C>(escrow: &RentalEscrow<A, C>, clock: &Clock): AssetState`
 
-Pure derivation from phase anchors and the clock. No mutation, no fund movement, no side effects.
+**Sole responsibility:** derive the current logical state from the stored phase anchors,
+the immutable config, and the current timestamp. Nothing else.
 
-**Derivation logic** (boundaries evaluated in order):
+No mutation. No fund movement. No side effects.
 
-1. If stored state is `Rented(HandoverConfirmed)` and `handover_countdown_expiry` has passed:
-   → logical state advances to `Rented(HandoverOpen)` for the pending tenant.
-   → continue to check tenure boundary.
-2. If logical state is `Rented` and `phase_start_ms + tenure_ceiling` has passed:
-   → if `retire_flag`: → `Retired`.
-   → else: → `AtDutchAuction`.
-3. If logical state is `AtDutchAuction` and `phase_start_ms + descent_ceiling` has passed:
-   → `Idle`.
+**Derivation logic** (boundaries evaluated in order against `clock::timestamp_ms(clock)`):
+
+1. Stored state `Rented(HandoverConfirmed)` + `handover_countdown_expiry` passed
+   → returns `Rented(HandoverOpen)`. Continues to next check.
+2. Logical state `Rented` + `phase_start_ms + tenure_ceiling` passed
+   → if `retire_flag`: returns `Retired`.
+   → else: returns `AtDutchAuction`.
+3. Logical state `AtDutchAuction` + `phase_start_ms + descent_ceiling` passed
+   → returns `Idle`.
 
 At most 3 boundaries evaluated per call.
 
 **How public functions use it:**
 
-Each public function that reads or mutates state calls `resolve_state` first to derive
-the current logical state, asserts its pre-condition, then calls the appropriate
-`execute_*` helpers to apply any elapsed transitions before performing its own operation.
-The protocol is fully deterministic — incentivized actors (tenants, owners, new renters)
-drive all state advancement. No keeper required.
+Each public function calls `resolve_state` first to know the current state,
+asserts its own pre-condition against the result, then calls the appropriate
+private `execute_*` helpers to apply any elapsed transitions before performing
+its own mutation. `resolve_state` never triggers those helpers — that is the
+caller's responsibility.
 
 **Off-chain use:**
 
-Because `resolve_state` takes only immutable references, it can be called via
-`devInspectTransactionBlock` with no gas cost. Frontend and indexers can derive
-the current state without replicating the state machine logic off-chain.
+Takes only immutable references. Can be called via `devInspectTransactionBlock`
+with no gas cost. Frontend and indexers derive the current state without
+replicating the state machine logic off-chain.
 
 ---
 
@@ -534,10 +538,14 @@ the same function to determine state before acting.
 
 ### Why `AssetState` and `RentPhase` live inside `rental_escrow`
 
-`AssetState` and `RentPhase` are internal to the escrow's state machine.
-They never appear in any public function signature — no external module needs to
-construct, pattern-match, or hold them. Extracting them would create a module
-with no public API whose sole consumer is `rental_escrow`. They stay private.
+`AssetState` and `RentPhase` are public types defined in `rental_escrow` because
+`resolve_state` returns `AssetState` in its public signature — external callers
+must be able to pattern-match on the result.
+
+They still live in `rental_escrow` rather than a separate module because no other
+module needs to construct or own them. Extracting them would create a module with
+no independent responsibility whose sole consumer remains `rental_escrow`.
+The state machine logic that mutates them stays private to the module.
 
 ### Why `OwnerCap` and `TenantCap` are separate modules
 

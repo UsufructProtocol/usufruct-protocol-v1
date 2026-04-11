@@ -115,14 +115,15 @@ and lives outside the escrow so the escrow can be cleanly destroyed on `claim_as
 
 ## Contention Map
 
-One shared object. All operations that mutate state are serial on `RentalEscrow`.
+Two shared objects per asset instance. Operations that call `apply_pending_transitions`
+are serial on both `RentalEscrow` and `ProtocolTreasury`.
 
 | Operation | Contention |
 |---|---|
-| `rent`, `execute_handover`, `retire`, `claim_asset` | serial on RentalEscrow |
-| `withdraw_earnings`, `withdraw_treasury` | serial on RentalEscrow |
-| `borrow_asset`, `return_asset` | serial on RentalEscrow |
-| `resolve_state` | serial on RentalEscrow and ProtocolTreasury |
+| `rent`, `execute_handover`, `retire`, `claim_asset`, `borrow_asset`, `resolve_state` | serial on RentalEscrow and ProtocolTreasury |
+| `return_asset` | serial on RentalEscrow only |
+| `withdraw_earnings` | serial on RentalEscrow only |
+| `withdraw_treasury` | serial on ProtocolTreasury only |
 
 ---
 
@@ -264,7 +265,7 @@ retire_floor     >= 0   (always true for u64)
 ### 4. `owner_cap.move` — Owner capability
 
 **Responsibility:** `OwnerCap` object. One per integration instance.
-Proves authority for `retire()` and `IntegratorTreasury::withdraw()`.
+Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
 
 **Types:**
 
@@ -281,7 +282,7 @@ Proves authority for `retire()` and `IntegratorTreasury::withdraw()`.
 | Function | Visibility | Purpose |
 |---|---|---|
 | `new(escrow_id, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. |
-| `burn(cap)` | `public(package)` | Destroy. Called only by `rental_escrow::retire`. |
+| `burn(cap)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 | `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts if `cap.escrow_id != escrow_id`. |
 
@@ -294,7 +295,8 @@ Proves authority for `retire()` and `IntegratorTreasury::withdraw()`.
 ### 5. `tenant_cap.move` — Tenant capability and asset receipt
 
 **Responsibility:** `TenantCap` object and `AssetReceipt` hot potato.
-`TenantCap` is minted on every valid bid; stale caps are inert.
+`TenantCap` is minted only when a bidder becomes the current tenant — not at bid time.
+Stale caps from displaced tenants are inert.
 `AssetReceipt` enforces same-PTB return of borrowed assets.
 
 **Types:**
@@ -336,7 +338,7 @@ No logic, no state. Pure data carriers.
 
 | Event | Key Fields |
 |---|---|
-| `AssetIntegrated` | `escrow_id, owner_cap_id, integrator_treasury_id, protocol_treasury_id, min_rent_price, tenure_ceiling` |
+| `AssetIntegrated` | `escrow_id, owner_cap_id, protocol_treasury_id, min_rent_price, tenure_ceiling` |
 | `RentalStarted` | `escrow_id, tenant_cap_id, price` |
 | `TakeoverInitiated` | `escrow_id, outgoing_cap_id, incoming_cap_id, new_price, handover_expiry` |
 | `BidSuperseded` | `escrow_id, refunded_cap_id, refunded_amount` |
@@ -465,7 +467,7 @@ mutates them remains private.
 
 **Sole responsibility:** execute every elapsed lazy transition — in order — before
 any public function applies its own logic. This guarantees that `owner_earnings`
-and `protocol_treasury` are never bypassed regardless of how long the escrow has
+and `ProtocolTreasury.balance` are never bypassed regardless of how long the escrow has
 been inactive or what state the caller finds it in.
 
 This is the critical invariant of the protocol. Every boundary event
@@ -553,10 +555,11 @@ protocol operation. Use cases:
 
 ### Tenant stake lifecycle
 
-Payment enters as `Coin<CoinType>` → split exact amount → `Balance` in `RentalEscrow.tenant_stake`.
+Payment enters as `Coin<CoinType>` → `Balance` in `RentalEscrow.tenant_stake`.
 At handover: split into `used_credit` + `remain_credit`.
 `remain_credit` → pushed immediately to displaced tenant as `Coin`.
-`used_credit` → split 95/5 → deposited into `IntegratorTreasury` and `ProtocolTreasury`.
+`used_credit` → split 95/5 → `owner_earnings` (95%) and `ProtocolTreasury.balance` (5%).
+At tenure expiry: full `tenant_stake` → split 95/5 → `owner_earnings` and `ProtocolTreasury.balance`.
 
 ### Pending bid lifecycle
 
@@ -564,18 +567,18 @@ Incoming bid enters as `Coin<CoinType>` → `Balance` in `RentalEscrow.pending_b
 If superseded: refunded immediately as `Coin` (push to registered address).
 At handover: becomes new `tenant_stake`.
 
-### Integrator earnings lifecycle
+### Owner earnings lifecycle
 
-Accumulated via `IntegratorTreasury::deposit()` at each handover and tenure expiry (95% share).
-Withdrawn by owner via `IntegratorTreasury::withdraw()` → `Coin` (pull, requires `OwnerCap`).
-Never touches `RentalEscrow` — fully decoupled.
+Accumulated in `RentalEscrow.owner_earnings` at each handover and tenure expiry (95% share).
+Withdrawn by owner via `withdraw_earnings()` → `Coin` (pull, requires `OwnerCap`).
+Swept atomically by `claim_asset()` when the escrow is deleted.
 
 ### Protocol fee lifecycle
 
-Accumulated via `ProtocolTreasury::deposit()` at each handover and tenure expiry (5% share).
+Accumulated in `ProtocolTreasury.balance` at each handover and tenure expiry (5% share).
 Per-asset instance — no cross-escrow contention.
-Withdrawn by admin via `ProtocolTreasury::withdraw()` → `Coin` (pull, requires `ProtocolAdminCap`).
-Admin batches withdrawals across all instances in a single PTB.
+Outlives `RentalEscrow` — not affected by `claim_asset()`.
+Withdrawn by admin via `withdraw_treasury()` → `Coin` (pull, requires `ProtocolAdminCap`).
 
 ---
 
@@ -584,13 +587,13 @@ Admin batches withdrawals across all instances in a single PTB.
 - All timestamps in milliseconds (`sui::clock::Clock::timestamp_ms`).
 - All prices in base token units (no decimals at protocol level).
 - Asset requires `key + store` abilities to live inside `RentalEscrow`.
-- `integrate()` creates and shares 3 objects atomically: `RentalEscrow`, `IntegratorTreasury`, `ProtocolTreasury`.
+- `integrate()` creates and shares 2 objects atomically: `RentalEscrow` and `ProtocolTreasury`.
 - `asset: Asset` — the asset is always present while the escrow exists. There is no valid persistent state where the escrow exists without the asset. `claim_asset()` extracts the asset and deletes the escrow atomically. The PTB borrow mechanism (`borrow_asset`/`return_asset`) is an implementation detail — the temporary extraction never persists across transaction boundaries.
 - Fund flows are asymmetric: owner and admin pull from their own objects; tenants receive pushes to the address registered at mint time.
 - Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.
 - Maximum nesting depth for `OwnerCap` as asset: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.
 - `ProtocolTreasury` is per-asset (not global) to avoid cross-escrow contention on boundary transitions.
-- Object discovery: `AssetIntegrated` includes `integrator_treasury_id` and `protocol_treasury_id` so off-chain consumers can track all instances from events. Sui RPC (`suix_queryObjects` by type) serves as a bootstrap fallback.
+- Object discovery: `AssetIntegrated` includes `protocol_treasury_id` so off-chain consumers can track all instances from events. Sui RPC (`suix_queryObjects` by type) serves as a bootstrap fallback.
 
 ---
 

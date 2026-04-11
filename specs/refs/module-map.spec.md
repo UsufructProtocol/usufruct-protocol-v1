@@ -111,10 +111,9 @@ operations stay on the single escrow object.
  withdraw_treasury()           ←  Coin<C>  ←  protocol_treasury local      (pull, ProtocolAdminCap, on escrow)
  retire()                   —  sets retire_flag only, no asset movement
  claim_asset()              ←  Coin<C>  ←  owner_earnings (sweep)
-                            →  ProtocolFeeReceipt<C>         (hot potato — must resolve in same PTB)
+                            —  protocol_treasury  →  ProtocolFeeReceipt<C>  →  OrphanedTreasury<C>  (shared, if balance > 0)
+                            —                                                →  destroy_zero          (if balance == 0)
                             ←  Asset    ←  RentalEscrow (unwrapped, deleted)
- share_protocol_fees()      —  ProtocolFeeReceipt<C>  →  OrphanedTreasury<C>  (shared, if balance > 0)
-                            —  balance == 0            →  destroy_zero
  drain_orphaned_treasury()  ←  Coin<C>  ←  OrphanedTreasury<C>             (pull, ProtocolAdminCap, deleted)
 ```
 
@@ -395,7 +394,7 @@ No logic, no state. Pure data carriers.
 | `init(witness, ctx)` | private | Creates `ProtocolAdminCap` (transfer to sender). |
 | `assert_admin(cap)` | `public(package)` | Type-level check (receiving `&ProtocolAdminCap` is sufficient). |
 | `new_receipt<C>(balance): ProtocolFeeReceipt<C>` | `public(package)` | Wraps extracted `protocol_treasury` balance into hot potato. Called only by `rental_escrow::claim_asset`. |
-| `share_protocol_fees<C>(receipt, ctx)` | `public` | Consumes hot potato. If `balance > 0`: creates and shares `OrphanedTreasury<C>`. If `balance == 0`: destroys zero balance. No-op for the caller if fees are zero. |
+| `share_protocol_fees<C>(receipt, ctx)` | `public(package)` | Consumes hot potato. If `balance > 0`: creates and shares `OrphanedTreasury<C>`. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
 | `drain_orphaned_treasury<C>(treasury, cap, ctx): Coin<C>` | `public` | Requires `ProtocolAdminCap`. Drains `OrphanedTreasury.balance` → `Coin`, deletes the object. |
 
 **Status:** [ ] `ADMIN` OTW · [ ] `ProtocolAdminCap` · [ ] `OrphanedTreasury` · [ ] `ProtocolFeeReceipt` · [ ] `init` · [ ] `assert_admin` · [ ] `new_receipt` · [ ] `share_protocol_fees` · [ ] `drain_orphaned_treasury`
@@ -449,7 +448,7 @@ that mutates them remains private.
 | `borrow_asset` | `public` | Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset + `AssetReceipt`. |
 | `return_asset` | `public` | Consumes `AssetReceipt`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
-| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Wraps `protocol_treasury` into `ProtocolFeeReceipt<C>` via `admin::new_receipt()`. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, ProtocolFeeReceipt<C>)`. Caller must resolve receipt in same PTB via `admin::share_protocol_fees()`. |
+| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Wraps `protocol_treasury` into `ProtocolFeeReceipt<C>` via `admin::new_receipt()`, immediately resolves it via `admin::share_protocol_fees()`. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
 | `withdraw_treasury` | `public` | Requires `ProtocolAdminCap` + `&mut RentalEscrow`. Drains `protocol_treasury` (local) → `Coin`. No state resolution needed. Admin utility — allows collecting fees from an active escrow without waiting for retirement. |
 | `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order, no return value. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state and credit pending earnings without triggering a full operation. See §Pending Transitions. |
@@ -761,9 +760,9 @@ The owner always makes two calls regardless of the prior state:
 
 Consistent two-step flow for all cases. `retire()` never returns an asset.
 `claim_asset()` always does — and in the same call: sweeps `owner_earnings` to the
-owner, wraps `protocol_treasury` into a `ProtocolFeeReceipt<C>` hot potato, burns
-`OwnerCap`, and deletes `RentalEscrow`. The caller resolves the hot potato in the
-same PTB via `share_protocol_fees()`. All local balances are consumed before
+owner, wraps `protocol_treasury` into a `ProtocolFeeReceipt<C>` hot potato and
+immediately resolves it via `share_protocol_fees()` (both internal to the call),
+burns `OwnerCap`, and deletes `RentalEscrow`. All local balances are consumed before
 deletion — no orphaned funds, no locked balances.
 
 

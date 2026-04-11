@@ -122,7 +122,7 @@ One shared object. All operations that mutate state are serial on `RentalEscrow`
 | `rent`, `execute_handover`, `retire`, `claim_asset` | serial on RentalEscrow |
 | `withdraw_earnings`, `withdraw_treasury` | serial on RentalEscrow |
 | `borrow_asset`, `return_asset` | serial on RentalEscrow |
-| `resolve_state` | read-only — no contention |
+| `resolve_state` | serial on RentalEscrow and ProtocolTreasury |
 
 ---
 
@@ -400,9 +400,9 @@ This is the integration point — it consumes every other module.
 | `AssetState` | `copy, drop, store` | Public enum: `Idle`, `Rented { phase: RentPhase }`, `AtDutchAuction`, `Retired` |
 | `RentPhase` | `copy, drop, store` | Public enum: `HandoverOpen`, `HandoverConfirmed` |
 
-`AssetState` and `RentPhase` are public because `resolve_state` returns `AssetState`
-in its public signature. External callers must be able to pattern-match on the result.
-The state machine logic that mutates them remains private.
+`AssetState` and `RentPhase` are public so external callers can pattern-match on
+`escrow.state` after `resolve_state` settles it. The state machine logic that
+mutates them remains private.
 
 **`RentalEscrow` fields:**
 - `id: UID`
@@ -439,7 +439,7 @@ The state machine logic that mutates them remains private.
 | `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller, burns `OwnerCap`, deletes `RentalEscrow`, returns asset. `ProtocolTreasury` is not touched — admin withdraws independently. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
 | `withdraw_treasury` | `public` | Requires `ProtocolAdminCap`. Drains `ProtocolTreasury.balance` → `Coin`. No state resolution needed. |
-| `resolve_state` | `public` | Pure read. Derives current logical state from anchors + clock. No mutation. |
+| `resolve_state` | `public` | Permissionless settler. Calls `apply_pending_transitions()`, no return value. The protocol does not need it — every public mutating function already settles state. Provided so incentivized actors (frontend, bots) can advance state and credit pending earnings without triggering a full operation. |
 
 **Status:** [ ] `integrate` · [ ] `rent` · [ ] `execute_handover` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `resolve_state`
 
@@ -518,47 +518,34 @@ never be credited. `apply_pending_transitions()` closes this gap unconditionally
 **Exception — functions that do not call it:**
 - `return_asset()` — only returns the asset to escrow, no state dependency.
 - `withdraw_earnings()` — drains `owner_earnings` directly, no state change.
-- `withdraw_treasury()` — drains `protocol_treasury` directly, no state change.
-- `resolve_state()` — pure read, no mutation by design.
+- `withdraw_treasury()` — drains `ProtocolTreasury.balance` directly, no state change.
 
 ---
 
-## State Resolution
+## State Settlement
 
-`resolve_state` is the single point of truth for the current logical state of any escrow.
+`resolve_state` is a permissionless settler. It calls `apply_pending_transitions()`
+and returns nothing. After it executes, `escrow.state` reflects the current logical
+state and all pending earnings have been credited.
 
-**Signature:** `public fun resolve_state<A, C>(escrow: &RentalEscrow<A, C>, clock: &Clock): AssetState`
+**Signature:** `public fun resolve_state<A, C>(escrow: &mut RentalEscrow<A, C>, treasury: &mut ProtocolTreasury<C>, clock: &Clock, ctx: &mut TxContext)`
 
-**Sole responsibility:** derive the current logical state from the stored phase anchors,
-the immutable config, and the current timestamp. Nothing else.
+**The protocol does not need this function.** Every public mutating function
+(`rent`, `execute_handover`, `retire`, `claim_asset`, `borrow_asset`) calls
+`apply_pending_transitions()` before its own logic. No boundary event can be
+skipped, and no funds can be permanently left uncredited, regardless of how long
+an escrow remains inactive. An idle escrow will be settled the moment the next
+natural operation occurs — if no tenant ever rents again, the owner will never
+have unclaimed earnings because there are none to claim.
 
-No mutation. No fund movement. No side effects.
-
-**Derivation logic** (boundaries evaluated in order against `clock::timestamp_ms(clock)`):
-
-1. Stored state `Rented(HandoverConfirmed)` + `handover_countdown_expiry` passed
-   → returns `Rented(HandoverOpen)`. Continues to next check.
-2. Logical state `Rented` + `phase_start_ms + tenure_ceiling` passed
-   → if `retire_flag`: returns `Retired`.
-   → else: returns `AtDutchAuction`.
-3. Logical state `AtDutchAuction` + `phase_start_ms + descent_ceiling` passed
-   → returns `Idle`.
-
-At most 3 boundaries evaluated per call.
-
-**How public functions use it:**
-
-Each public function calls `resolve_state` first to know the current state,
-asserts its own pre-condition against the result, then calls the appropriate
-private `execute_*` helpers to apply any elapsed transitions before performing
-its own mutation. `resolve_state` never triggers those helpers — that is the
-caller's responsibility.
-
-**Off-chain use:**
-
-Takes only immutable references. Can be called via `devInspectTransactionBlock`
-with no gas cost. Frontend and indexers derive the current state without
-replicating the state machine logic off-chain.
+**Why it exists:** it allows incentivized actors to advance state and credit
+`owner_earnings` and `ProtocolTreasury.balance` without performing a full
+protocol operation. Use cases:
+- A frontend that wants to display up-to-date on-chain state before the owner
+  calls `withdraw_earnings()`.
+- A keeper bot settling expired escrows on behalf of inactive owners.
+- Via `devInspectTransactionBlock`: simulate settlement for free to read the
+  resulting `escrow.state` without committing the transaction.
 
 ---
 
@@ -649,18 +636,17 @@ claimed benefit.
 
 ### Why `resolve_state` is public
 
-The protocol is deterministic and lazy — state is always derivable from
-`(immutable_params, phase_anchors, clock)`. Making `resolve_state` public
-with only immutable references allows off-chain consumers to call it via
-`devInspectTransactionBlock` without gas. Frontend and indexers derive current
-state without replicating the state machine. Internal public functions use
-the same function to determine state before acting.
+The protocol guarantees settlement through its normal operations — no external
+settler is required for correctness. `resolve_state` is public because it is
+useful, not necessary: it lets any actor advance an idle escrow's state and credit
+pending earnings without performing a full protocol operation. Keeping it public
+also enables `devInspectTransactionBlock` simulation — callers can observe the
+post-settlement state for free before deciding whether to submit a real transaction.
 
 ### Why `AssetState` and `RentPhase` live inside `rental_escrow`
 
-`AssetState` and `RentPhase` are public types defined in `rental_escrow` because
-`resolve_state` returns `AssetState` in its public signature — external callers
-must be able to pattern-match on the result.
+`AssetState` and `RentPhase` are public types defined in `rental_escrow` so
+external callers can read and pattern-match on `escrow.state` after settlement.
 
 They still live in `rental_escrow` rather than a separate module because no other
 module needs to construct or own them. Extracting them would create a module with
@@ -691,8 +677,9 @@ Placing the package `init` in `admin.move` yields the `ADMIN` witness, creating
 ### Why `rent()` is the single entry point
 
 All paths to becoming a tenant go through `rent()`. The function calls
-`resolve_state()` and applies the appropriate sub-logic based on the current state:
-Idle, AtDutchAuction, Rented(HandoverOpen), or Rented(HandoverConfirmed).
+`apply_pending_transitions()` first, then applies the appropriate sub-logic based
+on the resulting `escrow.state`: Idle, AtDutchAuction, Rented(HandoverOpen), or
+Rented(HandoverConfirmed).
 
 One responsibility: pay for access. The state determines the price and the mechanics.
 The API surface is minimal — no `takeover()`, no `rent_auction()`.
@@ -725,9 +712,9 @@ notification of tenancy. No indexer query, no event subscription needed —
 the object in the wallet says everything.
 
 **Edge case — both actors inactive:** if neither actor calls `execute_handover()`
-and the new tenant's tenure expires, `resolve_state()` correctly derives the full
-lazy chain (handover → tenure expiry → AtDutchAuction). The next actor to touch
-the escrow (a new renter, owner calling retire) triggers execution. No funds are
+and the new tenant's tenure expires, the full lazy chain (handover → tenure expiry
+→ AtDutchAuction) executes when the next actor touches the escrow — a new renter,
+the owner calling `retire`, or anyone calling `resolve_state`. No funds are
 permanently lost. The new tenant bears the cost of inaction — their stake is
 consumed for time they held exclusive rights but did not exercise.
 

@@ -433,7 +433,7 @@ that mutates them remains private.
 | Function | Visibility | Summary |
 |---|---|---|
 | `integrate` | `public` | Creates and shares `RentalEscrow` and `ProtocolTreasury`. Returns `OwnerCap`. |
-| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `compute_price_descent()`, mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, lazy mint, computes `handover_countdown_expiry`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. **Retired** or `retire_flag` on Rented — aborts. |
+| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `compute_price_descent()`, mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`, recalculates `handover_countdown_expiry` with same clamp. **Retired** or `retire_flag` on Rented — aborts. |
 | `borrow_asset` | `public` | Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset + `AssetReceipt`. |
 | `return_asset` | `public` | Consumes `AssetReceipt`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
@@ -505,6 +505,10 @@ if escrow.state == AtDutchAuction
 - No prior knowledge of how many transitions are pending. The clock and the stored
   state fields contain all necessary information.
 - If no transitions are pending, all 3 checks are no-ops. Zero overhead.
+- **Check 1 always precedes Check 2 when `pending_bid` is present.** `rent()` clamps
+  `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`,
+  guaranteeing the handover fires at or before tenure expiry. Check 2 never sees
+  `HandoverConfirmed` with an orphaned `pending_bid`.
 
 **Why every public mutating function calls it:**
 

@@ -120,7 +120,7 @@ are serial on both `RentalEscrow` and `ProtocolTreasury`.
 
 | Operation | Contention |
 |---|---|
-| `rent`, `retire`, `claim_asset`, `borrow_asset`, `resolve_state` | serial on RentalEscrow and ProtocolTreasury |
+| `rent`, `retire`, `claim_asset`, `borrow_asset`, `apply_pending_transitions` | serial on RentalEscrow and ProtocolTreasury |
 | `return_asset` | serial on RentalEscrow only |
 | `withdraw_earnings` | serial on RentalEscrow only |
 | `withdraw_treasury` | serial on ProtocolTreasury only |
@@ -403,8 +403,8 @@ This is the integration point — it consumes every other module.
 | `RentPhase` | `copy, drop, store` | Public enum: `HandoverOpen`, `HandoverConfirmed` |
 
 `AssetState` and `RentPhase` are public so external callers can pattern-match on
-`escrow.state` after `resolve_state` settles it. The state machine logic that
-mutates them remains private.
+`escrow.state` after `apply_pending_transitions` settles it. The state machine logic
+that mutates them remains private.
 
 **`RentalEscrow` fields:**
 - `id: UID`
@@ -440,15 +440,13 @@ mutates them remains private.
 | `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller, burns `OwnerCap`, deletes `RentalEscrow`, returns asset. `ProtocolTreasury` is not touched — admin withdraws independently. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
 | `withdraw_treasury` | `public` | Requires `ProtocolAdminCap`. Drains `ProtocolTreasury.balance` → `Coin`. No state resolution needed. |
-| `resolve_state` | `public` | Permissionless settler. Calls `apply_pending_transitions()`, no return value. The protocol does not need it — every public mutating function already settles state. Provided so incentivized actors (frontend, bots) can advance state and credit pending earnings without triggering a full operation. |
-
-**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `resolve_state`
+| `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order, no return value. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state and credit pending earnings without triggering a full operation. See §Pending Transitions. |
+**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `apply_pending_transitions`
 
 **Internal functions (private):**
 
 | Function | Purpose |
 |---|---|
-| `apply_pending_transitions` | **Critical.** Resolves and executes all elapsed lazy transitions in order before any public mutation. Receives `&mut ProtocolTreasury<C>` so fee deposits reach the external object. See §Pending Transitions. |
 | `do_handover` | Executes handover boundary: push `remain_credit`, split `used_credit` (95/5) into `owner_earnings` and `ProtocolTreasury.balance`, move `pending_bid` → `tenant_stake`, mint + push `TenantCap`, rotate addresses. Push-before-rotate invariant enforced here. |
 | `do_tenure_expiry` | Executes tenure boundary: split full `tenant_stake` (95/5) into `owner_earnings` and `ProtocolTreasury.balance`. Transition to `AtDutchAuction` or `Retired`. |
 | `do_auction_expiry` | Transition to `Idle`. No funds to move. |
@@ -525,23 +523,20 @@ never be credited. `apply_pending_transitions()` closes this gap unconditionally
 
 ## State Settlement
 
-`resolve_state` is a permissionless settler. It calls `apply_pending_transitions()`
-and returns nothing. After it executes, `escrow.state` reflects the current logical
-state and all pending earnings have been credited.
+`apply_pending_transitions` is both the internal settlement engine and a public
+permissionless entry point. Making it public eliminates the need for a separate
+`resolve_state` wrapper — the function is its own interface.
 
-**Signature:** `public fun resolve_state<A, C>(escrow: &mut RentalEscrow<A, C>, treasury: &mut ProtocolTreasury<C>, clock: &Clock, ctx: &mut TxContext)`
+**Signature:** `public fun apply_pending_transitions<A, C>(escrow: &mut RentalEscrow<A, C>, treasury: &mut ProtocolTreasury<C>, clock: &Clock, ctx: &mut TxContext)`
 
-**The protocol does not need this function.** Every public mutating function
-(`rent`, `retire`, `claim_asset`, `borrow_asset`) calls
-`apply_pending_transitions()` before its own logic. No boundary event can be
-skipped, and no funds can be permanently left uncredited, regardless of how long
-an escrow remains inactive. An idle escrow will be settled the moment the next
-natural operation occurs — if no tenant ever rents again, the owner will never
-have unclaimed earnings because there are none to claim.
+**The protocol does not need external callers.** Every public mutating function
+(`rent`, `retire`, `claim_asset`, `borrow_asset`) calls it before its own logic.
+No boundary event can be skipped, and no funds can be permanently left uncredited,
+regardless of how long an escrow remains inactive.
 
-**Why it exists:** it allows incentivized actors to advance state and credit
-`owner_earnings` and `ProtocolTreasury.balance` without performing a full
-protocol operation. Use cases:
+**Why it is public:** it allows incentivized actors to advance state and credit
+`owner_earnings` and `ProtocolTreasury.balance` without performing a full protocol
+operation. Use cases:
 - A frontend that wants to display up-to-date on-chain state before the owner
   calls `withdraw_earnings()`.
 - A keeper bot settling expired escrows on behalf of inactive owners.
@@ -636,14 +631,14 @@ premature: `withdraw_earnings` and `withdraw_treasury` would still contend with
 `rent()` (now on the treasury object instead of the escrow), eliminating the
 claimed benefit.
 
-### Why `resolve_state` is public
+### Why `apply_pending_transitions` is public
 
 The protocol guarantees settlement through its normal operations — no external
-settler is required for correctness. `resolve_state` is public because it is
-useful, not necessary: it lets any actor advance an idle escrow's state and credit
-pending earnings without performing a full protocol operation. Keeping it public
-also enables `devInspectTransactionBlock` simulation — callers can observe the
-post-settlement state for free before deciding whether to submit a real transaction.
+caller is required for correctness. `apply_pending_transitions` is public because
+it is useful, not necessary: it lets any actor advance an idle escrow's state and
+credit pending earnings without performing a full protocol operation. A separate
+`resolve_state` wrapper would be a redundant indirection with an identical signature
+— making the function itself public is the simpler design.
 
 ### Why `AssetState` and `RentPhase` live inside `rental_escrow`
 
@@ -700,9 +695,10 @@ cap, whose storage cost they paid themselves and whose rebate is theirs to claim
 
 The handover executes lazily inside `apply_pending_transitions()` — it fires
 automatically as a side effect of the next operation on the escrow (`rent()`,
-`borrow_asset()`, `retire()`, or `resolve_state()`). Two incentivized actors exist:
-the new tenant (wants cap and access) and the displaced tenant (wants remain_credit).
-Either can trigger it by calling `resolve_state()`. No cooperative dependency between
+`borrow_asset()`, `retire()`, or `apply_pending_transitions()`). Two incentivized
+actors exist: the new tenant (wants cap and access) and the displaced tenant
+(wants remain_credit). Either can trigger it by calling `apply_pending_transitions()`.
+No cooperative dependency between
 them — `remain_credit` and `TenantCap` are pushed regardless of who triggers the
 settlement.
 
@@ -714,7 +710,7 @@ settlement.
 notification of tenancy. No indexer query, no event subscription needed —
 the object in the wallet says everything.
 
-**Edge case — both actors inactive:** if neither actor calls `resolve_state()`
+**Edge case — both actors inactive:** if neither actor calls `apply_pending_transitions()`
 and the new tenant's tenure expires, the full lazy chain (handover → tenure expiry
 → AtDutchAuction) executes when the next actor touches the escrow. No funds are
 permanently lost. The new tenant bears the cost of inaction — their stake is

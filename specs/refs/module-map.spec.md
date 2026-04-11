@@ -346,8 +346,8 @@ No logic, no state. Pure data carriers.
 |---|---|
 | `AssetIntegrated` | `escrow_id, owner_cap_id, min_rent_price, tenure_ceiling` |
 | `RentalStarted` | `escrow_id, tenant_cap_id, price` |
-| `TakeoverInitiated` | `escrow_id, outgoing_cap_id, incoming_cap_id, new_price, handover_expiry` |
-| `BidSuperseded` | `escrow_id, refunded_cap_id, refunded_amount` |
+| `TakeoverInitiated` | `escrow_id, outgoing_cap_id, pending_tenant_address, new_price, handover_expiry` |
+| `BidSuperseded` | `escrow_id, refunded_address, refunded_amount` |
 | `HandoverCompleted` | `escrow_id, from_cap_id, to_cap_id, remain_credit_returned, owner_earned, protocol_fee` |
 | `TenureExpired` | `escrow_id, cap_id, owner_earned, protocol_fee` |
 | `DutchAuctionStarted` | `escrow_id, start_price, floor_price` |
@@ -390,7 +390,7 @@ Both singletons created once at publish time via one-time witness (OTW) pattern.
 |---|---|---|
 | `init(witness, ctx)` | private | Creates `ProtocolAdminCap` (transfer to sender) and `ProtocolTreasuryGlobal` (share). |
 | `assert_admin(cap)` | `public(package)` | Type-level check (receiving `&ProtocolAdminCap` is sufficient). |
-| `withdraw_global_treasury<C>(global, cap, ctx): Coin<C>` | `public` | Requires `ProtocolAdminCap`. Drains `ProtocolTreasuryGlobal.balance` → `Coin`. Callable once per batch of retired escrows. |
+| `withdraw_global_treasury<C>(global, cap, ctx): Coin<C>` | `public` | Requires `ProtocolAdminCap`. Drains `ProtocolTreasuryGlobal.balance` → `Coin`. |
 
 **Status:** [ ] `ADMIN` OTW · [ ] `ProtocolAdminCap` · [ ] `ProtocolTreasuryGlobal` · [ ] `init` · [ ] `assert_admin` · [ ] `withdraw_global_treasury`
 
@@ -439,7 +439,7 @@ that mutates them remains private.
 | Function | Visibility | Summary |
 |---|---|---|
 | `integrate` | `public` | Creates and shares `RentalEscrow`. Returns `OwnerCap`. |
-| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `compute_price_descent()`, mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`, recalculates `handover_countdown_expiry` with same clamp. **Retired** or `retire_flag` on Rented — aborts. |
+| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `compute_price_descent()`, mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. **Retired** or `retire_flag` on Rented — aborts. |
 | `borrow_asset` | `public` | Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset + `AssetReceipt`. |
 | `return_asset` | `public` | Consumes `AssetReceipt`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |

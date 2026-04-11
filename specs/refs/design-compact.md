@@ -53,7 +53,7 @@ For rationale, incentive analysis, and examples see liquid-renting-protocol-desi
 
 **OwnerCap:** Sole verification for owner-privileged operations: `withdraw_earnings()`, `retire()`. `used_credit` accumulates as a balance inside the escrow — the `OwnerCap` holder withdraws it actively. The protocol never tracks who holds the cap. Mutual exclusivity: `OwnerCap` exists ↔ asset is in escrow; at retirement, asset is returned and `OwnerCap` is burned.
 
-**TenantCap:** Minted on every valid bid. Non-transferable by type (`key` only — no `store`, no module transfer function). The escrow registers `current_tenant_cap_id` and `pending_tenant_cap_id` (IDs, not addresses). Verification: `object::id(cap) == escrow.current_tenant_cap_id`. The escrow also stores the tenant's **address** at mint time to enable push fund flows. Stale caps (superseded or displaced) remain in the holder's wallet — inert, failing ID check. A burn function is provided for voluntary gas recovery.
+**TenantCap:** Minted only when a bidder becomes the current tenant — at `rent()` from Idle or AtDutchAuction, and at handover completion. Bids placed during Rented states do not mint a cap. Non-transferable by type (`key` only — no `store`, no module transfer function). The escrow registers `current_tenant_cap_id` (ID) and the addresses of the current and pending tenant (`current_tenant_address`, `pending_tenant_address`) to enable push fund flows. Verification: `object::id(cap) == escrow.current_tenant_cap_id`. At handover, the displaced tenant's cap becomes stale — inert, failing the ID check. A burn function is provided for voluntary gas recovery.
 
 **Fund flow asymmetry:**
 - Owner: **pull** — `used_credit` accumulates in escrow, withdrawn actively with `OwnerCap`.

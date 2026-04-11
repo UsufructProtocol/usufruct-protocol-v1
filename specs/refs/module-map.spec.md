@@ -9,8 +9,9 @@ For protocol rationale and incentive analysis see `design-compact.md`.
 
 ## Object Model
 
-One shared object per asset instance. All protocol state, balances, and
-configuration live in `RentalEscrow`. No auxiliary treasury objects.
+Two shared objects per asset instance: `RentalEscrow` holds all protocol state
+and integrator-side balances; `ProtocolTreasury` holds accumulated protocol fees
+and lives outside the escrow so the escrow can be cleanly destroyed on `claim_asset`.
 
 ```
  OWNER'S WALLET                        TENANT'S WALLET (current / pending)
@@ -54,10 +55,18 @@ configuration live in `RentalEscrow`. No auxiliary treasury objects.
 ║  │  owner_earnings  │         └───────────────────────────────────┘ ║
 ║  │  Balance<C>      │                                               ║
 ║  └──────────────────┘                                               ║
-║  ┌──────────────────┐                                               ║
-║  │protocol_treasury │                                               ║
-║  │  Balance<C>      │                                               ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  ProtocolTreasury<CoinType>          [SHARED — per asset]           ║
+║                                                                      ║
+║  ┌──────────────────┐         ┌───────────────────────────────────┐ ║
+║  │  balance         │         │  · escrow_id: ID                  │ ║
+║  │  Balance<C>      │         └───────────────────────────────────┘ ║
 ║  └──────────────────┘                                               ║
+║                                                                      ║
+║  Created in integrate(). Outlives RentalEscrow.                     ║
+║  Admin withdraws via withdraw_treasury(ProtocolAdminCap).           ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 
@@ -87,18 +96,19 @@ configuration live in `RentalEscrow`. No auxiliary treasury objects.
  apply_pending_transitions() — handover fires:
    pending_bid              →  tenant_stake  (new tenant)
    used_credit × 0.95       →  owner_earnings
-   used_credit × 0.05       →  protocol_treasury
+   used_credit × 0.05       →  ProtocolTreasury.balance
    remain_credit            ←  Coin<C>  (push to current_tenant_address)
 
  apply_pending_transitions() — tenure expiry:
    tenant_stake × 0.95      →  owner_earnings
-   tenant_stake × 0.05      →  protocol_treasury
+   tenant_stake × 0.05      →  ProtocolTreasury.balance
 
- withdraw_earnings()        ←  Coin<C>  ←  owner_earnings   (pull, OwnerCap)
- withdraw_treasury()        ←  Coin<C>  ←  protocol_treasury (pull, ProtocolAdminCap)
+ withdraw_earnings()        ←  Coin<C>  ←  owner_earnings         (pull, OwnerCap)
+ withdraw_treasury()        ←  Coin<C>  ←  ProtocolTreasury.balance (pull, ProtocolAdminCap)
  retire()                   —  sets retire_flag only, no asset movement
  claim_asset()              ←  Coin<C>  ←  owner_earnings (sweep, if any)
                             ←  Asset    ←  RentalEscrow (unwrapped, deleted)
+                            —  ProtocolTreasury untouched; admin withdraws independently
 ```
 
 ---
@@ -386,6 +396,7 @@ This is the integration point — it consumes every other module.
 | Type | Abilities | Notes |
 |---|---|---|
 | `RentalEscrow<phantom Asset, phantom CoinType>` | `key` | Shared object. One per integrated asset. |
+| `ProtocolTreasury<phantom CoinType>` | `key` | Shared object. Created alongside escrow in `integrate`. Outlives the escrow. |
 | `AssetState` | `copy, drop, store` | Public enum: `Idle`, `Rented { phase: RentPhase }`, `AtDutchAuction`, `Retired` |
 | `RentPhase` | `copy, drop, store` | Public enum: `HandoverOpen`, `HandoverConfirmed` |
 
@@ -394,7 +405,6 @@ in its public signature. External callers must be able to pattern-match on the r
 The state machine logic that mutates them remains private.
 
 **`RentalEscrow` fields:**
-- `id: UID`
 - `id: UID`
 - `asset: Asset`
 - `config: IntegrationConfig`
@@ -408,23 +418,27 @@ The state machine logic that mutates them remains private.
 - `handover_countdown_expiry: Option<u64>`
 - `tenant_stake: Balance<CoinType>`
 - `owner_earnings: Balance<CoinType>`
-- `protocol_treasury: Balance<CoinType>`
 - `retire_flag: bool`
 - `integrated_at_ms: u64`
+
+**`ProtocolTreasury` fields:**
+- `id: UID`
+- `escrow_id: ID`
+- `balance: Balance<CoinType>`
 
 **Public API:**
 
 | Function | Visibility | Summary |
 |---|---|---|
-| `integrate` | `public` | Creates and shares `RentalEscrow`. Returns `OwnerCap`. |
+| `integrate` | `public` | Creates and shares `RentalEscrow` and `ProtocolTreasury`. Returns `OwnerCap`. |
 | `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `compute_price_descent()`, mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, lazy mint, computes `handover_countdown_expiry`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. **Retired** or `retire_flag` on Rented — aborts. |
 | `execute_handover` | `public` | Permissionless. Time-gated: aborts if `handover_countdown_expiry` not yet passed. Calls `apply_pending_transitions()` first. Natural actor: new tenant (wants cap) or displaced tenant (wants remain_credit). |
 | `borrow_asset` | `public` | Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset + `AssetReceipt`. |
 | `return_asset` | `public` | Consumes `AssetReceipt`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
-| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller, burns `OwnerCap`, deletes `RentalEscrow`, returns asset. |
+| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller, burns `OwnerCap`, deletes `RentalEscrow`, returns asset. `ProtocolTreasury` is not touched — admin withdraws independently. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
-| `withdraw_treasury` | `public` | Requires `ProtocolAdminCap`. Drains `protocol_treasury` → `Coin`. No state resolution needed. |
+| `withdraw_treasury` | `public` | Requires `ProtocolAdminCap`. Drains `ProtocolTreasury.balance` → `Coin`. No state resolution needed. |
 | `resolve_state` | `public` | Pure read. Derives current logical state from anchors + clock. No mutation. |
 
 **Status:** [ ] `integrate` · [ ] `rent` · [ ] `execute_handover` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `resolve_state`
@@ -433,9 +447,9 @@ The state machine logic that mutates them remains private.
 
 | Function | Purpose |
 |---|---|
-| `apply_pending_transitions` | **Critical.** Resolves and executes all elapsed lazy transitions in order before any public mutation. See §Pending Transitions. |
-| `do_handover` | Executes handover boundary: push `remain_credit`, split `used_credit` (95/5), move `pending_bid` → `tenant_stake`, mint + push `TenantCap`, rotate addresses. Push-before-rotate invariant enforced here. |
-| `do_tenure_expiry` | Executes tenure boundary: split full `tenant_stake` (95/5) into `owner_earnings` and `protocol_treasury`. Transition to `AtDutchAuction` or `Retired`. |
+| `apply_pending_transitions` | **Critical.** Resolves and executes all elapsed lazy transitions in order before any public mutation. Receives `&mut ProtocolTreasury<C>` so fee deposits reach the external object. See §Pending Transitions. |
+| `do_handover` | Executes handover boundary: push `remain_credit`, split `used_credit` (95/5) into `owner_earnings` and `ProtocolTreasury.balance`, move `pending_bid` → `tenant_stake`, mint + push `TenantCap`, rotate addresses. Push-before-rotate invariant enforced here. |
+| `do_tenure_expiry` | Executes tenure boundary: split full `tenant_stake` (95/5) into `owner_earnings` and `ProtocolTreasury.balance`. Transition to `AtDutchAuction` or `Retired`. |
 | `do_auction_expiry` | Transition to `Idle`. No funds to move. |
 | `split_fee` | Pure: splits an amount into (amount×0.95, amount×0.05) tuple. |
 
@@ -447,7 +461,7 @@ The state machine logic that mutates them remains private.
 
 ### `apply_pending_transitions` — private, called by every public mutating function
 
-**Signature:** `fun apply_pending_transitions<A, C>(escrow: &mut RentalEscrow<A, C>, clock: &Clock, ctx: &mut TxContext)`
+**Signature:** `fun apply_pending_transitions<A, C>(escrow: &mut RentalEscrow<A, C>, treasury: &mut ProtocolTreasury<C>, clock: &Clock, ctx: &mut TxContext)`
 
 **Sole responsibility:** execute every elapsed lazy transition — in order — before
 any public function applies its own logic. This guarantees that `owner_earnings`
@@ -465,18 +479,18 @@ the protocol. If any boundary is skipped, those funds never materialize.
 // Check 1 — pending handover
 if escrow.state == Rented(HandoverConfirmed)
    && clock.now() >= escrow.handover_countdown_expiry:
-     do_handover(escrow, clock, ctx)
+     do_handover(escrow, treasury, clock, ctx)
      // escrow.state is now Rented(HandoverOpen)
      // escrow.phase_start_ms is now handover_countdown_expiry
-     // owner_earnings and protocol_treasury credited with used_credit splits
+     // owner_earnings and ProtocolTreasury.balance credited with used_credit splits
      // remain_credit pushed to displaced tenant
 
 // Check 2 — tenure expired (reads state as mutated by check 1)
 if escrow.state == Rented(...)
    && clock.now() >= escrow.phase_start_ms + config.tenure_ceiling:
-     do_tenure_expiry(escrow, ctx)
+     do_tenure_expiry(escrow, treasury, ctx)
      // escrow.state is now AtDutchAuction (or Retired if retire_flag)
-     // owner_earnings and protocol_treasury credited with full stake splits
+     // owner_earnings and ProtocolTreasury.balance credited with full stake splits
 
 // Check 3 — auction expired (reads state as mutated by check 2)
 if escrow.state == AtDutchAuction

@@ -267,7 +267,34 @@ All set once at integration time. Immutable for the lifetime of that instance. T
 | Idle | Immediate → Retired |
 
 
-7. LAZY EVALUATION
+7. THE NATIVE TOKEN DEMAND CIRCUIT
+-----------------------------------
+
+When an integrating protocol uses its own native token `$X` as `payment_token`, the rental market creates an organic demand loop for that token.
+
+**Mechanism:** Any participant who wants to acquire the usus of the asset must first acquire `$X`. Competing for the asset converts directly into buy pressure on the native token — not speculative demand, but operational demand.
+
+**The feedback loop:**
+
+```
+demand for usus
+    → acquire $X to bid
+    → buy pressure on $X
+    → rising last_rent_price → more $X required per cycle
+    → owner earnings in $X → aligned incentive to hold $X
+    → protocol fees in $X → treasury grows in $X
+    → stronger ecosystem → more demand for the asset
+    → demand for usus
+```
+
+**Self-limiting property:** The loop is grounded in the utility-grounded value principle. If the asset's usus loses real value, rental demand collapses and token demand from this source disappears. The circuit cannot sustain itself on price speculation alone.
+
+**Design implication:** Integration parameters directly shape the circuit's intensity. `min_rent_price` too high → no participants → no token demand. `f_next_rent_price` increment too large → rapid price escalation, concentrated participation. `tenure_ceiling` too long → slow rotation, weak demand circuit.
+
+Full analysis: §15 of design document.
+
+
+9. LAZY EVALUATION
 ------------------
 
 The protocol stores only:
@@ -283,7 +310,7 @@ current_state = f(immutable_params, phase_anchors, clock::timestamp_ms())
 Functions are pure and deterministic. No keeper, no off-chain coordinator, no liveness assumption. Every state transition is resolved lazily by the next transaction that touches the shared object. Gas paid by whoever initiates the interaction.
 
 
-8. GLOSSARY (CONDENSED)
+10. GLOSSARY (CONDENSED)
 ------------------------
 
 ### Prices

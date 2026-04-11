@@ -44,8 +44,9 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 12. [Protocol Value Capture](#12-protocol-value-capture)
 13. [Attack Vectors and Protocol Resilience](#13-attack-vectors-and-protocol-resilience)
 14. [Integration Design Space](#14-integration-design-space)
-15. [The Protocol in Practice](#15-the-protocol-in-practice)
-16. [Glossary](#16-glossary)
+15. [The Native Token Demand Circuit](#15-the-native-token-demand-circuit)
+16. [The Protocol in Practice](#16-the-protocol-in-practice)
+17. [Glossary](#17-glossary)
 
 ---
 
@@ -1141,7 +1142,57 @@ No external authorization from asset systems or currency systems is required. Th
 
 ---
 
-## 15. The Protocol in Practice
+## 15. The Native Token Demand Circuit
+
+The Liquid Renting Protocol accepts any `Coin<T>` as the `payment_token` for a given integration. This design decision — motivated by generality — produces an emergent economic property when an integrating protocol uses its own native token as `payment_token`.
+
+### The Mechanism
+
+An integrating protocol that issues both an asset and a native token `$X` can configure the integration with `payment_token = $X`. From that moment, participating in the rental market for that asset requires holding `$X`. A competitor who wants to displace the current tenant, an actor who wants to enter from `Idle`, a bidder during the Dutch Auction — all must first acquire `$X` from the market.
+
+The rental market for the asset becomes an organic demand source for the native token. Not speculative demand driven by price expectations, but operational demand: actors must hold `$X` to participate. The act of competing for the usus of the asset converts directly into buy pressure on the coin.
+
+### The Feedback Loop
+
+The effect does not stop at first-order demand. As competition for the asset intensifies:
+
+1. Bidders acquire `$X` to place bids — buy pressure on the token.
+2. `last_rent_price` rises through successive takeovers — each cycle requires more `$X`.
+3. Owner earnings accumulate as `$X` — the asset owner's economic interest is aligned with the token's value.
+4. Protocol fees accumulate as `$X` — the protocol treasury grows in the same denomination.
+5. A more valuable `$X` and a more active market attract new participants — who must acquire `$X` to enter.
+
+The circuit is self-reinforcing. Demand for the usus of the asset feeds demand for the coin that gates access to that usus. The rental market and the token economy become a single coupled system — without either having been designed with the other in mind.
+
+### Why This Is Not Designed
+
+The Liquid Renting Protocol does not know about the integrating protocol's token, its supply, or its ecosystem. It operates exclusively on `Balance<CoinType>` internally. The feedback loop emerges from the combination of:
+
+- LRP's generality — any `Coin<T>` is accepted without modification.
+- The integrating protocol's choice to use its own token as `payment_token`.
+- The market's natural behavior — participants acquire whatever is required to participate.
+
+The protocol does not design for token appreciation. It designs for a market that correctly prices the usus of an asset. The token demand is a consequence of that market existing, not an explicit incentive layered on top.
+
+### The Self-Limiting Property
+
+The feedback loop is grounded in the utility-grounded value principle (§2). Demand for `$X` exists because demand for the usus of the asset is real — because the asset produces genuine value for whoever holds it. If the asset's usus loses value — the position stops generating yield, the governance rights become irrelevant, the competitive advantage disappears — rental demand collapses and the derived demand for `$X` disappears with it.
+
+The circuit cannot sustain itself on price speculation alone. A tenant who enters only because `$X` is rising will exit when it stops rising — and the rental market, pricing only usus, will reflect this honestly. The loop is strong exactly when and only when the underlying asset is genuinely useful.
+
+### A Note for Integrating Protocols
+
+An integrator choosing their native token as `payment_token` is not merely selecting a currency denomination — they are wiring the rental market directly into their token economy. The integration parameters they configure shape the intensity and character of the resulting demand circuit:
+
+- A `min_rent_price` that prices out real participants produces an inactive market and no token demand.
+- A `f_next_rent_price` with a large increment drives prices up rapidly, requiring progressively more `$X` per cycle — amplifying the circuit but concentrating participation among well-capitalized actors.
+- A `tenure_ceiling` that is too long reduces rotation and slows the demand circuit; one that is too short may discourage serious participants from entering at all.
+
+The protocol's success and the integrating protocol's token economy are not independent outcomes. The parameters that produce a liquid, competitive rental market also produce the strongest demand circuit for the native token. They are the same optimization.
+
+---
+
+## 16. The Protocol in Practice
 
 The following instantiations illustrate which protocol mechanic does the work, and what problem it solves that a static rental model could not.
 
@@ -1185,7 +1236,7 @@ The protocol applies because yield optimization is a competitive service: multip
 
 ---
 
-## 16. Glossary
+## 17. Glossary
 
 ### Actors
 

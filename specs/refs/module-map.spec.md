@@ -106,8 +106,9 @@ the global before deleting the escrow. All other operations stay on the single e
    tenant_stake × 0.95      →  owner_earnings
    tenant_stake × 0.05      →  protocol_treasury  (local, inside escrow)
 
- withdraw_earnings()        ←  Coin<C>  ←  owner_earnings   (pull, OwnerCap)
- withdraw_treasury()        ←  Coin<C>  ←  protocol_treasury (pull, ProtocolAdminCap, on escrow)
+ withdraw_earnings()           ←  Coin<C>  ←  owner_earnings            (pull, OwnerCap)
+ withdraw_treasury()           ←  Coin<C>  ←  protocol_treasury local    (pull, ProtocolAdminCap, on escrow)
+ withdraw_global_treasury()    ←  Coin<C>  ←  ProtocolTreasuryGlobal     (pull, ProtocolAdminCap)
  retire()                   —  sets retire_flag only, no asset movement
  claim_asset()              ←  Coin<C>  ←  owner_earnings (sweep)
                             —  protocol_treasury  →  ProtocolTreasuryGlobal (sweep_protocol_fees)
@@ -128,6 +129,7 @@ function that also touches the global singleton.
 | `withdraw_earnings` | serial on RentalEscrow |
 | `withdraw_treasury` | serial on RentalEscrow |
 | `claim_asset` | serial on RentalEscrow + ProtocolTreasuryGlobal |
+| `withdraw_global_treasury` | serial on ProtocolTreasuryGlobal only |
 
 ---
 
@@ -388,8 +390,9 @@ Both singletons created once at publish time via one-time witness (OTW) pattern.
 |---|---|---|
 | `init(witness, ctx)` | private | Creates `ProtocolAdminCap` (transfer to sender) and `ProtocolTreasuryGlobal` (share). |
 | `assert_admin(cap)` | `public(package)` | Type-level check (receiving `&ProtocolAdminCap` is sufficient). |
+| `withdraw_global_treasury<C>(global, cap, ctx): Coin<C>` | `public` | Requires `ProtocolAdminCap`. Drains `ProtocolTreasuryGlobal.balance` → `Coin`. Callable once per batch of retired escrows. |
 
-**Status:** [ ] `ADMIN` OTW · [ ] `ProtocolAdminCap` · [ ] `ProtocolTreasuryGlobal` · [ ] `init` · [ ] `assert_admin`
+**Status:** [ ] `ADMIN` OTW · [ ] `ProtocolAdminCap` · [ ] `ProtocolTreasuryGlobal` · [ ] `init` · [ ] `assert_admin` · [ ] `withdraw_global_treasury`
 
 **Depends on:** nothing.
 

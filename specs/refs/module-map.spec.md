@@ -298,25 +298,19 @@ Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
 
 ### 5. `tenant_cap.move` — Tenant capability and asset receipt
 
-**Responsibility:** `TenantCap` object and `AssetReceipt` hot potato.
+**Responsibility:** `TenantCap` object only.
 `TenantCap` is minted only when a bidder becomes the current tenant — not at bid time.
 Stale caps from displaced tenants are inert.
-`AssetReceipt` enforces same-PTB return of borrowed assets.
 
 **Types:**
 
 | Type | Abilities | Notes |
 |---|---|---|
 | `TenantCap` | `key` | Non-transferable (no `store`). |
-| `AssetReceipt` | *(none)* | Hot potato. |
 
 **`TenantCap` fields:**
 - `id: UID`
 - `escrow_id: ID`
-
-**`AssetReceipt` fields:**
-- `escrow_id: ID`
-- `asset_id: ID`
 
 **Exports:**
 
@@ -325,10 +319,8 @@ Stale caps from displaced tenants are inert.
 | `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::rent` (Idle, AtDutchAuction) and `rental_escrow::do_handover` (handover completion). |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
 | `escrow_id(cap): ID` | `public` | Getter. |
-| `new_receipt(escrow_id, asset_id): AssetReceipt` | `public(package)` | Create hot potato. Called by `rental_escrow::borrow_asset` with `object::id(&asset)` at borrow time. |
-| `consume_receipt(receipt, escrow_id, asset_id)` | `public(package)` | Destroy receipt. Aborts if `receipt.escrow_id != escrow_id` or `receipt.asset_id != asset_id`. |
 
-**Status:** [ ] `TenantCap` · [ ] `AssetReceipt` · [ ] `new` · [ ] `burn` · [ ] `escrow_id` · [ ] `new_receipt` · [ ] `consume_receipt`
+**Status:** [ ] `TenantCap` · [ ] `new` · [ ] `burn` · [ ] `escrow_id`
 
 **Depends on:** nothing (only `sui::object`).
 
@@ -413,6 +405,7 @@ This is the integration point — it consumes every other module.
 | `RentalEscrow<phantom Asset, phantom CoinType>` | `key` | Shared object. One per integrated asset. |
 | `AssetState` | `copy, drop, store` | Public enum: `Idle`, `Rented { phase: RentPhase }`, `AtDutchAuction`, `Retired` |
 | `RentPhase` | `copy, drop, store` | Public enum: `HandoverOpen`, `HandoverConfirmed` |
+| `AssetReceipt` | *(none)* | Hot potato. Created by `borrow_asset`, consumed by `return_asset`. Carries `escrow_id` and `asset_id` to enforce same-PTB return of the exact asset to the exact escrow. |
 
 `AssetState` and `RentPhase` are public so external callers can pattern-match on
 `escrow.state` after `apply_pending_transitions` settles it. The `state` field is
@@ -443,8 +436,8 @@ functions.
 |---|---|---|
 | `integrate` | `public` | Creates and shares `RentalEscrow`. Returns `OwnerCap`. |
 | `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `compute_price_descent()`, mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active. **Retired** — aborts. |
-| `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset + `AssetReceipt`. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
-| `return_asset` | `public` | Consumes `AssetReceipt`. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
+| `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
+| `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
 | `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Calls `admin::share_protocol_fees(protocol_treasury, ctx)` directly — creates and shares `OrphanedTreasury<C>` if balance > 0, destroys zero balance if == 0. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |

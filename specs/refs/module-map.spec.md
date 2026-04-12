@@ -208,9 +208,9 @@ All functions are pure — no objects, no mutation, no Sui state.
 | Function | Visibility | Signature | Purpose |
 |---|---|---|---|
 | `evaluate` | private | `(shape: &CurveShape, x_num: u64, x_den: u64, scale: u64): u64` | Evaluate normalized shape at `x = x_num/x_den`, result in `[0, scale]`. Used only by `compute_used_credit` and `compute_price_descent`. |
-| `compute_used_credit` | `public` | `(shape: &CurveShape, elapsed_ms: u64, tenure_ceiling: u64, last_rent_price: u64): u64` | `last_rent_price * g(elapsed / tenure_ceiling)`. Saturates at `last_rent_price`. |
-| `compute_price_descent` | `public` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
-| `compute_next_rent_price` | `public` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
+| `compute_used_credit` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, tenure_ceiling: u64, last_rent_price: u64): u64` | `last_rent_price * g(elapsed / tenure_ceiling)`. Saturates at `last_rent_price`. |
+| `compute_price_descent` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
+| `compute_next_rent_price` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
 
 **Constructors (public):** One `new_*` per variant for each type, with validation:
 - `CurveShape`: `PowerLaw` requires `alpha_num > 0, alpha_den > 0`.
@@ -443,7 +443,10 @@ functions.
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
 | `withdraw_treasury` | `public` | Requires `ProtocolAdminCap` + `&mut RentalEscrow`. Drains `protocol_treasury` (local) → `Coin`. No state resolution needed. Admin utility — allows collecting fees from an active escrow without waiting for retirement. |
 | `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order, no return value. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state and credit pending earnings without triggering a full operation. See §Pending Transitions. |
-**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `apply_pending_transitions`
+| `current_used_credit` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Internally clamps `timestamp_ms` to `handover_countdown_expiry` if state is `HandoverConfirmed` — prevents showing used_credit beyond the boundary. Used internally by `do_handover` (passes `handover_countdown_expiry`) and externally by frontends (pass `clock.timestamp_ms()`). |
+| `current_price_descent` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Current Dutch Auction price at `timestamp_ms`. Only meaningful when state is `AtDutchAuction`. |
+| `current_next_rent_price` | `public` | `(escrow: &RentalEscrow): u64`. Read-only query. Price to displace the current tenant. Only meaningful when state is `Rented`. |
+**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `apply_pending_transitions` · [ ] `current_used_credit` · [ ] `current_price_descent` · [ ] `current_next_rent_price`
 
 **`phase_start_ms` assignment:**
 

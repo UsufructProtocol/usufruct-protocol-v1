@@ -150,20 +150,17 @@ liquid_renting = "0x0"
 ## Module Dependency Graph
 
 ```
-                 math
-                  ^
-                  |
-                curve
-                  ^
-                  |
-               config
-                  ^
-                  |
-  owner_cap   tenant_cap   events   admin
-       \          |          /        /
-        \         |         /        /
-         v        v        v        v
-            rental_escrow
+  math
+   ^
+   |
+ curve
+   ^
+   |
+config    owner_cap    tenant_cap    events    admin
+    ^          ^            ^          ^        ^
+     \         |            |          |       /
+      \        |            |          |      /
+                    rental_escrow
 ```
 
 Arrows point from dependency to dependent.

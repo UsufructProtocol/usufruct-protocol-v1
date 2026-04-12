@@ -383,6 +383,8 @@ No logic, no state. Pure data carriers.
 **Fields (`OrphanedTreasury`):**
 - `id: UID`
 - `balance: Balance<CoinType>`
+- `escrow_id: ID`
+- `asset_id: ID`
 
 **Exports:**
 
@@ -390,7 +392,7 @@ No logic, no state. Pure data carriers.
 |---|---|---|
 | `init(witness, ctx)` | private | Creates `ProtocolAdminCap` (transfer to sender). |
 | `assert_admin(cap)` | `public(package)` | Type-level check (receiving `&ProtocolAdminCap` is sufficient). |
-| `share_protocol_fees<C>(balance: Balance<C>, ctx)` | `public(package)` | If `balance > 0`: creates and shares `OrphanedTreasury<C>`. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
+| `share_protocol_fees<C>(balance: Balance<C>, escrow_id: ID, asset_id: ID, ctx)` | `public(package)` | If `balance > 0`: creates and shares `OrphanedTreasury<C>` with `escrow_id` and `asset_id` for traceability. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
 | `drain_orphaned_treasury<C>(treasury, cap, ctx): Coin<C>` | `public` | Requires `ProtocolAdminCap`. Drains `OrphanedTreasury.balance` → `Coin`, deletes the object. |
 
 **Status:** [ ] `ADMIN` OTW · [ ] `ProtocolAdminCap` · [ ] `OrphanedTreasury` · [ ] `init` · [ ] `assert_admin` · [ ] `share_protocol_fees` · [ ] `drain_orphaned_treasury`

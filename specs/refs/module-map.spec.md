@@ -203,14 +203,14 @@ All functions are pure — no objects, no mutation, no Sui state.
 | `CurveShape` | `copy, drop, store` | `Linear`, `PowerLaw { alpha_num: u64, alpha_den: u64 }`, `Exponential { alpha: u64 }`, `Smoothstep` |
 | `PriceFunction` | `copy, drop, store` | `FixedDelta { delta: u64 }`, `Percentage { bps: u64 }`, `CompoundDelta { bps: u64, delta: u64 }` |
 
-**Exports (public):**
+**Functions:**
 
-| Function | Signature | Purpose |
-|---|---|---|
-| `evaluate` | `(shape: &CurveShape, x_num: u64, x_den: u64, scale: u64): u64` | Evaluate normalized shape at `x = x_num/x_den`, result in `[0, scale]` |
-| `compute_used_credit` | `(shape: &CurveShape, elapsed_ms: u64, tenure_ceiling: u64, last_rent_price: u64): u64` | `last_rent_price * g(elapsed / tenure_ceiling)`. Saturates at `last_rent_price`. |
-| `compute_price_descent` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
-| `compute_next_rent_price` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
+| Function | Visibility | Signature | Purpose |
+|---|---|---|---|
+| `evaluate` | private | `(shape: &CurveShape, x_num: u64, x_den: u64, scale: u64): u64` | Evaluate normalized shape at `x = x_num/x_den`, result in `[0, scale]`. Used only by `compute_used_credit` and `compute_price_descent`. |
+| `compute_used_credit` | `public` | `(shape: &CurveShape, elapsed_ms: u64, tenure_ceiling: u64, last_rent_price: u64): u64` | `last_rent_price * g(elapsed / tenure_ceiling)`. Saturates at `last_rent_price`. |
+| `compute_price_descent` | `public` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
+| `compute_next_rent_price` | `public` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
 
 **Constructors (public):** One `new_*` per variant for each type, with validation:
 - `CurveShape`: `PowerLaw` requires `alpha_num > 0, alpha_den > 0`.

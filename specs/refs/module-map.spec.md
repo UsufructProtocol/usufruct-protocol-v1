@@ -341,19 +341,19 @@ No logic, no state. Pure data carriers.
 
 **Types (all `copy, drop`):**
 
-| Event | Key Fields |
-|---|---|
-| `AssetIntegrated` | `escrow_id, owner_cap_id, min_rent_price, tenure_ceiling` |
-| `RentalStarted` | `escrow_id, tenant_cap_id, price` |
-| `TakeoverInitiated` | `escrow_id, outgoing_cap_id, pending_tenant_address, new_price, handover_expiry` |
-| `BidSuperseded` | `escrow_id, refunded_address, refunded_amount` |
-| `HandoverCompleted` | `escrow_id, from_cap_id, to_cap_id, remain_credit_returned, owner_earned, protocol_fee` |
-| `TenureExpired` | `escrow_id, cap_id, owner_earned, protocol_fee` |
-| `DutchAuctionStarted` | `escrow_id, start_price, floor_price` |
-| `DutchAuctionEntry` | `escrow_id, tenant_cap_id, entry_price` |
-| `AssetIdled` | `escrow_id` |
-| `RetireInitiated` | `escrow_id, current_state: u8` |
-| `AssetRetired` | `escrow_id` |
+| Event | Key Fields | Emitted by |
+|---|---|---|
+| `AssetIntegrated` | `escrow_id, owner_cap_id, min_rent_price, tenure_ceiling` | `integrate` |
+| `RentalStarted` | `escrow_id, tenant_cap_id, price` | `rent` (Idle, AtDutchAuction) |
+| `TakeoverInitiated` | `escrow_id, outgoing_cap_id, pending_tenant_address, new_price, handover_expiry` | `rent` (HandoverOpen) |
+| `BidSuperseded` | `escrow_id, refunded_address, refunded_amount` | `rent` (HandoverConfirmed) |
+| `HandoverCompleted` | `escrow_id, from_cap_id, to_cap_id, remain_credit_returned, owner_earned, protocol_fee` | `apply_pending_transitions` → `do_handover` (lazy) |
+| `TenureExpired` | `escrow_id, cap_id, owner_earned, protocol_fee` | `apply_pending_transitions` → `do_tenure_expiry` (lazy) |
+| `DutchAuctionStarted` | `escrow_id, start_price, floor_price` | `apply_pending_transitions` → `do_tenure_expiry` (lazy) |
+| `DutchAuctionEntry` | `escrow_id, tenant_cap_id, entry_price` | `rent` (AtDutchAuction) |
+| `AssetIdled` | `escrow_id` | `apply_pending_transitions` → `do_auction_expiry` (lazy) |
+| `RetireInitiated` | `escrow_id, current_state: u8` | `retire` |
+| `AssetRetired` | `escrow_id` | `claim_asset` |
 
 **Exports:** One `emit_*` function per event (`public(package)`), so only `rental_escrow` can fire them.
 

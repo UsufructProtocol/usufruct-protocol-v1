@@ -316,6 +316,7 @@ Stale caps from displaced tenants are inert.
 
 **`AssetReceipt` fields:**
 - `escrow_id: ID`
+- `asset_id: ID`
 
 **Exports:**
 
@@ -324,8 +325,8 @@ Stale caps from displaced tenants are inert.
 | `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::rent` (Idle, AtDutchAuction) and `rental_escrow::do_handover` (handover completion). |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
 | `escrow_id(cap): ID` | `public` | Getter. |
-| `new_receipt(escrow_id): AssetReceipt` | `public(package)` | Create hot potato. Called by `rental_escrow::borrow_asset`. |
-| `consume_receipt(receipt, escrow_id)` | `public(package)` | Destroy receipt. Aborts if `receipt.escrow_id != escrow_id`. |
+| `new_receipt(escrow_id, asset_id): AssetReceipt` | `public(package)` | Create hot potato. Called by `rental_escrow::borrow_asset` with `object::id(&asset)` at borrow time. |
+| `consume_receipt(receipt, escrow_id, asset_id)` | `public(package)` | Destroy receipt. Aborts if `receipt.escrow_id != escrow_id` or `receipt.asset_id != asset_id`. |
 
 **Status:** [ ] `TenantCap` · [ ] `AssetReceipt` · [ ] `new` · [ ] `burn` · [ ] `escrow_id` · [ ] `new_receipt` · [ ] `consume_receipt`
 
@@ -444,7 +445,7 @@ functions.
 | `integrate` | `public` | Creates and shares `RentalEscrow`. Returns `OwnerCap`. |
 | `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `compute_price_descent()`, mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active. **Retired** — aborts. |
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset + `AssetReceipt`. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
-| `return_asset` | `public` | Consumes `AssetReceipt`. Returns asset to escrow. No state resolution needed. |
+| `return_asset` | `public` | Consumes `AssetReceipt`. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
 | `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Wraps `protocol_treasury` into `ProtocolFeeReceipt<C>` via `admin::new_receipt()`, immediately resolves it via `admin::share_protocol_fees()`. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |

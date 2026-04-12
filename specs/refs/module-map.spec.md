@@ -445,6 +445,19 @@ functions.
 | `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order, no return value. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state and credit pending earnings without triggering a full operation. See §Pending Transitions. |
 **Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `apply_pending_transitions`
 
+**`phase_start_ms` assignment:**
+
+| Transition | New `phase_start_ms` |
+|---|---|
+| `rent()` from Idle | `clock.now()` |
+| `rent()` from AtDutchAuction | `clock.now()` |
+| Handover completes | `handover_countdown_expiry` |
+| Tenure expiry → AtDutchAuction | `phase_start_ms + tenure_ceiling` |
+| Auction expiry → Idle | `phase_start_ms + descent_ceiling` |
+
+`clock.now()` is used only when a tenant voluntarily starts a new tenure. All lazy
+boundaries use the exact expiry timestamp so no time is gifted or lost between
+when a transition logically occurred and when it was executed.
 
 **Internal functions (private):**
 

@@ -20,8 +20,8 @@ It is the bridge between raw arithmetic (`math`) and protocol-level computations
 - `PriceFunction` — enumerated functional forms for `f_next_rent_price`.
 - `evaluate_curve` — private dispatcher. Single entry point for evaluating
   any `CurveShape` at a given (t, t_max) pair. Returns a value in [0, SCALE].
-- `new_logistic` — the only valid constructor for the `Logistic` variant.
-  Precomputes `denom` at construction time.
+- `LOGISTIC_K: u64 = 20` and `LOGISTIC_DENOM: u64` — module-level constants.
+  `denom` is precomputed from k=20 at compile time, never set by the integrator.
 - `compute_used_credit`, `compute_price_descent`, `compute_next_rent_price` —
   `public(package)` protocol-level wrappers. Called by `rental_escrow` via
   `current_used_credit`, `current_price_descent`, `current_next_rent_price`.
@@ -72,12 +72,14 @@ enum CurveShape {
         alpha_abs: u8,
         alpha_neg: bool,
     },
-    Logistic {
-        k: u8,
-        denom: u64,
-    },
+    Logistic,
 }
 ```
+
+`Logistic` has no fields. `k = 20` and `denom` are module-level constants:
+
+    const LOGISTIC_K: u64 = 20;
+    const LOGISTIC_DENOM: u64 = /* precomputed: (σ(10) − σ(−10)) · SCALE ≈ 999_909_119 */;
 
 **Abilities:** `copy, drop, store`
 
@@ -92,10 +94,7 @@ enum CurveShape {
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num, alpha_den` | `alpha_num != alpha_den` (degenerate linear — use `Linear` instead) |
 | `Exponential` | `g(x) = (e^(α·x) - 1) / (e^α - 1)` | `alpha_abs` | `∈ [1, 8]` |
 | `Exponential` | `g(x) = (e^(α·x) - 1) / (e^α - 1)` | `alpha_neg` | `false` → convex (α > 0), `true` → concave (α < 0) |
-| `Logistic` | `g(x) = (σ(k·(x−0.5)) − σ(−k/2)) / denom` | `k` | `∈ [10, 16]` |
-
-**Note on `Logistic`:** never construct `Logistic { k, denom }` directly.
-Always use `curve::new_logistic(k)` — it validates `k` and precomputes `denom`.
+| `Logistic` | `g(x) = (σ(20·(x−0.5)) − σ(−10)) / LOGISTIC_DENOM` | — | No fields. k=20 fixed. |
 
 ### PriceFunction — enum
 
@@ -339,75 +338,60 @@ alpha_abs = 0 is rejected because e^0 - 1 = 0 makes the denominator zero
 8. LOGISTIC VARIANT
 --------------------
 
-    g(x) = (σ(k·(x − 0.5)) − σ(−k/2)) / denom
+    g(x) = (σ(20·(x − 0.5)) − σ(−10)) / LOGISTIC_DENOM
 
     where σ(y) = e^y / (e^y + 1)
-    and   denom = (σ(k/2) − σ(−k/2)) * SCALE   [precomputed at integration time]
 
-    k: u8      — steepness, ∈ [10, 16]. Inflection fixed at x = 0.5.
-    denom: u64 — precomputed normalization constant. Never set manually.
+No fields. `k = 20` and `LOGISTIC_DENOM` are module-level constants.
+Produces a steep S-curve with inflection fixed at x = 0.5 — distinctly
+more pronounced than `Smoothstep`. Use when a sharp sigmoid is required.
 
-**Construction:** always use `curve::new_logistic(k)` — never construct
-`Logistic { k, denom }` directly. `new_logistic` validates k ∈ [10, 16],
-computes denom via `math::exp_scaled`, and returns the variant.
+### Module-level constants
 
-### Shape by k value
+    const LOGISTIC_K: u64    = 20;
+    const LOGISTIC_DENOM: u64 = /* (σ(10) − σ(−10)) · SCALE ≈ 999_909_119 */;
 
-    k ∈ [10, 12]  →  pronounced S-curve, distinctly steeper than Smoothstep
-    k ∈ [13, 16]  →  steep cliff near x = 0.5
+`LOGISTIC_DENOM` is derived once:
 
-k < 10 produces curves indistinguishable from Linear or Smoothstep — use those
-variants instead (exact computation, negligible gas cost).
-Use `Logistic` only when a steep, parameterizable sigmoid is required.
-
-### new_logistic(k: u8): CurveShape
-
-Precomputes `denom` at construction time:
-
-    let TS: u128 = TAYLOR_SCALE;                               // 10^18, from math
-    let ek2: u128 = math::exp_scaled(k as u64, 2, false);     // e^(k/2) * TS
-    // σ(k/2)  = ek2 / (ek2 + TS)
-    // σ(−k/2) = TS  / (ek2 + TS)
-    // σ(k/2) − σ(−k/2) = (ek2 − TS) / (ek2 + TS)
-    denom = ((ek2 - TS) * SCALE as u128 / (ek2 + TS)) as u64;
-    CurveShape::Logistic { k, denom }
+    let TS: u128 = TAYLOR_SCALE;
+    let ek2: u128 = math::exp_scaled(10, 1, false);   // e^10 * TS
+    // σ(10) − σ(−10) = (ek2 − TS) / (ek2 + TS)
+    LOGISTIC_DENOM = ((ek2 - TS) * SCALE as u128 / (ek2 + TS)) as u64;
 
 ### Runtime algorithm
 
     let TS: u128 = TAYLOR_SCALE;
     let S:  u128 = SCALE as u128;
 
-    // y = k · (x − 0.5) = k · (t − t_max/2) / t_max
-    // y_num_abs = k · |2t − t_max|, y_den = 2 · t_max, y_neg = (t < t_max/2)
+    // y = 20 · (x − 0.5) = 20 · (t − t_max/2) / t_max
     let two_t = 2 * t;
     let (y_num_abs, y_neg) = if two_t >= t_max {
-        (k as u64 * (two_t - t_max), false)
+        (LOGISTIC_K * (two_t - t_max), false)
     } else {
-        (k as u64 * (t_max - two_t), true)
+        (LOGISTIC_K * (t_max - two_t), true)
     };
     let y_den: u64 = 2 * t_max;
 
     let ey: u128 = math::exp_scaled(y_num_abs, y_den, y_neg);   // e^y * TS
     let sigma_y: u128 = ey * S / (ey + TS);                     // σ(y) * SCALE
 
-    // σ(−k/2) * SCALE = (SCALE − denom) / 2   [derived from stored denom]
-    let sigma_floor: u128 = (S - denom as u128) / 2;
+    // σ(−10) * SCALE = (SCALE − LOGISTIC_DENOM) / 2
+    let sigma_floor: u128 = (S - LOGISTIC_DENOM as u128) / 2;
 
-    ((sigma_y - sigma_floor) * S / denom as u128) as u64
+    ((sigma_y - sigma_floor) * S / LOGISTIC_DENOM as u128) as u64
 
-Note: `two_t` and `y_den` require `tenure_ceiling ≤ u64::MAX / 2 ≈ 9.2×10^18 ms`
-(~292 million years). Enforced by `config::new`.
+Note: `two_t` and `y_den` require `tenure_ceiling ≤ u64::MAX / 2`.
+Enforced by `config::new`.
 
 ### Overflow analysis
 
-    ey          ≤ e^8 · TS ≈ 2981 · 10^18 ≈ 3×10^21   fits u128 ✓
-    ey · S      ≤ 3×10^21 · 10^9 = 3×10^30             fits u128 ✓
-    (σ_y − σ_floor) · S  ≤ S · S = 10^18               fits u128 ✓
+    ey          ≤ e^10 · TS ≈ 22026 · 10^18 ≈ 2.2×10^22   fits u128 ✓
+    ey · S      ≤ 2.2×10^22 · 10^9 = 2.2×10^31             fits u128 ✓
+    (σ_y − σ_floor) · S  ≤ S · S = 10^18                   fits u128 ✓
 
-### Constraint at integration time
+### No integration-time constraint
 
-    k ∈ [10, 16]
-    denom > 0   (guaranteed: k ≥ 10 ensures σ(k/2) > σ(−k/2))
+`Logistic` has no fields — nothing to validate at integration time.
 
 
 9. COMPUTE_USED_CREDIT
@@ -502,7 +486,6 @@ in `config::new`.
 
 | Function | Visibility | Notes |
 |---|---|---|
-| `new_logistic(k: u8): CurveShape` | `public` | Only valid constructor for `Logistic`. |
 | `compute_used_credit(...)` | `public(package)` | Called by `rental_escrow::current_used_credit`. |
 | `compute_price_descent(...)` | `public(package)` | Called by `rental_escrow::current_price_descent`. |
 | `compute_next_rent_price(...)` | `public(package)` | Called by `rental_escrow::current_next_rent_price`. |

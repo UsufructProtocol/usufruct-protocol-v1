@@ -200,7 +200,7 @@ All functions are pure — no objects, no mutation, no Sui state.
 
 | Type | Abilities | Variants |
 |---|---|---|
-| `CurveShape` | `copy, drop, store` | `Linear`, `PowerLaw { alpha_num: u64, alpha_den: u64 }`, `Exponential { alpha: u64 }`, `Smoothstep` |
+| `CurveShape` | `copy, drop, store` | `Linear`, `Smoothstep`, `PowerLaw { alpha_num: u8, alpha_den: u8 }`, `Exponential { alpha_abs: u8, alpha_neg: bool }`, `Logistic { k: u8, denom: u64 }` |
 | `PriceFunction` | `copy, drop, store` | `FixedDelta { delta: u64 }`, `Percentage { bps: u64 }`, `CompoundDelta { bps: u64, delta: u64 }` |
 
 **Functions:**
@@ -213,10 +213,10 @@ All functions are pure — no objects, no mutation, no Sui state.
 | `compute_next_rent_price` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
 
 **Constructors (public):** One `new_*` per variant for each type, with validation:
-- `CurveShape`: `PowerLaw` requires `alpha_num > 0, alpha_den > 0`.
+- `CurveShape`: `PowerLaw` requires `alpha_num ∈ [1,8], alpha_den ∈ {1,2,3,4}, alpha_num != alpha_den`. `Exponential` requires `alpha_abs ∈ [1,8]`. `Logistic` — use `new_logistic(k)` only, never construct directly; validates `k ∈ [10,16]` and precomputes `denom`.
 - `PriceFunction`: `FixedDelta` requires `delta > 0`; `Percentage` requires `bps > 0`; `CompoundDelta` requires `bps > 0 || delta > 0`.
 
-**Status:** [ ] `CurveShape` · [ ] `PriceFunction` · [ ] `evaluate` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
+**Status:** [ ] `CurveShape` · [ ] `PriceFunction` · [ ] `evaluate` · [ ] `new_logistic` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
 
 **Depends on:** `math`.
 

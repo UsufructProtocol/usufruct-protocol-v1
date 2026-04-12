@@ -415,8 +415,9 @@ This is the integration point — it consumes every other module.
 | `RentPhase` | `copy, drop, store` | Public enum: `HandoverOpen`, `HandoverConfirmed` |
 
 `AssetState` and `RentPhase` are public so external callers can pattern-match on
-`escrow.state` after `apply_pending_transitions` settles it. The state machine logic
-that mutates them remains private.
+`escrow.state` after `apply_pending_transitions` settles it. The `state` field is
+not directly writable from outside the module — all transitions go through module
+functions.
 
 **`RentalEscrow` fields:**
 - `id: UID`
@@ -676,7 +677,9 @@ external callers can read and pattern-match on `escrow.state` after settlement.
 They still live in `rental_escrow` rather than a separate module because no other
 module needs to construct or own them. Extracting them would create a module with
 no independent responsibility whose sole consumer remains `rental_escrow`.
-The state machine logic that mutates them stays private to the module.
+The `state` field is not directly writable from outside the module. All transitions
+go through module functions — `apply_pending_transitions`, `rent`, `retire`, and
+`claim_asset` — which control when and how state changes.
 
 ### Why `OwnerCap` and `TenantCap` are separate modules
 

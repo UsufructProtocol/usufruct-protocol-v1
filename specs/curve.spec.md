@@ -20,8 +20,8 @@ It is the bridge between raw arithmetic (`math`) and protocol-level computations
 - `PriceFunction` — enumerated functional forms for `f_next_rent_price`.
 - `evaluate_curve` — private dispatcher. Single entry point for evaluating
   any `CurveShape` at a given (t, t_max) pair. Returns a value in [0, SCALE].
-- `LOGISTIC_K: u64 = 20` and `LOGISTIC_DENOM: u64` — module-level constants.
-  `denom` is precomputed from k=20 at compile time, never set by the integrator.
+- `LOGISTIC_K: u64 = 12` and `LOGISTIC_DENOM: u64` — module-level constants.
+  `denom` is precomputed from k=12 at compile time, never set by the integrator.
 - `compute_used_credit`, `compute_price_descent`, `compute_next_rent_price` —
   `public(package)` protocol-level wrappers. Called by `rental_escrow` via
   `current_used_credit`, `current_price_descent`, `current_next_rent_price`.
@@ -338,24 +338,24 @@ alpha_abs = 0 is rejected because e^0 - 1 = 0 makes the denominator zero
 8. LOGISTIC VARIANT
 --------------------
 
-    g(x) = (σ(20·(x − 0.5)) − σ(−10)) / LOGISTIC_DENOM
+    g(x) = (σ(12·(x − 0.5)) − σ(−6)) / LOGISTIC_DENOM
 
     where σ(y) = e^y / (e^y + 1)
 
-No fields. `k = 20` and `LOGISTIC_DENOM` are module-level constants.
-Produces a steep S-curve with inflection fixed at x = 0.5 — distinctly
-more pronounced than `Smoothstep`. Use when a sharp sigmoid is required.
+No fields. `k = 12` and `LOGISTIC_DENOM` are module-level constants.
+Produces a pronounced S-curve with inflection fixed at x = 0.5 — clearly
+distinguishable from `Smoothstep` without being extreme.
 
 ### Module-level constants
 
-    const LOGISTIC_K: u64    = 20;
-    const LOGISTIC_DENOM: u64 = /* (σ(10) − σ(−10)) · SCALE ≈ 999_909_119 */;
+    const LOGISTIC_K: u64    = 12;
+    const LOGISTIC_DENOM: u64 = /* (σ(6) − σ(−6)) · SCALE ≈ 997_524_148 */;
 
 `LOGISTIC_DENOM` is derived once:
 
     let TS: u128 = TAYLOR_SCALE;
-    let ek2: u128 = math::exp_scaled(10, 1, false);   // e^10 * TS
-    // σ(10) − σ(−10) = (ek2 − TS) / (ek2 + TS)
+    let ek2: u128 = math::exp_scaled(6, 1, false);   // e^6 * TS
+    // σ(6) − σ(−6) = (ek2 − TS) / (ek2 + TS)
     LOGISTIC_DENOM = ((ek2 - TS) * SCALE as u128 / (ek2 + TS)) as u64;
 
 ### Runtime algorithm
@@ -363,7 +363,7 @@ more pronounced than `Smoothstep`. Use when a sharp sigmoid is required.
     let TS: u128 = TAYLOR_SCALE;
     let S:  u128 = SCALE as u128;
 
-    // y = 20 · (x − 0.5) = 20 · (t − t_max/2) / t_max
+    // y = 12 · (x − 0.5) = 12 · (t − t_max/2) / t_max
     let two_t = 2 * t;
     let (y_num_abs, y_neg) = if two_t >= t_max {
         (LOGISTIC_K * (two_t - t_max), false)
@@ -375,7 +375,7 @@ more pronounced than `Smoothstep`. Use when a sharp sigmoid is required.
     let ey: u128 = math::exp_scaled(y_num_abs, y_den, y_neg);   // e^y * TS
     let sigma_y: u128 = ey * S / (ey + TS);                     // σ(y) * SCALE
 
-    // σ(−10) * SCALE = (SCALE − LOGISTIC_DENOM) / 2
+    // σ(−6) * SCALE = (SCALE − LOGISTIC_DENOM) / 2
     let sigma_floor: u128 = (S - LOGISTIC_DENOM as u128) / 2;
 
     ((sigma_y - sigma_floor) * S / LOGISTIC_DENOM as u128) as u64
@@ -385,9 +385,9 @@ Enforced by `config::new`.
 
 ### Overflow analysis
 
-    ey          ≤ e^10 · TS ≈ 22026 · 10^18 ≈ 2.2×10^22   fits u128 ✓
-    ey · S      ≤ 2.2×10^22 · 10^9 = 2.2×10^31             fits u128 ✓
-    (σ_y − σ_floor) · S  ≤ S · S = 10^18                   fits u128 ✓
+    ey          ≤ e^6 · TS ≈ 403 · 10^18 ≈ 4×10^20   fits u128 ✓
+    ey · S      ≤ 4×10^20 · 10^9 = 4×10^29            fits u128 ✓
+    (σ_y − σ_floor) · S  ≤ S · S = 10^18              fits u128 ✓
 
 ### No integration-time constraint
 

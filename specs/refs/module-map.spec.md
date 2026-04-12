@@ -200,7 +200,7 @@ All functions are pure — no objects, no mutation, no Sui state.
 
 | Type | Abilities | Variants |
 |---|---|---|
-| `CurveShape` | `copy, drop, store` | `Linear`, `Smoothstep`, `PowerLaw { alpha_num: u8, alpha_den: u8 }`, `Exponential { alpha_abs: u8, alpha_neg: bool }`, `Logistic` (no fields — k=20 fixed, denom precomputed as module constant) |
+| `CurveShape` | `copy, drop, store` | `Linear`, `Smoothstep`, `PowerLaw { alpha_num: u8, alpha_den: u8 }`, `Exponential { alpha_abs: u8, alpha_neg: bool }`, `Logistic` (no fields — k=12 fixed, denom precomputed as module constant) |
 | `PriceFunction` | `copy, drop, store` | `FixedDelta { delta: u64 }`, `Percentage { bps: u64 }`, `CompoundDelta { bps: u64, delta: u64 }` |
 
 **Functions:**

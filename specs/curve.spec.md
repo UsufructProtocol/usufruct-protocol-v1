@@ -139,7 +139,7 @@ All variants must satisfy:
 - No u64 overflow on computation
 
 Per-variant overflow constraints:
-- `FixedDelta`:  `delta > 0` (enforced by the > check above)
+- `FixedDelta`:  `delta > 0`
 - `Percentage`:  `bps ∈ [1, u64::MAX - 10000]` so `10000 + bps` does not overflow u64
 - `CompoundDelta`: same `bps` bound as Percentage; `delta` unconstrained (> check handles it)
 

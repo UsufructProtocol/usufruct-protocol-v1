@@ -26,7 +26,7 @@ movements, no Sui framework dependencies.
 - `CurveShape`, `PriceFunction` — live in `curve`.
 - `evaluate_curve`, `compute_used_credit`, `compute_price_descent`,
   `compute_next_rent_price` — live in `curve`.
-- Integration-time validation — lives in `config::new`.
+- Integration-time validation — lives in `curve` constructors (`config::new` assembles, does not re-validate).
 - Protocol state, fund movements, access control, event emission.
 
 **Dependency direction:** `math` calls nothing outside its own module.
@@ -120,7 +120,7 @@ Abort cases:
 
 `d ∈ {2, 3, 4}` — the only degrees used by `curve` (PowerLaw variant).
 Behaviour outside this range is undefined. Validation is the caller's
-responsibility (`config::new`).
+responsibility (`curve`'s `power_law` constructor).
 
 ### Algorithm
 
@@ -238,7 +238,7 @@ Note: divisor `k * y_den` computed in u128 to avoid u64 overflow for large y_den
     term    ≤ peak ≈ e^8 · TS / √(2π·8) ≈ 4.2×10^20      fits u128 ✓
     term · y_num:
       Exponential: y_num = alpha_abs · t ≤ 8 · tenure_ceiling
-      Logistic:    y_num = k · |2t − t_max| ≤ 16 · tenure_ceiling
+      Logistic:    y_num = k · |2t − t_max| ≤ 12 · tenure_ceiling
       For tenure_ceiling ≤ 10^13 ms (~317 years):
         term · y_num ≤ 4.2×10^20 · 16 · 10^13 = 6.7×10^34  fits u128 ✓
       u128 max ≈ 3.4×10^38 — safe margin of ~3 orders of magnitude.

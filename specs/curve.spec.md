@@ -573,12 +573,37 @@ If `elapsed_ms >= descent_ceiling`, `evaluate_curve` returns SCALE and
         last_rent_price: u64,
     ): u64
 
-### Dispatch
+### Semantics
 
-| Variant                        | Computation |
-|--------------------------------|-------------|
-| `FixedDelta { delta }`         | `last_rent_price + delta` |
-| `CompoundDelta { bps, delta }` | `math::mul_div(last_rent_price, 10000 + bps, 10000) + delta` |
+    compute_next_rent_price(price_fn, last_rent_price)
+        → evaluate_price_fn(price_fn, last_rent_price)
+
+Thin wrapper. All logic lives in the private layer below.
+
+---
+
+### `evaluate_price_fn` (private dispatcher)
+
+    fun evaluate_price_fn(price_fn: &PriceFunction, last_rent_price: u64): u64 {
+        match price_fn {
+            PriceFunction::FixedDelta   { delta }      => eval_fixed_delta(last_rent_price, *delta),
+            PriceFunction::CompoundDelta { bps, delta } => eval_compound_delta(last_rent_price, *bps, *delta),
+        }
+    }
+
+---
+
+### `eval_fixed_delta` (private)
+
+    fun eval_fixed_delta(last_rent_price: u64, delta: u64): u64
+
+    last_rent_price + delta
+
+### `eval_compound_delta` (private)
+
+    fun eval_compound_delta(last_rent_price: u64, bps: u64, delta: u64): u64
+
+    math::mul_div(last_rent_price, 10000 + bps, 10000) + delta
 
 ### Overflow
 
@@ -615,6 +640,9 @@ Guaranteed result > last_rent_price by constructor field constraints (§2.3).
 | `eval_power_law(...)` | private | §6 |
 | `eval_exponential(...)` | private | §7 |
 | `eval_logistic(...)` | private | §8 |
+| `evaluate_price_fn(...)` | private | Dispatcher — match on `PriceFunction`. |
+| `eval_fixed_delta(...)` | private | §11 |
+| `eval_compound_delta(...)` | private | §11 |
 
 `CurveShape` and `PriceFunction` types are defined in this module and embedded
 in `IntegrationConfig` (via `config.move`).

@@ -98,7 +98,7 @@ enum CurveShape {
 
 **Abilities:** `copy, drop, store`
 
-**Constraints (validated at integration time by `config::new`):**
+**Constraints (validated by constructors in §2.3):**
 
 | Variant | Function | Field | Constraint |
 |---------|----------|-------|------------|
@@ -132,16 +132,16 @@ enum PriceFunction {
 
 **Abilities:** `copy, drop, store`
 
-**Constraints (validated at integration time by `config::new`):**
+**Field-level constraints (validated by constructors in §2.3):**
 
-All variants must satisfy:
-- `compute_next_rent_price(fn, min_rent_price) > min_rent_price`
-- No u64 overflow on computation
-
-Per-variant overflow constraints:
 - `FixedDelta`:  `delta > 0`
 - `Percentage`:  `bps ∈ [1, u64::MAX - 10000]` so `10000 + bps` does not overflow u64
-- `CompoundDelta`: same `bps` bound as Percentage; `delta` unconstrained (> check handles it)
+- `CompoundDelta`: same `bps` bound as Percentage; `delta` unconstrained
+
+**Cross-field constraint (validated by `config::new` via `assert_price_increases`):**
+
+- `compute_next_rent_price(fn, min_rent_price) > min_rent_price` for all variants
+  (requires `min_rent_price`, which the constructor does not know)
 
 **Semantics:**
 

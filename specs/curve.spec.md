@@ -275,8 +275,8 @@ Exact. No approximation.
 
 Let `x = t * SCALE / t_max` (x in [0, SCALE]).
 
-    g(x/SCALE) = 3(x/SCALE)² - 2(x/SCALE)³
-               = x² * (3*SCALE - 2*x) / SCALE²
+    g(x/SCALE) · SCALE = 3(x/SCALE)² - 2(x/SCALE)³
+                      = x² * (3*SCALE - 2*x) / SCALE²
 
 ### Algorithm
 
@@ -487,8 +487,11 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
 
     ((sigma_y - sigma_floor) * S / LOGISTIC_DENOM as u128) as u64
 
-Note: `two_t` and `y_den` require `tenure_ceiling ≤ u64::MAX / 2`.
-Enforced by `config::new`.
+Note: `two_t` and `y_den` require `tenure_ceiling ≤ u64::MAX / 2`;
+`LOGISTIC_K * (two_t - t_max)` and `LOGISTIC_K * (t_max - two_t)` require
+`tenure_ceiling ≤ u64::MAX / LOGISTIC_K = u64::MAX / 12`.
+The binding constraint is therefore `tenure_ceiling ≤ u64::MAX / 12`.
+Enforced by `config::new` when the curve is `Logistic`.
 
 ### Overflow analysis
 
@@ -559,6 +562,13 @@ relative to `phase_start_ms`.
 
 If `elapsed_ms >= descent_ceiling`, `evaluate_curve` returns SCALE and
 `price = min_rent_price`.
+
+### Precondition
+
+Caller must ensure `last_rent_price >= min_rent_price`. The protocol
+guarantees this invariant — the first rent sets
+`last_rent_price = min_rent_price` and it only increases thereafter.
+Violation would underflow the u64 subtraction `last_rent_price - min_rent_price`.
 
 
 11. COMPUTE_NEXT_RENT_PRICE
@@ -714,7 +724,7 @@ the dispatcher short-circuits before reaching `eval_*`.
 
 - **Range:** result `∈ [0, SCALE]`
 - **Monotonicity:** `t1 < t2 → eval_smoothstep(t1) ≤ eval_smoothstep(t2)`
-- **Exact symmetry:** `eval_smoothstep(t, t_max) + eval_smoothstep(t_max-t, t_max) = SCALE`
+- **Approximate symmetry (within 1-2 ULP):** `eval_smoothstep(t, t_max) + eval_smoothstep(t_max-t, t_max) ∈ [SCALE-2, SCALE]`
 - **Exact midpoint:** `eval_smoothstep(t_max/2, t_max) = SCALE/2` when `t_max` even
 - **Below linear:** `eval_smoothstep(t) < eval_linear(t)` for `t ∈ (0, t_max/2)`
 - **Above linear:** `eval_smoothstep(t) > eval_linear(t)` for `t ∈ (t_max/2, t_max)`

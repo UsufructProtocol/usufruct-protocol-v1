@@ -96,7 +96,7 @@ Exact (no approximation):
 | 5 | 1 | 3 | 1 | floor: 5/3 |
 | 6 | 1 | 3 | 2 | floor: 6/3 |
 | 1_000_000_000 | 1_000_000_000 | 1_000_000_000 | 1_000_000_000 | curve::SCALE identity |
-| 5_000_000_000 | 5_000_000_000 | 5_000_000_000 | 5_000_000_000 | a·b = 25×10¹⁸ overflows u64, result fits — tests u128 promotion |
+| 5_000_000_000 | 5_000_000_000 | 5_000_000_000 | 5_000_000_000 | a·b = 25×10¹⁸ > u64::MAX but result fits — intermediate exceeds u64 range, final does not |
 | `u64::MAX` | 1 | 1 | `u64::MAX` | identity |
 | `u64::MAX` | `u64::MAX` | `u64::MAX` | `u64::MAX` | max exact |
 

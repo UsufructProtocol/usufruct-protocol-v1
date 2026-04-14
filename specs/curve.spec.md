@@ -653,3 +653,209 @@ integrator. Error constants remain `public` so the SDK can map abort codes to
 human-readable messages.
 
 **Depends on:** `math` (for `mul_div`, `nth_root_u128`, `exp_scaled`).
+
+
+13. TEST CASES
+--------------
+
+Tests follow the same convention as `math.spec.md`: exact values are given where
+derivable from the algorithm by hand; algorithm-derived golden vectors are marked
+and must be established by running the implementation once and fixing the output.
+
+Three categories per function:
+- **Edge cases** — boundary inputs with known exact output
+- **Golden vectors** — specific input → exact output (hand-derived or algorithm-derived)
+- **Properties** — invariants that must hold for all valid inputs in the stated domain
+
+
+### 13.1 `evaluate_curve` — dispatcher edge cases
+
+These apply regardless of the variant passed. Tested once per variant to confirm
+the dispatcher short-circuits before reaching `eval_*`.
+
+| `shape` | `t` | `t_max` | result |
+|---------|-----|---------|--------|
+| any | `0` | any `> 0` | `0` |
+| any | `t_max` | `t_max` | `SCALE` |
+| any | `t_max + 1` | `t_max` | `SCALE` |
+
+
+### 13.2 `eval_linear`
+
+#### Golden vectors
+
+| `t` | `t_max` | result | note |
+|-----|---------|--------|------|
+| `1` | `4` | `250_000_000` | floor(SCALE/4) |
+| `3` | `4` | `750_000_000` | floor(3·SCALE/4) |
+| `1` | `3` | `333_333_333` | floor: 1/3 |
+| `2` | `3` | `666_666_666` | floor: 2/3 |
+| `1` | `1_000_000_000` | `1` | minimum nonzero output |
+
+#### Properties
+
+- **Exactness:** `eval_linear(t, t_max) = floor(t * SCALE / t_max)`
+- **Range:** result `∈ [0, SCALE]`
+- **Monotonicity:** `t1 < t2 → eval_linear(t1, t_max) ≤ eval_linear(t2, t_max)`
+- **Midpoint:** `eval_linear(t_max/2, t_max) = SCALE/2` when `t_max` is even
+
+
+### 13.3 `eval_smoothstep`
+
+#### Golden vectors
+
+| `t` | `t_max` | result | note |
+|-----|---------|--------|------|
+| `1_000_000_000` | `4_000_000_000` | `156_250_000` | x=0.25: g(0.25)=0.15625 |
+| `2_000_000_000` | `4_000_000_000` | `500_000_000` | midpoint exact: g(0.5)=0.5 |
+| `3_000_000_000` | `4_000_000_000` | `843_750_000` | x=0.75: g(0.75)=0.84375 |
+
+#### Properties
+
+- **Range:** result `∈ [0, SCALE]`
+- **Monotonicity:** `t1 < t2 → eval_smoothstep(t1) ≤ eval_smoothstep(t2)`
+- **Exact symmetry:** `eval_smoothstep(t, t_max) + eval_smoothstep(t_max-t, t_max) = SCALE`
+- **Exact midpoint:** `eval_smoothstep(t_max/2, t_max) = SCALE/2` when `t_max` even
+- **Below linear:** `eval_smoothstep(t) < eval_linear(t)` for `t ∈ (0, t_max/2)`
+- **Above linear:** `eval_smoothstep(t) > eval_linear(t)` for `t ∈ (t_max/2, t_max)`
+
+
+### 13.4 `eval_power_law`
+
+#### Golden vectors
+
+Algorithm-derived — establish during initial implementation (same approach as
+`exp_scaled` golden vectors in `math.spec.md`).
+
+Representative inputs to cover:
+- `alpha = 1/2` (d=2, concave): `t=1, t_max=4`
+- `alpha = 2`   (d=1, convex):  `t=1, t_max=4`
+- `alpha = 3/2` (d=2, convex):  `t=1, t_max=4`
+- `alpha = 1/3` (d=3, concave): `t=1, t_max=8`
+- `alpha = 1/4` (d=4, concave): `t=1, t_max=16`
+
+#### Properties
+
+- **Range:** result `∈ [0, SCALE]`
+- **Monotonicity:** `t1 < t2 → eval_power_law(t1) ≤ eval_power_law(t2)`
+- **Below linear** when `alpha > 1`:
+  `eval_power_law(t, t_max, n, d) < eval_linear(t, t_max)` for `t ∈ (0, t_max)`
+- **Above linear** when `alpha < 1`:
+  `eval_power_law(t, t_max, n, d) > eval_linear(t, t_max)` for `t ∈ (0, t_max)`
+- **Special case d=1:** no root step — result equals `acc` directly (Step 2 skipped)
+- **Normalization:** `eval_power_law(t, t_max, 2, 4)` = `eval_power_law(t, t_max, 1, 2)`
+  (constructor reduces 2/4 → 1/2 via gcd)
+
+
+### 13.5 `eval_exponential`
+
+#### Golden vectors
+
+Algorithm-derived — establish during initial implementation.
+
+Representative inputs to cover:
+- `alpha_abs=2, alpha_neg=false` (convex):  `t=1, t_max=4`
+- `alpha_abs=2, alpha_neg=true`  (concave): `t=1, t_max=4`
+- `alpha_abs=4, alpha_neg=false`:            `t=1, t_max=4`
+- `alpha_abs=8, alpha_neg=false`:            `t=1, t_max=4` (upper bound)
+- `alpha_abs=1, alpha_neg=true`:             `t=1, t_max=4` (minimum concave)
+
+#### Properties
+
+- **Range:** result `∈ [0, SCALE]`
+- **Monotonicity:** `t1 < t2 → eval_exponential(t1) ≤ eval_exponential(t2)`
+- **Below linear** when `alpha_neg=false`:
+  `eval_exponential(t, t_max, a, false) < eval_linear(t, t_max)` for `t ∈ (0, t_max)`
+- **Above linear** when `alpha_neg=true`:
+  `eval_exponential(t, t_max, a, true) > eval_linear(t, t_max)` for `t ∈ (0, t_max)`
+- **Complementarity** (mathematically exact, small rounding deviation from integer arithmetic):
+  `eval_exponential(t, t_max, a, false) + eval_exponential(t_max-t, t_max, a, true) ≈ SCALE`
+  Proof: `f_α(x) + f_{-α}(1-x) = 1` for all x (see §7). Maximum deviation: a few ULP.
+
+
+### 13.6 `eval_logistic`
+
+#### Golden vectors
+
+Algorithm-derived — establish during initial implementation.
+
+Representative inputs to cover:
+- `t = t_max/4`: below linear
+- `t = t_max/2`: exact midpoint = `SCALE/2`
+- `t = 3*t_max/4`: above linear
+
+#### Properties
+
+- **Range:** result `∈ [0, SCALE]`
+- **Monotonicity:** `t1 < t2 → eval_logistic(t1) ≤ eval_logistic(t2)`
+- **Exact midpoint:** `eval_logistic(t_max/2, t_max) = SCALE/2`
+- **Approximate symmetry:** `eval_logistic(t, t_max) + eval_logistic(t_max-t, t_max) ≈ SCALE`
+  (deviation ≤ 2 ULP from accumulated rounding in `exp_scaled`)
+- **Below linear:** `eval_logistic(t) < eval_linear(t)` for `t ∈ (0, t_max/2)`
+- **Above linear:** `eval_logistic(t) > eval_linear(t)` for `t ∈ (t_max/2, t_max)`
+
+
+### 13.7 `eval_fixed_delta`
+
+#### Golden vectors
+
+| `last_rent_price` | `delta` | result | note |
+|-------------------|---------|--------|------|
+| `100` | `50` | `150` | exact |
+| `1_000_000_000` | `1` | `1_000_000_001` | minimum delta |
+| `1_000_000_000` | `1_000_000_000` | `2_000_000_000` | delta equals price |
+
+#### Properties
+
+- **Exactness:** `result = last_rent_price + delta`
+- **Strict increase:** `result > last_rent_price`
+- **Exact increment:** `result - last_rent_price = delta`
+
+
+### 13.8 `eval_compound_delta`
+
+#### Golden vectors
+
+| `last_rent_price` | `bps` | `delta` | result | note |
+|-------------------|-------|---------|--------|------|
+| `10_000` | `500` | `1` | `10_501` | 5% = +500, +delta |
+| `1` | `500` | `1` | `2` | percentage floors to 0, only delta contributes |
+| `200` | `50` | `1` | `201` | bps=50 at exact threshold (x=200): +1 from pct, +1 from delta |
+| `199` | `50` | `1` | `200` | below threshold: pct floors to 0 |
+| `1_000_000_000` | `10_000` | `1` | `2_000_000_001` | 100% + delta |
+
+#### Properties
+
+- **Strict increase:** `result > last_rent_price` for all valid inputs
+- **Minimum increase:** `result >= last_rent_price + delta`
+- **Percentage floor:** when `last_rent_price < 10_000 / bps`,
+  `result = last_rent_price + delta` (percentage component lost to floor rounding)
+
+
+### 13.9 `compute_used_credit`
+
+#### Properties
+
+- **Range:** `result ∈ [0, last_rent_price]`
+- **Zero start:** `elapsed_ms = 0 → result = 0`
+- **Saturation:** `elapsed_ms >= tenure_ceiling → result = last_rent_price`
+- **Monotonicity:** `e1 < e2 → compute_used_credit(e1) ≤ compute_used_credit(e2)`
+- **Complement:** `result + (last_rent_price - result) = last_rent_price` (confirms no overflow)
+
+
+### 13.10 `compute_price_descent`
+
+#### Properties
+
+- **Range:** `result ∈ [min_rent_price, last_rent_price]`
+- **Zero start:** `elapsed_ms = 0 → result = last_rent_price`
+- **Saturation:** `elapsed_ms >= descent_ceiling → result = min_rent_price`
+- **Monotone decreasing:** `e1 < e2 → compute_price_descent(e1) ≥ compute_price_descent(e2)`
+
+
+### 13.11 `compute_next_rent_price`
+
+#### Properties
+
+- **Strict increase:** `result > last_rent_price` for all valid inputs
+- **Determinism:** same `(price_fn, last_rent_price)` → same result always

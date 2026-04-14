@@ -76,10 +76,10 @@ enum CurveShape {
 }
 ```
 
-`Logistic` has no fields. `k = 20` and `denom` are module-level constants:
+`Logistic` has no fields. `k = 12` and `denom` are module-level constants:
 
-    const LOGISTIC_K: u64 = 20;
-    const LOGISTIC_DENOM: u64 = /* precomputed: (σ(10) − σ(−10)) · SCALE ≈ 999_909_119 */;
+    const LOGISTIC_K: u64 = 12;
+    const LOGISTIC_DENOM: u64 = /* precomputed: (σ(6) − σ(−6)) · SCALE ≈ 995_054_754 */;
 
 **Abilities:** `copy, drop, store`
 
@@ -94,7 +94,7 @@ enum CurveShape {
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num, alpha_den` | `alpha_num != alpha_den` (degenerate linear — use `Linear` instead) |
 | `Exponential` | `g(x) = (e^(α·x) - 1) / (e^α - 1)` | `alpha_abs` | `∈ [1, 8]` |
 | `Exponential` | `g(x) = (e^(α·x) - 1) / (e^α - 1)` | `alpha_neg` | `false` → convex (α > 0), `true` → concave (α < 0) |
-| `Logistic` | `g(x) = (σ(20·(x−0.5)) − σ(−10)) / LOGISTIC_DENOM` | — | No fields. k=20 fixed. |
+| `Logistic` | `g(x) = (σ(12·(x−0.5)) − σ(−6)) / LOGISTIC_DENOM` | — | No fields. k=12 fixed. |
 
 ### PriceFunction — enum
 

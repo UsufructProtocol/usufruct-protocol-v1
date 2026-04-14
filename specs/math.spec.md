@@ -46,6 +46,16 @@ movements, no Sui framework dependencies.
 Rounding: floor throughout (truncation), unless stated otherwise.
 
 
+1.1 ERROR CONSTANTS
+-------------------
+
+    const E_MUL_DIV_OVERFLOW:    u64 = 0;  // mul_div: result exceeds u64 range
+    const E_INVALID_ROOT_DEGREE: u64 = 1;  // nth_root_u128: d ∉ {2, 3, 4}
+
+Division by zero in `mul_div` (c = 0) triggers Move's built-in arithmetic
+abort — no user-defined constant is needed for that path.
+
+
 2. MUL_DIV
 ----------
 
@@ -61,13 +71,39 @@ Rounding: floor throughout (truncation), unless stated otherwise.
 
     let num: u128 = (a as u128) * (b as u128);
     let res: u128 = num / (c as u128);
-    assert!(res <= u64::MAX as u128);   // abort on overflow
+    assert!(res <= u64::MAX as u128, E_MUL_DIV_OVERFLOW);
     res as u64
 
 ### Constraints
 
-- `c > 0` — aborts if zero
-- Result fits u64 — aborts otherwise
+- `c > 0` — aborts (arithmetic error) if zero
+- Result fits u64 — `assert!(res <= u64::MAX as u128, E_MUL_DIV_OVERFLOW)`
+
+
+### Test cases
+
+Exact (no approximation):
+
+| `a` | `b` | `c` | result | note |
+|-----|-----|-----|--------|------|
+| 0 | 5 | 3 | 0 | zero multiplicand |
+| 5 | 0 | 3 | 0 | zero multiplicand |
+| 6 | 7 | 3 | 14 | exact |
+| 1 | 1 | 3 | 0 | floor: 1/3 |
+| 2 | 1 | 3 | 0 | floor: 2/3 |
+| 3 | 1 | 3 | 1 | boundary |
+| 5 | 1 | 3 | 1 | floor: 5/3 |
+| 6 | 1 | 3 | 2 | floor: 6/3 |
+| `SCALE` | `SCALE` | `SCALE` | `SCALE` | scale-range identity |
+| `u64::MAX` | 1 | 1 | `u64::MAX` | identity |
+| `u64::MAX` | `u64::MAX` | `u64::MAX` | `u64::MAX` | max exact |
+
+Abort cases:
+
+| `a` | `b` | `c` | abort | reason |
+|-----|-----|-----|-------|--------|
+| 1 | 1 | 0 | arithmetic | c = 0 |
+| `u64::MAX` | 2 | 1 | `E_MUL_DIV_OVERFLOW` | result = 2·u64::MAX overflows |
 
 
 3. NTH_ROOT_U128
@@ -80,6 +116,13 @@ Rounding: floor throughout (truncation), unless stated otherwise.
 ### Semantics
 
     Returns floor(n^(1/d))
+
+### Constraints
+
+- `d ∈ {2, 3, 4}` — `assert!(d >= 2 && d <= 4, E_INVALID_ROOT_DEGREE)`
+
+Only these degrees are used by `curve` (PowerLaw variant). Behaviour for other
+values is undefined and the function aborts.
 
 ### Algorithm
 
@@ -120,6 +163,41 @@ x converges toward n^(1/d). At worst x0 = 1 << ceil(128/d).
 ### Usage
 
 Called by `curve` for the PowerLaw variant (d ∈ {2, 3, 4}).
+
+
+### Test cases
+
+Exact (floor root by definition):
+
+| `n` | `d` | result | note |
+|-----|-----|--------|------|
+| 0 | 2 | 0 | n = 0 special case |
+| 1 | 2 | 1 | n = 1 special case |
+| 4 | 2 | 2 | perfect square |
+| 9 | 2 | 3 | perfect square |
+| 10 | 2 | 3 | floor: √10 ≈ 3.162 |
+| 15 | 2 | 3 | floor: √15 ≈ 3.873 |
+| 16 | 2 | 4 | perfect square |
+| 0 | 3 | 0 | n = 0 special case |
+| 1 | 3 | 1 | n = 1 special case |
+| 8 | 3 | 2 | perfect cube |
+| 26 | 3 | 2 | floor: ∛26 ≈ 2.962 |
+| 27 | 3 | 3 | perfect cube |
+| 0 | 4 | 0 | n = 0 special case |
+| 1 | 4 | 1 | n = 1 special case |
+| 16 | 4 | 2 | perfect 4th power |
+| 80 | 4 | 2 | floor: ⁴√80 ≈ 2.990 |
+| 81 | 4 | 3 | perfect 4th power |
+| 2¹²⁸ − 1 | 2 | 2⁶⁴ − 1 | max u128; (2⁶⁴−1)² ≤ 2¹²⁸−1 < (2⁶⁴)² |
+
+Abort cases:
+
+| `d` | abort | reason |
+|-----|-------|--------|
+| 1 | `E_INVALID_ROOT_DEGREE` | below range |
+| 5 | `E_INVALID_ROOT_DEGREE` | above range |
+
+Invariant (for all valid inputs): `result^d ≤ n < (result + 1)^d`.
 
 
 4. EXP_SCALED / EXP_SCALED_POS
@@ -179,13 +257,74 @@ Note: divisor `k * y_den` computed in u128 to avoid u64 overflow for large y_den
 Called by `curve` for the Exponential and Logistic variants.
 
 
+### Test cases
+
+#### Exact case (y = 0)
+
+The Taylor series exits after k=1 (term becomes 0). Result is exact regardless
+of `neg`.
+
+| `y_num` | `y_den` | `neg` | result |
+|---------|---------|-------|--------|
+| 0 | 1 | false | `TAYLOR_SCALE` |
+| 0 | 1 | true | `TAYLOR_SCALE` |
+| 0 | 7 | false | `TAYLOR_SCALE` |
+
+#### Algorithm-derived golden vectors
+
+These values are produced by the spec algorithm (K = 20 terms, floor rounding
+at every step). They are not the mathematical floor of eʸ · TS — they are
+what the specific integer-arithmetic algorithm produces.
+
+**How to establish:** run the algorithm once; record the output; fix those
+values as constants in the test file. All future changes must reproduce them
+exactly.
+
+Traced by hand for y = 1 (exp_scaled_pos step-by-step through K = 20):
+
+| `y_num` | `y_den` | `neg` | expected result |
+|---------|---------|-------|-----------------|
+| 1 | 1 | false | 2_718_281_828_459_045_226 |
+| 1 | 1 | true  | 367_879_441_171_442_322  |
+
+Reference: true floor(e¹ · TS) = 2_718_281_828_459_045_235 (delta = 9 ULP —
+within the < 10⁻⁹ relative error budget). The `neg=true` result of 322 exceeds
+the mathematical floor (321) by 1 ULP — the expected upper-bound rounding from
+the reciprocal identity.
+
+For y ∈ {2, 4, 8} and fractional y, establish during initial implementation
+using the same trace method.
+
+#### Properties
+
+These hold for all valid inputs and can be tested without knowing exact values:
+
+1. **Monotone (pos):** for rational 0 < y₁ < y₂ ≤ 8,
+   `exp_scaled(y1_num, y1_den, false) < exp_scaled(y2_num, y2_den, false)`
+
+2. **Reciprocal identity (within 1 ULP):** for any y > 0,
+   `exp_scaled(y, neg=false) × exp_scaled(y, neg=true)` ∈ `[TS² − TS, TS²]`
+
+3. **Precision bound:** for all y = y_num/y_den with 0 < y ≤ 8,
+   `|result − floor(eʸ · TS)| ≤ floor(eʸ · TS) × 10⁻⁹`
+
+#### Input validity note
+
+No abort is defined for out-of-range y. The overflow analysis (§4) guarantees
+correctness only for `y_num/y_den ≤ 8` with `tenure_ceiling ≤ 10¹³ ms`. Inputs
+outside this range are the caller's responsibility (`curve` enforces them at
+integration time via `alpha_abs ∈ [1, 8]`).
+
+
 5. MODULE BOUNDARY
 ------------------
 
 `math.move` exports:
 
-| Function | Visibility | Notes |
-|---|---|---|
+| Symbol | Visibility | Notes |
+|--------|-----------|-------|
+| `E_MUL_DIV_OVERFLOW: u64 = 0` | `public` | Abort code for mul_div result overflow. |
+| `E_INVALID_ROOT_DEGREE: u64 = 1` | `public` | Abort code for d ∉ {2,3,4}. |
 | `mul_div(a, b, c): u64` | `public` | Used by `curve` and internally. |
 | `nth_root_u128(n, d): u128` | `public` | Used by `curve` (PowerLaw). |
 | `exp_scaled(y_num, y_den, neg): u128` | `public` | Used by `curve` (Exponential, Logistic). |

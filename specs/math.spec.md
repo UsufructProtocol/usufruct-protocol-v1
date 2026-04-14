@@ -57,8 +57,8 @@ Division by zero in `mul_div` (c = 0) triggers Move's built-in arithmetic
 abort — no user-defined constant is needed for that path.
 
 
-2. MUL_DIV
-----------
+2. `mul_div`
+-----------
 
 ### Signature
 
@@ -108,8 +108,8 @@ Abort cases:
 | `u64::MAX` | 2 | 1 | `E_MUL_DIV_OVERFLOW` | result = 2·u64::MAX overflows |
 
 
-3. NTH_ROOT_U128
-----------------
+3. `nth_root_u128`
+------------------
 
 ### Signature
 
@@ -197,8 +197,8 @@ Exact (floor root by definition):
 Invariant (for all valid inputs): `result^d ≤ n < (result + 1)^d`.
 
 
-4. EXP_SCALED / EXP_SCALED_POS
---------------------------------
+4. `exp_scaled` / `exp_scaled_pos`
+-----------------------------------
 
 ### Signatures
 

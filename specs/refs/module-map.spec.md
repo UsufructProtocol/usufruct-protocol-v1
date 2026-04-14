@@ -176,16 +176,23 @@ Arrows point from dependency to dependent.
 **Responsibility:** Pure integer math with u128 intermediates.
 No protocol types, no objects, no Sui framework dependencies.
 
+**Constants (public):**
+
+| Symbol | Type | Value | Purpose |
+|---|---|---|---|
+| `TAYLOR_SCALE` | `u128` | `10^18` | Fixed-point denominator for `exp_scaled` results. Used by `curve` to interpret them. |
+| `TAYLOR_SCALE_SQ` | `u128` | `10^36` | `TAYLOR_SCALE²`. Used by `curve` for the `exp_scaled` negative path. |
+| `E_MUL_DIV_OVERFLOW` | `u64` | `0` | Abort code when `mul_div` result overflows u64. |
+
 **Exports (public):**
 
 | Function | Signature | Purpose |
 |---|---|---|
-| `mul_div` | `(a: u64, b: u64, c: u64): u64` | `a * b / c` via u128, overflow-safe |
-| `pow_frac` | `(base: u64, exp_num: u64, exp_den: u64, scale: u64): u64` | `base^(n/d)` for PowerLaw curves |
-| `exp_scaled` | `(alpha: u64, x_num: u64, x_den: u64, scale: u64): u64` | `(e^(ax)-1)/(e^a-1)` for Exponential curves |
-| `smoothstep` | `(x_num: u64, x_den: u64, scale: u64): u64` | `3x^2 - 2x^3` for Smoothstep curves |
+| `mul_div` | `(a: u64, b: u64, c: u64): u64` | `floor(a * b / c)` via u128, overflow-safe. |
+| `nth_root_u128` | `(n: u128, d: u32): u128` | `floor(n^(1/d))` via Newton-Raphson. Used by `curve` for the PowerLaw variant. `d ∈ {2, 3, 4}`. |
+| `exp_scaled` | `(y_num: u64, y_den: u64, neg: bool): u128` | `floor(e^(y_num/y_den) · TAYLOR_SCALE)` with sign via `neg`. Used by `curve` for the Exponential and Logistic variants. |
 
-**Status:** [ ] `mul_div` · [ ] `pow_frac` · [ ] `exp_scaled` · [ ] `smoothstep`
+**Status:** [ ] `mul_div` · [ ] `nth_root_u128` · [ ] `exp_scaled`
 
 **Depends on:** nothing.
 
@@ -202,22 +209,26 @@ All functions are pure — no objects, no mutation, no Sui state.
 | Type | Abilities | Variants |
 |---|---|---|
 | `CurveShape` | `copy, drop, store` | `Linear`, `Smoothstep`, `PowerLaw { alpha_num: u8, alpha_den: u8 }`, `Exponential { alpha_abs: u8, alpha_neg: bool }`, `Logistic` (no fields — k=12 fixed, denom precomputed as module constant) |
-| `PriceFunction` | `copy, drop, store` | `FixedDelta { delta: u64 }`, `Percentage { bps: u64 }`, `CompoundDelta { bps: u64, delta: u64 }` |
+| `PriceFunction` | `copy, drop, store` | `FixedDelta { delta: u64 }`, `CompoundDelta { bps: u64, delta: u64 }` |
+
+Note: there is no standalone `Percentage` variant. Pure percentage behavior is expressed as `CompoundDelta { bps, delta: 1 }`.
 
 **Functions:**
 
 | Function | Visibility | Signature | Purpose |
 |---|---|---|---|
-| `evaluate` | private | `(shape: &CurveShape, x_num: u64, x_den: u64, scale: u64): u64` | Evaluate normalized shape at `x = x_num/x_den`, result in `[0, scale]`. Used only by `compute_used_credit` and `compute_price_descent`. |
+| `evaluate_curve` | private | `(shape: &CurveShape, t: u64, t_max: u64): u64` | Evaluate normalized shape at `x = t/t_max`, result in `[0, SCALE]`. Used only by `compute_used_credit` and `compute_price_descent`. |
+| `evaluate_price_fn` | private | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatch on `PriceFunction` variant. Called only by `compute_next_rent_price`. |
 | `compute_used_credit` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, tenure_ceiling: u64, last_rent_price: u64): u64` | `last_rent_price * g(elapsed / tenure_ceiling)`. Saturates at `last_rent_price`. |
 | `compute_price_descent` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
 | `compute_next_rent_price` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
 
-**Constructors (public):** One `new_*` per variant for each type, with validation:
-- `CurveShape`: `PowerLaw` requires `alpha_num ∈ [1,8], alpha_den ∈ {1,2,3,4}, alpha_num != alpha_den`. `Exponential` requires `alpha_abs ∈ [1,8]`. `Logistic` has no fields — no validation needed.
-- `PriceFunction`: `FixedDelta` requires `delta > 0`; `Percentage` requires `bps > 0`; `CompoundDelta` requires `bps > 0 || delta > 0`.
+**Constructors (`public(package)`):** One function per variant. Called only by `config::new` — not callable directly from PTBs.
 
-**Status:** [ ] `CurveShape` · [ ] `PriceFunction` · [ ] `evaluate` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
+- `CurveShape`: `linear()`, `smoothstep()`, `logistic()` — no validation. `power_law(alpha_num, alpha_den)` — validates `alpha_num ∈ [1, 8]`, `alpha_den ∈ {1, 2, 3, 4}`, `alpha_num != alpha_den`; normalizes by `gcd(alpha_num, alpha_den)`. `exponential(alpha_abs, alpha_neg)` — validates `alpha_abs ∈ [1, 8]`.
+- `PriceFunction`: `fixed_delta(delta)` — validates `delta > 0`. `compound_delta(bps, delta)` — validates `bps ∈ [1, u64::MAX − 10000]`, `delta > 0`.
+
+**Status:** [ ] `CurveShape` · [ ] `PriceFunction` · [ ] `evaluate_curve` · [ ] `evaluate_price_fn` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
 
 **Depends on:** `math`.
 

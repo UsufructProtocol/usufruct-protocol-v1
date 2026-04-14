@@ -242,7 +242,7 @@ Note: divisor `k * y_den` computed in u128 to avoid u64 overflow for large y_den
       Exponential: y_num = alpha_abs · t ≤ 8 · tenure_ceiling
       Logistic:    y_num = k · |2t − t_max| ≤ 12 · tenure_ceiling
       For tenure_ceiling ≤ 10^13 ms (~317 years):
-        term · y_num ≤ 4.2×10^20 · 16 · 10^13 = 6.7×10^34  fits u128 ✓
+        term · y_num ≤ 4.2×10^20 · 12 · 10^13 = 5.0×10^34  fits u128 ✓
       u128 max ≈ 3.4×10^38 — safe margin of ~3 orders of magnitude.
 
 ### Usage

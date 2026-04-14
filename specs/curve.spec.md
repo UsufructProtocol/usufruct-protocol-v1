@@ -179,16 +179,16 @@ directly without validation.
 
 ### CurveShape constructors
 
-    public fun linear(): CurveShape
+    public(package) fun linear(): CurveShape
     // Returns CurveShape::Linear. No validation.
 
-    public fun smoothstep(): CurveShape
+    public(package) fun smoothstep(): CurveShape
     // Returns CurveShape::Smoothstep. No validation.
 
-    public fun logistic(): CurveShape
+    public(package) fun logistic(): CurveShape
     // Returns CurveShape::Logistic. No validation.
 
-    public fun power_law(alpha_num: u8, alpha_den: u8): CurveShape
+    public(package) fun power_law(alpha_num: u8, alpha_den: u8): CurveShape
     // Validates:
     //   assert!(alpha_num >= 1 && alpha_num <= 8, E_ALPHA_NUM_RANGE)
     //   assert!(alpha_den >= 1 && alpha_den <= 4, E_ALPHA_DEN_RANGE)
@@ -196,19 +196,19 @@ directly without validation.
     // Normalizes: divides both by gcd(alpha_num, alpha_den) before storing.
     // Returns CurveShape::PowerLaw { alpha_num: reduced, alpha_den: reduced }.
 
-    public fun exponential(alpha_abs: u8, alpha_neg: bool): CurveShape
+    public(package) fun exponential(alpha_abs: u8, alpha_neg: bool): CurveShape
     // Validates:
     //   assert!(alpha_abs >= 1 && alpha_abs <= 8, E_ALPHA_ABS_RANGE)
     // Returns CurveShape::Exponential { alpha_abs, alpha_neg }.
 
 ### PriceFunction constructors
 
-    public fun fixed_delta(delta: u64): PriceFunction
+    public(package) fun fixed_delta(delta: u64): PriceFunction
     // Validates:
     //   assert!(delta > 0, E_FIXED_DELTA_ZERO)
     // Returns PriceFunction::FixedDelta { delta }.
 
-    public fun compound_delta(bps: u64, delta: u64): PriceFunction
+    public(package) fun compound_delta(bps: u64, delta: u64): PriceFunction
     // Validates:
     //   assert!(bps >= 1 && bps <= u64::MAX - 10000, E_BPS_RANGE)
     //   assert!(delta > 0,                            E_FIXED_DELTA_ZERO)
@@ -618,19 +618,19 @@ Guaranteed result > last_rent_price by constructor field constraints (§2.3).
 
 | Symbol | Visibility | Notes |
 |--------|-----------|-------|
-| `E_ALPHA_NUM_RANGE: u64 = 0` | `public` | |
-| `E_ALPHA_DEN_RANGE: u64 = 1` | `public` | |
-| `E_DEGENERATE_LINEAR: u64 = 2` | `public` | |
-| `E_ALPHA_ABS_RANGE: u64 = 3` | `public` | |
-| `E_FIXED_DELTA_ZERO: u64 = 4` | `public` | |
-| `E_BPS_RANGE: u64 = 5` | `public` | |
-| `linear()` | `public` | |
-| `smoothstep()` | `public` | |
-| `logistic()` | `public` | |
-| `power_law(alpha_num, alpha_den)` | `public` | Validates + normalizes. |
-| `exponential(alpha_abs, alpha_neg)` | `public` | Validates. |
-| `fixed_delta(delta)` | `public` | Validates. |
-| `compound_delta(bps, delta)` | `public` | Validates bps and delta. |
+| `E_ALPHA_NUM_RANGE: u64 = 0` | `public` | SDK error handling. |
+| `E_ALPHA_DEN_RANGE: u64 = 1` | `public` | SDK error handling. |
+| `E_DEGENERATE_LINEAR: u64 = 2` | `public` | SDK error handling. |
+| `E_ALPHA_ABS_RANGE: u64 = 3` | `public` | SDK error handling. |
+| `E_FIXED_DELTA_ZERO: u64 = 4` | `public` | SDK error handling. |
+| `E_BPS_RANGE: u64 = 5` | `public` | SDK error handling. |
+| `linear()` | `public(package)` | Called by `config::new`. |
+| `smoothstep()` | `public(package)` | Called by `config::new`. |
+| `logistic()` | `public(package)` | Called by `config::new`. |
+| `power_law(alpha_num, alpha_den)` | `public(package)` | Called by `config::new`. Validates + normalizes. |
+| `exponential(alpha_abs, alpha_neg)` | `public(package)` | Called by `config::new`. Validates. |
+| `fixed_delta(delta)` | `public(package)` | Called by `config::new`. Validates. |
+| `compound_delta(bps, delta)` | `public(package)` | Called by `config::new`. Validates. |
 | `compute_used_credit(...)` | `public(package)` | Called by `rental_escrow`. |
 | `compute_price_descent(...)` | `public(package)` | Called by `rental_escrow`. |
 | `compute_next_rent_price(...)` | `public(package)` | Called by `rental_escrow`. |
@@ -646,5 +646,12 @@ Guaranteed result > last_rent_price by constructor field constraints (§2.3).
 
 `CurveShape` and `PriceFunction` types are defined in this module and embedded
 in `IntegrationConfig` (via `config.move`).
+
+**SDK note:** constructors are `public(package)` — not callable from PTBs directly.
+The SDK goes through `config::new`, which calls them internally. This means the SDK
+exposes plain parameters (`alpha_num`, `bps`, etc.) and generates a single PTB call,
+keeping `CurveShape` and `PriceFunction` as implementation details invisible to the
+integrator. Error constants remain `public` so the SDK can map abort codes to
+human-readable messages.
 
 **Depends on:** `math` (for `mul_div`, `nth_root_u128`, `exp_scaled`).

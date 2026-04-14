@@ -63,9 +63,8 @@ All validation aborts originate in the constructors defined in §2.3.
     const E_ALPHA_DEN_RANGE:   u64 = 1;  // power_law: alpha_den ∉ {1, 2, 3, 4}
     const E_DEGENERATE_LINEAR: u64 = 2;  // power_law: alpha_num == alpha_den (use Linear)
     const E_ALPHA_ABS_RANGE:   u64 = 3;  // exponential: alpha_abs ∉ [1, 8]
-    const E_FIXED_DELTA_ZERO:  u64 = 4;  // fixed_delta: delta == 0
-    const E_BPS_RANGE:         u64 = 5;  // percentage / compound_delta: bps ∉ [1, u64::MAX−10000]
-    const E_NO_PRICE_INCREASE: u64 = 6;  // assert_price_increases: f(min_rent_price) <= min_rent_price
+    const E_FIXED_DELTA_ZERO:  u64 = 4;  // fixed_delta / compound_delta: delta == 0
+    const E_BPS_RANGE:         u64 = 5;  // compound_delta: bps ∉ [1, u64::MAX−10000]
 
 
 2. TYPES
@@ -120,9 +119,6 @@ enum PriceFunction {
     FixedDelta {
         delta: u64,
     },
-    Percentage {
-        bps: u64,
-    },
     CompoundDelta {
         bps: u64,
         delta: u64,
@@ -134,24 +130,23 @@ enum PriceFunction {
 
 **Field-level constraints (validated by constructors in §2.3):**
 
-- `FixedDelta`:  `delta > 0`
-- `Percentage`:  `bps ∈ [1, u64::MAX - 10000]` so `10000 + bps` does not overflow u64
-- `CompoundDelta`: same `bps` bound as Percentage; `delta` unconstrained
+- `FixedDelta`:    `delta > 0`
+- `CompoundDelta`: `bps ∈ [1, u64::MAX - 10000]` so `10000 + bps` does not overflow u64; `delta > 0`
 
-**Cross-field constraint (validated by `config::new` via `assert_price_increases`):**
-
-- `compute_next_rent_price(fn, min_rent_price) > min_rent_price` for all variants
-  (requires `min_rent_price`, which the constructor does not know)
+Both variants guarantee `f(x) > x` for all `x > 0` from field constraints alone — no
+cross-field validation required. For `CompoundDelta`: `mul_div(x, 10000 + bps, 10000) >= x`
+always (denominator ≤ numerator factor), so `+ delta > 0` ensures strict increase regardless
+of floor rounding on the percentage component.
 
 **Semantics:**
 
 | Variant | Formula |
 |---------|---------|
 | `FixedDelta { delta }` | `f(x) = x + delta` |
-| `Percentage { bps }` | `f(x) = mul_div(x, 10000 + bps, 10000)` |
 | `CompoundDelta { bps, delta }` | `f(x) = mul_div(x, 10000 + bps, 10000) + delta` |
 
 where `bps` is basis points (100 bps = 1%, 10000 bps = 100%).
+Pure percentage behavior: use `CompoundDelta { bps, delta: 1 }`.
 
 
 2.3 CONSTRUCTORS
@@ -194,30 +189,11 @@ directly without validation.
     //   assert!(delta > 0, E_FIXED_DELTA_ZERO)
     // Returns PriceFunction::FixedDelta { delta }.
 
-    public fun percentage(bps: u64): PriceFunction
-    // Validates:
-    //   assert!(bps >= 1 && bps <= u64::MAX - 10000, E_BPS_RANGE)
-    // Returns PriceFunction::Percentage { bps }.
-
     public fun compound_delta(bps: u64, delta: u64): PriceFunction
     // Validates:
     //   assert!(bps >= 1 && bps <= u64::MAX - 10000, E_BPS_RANGE)
-    // delta may be 0 when bps ≥ 1 — f(x) > x is not guaranteed by fields alone
-    // for small x; see assert_price_increases below.
+    //   assert!(delta > 0,                            E_FIXED_DELTA_ZERO)
     // Returns PriceFunction::CompoundDelta { bps, delta }.
-
-### Cross-field validation
-
-    public(package) fun assert_price_increases(
-        price_fn: &PriceFunction,
-        min_rent_price: u64,
-    )
-    // Called by config::new after constructing all integration parameters.
-    // Asserts: compute_next_rent_price(price_fn, min_rent_price) > min_rent_price
-    // Aborts:  E_NO_PRICE_INCREASE
-    //
-    // Necessary because CompoundDelta{bps=1, delta=0} satisfies field-level
-    // constraints but may floor to x for small min_rent_price values.
 
 
 3. EVALUATE_CURVE (private)
@@ -550,14 +526,12 @@ If `elapsed_ms >= descent_ceiling`, `evaluate_curve` returns SCALE and
 | Variant                        | Computation |
 |--------------------------------|-------------|
 | `FixedDelta { delta }`         | `last_rent_price + delta` |
-| `Percentage { bps }`           | `math::mul_div(last_rent_price, 10000 + bps, 10000)` |
 | `CompoundDelta { bps, delta }` | `math::mul_div(last_rent_price, 10000 + bps, 10000) + delta` |
 
 ### Overflow
 
 All additions use checked arithmetic — abort on u64 overflow.
-Guaranteed result > last_rent_price by `assert_price_increases` (§2.3),
-called by `config::new`.
+Guaranteed result > last_rent_price by constructor field constraints (§2.3).
 
 
 12. MODULE BOUNDARY
@@ -573,16 +547,13 @@ called by `config::new`.
 | `E_ALPHA_ABS_RANGE: u64 = 3` | `public` | |
 | `E_FIXED_DELTA_ZERO: u64 = 4` | `public` | |
 | `E_BPS_RANGE: u64 = 5` | `public` | |
-| `E_NO_PRICE_INCREASE: u64 = 6` | `public` | |
 | `linear()` | `public` | |
 | `smoothstep()` | `public` | |
 | `logistic()` | `public` | |
 | `power_law(alpha_num, alpha_den)` | `public` | Validates + normalizes. |
 | `exponential(alpha_abs, alpha_neg)` | `public` | Validates. |
 | `fixed_delta(delta)` | `public` | Validates. |
-| `percentage(bps)` | `public` | Validates. |
-| `compound_delta(bps, delta)` | `public` | Validates bps only. |
-| `assert_price_increases(price_fn, min_rent_price)` | `public(package)` | Called by `config::new`. |
+| `compound_delta(bps, delta)` | `public` | Validates bps and delta. |
 | `compute_used_credit(...)` | `public(package)` | Called by `rental_escrow`. |
 | `compute_price_descent(...)` | `public(package)` | Called by `rental_escrow`. |
 | `compute_next_rent_price(...)` | `public(package)` | Called by `rental_escrow`. |

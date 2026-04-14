@@ -150,6 +150,21 @@ where `bps` is basis points (100 bps = 1%, 10000 bps = 100%).
 `min_rent_price` and `last_rent_price`. It is not scaled by `SCALE` (10^9).
 Pure percentage behavior: use `CompoundDelta { bps, delta: 1 }` (1 base unit).
 
+**Floor threshold for the percentage component** — the bps contribution is zero when
+`last_rent_price < 10000 / bps`. Below this threshold only `delta` contributes.
+
+| bps | % | Min price for bps to contribute |
+|-----|---|---------------------------------|
+| 1 | 0.01% | 10_000 base units |
+| 10 | 0.1% | 1_000 base units |
+| 50 | 0.5% | 200 base units |
+| 100 | 1% | 100 base units |
+| 500 | 5% | 20 base units |
+| 1_000 | 10% | 10 base units |
+
+For highly fractioned tokens, prefer larger `bps` or a meaningful `delta` to ensure
+the percentage component is not silently swallowed by floor rounding.
+
 
 2.3 CONSTRUCTORS
 ----------------

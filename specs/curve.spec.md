@@ -20,6 +20,8 @@ It is the bridge between raw arithmetic (`math`) and protocol-level computations
 - `PriceFunction` — enumerated functional forms for `f_next_rent_price`.
 - `evaluate_curve` — private dispatcher. Single entry point for evaluating
   any `CurveShape` at a given (t, t_max) pair. Returns a value in [0, SCALE].
+- `evaluate_price_fn` — private dispatcher. Single entry point for evaluating
+  any `PriceFunction` at a given `last_rent_price`.
 - `LOGISTIC_K: u64 = 12` and `LOGISTIC_DENOM: u64` — module-level constants.
   Both are hardcoded literals. Move `const` does not support function calls, so
   `LOGISTIC_DENOM` cannot be derived from `exp_scaled` at compile time — its value
@@ -95,10 +97,8 @@ enum CurveShape has copy, drop, store {
 
 `Logistic` has no fields. `k = 12` and `denom` are module-level constants:
 
-    const LOGISTIC_K: u64 = 12;
-    const LOGISTIC_DENOM: u64 = /* precomputed: (σ(6) − σ(−6)) · SCALE ≈ 995_054_754 */;
-
-**Abilities:** `copy, drop, store`
+    const LOGISTIC_K: u64     = 12;
+    const LOGISTIC_DENOM: u64 = /* algorithm-derived — establish during initial implementation */;
 
 **Constraints (validated by constructors in §2.3):**
 
@@ -127,8 +127,6 @@ enum PriceFunction has copy, drop, store {
     },
 }
 ```
-
-**Abilities:** `copy, drop, store`
 
 **Field-level constraints (validated by constructors in §2.3):**
 
@@ -324,16 +322,16 @@ Not a substitute for pure concavity or convexity — distinct incentive profile.
     alpha = 1                          →  linear (degenerate; use Linear instead)
     alpha > 1  (e.g. 2, 3, 3/2)       →  purely convex
 
-### Normalization at integration time
+### Normalization at construction time
 
     let g = gcd(alpha_num, alpha_den);
     alpha_num /= g;
     alpha_den /= g;
 
-Reduces to lowest terms once at integration time (stored in variant).
+Reduces to lowest terms once at construction time (stored in variant).
 Minimizes loop iterations in Step 1 and may eliminate Step 2 entirely
 (e.g., 6/2 → 3/1: x^3 with no root vs x^6 + square root).
-Guaranteed by `config::new`: stored alpha_num and alpha_den are always coprime.
+Guaranteed by `power_law()` constructor: stored alpha_num and alpha_den are always coprime.
 
 ### Algorithm
 
@@ -401,8 +399,8 @@ and therefore the curve shape:
 
 ### Algorithm
 
-    let a   = shape.alpha_abs as u64;   // ∈ [1, 8]
-    let neg = shape.alpha_neg;
+    let a   = alpha_abs as u64;   // ∈ [1, 8]
+    let neg = alpha_neg;
 
     // e^(α·x): y_num = a*t, y_den = t_max, sign = neg
     let exp_ax = math::exp_scaled(a * t, t_max, neg);
@@ -425,10 +423,10 @@ and therefore the curve shape:
 
 `TAYLOR_SCALE` is defined in `math` — see math.spec.md §1.
 
-### Constraints at integration time
+### Constraints validated by constructor
 
     alpha_abs ∈ [1, 8]     (0 rejected: denominator would be zero)
-    alpha_neg ∈ {true, false}
+    alpha_neg ∈ {true, false}   (not validated — any bool accepted)
 
 alpha_abs = 0 is rejected because e^0 - 1 = 0 makes the denominator zero
 (the limit at α → 0 is linear — use Linear variant instead).
@@ -442,12 +440,12 @@ alpha_abs = 0 is rejected because e^0 - 1 = 0 makes the denominator zero
     where σ(y) = e^y / (e^y + 1)
 
 No fields. `k = 12` and `LOGISTIC_DENOM` are module-level constants.
+Produces a pronounced S-curve with inflection fixed at x = 0.5 — clearly
+distinguishable from `Smoothstep` without being extreme.
 
 ### Signature
 
     fun eval_logistic(t: u64, t_max: u64): u64
-Produces a pronounced S-curve with inflection fixed at x = 0.5 — clearly
-distinguishable from `Smoothstep` without being extreme.
 
 ### Module-level constants
 
@@ -500,7 +498,7 @@ Enforced by `config::new`.
 
 ### No integration-time constraint
 
-`Logistic` has no fields — nothing to validate at integration time.
+`Logistic` has no fields — nothing to validate at construction time.
 
 
 9. COMPUTE_USED_CREDIT

@@ -110,7 +110,6 @@ enum CurveShape {
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_den` | `∈ {1, 2, 3, 4}` |
 | `PowerLaw` | `g(x) = x^(alpha_num/alpha_den)` | `alpha_num, alpha_den` | `alpha_num != alpha_den` (degenerate linear — use `Linear` instead) |
 | `Exponential` | `g(x) = (e^(α·x) - 1) / (e^α - 1)` | `alpha_abs` | `∈ [1, 8]` |
-| `Exponential` | `g(x) = (e^(α·x) - 1) / (e^α - 1)` | `alpha_neg` | `false` → convex (α > 0), `true` → concave (α < 0) |
 | `Logistic` | `g(x) = (σ(12·(x−0.5)) − σ(−6)) / LOGISTIC_DENOM` | — | No fields. k=12 fixed. |
 
 ### PriceFunction — enum
@@ -368,14 +367,15 @@ This is why alpha_den is restricted to {1, 2, 3, 4}.
     g(x) = (e^(α·x) - 1) / (e^α - 1)
 
     alpha_abs: u8   — magnitude of exponent, ∈ [1, 8]
-    alpha_neg: bool — sign: false → α > 0 (convex), true → α < 0 (concave)
-
-Move has no native signed integer types. Sign is represented as magnitude + flag.
+    alpha_neg: bool — sign of α (Move has no native signed integers)
 
 ### Sign and shape
 
-    alpha_neg = false  →  convex  (e.g. α = 2: slow start, fast finish)
-    alpha_neg = true   →  concave (e.g. α = -2: fast start, slow finish)
+`alpha_neg` is not validated — any bool is accepted. It determines the sign of α
+and therefore the curve shape:
+
+    alpha_neg = false  →  α = +alpha_abs  →  convex  (slow start, fast finish)
+    alpha_neg = true   →  α = −alpha_abs  →  concave (fast start, slow finish)
 
 ### Algorithm
 

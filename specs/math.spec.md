@@ -220,7 +220,9 @@ Error introduced by the integer division is at most 1 ULP — within the 10^-9 b
 
 ### Taylor series algorithm for exp_scaled_pos
 
-    K = 20 terms — for |y| ≤ 8, yields relative error < 10^-9.
+    K = 32 terms — for |y| ≤ 8, yields relative error < 10^-9.
+    Early exit fires well before k=32 for small y — gas cost increase
+    is only realized near the upper bound (|y| → 8).
 
     acc: u128 = TAYLOR_SCALE   // term_0 = 1 * TS
     term: u128 = TAYLOR_SCALE  // running term

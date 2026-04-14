@@ -96,6 +96,7 @@ Exact (no approximation):
 | 5 | 1 | 3 | 1 | floor: 5/3 |
 | 6 | 1 | 3 | 2 | floor: 6/3 |
 | 1_000_000_000 | 1_000_000_000 | 1_000_000_000 | 1_000_000_000 | curve::SCALE identity |
+| 5_000_000_000 | 5_000_000_000 | 5_000_000_000 | 5_000_000_000 | a·b = 25×10¹⁸ overflows u64, result fits — tests u128 promotion |
 | `u64::MAX` | 1 | 1 | `u64::MAX` | identity |
 | `u64::MAX` | `u64::MAX` | `u64::MAX` | `u64::MAX` | max exact |
 
@@ -189,6 +190,9 @@ Exact (floor root by definition):
 | 80 | 4 | 2 | floor: ⁴√80 ≈ 2.990 |
 | 81 | 4 | 3 | perfect 4th power |
 | 2¹²⁸ − 1 | 2 | 2⁶⁴ − 1 | max u128; (2⁶⁴−1)² ≤ 2¹²⁸−1 < (2⁶⁴)² |
+| 2⁹⁶ | 3 | 2³² | exact cube: (2³²)³ = 2⁹⁶ — tests d=3 convergence for large n |
+| 2⁹⁶ − 1 | 3 | 2³² − 1 | floor near boundary: (2³²)³ > 2⁹⁶−1 ≥ (2³²−1)³ |
+| 2⁹⁶ | 4 | 2²⁴ | exact 4th power: (2²⁴)⁴ = 2⁹⁶ — tests d=4 convergence for large n |
 
 Invariant (for all valid inputs): `result^d ≤ n < (result + 1)^d`.
 

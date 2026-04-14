@@ -146,7 +146,9 @@ of floor rounding on the percentage component.
 | `CompoundDelta { bps, delta }` | `f(x) = mul_div(x, 10000 + bps, 10000) + delta` |
 
 where `bps` is basis points (100 bps = 1%, 10000 bps = 100%).
-Pure percentage behavior: use `CompoundDelta { bps, delta: 1 }`.
+`delta` is a raw amount in the payment token's base denomination — same unit as
+`min_rent_price` and `last_rent_price`. It is not scaled by `SCALE` (10^9).
+Pure percentage behavior: use `CompoundDelta { bps, delta: 1 }` (1 base unit).
 
 
 2.3 CONSTRUCTORS

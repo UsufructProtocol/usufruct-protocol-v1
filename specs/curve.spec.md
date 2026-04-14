@@ -21,7 +21,10 @@ It is the bridge between raw arithmetic (`math`) and protocol-level computations
 - `evaluate_curve` — private dispatcher. Single entry point for evaluating
   any `CurveShape` at a given (t, t_max) pair. Returns a value in [0, SCALE].
 - `LOGISTIC_K: u64 = 12` and `LOGISTIC_DENOM: u64` — module-level constants.
-  `denom` is precomputed from k=12 at compile time, never set by the integrator.
+  Both are hardcoded literals. Move `const` does not support function calls, so
+  `LOGISTIC_DENOM` cannot be derived from `exp_scaled` at compile time — its value
+  is established by running the algorithm once during initial implementation (same
+  approach as the golden vectors in `math.spec.md`), then fixed as a literal.
 - `compute_used_credit`, `compute_price_descent`, `compute_next_rent_price` —
   `public(package)` protocol-level wrappers. Called by `rental_escrow` via
   `current_used_credit`, `current_price_descent`, `current_next_rent_price`.
@@ -422,15 +425,21 @@ distinguishable from `Smoothstep` without being extreme.
 
 ### Module-level constants
 
-    const LOGISTIC_K: u64    = 12;
-    const LOGISTIC_DENOM: u64 = /* (σ(6) − σ(−6)) · SCALE ≈ 997_524_148 */;
+    const LOGISTIC_K: u64     = 12;
+    const LOGISTIC_DENOM: u64 = /* algorithm-derived — establish during initial implementation */;
 
-`LOGISTIC_DENOM` is derived once:
+Move `const` only admits literals and simple arithmetic — function calls are not
+allowed. `LOGISTIC_DENOM` must be hardcoded as a literal whose value is produced by
+running the following derivation once and recording the output (K=32, floor rounding):
 
-    let TS: u128 = TAYLOR_SCALE;
-    let ek2: u128 = math::exp_scaled(6, 1, false);   // e^6 * TS
-    // σ(6) − σ(−6) = (ek2 − TS) / (ek2 + TS)
-    LOGISTIC_DENOM = ((ek2 - TS) * SCALE as u128 / (ek2 + TS)) as u64;
+    let TS: u128  = TAYLOR_SCALE;
+    let ek6: u128 = math::exp_scaled(6, 1, false);   // e^6 · TS  (K=32)
+    // (σ(6) − σ(−6)) · SCALE  =  (ek6 − TS) · SCALE / (ek6 + TS)
+    LOGISTIC_DENOM = ((ek6 - TS) * SCALE as u128 / (ek6 + TS)) as u64;
+
+Mathematical reference: (σ(6) − σ(−6)) · SCALE ≈ 995_054_750. The exact
+algorithm-derived value may differ by a few ULP due to floor rounding in
+`exp_scaled` — use the algorithm output, not this approximation.
 
 ### Runtime algorithm
 

@@ -271,7 +271,7 @@ of `neg`.
 
 #### Algorithm-derived golden vectors
 
-These values are produced by the spec algorithm (K = 20 terms, floor rounding
+These values are produced by the spec algorithm (K = 32 terms, floor rounding
 at every step). They are not the mathematical floor of eʸ · TS — they are
 what the specific integer-arithmetic algorithm produces.
 
@@ -279,7 +279,8 @@ what the specific integer-arithmetic algorithm produces.
 values as constants in the test file. All future changes must reproduce them
 exactly.
 
-Traced by hand for y = 1 (exp_scaled_pos step-by-step through K = 20):
+Expected values for K = 32 terms. For y = 1, these are algorithm-derived
+and must be verified during initial implementation:
 
 | `y_num` | `y_den` | `neg` | expected result |
 |---------|---------|-------|-----------------|

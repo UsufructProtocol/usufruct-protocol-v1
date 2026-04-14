@@ -49,8 +49,7 @@ Rounding: floor throughout (truncation), unless stated otherwise.
 1.1 ERROR CONSTANTS
 -------------------
 
-    const E_MUL_DIV_OVERFLOW:    u64 = 0;  // mul_div: result exceeds u64 range
-    const E_INVALID_ROOT_DEGREE: u64 = 1;  // nth_root_u128: d ∉ {2, 3, 4}
+    const E_MUL_DIV_OVERFLOW: u64 = 0;  // mul_div: result exceeds u64 range
 
 Division by zero in `mul_div` (c = 0) triggers Move's built-in arithmetic
 abort — no user-defined constant is needed for that path.
@@ -117,12 +116,11 @@ Abort cases:
 
     Returns floor(n^(1/d))
 
-### Constraints
+### Valid inputs
 
-- `d ∈ {2, 3, 4}` — `assert!(d >= 2 && d <= 4, E_INVALID_ROOT_DEGREE)`
-
-Only these degrees are used by `curve` (PowerLaw variant). Behaviour for other
-values is undefined and the function aborts.
+`d ∈ {2, 3, 4}` — the only degrees used by `curve` (PowerLaw variant).
+Behaviour outside this range is undefined. Validation is the caller's
+responsibility (`config::new`).
 
 ### Algorithm
 
@@ -189,13 +187,6 @@ Exact (floor root by definition):
 | 80 | 4 | 2 | floor: ⁴√80 ≈ 2.990 |
 | 81 | 4 | 3 | perfect 4th power |
 | 2¹²⁸ − 1 | 2 | 2⁶⁴ − 1 | max u128; (2⁶⁴−1)² ≤ 2¹²⁸−1 < (2⁶⁴)² |
-
-Abort cases:
-
-| `d` | abort | reason |
-|-----|-------|--------|
-| 1 | `E_INVALID_ROOT_DEGREE` | below range |
-| 5 | `E_INVALID_ROOT_DEGREE` | above range |
 
 Invariant (for all valid inputs): `result^d ≤ n < (result + 1)^d`.
 
@@ -324,7 +315,6 @@ integration time via `alpha_abs ∈ [1, 8]`).
 | Symbol | Visibility | Notes |
 |--------|-----------|-------|
 | `E_MUL_DIV_OVERFLOW: u64 = 0` | `public` | Abort code for mul_div result overflow. |
-| `E_INVALID_ROOT_DEGREE: u64 = 1` | `public` | Abort code for d ∉ {2,3,4}. |
 | `mul_div(a, b, c): u64` | `public` | Used by `curve` and internally. |
 | `nth_root_u128(n, d): u128` | `public` | Used by `curve` (PowerLaw). |
 | `exp_scaled(y_num, y_den, neg): u128` | `public` | Used by `curve` (Exponential, Logistic). |

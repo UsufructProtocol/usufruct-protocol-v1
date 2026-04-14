@@ -92,9 +92,9 @@ operations stay on the single escrow object.
 ## Coin Flows
 
 ```
- rent() [Idle]              →  Coin<C>  →  tenant_stake
- rent() [AtDutchAuction]    →  Coin<C>  →  tenant_stake
- rent() [Rented]            →  Coin<C>  →  pending_bid
+ rent() [Idle]              →  Coin<C> (== min_rent_price)       →  tenant_stake
+ rent() [AtDutchAuction]    →  Coin<C> (>= price_descent(now))  →  tenant_stake  (full amount, no refund)
+ rent() [Rented]            →  Coin<C> (== next_rent_price)      →  pending_bid
    (if superseded)          ←  Coin<C>  ←  pending_bid  (refund, push)
 
  apply_pending_transitions() — handover fires:
@@ -131,6 +131,7 @@ One shared object per asset for all normal operations. No global singleton exist
 | `withdraw_treasury` | serial on RentalEscrow |
 | `claim_asset` | serial on RentalEscrow only |
 | `drain_orphaned_treasury` | serial on OrphanedTreasury only |
+| `current_state`, `current_used_credit`, `current_price_descent`, `current_next_rent_price` | read-only (`&RentalEscrow`) — no contention |
 
 ---
 

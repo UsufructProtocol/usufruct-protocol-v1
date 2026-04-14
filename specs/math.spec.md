@@ -36,12 +36,14 @@ movements, no Sui framework dependencies.
 1. PRECISION MODEL
 ------------------
 
-    SCALE: u64        = 1_000_000_000          (10^9)
-    TAYLOR_SCALE: u128 = 1_000_000_000_000_000_000  (10^18)
+    TAYLOR_SCALE: u128    = 1_000_000_000_000_000_000  (10^18)
     TAYLOR_SCALE_SQ: u128 = TAYLOR_SCALE * TAYLOR_SCALE   (10^36, fits u128 ✓)
 
-`SCALE` is used by `curve` for curve output values in [0, SCALE].
-`TAYLOR_SCALE` and `TAYLOR_SCALE_SQ` are used internally by `exp_scaled`.
+`TAYLOR_SCALE` and `TAYLOR_SCALE_SQ` are internal to `exp_scaled` and exported
+as public constants so `curve` can interpret the results.
+
+`SCALE` (10^9) is defined in `curve` — it is the fixed-point denominator for
+curve output values and has no role in `math`.
 
 Rounding: floor throughout (truncation), unless stated otherwise.
 
@@ -93,7 +95,7 @@ Exact (no approximation):
 | 3 | 1 | 3 | 1 | boundary |
 | 5 | 1 | 3 | 1 | floor: 5/3 |
 | 6 | 1 | 3 | 2 | floor: 6/3 |
-| `SCALE` | `SCALE` | `SCALE` | `SCALE` | scale-range identity |
+| 1_000_000_000 | 1_000_000_000 | 1_000_000_000 | 1_000_000_000 | curve::SCALE identity |
 | `u64::MAX` | 1 | 1 | `u64::MAX` | identity |
 | `u64::MAX` | `u64::MAX` | `u64::MAX` | `u64::MAX` | max exact |
 
@@ -314,6 +316,8 @@ integration time via `alpha_abs ∈ [1, 8]`).
 
 | Symbol | Visibility | Notes |
 |--------|-----------|-------|
+| `TAYLOR_SCALE: u128` | `public` | Used by `curve` to interpret `exp_scaled` results. |
+| `TAYLOR_SCALE_SQ: u128` | `public` | Used by `curve` (Exponential neg path). |
 | `E_MUL_DIV_OVERFLOW: u64 = 0` | `public` | Abort code for mul_div result overflow. |
 | `mul_div(a, b, c): u64` | `public` | Used by `curve` and internally. |
 | `nth_root_u128(n, d): u128` | `public` | Used by `curve` (PowerLaw). |

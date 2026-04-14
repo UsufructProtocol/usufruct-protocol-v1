@@ -28,7 +28,8 @@ It is the bridge between raw arithmetic (`math`) and protocol-level computations
 
 **Does not own:**
 
-- Integration-time validation — lives in `config::new`.
+- Assembly of integration parameters — lives in `config::new`.
+  (`config::new` calls `curve` constructors; it does not re-validate fields.)
 - Protocol state (`RentalEscrow`, phase anchors).
 - Fund movements (`Balance`, `Coin`).
 - Access control (`OwnerCap`, `TenantCap`).
@@ -51,6 +52,20 @@ A curve output value `v` in [0, SCALE] represents the rational g(x) = v / SCALE.
 Intermediates use u128 to avoid overflow. Final results are cast back to u64.
 
 Rounding: floor throughout (truncation), unless stated otherwise.
+
+
+1.1 ERROR CONSTANTS
+-------------------
+
+All validation aborts originate in the constructors defined in §2.3.
+
+    const E_ALPHA_NUM_RANGE:   u64 = 0;  // power_law: alpha_num ∉ [1, 8]
+    const E_ALPHA_DEN_RANGE:   u64 = 1;  // power_law: alpha_den ∉ {1, 2, 3, 4}
+    const E_DEGENERATE_LINEAR: u64 = 2;  // power_law: alpha_num == alpha_den (use Linear)
+    const E_ALPHA_ABS_RANGE:   u64 = 3;  // exponential: alpha_abs ∉ [1, 8]
+    const E_FIXED_DELTA_ZERO:  u64 = 4;  // fixed_delta: delta == 0
+    const E_BPS_RANGE:         u64 = 5;  // percentage / compound_delta: bps ∉ [1, u64::MAX−10000]
+    const E_NO_PRICE_INCREASE: u64 = 6;  // assert_price_increases: f(min_rent_price) <= min_rent_price
 
 
 2. TYPES
@@ -137,6 +152,72 @@ Per-variant overflow constraints:
 | `CompoundDelta { bps, delta }` | `f(x) = mul_div(x, 10000 + bps, 10000) + delta` |
 
 where `bps` is basis points (100 bps = 1%, 10000 bps = 100%).
+
+
+2.3 CONSTRUCTORS
+----------------
+
+Enum fields are private to `curve.move`. All external callers must construct
+`CurveShape` and `PriceFunction` values through these functions.
+
+`Linear`, `Smoothstep`, and `Logistic` have no fields — they are returned
+directly without validation.
+
+### CurveShape constructors
+
+    public fun linear(): CurveShape
+    // Returns CurveShape::Linear. No validation.
+
+    public fun smoothstep(): CurveShape
+    // Returns CurveShape::Smoothstep. No validation.
+
+    public fun logistic(): CurveShape
+    // Returns CurveShape::Logistic. No validation.
+
+    public fun power_law(alpha_num: u8, alpha_den: u8): CurveShape
+    // Validates:
+    //   assert!(alpha_num >= 1 && alpha_num <= 8, E_ALPHA_NUM_RANGE)
+    //   assert!(alpha_den >= 1 && alpha_den <= 4, E_ALPHA_DEN_RANGE)
+    //   assert!(alpha_num != alpha_den,            E_DEGENERATE_LINEAR)
+    // Normalizes: divides both by gcd(alpha_num, alpha_den) before storing.
+    // Returns CurveShape::PowerLaw { alpha_num: reduced, alpha_den: reduced }.
+
+    public fun exponential(alpha_abs: u8, alpha_neg: bool): CurveShape
+    // Validates:
+    //   assert!(alpha_abs >= 1 && alpha_abs <= 8, E_ALPHA_ABS_RANGE)
+    // Returns CurveShape::Exponential { alpha_abs, alpha_neg }.
+
+### PriceFunction constructors
+
+    public fun fixed_delta(delta: u64): PriceFunction
+    // Validates:
+    //   assert!(delta > 0, E_FIXED_DELTA_ZERO)
+    // Returns PriceFunction::FixedDelta { delta }.
+
+    public fun percentage(bps: u64): PriceFunction
+    // Validates:
+    //   assert!(bps >= 1 && bps <= u64::MAX - 10000, E_BPS_RANGE)
+    // Returns PriceFunction::Percentage { bps }.
+
+    public fun compound_delta(bps: u64, delta: u64): PriceFunction
+    // Validates:
+    //   assert!(bps >= 1 && bps <= u64::MAX - 10000, E_BPS_RANGE)
+    // delta may be 0 when bps ≥ 1 — f(x) > x is not guaranteed by fields alone
+    // for small x; see assert_price_increases below.
+    // Returns PriceFunction::CompoundDelta { bps, delta }.
+
+### Cross-field validation
+
+    public(package) fun assert_price_increases(
+        price_fn: &PriceFunction,
+        min_rent_price: u64,
+    )
+    // Called by config::new after constructing all integration parameters.
+    // Asserts: compute_next_rent_price(price_fn, min_rent_price) > min_rent_price
+    // Aborts:  E_NO_PRICE_INCREASE
+    //
+    // Necessary because CompoundDelta{bps=1, delta=0} satisfies field-level
+    // constraints but may floor to x for small min_rent_price values.
 
 
 3. EVALUATE_CURVE (private)
@@ -475,8 +556,8 @@ If `elapsed_ms >= descent_ceiling`, `evaluate_curve` returns SCALE and
 ### Overflow
 
 All additions use checked arithmetic — abort on u64 overflow.
-Guaranteed result > last_rent_price by integration-time constraint validation
-in `config::new`.
+Guaranteed result > last_rent_price by `assert_price_increases` (§2.3),
+called by `config::new`.
 
 
 12. MODULE BOUNDARY
@@ -484,11 +565,27 @@ in `config::new`.
 
 `curve.move` exports:
 
-| Function | Visibility | Notes |
-|---|---|---|
-| `compute_used_credit(...)` | `public(package)` | Called by `rental_escrow::current_used_credit`. |
-| `compute_price_descent(...)` | `public(package)` | Called by `rental_escrow::current_price_descent`. |
-| `compute_next_rent_price(...)` | `public(package)` | Called by `rental_escrow::current_next_rent_price`. |
+| Symbol | Visibility | Notes |
+|--------|-----------|-------|
+| `E_ALPHA_NUM_RANGE: u64 = 0` | `public` | |
+| `E_ALPHA_DEN_RANGE: u64 = 1` | `public` | |
+| `E_DEGENERATE_LINEAR: u64 = 2` | `public` | |
+| `E_ALPHA_ABS_RANGE: u64 = 3` | `public` | |
+| `E_FIXED_DELTA_ZERO: u64 = 4` | `public` | |
+| `E_BPS_RANGE: u64 = 5` | `public` | |
+| `E_NO_PRICE_INCREASE: u64 = 6` | `public` | |
+| `linear()` | `public` | |
+| `smoothstep()` | `public` | |
+| `logistic()` | `public` | |
+| `power_law(alpha_num, alpha_den)` | `public` | Validates + normalizes. |
+| `exponential(alpha_abs, alpha_neg)` | `public` | Validates. |
+| `fixed_delta(delta)` | `public` | Validates. |
+| `percentage(bps)` | `public` | Validates. |
+| `compound_delta(bps, delta)` | `public` | Validates bps only. |
+| `assert_price_increases(price_fn, min_rent_price)` | `public(package)` | Called by `config::new`. |
+| `compute_used_credit(...)` | `public(package)` | Called by `rental_escrow`. |
+| `compute_price_descent(...)` | `public(package)` | Called by `rental_escrow`. |
+| `compute_next_rent_price(...)` | `public(package)` | Called by `rental_escrow`. |
 | `evaluate_curve(...)` | private | Internal dispatcher. |
 
 `CurveShape` and `PriceFunction` types are defined in this module and embedded

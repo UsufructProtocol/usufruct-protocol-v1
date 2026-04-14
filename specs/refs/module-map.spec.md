@@ -12,7 +12,7 @@ For protocol rationale and incentive analysis see `design-compact.md`.
 One shared object per asset instance (`RentalEscrow`). No global singleton.
 Protocol fees accumulate in a `protocol_treasury` `Balance` field inside each escrow.
 At retirement, `claim_asset()` extracts that balance into a `ProtocolFeeReceipt<C>`
-hot potato — resolved in the same PTB by `share_protocol_fees()`, which creates an
+hot potato — resolved in the same PTB by `float_protocol_treasury()`, which creates an
 independent `OrphanedTreasury<C>` shared object if fees are non-zero. All other
 operations stay on the single escrow object.
 
@@ -68,7 +68,7 @@ operations stay on the single escrow object.
 ║  OrphanedTreasury<CoinType>          [SHARED — created at retire]   ║
 ║                                                                      ║
 ║  ┌──────────────────┐                                               ║
-║  │  balance         │  Created by share_protocol_fees() inside     ║
+║  │  balance         │  Created by float_protocol_treasury() inside     ║
 ║  │  Balance<C>      │  claim_asset() PTB. Floats until drained.    ║
 ║  └──────────────────┘  Deleted by drain_orphaned_treasury().       ║
 ╚══════════════════════════════════════════════════════════════════════╝
@@ -368,7 +368,7 @@ No logic, no state. Pure data carriers.
 |---|---|---|
 | `ADMIN` | `drop` | OTW. Consumed in `init`. |
 | `ProtocolAdminCap` | `key, store` | Singleton. Held by protocol deployer. |
-| `OrphanedTreasury<phantom CoinType>` | `key` | Shared object. Created by `share_protocol_fees()` at escrow retirement. Deleted by `drain_orphaned_treasury()`. |
+| `OrphanedTreasury<phantom CoinType>` | `key` | Shared object. Created by `float_protocol_treasury()` at escrow retirement. Deleted by `drain_orphaned_treasury()`. |
 
 **Fields (`ProtocolAdminCap`):**
 - `id: UID`
@@ -384,10 +384,10 @@ No logic, no state. Pure data carriers.
 | Function | Visibility | Purpose |
 |---|---|---|
 | `init(witness, ctx)` | private | Creates `ProtocolAdminCap` (transfer to sender). |
-| `share_protocol_fees<C>(balance: Balance<C>, escrow_id: ID, asset_id: ID, ctx)` | `public(package)` | If `balance > 0`: creates and shares `OrphanedTreasury<C>` with `escrow_id` and `asset_id` for traceability. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
+| `float_protocol_treasury<C>(balance: Balance<C>, escrow_id: ID, asset_id: ID, ctx)` | `public(package)` | If `balance > 0`: creates and shares `OrphanedTreasury<C>` with `escrow_id` and `asset_id` for traceability. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
 | `drain_orphaned_treasury<C>(treasury, cap, ctx): Coin<C>` | `public` | Requires `ProtocolAdminCap`. Drains `OrphanedTreasury.balance` → `Coin`, deletes the object. |
 
-**Status:** [ ] `ADMIN` OTW · [ ] `ProtocolAdminCap` · [ ] `OrphanedTreasury` · [ ] `init` · [ ] `share_protocol_fees` · [ ] `drain_orphaned_treasury`
+**Status:** [ ] `ADMIN` OTW · [ ] `ProtocolAdminCap` · [ ] `OrphanedTreasury` · [ ] `init` · [ ] `float_protocol_treasury` · [ ] `drain_orphaned_treasury`
 
 **Depends on:** nothing.
 
@@ -440,7 +440,7 @@ functions.
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
-| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Calls `admin::share_protocol_fees(protocol_treasury, ctx)` directly — creates and shares `OrphanedTreasury<C>` if balance > 0, destroys zero balance if == 0. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
+| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Calls `admin::float_protocol_treasury(protocol_treasury, ctx)` directly — creates and shares `OrphanedTreasury<C>` if balance > 0, destroys zero balance if == 0. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
 | `withdraw_treasury` | `public` | Requires `ProtocolAdminCap` + `&mut RentalEscrow`. Drains `protocol_treasury` (local) → `Coin`. No state resolution needed. Admin utility — allows collecting fees from an active escrow without waiting for retirement. |
 | `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order. Returns `AssetState` — the settled state after all transitions. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state on-chain, credit pending earnings, and read the resulting state in one transaction. See §Pending Transitions. |
@@ -597,7 +597,7 @@ Swept atomically by `claim_asset()` when the escrow is deleted.
 Accumulated in `RentalEscrow.protocol_treasury` (local `Balance`) at each handover
 and tenure expiry (5% share). No cross-escrow contention — stays inside the escrow.
 Admin drains via `withdraw_treasury()` at any time (requires `ProtocolAdminCap` + escrow).
-On `claim_asset()`: `protocol_treasury` is passed directly to `admin::share_protocol_fees()`.
+On `claim_asset()`: `protocol_treasury` is passed directly to `admin::float_protocol_treasury()`.
 If balance > 0, a shared `OrphanedTreasury<C>` is created and floats on chain;
 if balance == 0, the zero balance is destroyed cleanly. No local balance is ever dropped.
 `OrphanedTreasury<C>` objects are discoverable by type (`suix_queryObjects`). The admin
@@ -656,7 +656,7 @@ boundary event without touching any external object. Every public mutating funct
 carries only one shared object reference — no contention beyond the escrow itself.
 
 `protocol_treasury` cannot be dropped when the escrow is deleted — `Balance` has no
-`drop` ability in Move. `claim_asset()` passes it directly to `admin::share_protocol_fees()`,
+`drop` ability in Move. `claim_asset()` passes it directly to `admin::float_protocol_treasury()`,
 a `public(package)` function that creates and shares an `OrphanedTreasury<C>` if the
 balance is non-zero, or destroys the zero balance cleanly. The caller receives only
 `(Asset, Coin<C>)` — no hot potato to resolve. No global accumulator exists — each
@@ -770,7 +770,7 @@ The owner always makes two calls regardless of the prior state:
 Consistent two-step flow for all cases. `retire()` never returns an asset.
 `claim_asset()` always does — and in the same call: sweeps `owner_earnings` to the
 owner, wraps `protocol_treasury` into a `ProtocolFeeReceipt<C>` hot potato and
-immediately resolves it via `share_protocol_fees()` (both internal to the call),
+immediately resolves it via `float_protocol_treasury()` (both internal to the call),
 burns `OwnerCap`, and deletes `RentalEscrow`. All local balances are consumed before
 deletion — no orphaned funds, no locked balances.
 

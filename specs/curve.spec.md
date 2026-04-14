@@ -227,25 +227,35 @@ directly without validation.
 Evaluates the normalized shape function g at x = t / t_max.
 Returns g(x) * SCALE, in [0, SCALE].
 
-### Edge cases (apply before dispatch, regardless of shape)
-
-| Condition    | Return  |
-|--------------|---------|
-| `t == 0`     | `0`     |
-| `t >= t_max` | `SCALE` |
-
-### Dispatch
-
-Delegates to the variant-specific function below.
 `t_max > 0` is guaranteed by `IntegrationConfig` constraints.
-
 Private — used only by `compute_used_credit` and `compute_price_descent`.
+
+### Implementation
+
+    fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64): u64 {
+        if t == 0      { return 0 };
+        if t >= t_max  { return SCALE };
+
+        match shape {
+            CurveShape::Linear                                => eval_linear(t, t_max),
+            CurveShape::Smoothstep                            => eval_smoothstep(t, t_max),
+            CurveShape::PowerLaw { alpha_num, alpha_den }     => eval_power_law(t, t_max, *alpha_num, *alpha_den),
+            CurveShape::Exponential { alpha_abs, alpha_neg }  => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
+            CurveShape::Logistic                              => eval_logistic(t, t_max),
+        }
+    }
+
+Each `eval_*` function is private to `curve.move` and defined in §4-§8 below.
 
 
 4. LINEAR VARIANT
 -----------------
 
     g(x) = x
+
+### Signature
+
+    fun eval_linear(t: u64, t_max: u64): u64
 
 ### Algorithm
 
@@ -258,6 +268,10 @@ Exact. No approximation.
 ---------------------
 
     g(x) = 3x² - 2x³
+
+### Signature
+
+    fun eval_smoothstep(t: u64, t_max: u64): u64
 
 ### Derivation in integers
 
@@ -299,6 +313,10 @@ Not a substitute for pure concavity or convexity — distinct incentive profile.
 
     alpha_num: u8   — numerator of exponent,   ∈ [1, 8]
     alpha_den: u8   — denominator of exponent, ∈ {1, 2, 3, 4}
+
+### Signature
+
+    fun eval_power_law(t: u64, t_max: u64, alpha_num: u8, alpha_den: u8): u64
 
 ### Shape by alpha value
 
@@ -369,6 +387,10 @@ This is why alpha_den is restricted to {1, 2, 3, 4}.
     alpha_abs: u8   — magnitude of exponent, ∈ [1, 8]
     alpha_neg: bool — sign of α (Move has no native signed integers)
 
+### Signature
+
+    fun eval_exponential(t: u64, t_max: u64, alpha_abs: u8, alpha_neg: bool): u64
+
 ### Sign and shape
 
 `alpha_neg` is not validated — any bool is accepted. It determines the sign of α
@@ -420,6 +442,10 @@ alpha_abs = 0 is rejected because e^0 - 1 = 0 makes the denominator zero
     where σ(y) = e^y / (e^y + 1)
 
 No fields. `k = 12` and `LOGISTIC_DENOM` are module-level constants.
+
+### Signature
+
+    fun eval_logistic(t: u64, t_max: u64): u64
 Produces a pronounced S-curve with inflection fixed at x = 0.5 — clearly
 distinguishable from `Smoothstep` without being extreme.
 
@@ -583,7 +609,12 @@ Guaranteed result > last_rent_price by constructor field constraints (§2.3).
 | `compute_used_credit(...)` | `public(package)` | Called by `rental_escrow`. |
 | `compute_price_descent(...)` | `public(package)` | Called by `rental_escrow`. |
 | `compute_next_rent_price(...)` | `public(package)` | Called by `rental_escrow`. |
-| `evaluate_curve(...)` | private | Internal dispatcher. |
+| `evaluate_curve(...)` | private | Dispatcher — match on `CurveShape`. |
+| `eval_linear(...)` | private | §4 |
+| `eval_smoothstep(...)` | private | §5 |
+| `eval_power_law(...)` | private | §6 |
+| `eval_exponential(...)` | private | §7 |
+| `eval_logistic(...)` | private | §8 |
 
 `CurveShape` and `PriceFunction` types are defined in this module and embedded
 in `IntegrationConfig` (via `config.move`).

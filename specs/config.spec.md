@@ -16,7 +16,7 @@ embedded inside `RentalEscrow` at integration time and never mutated again.
 
 **Owns:**
 
-- `IntegrationConfig` — plain data struct (`store` only, no `key`, no `drop`).
+- `IntegrationConfig` — plain data struct (`copy + drop + store`, no `key`).
   No UID. Not a shared object. Embedded field inside `RentalEscrow`.
 - `new(...)` — the sole constructor. `public`. Validates all protocol
   invariants and aborts on any violation.
@@ -58,7 +58,7 @@ can map abort codes to human-readable messages (same convention as `curve`).
 Bundles all immutable parameters for one integration instance.
 
 ```move
-struct IntegrationConfig has store {
+struct IntegrationConfig has copy, drop, store {
     min_rent_price:  u64,
     tenure_ceiling:  u64,
     handover_floor:  u64,
@@ -70,10 +70,12 @@ struct IntegrationConfig has store {
 }
 ```
 
-**Abilities:** `store` only.
+**Abilities:** `copy + drop + store`.
 - No `key` — not an object; embedded inside `RentalEscrow`.
-- No `drop` — must be explicitly destructured at retirement (via `claim_asset`).
-- No `copy` — there is exactly one `IntegrationConfig` per escrow.
+- `drop` — all fields have `drop` (u64, CurveShape, PriceFunction). No assets to
+  protect; omitting `drop` would add boilerplate with no safety benefit.
+- `copy` — config is immutable data; all fields have `copy`. Enables reading a
+  config from one escrow to construct another with identical parameters.
 
 **Field semantics:**
 
@@ -235,7 +237,7 @@ For any config `c` produced by `new(mrp, tc, hf, dsc, rf, g, h, pf)`:
 | `E_HANDOVER_FLOOR_ZERO: u64 = 2` | `public` | SDK error handling. |
 | `E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 3` | `public` | SDK error handling. |
 | `E_DESCENT_CEILING_ZERO: u64 = 4` | `public` | SDK error handling. |
-| `IntegrationConfig` (type) | `public` | Embedded in `RentalEscrow`. |
+| `IntegrationConfig` (type) | `public` | `copy + drop + store`. Embedded in `RentalEscrow`. |
 | `new(...)` | `public` | Validated constructor. |
 | `min_rent_price(cfg)` | `public` | Getter — returns `u64`. |
 | `tenure_ceiling(cfg)` | `public` | Getter — returns `u64`. |

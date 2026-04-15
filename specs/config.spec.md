@@ -30,10 +30,10 @@ embedded inside `RentalEscrow` at integration time and never mutated again.
 - Protocol state, fund movements, or capability objects.
 - Any Sui framework object operations (no `object::new`, no `transfer`).
 
-**Dependency direction:** `config` calls nothing from `curve` at runtime —
-it only stores `CurveShape` and `PriceFunction` values. The dependency is
-purely structural (type imports). `rental_escrow` calls `config::new` and
-the getters.
+**Dependency direction:** `config` calls no `curve` module functions.
+It stores `CurveShape` and `PriceFunction` values and pattern-matches on them
+at runtime only to enforce the Logistic overflow constraint in `new`.
+`rental_escrow` calls `config::new` and the getters.
 
 
 1. ERROR CONSTANTS
@@ -125,14 +125,19 @@ so callers outside the package cannot build the arguments.
     assert!(handover_floor <= tenure_ceiling,          E_HANDOVER_FLOOR_EXCEEDS_TENURE)
     assert!(descent_ceiling > 0,                      E_DESCENT_CEILING_ZERO)
 
-Logistic-specific upper-bound checks (cross-field, curve × time):
+Logistic-specific upper-bound checks (cross-field, curve × time).
+Expressed as pattern matches — the idiomatic Move 2024 form:
 
-    if credit_curve == CurveShape::Logistic {
-        assert!(tenure_ceiling <= u64::MAX / 12, E_TENURE_TOO_LARGE_FOR_LOGISTIC)
-    }
-    if descent_curve == CurveShape::Logistic {
-        assert!(descent_ceiling <= u64::MAX / 12, E_DESCENT_TOO_LARGE_FOR_LOGISTIC)
-    }
+    match (&credit_curve) {
+        CurveShape::Logistic =>
+            assert!(tenure_ceiling <= u64::MAX / 12, E_TENURE_TOO_LARGE_FOR_LOGISTIC),
+        _ => (),
+    };
+    match (&descent_curve) {
+        CurveShape::Logistic =>
+            assert!(descent_ceiling <= u64::MAX / 12, E_DESCENT_TOO_LARGE_FOR_LOGISTIC),
+        _ => (),
+    };
 
 **Rationale for Logistic checks:** `eval_logistic` (curve §8) computes
 `LOGISTIC_K * (two_t - t_max)` where `two_t = 2 * t` and `t_max` is
@@ -190,8 +195,8 @@ re-checking.
     cfg.handover_floor <= cfg.tenure_ceiling
 
 **P4 — Logistic overflow safety:**
-    if cfg.credit_curve == Logistic  →  cfg.tenure_ceiling  <= u64::MAX / 12
-    if cfg.descent_curve == Logistic →  cfg.descent_ceiling <= u64::MAX / 12
+    if cfg.credit_curve == CurveShape::Logistic  →  cfg.tenure_ceiling  <= u64::MAX / 12
+    if cfg.descent_curve == CurveShape::Logistic →  cfg.descent_ceiling <= u64::MAX / 12
 
 **P5 — retire_floor is unrestricted:**
     cfg.retire_floor can be 0 (no restriction) or any u64 value.
@@ -208,9 +213,9 @@ re-checking.
 Format: `new(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function)`
 
 Curve values use shorthand: `Lin` = `linear()`, `Smt` = `smoothstep()`,
-`Pow(n,d)` = `power_law(n, d)`, `Exp(a, neg)` = `exponential(a, neg)`,
+`Pow(n,d)` = `power_law(n, d)`, `Exp(a,neg)` = `exponential(a, neg)`,
 `Log` = `logistic()`.
-Price function: `FD(d)` = `fixed_delta(d)`.
+Price function: `FD(d)` = `fixed_delta(d)`, `CD(bps,d)` = `compound_delta(bps, d)`.
 
 ### 6.1 Valid inputs (must not abort)
 
@@ -224,6 +229,7 @@ Price function: `FD(d)` = `fixed_delta(d)`.
 | V6 | 1 | 1 | 1 | u64::MAX / 12 | 0 | Lin | Log | FD(1) | Logistic descent_curve at exact upper bound for descent_ceiling. |
 | V7 | 1 | u64::MAX / 12 | 1 | u64::MAX / 12 | 0 | Log | Log | FD(1) | Both curves Logistic at upper bound. |
 | V8 | u64::MAX | 1_000 | 500 | 1_000 | 0 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
+| V9 | 1 | u64::MAX | 1 | u64::MAX | 0 | Lin | Lin | FD(1) | Non-Logistic curves have no upper bound on time parameters. |
 
 ### 6.2 Invalid inputs (must abort with stated error code)
 
@@ -240,14 +246,14 @@ Price function: `FD(d)` = `fixed_delta(d)`.
 
 ### 6.3 Getter round-trip (must hold for all valid configs)
 
-For any config `c` produced by `new(p, tc, hf, dc, rf, cc, dc_curve, pf)`:
-    min_rent_price(&c)  == p
+For any config `c` produced by `new(mrp, tc, hf, dsc, rf, g, h, pf)`:
+    min_rent_price(&c)  == mrp
     tenure_ceiling(&c)  == tc
     handover_floor(&c)  == hf
-    descent_ceiling(&c) == dc
+    descent_ceiling(&c) == dsc
     retire_floor(&c)    == rf
-    credit_curve(&c)    == &cc
-    descent_curve(&c)   == &dc_curve
+    credit_curve(&c)    == &g
+    descent_curve(&c)   == &h
     price_function(&c)  == &pf
 
 ### 6.4 Logistic boundary precision

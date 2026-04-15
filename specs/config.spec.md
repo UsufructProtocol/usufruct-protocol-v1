@@ -25,20 +25,20 @@ embedded inside `RentalEscrow` at integration time and never mutated again.
 **Does not own:**
 
 - `CurveShape` and `PriceFunction` construction or evaluation — those live in
-  `curve`. `config::new` receives already-constructed values and does not
+  `curve`. `config::new_config` receives already-constructed values and does not
   re-validate their internal fields.
 - Protocol state, fund movements, or capability objects.
 - Any Sui framework object operations (no `object::new`, no `transfer`).
 
 **Dependency direction:** `config` calls no `curve` module functions.
 It stores `CurveShape` and `PriceFunction` values.
-`rental_escrow` calls `config::new` and the getters.
+`rental_escrow` calls `config::new_config` and the getters.
 
 
 1. ERROR CONSTANTS
 ------------------
 
-All validation aborts originate in `new`. Constants are `public` so the SDK
+All validation aborts originate in `new_config`. Constants are `public` so the SDK
 can map abort codes to human-readable messages (same convention as `curve`).
 
     public const E_MIN_RENT_PRICE_ZERO:           u64 = 0;  // min_rent_price == 0
@@ -112,7 +112,7 @@ All fields are private. Access via getters only.
 ### Visibility
 
 `public` — callable from PTBs. Integrators build `CurveShape` and `PriceFunction`
-values via `curve` constructors (also `public`), then pass them to `new`.
+values via `curve` constructors (also `public`), then pass them to `new_config`.
 
 ### Validation (in order)
 
@@ -158,7 +158,7 @@ No setter exists. `IntegrationConfig` is write-once.
 -------------
 
 The following hold for any `IntegrationConfig` successfully constructed via
-`new` — they are invariants the rest of the protocol may rely on without
+`new_config` — they are invariants the rest of the protocol may rely on without
 re-checking.
 
 **P1 — Price floor positive:**
@@ -177,14 +177,14 @@ re-checking.
     0 means the owner may call `retire()` immediately after integration.
 
 **P5 — Getters are consistent:**
-    For all fields f: getter_f(new(..., f, ...)) == f
-    (Constructors store values as-is; no normalization occurs in `config`.)
+    For all fields f: getter_f(new_config(..., f, ...)) == f
+    (Constructor stores values as-is; no normalization occurs in `config`.)
 
 
 6. TEST CASES
 -------------
 
-Format: `new(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function)`
+Format: `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function)`
 
 Curve values use shorthand: `Lin` = `new_linear()`, `Smt` = `new_smoothstep()`,
 `Pow(n,d)` = `new_power_law(n, d)`, `Exp(a,neg)` = `new_exponential(a, neg)`,
@@ -214,7 +214,7 @@ Price function: `FD(d)` = `new_fixed_delta(d)`, `CD(bps,d)` = `new_compound_delt
 
 ### 6.3 Getter round-trip (must hold for all valid configs)
 
-For any config `c` produced by `new(mrp, tc, hf, dsc, rf, g, h, pf)`:
+For any config `c` produced by `new_config(mrp, tc, hf, dsc, rf, g, h, pf)`:
     min_rent_price(&c)  == mrp
     tenure_ceiling(&c)  == tc
     handover_floor(&c)  == hf
@@ -248,10 +248,10 @@ For any config `c` produced by `new(mrp, tc, hf, dsc, rf, g, h, pf)`:
 | `descent_curve(cfg)` | `public(package)` | Getter — returns `&CurveShape`. |
 | `price_function(cfg)` | `public(package)` | Getter — returns `&PriceFunction`. |
 
-No private helpers. All logic is in `new`.
+No private helpers. All logic is in `new_config`.
 
 **Integration flow:** an integrator calls `curve` constructors to build
-`CurveShape` and `PriceFunction` values, then calls `new` to get an
+`CurveShape` and `PriceFunction` values, then calls `new_config` to get an
 `IntegrationConfig`, then passes it to `rental_escrow::integrate`. All three
 layers are `public` and composable from a PTB. Error constants are `public`
 so the SDK can map abort codes to human-readable messages.

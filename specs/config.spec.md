@@ -74,6 +74,8 @@ public struct IntegrationConfig has copy, drop, store {
 - No `key` — not an object; embedded inside `RentalEscrow`.
 - `drop` — all fields have `drop` (u64, CurveShape, PriceFunction). No assets to
   protect; omitting `drop` would add boilerplate with no safety benefit.
+  Consequence: at retirement, `claim_asset` destroys `RentalEscrow` and
+  `IntegrationConfig` is discarded implicitly — no explicit destructuring required.
 - `copy` — config is immutable data; all fields have `copy`. Enables reading a
   config from one escrow to construct another with identical parameters.
 
@@ -149,7 +151,10 @@ needs these in Move code.
     public(package) fun price_function(cfg: &IntegrationConfig): &PriceFunction
 
 Scalar fields (`u64`) are returned by value (copy). Curve and price function
-fields are returned by immutable reference (no `copy` needed at call sites).
+fields are returned by immutable reference. Rationale: if `CurveShape` or
+`PriceFunction` lost `copy` in the future, `IntegrationConfig` would also lose
+`copy` (a struct cannot have abilities its fields lack) — but reference-returning
+getters would remain valid without signature changes.
 
 No setter exists. `IntegrationConfig` is write-once.
 
@@ -201,6 +206,14 @@ Price function: `FD(d)` = `new_fixed_delta(d)`, `CD(bps,d)` = `new_compound_delt
 | V4 | 50 | 100_000 | 1 | 50_000 | 0 | Pow(1,2) | Lin | FD(1) | handover_floor = 1 (minimum). |
 | V5 | u64::MAX | 1_000 | 500 | 1_000 | 0 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
 | V6 | 1 | u64::MAX | 1 | u64::MAX | 0 | Log | Log | FD(1) | No upper bound on time parameters — including Logistic. |
+| V7 | 1_000 | 86_400_000 | 3_600_000 | 43_200_000 | 0 | Lin | Lin | CD(500,100) | CompoundDelta price function: 5% + 100 base units per cycle. |
+
+**Note — unconstrained free variables:** `tenure_ceiling`, `descent_ceiling`,
+and `retire_floor` have no upper bound. Absurd values (e.g. `u64::MAX`) are
+accepted by `new_config`; any resulting arithmetic overflow surfaces at runtime
+inside `curve` or `rental_escrow` via Move's checked arithmetic. Adding upper
+bounds here would be the same mistake as the removed Logistic constraint —
+validation noise for inputs that never occur in practice.
 
 ### 6.2 Invalid inputs (must abort with stated error code)
 

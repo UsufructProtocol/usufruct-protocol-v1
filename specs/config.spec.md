@@ -111,10 +111,8 @@ All fields are private. Access via getters only.
 
 ### Visibility
 
-`public` — callable from anywhere, including by `rental_escrow::integrate`.
-Not directly callable from PTBs in practice: `CurveShape` and `PriceFunction`
-values are constructed via `curve` constructors which are `public(package)`,
-so callers outside the package cannot build the arguments.
+`public` — callable from PTBs. Integrators build `CurveShape` and `PriceFunction`
+values via `curve` constructors (also `public`), then pass them to `new`.
 
 ### Validation (in order)
 
@@ -250,12 +248,10 @@ For any config `c` produced by `new(mrp, tc, hf, dsc, rf, g, h, pf)`:
 
 No private helpers. All logic is in `new`.
 
-**SDK note:** `new` is `public` but not directly reachable from a PTB in
-isolation — it requires `CurveShape` and `PriceFunction` arguments that are
-only constructible via `curve` functions which are `public(package)`. The SDK
-wraps the full integration flow into a single PTB via `rental_escrow::integrate`,
-keeping `IntegrationConfig`, `CurveShape`, and `PriceFunction` as
-implementation details invisible to the integrator. Error constants are `public`
+**Integration flow:** an integrator calls `curve` constructors to build
+`CurveShape` and `PriceFunction` values, then calls `new` to get an
+`IntegrationConfig`, then passes it to `rental_escrow::integrate`. All three
+layers are `public` and composable from a PTB. Error constants are `public`
 so the SDK can map abort codes to human-readable messages.
 
 **Depends on:** `curve` (type imports only — `CurveShape`, `PriceFunction`).

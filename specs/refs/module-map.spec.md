@@ -223,7 +223,7 @@ Note: there is no standalone `Percentage` variant. Pure percentage behavior is e
 | `compute_price_descent` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
 | `compute_next_rent_price` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
 
-**Constructors (`public(package)`):** One function per variant. Called only by `config::new` — not callable directly from PTBs.
+**Constructors (`public`):** One function per variant. Called by integrators from PTBs to build `CurveShape` and `PriceFunction` values before calling `config::new`.
 
 - `CurveShape`: `linear()`, `smoothstep()`, `logistic()` — no validation. `power_law(alpha_num, alpha_den)` — validates `alpha_num ∈ [1, 8]`, `alpha_den ∈ {1, 2, 3, 4}`, `alpha_num != alpha_den`; normalizes by `gcd(alpha_num, alpha_den)`. `exponential(alpha_abs, alpha_neg)` — validates `alpha_abs ∈ [1, 8]`.
 - `PriceFunction`: `fixed_delta(delta)` — validates `delta > 0`. `compound_delta(bps, delta)` — validates `bps ∈ [1, u64::MAX − 10000]`, `delta > 0`.
@@ -244,7 +244,7 @@ No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 
 | Type | Abilities |
 |---|---|
-| `IntegrationConfig` | `store` |
+| `IntegrationConfig` | `copy, drop, store` |
 
 **Fields:**
 - `min_rent_price: u64`

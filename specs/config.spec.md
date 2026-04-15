@@ -31,8 +31,7 @@ embedded inside `RentalEscrow` at integration time and never mutated again.
 - Any Sui framework object operations (no `object::new`, no `transfer`).
 
 **Dependency direction:** `config` calls no `curve` module functions.
-It stores `CurveShape` and `PriceFunction` values and pattern-matches on them
-at runtime only to enforce the Logistic overflow constraint in `new`.
+It stores `CurveShape` and `PriceFunction` values.
 `rental_escrow` calls `config::new` and the getters.
 
 
@@ -42,13 +41,11 @@ at runtime only to enforce the Logistic overflow constraint in `new`.
 All validation aborts originate in `new`. Constants are `public` so the SDK
 can map abort codes to human-readable messages (same convention as `curve`).
 
-    public const E_MIN_RENT_PRICE_ZERO:            u64 = 0;  // min_rent_price == 0
-    public const E_TENURE_CEILING_ZERO:            u64 = 1;  // tenure_ceiling == 0
-    public const E_HANDOVER_FLOOR_ZERO:            u64 = 2;  // handover_floor == 0
-    public const E_HANDOVER_FLOOR_EXCEEDS_TENURE:  u64 = 3;  // handover_floor > tenure_ceiling
-    public const E_DESCENT_CEILING_ZERO:           u64 = 4;  // descent_ceiling == 0
-    public const E_TENURE_TOO_LARGE_FOR_LOGISTIC:  u64 = 5;  // Logistic credit_curve + tenure_ceiling > u64::MAX / 12
-    public const E_DESCENT_TOO_LARGE_FOR_LOGISTIC: u64 = 6;  // Logistic descent_curve + descent_ceiling > u64::MAX / 12
+    public const E_MIN_RENT_PRICE_ZERO:           u64 = 0;  // min_rent_price == 0
+    public const E_TENURE_CEILING_ZERO:           u64 = 1;  // tenure_ceiling == 0
+    public const E_HANDOVER_FLOOR_ZERO:           u64 = 2;  // handover_floor == 0
+    public const E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 3;  // handover_floor > tenure_ceiling
+    public const E_DESCENT_CEILING_ZERO:          u64 = 4;  // descent_ceiling == 0
 
 `retire_floor >= 0` is trivially satisfied for `u64` — no error constant needed.
 
@@ -119,32 +116,11 @@ so callers outside the package cannot build the arguments.
 
 ### Validation (in order)
 
-    assert!(min_rent_price > 0,                       E_MIN_RENT_PRICE_ZERO)
-    assert!(tenure_ceiling > 0,                       E_TENURE_CEILING_ZERO)
-    assert!(handover_floor > 0,                       E_HANDOVER_FLOOR_ZERO)
-    assert!(handover_floor <= tenure_ceiling,          E_HANDOVER_FLOOR_EXCEEDS_TENURE)
-    assert!(descent_ceiling > 0,                      E_DESCENT_CEILING_ZERO)
-
-Logistic-specific upper-bound checks (cross-field, curve × time).
-Expressed as pattern matches — the idiomatic Move 2024 form:
-
-    match (&credit_curve) {
-        CurveShape::Logistic =>
-            assert!(tenure_ceiling <= u64::MAX / 12, E_TENURE_TOO_LARGE_FOR_LOGISTIC),
-        _ => (),
-    };
-    match (&descent_curve) {
-        CurveShape::Logistic =>
-            assert!(descent_ceiling <= u64::MAX / 12, E_DESCENT_TOO_LARGE_FOR_LOGISTIC),
-        _ => (),
-    };
-
-**Rationale for Logistic checks:** `eval_logistic` (curve §8) computes
-`LOGISTIC_K * (two_t - t_max)` where `two_t = 2 * t` and `t_max` is
-`tenure_ceiling` (or `descent_ceiling`). The binding overflow constraint is
-`t_max ≤ u64::MAX / LOGISTIC_K = u64::MAX / 12`. This is the only case where
-a curve type imposes a constraint on a time parameter — all other variants
-impose no additional bounds beyond `> 0`.
+    assert!(min_rent_price > 0,              E_MIN_RENT_PRICE_ZERO)
+    assert!(tenure_ceiling > 0,              E_TENURE_CEILING_ZERO)
+    assert!(handover_floor > 0,              E_HANDOVER_FLOOR_ZERO)
+    assert!(handover_floor <= tenure_ceiling, E_HANDOVER_FLOOR_EXCEEDS_TENURE)
+    assert!(descent_ceiling > 0,             E_DESCENT_CEILING_ZERO)
 
 No validation is performed on `credit_curve`, `descent_curve`, or
 `price_function` field internals — those were validated by their constructors
@@ -194,15 +170,11 @@ re-checking.
 **P3 — Handover contained within tenure:**
     cfg.handover_floor <= cfg.tenure_ceiling
 
-**P4 — Logistic overflow safety:**
-    if cfg.credit_curve == CurveShape::Logistic  →  cfg.tenure_ceiling  <= u64::MAX / 12
-    if cfg.descent_curve == CurveShape::Logistic →  cfg.descent_ceiling <= u64::MAX / 12
-
-**P5 — retire_floor is unrestricted:**
+**P4 — retire_floor is unrestricted:**
     cfg.retire_floor can be 0 (no restriction) or any u64 value.
     0 means the owner may call `retire()` immediately after integration.
 
-**P6 — Getters are consistent:**
+**P5 — Getters are consistent:**
     For all fields f: getter_f(new(..., f, ...)) == f
     (Constructors store values as-is; no normalization occurs in `config`.)
 
@@ -225,11 +197,8 @@ Price function: `FD(d)` = `fixed_delta(d)`, `CD(bps,d)` = `compound_delta(bps, d
 | V2 | 1_000_000 | 86_400_000 | 3_600_000 | 43_200_000 | 0 | Lin | Lin | FD(1) | Typical: 1h handover in 24h tenure, 12h auction. |
 | V3 | 100 | 10_000 | 5_000 | 10_000 | 7_200_000 | Smt | Smt | FD(10) | retire_floor > 0. |
 | V4 | 50 | 100_000 | 1 | 50_000 | 0 | Pow(1,2) | Lin | FD(1) | handover_floor = 1 (minimum). |
-| V5 | 1 | u64::MAX / 12 | 1 | 1 | 0 | Log | Lin | FD(1) | Logistic credit_curve at exact upper bound for tenure_ceiling. |
-| V6 | 1 | 1 | 1 | u64::MAX / 12 | 0 | Lin | Log | FD(1) | Logistic descent_curve at exact upper bound for descent_ceiling. |
-| V7 | 1 | u64::MAX / 12 | 1 | u64::MAX / 12 | 0 | Log | Log | FD(1) | Both curves Logistic at upper bound. |
-| V8 | u64::MAX | 1_000 | 500 | 1_000 | 0 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
-| V9 | 1 | u64::MAX | 1 | u64::MAX | 0 | Lin | Lin | FD(1) | Non-Logistic curves have no upper bound on time parameters. |
+| V5 | u64::MAX | 1_000 | 500 | 1_000 | 0 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
+| V6 | 1 | u64::MAX | 1 | u64::MAX | 0 | Log | Log | FD(1) | No upper bound on time parameters — including Logistic. |
 
 ### 6.2 Invalid inputs (must abort with stated error code)
 
@@ -240,9 +209,6 @@ Price function: `FD(d)` = `fixed_delta(d)`, `CD(bps,d)` = `compound_delta(bps, d
 | I3 | handover_floor = 0 | E_HANDOVER_FLOOR_ZERO (2) |
 | I4 | handover_floor > tenure_ceiling (e.g. floor=100, ceiling=50) | E_HANDOVER_FLOOR_EXCEEDS_TENURE (3) |
 | I5 | descent_ceiling = 0 | E_DESCENT_CEILING_ZERO (4) |
-| I6 | credit_curve = Logistic, tenure_ceiling = u64::MAX / 12 + 1 | E_TENURE_TOO_LARGE_FOR_LOGISTIC (5) |
-| I7 | descent_curve = Logistic, descent_ceiling = u64::MAX / 12 + 1 | E_DESCENT_TOO_LARGE_FOR_LOGISTIC (6) |
-| I8 | credit_curve = Logistic, tenure_ceiling = u64::MAX | E_TENURE_TOO_LARGE_FOR_LOGISTIC (5) |
 
 ### 6.3 Getter round-trip (must hold for all valid configs)
 
@@ -255,15 +221,6 @@ For any config `c` produced by `new(mrp, tc, hf, dsc, rf, g, h, pf)`:
     credit_curve(&c)    == &g
     descent_curve(&c)   == &h
     price_function(&c)  == &pf
-
-### 6.4 Logistic boundary precision
-
-The boundary `u64::MAX / 12` uses integer (floor) division.
-`u64::MAX = 18_446_744_073_709_551_615`.
-`u64::MAX / 12 = 1_537_228_672_809_129_301`.
-
-- V5/V6/V7 use exactly `1_537_228_672_809_129_301` — must not abort.
-- I6 uses `1_537_228_672_809_129_302` — must abort with E_TENURE_TOO_LARGE_FOR_LOGISTIC.
 
 
 7. MODULE BOUNDARY
@@ -278,8 +235,6 @@ The boundary `u64::MAX / 12` uses integer (floor) division.
 | `E_HANDOVER_FLOOR_ZERO: u64 = 2` | `public` | SDK error handling. |
 | `E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 3` | `public` | SDK error handling. |
 | `E_DESCENT_CEILING_ZERO: u64 = 4` | `public` | SDK error handling. |
-| `E_TENURE_TOO_LARGE_FOR_LOGISTIC: u64 = 5` | `public` | SDK error handling. |
-| `E_DESCENT_TOO_LARGE_FOR_LOGISTIC: u64 = 6` | `public` | SDK error handling. |
 | `IntegrationConfig` (type) | `public` | Embedded in `RentalEscrow`. |
 | `new(...)` | `public` | Validated constructor. |
 | `min_rent_price(cfg)` | `public` | Getter — returns `u64`. |

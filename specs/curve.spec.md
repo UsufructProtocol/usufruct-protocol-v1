@@ -487,11 +487,6 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
 
     ((sigma_y - sigma_floor) * S / LOGISTIC_DENOM as u128) as u64
 
-Note: `two_t` and `y_den` require `tenure_ceiling ≤ u64::MAX / 2`;
-`LOGISTIC_K * (two_t - t_max)` and `LOGISTIC_K * (t_max - two_t)` require
-`tenure_ceiling ≤ u64::MAX / LOGISTIC_K = u64::MAX / 12`.
-The binding constraint is therefore `tenure_ceiling ≤ u64::MAX / 12`.
-Enforced by `config::new` when the curve is `Logistic`.
 
 ### Overflow analysis
 

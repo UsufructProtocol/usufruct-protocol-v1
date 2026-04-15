@@ -214,6 +214,9 @@ Price function: `FD(d)` = `new_fixed_delta(d)`, `CD(bps,d)` = `new_compound_delt
 
 ### 6.3 Getter round-trip (must hold for all valid configs)
 
+Verifies that every value passed to `new_config` is returned unchanged by its
+getter — the constructor does not transform, normalize, or discard any field.
+
 For any config `c` produced by `new_config(mrp, tc, hf, dsc, rf, g, h, pf)`:
     min_rent_price(&c)  == mrp
     tenure_ceiling(&c)  == tc
@@ -223,6 +226,13 @@ For any config `c` produced by `new_config(mrp, tc, hf, dsc, rf, g, h, pf)`:
     credit_curve(&c)    == &g
     descent_curve(&c)   == &h
     price_function(&c)  == &pf
+
+Note on `CurveShape`: `new_power_law` normalizes by gcd before storing, so the
+round-trip holds against the reduced value, not the raw arguments:
+
+    g = new_power_law(2, 4)          // stored as PowerLaw { alpha_num: 1, alpha_den: 2 }
+    credit_curve(&c) == &g           // &PowerLaw { 1, 2 } — correct
+    credit_curve(&c) == &PowerLaw { alpha_num: 2, alpha_den: 4 }  // WRONG
 
 
 7. MODULE BOUNDARY

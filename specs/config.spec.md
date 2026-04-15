@@ -20,7 +20,7 @@ embedded inside `RentalEscrow` at integration time and never mutated again.
   No UID. Not a shared object. Embedded field inside `RentalEscrow`.
 - `new_config(...)` — the sole constructor. `public`. Validates all protocol
   invariants and aborts on any violation.
-- One `public` getter per field. Return immutable references or copy values.
+- One `public(package)` getter per field. Return immutable references or copy values.
 
 **Does not own:**
 
@@ -58,7 +58,7 @@ can map abort codes to human-readable messages (same convention as `curve`).
 Bundles all immutable parameters for one integration instance.
 
 ```move
-struct IntegrationConfig has copy, drop, store {
+public struct IntegrationConfig has copy, drop, store {
     min_rent_price:  u64,
     tenure_ceiling:  u64,
     handover_floor:  u64,
@@ -135,16 +135,18 @@ values. No implicit defaults.
 4. GETTERS
 ----------
 
-One `public` getter per field. All take `&IntegrationConfig`.
+One `public(package)` getter per field. All take `&IntegrationConfig`.
+External observers read field values on-chain directly; only `rental_escrow`
+needs these in Move code.
 
-    public fun min_rent_price(cfg: &IntegrationConfig): u64
-    public fun tenure_ceiling(cfg: &IntegrationConfig): u64
-    public fun handover_floor(cfg: &IntegrationConfig): u64
-    public fun descent_ceiling(cfg: &IntegrationConfig): u64
-    public fun retire_floor(cfg: &IntegrationConfig): u64
-    public fun credit_curve(cfg: &IntegrationConfig): &CurveShape
-    public fun descent_curve(cfg: &IntegrationConfig): &CurveShape
-    public fun price_function(cfg: &IntegrationConfig): &PriceFunction
+    public(package) fun min_rent_price(cfg: &IntegrationConfig): u64
+    public(package) fun tenure_ceiling(cfg: &IntegrationConfig): u64
+    public(package) fun handover_floor(cfg: &IntegrationConfig): u64
+    public(package) fun descent_ceiling(cfg: &IntegrationConfig): u64
+    public(package) fun retire_floor(cfg: &IntegrationConfig): u64
+    public(package) fun credit_curve(cfg: &IntegrationConfig): &CurveShape
+    public(package) fun descent_curve(cfg: &IntegrationConfig): &CurveShape
+    public(package) fun price_function(cfg: &IntegrationConfig): &PriceFunction
 
 Scalar fields (`u64`) are returned by value (copy). Curve and price function
 fields are returned by immutable reference (no `copy` needed at call sites).
@@ -237,14 +239,14 @@ For any config `c` produced by `new(mrp, tc, hf, dsc, rf, g, h, pf)`:
 | `E_DESCENT_CEILING_ZERO: u64 = 4` | `public` | SDK error handling. |
 | `IntegrationConfig` (type) | `public` | `copy + drop + store`. Embedded in `RentalEscrow`. |
 | `new_config(...)` | `public` | Validated constructor. |
-| `min_rent_price(cfg)` | `public` | Getter — returns `u64`. |
-| `tenure_ceiling(cfg)` | `public` | Getter — returns `u64`. |
-| `handover_floor(cfg)` | `public` | Getter — returns `u64`. |
-| `descent_ceiling(cfg)` | `public` | Getter — returns `u64`. |
-| `retire_floor(cfg)` | `public` | Getter — returns `u64`. |
-| `credit_curve(cfg)` | `public` | Getter — returns `&CurveShape`. |
-| `descent_curve(cfg)` | `public` | Getter — returns `&CurveShape`. |
-| `price_function(cfg)` | `public` | Getter — returns `&PriceFunction`. |
+| `min_rent_price(cfg)` | `public(package)` | Getter — returns `u64`. |
+| `tenure_ceiling(cfg)` | `public(package)` | Getter — returns `u64`. |
+| `handover_floor(cfg)` | `public(package)` | Getter — returns `u64`. |
+| `descent_ceiling(cfg)` | `public(package)` | Getter — returns `u64`. |
+| `retire_floor(cfg)` | `public(package)` | Getter — returns `u64`. |
+| `credit_curve(cfg)` | `public(package)` | Getter — returns `&CurveShape`. |
+| `descent_curve(cfg)` | `public(package)` | Getter — returns `&CurveShape`. |
+| `price_function(cfg)` | `public(package)` | Getter — returns `&PriceFunction`. |
 
 No private helpers. All logic is in `new`.
 

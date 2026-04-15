@@ -261,7 +261,7 @@ No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 | Function | Purpose |
 |---|---|
 | `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
-| One getter per field | Immutable access |
+| One `public(package)` getter per field | Immutable access for `rental_escrow` |
 
 **Validation constraints (enforced in `new`):**
 ```

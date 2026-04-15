@@ -80,7 +80,7 @@ All validation aborts originate in the constructors defined in §2.3.
 Defines the functional form of `f_credit_ascent` or `f_price_descent`.
 
 ```move
-enum CurveShape has copy, drop, store {
+public enum CurveShape has copy, drop, store {
     Linear,
     Smoothstep,
     PowerLaw {
@@ -117,7 +117,7 @@ enum CurveShape has copy, drop, store {
 Defines the functional form of `f_next_rent_price`.
 
 ```move
-enum PriceFunction has copy, drop, store {
+public enum PriceFunction has copy, drop, store {
     FixedDelta {
         delta: u64,
     },

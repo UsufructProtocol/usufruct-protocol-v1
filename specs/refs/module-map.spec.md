@@ -172,19 +172,22 @@ liquid_renting = "0x0"
 ## Module Dependency Graph
 
 ```
-  math
-   ^
-   |
- curve
-   ^
-   |
-config    owner_cap    tenant_cap    events    protocol_admin_cap    protocol_global_treasury
-    ^          ^            ^          ^              ^                        ^
-     \         |            |          |               \                      /
-      \        |            |          |           protocol_local_treasury
-       \       |            |          |                     ^
-        \      |            |          |                    /
-                         rental_escrow
+      math
+     ^    ^
+     |    |
+ curve_shape  price_function
+          \        /
+           \      /
+            \    /
+             \  /
+              \/
+           config    owner_cap    tenant_cap    events    protocol_admin_cap    protocol_global_treasury
+               ^          ^            ^          ^              ^                        ^
+                \         |            |          |               \                      /
+                 \        |            |          |           protocol_local_treasury
+                  \       |            |          |                     ^
+                   \      |            |          |                    /
+                                    rental_escrow
 ```
 
 Arrows point from dependency to dependent.
@@ -206,8 +209,8 @@ No protocol types, no objects, no Sui framework dependencies.
 
 | Symbol | Type | Value | Purpose |
 |---|---|---|---|
-| `TAYLOR_SCALE` | `u128` | `10^18` | Fixed-point denominator for `exp_scaled` results. Used by `curve` to interpret them. |
-| `TAYLOR_SCALE_SQ` | `u128` | `10^36` | `TAYLOR_SCALE²`. Used by `curve` for the `exp_scaled` negative path. |
+| `TAYLOR_SCALE` | `u128` | `10^18` | Fixed-point denominator for `exp_scaled` results. Used by `curve_shape` to interpret them. |
+| `TAYLOR_SCALE_SQ` | `u128` | `10^36` | `TAYLOR_SCALE²`. Used by `curve_shape` for the `exp_scaled` negative path. |
 | `E_MUL_DIV_OVERFLOW` | `u64` | `0` | Abort code when `mul_div` result overflows u64. |
 
 **Exports (public):**
@@ -215,8 +218,8 @@ No protocol types, no objects, no Sui framework dependencies.
 | Function | Signature | Purpose |
 |---|---|---|
 | `mul_div` | `(a: u64, b: u64, c: u64): u64` | `floor(a * b / c)` via u128, overflow-safe. |
-| `nth_root_u128` | `(n: u128, d: u32): u128` | `floor(n^(1/d))` via Newton-Raphson. Used by `curve` for the PowerLaw variant. `d ∈ {2, 3, 4}`. |
-| `exp_scaled` | `(y_num: u64, y_den: u64, neg: bool): u128` | `floor(e^(y_num/y_den) · TAYLOR_SCALE)` with sign via `neg`. Used by `curve` for the Exponential and Logistic variants. |
+| `nth_root_u128` | `(n: u128, d: u32): u128` | `floor(n^(1/d))` via Newton-Raphson. Used by `curve_shape` for the PowerLaw variant. `d ∈ {2, 3, 4}`. |
+| `exp_scaled` | `(y_num: u64, y_den: u64, neg: bool): u128` | `floor(e^(y_num/y_den) · TAYLOR_SCALE)` with sign via `neg`. Used by `curve_shape` for the Exponential and Logistic variants. |
 
 **Status:** [ ] `mul_div` · [ ] `nth_root_u128` · [ ] `exp_scaled`
 
@@ -224,43 +227,77 @@ No protocol types, no objects, no Sui framework dependencies.
 
 ---
 
-### 2. `curve.move` — Shape functions and price functions
+### 2. `curve_shape.move` — Shape functions (CurveShape)
 
-**Responsibility:** Defines the `CurveShape` and `PriceFunction` enum types.
-Evaluates normalized shape functions and price computations.
-All functions are pure — no objects, no mutation, no Sui state.
+**Responsibility:** Defines the `CurveShape` enum type and evaluates normalized
+shape functions. All functions are pure — no objects, no mutation, no Sui state.
 
 **Types:**
 
 | Type | Abilities | Variants |
 |---|---|---|
-| `CurveShape` | `copy, drop, store` | `Linear`, `Smoothstep`, `PowerLaw { alpha_num: u8, alpha_den: u8 }`, `Exponential { alpha_abs: u8, alpha_neg: bool }`, `Logistic` (no fields — k=12 fixed, denom precomputed as module constant) |
-| `PriceFunction` | `copy, drop, store` | `FixedDelta { delta: u64 }`, `CompoundDelta { bps: u64, delta: u64 }` |
+| `CurveShape` | `copy, drop, store` | `Linear`, `Smoothstep`, `PowerLaw { alpha_num: u8, alpha_den: u8 }`, `Exponential { alpha_abs: u8, alpha_neg: bool }`, `Logistic` (no fields — k=12 fixed, `LOGISTIC_DENOM` precomputed as module constant) |
 
-Note: there is no standalone `Percentage` variant. Pure percentage behavior is expressed as `CompoundDelta { bps, delta: 1 }`.
+**Constants (module-level):**
+- `SCALE: u64 = 1_000_000_000`
+- `LOGISTIC_K: u64 = 12`
+- `LOGISTIC_DENOM: u64` — algorithm-derived literal, established once at initial implementation
+
+**Error constants (public):**
+- `E_ALPHA_NUM_RANGE: u64 = 0`
+- `E_ALPHA_DEN_RANGE: u64 = 1`
+- `E_DEGENERATE_LINEAR: u64 = 2`
+- `E_ALPHA_ABS_RANGE: u64 = 3`
+
+**Constructors (`public`):** `new_linear()`, `new_smoothstep()`, `new_logistic()` — no validation. `new_power_law(alpha_num, alpha_den)` — validates `alpha_num ∈ [1, 8]`, `alpha_den ∈ {1, 2, 3, 4}`, `alpha_num != alpha_den`; normalizes by `gcd(alpha_num, alpha_den)`. `new_exponential(alpha_abs, alpha_neg)` — validates `alpha_abs ∈ [1, 8]`.
 
 **Functions:**
 
 | Function | Visibility | Signature | Purpose |
 |---|---|---|---|
-| `evaluate_curve` | private | `(shape: &CurveShape, t: u64, t_max: u64): u64` | Evaluate normalized shape at `x = t/t_max`, result in `[0, SCALE]`. Used only by `compute_used_credit` and `compute_price_descent`. |
-| `evaluate_price_fn` | private | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatch on `PriceFunction` variant. Called only by `compute_next_rent_price`. |
+| `evaluate_curve` | private | `(shape: &CurveShape, t: u64, t_max: u64): u64` | Evaluate normalized shape at `x = t/t_max`, result in `[0, SCALE]`. Short-circuits at `t == 0 → 0` and `t >= t_max → SCALE`. |
 | `compute_used_credit` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, tenure_ceiling: u64, last_rent_price: u64): u64` | `last_rent_price * g(elapsed / tenure_ceiling)`. Saturates at `last_rent_price`. |
 | `compute_price_descent` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
-| `compute_next_rent_price` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
 
-**Constructors (`public`):** One function per variant. Called by integrators from PTBs to build `CurveShape` and `PriceFunction` values before calling `config::new_config`.
-
-- `CurveShape`: `new_linear()`, `new_smoothstep()`, `new_logistic()` — no validation. `new_power_law(alpha_num, alpha_den)` — validates `alpha_num ∈ [1, 8]`, `alpha_den ∈ {1, 2, 3, 4}`, `alpha_num != alpha_den`; normalizes by `gcd(alpha_num, alpha_den)`. `new_exponential(alpha_abs, alpha_neg)` — validates `alpha_abs ∈ [1, 8]`.
-- `PriceFunction`: `new_fixed_delta(delta)` — validates `delta > 0`. `new_compound_delta(bps, delta)` — validates `bps ∈ [1, u64::MAX − 10000]`, `delta > 0`.
-
-**Status:** [ ] `CurveShape` · [ ] `PriceFunction` · [ ] `evaluate_curve` · [ ] `evaluate_price_fn` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
+**Status:** [ ] `CurveShape` · [ ] `evaluate_curve` · [ ] `compute_used_credit` · [ ] `compute_price_descent`
 
 **Depends on:** `math`.
 
 ---
 
-### 3. `config.move` — Integration configuration
+### 3. `price_function.move` — Price escalation function (PriceFunction)
+
+**Responsibility:** Defines the `PriceFunction` enum type and evaluates
+`f_next_rent_price`. All functions are pure — no objects, no mutation, no Sui state.
+
+**Types:**
+
+| Type | Abilities | Variants |
+|---|---|---|
+| `PriceFunction` | `copy, drop, store` | `FixedDelta { delta: u64 }`, `CompoundDelta { bps: u64, delta: u64 }` |
+
+Note: there is no standalone `Percentage` variant. Pure percentage behavior is expressed as `CompoundDelta { bps, delta: 1 }`.
+
+**Error constants (public):**
+- `E_FIXED_DELTA_ZERO: u64 = 0`
+- `E_BPS_RANGE: u64 = 1`
+
+**Constructors (`public`):** `new_fixed_delta(delta)` — validates `delta > 0`. `new_compound_delta(bps, delta)` — validates `bps ∈ [1, u64::MAX − 10000]`, `delta > 0`.
+
+**Functions:**
+
+| Function | Visibility | Signature | Purpose |
+|---|---|---|---|
+| `evaluate_price_fn` | private | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatch on `PriceFunction` variant. Called only by `compute_next_rent_price`. |
+| `compute_next_rent_price` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Thin wrapper over `evaluate_price_fn`. Result always `> last_rent_price`. |
+
+**Status:** [ ] `PriceFunction` · [ ] `evaluate_price_fn` · [ ] `compute_next_rent_price`
+
+**Depends on:** `math`.
+
+---
+
+### 4. `config.move` — Integration configuration
 
 **Responsibility:** `IntegrationConfig` struct and its validated constructor.
 Bundles all immutable parameters set once at integration time.
@@ -300,11 +337,11 @@ retire_floor     >= 0   (always true for u64)
 
 **Status:** [ ] `IntegrationConfig` · [ ] `new` · [ ] getters
 
-**Depends on:** `curve`.
+**Depends on:** `curve_shape`, `price_function`.
 
 ---
 
-### 4. `owner_cap.move` — Owner capability
+### 5. `owner_cap.move` — Owner capability
 
 **Responsibility:** `OwnerCap` object. One per integration instance.
 Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
@@ -334,7 +371,7 @@ Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
 
 ---
 
-### 5. `tenant_cap.move` — Tenant capability and asset receipt
+### 6. `tenant_cap.move` — Tenant capability and asset receipt
 
 **Responsibility:** `TenantCap` object only.
 `TenantCap` is minted only when a bidder becomes the current tenant — not at bid time.
@@ -364,7 +401,7 @@ Stale caps from displaced tenants are inert.
 
 ---
 
-### 6. `events.move` — Protocol events
+### 7. `events.move` — Protocol events
 
 **Responsibility:** Event struct definitions and package-scoped emit helpers.
 No logic, no state. Pure data carriers.
@@ -393,7 +430,7 @@ No logic, no state. Pure data carriers.
 
 ---
 
-### 7. `protocol_admin_cap.move` — Protocol administrator capability
+### 8. `protocol_admin_cap.move` — Protocol administrator capability
 
 **Responsibility:** `ProtocolAdminCap` singleton. Proof of protocol-level authority.
 Created once at publish time via `init`. No other logic.
@@ -419,7 +456,7 @@ Created once at publish time via `init`. No other logic.
 
 ---
 
-### 8. `protocol_global_treasury.move` — Protocol fee inbox (singleton)
+### 9. `protocol_global_treasury.move` — Protocol fee inbox (singleton)
 
 **Responsibility:** `ProtocolGlobalTreasury` shared singleton. Pure inbox — no balance,
 no phantom type. Receives `ProtocolLocalTreasury<C>` child objects via transfer-to-object.
@@ -447,7 +484,7 @@ Exposes `uid_mut` so `protocol_local_treasury` can call `transfer::receive`.
 
 ---
 
-### 9. `protocol_local_treasury.move` — Protocol fee payload and drain
+### 10. `protocol_local_treasury.move` — Protocol fee payload and drain
 
 **Responsibility:** `ProtocolLocalTreasury<C>` per-retirement fee object, and all
 fund-routing logic: `float` creates and routes to the inbox; `drain_local_treasuries`
@@ -478,7 +515,7 @@ receives and drains. `transfer::receive` is restricted to this module (`key` onl
 
 ---
 
-### 10. `rental_escrow.move` — Core escrow and public API
+### 11. `rental_escrow.move` — Core escrow and public API
 
 **Responsibility:** The central shared object, state machine, lazy evaluation,
 all public entry points, and fund distribution logic.
@@ -559,7 +596,7 @@ when a transition logically occurred and when it was executed.
 | `do_auction_expiry` | Transition to `Idle`. No funds to move. |
 | `split_fee` | Pure: splits an amount into (amount×0.95, amount×0.05) tuple. |
 
-**Depends on:** `math`, `curve`, `config`, `owner_cap`, `tenant_cap`, `events`,
+**Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`, `events`,
 `protocol_admin_cap`, `protocol_global_treasury`, `protocol_local_treasury`.
 
 ---
@@ -717,19 +754,21 @@ in the object type, so no coordination is needed to identify which coin to drain
 
 ```
 sources/
-    math.move                    §1   — pure arithmetic
-    curve.move                   §2   — shape + price function types and evaluation
-    config.move                  §3   — IntegrationConfig struct + validation
-    owner_cap.move               §4   — OwnerCap object
-    tenant_cap.move              §5   — TenantCap + AssetReceipt objects
-    events.move                  §6   — event structs + emit helpers
-    protocol_admin_cap.move      §7   — ProtocolAdminCap singleton
-    protocol_global_treasury.move §8  — ProtocolGlobalTreasury inbox singleton
-    protocol_local_treasury.move §9   — ProtocolLocalTreasury + float + drain
-    rental_escrow.move           §10  — RentalEscrow shared object + full public API
+    math.move                     §1   — pure arithmetic
+    curve_shape.move              §2   — CurveShape type and shape function evaluation
+    price_function.move           §3   — PriceFunction type and price escalation
+    config.move                   §4   — IntegrationConfig struct + validation
+    owner_cap.move                §5   — OwnerCap object
+    tenant_cap.move               §6   — TenantCap + AssetReceipt objects
+    events.move                   §7   — event structs + emit helpers
+    protocol_admin_cap.move       §8   — ProtocolAdminCap singleton
+    protocol_global_treasury.move §9   — ProtocolGlobalTreasury inbox singleton
+    protocol_local_treasury.move  §10  — ProtocolLocalTreasury + float + drain
+    rental_escrow.move            §11  — RentalEscrow shared object + full public API
 tests/
     math_tests.move
-    curve_tests.move
+    curve_shape_tests.move
+    price_function_tests.move
     config_tests.move
     protocol_local_treasury_tests.move
     rental_escrow_tests.move
@@ -884,16 +923,18 @@ Build bottom-up following the dependency graph:
 
 ```
 1.  math                      (leaf — no dependencies)
-2.  curve                     (depends on math)
-3.  config                    (depends on curve)
-4.  owner_cap                 (leaf)
-5.  tenant_cap                (leaf)
-6.  events                    (leaf)
-7.  protocol_admin_cap        (leaf)
-8.  protocol_global_treasury  (leaf)
-9.  protocol_local_treasury   (depends on protocol_admin_cap, protocol_global_treasury)
-10. rental_escrow             (depends on all above)
+2.  curve_shape               (depends on math)
+3.  price_function            (depends on math)
+4.  config                    (depends on curve_shape, price_function)
+5.  owner_cap                 (leaf)
+6.  tenant_cap                (leaf)
+7.  events                    (leaf)
+8.  protocol_admin_cap        (leaf)
+9.  protocol_global_treasury  (leaf)
+10. protocol_local_treasury   (depends on protocol_admin_cap, protocol_global_treasury)
+11. rental_escrow             (depends on all above)
 ```
 
-Steps 3–8 are independent of each other (except config→curve and step 9→7,8).
-Steps 4–8 can be built in parallel.
+Steps 2–3 are independent of each other (both depend only on math) and can be built in parallel.
+Steps 5–9 are independent leaves — build in parallel.
+Step 4 (config) waits on steps 2–3. Step 10 waits on steps 8–9. Step 11 waits on all.

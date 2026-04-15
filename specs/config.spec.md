@@ -18,7 +18,7 @@ embedded inside `RentalEscrow` at integration time and never mutated again.
 
 - `IntegrationConfig` — plain data struct (`copy + drop + store`, no `key`).
   No UID. Not a shared object. Embedded field inside `RentalEscrow`.
-- `new(...)` — the sole constructor. `public`. Validates all protocol
+- `new_config(...)` — the sole constructor. `public`. Validates all protocol
   invariants and aborts on any violation.
 - One `public` getter per field. Return immutable references or copy values.
 
@@ -98,7 +98,7 @@ All fields are private. Access via getters only.
 
 ### Signature
 
-    public fun new(
+    public fun new_config(
         min_rent_price:  u64,
         tenure_ceiling:  u64,
         handover_floor:  u64,
@@ -184,10 +184,10 @@ re-checking.
 
 Format: `new(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function)`
 
-Curve values use shorthand: `Lin` = `linear()`, `Smt` = `smoothstep()`,
-`Pow(n,d)` = `power_law(n, d)`, `Exp(a,neg)` = `exponential(a, neg)`,
-`Log` = `logistic()`.
-Price function: `FD(d)` = `fixed_delta(d)`, `CD(bps,d)` = `compound_delta(bps, d)`.
+Curve values use shorthand: `Lin` = `new_linear()`, `Smt` = `new_smoothstep()`,
+`Pow(n,d)` = `new_power_law(n, d)`, `Exp(a,neg)` = `new_exponential(a, neg)`,
+`Log` = `new_logistic()`.
+Price function: `FD(d)` = `new_fixed_delta(d)`, `CD(bps,d)` = `new_compound_delta(bps, d)`.
 
 ### 6.1 Valid inputs (must not abort)
 
@@ -236,7 +236,7 @@ For any config `c` produced by `new(mrp, tc, hf, dsc, rf, g, h, pf)`:
 | `E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 3` | `public` | SDK error handling. |
 | `E_DESCENT_CEILING_ZERO: u64 = 4` | `public` | SDK error handling. |
 | `IntegrationConfig` (type) | `public` | `copy + drop + store`. Embedded in `RentalEscrow`. |
-| `new(...)` | `public` | Validated constructor. |
+| `new_config(...)` | `public` | Validated constructor. |
 | `min_rent_price(cfg)` | `public` | Getter — returns `u64`. |
 | `tenure_ceiling(cfg)` | `public` | Getter — returns `u64`. |
 | `handover_floor(cfg)` | `public` | Getter — returns `u64`. |

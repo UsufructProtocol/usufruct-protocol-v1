@@ -223,10 +223,10 @@ Note: there is no standalone `Percentage` variant. Pure percentage behavior is e
 | `compute_price_descent` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
 | `compute_next_rent_price` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatches on variant. Result always `> last_rent_price`. |
 
-**Constructors (`public`):** One function per variant. Called by integrators from PTBs to build `CurveShape` and `PriceFunction` values before calling `config::new`.
+**Constructors (`public`):** One function per variant. Called by integrators from PTBs to build `CurveShape` and `PriceFunction` values before calling `config::new_config`.
 
-- `CurveShape`: `linear()`, `smoothstep()`, `logistic()` — no validation. `power_law(alpha_num, alpha_den)` — validates `alpha_num ∈ [1, 8]`, `alpha_den ∈ {1, 2, 3, 4}`, `alpha_num != alpha_den`; normalizes by `gcd(alpha_num, alpha_den)`. `exponential(alpha_abs, alpha_neg)` — validates `alpha_abs ∈ [1, 8]`.
-- `PriceFunction`: `fixed_delta(delta)` — validates `delta > 0`. `compound_delta(bps, delta)` — validates `bps ∈ [1, u64::MAX − 10000]`, `delta > 0`.
+- `CurveShape`: `new_linear()`, `new_smoothstep()`, `new_logistic()` — no validation. `new_power_law(alpha_num, alpha_den)` — validates `alpha_num ∈ [1, 8]`, `alpha_den ∈ {1, 2, 3, 4}`, `alpha_num != alpha_den`; normalizes by `gcd(alpha_num, alpha_den)`. `new_exponential(alpha_abs, alpha_neg)` — validates `alpha_abs ∈ [1, 8]`.
+- `PriceFunction`: `new_fixed_delta(delta)` — validates `delta > 0`. `new_compound_delta(bps, delta)` — validates `bps ∈ [1, u64::MAX − 10000]`, `delta > 0`.
 
 **Status:** [ ] `CurveShape` · [ ] `PriceFunction` · [ ] `evaluate_curve` · [ ] `evaluate_price_fn` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
 
@@ -260,7 +260,7 @@ No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 
 | Function | Purpose |
 |---|---|
-| `new(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
+| `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
 | One getter per field | Immutable access |
 
 **Validation constraints (enforced in `new`):**

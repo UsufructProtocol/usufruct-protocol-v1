@@ -177,16 +177,16 @@ directly without validation.
 
 ### CurveShape constructors
 
-    public fun linear(): CurveShape
+    public fun new_linear(): CurveShape
     // Returns CurveShape::Linear. No validation.
 
-    public fun smoothstep(): CurveShape
+    public fun new_smoothstep(): CurveShape
     // Returns CurveShape::Smoothstep. No validation.
 
-    public fun logistic(): CurveShape
+    public fun new_logistic(): CurveShape
     // Returns CurveShape::Logistic. No validation.
 
-    public fun power_law(alpha_num: u8, alpha_den: u8): CurveShape
+    public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShape
     // Validates:
     //   assert!(alpha_num >= 1 && alpha_num <= 8, E_ALPHA_NUM_RANGE)
     //   assert!(alpha_den >= 1 && alpha_den <= 4, E_ALPHA_DEN_RANGE)
@@ -194,19 +194,19 @@ directly without validation.
     // Normalizes: divides both by gcd(alpha_num, alpha_den) before storing.
     // Returns CurveShape::PowerLaw { alpha_num: reduced, alpha_den: reduced }.
 
-    public fun exponential(alpha_abs: u8, alpha_neg: bool): CurveShape
+    public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShape
     // Validates:
     //   assert!(alpha_abs >= 1 && alpha_abs <= 8, E_ALPHA_ABS_RANGE)
     // Returns CurveShape::Exponential { alpha_abs, alpha_neg }.
 
 ### PriceFunction constructors
 
-    public fun fixed_delta(delta: u64): PriceFunction
+    public fun new_fixed_delta(delta: u64): PriceFunction
     // Validates:
     //   assert!(delta > 0, E_FIXED_DELTA_ZERO)
     // Returns PriceFunction::FixedDelta { delta }.
 
-    public fun compound_delta(bps: u64, delta: u64): PriceFunction
+    public fun new_compound_delta(bps: u64, delta: u64): PriceFunction
     // Validates:
     //   assert!(bps >= 1 && bps <= u64::MAX - 10000, E_BPS_RANGE)
     //   assert!(delta > 0,                            E_FIXED_DELTA_ZERO)
@@ -627,13 +627,13 @@ Guaranteed result > last_rent_price by constructor field constraints (§2.3).
 | `E_ALPHA_ABS_RANGE: u64 = 3` | `public` | SDK error handling. |
 | `E_FIXED_DELTA_ZERO: u64 = 4` | `public` | SDK error handling. |
 | `E_BPS_RANGE: u64 = 5` | `public` | SDK error handling. |
-| `linear()` | `public` | Called by integrators to build `CurveShape`. |
-| `smoothstep()` | `public` | Called by integrators to build `CurveShape`. |
-| `logistic()` | `public` | Called by integrators to build `CurveShape`. |
-| `power_law(alpha_num, alpha_den)` | `public` | Called by integrators. Validates + normalizes. |
-| `exponential(alpha_abs, alpha_neg)` | `public` | Called by integrators. Validates. |
-| `fixed_delta(delta)` | `public` | Called by integrators to build `PriceFunction`. |
-| `compound_delta(bps, delta)` | `public` | Called by integrators. Validates. |
+| `new_linear()` | `public` | Called by integrators to build `CurveShape`. |
+| `new_smoothstep()` | `public` | Called by integrators to build `CurveShape`. |
+| `new_logistic()` | `public` | Called by integrators to build `CurveShape`. |
+| `new_power_law(alpha_num, alpha_den)` | `public` | Called by integrators. Validates + normalizes. |
+| `new_exponential(alpha_abs, alpha_neg)` | `public` | Called by integrators. Validates. |
+| `new_fixed_delta(delta)` | `public` | Called by integrators to build `PriceFunction`. |
+| `new_compound_delta(bps, delta)` | `public` | Called by integrators. Validates. |
 | `compute_used_credit(...)` | `public(package)` | Called by `rental_escrow`. |
 | `compute_price_descent(...)` | `public(package)` | Called by `rental_escrow`. |
 | `compute_next_rent_price(...)` | `public(package)` | Called by `rental_escrow`. |

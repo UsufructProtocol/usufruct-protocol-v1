@@ -26,16 +26,27 @@ Pure data carriers.
 **Key design properties:**
 - All event structs have `copy, drop` abilities — required by
   `sui::event::emit`.
+- **The Sui Verifier requires the emitted type to be internal to the
+  module that calls `event::emit`.** `rental_escrow` cannot call
+  `event::emit` directly with types defined here. The `emit_*` helper
+  pattern is therefore not just organizational — it is the only valid
+  architecture for centralizing event definitions in a separate module.
 - All `emit_*` functions are `public(package)` — only `rental_escrow`
   can fire them. This enforces that events are only emitted at the
   correct call sites and prevents external modules from injecting
   spurious events.
 - Centralizing emission in `events.move` makes struct definitions
   discoverable and testable in isolation from `rental_escrow`.
+- `sender` and `timestamp` are automatically included in event metadata
+  by the Sui runtime (transaction effects). No need to add them to
+  event structs.
 - Events are the audit log for fund flows. `HandoverCompleted` and
   `TenureExpired` include `owner_earned` and `protocol_fee` fields —
   the sole traceability mechanism for fee splits (no fields on
   `FeeMessage` for this purpose).
+- `sui::event::emit_authenticated` exists for light-client-verifiable
+  event streams. Not used now, but available for critical events like
+  `HandoverCompleted` if cryptographic auditability is needed in future.
 
 **Open question — `RentalStarted` vs `DutchAuctionEntry`:**
 The module-map lists both as emitted at `rent (AtDutchAuction)`.

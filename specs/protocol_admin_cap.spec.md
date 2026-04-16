@@ -239,3 +239,55 @@ Tested indirectly via `protocol_local_treasury::drain_local_treasuries`.
 No error constants.
 
 **Depends on:** nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`).
+
+
+7. RATIONALE — DUAL ROLE OF ProtocolAdminCap
+---------------------------------------------
+
+### Why not a dedicated shared inbox (ProtocolGlobalTreasury)?
+
+The original design used a separate `ProtocolGlobalTreasury` shared singleton as the
+fee inbox. Shared objects in Sui require consensus for every transaction that touches
+them — even read-only access. This imposed a consensus cost on two operations:
+
+- `integrate` — reads the shared treasury to register its ID in the escrow.
+- `drain_local_treasuries` — mutates the shared treasury to receive child objects.
+
+Both are admin or integrator paths, not user-facing. But `drain` is recurrent — it
+fires every time the protocol collects accumulated fees. At a 5% fee rate, the admin's
+operational cost directly erodes protocol revenue. Eliminating consensus from the drain
+path is not premature optimization; it is proportional to the protocol's margin.
+
+### Why AdminCap as the inbox?
+
+The key insight is that losing `ProtocolAdminCap` already locked access to all admin
+functions — including any drain operation. A separate shared treasury would have been
+accessible to everyone on-chain but inaccessible to the admin without the cap.
+The shared object provided no additional recoverability.
+
+Unifying the inbox into the cap collapses two objects that were always used together
+into one. The consequences:
+
+- **Gas**: `drain_local_treasuries` now touches only owned objects — fastpath, no consensus.
+- **API**: the drain signature drops one argument. `&mut ProtocolAdminCap` simultaneously
+  gates access (capability check) and provides `uid_mut` for `transfer::receive`.
+- **Transfer semantics**: transferring `ProtocolAdminCap` to a multisig or DAO transfers
+  both admin authority and inbox ownership atomically. With a separate treasury, the
+  admin risked partial transfer — cap in one wallet, uncollected fees in another.
+
+### Why ProtocolFeeRef (frozen) instead of passing the ID directly?
+
+`integrate` needs the fee inbox ID to store in each `RentalEscrow`. The alternatives:
+
+1. **Pass raw `ID`** — no type safety. Any integrator could pass an arbitrary ID,
+   routing fees to a dead address. Fees would be permanently lost.
+2. **Pass `&ProtocolAdminCap`** — requires the admin to co-sign every `integrate`
+   transaction. Integrators are third parties; requiring admin presence breaks
+   permissionless integration.
+3. **Pass `&ProtocolFeeRef`** (chosen) — a frozen object is immutable and accessible
+   by any PTB without consensus. It carries a typed guarantee: the ID inside was set
+   by the protocol's own `init` and can never be changed. Type safety is preserved;
+   the admin is not needed at integration time.
+
+`ProtocolFeeRef` is the minimal object that makes permissionless, type-safe,
+consensus-free registration of the fee inbox ID possible.

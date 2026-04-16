@@ -16,7 +16,7 @@ by any PTB without consensus).
 At each boundary event (handover, tenure expiry), `send_fee()` creates a
 `FeeMessage<C>` and transfers it to `ProtocolFeeInbox` via transfer-to-object
 (free, no contention on the inbox). The admin drains all messages via
-`drain_and_delete_fee_messages`, presenting `&mut ProtocolFeeInbox` — owned object, fastpath,
+`collect_fee_messages`, presenting `&mut ProtocolFeeInbox` — owned object, fastpath,
 no consensus. All other operations stay on the single escrow object.
 
 ```
@@ -24,7 +24,7 @@ no consensus. All other operations stay on the single escrow object.
  ┌─────────────────────────────────────────────┐
  │   ProtocolFeeInbox              [OWNED]      │
  │   · fee inbox (child objects accumulate here)│
- │   drain_and_delete_fee_messages()                       │
+ │   collect_fee_messages()                       │
  └──────────────────────┬──────────────────────┘
                         │ (child objects, one per boundary event with non-zero fees)
                         │ transfer-to-object — free, no contention on FeeInbox
@@ -34,7 +34,7 @@ no consensus. All other operations stay on the single escrow object.
 ║  ┌──────────────────┐  Created by send_fee() inside do_handover()  ║
 ║  │  balance         │  and do_tenure_expiry(). Transferred to      ║
 ║  │  Balance<C>      │  ProtocolFeeInbox as child.                  ║
-║  └──────────────────┘  Deleted by drain_and_delete_fee_messages().            ║
+║  └──────────────────┘  Deleted by collect_fee_messages().            ║
 ║                         escrow_id for traceability.                 ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -127,7 +127,7 @@ no consensus. All other operations stay on the single escrow object.
  retire()                   —  sets retire_flag only, no asset movement
  claim_asset()              ←  Coin<C>  ←  owner_earnings (sweep)
                             ←  Asset    ←  RentalEscrow (unwrapped, deleted)
- drain_and_delete_fee_messages<C>()    ←  Coin<C>  ←  FeeMessage<C>[]                  (&mut ProtocolFeeInbox, fastpath, deleted, one call per CoinType)
+ collect_fee_messages<C>()    ←  Coin<C>  ←  FeeMessage<C>[]                  (&mut ProtocolFeeInbox, fastpath, deleted, one call per CoinType)
 ```
 
 ---
@@ -144,7 +144,7 @@ objects — fastpath, no consensus.
 | `withdraw_earnings` | serial on RentalEscrow |
 | `integrate` | serial on RentalEscrow · read `ProtocolFeeRef` (frozen — no consensus) |
 | `claim_asset` | serial on RentalEscrow only — transfer-to-object does not touch `ProtocolFeeInbox` |
-| `drain_and_delete_fee_messages<C>` | owned `ProtocolFeeInbox` only — fastpath, no consensus, one call per CoinType |
+| `collect_fee_messages<C>` | owned `ProtocolFeeInbox` only — fastpath, no consensus, one call per CoinType |
 | `current_state`, `current_used_credit`, `current_price_descent`, `current_next_rent_price` | read-only (`&RentalEscrow`) — no contention |
 
 ---
@@ -461,7 +461,7 @@ inbox's ID — passed to `integrate` by any integrator without consensus overhea
 
 **Responsibility:** `FeeMessage<C>` per-boundary-event fee object, and all
 fund-routing logic: `send_fee` creates and routes to the inbox at each boundary;
-`drain_and_delete_fee_messages` receives and drains. `transfer::receive` is restricted to this
+`collect_fee_messages` receives and drains. `transfer::receive` is restricted to this
 module (`key` only type).
 
 **Types:**
@@ -482,9 +482,9 @@ module (`key` only type).
 | `send_fee<C>(balance, fee_inbox_id, escrow_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
 | `receive_message<C>(inbox, ticket)` | private | Receives one `FeeMessage<C>` from inbox via `transfer::receive`. |
 | `consume_message<C>(msg)` | private | Destructures `FeeMessage<C>`, deletes UID, returns `Balance<C>`. |
-| `drain_and_delete_fee_messages<C>(inbox, tickets, ctx): Coin<C>` | `public` | Pipeline of `receive_message` + `consume_message`. Single pass O(n). Returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
+| `collect_fee_messages<C>(inbox, tickets, ctx): Coin<C>` | `public` | Pipeline of `receive_message` + `consume_message`. Single pass O(n). Returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
 
-**Status:** [x] `FeeMessage` · [x] `send_fee` · [x] `receive_message` · [x] `consume_message` · [x] `drain_and_delete_fee_messages`
+**Status:** [x] `FeeMessage` · [x] `send_fee` · [x] `receive_message` · [x] `consume_message` · [x] `collect_fee_messages`
 
 **Depends on:** `protocol_fee_inbox`.
 
@@ -699,7 +699,7 @@ transfers it to `ProtocolFeeInbox` via transfer-to-object — free, does not mut
 `ProtocolFeeInbox`. No fee balance ever accumulates inside `RentalEscrow`.
 `FeeMessage<C>` objects are discoverable as children of `ProtocolFeeInbox`
 via `suix_getOwnedObjects`. The admin groups them by CoinType and calls
-`drain_and_delete_fee_messages<C>()` once per type — up to 1024 messages per PTB — presenting
+`collect_fee_messages<C>()` once per type — up to 1024 messages per PTB — presenting
 only `&mut ProtocolFeeInbox` (owned object, fastpath, no consensus).
 All messages are deleted after draining. The CoinType is encoded in the object type,
 so no coordination is needed to identify which coin to drain.
@@ -713,7 +713,7 @@ so no coordination is needed to identify which coin to drain.
 - Asset requires `key + store` abilities to live inside `RentalEscrow`.
 - `integrate()` creates and shares 1 object: `RentalEscrow`. It takes `&ProtocolFeeRef` (frozen — no consensus) and stores `fee_ref_inbox_id(fee_ref)` as `fee_inbox_id`. Publish-time `init()` creates two singletons: `ProtocolFeeInbox` (transferred to deployer) and `ProtocolFeeRef` (frozen).
 - `asset: Asset` — the asset is always present while the escrow exists. There is no valid persistent state where the escrow exists without the asset. `claim_asset()` extracts the asset and deletes the escrow atomically. The PTB borrow mechanism (`borrow_asset`/`return_asset`) is an implementation detail — the temporary extraction never persists across transaction boundaries.
-- Fund flows are asymmetric: owner pulls via `withdraw_earnings()` and `claim_asset()`; admin pulls via `drain_and_delete_fee_messages()`; tenants receive pushes to the address registered at mint time.
+- Fund flows are asymmetric: owner pulls via `withdraw_earnings()` and `claim_asset()`; admin pulls via `collect_fee_messages()`; tenants receive pushes to the address registered at mint time.
 - Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.
 - Maximum nesting depth for `OwnerCap` as asset: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.
 - Object discovery: `AssetIntegrated` includes `escrow_id` so off-chain consumers can track all instances from events. Sui RPC (`suix_queryObjects` by type) serves as a bootstrap fallback.
@@ -771,7 +771,7 @@ consensus overhead.
 
 The admin discovers `FeeMessage<C>` objects as children of `ProtocolFeeInbox`
 via `suix_getOwnedObjects`, groups them by CoinType, and batch-drains each group via
-`drain_and_delete_fee_messages<C>()` — up to 1024 messages per PTB, one call per CoinType,
+`collect_fee_messages<C>()` — up to 1024 messages per PTB, one call per CoinType,
 presenting only `&mut ProtocolFeeInbox` (owned, fastpath, no consensus).
 The CoinType is encoded in the object type: no coordination between owner and admin is
 required at any point in the lifecycle.

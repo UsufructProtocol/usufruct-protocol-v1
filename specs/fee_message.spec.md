@@ -24,7 +24,7 @@ for protocol fees at each boundary event.
   the inbox via `transfer::receive`. Single-object step.
 - `consume_message<C>(...)` — private. Destructures a `FeeMessage<C>`,
   deletes its `UID`, and returns its `Balance<C>`.
-- `drain_and_delete_fee_messages<C>(...)` — `public`. Pipeline of
+- `collect_fee_messages<C>(...)` — `public`. Pipeline of
   `receive_message` + `consume_message` over a vector, with an internal
   `Balance<C>` accumulator. Single pass — O(n). Returns `Coin<C>`.
   Called by admin.
@@ -36,7 +36,7 @@ for protocol fees at each boundary event.
 - `FeeMessage` is `key` only. `transfer::receive` is restricted to this
   module — no external code can receive these objects from the inbox.
 - Zero balances are destroyed in `send_fee` without creating an object.
-- One `drain_and_delete_fee_messages<C>` call handles one CoinType.
+- One `collect_fee_messages<C>` call handles one CoinType.
   Multiple calls for different types may be chained in a single PTB,
   all sharing one `&mut ProtocolFeeInbox` — fastpath, no consensus.
 - The accumulator is `Balance<C>`, not `Coin<C>` — `ctx` is only used
@@ -46,10 +46,10 @@ for protocol fees at each boundary event.
 1. ERROR CONSTANTS
 ------------------
 
-None. Neither `send_fee` nor `drain_and_delete_fee_messages` have
+None. Neither `send_fee` nor `collect_fee_messages` have
 validatable preconditions that require named abort codes. `send_fee`
 handles zero balance as a no-op branch, not an error.
-`drain_and_delete_fee_messages` accepts an empty vector as a valid no-op.
+`collect_fee_messages` accepts an empty vector as a valid no-op.
 
 
 2. TYPE
@@ -138,7 +138,7 @@ appropriate granularity.
         ticket: Receiving<FeeMessage<C>>,
     ): FeeMessage<C>
 
-**Visibility:** private — called only by `drain_and_delete_fee_messages`.
+**Visibility:** private — called only by `collect_fee_messages`.
 
 **Purpose:** receives one `FeeMessage<C>` from the inbox.
 
@@ -155,7 +155,7 @@ be called in the module that defines the child type — here, `fee_message.move`
 
     fun consume_message<C>(msg: FeeMessage<C>): Balance<C>
 
-**Visibility:** private — called only by `drain_and_delete_fee_messages`.
+**Visibility:** private — called only by `collect_fee_messages`.
 
 **Purpose:** destructs a `FeeMessage<C>`, deletes its object identity,
 and returns its balance.
@@ -171,9 +171,9 @@ and returns its balance.
 
 ---
 
-### `drain_and_delete_fee_messages`
+### `collect_fee_messages`
 
-    public fun drain_and_delete_fee_messages<C>(
+    public fun collect_fee_messages<C>(
         inbox:   &mut ProtocolFeeInbox,
         tickets: vector<Receiving<FeeMessage<C>>>,
         ctx:     &mut TxContext,
@@ -238,7 +238,7 @@ chained in a single PTB, all sharing the same `&mut ProtocolFeeInbox`.
     Since one escrow wraps exactly one asset, `escrow_id` is sufficient.
 
 **P5 — Coin accumulation:**
-    All balances from one `drain_and_delete_fee_messages<C>` call are
+    All balances from one `collect_fee_messages<C>` call are
     joined into a single `Coin<C>` via a `Balance<C>` accumulator.
     The caller receives one coin regardless of how many messages were drained.
     No intermediate coins are created.
@@ -271,7 +271,7 @@ Private functions — tested directly from `#[test]` functions within the module
 | R1 | `receive_message` on a valid ticket | Returns `FeeMessage<C>` with correct `balance` and `escrow_id`. Object no longer owned by inbox. |
 | C1 | `consume_message` on a received `FeeMessage` | Returns `Balance<C>` equal to original fee. Object's `UID` deleted. |
 
-### 5.3 `drain_and_delete_fee_messages`
+### 5.3 `collect_fee_messages`
 
 | # | Description | Expected |
 |---|---|---|
@@ -298,7 +298,7 @@ Private functions — tested directly from `#[test]` functions within the module
 | `send_fee<C>(balance, fee_inbox_id, escrow_id, ctx)` | `public(package)` | Creates and transfers to `ProtocolFeeInbox` inbox. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
 | `receive_message<C>(inbox, ticket)` | private | Receives one `FeeMessage<C>` from inbox via `transfer::receive`. |
 | `consume_message<C>(msg)` | private | Destructures `FeeMessage<C>`, deletes UID, returns `Balance<C>`. |
-| `drain_and_delete_fee_messages<C>(inbox, tickets, ctx)` | `public` | Pipeline of receive + consume over all tickets. Returns `Coin<C>`. Called by admin PTB. |
+| `collect_fee_messages<C>(inbox, tickets, ctx)` | `public` | Pipeline of receive + consume over all tickets. Returns `Coin<C>`. Called by admin PTB. |
 
 No error constants.
 

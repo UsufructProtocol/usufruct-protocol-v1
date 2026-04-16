@@ -63,9 +63,8 @@ object via transfer-to-object immediately at the split. Deleted at drain time.
 
 ```move
 public struct FeeMessage<phantom CoinType> has key {
-    id:        UID,
-    balance:   Balance<CoinType>,
-    escrow_id: ID,
+    id:      UID,
+    balance: Balance<CoinType>,
 }
 ```
 
@@ -80,7 +79,6 @@ public struct FeeMessage<phantom CoinType> has key {
 |---|---|---|
 | `id` | `UID` | Object identity. |
 | `balance` | `Balance<CoinType>` | Protocol fee amount. Always > 0 — zero-balance objects are never created. |
-| `escrow_id` | `ID` | ID of the `RentalEscrow` that generated this fee. Sufficient for off-chain traceability — one escrow wraps exactly one asset. |
 
 **Invariant:** `balance::value(&self.balance) > 0` for any live `FeeMessage`.
 Zero-balance instances are never created — `send_fee` destroys zero balances
@@ -95,7 +93,6 @@ directly without constructing an object.
     public(package) fun send_fee<C>(
         balance:      Balance<C>,
         fee_inbox_id: ID,
-        escrow_id:    ID,
         ctx:          &mut TxContext,
     )
 
@@ -108,7 +105,7 @@ directly without constructing an object.
 - If `balance::value(&balance) == 0`:
   calls `balance::destroy_zero(balance)`. No object created. Returns.
 - If `balance::value(&balance) > 0`:
-  creates `FeeMessage<C>` with the balance and `escrow_id`,
+  creates `FeeMessage<C>` with the balance,
   then calls `transfer::transfer(msg, fee_inbox_id.to_address())`.
 
 **Call sites:** called by `do_handover` and `do_tenure_expiry` inside
@@ -161,7 +158,7 @@ be called in the module that defines the child type — here, `fee_message.move`
 and returns its balance.
 
 **Behavior:**
-1. Destructures: `FeeMessage { id, balance, escrow_id: _ } = msg`
+1. Destructures: `FeeMessage { id, balance } = msg`
 2. Calls `object::delete(id)`.
 3. Returns `balance`.
 
@@ -233,9 +230,11 @@ chained in a single PTB, all sharing the same `&mut ProtocolFeeInbox`.
     Every `FeeMessage` passed to `consume_message` is destructured and its
     `UID` deleted. No orphaned objects remain after draining.
 
-**P4 — Traceability:**
-    `escrow_id` allows off-chain attribution of each fee to its source escrow.
-    Since one escrow wraps exactly one asset, `escrow_id` is sufficient.
+**P4 — Traceability via events:**
+    `FeeMessage` carries no traceability fields. Trazability is handled by
+    `HandoverCompleted` and `TenureExpired` events in `rental_escrow`, which
+    include `escrow_id` and `protocol_fee` at the moment the fee is created.
+    Events are the audit log — the struct only carries what the code uses.
 
 **P5 — Coin accumulation:**
     All balances from one `collect_fee_messages<C>` call are
@@ -257,7 +256,7 @@ chained in a single PTB, all sharing the same `&mut ProtocolFeeInbox`.
 
 | # | Description | Expected |
 |---|---|---|
-| S1 | `send_fee<C>` with `balance > 0` | `FeeMessage<C>` created. Owned by `fee_inbox_id`. `balance::value == input`. `escrow_id` matches input. |
+| S1 | `send_fee<C>` with `balance > 0` | `FeeMessage<C>` created. Owned by `fee_inbox_id`. `balance::value == input`. |
 | S2 | `send_fee<C>` with `balance == 0` | No object created. Zero balance destroyed cleanly. No abort. |
 | S3 | `send_fee<C>` called twice with same `fee_inbox_id` | Two distinct `FeeMessage<C>` objects exist as children of `fee_inbox_id`. |
 | S4 | `send_fee<SUI>` and `send_fee<USDC>` with same `fee_inbox_id` | Two objects of distinct types exist as children. No conflict. |
@@ -295,7 +294,7 @@ Private functions — tested directly from `#[test]` functions within the module
 | Symbol | Visibility | Notes |
 |--------|------------|-------|
 | `FeeMessage<C>` (type) | `public` | `key` only. Per-boundary-event fee message. |
-| `send_fee<C>(balance, fee_inbox_id, escrow_id, ctx)` | `public(package)` | Creates and transfers to `ProtocolFeeInbox` inbox. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
+| `send_fee<C>(balance, fee_inbox_id, ctx)` | `public(package)` | Creates and transfers to `ProtocolFeeInbox` inbox. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
 | `receive_message<C>(inbox, ticket)` | private | Receives one `FeeMessage<C>` from inbox via `transfer::receive`. |
 | `consume_message<C>(msg)` | private | Destructures `FeeMessage<C>`, deletes UID, returns `Balance<C>`. |
 | `collect_fee_messages<C>(inbox, tickets, ctx)` | `public` | Pipeline of receive + consume over all tickets. Returns `Coin<C>`. Called by admin PTB. |

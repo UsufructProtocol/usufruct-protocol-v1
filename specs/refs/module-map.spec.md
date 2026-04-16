@@ -35,7 +35,7 @@ no consensus. All other operations stay on the single escrow object.
 ║  │  balance         │  and do_tenure_expiry(). Transferred to      ║
 ║  │  Balance<C>      │  ProtocolFeeInbox as child.                  ║
 ║  └──────────────────┘  Deleted by collect_fee_messages().            ║
-║                         escrow_id for traceability.                 ║
+║                         traceability via events.                     ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
  [FROZEN — singleton]
@@ -473,13 +473,12 @@ module (`key` only type).
 **Fields (`FeeMessage`):**
 - `id: UID`
 - `balance: Balance<CoinType>`
-- `escrow_id: ID`
 
 **Exports:**
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `send_fee<C>(balance, fee_inbox_id, escrow_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
+| `send_fee<C>(balance, fee_inbox_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
 | `receive_message<C>(inbox, ticket)` | private | Receives one `FeeMessage<C>` from inbox via `transfer::receive`. |
 | `consume_message<C>(msg)` | private | Destructures `FeeMessage<C>`, deletes UID, returns `Balance<C>`. |
 | `collect_fee_messages<C>(inbox, tickets, ctx): Coin<C>` | `public` | Pipeline of `receive_message` + `consume_message`. Single pass O(n). Returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |

@@ -1,0 +1,279 @@
+PROTOCOL FEE INBOX MODULE — SPECIFICATION
+==========================================
+
+Module: `protocol_fee_inbox`
+Design reference: design-compact.md §3 (fund flows — protocol fee)
+Module map reference: module-map.spec.md §8
+Depends on: nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`)
+
+
+0. MODULE RESPONSIBILITY
+------------------------
+
+`protocol_fee_inbox` owns two types created together at publish time:
+`ProtocolFeeInbox` and `ProtocolFeeRef`.
+
+**Owns:**
+- `ProtocolFeeInbox` — `key + store` singleton. Transfer-to-object target
+  for all `FeeMessage<C>` objects created at each boundary event — the
+  fee inbox is its sole role.
+- `ProtocolFeeRef` — `key` only, frozen at init. Stores the ID of
+  `ProtocolFeeInbox`. Passed to `integrate` by any integrator so the
+  escrow can record where to route protocol fees. Immutable forever.
+- `init(ctx)` — package initializer. Creates one `ProtocolFeeInbox`
+  (transferred to deployer) and one `ProtocolFeeRef` (frozen).
+- `uid_mut(inbox)` — `public(package)`. Exposes `&mut UID` of
+  `ProtocolFeeInbox` so `fee_message` can call
+  `transfer::receive` against it.
+- `fee_ref_inbox_id(ref)` — `public`. Getter for `ProtocolFeeRef.inbox_id`.
+  Used by `rental_escrow::integrate` to extract and store the fee inbox ID.
+
+**Does not own:**
+- Any balance or fund logic.
+- Drain or receive logic — that lives in `fee_message`.
+
+**Authorization model:** `ProtocolFeeInbox` conveys no Move-level capability.
+Access to `drain_fee_messages` is enforced by Sui's ownership model —
+only the holder of `ProtocolFeeInbox` can present `&mut ProtocolFeeInbox`
+in a transaction. No explicit capability check is needed.
+
+**Dependency direction:** `protocol_fee_inbox` calls no protocol module
+functions. It is a leaf in the dependency graph.
+
+
+1. ERROR CONSTANTS
+------------------
+
+None. `init` cannot fail — it creates both objects unconditionally.
+
+
+2. TYPES
+--------
+
+### ProtocolFeeInbox — struct
+
+Singleton fee inbox. Transfer-to-object target for all `FeeMessage<C>`
+objects created at boundary events across all escrows.
+
+```move
+public struct ProtocolFeeInbox has key, store {
+    id: UID,
+}
+```
+
+**Abilities:** `key + store`.
+- `key` — object identity. Lives in a wallet. Required for
+  transfer-to-object (fee inbox role) and `transfer::receive` parent.
+- `store` — transferable outside the defining module. Enables the inbox
+  to be transferred to a new holder (e.g., multisig, DAO).
+
+**Fields:**
+- `id: UID` — object identity. No other data fields — child
+  `FeeMessage<C>` objects accumulate here via transfer-to-object.
+
+**Singleton guarantee:** `init` is the only creation site. Sui's package
+initializer runs exactly once at publish time. No public constructor exists.
+There is exactly one `ProtocolFeeInbox` per package deployment.
+
+**Role:** The holder presents `&mut ProtocolFeeInbox` to `drain_fee_messages`.
+Sui's ownership model enforces that only the holder can do so — no
+Move-level capability check is required. Transferring `ProtocolFeeInbox`
+atomically transfers both inbox ownership and drain authority.
+
+---
+
+### ProtocolFeeRef — struct
+
+Frozen pointer to `ProtocolFeeInbox`. Created once at init and immediately
+frozen. Accessible by any PTB without consensus overhead.
+
+```move
+public struct ProtocolFeeRef has key {
+    id:       UID,
+    inbox_id: ID,
+}
+```
+
+**Abilities:** `key` only.
+- `key` — object identity. Required to be frozen via `transfer::freeze_object`.
+- No `store` — cannot be transferred or wrapped. Frozen status is permanent.
+
+**Fields:**
+- `id: UID` — object identity.
+- `inbox_id: ID` — ID of the `ProtocolFeeInbox`. This is the address
+  to which `send_fee` transfers `FeeMessage<C>` objects.
+
+**Immutability:** frozen at init via `transfer::freeze_object`. The field
+`inbox_id` never changes. Any PTB can reference `&ProtocolFeeRef`
+without going through consensus — immutable objects bypass the sequencer.
+
+
+3. FUNCTIONS
+------------
+
+### `init`
+
+    fun init(ctx: &mut TxContext)
+
+**Visibility:** private (package initializer — called by Sui runtime at publish).
+
+**Behavior:**
+1. Creates a `ProtocolFeeInbox` with a fresh `UID`. Stores its ID.
+2. Transfers `ProtocolFeeInbox` to `ctx.sender()` (the deployer).
+3. Creates a `ProtocolFeeRef` with `inbox_id` set to the stored ID.
+4. Freezes `ProtocolFeeRef` via `transfer::freeze_object`.
+
+**Side effects:** one `ProtocolFeeInbox` transferred to deployer; one
+`ProtocolFeeRef` frozen on-chain. No shared objects created. No events emitted.
+
+---
+
+### `uid_mut`
+
+    public(package) fun uid_mut(inbox: &mut ProtocolFeeInbox): &mut UID
+
+**Visibility:** `public(package)` — callable only within this package.
+
+**Purpose:** exposes `&mut UID` to `fee_message` so it can call
+`transfer::receive(&mut uid, receiving)`. In Sui Move, `transfer::receive`
+requires `&mut UID` of the parent object. Since `id` is a private field,
+the defining module must expose it explicitly.
+
+**Behavior:** returns `&mut inbox.id`.
+
+**Safety:** `public(package)` restricts callers to this package. Only
+`fee_message` calls this function — it is the sole module that
+performs `transfer::receive` against `ProtocolFeeInbox`.
+No external module can obtain `&mut UID` of `ProtocolFeeInbox`.
+
+---
+
+### `fee_ref_inbox_id`
+
+    public fun fee_ref_inbox_id(fee_ref: &ProtocolFeeRef): ID
+
+**Visibility:** `public` — callable by any module, including `rental_escrow`.
+
+**Purpose:** exposes `inbox_id` from a frozen `ProtocolFeeRef`. Used by
+`rental_escrow::integrate` to read and store the fee inbox ID.
+
+**Behavior:** returns `fee_ref.inbox_id`.
+
+
+4. PROPERTIES
+-------------
+
+**P1 — Singleton:**
+    Exactly one `ProtocolFeeInbox` exists per package deployment.
+    No public constructor. `init` is the only creation site.
+
+**P2 — Transferable:**
+    `ProtocolFeeInbox` has `store`. The holder may transfer it to any address.
+    After transfer, the new holder has full drain access.
+
+**P3 — Fee inbox:**
+    `FeeMessage<C>` objects are transferred to `ProtocolFeeInbox`'s
+    address via transfer-to-object at each boundary event. Draining them
+    requires presenting `&mut ProtocolFeeInbox` — only the holder can do so.
+    Losing the inbox permanently locks access to accumulated fee objects.
+
+**P4 — ProtocolFeeRef is immutable:**
+    Frozen at init. `inbox_id` never changes. Accessible by any PTB
+    without consensus overhead. One per package deployment.
+
+**P5 — uid_mut is package-scoped:**
+    Only modules within this package can call `uid_mut`.
+    No external module can access `&mut UID` of `ProtocolFeeInbox`.
+
+
+5. TEST CASES
+-------------
+
+### 5.1 Initialization
+
+| # | Description | Expected |
+|---|---|---|
+| T1 | Publish package — `init` runs | One `ProtocolFeeInbox` owned by deployer. One `ProtocolFeeRef` frozen on-chain. |
+| T2 | `fee_ref_inbox_id` on `ProtocolFeeRef` | Returns ID equal to `object::id(&fee_inbox)`. |
+| T3 | Transfer `ProtocolFeeInbox` to a new address | New holder can present `&mut ProtocolFeeInbox` to drain-gated functions. |
+
+### 5.2 Authorization gate
+
+The inbox itself has no logic to test beyond creation and transfer.
+Authorization enforcement is tested where each gate lives:
+
+| # | Module | Gate |
+|---|---|---|
+| T4 | `fee_message_tests` | `drain_fee_messages` aborts without `ProtocolFeeInbox` |
+
+### 5.3 uid_mut
+
+Tested indirectly via `fee_message::drain_fee_messages`.
+
+| # | Module | Gate |
+|---|---|---|
+| T5 | `fee_message_tests` | `drain_fee_messages` can receive child objects via `uid_mut` |
+
+
+6. MODULE BOUNDARY
+------------------
+
+`protocol_fee_inbox.move` exports:
+
+| Symbol | Visibility | Notes |
+|--------|------------|-------|
+| `ProtocolFeeInbox` (type) | `public` | `key + store`. Singleton. Fee inbox. |
+| `ProtocolFeeRef` (type) | `public` | `key` only. Frozen. Immutable pointer to `ProtocolFeeInbox`. |
+| `init(ctx)` | private | Package initializer. Creates both objects. Runs once at publish. |
+| `uid_mut(inbox)` | `public(package)` | Returns `&mut UID`. Bridge for `transfer::receive` in `fee_message`. |
+| `fee_ref_inbox_id(fee_ref)` | `public` | Returns `inbox_id`. Used by `rental_escrow::integrate`. |
+
+No error constants.
+
+**Depends on:** nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`).
+
+
+7. RATIONALE — ProtocolFeeInbox AS INBOX
+-----------------------------------------
+
+### Why not a dedicated shared inbox (ProtocolGlobalTreasury)?
+
+A shared singleton inbox would require consensus for every transaction
+that touches it — even read-only access. This would impose a consensus
+cost on `integrate` (reads the inbox to register its ID) and on
+`drain_fee_messages` (mutates it to receive child objects).
+
+`drain_fee_messages` is recurrent — it fires every time the protocol
+collects accumulated fees. At a 5% fee rate, consensus overhead on the
+drain path directly erodes protocol revenue. Eliminating consensus from
+the drain path is proportional to the protocol's margin.
+
+### Why ProtocolFeeInbox (owned) instead of a shared object?
+
+`ProtocolFeeInbox` is an owned singleton. Transfer-to-object is a free
+operation — it does not mutate the parent object. `FeeMessage<C>` objects
+accumulate as children without any contention on the inbox. The drain
+operation touches only owned objects — `ProtocolFeeInbox` and the
+`Receiving` tickets — so Sui routes it through the fastpath, no consensus.
+
+Transferring `ProtocolFeeInbox` to a multisig or DAO transfers both
+inbox ownership and drain authority atomically. No partial transfer risk.
+
+### Why ProtocolFeeRef (frozen) instead of passing the ID directly?
+
+`integrate` needs the fee inbox ID to store in each `RentalEscrow`.
+The alternatives:
+
+1. **Pass raw `ID`** — no type safety. Any integrator could pass an arbitrary ID,
+   routing fees to a dead address. Fees would be permanently lost.
+2. **Pass `&ProtocolFeeInbox`** — requires the inbox holder to co-sign every
+   `integrate` transaction. Integrators are third parties; requiring holder
+   presence breaks permissionless integration.
+3. **Pass `&ProtocolFeeRef`** (chosen) — a frozen object is immutable and
+   accessible by any PTB without consensus. It carries a typed guarantee:
+   the ID inside was set by the protocol's own `init` and can never be
+   changed. Type safety is preserved; the inbox holder is not needed at
+   integration time.
+
+`ProtocolFeeRef` is the minimal object that makes permissionless, type-safe,
+consensus-free registration of the fee inbox ID possible.

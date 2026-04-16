@@ -108,12 +108,11 @@ directly without constructing an object.
 `rental_escrow` — once per boundary event where a fee split occurs.
 Not called at `claim_asset`.
 
-**Why `fee_inbox_id` not `&mut ProtocolFeeInbox`:** `do_handover` and
-`do_tenure_expiry` already have `fee_inbox_id` available from the escrow
-(registered at `integrate` time via `ProtocolFeeRef`). Passing the ID
-directly avoids requiring `ProtocolFeeInbox` as an extra argument in
-any transaction that triggers a boundary event. `ProtocolFeeInbox` does
-not need to be in those transactions at all.
+**Why `fee_inbox_id` not `&mut ProtocolFeeInbox`:** `ProtocolFeeInbox` is
+an owned object. In Sui, owned objects can only be included in a transaction
+by their owner. Boundary events are triggered by tenants, bots, or any
+permissionless caller — none of whom own `ProtocolFeeInbox`. Passing the ID
+(stored in the escrow at `integrate` time) is the only viable design.
 
 **Transfer-to-object:** `transfer::transfer` to an object ID is a free
 operation — it does not mutate `ProtocolFeeInbox`. No contention on the

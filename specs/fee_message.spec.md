@@ -108,6 +108,11 @@ directly without constructing an object.
   creates `FeeMessage<C>` with the balance,
   then calls `transfer::transfer(msg, fee_inbox_id.to_address())`.
 
+**Sole creation site:** `send_fee` is the only function that constructs
+a `FeeMessage`. No public or private constructor exists separately —
+struct literal creation within `fee_message.move` is the mechanism, and
+it is inaccessible to any external module.
+
 **Call sites:** called by `do_handover` and `do_tenure_expiry` inside
 `rental_escrow` — once per boundary event where a fee split occurs.
 Not called at `claim_asset`.

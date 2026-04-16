@@ -2,8 +2,8 @@ PROTOCOL GLOBAL TREASURY MODULE — SPECIFICATION
 ================================================
 
 Module: `protocol_global_treasury`
-Design reference: design-compact.md (governance)
-Module map reference: module-map.spec.md §7
+Design reference: design-compact.md §3 (fund flows — protocol fee)
+Module map reference: module-map.spec.md §9
 Depends on: nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`)
 
 
@@ -99,8 +99,9 @@ the defining module must expose it explicitly.
 
 **Behavior:** returns `&mut global.id`.
 
-**Safety:** `public(package)` restricts callers to this package. The only
-intended caller is `protocol_local_treasury::drain_local_treasuries`.
+**Safety:** `public(package)` restricts callers to this package. Only
+`protocol_local_treasury` calls this function — it is the sole module that
+performs `transfer::receive` against `ProtocolGlobalTreasury`.
 No external module can obtain `&mut UID` of `ProtocolGlobalTreasury`.
 
 
@@ -156,8 +157,9 @@ Direct unit test:
 | Symbol | Visibility | Notes |
 |--------|------------|-------|
 | `ProtocolGlobalTreasury` (type) | `public` | `key` only. Shared singleton. |
+| `init(ctx)` | private | Package initializer. Runs once at publish. Not callable externally. |
 | `uid_mut(global)` | `public(package)` | Returns `&mut UID`. Bridge for `transfer::receive` in `protocol_local_treasury`. |
 
-No error constants. No public functions beyond `init` (private) and `uid_mut` (package).
+No error constants.
 
 **Depends on:** nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`).

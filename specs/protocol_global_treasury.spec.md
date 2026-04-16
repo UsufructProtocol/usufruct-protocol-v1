@@ -142,11 +142,10 @@ No external module can obtain `&mut UID` of `ProtocolGlobalTreasury`.
 ### 5.2 `uid_mut`
 
 Tested indirectly via `protocol_local_treasury::drain_local_treasuries`.
-Direct unit test:
 
-| # | Description | Expected |
+| # | Module | Gate |
 |---|---|---|
-| T2 | Call `uid_mut` on `ProtocolGlobalTreasury` | Returns `&mut UID` equal to `object::id(&global)`. |
+| T2 | `protocol_local_treasury_tests` | `drain_local_treasuries` can receive child objects via `uid_mut` |
 
 
 6. MODULE BOUNDARY

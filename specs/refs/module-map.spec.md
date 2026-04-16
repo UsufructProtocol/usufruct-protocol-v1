@@ -10,39 +10,38 @@ For protocol rationale and incentive analysis see `design-compact.md`.
 ## Object Model
 
 One shared object per asset instance (`RentalEscrow`). At publish time, `init`
-creates two singletons: `ProtocolAdminCap` (owned by deployer — auth proof and fee
-inbox) and `ProtocolFeeRef` (frozen — immutable pointer to the cap's ID, accessible
+creates two singletons: `ProtocolFeeInbox` (owned by deployer — fee inbox) and
+`ProtocolFeeRef` (frozen — immutable pointer to the inbox's ID, accessible
 by any PTB without consensus).
-Protocol fees accumulate in a `protocol_treasury` `Balance` field inside each escrow.
-At retirement, `claim_asset()` wraps that balance into a `ProtocolLocalTreasury<C>`
-object and transfers it to `ProtocolAdminCap` via transfer-to-object (free, no
-contention on the inbox). The admin drains all locals via `drain_local_treasuries`,
-presenting `&mut ProtocolAdminCap` — owned object, fastpath, no consensus. All other
-operations stay on the single escrow object.
+At each boundary event (handover, tenure expiry), `send_fee()` creates a
+`FeeMessage<C>` and transfers it to `ProtocolFeeInbox` via transfer-to-object
+(free, no contention on the inbox). The admin drains all messages via
+`drain_fee_messages`, presenting `&mut ProtocolFeeInbox` — owned object, fastpath,
+no consensus. All other operations stay on the single escrow object.
 
 ```
  ADMIN'S WALLET
  ┌─────────────────────────────────────────────┐
- │   ProtocolAdminCap              [OWNED]      │
+ │   ProtocolFeeInbox              [OWNED]      │
  │   · fee inbox (child objects accumulate here)│
- │   withdraw_treasury()                        │
- │   drain_local_treasuries()                   │
+ │   drain_fee_messages()                       │
  └──────────────────────┬──────────────────────┘
-                        │ (child objects, one per claim_asset with non-zero fees)
-                        │ transfer-to-object — free, no contention on AdminCap
+                        │ (child objects, one per boundary event with non-zero fees)
+                        │ transfer-to-object — free, no contention on FeeInbox
 ╔══════════════════════════════════════════════════════════════════════╗
-║  ProtocolLocalTreasury<CoinType>     [OWNED by ProtocolAdminCap]    ║
+║  FeeMessage<CoinType>                [OWNED by ProtocolFeeInbox]    ║
 ║                                                                      ║
-║  ┌──────────────────┐  Created by route_fee() inside claim_asset(). ║
-║  │  balance         │  Transferred to ProtocolAdminCap as child.    ║
-║  │  Balance<C>      │  Deleted by drain_local_treasuries().         ║
-║  └──────────────────┘  escrow_id + asset_id for traceability.       ║
+║  ┌──────────────────┐  Created by send_fee() inside do_handover()  ║
+║  │  balance         │  and do_tenure_expiry(). Transferred to      ║
+║  │  Balance<C>      │  ProtocolFeeInbox as child.                  ║
+║  └──────────────────┘  Deleted by drain_fee_messages().            ║
+║                         escrow_id + asset_id for traceability.      ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
  [FROZEN — singleton]
  ┌──────────────────────────────────────────────┐
  │   ProtocolFeeRef                             │
- │   · admin_cap_id: ID  ← ID of AdminCap      │
+ │   · inbox_id: ID  ← ID of FeeInbox          │
  │   Immutable. Accessible without consensus.   │
  │   Passed to integrate() by any integrator.   │
  └──────────────────────────────────────────────┘
@@ -88,10 +87,6 @@ operations stay on the single escrow object.
 ║  │  owner_earnings  │         │  · fee_inbox_id: ID               │ ║
 ║  │  Balance<C>      │         └───────────────────────────────────┘ ║
 ║  └──────────────────┘                                               ║
-║  ┌──────────────────┐                                               ║
-║  │protocol_treasury │                                               ║
-║  │  Balance<C>      │                                               ║
-║  └──────────────────┘                                               ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 
@@ -121,21 +116,18 @@ operations stay on the single escrow object.
  apply_pending_transitions() — handover fires:
    pending_bid              →  tenant_stake  (new tenant)
    used_credit × 0.95       →  owner_earnings
-   used_credit × 0.05       →  protocol_treasury  (local, inside escrow)
+   used_credit × 0.05       →  FeeMessage<C>  →  transfer-to-object  →  fee_inbox_id
    remain_credit            ←  Coin<C>  (push to current_tenant_address)
 
  apply_pending_transitions() — tenure expiry:
    tenant_stake × 0.95      →  owner_earnings
-   tenant_stake × 0.05      →  protocol_treasury  (local, inside escrow)
+   tenant_stake × 0.05      →  FeeMessage<C>  →  transfer-to-object  →  fee_inbox_id
 
- withdraw_earnings()              ←  Coin<C>  ←  owner_earnings                   (pull, OwnerCap)
- withdraw_treasury()              ←  Coin<C>  ←  protocol_treasury local           (pull, ProtocolAdminCap, on escrow)
- retire()                      —  sets retire_flag only, no asset movement
- claim_asset()                 ←  Coin<C>  ←  owner_earnings (sweep)
-                               —  protocol_treasury  →  ProtocolLocalTreasury<C>  →  transfer-to-object → fee_inbox_id  (if balance > 0)
-                               —  protocol_treasury  →  destroy_zero               (if balance == 0)
-                               ←  Asset    ←  RentalEscrow (unwrapped, deleted)
- drain_local_treasuries<C>()   ←  Coin<C>  ←  ProtocolLocalTreasury<C>[]          (&mut ProtocolAdminCap, fastpath, deleted, one call per CoinType)
+ withdraw_earnings()        ←  Coin<C>  ←  owner_earnings                   (pull, OwnerCap)
+ retire()                   —  sets retire_flag only, no asset movement
+ claim_asset()              ←  Coin<C>  ←  owner_earnings (sweep)
+                            ←  Asset    ←  RentalEscrow (unwrapped, deleted)
+ drain_fee_messages<C>()    ←  Coin<C>  ←  FeeMessage<C>[]                  (&mut ProtocolFeeInbox, fastpath, deleted, one call per CoinType)
 ```
 
 ---
@@ -150,10 +142,9 @@ objects — fastpath, no consensus.
 | `rent`, `retire`, `borrow_asset`, `apply_pending_transitions` | serial on RentalEscrow |
 | `return_asset` | serial on RentalEscrow |
 | `withdraw_earnings` | serial on RentalEscrow |
-| `withdraw_treasury` | serial on RentalEscrow |
 | `integrate` | serial on RentalEscrow · read `ProtocolFeeRef` (frozen — no consensus) |
-| `claim_asset` | serial on RentalEscrow only — transfer-to-object does not touch `ProtocolAdminCap` |
-| `drain_local_treasuries<C>` | owned `ProtocolAdminCap` only — fastpath, no consensus, one call per CoinType |
+| `claim_asset` | serial on RentalEscrow only — transfer-to-object does not touch `ProtocolFeeInbox` |
+| `drain_fee_messages<C>` | owned `ProtocolFeeInbox` only — fastpath, no consensus, one call per CoinType |
 | `current_state`, `current_used_credit`, `current_price_descent`, `current_next_rent_price` | read-only (`&RentalEscrow`) — no contention |
 
 ---
@@ -183,10 +174,10 @@ liquid_renting = "0x0"
             \    /
              \  /
               \/
-           config    owner_cap    tenant_cap    events    protocol_admin_cap
+           config    owner_cap    tenant_cap    events    protocol_fee_inbox
                ^          ^            ^          ^              ^
                 \         |            |          |              |
-                 \        |            |          |    protocol_local_treasury
+                 \        |            |          |    fee_message
                   \       |            |          |              ^
                    \      |            |          |             /
                                     rental_escrow
@@ -194,8 +185,8 @@ liquid_renting = "0x0"
 
 Arrows point from dependency to dependent.
 `rental_escrow` is the integration point; every other module is independent of it.
-`rental_escrow` also imports `protocol_admin_cap` directly (for `withdraw_treasury`
-gate and `ProtocolFeeRef` in `integrate`) in addition to `protocol_local_treasury`.
+`rental_escrow` also imports `protocol_fee_inbox` directly (for `ProtocolFeeRef` in
+`integrate`) in addition to `fee_message`.
 
 ---
 
@@ -431,54 +422,55 @@ No logic, no state. Pure data carriers.
 
 ---
 
-### 8. `protocol_admin_cap.move` — Protocol administrator capability and fee inbox
+### 8. `protocol_fee_inbox.move` — Protocol fee inbox
 
-**Responsibility:** `ProtocolAdminCap` singleton and `ProtocolFeeRef` frozen pointer.
-`ProtocolAdminCap` is both the proof of admin authority and the transfer-to-object
-target for protocol fee objects. `ProtocolFeeRef` is a frozen, immutable pointer to
-the cap's ID — passed to `integrate` by any integrator without consensus overhead.
+**Responsibility:** `ProtocolFeeInbox` singleton and `ProtocolFeeRef` frozen pointer.
+`ProtocolFeeInbox` is the transfer-to-object target for all `FeeMessage<C>` objects
+created at boundary events. `ProtocolFeeRef` is a frozen, immutable pointer to the
+inbox's ID — passed to `integrate` by any integrator without consensus overhead.
 
 **Types:**
 
 | Type | Abilities | Notes |
 |---|---|---|
-| `ProtocolAdminCap` | `key, store` | Singleton. Transferable. Auth proof and fee inbox. |
-| `ProtocolFeeRef` | `key` | Frozen singleton. Immutable pointer to `ProtocolAdminCap`. |
+| `ProtocolFeeInbox` | `key, store` | Singleton. Transferable. Fee inbox. |
+| `ProtocolFeeRef` | `key` | Frozen singleton. Immutable pointer to `ProtocolFeeInbox`. |
 
-**Fields (`ProtocolAdminCap`):**
+**Fields (`ProtocolFeeInbox`):**
 - `id: UID`
 
 **Fields (`ProtocolFeeRef`):**
 - `id: UID`
-- `admin_cap_id: ID`
+- `inbox_id: ID`
 
 **Exports:**
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `init(ctx)` | private | Creates `ProtocolAdminCap` (transfers to deployer) and `ProtocolFeeRef` (freezes). |
-| `uid_mut(cap): &mut UID` | `public(package)` | Exposes `&mut UID` for `transfer::receive` in `protocol_local_treasury`. |
-| `fee_ref_cap_id(fee_ref): ID` | `public` | Returns `admin_cap_id`. Used by `rental_escrow::integrate`. |
+| `init(ctx)` | private | Creates `ProtocolFeeInbox` (transfers to deployer) and `ProtocolFeeRef` (freezes). |
+| `uid_mut(inbox): &mut UID` | `public(package)` | Exposes `&mut UID` for `transfer::receive` in `fee_message`. |
+| `fee_ref_inbox_id(fee_ref): ID` | `public` | Returns `inbox_id`. Used by `rental_escrow::integrate`. |
 
-**Status:** [x] `ProtocolAdminCap` · [x] `ProtocolFeeRef` · [x] `init` · [x] `uid_mut` · [x] `fee_ref_cap_id`
+**Status:** [x] `ProtocolFeeInbox` · [x] `ProtocolFeeRef` · [x] `init` · [x] `uid_mut` · [x] `fee_ref_inbox_id`
 
 **Depends on:** nothing.
 
 ---
 
-### 9. `protocol_local_treasury.move` — Protocol fee payload and drain
+### 9. `fee_message.move` — Protocol fee message and drain
 
-**Responsibility:** `ProtocolLocalTreasury<C>` per-retirement fee object, and all
-fund-routing logic: `route_fee` creates and routes to the inbox; `drain_local_treasuries`
-receives and drains. `transfer::receive` is restricted to this module (`key` only type).
+**Responsibility:** `FeeMessage<C>` per-boundary-event fee object, and all
+fund-routing logic: `send_fee` creates and routes to the inbox at each boundary;
+`drain_fee_messages` receives and drains. `transfer::receive` is restricted to this
+module (`key` only type).
 
 **Types:**
 
 | Type | Abilities | Notes |
 |---|---|---|
-| `ProtocolLocalTreasury<phantom CoinType>` | `key` | Per-retirement. Transferred to `ProtocolAdminCap` as child. Deleted at drain. |
+| `FeeMessage<phantom CoinType>` | `key` | Per-boundary-event. Transferred to `ProtocolFeeInbox` as child. Deleted at drain. |
 
-**Fields (`ProtocolLocalTreasury`):**
+**Fields (`FeeMessage`):**
 - `id: UID`
 - `balance: Balance<CoinType>`
 - `escrow_id: ID`
@@ -488,12 +480,12 @@ receives and drains. `transfer::receive` is restricted to this module (`key` onl
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `route_fee<C>(balance, fee_inbox_id, escrow_id, asset_id, ctx)` | `public(package)` | If `balance > 0`: creates `ProtocolLocalTreasury<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
-| `drain_local_treasuries<C>(cap, locals, ctx): Coin<C>` | `public` | Requires `&mut ProtocolAdminCap`. Receives each `ProtocolLocalTreasury<C>` from inbox, accumulates balances, deletes objects, returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
+| `send_fee<C>(balance, fee_inbox_id, escrow_id, asset_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
+| `drain_fee_messages<C>(inbox, messages, ctx): Coin<C>` | `public` | Requires `&mut ProtocolFeeInbox`. Receives each `FeeMessage<C>` from inbox, accumulates balances, deletes objects, returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
 
-**Status:** [x] `ProtocolLocalTreasury` · [x] `route_fee` · [x] `drain_local_treasuries`
+**Status:** [x] `FeeMessage` · [x] `send_fee` · [x] `drain_fee_messages`
 
-**Depends on:** `protocol_admin_cap`.
+**Depends on:** `protocol_fee_inbox`.
 
 ---
 
@@ -531,29 +523,28 @@ functions.
 - `handover_countdown_expiry: Option<u64>`
 - `tenant_stake: Balance<CoinType>`
 - `owner_earnings: Balance<CoinType>`
-- `protocol_treasury: Balance<CoinType>`
 - `retire_flag: bool`
 - `integrated_at_ms: u64`
-- `fee_inbox_id: ID` — ID of `ProtocolAdminCap`. Registered at `integrate` via `ProtocolFeeRef`.
+- `fee_inbox_id: ID` — ID of `ProtocolFeeInbox`. Registered at `integrate` via `ProtocolFeeRef`.
 
 **Public API:**
 
 | Function | Visibility | Summary |
 |---|---|---|
-| `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `fee_ref_cap_id(fee_ref)` and stores it as `fee_inbox_id`. Returns `OwnerCap`. |
-| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active. **Retired** — aborts. |
+| `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `fee_ref_inbox_id(fee_ref)` and stores it as `fee_inbox_id`. Returns `OwnerCap`. |
+| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
-| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Calls `protocol_local_treasury::route_fee(protocol_treasury, escrow.fee_inbox_id, ...)` — creates `ProtocolLocalTreasury<C>` and transfers to `ProtocolAdminCap` if balance > 0, destroys zero balance if == 0. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
+| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
-| `withdraw_treasury` | `public` | Requires `ProtocolAdminCap` + `&mut RentalEscrow`. Drains `protocol_treasury` (local) → `Coin`. No state resolution needed. Admin utility — allows collecting fees from an active escrow without waiting for retirement. |
 | `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order. Returns `AssetState` — the settled state after all transitions. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state on-chain, credit pending earnings, and read the resulting state in one transaction. See §Pending Transitions. |
 | `current_state` | `public` | `(escrow: &RentalEscrow, clock: &Clock): AssetState`. Read-only. Computes the settled state without mutating — free via `devInspectTransactionBlock`. Does not advance state on-chain. Use when the caller only needs to read state without paying gas. |
 | `current_used_credit` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Clamps `timestamp_ms` to `handover_countdown_expiry` if state is `HandoverConfirmed` — prevents showing used_credit beyond the boundary. Delegates to `curve::compute_used_credit`. Used internally by `do_handover` (passes `handover_countdown_expiry`) and externally by frontends (pass `clock.timestamp_ms()`). |
 | `current_price_descent` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Current Dutch Auction price at `timestamp_ms`. Only meaningful when state is `AtDutchAuction`. Delegates to `curve::compute_price_descent`. |
 | `current_next_rent_price` | `public` | `(escrow: &RentalEscrow): u64`. Read-only query. Price to displace the current tenant. Only meaningful when state is `Rented`. Delegates to `curve::compute_next_rent_price`. |
-**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `withdraw_treasury` · [ ] `apply_pending_transitions` · [ ] `current_state` · [ ] `current_used_credit` · [ ] `current_price_descent` · [ ] `current_next_rent_price`
+
+**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `apply_pending_transitions` · [ ] `current_state` · [ ] `current_used_credit` · [ ] `current_price_descent` · [ ] `current_next_rent_price`
 
 **`phase_start_ms` assignment:**
 
@@ -573,13 +564,13 @@ when a transition logically occurred and when it was executed.
 
 | Function | Purpose |
 |---|---|
-| `do_handover` | Executes handover boundary: push `remain_credit`, split `used_credit` (95/5) into `owner_earnings` and `protocol_treasury` (local), move `pending_bid` → `tenant_stake`, mint + push `TenantCap`, rotate addresses. Push-before-rotate invariant enforced here. |
-| `do_tenure_expiry` | Executes tenure boundary: split full `tenant_stake` (95/5) into `owner_earnings` and `protocol_treasury` (local). Transition to `AtDutchAuction` or `Retired`. |
+| `do_handover` | Executes handover boundary: push `remain_credit`, split `used_credit` (95/5) into `owner_earnings` (95%) and `send_fee()` call (5% → `FeeMessage<C>` → transfer-to-object → `fee_inbox_id`), move `pending_bid` → `tenant_stake`, mint + push `TenantCap`, rotate addresses. Push-before-rotate invariant enforced here. |
+| `do_tenure_expiry` | Executes tenure boundary: split full `tenant_stake` (95/5) into `owner_earnings` (95%) and `send_fee()` call (5% → `FeeMessage<C>` → transfer-to-object → `fee_inbox_id`). Transition to `AtDutchAuction` or `Retired`. |
 | `do_auction_expiry` | Transition to `Idle`. No funds to move. |
 | `split_fee` | Pure: splits an amount into (amount×0.95, amount×0.05) tuple. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`, `events`,
-`protocol_admin_cap`, `protocol_local_treasury`.
+`protocol_fee_inbox`, `fee_message`.
 
 ---
 
@@ -591,7 +582,7 @@ when a transition logically occurred and when it was executed.
 
 **Sole responsibility:** execute every elapsed lazy transition — in order — before
 any public function applies its own logic. This guarantees that `owner_earnings`
-and `protocol_treasury` are never bypassed regardless of how long the escrow has
+and protocol fees are never bypassed regardless of how long the escrow has
 been inactive or what state the caller finds it in.
 
 This is the critical invariant of the protocol. Every boundary event
@@ -608,7 +599,8 @@ if escrow.state == Rented(HandoverConfirmed)
      do_handover(escrow, clock, ctx)
      // escrow.state is now Rented(HandoverOpen)
      // escrow.phase_start_ms is now handover_countdown_expiry
-     // owner_earnings and protocol_treasury (local) credited with used_credit splits
+     // owner_earnings credited with used_credit × 0.95
+     // FeeMessage<C> created and transferred to fee_inbox_id (used_credit × 0.05)
      // remain_credit pushed to displaced tenant
 
 // Check 2 — tenure expired (reads state as mutated by check 1)
@@ -616,7 +608,8 @@ if escrow.state == Rented(...)
    && clock.now() >= escrow.phase_start_ms + config.tenure_ceiling:
      do_tenure_expiry(escrow, ctx)
      // escrow.state is now AtDutchAuction (or Retired if retire_flag)
-     // owner_earnings and protocol_treasury (local) credited with full stake splits
+     // owner_earnings credited with tenant_stake × 0.95
+     // FeeMessage<C> created and transferred to fee_inbox_id (tenant_stake × 0.05)
 
 // Check 3 — auction expired (reads state as mutated by check 2)
 if escrow.state == AtDutchAuction
@@ -648,7 +641,6 @@ never be credited. `apply_pending_transitions()` closes this gap unconditionally
 **Exception — functions that do not call it:**
 - `return_asset()` — only returns the asset to escrow, no state dependency.
 - `withdraw_earnings()` — drains `owner_earnings` directly, no state change.
-- `withdraw_treasury()` — drains `protocol_treasury` (local) directly, no state change.
 
 ---
 
@@ -666,8 +658,8 @@ No boundary event can be skipped, and no funds can be permanently left uncredite
 regardless of how long an escrow remains inactive.
 
 **Why it is public:** it allows incentivized actors to advance state and credit
-`owner_earnings` and `protocol_treasury` without performing a full protocol
-operation. Use cases:
+`owner_earnings` (and push `FeeMessage<C>` objects to the inbox) without performing
+a full protocol operation. Use cases:
 - A frontend that wants to display up-to-date on-chain state before the owner
   calls `withdraw_earnings()`.
 - A keeper bot settling expired escrows on behalf of inactive owners.
@@ -683,8 +675,8 @@ operation. Use cases:
 Payment enters as `Coin<CoinType>` → `Balance` in `RentalEscrow.tenant_stake`.
 At handover: split into `used_credit` + `remain_credit`.
 `remain_credit` → pushed immediately to displaced tenant as `Coin`.
-`used_credit` → split 95/5 → `owner_earnings` (95%) and `protocol_treasury` local (5%).
-At tenure expiry: full `tenant_stake` → split 95/5 → `owner_earnings` and `protocol_treasury` local.
+`used_credit` → split 95/5 → `owner_earnings` (95%) and `FeeMessage<C>` transferred to `ProtocolFeeInbox` (5%).
+At tenure expiry: full `tenant_stake` → split 95/5 → `owner_earnings` and `FeeMessage<C>` transferred to `ProtocolFeeInbox`.
 
 ### Pending bid lifecycle
 
@@ -700,19 +692,15 @@ Swept atomically by `claim_asset()` when the escrow is deleted.
 
 ### Protocol fee lifecycle
 
-Accumulated in `RentalEscrow.protocol_treasury` (local `Balance`) at each handover
-and tenure expiry (5% share). No cross-escrow contention — stays inside the escrow.
-Admin drains via `withdraw_treasury()` at any time (requires `ProtocolAdminCap` + escrow).
-On `claim_asset()`: `protocol_local_treasury::route_fee(protocol_treasury, escrow.fee_inbox_id, ...)`
-is called internally. If balance > 0, a `ProtocolLocalTreasury<C>` is created and
-transferred to `ProtocolAdminCap` via transfer-to-object — free, does not mutate
-`ProtocolAdminCap`. If balance == 0, the zero balance is destroyed cleanly.
-No local balance is ever dropped.
-`ProtocolLocalTreasury<C>` objects are discoverable as children of `ProtocolAdminCap`
+At each handover and tenure expiry (5% share), `send_fee()` is called inline by
+`do_handover` and `do_tenure_expiry`. It immediately creates a `FeeMessage<C>` and
+transfers it to `ProtocolFeeInbox` via transfer-to-object — free, does not mutate
+`ProtocolFeeInbox`. No fee balance ever accumulates inside `RentalEscrow`.
+`FeeMessage<C>` objects are discoverable as children of `ProtocolFeeInbox`
 via `suix_getOwnedObjects`. The admin groups them by CoinType and calls
-`drain_local_treasuries<C>()` once per type — up to 1024 locals per PTB — presenting
-only `&mut ProtocolAdminCap` (owned object, fastpath, no consensus).
-All locals are deleted after draining. The CoinType is encoded in the object type,
+`drain_fee_messages<C>()` once per type — up to 1024 messages per PTB — presenting
+only `&mut ProtocolFeeInbox` (owned object, fastpath, no consensus).
+All messages are deleted after draining. The CoinType is encoded in the object type,
 so no coordination is needed to identify which coin to drain.
 
 ---
@@ -722,12 +710,11 @@ so no coordination is needed to identify which coin to drain.
 - All timestamps in milliseconds (`sui::clock::Clock::timestamp_ms`).
 - All prices in base token units (no decimals at protocol level).
 - Asset requires `key + store` abilities to live inside `RentalEscrow`.
-- `integrate()` creates and shares 1 object: `RentalEscrow`. It takes `&ProtocolFeeRef` (frozen — no consensus) and stores `fee_ref_cap_id(fee_ref)` as `fee_inbox_id`. Publish-time `init()` creates two singletons: `ProtocolAdminCap` (transferred to deployer) and `ProtocolFeeRef` (frozen).
+- `integrate()` creates and shares 1 object: `RentalEscrow`. It takes `&ProtocolFeeRef` (frozen — no consensus) and stores `fee_ref_inbox_id(fee_ref)` as `fee_inbox_id`. Publish-time `init()` creates two singletons: `ProtocolFeeInbox` (transferred to deployer) and `ProtocolFeeRef` (frozen).
 - `asset: Asset` — the asset is always present while the escrow exists. There is no valid persistent state where the escrow exists without the asset. `claim_asset()` extracts the asset and deletes the escrow atomically. The PTB borrow mechanism (`borrow_asset`/`return_asset`) is an implementation detail — the temporary extraction never persists across transaction boundaries.
-- Fund flows are asymmetric: owner pulls via `withdraw_earnings()` and `claim_asset()`; admin pulls via `withdraw_treasury()` and `drain_local_treasuries()`; tenants receive pushes to the address registered at mint time.
+- Fund flows are asymmetric: owner pulls via `withdraw_earnings()` and `claim_asset()`; admin pulls via `drain_fee_messages()`; tenants receive pushes to the address registered at mint time.
 - Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.
 - Maximum nesting depth for `OwnerCap` as asset: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.
-- `ProtocolTreasury` is per-asset (not global) to avoid cross-escrow contention on boundary transitions.
 - Object discovery: `AssetIntegrated` includes `escrow_id` so off-chain consumers can track all instances from events. Sui RPC (`suix_queryObjects` by type) serves as a bootstrap fallback.
 - `CoinType` is a phantom type parameter fixed at integration time. Any fungible token satisfying Move's abilities works — integrating protocols can use their own native tokens as the rental currency rather than USDC or USDT. A protocol that mints its own asset can rent it out denominated in its own coin, creating a self-contained economic loop without dependency on external stablecoins.
 
@@ -744,15 +731,15 @@ sources/
     owner_cap.move                §5   — OwnerCap object
     tenant_cap.move               §6   — TenantCap + AssetReceipt objects
     events.move                   §7   — event structs + emit helpers
-    protocol_admin_cap.move       §8   — ProtocolAdminCap + ProtocolFeeRef
-    protocol_local_treasury.move  §9   — ProtocolLocalTreasury + route_fee + drain
+    protocol_fee_inbox.move       §8   — ProtocolFeeInbox + ProtocolFeeRef
+    fee_message.move              §9   — FeeMessage + send_fee + drain
     rental_escrow.move            §10  — RentalEscrow shared object + full public API
 tests/
     math_tests.move
     curve_shape_tests.move
     price_function_tests.move
     config_tests.move
-    protocol_local_treasury_tests.move
+    fee_message_tests.move
     rental_escrow_tests.move
 Move.toml
 Move.lock
@@ -762,28 +749,29 @@ Move.lock
 
 ## Design Decisions
 
-### One shared object per instance — ProtocolAdminCap as fee inbox
+### One shared object per instance — ProtocolFeeInbox as fee inbox
 
-All balances (`owner_earnings`, `protocol_treasury`) live inside `RentalEscrow` as
-`Balance<CoinType>` fields. `apply_pending_transitions()` credits both at every
-boundary event without touching any external object. Every public mutating function
-carries only one shared object reference — no contention beyond the escrow itself.
+Only `owner_earnings` lives inside `RentalEscrow` as a `Balance<CoinType>` field.
+`apply_pending_transitions()` credits it at every boundary event without touching any
+external object. Every public mutating function carries only one shared object
+reference — no contention beyond the escrow itself.
 
-`protocol_treasury` cannot be dropped when the escrow is deleted — `Balance` has no
-`drop` ability in Move. `claim_asset()` calls `protocol_local_treasury::route_fee()`
-internally, which wraps the balance into a `ProtocolLocalTreasury<C>` and transfers it
-to `ProtocolAdminCap` via transfer-to-object. This is a free operation — it does not
-mutate `ProtocolAdminCap`. The caller receives only `(Asset, Coin<C>)`.
+At each boundary event, `do_handover` and `do_tenure_expiry` call `send_fee()` to
+immediately create a `FeeMessage<C>` and transfer it to `ProtocolFeeInbox` via
+transfer-to-object. This is a free operation — it does not mutate `ProtocolFeeInbox`.
+No fee balance ever accumulates inside `RentalEscrow`. `claim_asset()` does not need
+to perform any fee cleanup — it simply sweeps `owner_earnings`, burns `OwnerCap`,
+and deletes the escrow.
 
-`ProtocolAdminCap` is an owned singleton (`key + store`) created at publish time and
-transferred to the deployer. It serves as both the admin auth proof and the fee inbox.
-Its ID is registered in each escrow at `integrate` time via `ProtocolFeeRef` — a frozen
-(immutable) pointer accessible by any PTB without consensus overhead.
+`ProtocolFeeInbox` is an owned singleton (`key + store`) created at publish time and
+transferred to the deployer. Its ID is registered in each escrow at `integrate` time
+via `ProtocolFeeRef` — a frozen (immutable) pointer accessible by any PTB without
+consensus overhead.
 
-The admin discovers `ProtocolLocalTreasury<C>` objects as children of `ProtocolAdminCap`
+The admin discovers `FeeMessage<C>` objects as children of `ProtocolFeeInbox`
 via `suix_getOwnedObjects`, groups them by CoinType, and batch-drains each group via
-`drain_local_treasuries<C>()` — up to 1024 locals per PTB, one call per CoinType,
-presenting only `&mut ProtocolAdminCap` (owned, fastpath, no consensus).
+`drain_fee_messages<C>()` — up to 1024 messages per PTB, one call per CoinType,
+presenting only `&mut ProtocolFeeInbox` (owned, fastpath, no consensus).
 The CoinType is encoded in the object type: no coordination between owner and admin is
 required at any point in the lifecycle.
 
@@ -824,11 +812,11 @@ and the validation constraints testable in isolation.
 
 ### Why admin types are split into two modules
 
-`ProtocolAdminCap` and `ProtocolFeeRef` are co-located in `protocol_admin_cap.move` —
+`ProtocolFeeInbox` and `ProtocolFeeRef` are co-located in `protocol_fee_inbox.move` —
 they are created together at init and are tightly coupled: `ProtocolFeeRef` exists
-solely to carry the ID of `ProtocolAdminCap`. Neither type has meaning without the other.
-`ProtocolLocalTreasury` lives in its own module because it owns the `transfer::receive`
-logic (restricted by `key` only) and depends on `protocol_admin_cap` for `uid_mut`.
+solely to carry the ID of `ProtocolFeeInbox`. Neither type has meaning without the other.
+`FeeMessage` lives in its own module because it owns the `transfer::receive`
+logic (restricted by `key` only) and depends on `protocol_fee_inbox` for `uid_mut`.
 Separating it keeps the drain logic isolated and independently testable. Two modules
 for admin concerns — not three — reflects the actual coupling in the design.
 
@@ -891,10 +879,8 @@ The owner always makes two calls regardless of the prior state:
 
 Consistent two-step flow for all cases. `retire()` never returns an asset.
 `claim_asset()` always does — and in the same call: sweeps `owner_earnings` to the
-owner, wraps `protocol_treasury` into a `ProtocolFeeReceipt<C>` hot potato and
-immediately resolves it via `route_fee()` (both internal to the call),
-burns `OwnerCap`, and deletes `RentalEscrow`. All local balances are consumed before
-deletion — no orphaned funds, no locked balances.
+owner, burns `OwnerCap`, and deletes `RentalEscrow`. All local balances are consumed
+before deletion — no orphaned funds, no locked balances.
 
 
 ---
@@ -911,8 +897,8 @@ Build bottom-up following the dependency graph:
 5.  owner_cap                 (leaf)
 6.  tenant_cap                (leaf)
 7.  events                    (leaf)
-8.  protocol_admin_cap        (leaf)
-9.  protocol_local_treasury   (depends on protocol_admin_cap)
+8.  protocol_fee_inbox        (leaf)
+9.  fee_message               (depends on protocol_fee_inbox)
 10. rental_escrow             (depends on all above)
 ```
 

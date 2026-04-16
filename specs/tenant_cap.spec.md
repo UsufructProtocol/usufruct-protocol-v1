@@ -34,6 +34,21 @@ Depends on: nothing (`sui::object` only)
 - `key` only, no `store`: non-transferable at the type level. No
   module-level transfer function exists. The cap can never leave the
   holder's wallet except via `burn`.
+  **Deliberate asymmetry with `OwnerCap` (`key + store`):**
+  `OwnerCap` is transferable because transferring ownership is a
+  first-class feature — selling the underlying asset is the intended
+  use case, and level-2 nesting requires `store`.
+  `TenantCap` is non-transferable for two compounding reasons:
+  1. `current_tenant_address` is registered at mint and has no update
+     mechanism. If the cap were transferred externally, `remain_credit`
+     would be pushed to the original address — not the new holder.
+     Fund flows would be broken by design.
+  2. `key + store` would enable a secondary market for caps, including
+     stale ones. A seller could list a stale cap as valid; the buyer
+     would not discover it until `borrow_asset` rejects it. `key` only
+     closes this attack surface at the type level — no secondary market
+     is possible. The only path to tenancy is through the protocol:
+     paying `next_rent_price` and displacing the current tenant.
 - **Lazy minting:** a bid during a Rented state does not mint a cap.
   `rental_escrow` stores `pending_tenant_address` and mints the cap
   only when the bidder actually becomes the current tenant — either at

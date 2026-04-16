@@ -65,12 +65,16 @@ Depends on: nothing (`sui::object` only)
   — its object ID no longer matches `escrow.current_tenant_cap_id`.
   Stale caps are inert: `borrow_asset` rejects them via the ID check.
   `burn` is the sole exit path, available at the holder's discretion.
-- **Delivery asymmetry:**
-  - `rent()` from Idle/AtDutchAuction: caller IS the new tenant →
-    TenantCap returned via PTB (composable).
-  - `do_handover()`: new tenant is `pending_tenant_address`, which is
-    not `tx.sender()` → TenantCap pushed via `transfer::transfer` to
-    that address. Push is unavoidable here.
+- **All TenantCap deliveries are pushes:**
+  `rent()` has a single signature across all states. In Rented states
+  no cap is minted — returning `Option<TenantCap>` would be required
+  for a return-based design, which is inconsistent and awkward.
+  Instead, all deliveries use `transfer::transfer`:
+  - `rent()` from Idle/AtDutchAuction → pushes to `tx_context::sender(ctx)`.
+  - `do_handover()` → pushes to `pending_tenant_address` (not
+    `tx.sender()`; push is the only viable mechanism here).
+  Uniform push across all mint sites keeps the delivery model simple
+  and consistent.
 - **TenantCap as signal:** the cap appearing in the wallet is the
   clearest notification of tenancy. No indexer query or event
   subscription needed.
@@ -142,8 +146,8 @@ current one passes the ID check.
 Creates `TenantCap { id: object::new(ctx), escrow_id }` and returns it.
 
 **Call sites:**
-- `rental_escrow::rent` (from Idle, AtDutchAuction) — returned via PTB
-  to the calling tenant.
+- `rental_escrow::rent` (from Idle, AtDutchAuction) — pushed via
+  `transfer::transfer` to `tx_context::sender(ctx)`.
 - `rental_escrow::do_handover` — pushed via `transfer::transfer` to
   `pending_tenant_address` (not `tx.sender()`).
 
@@ -215,12 +219,13 @@ Both checks live in `rental_escrow`, not here.
     unaware. The only consequence is that the object ceases to exist —
     it can no longer be presented to `borrow_asset`.
 
-**P5 — Delivery matches execution context:**
-    When `tx.sender()` is the new tenant (`rent()` from Idle,
-    AtDutchAuction), the cap is returned via PTB for composability.
-    When the new tenant is a registered address from a prior bid
-    (`do_handover()`), the cap is pushed — `transfer::transfer` is
-    the only viable mechanism.
+**P5 — All deliveries are pushes:**
+    `rent()` has a single signature and does not mint a cap in Rented
+    states. A return-based design would require `Option<TenantCap>`,
+    which is inconsistent. All mint sites use `transfer::transfer`:
+    `rent()` pushes to `tx_context::sender(ctx)`; `do_handover()`
+    pushes to `pending_tenant_address`. Uniform mechanism across all
+    delivery paths.
 
 
 5. TEST CASES

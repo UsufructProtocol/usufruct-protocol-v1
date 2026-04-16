@@ -2,8 +2,8 @@ PROTOCOL ADMIN CAP MODULE — SPECIFICATION
 ==========================================
 
 Module: `protocol_admin_cap`
-Design reference: design-compact.md (governance)
-Module map reference: module-map.spec.md §7
+Design reference: design-compact.md §3 (fund flows — protocol fee)
+Module map reference: module-map.spec.md §8
 Depends on: nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`)
 
 
@@ -110,8 +110,12 @@ No shared objects created. No events emitted.
 ### 5.2 Authorization gate
 
 The cap itself has no logic to test beyond creation and transfer.
-Authorization enforcement is tested in `protocol_local_treasury`
-(drain gate) and `rental_escrow` (withdraw_treasury gate).
+Authorization enforcement is tested where each gate lives:
+
+| # | Module | Gate |
+|---|---|---|
+| T3 | `protocol_local_treasury_tests` | `drain_local_treasuries` aborts without `ProtocolAdminCap` |
+| T4 | `rental_escrow_tests` | `withdraw_treasury` aborts without `ProtocolAdminCap` |
 
 
 6. MODULE BOUNDARY
@@ -122,8 +126,8 @@ Authorization enforcement is tested in `protocol_local_treasury`
 | Symbol | Visibility | Notes |
 |--------|------------|-------|
 | `ProtocolAdminCap` (type) | `public` | `key + store`. Singleton. |
+| `init(ctx)` | private | Package initializer. Runs once at publish. Not callable externally. |
 
-No error constants. No public functions beyond `init` (private).
-No getters — `id` is not exposed; the cap is passed by reference for authorization only.
+No error constants. No getters — `id` is not exposed; the cap is passed by reference for authorization only.
 
 **Depends on:** nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`).

@@ -35,7 +35,7 @@ no consensus. All other operations stay on the single escrow object.
 ║  │  balance         │  and do_tenure_expiry(). Transferred to      ║
 ║  │  Balance<C>      │  ProtocolFeeInbox as child.                  ║
 ║  └──────────────────┘  Deleted by drain_fee_messages().            ║
-║                         escrow_id + asset_id for traceability.      ║
+║                         escrow_id for traceability.                 ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
  [FROZEN — singleton]
@@ -474,13 +474,12 @@ module (`key` only type).
 - `id: UID`
 - `balance: Balance<CoinType>`
 - `escrow_id: ID`
-- `asset_id: ID`
 
 **Exports:**
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `send_fee<C>(balance, fee_inbox_id, escrow_id, asset_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
+| `send_fee<C>(balance, fee_inbox_id, escrow_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
 | `drain_fee_messages<C>(inbox, messages, ctx): Coin<C>` | `public` | Requires `&mut ProtocolFeeInbox`. Receives each `FeeMessage<C>` from inbox, accumulates balances, deletes objects, returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
 
 **Status:** [x] `FeeMessage` · [x] `send_fee` · [x] `drain_fee_messages`

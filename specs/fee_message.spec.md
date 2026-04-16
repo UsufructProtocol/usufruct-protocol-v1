@@ -59,7 +59,6 @@ public struct FeeMessage<phantom CoinType> has key {
     id:        UID,
     balance:   Balance<CoinType>,
     escrow_id: ID,
-    asset_id:  ID,
 }
 ```
 
@@ -74,8 +73,7 @@ public struct FeeMessage<phantom CoinType> has key {
 |---|---|---|
 | `id` | `UID` | Object identity. |
 | `balance` | `Balance<CoinType>` | Protocol fee amount. Always > 0 — zero-balance objects are never created. |
-| `escrow_id` | `ID` | ID of the `RentalEscrow` that generated this fee. For off-chain traceability. |
-| `asset_id` | `ID` | ID of the integrated asset. For off-chain traceability. |
+| `escrow_id` | `ID` | ID of the `RentalEscrow` that generated this fee. Sufficient for off-chain traceability — one escrow wraps exactly one asset. |
 
 **Invariant:** `balance::value(&self.balance) > 0` for any live `FeeMessage`.
 Zero-balance instances are never created — `send_fee` destroys zero balances
@@ -91,7 +89,6 @@ directly without constructing an object.
         balance:      Balance<C>,
         fee_inbox_id: ID,
         escrow_id:    ID,
-        asset_id:     ID,
         ctx:          &mut TxContext,
     )
 
@@ -104,7 +101,7 @@ directly without constructing an object.
 - If `balance::value(&balance) == 0`:
   calls `balance::destroy_zero(balance)`. No object created. Returns.
 - If `balance::value(&balance) > 0`:
-  creates `FeeMessage<C>` with the balance, `escrow_id`, and `asset_id`,
+  creates `FeeMessage<C>` with the balance and `escrow_id`,
   then calls `transfer::transfer(msg, fee_inbox_id.to_address())`.
 
 **Call sites:** called by `do_handover` and `do_tenure_expiry` inside
@@ -193,8 +190,8 @@ Multiple calls may be chained in a single PTB — each handles one
     and its `UID` deleted. No orphaned objects remain after draining.
 
 **P4 — Traceability:**
-    `escrow_id` and `asset_id` fields allow off-chain attribution of each
-    fee amount to its source escrow and asset.
+    `escrow_id` allows off-chain attribution of each fee to its source escrow.
+    Since one escrow wraps exactly one asset, `escrow_id` is sufficient.
 
 **P5 — Coin accumulation:**
     All balances from one `drain_fee_messages<C>` call are joined into a
@@ -215,7 +212,7 @@ Multiple calls may be chained in a single PTB — each handles one
 
 | # | Description | Expected |
 |---|---|---|
-| S1 | `send_fee<C>` with `balance > 0` | `FeeMessage<C>` created. Owned by `fee_inbox_id`. `balance::value == input`. `escrow_id` and `asset_id` match inputs. |
+| S1 | `send_fee<C>` with `balance > 0` | `FeeMessage<C>` created. Owned by `fee_inbox_id`. `balance::value == input`. `escrow_id` matches input. |
 | S2 | `send_fee<C>` with `balance == 0` | No object created. Zero balance destroyed cleanly. No abort. |
 | S3 | `send_fee<C>` called twice with same `fee_inbox_id` | Two distinct `FeeMessage<C>` objects exist as children of `fee_inbox_id`. |
 | S4 | `send_fee<SUI>` and `send_fee<USDC>` with same `fee_inbox_id` | Two objects of distinct types exist as children. No conflict. |
@@ -244,7 +241,7 @@ Multiple calls may be chained in a single PTB — each handles one
 | Symbol | Visibility | Notes |
 |--------|------------|-------|
 | `FeeMessage<C>` (type) | `public` | `key` only. Per-boundary-event fee message. |
-| `send_fee<C>(balance, fee_inbox_id, escrow_id, asset_id, ctx)` | `public(package)` | Creates and transfers to `ProtocolFeeInbox` inbox. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
+| `send_fee<C>(balance, fee_inbox_id, escrow_id, ctx)` | `public(package)` | Creates and transfers to `ProtocolFeeInbox` inbox. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
 | `drain_fee_messages<C>(inbox, messages, ctx)` | `public` | Drains inbox for one CoinType. Returns `Coin<C>`. Called by admin PTB. |
 
 No error constants.

@@ -100,8 +100,8 @@ escrow in the same call.
 
 **Behavior:**
 Creates `OwnerCap { id: object::new(ctx), escrow_id }` and returns it.
-The caller (`rental_escrow::integrate`) is responsible for transferring
-it to the integrating owner.
+The caller (`rental_escrow::integrate`) is responsible for returning
+it to the PTB — the PTB delivers it to the integrating owner.
 
 **Call site:** `rental_escrow::integrate` — once per integration.
 

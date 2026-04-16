@@ -174,12 +174,12 @@ liquid_renting = "0x0"
             \    /
              \  /
               \/
-           config    owner_cap    tenant_cap    events    protocol_fee_inbox
-               ^          ^            ^          ^              ^
-                \         |            |          |              |
-                 \        |            |          |    fee_message
-                  \       |            |          |              ^
-                   \      |            |          |             /
+           config    owner_cap    tenant_cap    protocol_fee_inbox
+               ^          ^            ^              ^
+                \         |            |              |
+                 \        |            |    fee_message
+                  \       |            |              ^
+                   \      |            |             /
                                     rental_escrow
 ```
 
@@ -187,6 +187,14 @@ Arrows point from dependency to dependent.
 `rental_escrow` is the integration point; every other module is independent of it.
 `rental_escrow` also imports `protocol_fee_inbox` directly (for `ProtocolFeeRef` in
 `integrate`) in addition to `fee_message`.
+
+**Events:** there is no standalone `events` module. Each module owns its own
+observability — event structs are defined in the module that emits them.
+All protocol state-machine events live in `rental_escrow`. Cap lifecycle events
+(`TenantCapMinted`, `TenantCapBurned`, `OwnerCapMinted`, `OwnerCapBurned`) live in
+`tenant_cap` and `owner_cap` respectively. Fee events live in `fee_message`.
+This follows the idiomatic Sui Move pattern: the Sui Verifier requires the emitted
+type to be internal to the module calling `event::emit`.
 
 ---
 
@@ -393,32 +401,12 @@ Stale caps from displaced tenants are inert.
 
 ---
 
-### 7. `events.move` — Protocol events
+### 7. ~~`events.move`~~ — No standalone events module
 
-**Responsibility:** Event struct definitions and package-scoped emit helpers.
-No logic, no state. Pure data carriers.
-
-**Types (all `copy, drop`):**
-
-| Event | Key Fields | Emitted by |
-|---|---|---|
-| `AssetIntegrated` | `escrow_id, owner_cap_id, min_rent_price, tenure_ceiling` | `integrate` |
-| `RentalStarted` | `escrow_id, tenant_cap_id, price` | `rent` (Idle, AtDutchAuction) |
-| `TakeoverInitiated` | `escrow_id, outgoing_cap_id, pending_tenant_address, new_price, handover_expiry` | `rent` (HandoverOpen) |
-| `BidSuperseded` | `escrow_id, refunded_address, refunded_amount` | `rent` (HandoverConfirmed) |
-| `HandoverCompleted` | `escrow_id, from_cap_id, to_cap_id, remain_credit_returned, owner_earned, protocol_fee` | `apply_pending_transitions` → `do_handover` (lazy) |
-| `TenureExpired` | `escrow_id, cap_id, owner_earned, protocol_fee` | `apply_pending_transitions` → `do_tenure_expiry` (lazy) |
-| `DutchAuctionStarted` | `escrow_id, start_price, floor_price` | `apply_pending_transitions` → `do_tenure_expiry` (lazy) |
-| `DutchAuctionEntry` | `escrow_id, tenant_cap_id, entry_price` | `rent` (AtDutchAuction) |
-| `AssetIdled` | `escrow_id` | `apply_pending_transitions` → `do_auction_expiry` (lazy) |
-| `RetireInitiated` | `escrow_id, current_state: u8` | `retire` |
-| `AssetRetired` | `escrow_id` | `claim_asset` |
-
-**Exports:** One `emit_*` function per event (`public(package)`), so only `rental_escrow` can fire them.
-
-**Status:** [ ] all event structs · [ ] all `emit_*` helpers
-
-**Depends on:** nothing (only `sui::event`).
+Event structs live in the module that emits them. See **Events** note in the
+dependency graph above. Protocol state-machine events are specified in
+`rental_escrow.spec.md`. Cap lifecycle events in `owner_cap.spec.md` and
+`tenant_cap.spec.md`. Fee events in `fee_message.spec.md`.
 
 ---
 
@@ -569,7 +557,7 @@ when a transition logically occurred and when it was executed.
 | `do_auction_expiry` | Transition to `Idle`. No funds to move. |
 | `split_fee` | Pure: splits an amount into (amount×0.95, amount×0.05) tuple. |
 
-**Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`, `events`,
+**Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
 `protocol_fee_inbox`, `fee_message`.
 
 ---
@@ -728,9 +716,8 @@ sources/
     curve_shape.move              §2   — CurveShape type and shape function evaluation
     price_function.move           §3   — PriceFunction type and price escalation
     config.move                   §4   — IntegrationConfig struct + validation
-    owner_cap.move                §5   — OwnerCap object
-    tenant_cap.move               §6   — TenantCap + AssetReceipt objects
-    events.move                   §7   — event structs + emit helpers
+    owner_cap.move                §5   — OwnerCap object (includes cap lifecycle events)
+    tenant_cap.move               §6   — TenantCap object (includes cap lifecycle events)
     protocol_fee_inbox.move       §8   — ProtocolFeeInbox + ProtocolFeeRef
     fee_message.move              §9   — FeeMessage + send_fee + drain
     rental_escrow.move            §10  — RentalEscrow shared object + full public API
@@ -896,12 +883,11 @@ Build bottom-up following the dependency graph:
 4.  config                    (depends on curve_shape, price_function)
 5.  owner_cap                 (leaf)
 6.  tenant_cap                (leaf)
-7.  events                    (leaf)
-8.  protocol_fee_inbox        (leaf)
-9.  fee_message               (depends on protocol_fee_inbox)
-10. rental_escrow             (depends on all above)
+7.  protocol_fee_inbox        (leaf)
+8.  fee_message               (depends on protocol_fee_inbox)
+9.  rental_escrow             (depends on all above)
 ```
 
 Steps 2–3 are independent of each other (both depend only on math) and can be built in parallel.
-Steps 5–8 are independent leaves — build in parallel.
-Step 4 (config) waits on steps 2–3. Step 9 waits on step 8. Step 10 waits on all.
+Steps 5–7 are independent leaves — build in parallel.
+Step 4 (config) waits on steps 2–3. Step 8 waits on step 7. Step 9 waits on all.

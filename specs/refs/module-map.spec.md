@@ -9,41 +9,43 @@ For protocol rationale and incentive analysis see `design-compact.md`.
 
 ## Object Model
 
-One shared object per asset instance (`RentalEscrow`). One global shared singleton
-(`ProtocolGlobalTreasury`) created at publish time — pure inbox, no balance.
+One shared object per asset instance (`RentalEscrow`). At publish time, `init`
+creates two singletons: `ProtocolAdminCap` (owned by deployer — auth proof and fee
+inbox) and `ProtocolFeeRef` (frozen — immutable pointer to the cap's ID, accessible
+by any PTB without consensus).
 Protocol fees accumulate in a `protocol_treasury` `Balance` field inside each escrow.
 At retirement, `claim_asset()` wraps that balance into a `ProtocolLocalTreasury<C>`
-object and transfers it to `ProtocolGlobalTreasury` via transfer-to-object (free,
-no contention on the global inbox). The admin drains all locals in one call via
-`drain_local_treasuries`, mutating only `ProtocolGlobalTreasury`. All other
+object and transfers it to `ProtocolAdminCap` via transfer-to-object (free, no
+contention on the inbox). The admin drains all locals via `drain_local_treasuries`,
+presenting `&mut ProtocolAdminCap` — owned object, fastpath, no consensus. All other
 operations stay on the single escrow object.
 
 ```
  ADMIN'S WALLET
- ┌──────────────────────┐
- │   ProtocolAdminCap   │
- └──────────┬───────────┘
-            │ withdraw_treasury()
-            │ drain_local_treasuries()
-            ▼
+ ┌─────────────────────────────────────────────┐
+ │   ProtocolAdminCap              [OWNED]      │
+ │   · fee inbox (child objects accumulate here)│
+ │   withdraw_treasury()                        │
+ │   drain_local_treasuries()                   │
+ └──────────────────────┬──────────────────────┘
+                        │ (child objects, one per claim_asset with non-zero fees)
+                        │ transfer-to-object — free, no contention on AdminCap
 ╔══════════════════════════════════════════════════════════════════════╗
-║  ProtocolGlobalTreasury              [SHARED — singleton]           ║
+║  ProtocolLocalTreasury<CoinType>     [OWNED by ProtocolAdminCap]    ║
 ║                                                                      ║
-║  Pure inbox. No balance. Receives ProtocolLocalTreasury<C> child    ║
-║  objects via transfer-to-object at each claim_asset(). Admin drains ║
-║  them via drain_local_treasuries() — one &mut access per call,      ║
-║  one call per CoinType. Indexed off-chain by suix_queryObjects.     ║
-╚══════════════════════════════════════════════════════════════════════╝
-        ▲  (child objects, one per claim_asset with non-zero fees)
-        │  transfer-to-object — free, no contention on GlobalTreasury
-╔══════════════════════════════════════════════════════════════════════╗
-║  ProtocolLocalTreasury<CoinType>     [OWNED by GlobalTreasury]      ║
-║                                                                      ║
-║  ┌──────────────────┐  Created by route_fee() inside claim_asset().     ║
-║  │  balance         │  Transferred to GlobalTreasury as child.      ║
+║  ┌──────────────────┐  Created by route_fee() inside claim_asset(). ║
+║  │  balance         │  Transferred to ProtocolAdminCap as child.    ║
 ║  │  Balance<C>      │  Deleted by drain_local_treasuries().         ║
 ║  └──────────────────┘  escrow_id + asset_id for traceability.       ║
 ╚══════════════════════════════════════════════════════════════════════╝
+
+ [FROZEN — singleton]
+ ┌──────────────────────────────────────────────┐
+ │   ProtocolFeeRef                             │
+ │   · admin_cap_id: ID  ← ID of AdminCap      │
+ │   Immutable. Accessible without consensus.   │
+ │   Passed to integrate() by any integrator.   │
+ └──────────────────────────────────────────────┘
 
  OWNER'S WALLET                        TENANT'S WALLET (current / pending)
  ┌───────────────────┐                 ┌──────────────────────┐
@@ -83,7 +85,7 @@ operations stay on the single escrow object.
 ║  │  Balance<C>      │         │  Flags + routing                  │ ║
 ║  └──────────────────┘         │  · retire_flag: bool              │ ║
 ║  ┌──────────────────┐         │  · integrated_at_ms: u64          │ ║
-║  │  owner_earnings  │         │  · global_treasury_id: ID         │ ║
+║  │  owner_earnings  │         │  · fee_inbox_id: ID               │ ║
 ║  │  Balance<C>      │         └───────────────────────────────────┘ ║
 ║  └──────────────────┘                                               ║
 ║  ┌──────────────────┐                                               ║
@@ -130,18 +132,18 @@ operations stay on the single escrow object.
  withdraw_treasury()              ←  Coin<C>  ←  protocol_treasury local           (pull, ProtocolAdminCap, on escrow)
  retire()                      —  sets retire_flag only, no asset movement
  claim_asset()                 ←  Coin<C>  ←  owner_earnings (sweep)
-                               —  protocol_treasury  →  ProtocolLocalTreasury<C>  →  transfer-to-object → global_treasury_id  (if balance > 0)
+                               —  protocol_treasury  →  ProtocolLocalTreasury<C>  →  transfer-to-object → fee_inbox_id  (if balance > 0)
                                —  protocol_treasury  →  destroy_zero               (if balance == 0)
                                ←  Asset    ←  RentalEscrow (unwrapped, deleted)
- drain_local_treasuries<C>()   ←  Coin<C>  ←  ProtocolLocalTreasury<C>[]          (pull, ProtocolAdminCap, deleted, one call per CoinType)
+ drain_local_treasuries<C>()   ←  Coin<C>  ←  ProtocolLocalTreasury<C>[]          (&mut ProtocolAdminCap, fastpath, deleted, one call per CoinType)
 ```
 
 ---
 
 ## Contention Map
 
-One shared object per asset for all normal operations. One global singleton
-(`ProtocolGlobalTreasury`) touched only at drain time.
+One shared object per asset for all normal operations. Admin operations use owned
+objects — fastpath, no consensus.
 
 | Operation | Contention |
 |---|---|
@@ -149,9 +151,9 @@ One shared object per asset for all normal operations. One global singleton
 | `return_asset` | serial on RentalEscrow |
 | `withdraw_earnings` | serial on RentalEscrow |
 | `withdraw_treasury` | serial on RentalEscrow |
-| `integrate` | serial on RentalEscrow · read-only on ProtocolGlobalTreasury (no contention) |
-| `claim_asset` | serial on RentalEscrow only — transfer-to-object does not touch ProtocolGlobalTreasury |
-| `drain_local_treasuries<C>` | serial on ProtocolGlobalTreasury only — one call per CoinType |
+| `integrate` | serial on RentalEscrow · read `ProtocolFeeRef` (frozen — no consensus) |
+| `claim_asset` | serial on RentalEscrow only — transfer-to-object does not touch `ProtocolAdminCap` |
+| `drain_local_treasuries<C>` | owned `ProtocolAdminCap` only — fastpath, no consensus, one call per CoinType |
 | `current_state`, `current_used_credit`, `current_price_descent`, `current_next_rent_price` | read-only (`&RentalEscrow`) — no contention |
 
 ---
@@ -181,20 +183,19 @@ liquid_renting = "0x0"
             \    /
              \  /
               \/
-           config    owner_cap    tenant_cap    events    protocol_admin_cap    protocol_global_treasury
-               ^          ^            ^          ^              ^                        ^
-                \         |            |          |               \                      /
-                 \        |            |          |           protocol_local_treasury
-                  \       |            |          |                     ^
-                   \      |            |          |                    /
+           config    owner_cap    tenant_cap    events    protocol_admin_cap
+               ^          ^            ^          ^              ^
+                \         |            |          |              |
+                 \        |            |          |    protocol_local_treasury
+                  \       |            |          |              ^
+                   \      |            |          |             /
                                     rental_escrow
 ```
 
 Arrows point from dependency to dependent.
 `rental_escrow` is the integration point; every other module is independent of it.
-`rental_escrow` also imports `protocol_admin_cap` and `protocol_global_treasury` directly
-(for `withdraw_treasury` gate and `integrate` respectively) in addition to
-`protocol_local_treasury`.
+`rental_escrow` also imports `protocol_admin_cap` directly (for `withdraw_treasury`
+gate and `ProtocolFeeRef` in `integrate`) in addition to `protocol_local_treasury`.
 
 ---
 
@@ -430,61 +431,42 @@ No logic, no state. Pure data carriers.
 
 ---
 
-### 8. `protocol_admin_cap.move` — Protocol administrator capability
+### 8. `protocol_admin_cap.move` — Protocol administrator capability and fee inbox
 
-**Responsibility:** `ProtocolAdminCap` singleton. Proof of protocol-level authority.
-Created once at publish time via `init`. No other logic.
+**Responsibility:** `ProtocolAdminCap` singleton and `ProtocolFeeRef` frozen pointer.
+`ProtocolAdminCap` is both the proof of admin authority and the transfer-to-object
+target for protocol fee objects. `ProtocolFeeRef` is a frozen, immutable pointer to
+the cap's ID — passed to `integrate` by any integrator without consensus overhead.
 
 **Types:**
 
 | Type | Abilities | Notes |
 |---|---|---|
-| `ProtocolAdminCap` | `key, store` | Singleton. Transferable. Held by protocol deployer. |
+| `ProtocolAdminCap` | `key, store` | Singleton. Transferable. Auth proof and fee inbox. |
+| `ProtocolFeeRef` | `key` | Frozen singleton. Immutable pointer to `ProtocolAdminCap`. |
 
 **Fields (`ProtocolAdminCap`):**
 - `id: UID`
 
-**Exports:**
-
-| Function | Visibility | Purpose |
-|---|---|---|
-| `init(ctx)` | private | Creates `ProtocolAdminCap`, transfers to `ctx.sender()`. |
-
-**Status:** [x] `ProtocolAdminCap` · [x] `init`
-
-**Depends on:** nothing.
-
----
-
-### 9. `protocol_global_treasury.move` — Protocol fee inbox (singleton)
-
-**Responsibility:** `ProtocolGlobalTreasury` shared singleton. Pure inbox — no balance,
-no phantom type. Receives `ProtocolLocalTreasury<C>` child objects via transfer-to-object.
-Exposes `uid_mut` so `protocol_local_treasury` can call `transfer::receive`.
-
-**Types:**
-
-| Type | Abilities | Notes |
-|---|---|---|
-| `ProtocolGlobalTreasury` | `key` | Shared singleton. Created at publish. Never transferred. |
-
-**Fields (`ProtocolGlobalTreasury`):**
+**Fields (`ProtocolFeeRef`):**
 - `id: UID`
+- `admin_cap_id: ID`
 
 **Exports:**
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `init(ctx)` | private | Creates `ProtocolGlobalTreasury`, shares it. |
-| `uid_mut(global): &mut UID` | `public(package)` | Exposes `&mut UID` for `transfer::receive` in `protocol_local_treasury`. |
+| `init(ctx)` | private | Creates `ProtocolAdminCap` (transfers to deployer) and `ProtocolFeeRef` (freezes). |
+| `uid_mut(cap): &mut UID` | `public(package)` | Exposes `&mut UID` for `transfer::receive` in `protocol_local_treasury`. |
+| `fee_ref_cap_id(fee_ref): ID` | `public` | Returns `admin_cap_id`. Used by `rental_escrow::integrate`. |
 
-**Status:** [x] `ProtocolGlobalTreasury` · [x] `init` · [x] `uid_mut`
+**Status:** [x] `ProtocolAdminCap` · [x] `ProtocolFeeRef` · [x] `init` · [x] `uid_mut` · [x] `fee_ref_cap_id`
 
 **Depends on:** nothing.
 
 ---
 
-### 10. `protocol_local_treasury.move` — Protocol fee payload and drain
+### 9. `protocol_local_treasury.move` — Protocol fee payload and drain
 
 **Responsibility:** `ProtocolLocalTreasury<C>` per-retirement fee object, and all
 fund-routing logic: `route_fee` creates and routes to the inbox; `drain_local_treasuries`
@@ -494,7 +476,7 @@ receives and drains. `transfer::receive` is restricted to this module (`key` onl
 
 | Type | Abilities | Notes |
 |---|---|---|
-| `ProtocolLocalTreasury<phantom CoinType>` | `key` | Per-retirement. Transferred to `ProtocolGlobalTreasury` as child. Deleted at drain. |
+| `ProtocolLocalTreasury<phantom CoinType>` | `key` | Per-retirement. Transferred to `ProtocolAdminCap` as child. Deleted at drain. |
 
 **Fields (`ProtocolLocalTreasury`):**
 - `id: UID`
@@ -506,16 +488,16 @@ receives and drains. `transfer::receive` is restricted to this module (`key` onl
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `route_fee<C>(balance, global_id, escrow_id, asset_id, ctx)` | `public(package)` | If `balance > 0`: creates `ProtocolLocalTreasury<C>`, transfers to `global_id`. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
-| `drain_local_treasuries<C>(global, cap, locals, ctx): Coin<C>` | `public` | Requires `ProtocolAdminCap`. Receives each `ProtocolLocalTreasury<C>` from inbox, accumulates balances, deletes objects, returns `Coin<C>`. One call per CoinType. |
+| `route_fee<C>(balance, fee_inbox_id, escrow_id, asset_id, ctx)` | `public(package)` | If `balance > 0`: creates `ProtocolLocalTreasury<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
+| `drain_local_treasuries<C>(cap, locals, ctx): Coin<C>` | `public` | Requires `&mut ProtocolAdminCap`. Receives each `ProtocolLocalTreasury<C>` from inbox, accumulates balances, deletes objects, returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
 
 **Status:** [x] `ProtocolLocalTreasury` · [x] `route_fee` · [x] `drain_local_treasuries`
 
-**Depends on:** `protocol_admin_cap`, `protocol_global_treasury`.
+**Depends on:** `protocol_admin_cap`.
 
 ---
 
-### 11. `rental_escrow.move` — Core escrow and public API
+### 10. `rental_escrow.move` — Core escrow and public API
 
 **Responsibility:** The central shared object, state machine, lazy evaluation,
 all public entry points, and fund distribution logic.
@@ -552,18 +534,18 @@ functions.
 - `protocol_treasury: Balance<CoinType>`
 - `retire_flag: bool`
 - `integrated_at_ms: u64`
-- `global_treasury_id: ID`
+- `fee_inbox_id: ID` — ID of `ProtocolAdminCap`. Registered at `integrate` via `ProtocolFeeRef`.
 
 **Public API:**
 
 | Function | Visibility | Summary |
 |---|---|---|
-| `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolGlobalTreasury` (read-only shared, no contention) — stores `object::id(global)` as `global_treasury_id`. Returns `OwnerCap`. |
+| `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `fee_ref_cap_id(fee_ref)` and stores it as `fee_inbox_id`. Returns `OwnerCap`. |
 | `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active. **Retired** — aborts. |
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
-| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Calls `protocol_local_treasury::route_fee(protocol_treasury, escrow.global_treasury_id, ...)` — creates `ProtocolLocalTreasury<C>` and transfers to global inbox if balance > 0, destroys zero balance if == 0. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
+| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Calls `protocol_local_treasury::route_fee(protocol_treasury, escrow.fee_inbox_id, ...)` — creates `ProtocolLocalTreasury<C>` and transfers to `ProtocolAdminCap` if balance > 0, destroys zero balance if == 0. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
 | `withdraw_treasury` | `public` | Requires `ProtocolAdminCap` + `&mut RentalEscrow`. Drains `protocol_treasury` (local) → `Coin`. No state resolution needed. Admin utility — allows collecting fees from an active escrow without waiting for retirement. |
 | `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order. Returns `AssetState` — the settled state after all transitions. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state on-chain, credit pending earnings, and read the resulting state in one transaction. See §Pending Transitions. |
@@ -597,7 +579,7 @@ when a transition logically occurred and when it was executed.
 | `split_fee` | Pure: splits an amount into (amount×0.95, amount×0.05) tuple. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`, `events`,
-`protocol_admin_cap`, `protocol_global_treasury`, `protocol_local_treasury`.
+`protocol_admin_cap`, `protocol_local_treasury`.
 
 ---
 
@@ -721,16 +703,17 @@ Swept atomically by `claim_asset()` when the escrow is deleted.
 Accumulated in `RentalEscrow.protocol_treasury` (local `Balance`) at each handover
 and tenure expiry (5% share). No cross-escrow contention — stays inside the escrow.
 Admin drains via `withdraw_treasury()` at any time (requires `ProtocolAdminCap` + escrow).
-On `claim_asset()`: `protocol_local_treasury::route_fee(protocol_treasury, escrow.global_treasury_id, ...)`
+On `claim_asset()`: `protocol_local_treasury::route_fee(protocol_treasury, escrow.fee_inbox_id, ...)`
 is called internally. If balance > 0, a `ProtocolLocalTreasury<C>` is created and
-transferred to `ProtocolGlobalTreasury` via transfer-to-object — free, no contention
-on the global inbox. If balance == 0, the zero balance is destroyed cleanly.
+transferred to `ProtocolAdminCap` via transfer-to-object — free, does not mutate
+`ProtocolAdminCap`. If balance == 0, the zero balance is destroyed cleanly.
 No local balance is ever dropped.
-`ProtocolLocalTreasury<C>` objects are discoverable as children of `ProtocolGlobalTreasury`
-via `suix_queryObjects`. The admin groups them by CoinType and calls
-`drain_local_treasuries<C>()` once per type — up to 1024 locals per PTB — mutating only
-`ProtocolGlobalTreasury`. All locals are deleted after draining. The CoinType is encoded
-in the object type, so no coordination is needed to identify which coin to drain.
+`ProtocolLocalTreasury<C>` objects are discoverable as children of `ProtocolAdminCap`
+via `suix_getOwnedObjects`. The admin groups them by CoinType and calls
+`drain_local_treasuries<C>()` once per type — up to 1024 locals per PTB — presenting
+only `&mut ProtocolAdminCap` (owned object, fastpath, no consensus).
+All locals are deleted after draining. The CoinType is encoded in the object type,
+so no coordination is needed to identify which coin to drain.
 
 ---
 
@@ -739,7 +722,7 @@ in the object type, so no coordination is needed to identify which coin to drain
 - All timestamps in milliseconds (`sui::clock::Clock::timestamp_ms`).
 - All prices in base token units (no decimals at protocol level).
 - Asset requires `key + store` abilities to live inside `RentalEscrow`.
-- `integrate()` creates and shares 1 object: `RentalEscrow`. It also takes `&ProtocolGlobalTreasury` as read-only input and stores its ID. Publish-time `init()` creates two singletons: `ProtocolAdminCap` (transferred to deployer) and `ProtocolGlobalTreasury` (shared).
+- `integrate()` creates and shares 1 object: `RentalEscrow`. It takes `&ProtocolFeeRef` (frozen — no consensus) and stores `fee_ref_cap_id(fee_ref)` as `fee_inbox_id`. Publish-time `init()` creates two singletons: `ProtocolAdminCap` (transferred to deployer) and `ProtocolFeeRef` (frozen).
 - `asset: Asset` — the asset is always present while the escrow exists. There is no valid persistent state where the escrow exists without the asset. `claim_asset()` extracts the asset and deletes the escrow atomically. The PTB borrow mechanism (`borrow_asset`/`return_asset`) is an implementation detail — the temporary extraction never persists across transaction boundaries.
 - Fund flows are asymmetric: owner pulls via `withdraw_earnings()` and `claim_asset()`; admin pulls via `withdraw_treasury()` and `drain_local_treasuries()`; tenants receive pushes to the address registered at mint time.
 - Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.
@@ -761,10 +744,9 @@ sources/
     owner_cap.move                §5   — OwnerCap object
     tenant_cap.move               §6   — TenantCap + AssetReceipt objects
     events.move                   §7   — event structs + emit helpers
-    protocol_admin_cap.move       §8   — ProtocolAdminCap singleton
-    protocol_global_treasury.move §9   — ProtocolGlobalTreasury inbox singleton
-    protocol_local_treasury.move  §10  — ProtocolLocalTreasury + route_fee + drain
-    rental_escrow.move            §11  — RentalEscrow shared object + full public API
+    protocol_admin_cap.move       §8   — ProtocolAdminCap + ProtocolFeeRef
+    protocol_local_treasury.move  §9   — ProtocolLocalTreasury + route_fee + drain
+    rental_escrow.move            §10  — RentalEscrow shared object + full public API
 tests/
     math_tests.move
     curve_shape_tests.move
@@ -780,7 +762,7 @@ Move.lock
 
 ## Design Decisions
 
-### One shared object per instance — global inbox for protocol fees
+### One shared object per instance — ProtocolAdminCap as fee inbox
 
 All balances (`owner_earnings`, `protocol_treasury`) live inside `RentalEscrow` as
 `Balance<CoinType>` fields. `apply_pending_transitions()` credits both at every
@@ -788,19 +770,20 @@ boundary event without touching any external object. Every public mutating funct
 carries only one shared object reference — no contention beyond the escrow itself.
 
 `protocol_treasury` cannot be dropped when the escrow is deleted — `Balance` has no
-`drop` ability in Move. `claim_asset()` calls `protocol_local_treasury::route_fee()` internally,
-which wraps the balance into a `ProtocolLocalTreasury<C>` and transfers it to
-`ProtocolGlobalTreasury` via transfer-to-object. This is a free operation — it does not
-mutate `ProtocolGlobalTreasury`. The caller receives only `(Asset, Coin<C>)`.
+`drop` ability in Move. `claim_asset()` calls `protocol_local_treasury::route_fee()`
+internally, which wraps the balance into a `ProtocolLocalTreasury<C>` and transfers it
+to `ProtocolAdminCap` via transfer-to-object. This is a free operation — it does not
+mutate `ProtocolAdminCap`. The caller receives only `(Asset, Coin<C>)`.
 
-`ProtocolGlobalTreasury` is a shared singleton (`key` only, `{ id: UID }`) created at
-publish time and shared forever. It is a pure inbox — it holds no balance. Its ID is
-registered in each escrow at `integrate` time (read-only shared access, no contention)
-so `claim_asset` can route fees without requiring an extra argument.
+`ProtocolAdminCap` is an owned singleton (`key + store`) created at publish time and
+transferred to the deployer. It serves as both the admin auth proof and the fee inbox.
+Its ID is registered in each escrow at `integrate` time via `ProtocolFeeRef` — a frozen
+(immutable) pointer accessible by any PTB without consensus overhead.
 
-The admin discovers `ProtocolLocalTreasury<C>` objects by type via `suix_queryObjects`,
-groups them by CoinType, and batch-drains each group via `drain_local_treasuries<C>()` —
-up to 1024 locals per PTB, one call per CoinType, mutating only `ProtocolGlobalTreasury`.
+The admin discovers `ProtocolLocalTreasury<C>` objects as children of `ProtocolAdminCap`
+via `suix_getOwnedObjects`, groups them by CoinType, and batch-drains each group via
+`drain_local_treasuries<C>()` — up to 1024 locals per PTB, one call per CoinType,
+presenting only `&mut ProtocolAdminCap` (owned, fastpath, no consensus).
 The CoinType is encoded in the object type: no coordination between owner and admin is
 required at any point in the lifecycle.
 
@@ -839,16 +822,15 @@ Inlining it in `rental_escrow` would force curve types and validation logic into
 the already-large escrow module. A dedicated module keeps the constructor focused
 and the validation constraints testable in isolation.
 
-### Why admin types are split into three modules
+### Why admin types are split into two modules
 
-Each type has a distinct lifecycle, ability set, and dependency footprint.
-`ProtocolAdminCap` is a pure leaf — no dependencies, created once, held in a wallet.
-`ProtocolGlobalTreasury` is a pure leaf — shared singleton inbox with no balance.
-`ProtocolLocalTreasury` is the only one with logic — it depends on the other two and
-owns `transfer::receive` (restricted by `key` only). Splitting them follows the
-one-module-one-type principle, makes the dependency tree explicit, and keeps each
-module's responsibility narrow. Each has its own `init` — Sui allows multiple
-`init` functions per package, one per module.
+`ProtocolAdminCap` and `ProtocolFeeRef` are co-located in `protocol_admin_cap.move` —
+they are created together at init and are tightly coupled: `ProtocolFeeRef` exists
+solely to carry the ID of `ProtocolAdminCap`. Neither type has meaning without the other.
+`ProtocolLocalTreasury` lives in its own module because it owns the `transfer::receive`
+logic (restricted by `key` only) and depends on `protocol_admin_cap` for `uid_mut`.
+Separating it keeps the drain logic isolated and independently testable. Two modules
+for admin concerns — not three — reflects the actual coupling in the design.
 
 ### Why `rent()` is the single entry point
 
@@ -930,11 +912,10 @@ Build bottom-up following the dependency graph:
 6.  tenant_cap                (leaf)
 7.  events                    (leaf)
 8.  protocol_admin_cap        (leaf)
-9.  protocol_global_treasury  (leaf)
-10. protocol_local_treasury   (depends on protocol_admin_cap, protocol_global_treasury)
-11. rental_escrow             (depends on all above)
+9.  protocol_local_treasury   (depends on protocol_admin_cap)
+10. rental_escrow             (depends on all above)
 ```
 
 Steps 2–3 are independent of each other (both depend only on math) and can be built in parallel.
-Steps 5–9 are independent leaves — build in parallel.
-Step 4 (config) waits on steps 2–3. Step 10 waits on steps 8–9. Step 11 waits on all.
+Steps 5–8 are independent leaves — build in parallel.
+Step 4 (config) waits on steps 2–3. Step 9 waits on step 8. Step 10 waits on all.

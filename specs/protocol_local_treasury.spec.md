@@ -2,9 +2,9 @@ PROTOCOL LOCAL TREASURY MODULE — SPECIFICATION
 ===============================================
 
 Module: `protocol_local_treasury`
-Design reference: design-compact.md (governance)
-Module map reference: module-map.spec.md §7
-Depends on: `protocol_admin_cap`, `protocol_global_treasury`
+Design reference: design-compact.md §3 (fund flows — protocol fee)
+Module map reference: module-map.spec.md §9
+Depends on: `protocol_admin_cap`
 
 
 0. MODULE RESPONSIBILITY
@@ -15,16 +15,15 @@ fund-routing logic for protocol fees at escrow retirement.
 
 **Owns:**
 - `ProtocolLocalTreasury<phantom C>` — `key` only. Created once per `claim_asset`
-  call when protocol fees are non-zero. Transferred to `ProtocolGlobalTreasury`
+  call when protocol fees are non-zero. Transferred to `ProtocolAdminCap`
   via transfer-to-object. Deleted at drain time.
 - `route_fee<C>(...)` — `public(package)`. Creates and routes a `ProtocolLocalTreasury`
-  to the global inbox. Called only by `rental_escrow::claim_asset`.
+  to `ProtocolAdminCap` via transfer-to-object. Called only by `rental_escrow::claim_asset`.
 - `drain_local_treasuries<C>(...)` — `public`. Receives and drains all
   `ProtocolLocalTreasury<C>` objects from the inbox in one call. Called by admin.
 
 **Does not own:**
-- The `ProtocolGlobalTreasury` type — defined in `protocol_global_treasury`.
-- Cap validation logic — accepts `&ProtocolAdminCap` as proof;
+- Cap validation logic — accepts `&mut ProtocolAdminCap` as proof and inbox;
   `protocol_admin_cap` owns the type.
 
 **Key design properties:**
@@ -33,8 +32,7 @@ fund-routing logic for protocol fees at escrow retirement.
 - Zero balances are destroyed in `route_fee` without creating an object.
 - One `drain_local_treasuries<C>` call handles one CoinType. Multiple calls
   for different types may be chained in a single PTB, all sharing one
-  `&mut ProtocolGlobalTreasury` — a single shared object mutation regardless
-  of the number of locals drained.
+  `&mut ProtocolAdminCap` — a single owned object mutation, fastpath, no consensus.
 
 
 1. ERROR CONSTANTS
@@ -51,8 +49,8 @@ not an error. `drain_local_treasuries` accepts an empty vector as a valid no-op.
 ### ProtocolLocalTreasury — struct
 
 Per-retirement fee payload. Wraps the protocol fee balance from one escrow
-retirement. Transferred to `ProtocolGlobalTreasury` as a child object.
-Deleted at drain time.
+retirement. Transferred to `ProtocolAdminCap` as a child object via
+transfer-to-object. Deleted at drain time.
 
 ```move
 public struct ProtocolLocalTreasury<phantom CoinType> has key {
@@ -88,33 +86,33 @@ without constructing an object.
 ### `route_fee`
 
     public(package) fun route_fee<C>(
-        balance:   Balance<C>,
-        global_id: ID,
-        escrow_id: ID,
-        asset_id:  ID,
-        ctx:       &mut TxContext,
+        balance:      Balance<C>,
+        fee_inbox_id: ID,
+        escrow_id:    ID,
+        asset_id:     ID,
+        ctx:          &mut TxContext,
     )
 
 **Visibility:** `public(package)` — callable only by `rental_escrow`.
 
-**Purpose:** routes the protocol fee balance from a retiring escrow to the
-`ProtocolGlobalTreasury` inbox via transfer-to-object.
+**Purpose:** routes the protocol fee balance from a retiring escrow to
+`ProtocolAdminCap` via transfer-to-object.
 
 **Behavior:**
 - If `balance::value(&balance) == 0`:
   calls `balance::destroy_zero(balance)`. No object created. Returns.
 - If `balance::value(&balance) > 0`:
   creates `ProtocolLocalTreasury<C>` with the balance, `escrow_id`, and `asset_id`,
-  then calls `transfer::transfer(local, global_id.to_address())`.
+  then calls `transfer::transfer(local, fee_inbox_id.to_address())`.
 
-**Why `global_id` not `&ProtocolGlobalTreasury`:** `claim_asset` already has
-`global_treasury_id` stored in the escrow. Passing the ID directly avoids
-requiring `ProtocolGlobalTreasury` as an extra argument to `claim_asset`,
-keeping its public signature clean.
+**Why `fee_inbox_id` not `&mut ProtocolAdminCap`:** `claim_asset` already has
+`fee_inbox_id` stored in the escrow (registered at `integrate` time via
+`ProtocolFeeRef`). Passing the ID directly avoids requiring `ProtocolAdminCap`
+as an extra argument to `claim_asset`, keeping its public signature clean.
+`ProtocolAdminCap` does not need to be in the `claim_asset` transaction at all.
 
 **Transfer-to-object:** `transfer::transfer` to an object ID is a free operation —
-it does not mutate `ProtocolGlobalTreasury`. No contention on the global inbox
-at retirement time.
+it does not mutate `ProtocolAdminCap`. No contention on the inbox at retirement time.
 
 **No events emitted.** The `AssetRetired` event in `rental_escrow` covers
 the retirement; per-fee events would be redundant at this granularity.
@@ -124,8 +122,7 @@ the retirement; per-fee events would be redundant at this granularity.
 ### `drain_local_treasuries`
 
     public fun drain_local_treasuries<C>(
-        global: &mut ProtocolGlobalTreasury,
-        _cap:   &ProtocolAdminCap,
+        cap:    &mut ProtocolAdminCap,
         locals: vector<Receiving<ProtocolLocalTreasury<C>>>,
         ctx:    &mut TxContext,
     ): Coin<C>
@@ -139,7 +136,7 @@ single `Coin<C>` to the caller.
 **Behavior:**
 1. Initializes `total: Balance<C> = balance::zero()`.
 2. For each `receiving` in `locals`:
-   a. `let local = transfer::receive(protocol_global_treasury::uid_mut(global), receiving)`
+   a. `let local = transfer::receive(protocol_admin_cap::uid_mut(cap), receiving)`
    b. Destructure: `ProtocolLocalTreasury { id, balance, .. } = local`
    c. `object::delete(id)`
    d. `balance::join(&mut total, balance)`
@@ -151,16 +148,20 @@ single `Coin<C>` to the caller.
 - **Structural (compiler):** `ProtocolLocalTreasury` is `key` only →
   `transfer::receive` compiles only inside `protocol_local_treasury.move`.
   No external module can execute step 2a, regardless of the arguments it passes.
-- **Capability (runtime):** `_cap: &ProtocolAdminCap` forces the PTB to include
-  a `ProtocolAdminCap` object. Without the cap in the caller's wallet, the PTB
-  fails to construct.
+- **Capability (runtime):** `cap: &mut ProtocolAdminCap` forces the PTB to include
+  the owned `ProtocolAdminCap`. Only the holder can present it as mutable.
+  `&mut` simultaneously gates access and provides `uid_mut` for the receive.
+
+**Fastpath:** `drain_local_treasuries` touches only owned objects — `ProtocolAdminCap`
+and the `Receiving` tickets. No shared objects in the transaction. Sui routes this
+through the owned-object fastpath — no consensus overhead.
 
 **One call per CoinType:** `Receiving<ProtocolLocalTreasury<C>>` is typed over `C`.
-The admin's off-chain indexer queries `suix_queryObjects` for
-`ProtocolLocalTreasury<C>` children of `ProtocolGlobalTreasury`, groups them by
+The admin's off-chain indexer queries `suix_getOwnedObjects` for
+`ProtocolLocalTreasury<C>` children of `ProtocolAdminCap`, groups them by
 `CoinType`, and builds one `vector<Receiving<...>>` per type.
 Multiple calls may be chained in a single PTB — each handles one `CoinType`
-and shares the same `&mut ProtocolGlobalTreasury`.
+and shares the same `&mut ProtocolAdminCap`.
 
 
 4. PROPERTIES
@@ -188,9 +189,9 @@ and shares the same `&mut ProtocolGlobalTreasury`.
     locals were drained.
 
 **P6 — No contention at retirement:**
-    `route_fee` uses transfer-to-object: `ProtocolGlobalTreasury` is not mutated
-    at `claim_asset` time. Contention on the global inbox occurs only during
-    the admin drain operation.
+    `route_fee` uses transfer-to-object: `ProtocolAdminCap` is not mutated
+    at `claim_asset` time. The drain is a separate admin operation on an owned
+    object — fastpath, no consensus, no contention with active escrows.
 
 
 5. TEST CASES
@@ -212,7 +213,7 @@ and shares the same `&mut ProtocolGlobalTreasury`.
 | D1 | Drain empty vector | Returns `Coin<C>` with value 0. No state change. |
 | D2 | Drain one local with balance `B` | Returns `Coin<C>` with value `B`. Object deleted. |
 | D3 | Drain N locals with balances `B1..BN` | Returns `Coin<C>` with value `B1+..+BN`. All N objects deleted. |
-| D4 | Drain `<SUI>` and `<USDC>` in same PTB (two calls) | Each call returns `Coin` of its type. All objects deleted. One `&mut ProtocolGlobalTreasury` shared across both calls. |
+| D4 | Drain `<SUI>` and `<USDC>` in same PTB (two calls) | Each call returns `Coin` of its type. All objects deleted. One `&mut ProtocolAdminCap` shared across both calls. |
 
 ### 5.3 Balance invariant
 
@@ -229,10 +230,9 @@ and shares the same `&mut ProtocolGlobalTreasury`.
 | Symbol | Visibility | Notes |
 |--------|------------|-------|
 | `ProtocolLocalTreasury<C>` (type) | `public` | `key` only. Per-retirement fee payload. |
-| `route_fee<C>(balance, global_id, escrow_id, asset_id, ctx)` | `public(package)` | Creates and routes to inbox. Called by `rental_escrow`. |
-| `drain_local_treasuries<C>(global, cap, locals, ctx)` | `public` | Drains inbox for one CoinType. Returns `Coin<C>`. Called by admin PTB. |
+| `route_fee<C>(balance, fee_inbox_id, escrow_id, asset_id, ctx)` | `public(package)` | Creates and routes to `ProtocolAdminCap` inbox. Called by `rental_escrow`. |
+| `drain_local_treasuries<C>(cap, locals, ctx)` | `public` | Drains inbox for one CoinType. Returns `Coin<C>`. Called by admin PTB. |
 
 No error constants.
 
-**Depends on:** `protocol_admin_cap` (type import only),
-`protocol_global_treasury` (`uid_mut` for `transfer::receive`).
+**Depends on:** `protocol_admin_cap` (`uid_mut` for `transfer::receive`, type import).

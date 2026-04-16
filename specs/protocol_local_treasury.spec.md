@@ -17,7 +17,7 @@ fund-routing logic for protocol fees at escrow retirement.
 - `ProtocolLocalTreasury<phantom C>` — `key` only. Created once per `claim_asset`
   call when protocol fees are non-zero. Transferred to `ProtocolGlobalTreasury`
   via transfer-to-object. Deleted at drain time.
-- `float<C>(...)` — `public(package)`. Creates and routes a `ProtocolLocalTreasury`
+- `route_fee<C>(...)` — `public(package)`. Creates and routes a `ProtocolLocalTreasury`
   to the global inbox. Called only by `rental_escrow::claim_asset`.
 - `drain_local_treasuries<C>(...)` — `public`. Receives and drains all
   `ProtocolLocalTreasury<C>` objects from the inbox in one call. Called by admin.
@@ -30,7 +30,7 @@ fund-routing logic for protocol fees at escrow retirement.
 **Key design properties:**
 - `ProtocolLocalTreasury` is `key` only. `transfer::receive` is restricted to this
   module — no external code can receive these objects from the inbox.
-- Zero balances are destroyed in `float` without creating an object.
+- Zero balances are destroyed in `route_fee` without creating an object.
 - One `drain_local_treasuries<C>` call handles one CoinType. Multiple calls
   for different types may be chained in a single PTB, all sharing one
   `&mut ProtocolGlobalTreasury` — a single shared object mutation regardless
@@ -40,8 +40,8 @@ fund-routing logic for protocol fees at escrow retirement.
 1. ERROR CONSTANTS
 ------------------
 
-None. Neither `float` nor `drain_local_treasuries` have validatable preconditions
-that require named abort codes. `float` handles zero balance as a no-op branch,
+None. Neither `route_fee` nor `drain_local_treasuries` have validatable preconditions
+that require named abort codes. `route_fee` handles zero balance as a no-op branch,
 not an error. `drain_local_treasuries` accepts an empty vector as a valid no-op.
 
 
@@ -78,16 +78,16 @@ public struct ProtocolLocalTreasury<phantom CoinType> has key {
 | `asset_id` | `ID` | ID of the integrated asset. For off-chain traceability. |
 
 **Invariant:** `balance::value(&self.balance) > 0` for any live `ProtocolLocalTreasury`.
-Zero-balance instances are never created — `float` destroys zero balances directly
+Zero-balance instances are never created — `route_fee` destroys zero balances directly
 without constructing an object.
 
 
 3. FUNCTIONS
 ------------
 
-### `float`
+### `route_fee`
 
-    public(package) fun float<C>(
+    public(package) fun route_fee<C>(
         balance:   Balance<C>,
         global_id: ID,
         escrow_id: ID,
@@ -167,7 +167,7 @@ and shares the same `&mut ProtocolGlobalTreasury`.
 -------------
 
 **P1 — No zero-balance objects:**
-    `float` with `balance == 0` destroys the balance without creating an object.
+    `route_fee` with `balance == 0` destroys the balance without creating an object.
     Every live `ProtocolLocalTreasury` has `balance > 0`.
 
 **P2 — Receive restricted to this module:**
@@ -188,7 +188,7 @@ and shares the same `&mut ProtocolGlobalTreasury`.
     locals were drained.
 
 **P6 — No contention at retirement:**
-    `float` uses transfer-to-object: `ProtocolGlobalTreasury` is not mutated
+    `route_fee` uses transfer-to-object: `ProtocolGlobalTreasury` is not mutated
     at `claim_asset` time. Contention on the global inbox occurs only during
     the admin drain operation.
 
@@ -196,14 +196,14 @@ and shares the same `&mut ProtocolGlobalTreasury`.
 5. TEST CASES
 -------------
 
-### 5.1 `float`
+### 5.1 `route_fee`
 
 | # | Description | Expected |
 |---|---|---|
-| F1 | `float<C>` with `balance > 0` | `ProtocolLocalTreasury<C>` created. Owned by `global_id`. `balance::value == input`. `escrow_id` and `asset_id` match inputs. |
-| F2 | `float<C>` with `balance == 0` | No object created. Zero balance destroyed cleanly. No abort. |
-| F3 | `float<C>` called twice with same `global_id` | Two distinct `ProtocolLocalTreasury<C>` objects exist as children of `global_id`. |
-| F4 | `float<SUI>` and `float<USDC>` with same `global_id` | Two objects of distinct types exist as children. No conflict. |
+| F1 | `route_fee<C>` with `balance > 0` | `ProtocolLocalTreasury<C>` created. Owned by `global_id`. `balance::value == input`. `escrow_id` and `asset_id` match inputs. |
+| F2 | `route_fee<C>` with `balance == 0` | No object created. Zero balance destroyed cleanly. No abort. |
+| F3 | `route_fee<C>` called twice with same `global_id` | Two distinct `ProtocolLocalTreasury<C>` objects exist as children of `global_id`. |
+| F4 | `route_fee<SUI>` and `route_fee<USDC>` with same `global_id` | Two objects of distinct types exist as children. No conflict. |
 
 ### 5.2 `drain_local_treasuries`
 
@@ -218,7 +218,7 @@ and shares the same `&mut ProtocolGlobalTreasury`.
 
 | # | Description | Expected |
 |---|---|---|
-| I1 | Total drained equals total floated | For all non-zero `float` calls, `sum(coin values drained) == sum(balances floated)`. |
+| I1 | Total drained equals total routed | For all non-zero `route_fee` calls, `sum(coin values drained) == sum(balances routed)`. |
 
 
 6. MODULE BOUNDARY
@@ -229,7 +229,7 @@ and shares the same `&mut ProtocolGlobalTreasury`.
 | Symbol | Visibility | Notes |
 |--------|------------|-------|
 | `ProtocolLocalTreasury<C>` (type) | `public` | `key` only. Per-retirement fee payload. |
-| `float<C>(balance, global_id, escrow_id, asset_id, ctx)` | `public(package)` | Creates and routes to inbox. Called by `rental_escrow`. |
+| `route_fee<C>(balance, global_id, escrow_id, asset_id, ctx)` | `public(package)` | Creates and routes to inbox. Called by `rental_escrow`. |
 | `drain_local_treasuries<C>(global, cap, locals, ctx)` | `public` | Drains inbox for one CoinType. Returns `Coin<C>`. Called by admin PTB. |
 
 No error constants.

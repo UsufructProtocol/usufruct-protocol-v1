@@ -39,7 +39,7 @@ operations stay on the single escrow object.
 ╔══════════════════════════════════════════════════════════════════════╗
 ║  ProtocolLocalTreasury<CoinType>     [OWNED by GlobalTreasury]      ║
 ║                                                                      ║
-║  ┌──────────────────┐  Created by float() inside claim_asset().     ║
+║  ┌──────────────────┐  Created by route_fee() inside claim_asset().     ║
 ║  │  balance         │  Transferred to GlobalTreasury as child.      ║
 ║  │  Balance<C>      │  Deleted by drain_local_treasuries().         ║
 ║  └──────────────────┘  escrow_id + asset_id for traceability.       ║
@@ -487,7 +487,7 @@ Exposes `uid_mut` so `protocol_local_treasury` can call `transfer::receive`.
 ### 10. `protocol_local_treasury.move` — Protocol fee payload and drain
 
 **Responsibility:** `ProtocolLocalTreasury<C>` per-retirement fee object, and all
-fund-routing logic: `float` creates and routes to the inbox; `drain_local_treasuries`
+fund-routing logic: `route_fee` creates and routes to the inbox; `drain_local_treasuries`
 receives and drains. `transfer::receive` is restricted to this module (`key` only type).
 
 **Types:**
@@ -506,10 +506,10 @@ receives and drains. `transfer::receive` is restricted to this module (`key` onl
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `float<C>(balance, global_id, escrow_id, asset_id, ctx)` | `public(package)` | If `balance > 0`: creates `ProtocolLocalTreasury<C>`, transfers to `global_id`. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
+| `route_fee<C>(balance, global_id, escrow_id, asset_id, ctx)` | `public(package)` | If `balance > 0`: creates `ProtocolLocalTreasury<C>`, transfers to `global_id`. If `balance == 0`: destroys zero balance. Called only by `rental_escrow::claim_asset`. |
 | `drain_local_treasuries<C>(global, cap, locals, ctx): Coin<C>` | `public` | Requires `ProtocolAdminCap`. Receives each `ProtocolLocalTreasury<C>` from inbox, accumulates balances, deletes objects, returns `Coin<C>`. One call per CoinType. |
 
-**Status:** [x] `ProtocolLocalTreasury` · [x] `float` · [x] `drain_local_treasuries`
+**Status:** [x] `ProtocolLocalTreasury` · [x] `route_fee` · [x] `drain_local_treasuries`
 
 **Depends on:** `protocol_admin_cap`, `protocol_global_treasury`.
 
@@ -563,7 +563,7 @@ functions.
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
-| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Calls `protocol_local_treasury::float(protocol_treasury, escrow.global_treasury_id, ...)` — creates `ProtocolLocalTreasury<C>` and transfers to global inbox if balance > 0, destroys zero balance if == 0. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
+| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Calls `protocol_local_treasury::route_fee(protocol_treasury, escrow.global_treasury_id, ...)` — creates `ProtocolLocalTreasury<C>` and transfers to global inbox if balance > 0, destroys zero balance if == 0. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
 | `withdraw_treasury` | `public` | Requires `ProtocolAdminCap` + `&mut RentalEscrow`. Drains `protocol_treasury` (local) → `Coin`. No state resolution needed. Admin utility — allows collecting fees from an active escrow without waiting for retirement. |
 | `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order. Returns `AssetState` — the settled state after all transitions. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state on-chain, credit pending earnings, and read the resulting state in one transaction. See §Pending Transitions. |
@@ -721,7 +721,7 @@ Swept atomically by `claim_asset()` when the escrow is deleted.
 Accumulated in `RentalEscrow.protocol_treasury` (local `Balance`) at each handover
 and tenure expiry (5% share). No cross-escrow contention — stays inside the escrow.
 Admin drains via `withdraw_treasury()` at any time (requires `ProtocolAdminCap` + escrow).
-On `claim_asset()`: `protocol_local_treasury::float(protocol_treasury, escrow.global_treasury_id, ...)`
+On `claim_asset()`: `protocol_local_treasury::route_fee(protocol_treasury, escrow.global_treasury_id, ...)`
 is called internally. If balance > 0, a `ProtocolLocalTreasury<C>` is created and
 transferred to `ProtocolGlobalTreasury` via transfer-to-object — free, no contention
 on the global inbox. If balance == 0, the zero balance is destroyed cleanly.
@@ -763,7 +763,7 @@ sources/
     events.move                   §7   — event structs + emit helpers
     protocol_admin_cap.move       §8   — ProtocolAdminCap singleton
     protocol_global_treasury.move §9   — ProtocolGlobalTreasury inbox singleton
-    protocol_local_treasury.move  §10  — ProtocolLocalTreasury + float + drain
+    protocol_local_treasury.move  §10  — ProtocolLocalTreasury + route_fee + drain
     rental_escrow.move            §11  — RentalEscrow shared object + full public API
 tests/
     math_tests.move
@@ -788,7 +788,7 @@ boundary event without touching any external object. Every public mutating funct
 carries only one shared object reference — no contention beyond the escrow itself.
 
 `protocol_treasury` cannot be dropped when the escrow is deleted — `Balance` has no
-`drop` ability in Move. `claim_asset()` calls `protocol_local_treasury::float()` internally,
+`drop` ability in Move. `claim_asset()` calls `protocol_local_treasury::route_fee()` internally,
 which wraps the balance into a `ProtocolLocalTreasury<C>` and transfers it to
 `ProtocolGlobalTreasury` via transfer-to-object. This is a free operation — it does not
 mutate `ProtocolGlobalTreasury`. The caller receives only `(Asset, Coin<C>)`.
@@ -910,7 +910,7 @@ The owner always makes two calls regardless of the prior state:
 Consistent two-step flow for all cases. `retire()` never returns an asset.
 `claim_asset()` always does — and in the same call: sweeps `owner_earnings` to the
 owner, wraps `protocol_treasury` into a `ProtocolFeeReceipt<C>` hot potato and
-immediately resolves it via `float_protocol_treasury()` (both internal to the call),
+immediately resolves it via `route_fee()` (both internal to the call),
 burns `OwnerCap`, and deletes `RentalEscrow`. All local balances are consumed before
 deletion — no orphaned funds, no locked balances.
 

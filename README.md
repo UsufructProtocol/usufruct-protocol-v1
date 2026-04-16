@@ -38,6 +38,12 @@ Neither the asset protocol nor the tenant needs to build or reason about any of 
 
 ---
 
+## Design philosophy
+
+LRP is infrastructure. The package has no external dependencies — only the Sui standard library. Any protocol that issues a capability can integrate without taking a dependency on a third-party ecosystem.
+
+---
+
 ## State machine
 
 ```

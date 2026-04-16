@@ -53,8 +53,14 @@ Depends on: nothing (`sui::object` only)
   `rental_escrow` stores `pending_tenant_address` and mints the cap
   only when the bidder actually becomes the current tenant — either at
   `rent()` (Idle, AtDutchAuction) or at handover completion inside
-  `do_handover()`. This eliminates orphaned caps from superseded
-  bidders.
+  `do_handover()`.
+  This avoids creating an object for every bid: in a competitive
+  handover window multiple bidders may supersede each other in rapid
+  succession. Minting a cap per bid would produce many short-lived
+  objects, each paying creation gas and leaving an orphaned stale cap
+  in a wallet that never held actual tenancy. Lazy minting ensures that
+  in practice only identities that were current tenant ever hold a cap
+  — one object, one tenure, no pollution.
 - **Staleness:** at handover, the displaced tenant's cap becomes stale
   — its object ID no longer matches `escrow.current_tenant_cap_id`.
   Stale caps are inert: `borrow_asset` rejects them via the ID check.

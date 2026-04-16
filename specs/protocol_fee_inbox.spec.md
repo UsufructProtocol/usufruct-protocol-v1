@@ -200,11 +200,15 @@ No external module can obtain `&mut UID` of `ProtocolFeeInbox`.
 ### 5.2 Authorization gate
 
 The inbox itself has no logic to test beyond creation and transfer.
-Authorization enforcement is tested where each gate lives:
+Authorization is enforced by the type system — `drain_fee_messages` requires
+`&mut ProtocolFeeInbox` as a parameter, so a call without the object does not
+compile. There is no runtime abort to test; the guarantee is structural.
 
-| # | Module | Gate |
+Correct behavior is verified where the gate is exercised:
+
+| # | Module | What is verified |
 |---|---|---|
-| T4 | `fee_message_tests` | `drain_fee_messages` aborts without `ProtocolFeeInbox` |
+| T4 | `fee_message_tests` | `drain_fee_messages` successfully drains when `&mut ProtocolFeeInbox` is presented — confirming the structural gate works end-to-end |
 
 ### 5.3 uid_mut
 
@@ -236,28 +240,26 @@ No error constants.
 7. RATIONALE — ProtocolFeeInbox AS INBOX
 -----------------------------------------
 
-### Why not a dedicated shared inbox (ProtocolGlobalTreasury)?
+### Why an owned object instead of a shared inbox?
 
 A shared singleton inbox would require consensus for every transaction
-that touches it — even read-only access. This would impose a consensus
-cost on `integrate` (reads the inbox to register its ID) and on
-`drain_fee_messages` (mutates it to receive child objects).
+that touches it. This imposes a cost on two operations:
 
-`drain_fee_messages` is recurrent — it fires every time the protocol
-collects accumulated fees. At a 5% fee rate, consensus overhead on the
-drain path directly erodes protocol revenue. Eliminating consensus from
-the drain path is proportional to the protocol's margin.
+- `integrate` — reads the inbox ID to register it in the escrow.
+- `drain_fee_messages` — mutates the inbox to receive child objects.
 
-### Why ProtocolFeeInbox (owned) instead of a shared object?
+`drain_fee_messages` is the critical path. It fires every time the
+protocol collects fees — a recurrent admin operation. At a 5% fee rate,
+consensus overhead on the drain path directly erodes protocol revenue.
 
-`ProtocolFeeInbox` is an owned singleton. Transfer-to-object is a free
-operation — it does not mutate the parent object. `FeeMessage<C>` objects
-accumulate as children without any contention on the inbox. The drain
-operation touches only owned objects — `ProtocolFeeInbox` and the
-`Receiving` tickets — so Sui routes it through the fastpath, no consensus.
+`ProtocolFeeInbox` as an owned object eliminates both costs. Transfer-to-object
+does not mutate the parent — `FeeMessage<C>` objects accumulate as children
+for free, with no contention on the inbox. The drain operation touches only
+owned objects (`ProtocolFeeInbox` and the `Receiving` tickets), so Sui routes
+it through the fastpath with no consensus overhead.
 
-Transferring `ProtocolFeeInbox` to a multisig or DAO transfers both
-inbox ownership and drain authority atomically. No partial transfer risk.
+Transferring `ProtocolFeeInbox` to a multisig or DAO transfers inbox ownership
+and drain authority atomically. No partial transfer risk.
 
 ### Why ProtocolFeeRef (frozen) instead of passing the ID directly?
 

@@ -33,7 +33,7 @@ Depends on: nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`)
 - Drain or receive logic — that lives in `fee_message`.
 
 **Authorization model:** `ProtocolFeeInbox` conveys no Move-level capability.
-Access to `drain_fee_messages` is enforced by Sui's ownership model —
+Access to `collect_fee_messages` is enforced by Sui's ownership model —
 only the holder of `ProtocolFeeInbox` can present `&mut ProtocolFeeInbox`
 in a transaction. No explicit capability check is needed.
 
@@ -75,7 +75,7 @@ public struct ProtocolFeeInbox has key, store {
 initializer runs exactly once at publish time. No public constructor exists.
 There is exactly one `ProtocolFeeInbox` per package deployment.
 
-**Role:** The holder presents `&mut ProtocolFeeInbox` to `drain_fee_messages`.
+**Role:** The holder presents `&mut ProtocolFeeInbox` to `collect_fee_messages`.
 Sui's ownership model enforces that only the holder can do so — no
 Move-level capability check is required. Transferring `ProtocolFeeInbox`
 atomically transfers both inbox ownership and drain authority.
@@ -200,7 +200,7 @@ No external module can obtain `&mut UID` of `ProtocolFeeInbox`.
 ### 5.2 Authorization gate
 
 The inbox itself has no logic to test beyond creation and transfer.
-Authorization is enforced by the type system — `drain_fee_messages` requires
+Authorization is enforced by the type system — `collect_fee_messages` requires
 `&mut ProtocolFeeInbox` as a parameter, so a call without the object does not
 compile. There is no runtime abort to test; the guarantee is structural.
 
@@ -208,15 +208,15 @@ Correct behavior is verified where the gate is exercised:
 
 | # | Module | What is verified |
 |---|---|---|
-| T4 | `fee_message_tests` | `drain_fee_messages` successfully drains when `&mut ProtocolFeeInbox` is presented — confirming the structural gate works end-to-end |
+| T4 | `fee_message_tests` | `collect_fee_messages` successfully drains when `&mut ProtocolFeeInbox` is presented — confirming the structural gate works end-to-end |
 
 ### 5.3 uid_mut
 
-Tested indirectly via `fee_message::drain_fee_messages`.
+Tested indirectly via `fee_message::collect_fee_messages`.
 
 | # | Module | Gate |
 |---|---|---|
-| T5 | `fee_message_tests` | `drain_fee_messages` can receive child objects via `uid_mut` |
+| T5 | `fee_message_tests` | `collect_fee_messages` can receive child objects via `uid_mut` |
 
 
 6. MODULE BOUNDARY
@@ -246,9 +246,9 @@ A shared singleton inbox would require consensus for every transaction
 that touches it. This imposes a cost on two operations:
 
 - `integrate` — reads the inbox ID to register it in the escrow.
-- `drain_fee_messages` — mutates the inbox to receive child objects.
+- `collect_fee_messages` — mutates the inbox to receive child objects.
 
-`drain_fee_messages` is the critical path. It fires every time the
+`collect_fee_messages` is the critical path. It fires every time the
 protocol collects fees — a recurrent admin operation. At a 5% fee rate,
 consensus overhead on the drain path directly erodes protocol revenue.
 

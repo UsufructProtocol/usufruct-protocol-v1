@@ -236,7 +236,7 @@ chained in a single PTB, all sharing the same `&mut ProtocolFeeInbox`.
     `UID` deleted. No orphaned objects remain after draining.
 
 **P4 — Traceability via events:**
-    `FeeMessage` carries no traceability fields. Trazability is handled by
+    `FeeMessage` carries no traceability fields. Traceability is handled by
     `HandoverCompleted` and `TenureExpired` events in `rental_escrow`, which
     include `escrow_id` and `protocol_fee` at the moment the fee is created.
     Events are the audit log — the struct only carries what the code uses.
@@ -272,7 +272,7 @@ Private functions — tested directly from `#[test]` functions within the module
 
 | # | Description | Expected |
 |---|---|---|
-| R1 | `receive_message` on a valid ticket | Returns `FeeMessage<C>` with correct `balance` and `escrow_id`. Object no longer owned by inbox. |
+| R1 | `receive_message` on a valid ticket | Returns `FeeMessage<C>` with correct `balance`. Object no longer owned by inbox. |
 | C1 | `consume_message` on a received `FeeMessage` | Returns `Balance<C>` equal to original fee. Object's `UID` deleted. |
 
 ### 5.3 `collect_fee_messages`

@@ -259,7 +259,6 @@ public struct AssetIntegrated has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
     integrator:       address,  // tx_context::sender(ctx)
-    timestamp_ms:     u64,
 }
 
 public struct RentStarted has copy, drop {
@@ -268,7 +267,6 @@ public struct RentStarted has copy, drop {
     tenant_cap_id:    ID,
     price_paid:       u64,     // stake amount transferred to escrow
     from_state:       AssetState,  // Idle or AtDutchAuction
-    timestamp_ms:     u64,
 }
 
 public struct BidPlaced has copy, drop {
@@ -276,7 +274,6 @@ public struct BidPlaced has copy, drop {
     pending_tenant:            address,
     bid_amount:                u64,
     handover_countdown_expiry: u64,
-    timestamp_ms:              u64,
 }
 
 public struct BidSuperseded has copy, drop {
@@ -285,7 +282,6 @@ public struct BidSuperseded has copy, drop {
     refunded_amount:   u64,
     new_bidder:        address,
     new_bid_amount:    u64,
-    timestamp_ms:      u64,
 }
 
 public struct HandoverCompleted has copy, drop {
@@ -318,33 +314,39 @@ public struct AuctionExpired has copy, drop {
 public struct RetireFlagSet has copy, drop {
     escrow_id:        ID,
     state_at_set:     AssetState,  // settled state when retire was called
-    timestamp_ms:     u64,
 }
 
 public struct AssetClaimed has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
     swept_earnings:   u64,
-    timestamp_ms:     u64,
 }
 
 public struct EarningsWithdrawn has copy, drop {
     escrow_id:        ID,
     amount:           u64,
-    timestamp_ms:     u64,
 }
 ```
 
 **Sui Verifier constraint:** every event struct has `copy + drop` and is
 internal to this module. `event::emit` requires these abilities.
 
-**Sender / timestamp convention:** every event includes `timestamp_ms`
-read from the `Clock` at emission. When the event corresponds to a lazy
-boundary, `timestamp_ms` is the exact boundary timestamp
-(`handover_countdown_expiry`, `phase_start_ms + tenure_ceiling`,
-`phase_start_ms + descent_ceiling`) — not `clock.now()`. This keeps the
-event timeline aligned with the state-machine's internal clock even when
-settlement is lazy.
+**Timestamp convention:** only boundary events — `HandoverCompleted`,
+`TenureExpired`, `AuctionExpired` — carry a `timestamp_ms` field. Its
+value is the exact boundary timestamp (`handover_countdown_expiry`,
+`phase_start_ms + tenure_ceiling`, `phase_start_ms + descent_ceiling`)
+— not `clock.now()` — so the event timeline stays aligned with the
+state machine even when settlement is lazy and runs in a later
+checkpoint than the boundary itself.
+
+Immediate events (`AssetIntegrated`, `RentStarted`, `BidPlaced`,
+`BidSuperseded`, `RetireFlagSet`, `AssetClaimed`, `EarningsWithdrawn`)
+do not carry a `timestamp_ms` field. Consumers read the event-envelope
+timestamp (`SuiEvent.timestampMs`, the checkpoint time of the emitting
+transaction), which is authoritative for anything that happens at tx
+time. Duplicating it in the event body would add no information and
+would force `&Clock` into the signature of functions that otherwise
+have no reason to read the clock.
 
 
 4. LIFECYCLE FUNCTIONS
@@ -378,7 +380,7 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    - `retire_flag = false`
    - `integrated_at_ms = clock.timestamp_ms()`
 5. `transfer::share_object(escrow)`.
-6. Emit `AssetIntegrated { escrow_id, owner_cap_id, integrator, timestamp_ms }`.
+6. Emit `AssetIntegrated { escrow_id, owner_cap_id, integrator }`.
 7. Return `OwnerCap`. The PTB routes it (typically via
    `transfer::public_transfer` to `tx_context::sender(ctx)`).
 
@@ -429,7 +431,7 @@ asset. Does not mutate balances.
      retire cuts it short).
    - `Idle` → set `state = Retired`. No auxiliary event (the state was
      already "empty"; `RetireFlagSet` covers it).
-7. Emit `RetireFlagSet { escrow_id, state_at_set: escrow.state, timestamp_ms }`.
+7. Emit `RetireFlagSet { escrow_id, state_at_set: escrow.state }`.
 
 **State after `retire` completes:**
 
@@ -494,7 +496,7 @@ deletes the escrow, returns the asset and earnings.
 7. `let earnings = coin::from_balance(owner_earnings, ctx);`
 8. `owner_cap::burn(owner_cap);`
 9. `object::delete(id);`
-10. Emit `AssetClaimed { escrow_id, owner_cap_id, swept_earnings, timestamp_ms }`.
+10. Emit `AssetClaimed { escrow_id, owner_cap_id, swept_earnings }`.
 11. Return `(asset, earnings)`.
 
 **Why both returned:** the owner gets everything they are owed atomically in
@@ -508,7 +510,6 @@ locked balances.
     public fun withdraw_earnings<Asset: key + store, CoinType>(
         escrow:    &mut RentalEscrow<Asset, CoinType>,
         owner_cap: &OwnerCap,
-        clock:     &Clock,
         ctx:       &mut TxContext,
     ): Coin<CoinType>
 
@@ -525,8 +526,8 @@ locked balances.
    first should call `apply_pending_transitions` explicitly before this.
 3. `let amount = balance::value(&escrow.owner_earnings);`
 4. `let balance = balance::withdraw_all(&mut escrow.owner_earnings);`
-5. Emit `EarningsWithdrawn { escrow_id, amount, timestamp_ms }` if
-   `amount > 0` (skip emission on zero drain to avoid log noise).
+5. Emit `EarningsWithdrawn { escrow_id, amount }` if `amount > 0`
+   (skip emission on zero drain to avoid log noise).
 6. Return `coin::from_balance(balance, ctx)`.
 
 **Empty drain:** if `owner_earnings` is zero, returns a zero-value `Coin`.
@@ -571,7 +572,7 @@ Valid no-op — does not abort.
 - `escrow.state = Rented { phase: HandoverOpen };`
 - `transfer::transfer(cap, tx_context::sender(ctx));`
 - Emit `RentStarted { escrow_id, tenant: sender, tenant_cap_id, price_paid,
-  from_state: Idle, timestamp_ms }`.
+  from_state: Idle }`.
 
 #### Case: `AtDutchAuction`
 
@@ -604,7 +605,7 @@ Valid no-op — does not abort.
 - `balance::join(&mut escrow.pending_bid, coin::into_balance(payment));`
 - `escrow.state = Rented { phase: HandoverConfirmed };`
 - Emit `BidPlaced { escrow_id, pending_tenant, bid_amount,
-  handover_countdown_expiry, timestamp_ms }`.
+  handover_countdown_expiry }`.
 
 **Retire flag rationale:** blocking new bids is what "retire during Rented"
 means — the current tenant completes their block uncontested and the asset
@@ -627,7 +628,7 @@ exits afterward.
   - `transfer::public_transfer(coin::from_balance(prev, ctx),
     option::destroy_some(escrow.pending_tenant_address));`
   - Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
-    new_bidder, new_bid_amount, timestamp_ms }`.
+    new_bidder, new_bid_amount }`.
 - Move new payment into `pending_bid`.
 - Overwrite `pending_tenant_address` with the new bidder.
 - `handover_countdown_expiry` is **not** updated — subsequent bids do not

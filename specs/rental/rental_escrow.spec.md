@@ -134,7 +134,7 @@ public enum AssetState has copy, drop, store {
 |---|---|
 | `Idle` | No tenant. Asset available at `min_rent_price`. Entry: `rent()`. |
 | `Rented { HandoverOpen }` | Current tenant holds exclusive access. No pending bid. |
-| `Rented { HandoverConfirmed }` | Current tenant holds access until `handover_countdown_expiry`. A pending tenant has paid `next_rent_price`. |
+| `Rented { HandoverConfirmed }` | Current tenant holds access until `handover_countdown_expiry`. A pending tenant has paid `>= next_rent_price`. |
 | `AtDutchAuction` | Price descends from `last_rent_price` toward `min_rent_price` via `compute_price_descent`. |
 | `Retired` | Terminal. `retire_flag` is set and the state machine has reached a point where the asset is extractable via `claim_asset`. |
 
@@ -609,7 +609,7 @@ exits afterward.
     new_bidder, new_bid_amount }`.
 - `escrow.last_rent_price = coin::value(&payment);`
 - `balance::join(&mut escrow.pending_bid, coin::into_balance(payment));`
-- Overwrite `pending_tenant_address` with the new bidder.
+- `escrow.pending_tenant_address = some(tx_context::sender(ctx));`
 - `handover_countdown_expiry` is **not** updated — subsequent bids do not
   reset the countdown (design-compact §4).
 - `state` remains `Rented { HandoverConfirmed }`.

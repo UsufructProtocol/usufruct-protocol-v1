@@ -788,7 +788,7 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 2. Let `remain_credit = balance::value(&escrow.tenant_stake) - used_credit`.
    (Invariant `used_credit + remain_credit == tenant_stake` from curve
    bijectivity.)
-3. Compute `(owner_share, fee_share) = split_fee(used_credit)` — §7.4.
+3. Compute `(owner_share, protocol_fee) = split_fee(used_credit)` — §7.4.
 4. **Take funds before any address rotation** (push-before-rotate invariant):
    - `if remain_credit > 0`:
      - `let remain_balance = balance::split(&mut escrow.tenant_stake, remain_credit);`
@@ -798,11 +798,11 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
      // used_credit == tenant_stake and remain_credit == 0. Skipping the split
      // avoids creating a zero Balance that Move requires to be consumed.
      // Consequence of `countdown = min(escrow.config.handover_floor, remaining)`.
-   - Take `fee_balance = balance::split(&mut escrow.tenant_stake, fee_share)`.
-   - Call `fee_message::send_fee<CoinType>(fee_balance, escrow.fee_inbox_id, ctx)`.
-   - Remaining `tenant_stake` = `owner_share` exactly. Move it into
-     `owner_earnings` via `balance::join(&mut owner_earnings,
-     balance::withdraw_all(&mut tenant_stake))`.
+   - `let fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee);`
+   - `fee_message::send_fee<CoinType>(fee_balance, escrow.fee_inbox_id, ctx);`
+   - Remaining `escrow.tenant_stake` = `owner_share` exactly. Move it into
+     `owner_earnings` via `balance::join(&mut escrow.owner_earnings,
+     balance::withdraw_all(&mut escrow.tenant_stake))`.
 5. **Rotate `pending_bid` → `tenant_stake`** (new tenant's stake):
    - `balance::join(&mut escrow.tenant_stake,
      balance::withdraw_all(&mut escrow.pending_bid));`

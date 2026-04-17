@@ -851,23 +851,23 @@ Two cases:
 
 1. Let `stake_total = balance::value(&escrow.tenant_stake)` — equal to
    `escrow.last_rent_price` (used_credit saturated to full).
-2. Compute `(owner_share, fee_share) = split_fee(stake_total)`.
-3. Take `fee_balance = balance::split(&mut escrow.tenant_stake, fee_share)`.
+2. Let `tenant = *option::borrow(&escrow.current_tenant_address);`
+3. Compute `(owner_share, protocol_fee) = split_fee(stake_total)`.
+4. Take `fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee)`.
    Call `fee_message::send_fee<CoinType>(fee_balance, escrow.fee_inbox_id, ctx)`.
-4. Move remaining stake into earnings:
+5. Move remaining stake into earnings:
    `balance::join(&mut escrow.owner_earnings,
     balance::withdraw_all(&mut escrow.tenant_stake));`
-5. **Clear tenant fields** (no new tenant to register):
+6. **Clear tenant fields** (no new tenant to register):
    - `escrow.current_tenant_cap_id = none();`
    - `escrow.current_tenant_address = none();`
-6. **Determine next state:**
+7. **Determine next state:**
    - If `escrow.retire_flag`: `escrow.state = Retired`.
-     `escrow.phase_start_ms = boundary_ms;` (bookkeeping; no subsequent
-     boundaries will fire).
+     `escrow.phase_start_ms = boundary_ms;` (bookkeeping).
    - Else: `escrow.state = AtDutchAuction;
      escrow.phase_start_ms = boundary_ms;`.
      `last_rent_price` is preserved — it is the starting price of the descent.
-7. Emit `TenureExpired { escrow_id, tenant, owner_share, protocol_fee,
+8. Emit `TenureExpired { escrow_id, tenant, owner_share, protocol_fee,
    next_state: escrow.state, timestamp_ms: boundary_ms }`.
 
 **Note:** the displaced tenant's `TenantCap` is not burned here. It becomes

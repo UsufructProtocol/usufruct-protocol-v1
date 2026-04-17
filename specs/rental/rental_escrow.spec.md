@@ -790,12 +790,14 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    bijectivity.)
 3. Compute `(owner_share, fee_share) = split_fee(used_credit)` — §7.4.
 4. **Take funds before any address rotation** (push-before-rotate invariant):
-   - Take `remain_credit` balance from `tenant_stake` (`balance::split`).
-   - `if remain_credit > 0` — push `coin::from_balance(remain_credit, ctx)` via
-     `transfer::public_transfer` to
-     `*option::borrow(&escrow.current_tenant_address)`.
-     // When countdown == remaining_rent_time the curve saturates: used_credit
-     // remain_credit == 0. Skip push to avoid a zero-value Coin. // Consequence of `countdown = min(escrow.config.handover_floor, remaining)`.
+   - `if remain_credit > 0`:
+     - `let remain_balance = balance::split(&mut escrow.tenant_stake, remain_credit);`
+     - `transfer::public_transfer(coin::from_balance(remain_balance, ctx),
+       *option::borrow(&escrow.current_tenant_address));`
+     // When countdown == remaining_rent_time the curve saturates:
+     // used_credit == tenant_stake and remain_credit == 0. Skipping the split
+     // avoids creating a zero Balance that Move requires to be consumed.
+     // Consequence of `countdown = min(escrow.config.handover_floor, remaining)`.
    - Take `fee_balance = balance::split(&mut escrow.tenant_stake, fee_share)`.
    - Call `fee_message::send_fee<CoinType>(fee_balance, escrow.fee_inbox_id, ctx)`.
    - Remaining `tenant_stake` = `owner_share` exactly. Move it into

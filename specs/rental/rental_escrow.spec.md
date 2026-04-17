@@ -834,11 +834,18 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
         ctx:         &mut TxContext,
     )
 
-**Preconditions:** `escrow.state` matches `Rented { HandoverOpen }` —
-`apply_pending_transitions` Check 1 has already resolved any
-`HandoverConfirmed` + `pending_bid`. Tenure expiry while in
-`HandoverConfirmed` would mean `pending_bid` still exists, which is the
-bug prevented by the clamp in `rent()`.
+**Preconditions:** `escrow.state == Rented { HandoverOpen }`. Guaranteed by
+the ordering of `apply_pending_transitions`: Check 1 always executes before
+Check 2. The clamp in `rent()` — `countdown = min(handover_floor, remaining)`
+— ensures `handover_countdown_expiry <= phase_start_ms + tenure_ceiling`.
+Two cases:
+- `remaining > handover_floor`: handover fires strictly before tenure expiry.
+  Check 2 sees `HandoverOpen` with a fresh `phase_start_ms` and does not fire.
+- `remaining <= handover_floor`: both boundaries coincide at
+  `phase_start_ms + tenure_ceiling`. Check 1 fires first, resetting
+  `phase_start_ms` to `boundary_ms`. Check 2 evaluates against the new
+  `phase_start_ms + tenure_ceiling` — in the future — and does not fire.
+  T(n+1) receives a full tenure.
 
 **Algorithm:**
 

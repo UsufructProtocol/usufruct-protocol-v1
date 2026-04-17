@@ -100,15 +100,14 @@ messages.
     public const E_NOT_IDLE:                 u64 = 3;  // rent() Idle-path: state is not Idle
     public const E_NOT_AUCTION:              u64 = 4;  // (reserved — dispatch abort guard)
     public const E_NOT_RENTED:               u64 = 5;  // (reserved — dispatch abort guard)
-    public const E_WRONG_PAYMENT_AMOUNT:     u64 = 6;  // payment != expected (Idle / Rented paths)
-    public const E_INSUFFICIENT_PAYMENT:     u64 = 7;  // auction path: payment < price_descent(now)
-    public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 8;  // rent() during Rented(HandoverOpen) with retire_flag
-    public const E_RETIRED_NO_BID:           u64 = 9;  // rent() called when state is Retired
-    public const E_ALREADY_RETIRED:          u64 = 10; // retire() when retire_flag already set
-    public const E_NOT_RETIRED:              u64 = 11; // claim_asset() when state != Retired
-    public const E_RECEIPT_ESCROW_MISMATCH:  u64 = 12; // return_asset: receipt.escrow_id != object::id(escrow)
-    public const E_RECEIPT_ASSET_MISMATCH:   u64 = 13; // return_asset: receipt.asset_id != object::id(&asset)
-    public const E_NO_EARNINGS:              u64 = 14; // withdraw_earnings: owner_earnings == 0 after settlement
+    public const E_INSUFFICIENT_PAYMENT:     u64 = 6;  // payment < floor price (all acquisition paths)
+    public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 7;  // rent() during Rented(HandoverOpen) with retire_flag
+    public const E_RETIRED_NO_BID:           u64 = 8;  // rent() called when state is Retired
+    public const E_ALREADY_RETIRED:          u64 = 9;  // retire() when retire_flag already set
+    public const E_NOT_RETIRED:              u64 = 10; // claim_asset() when state != Retired
+    public const E_RECEIPT_ESCROW_MISMATCH:  u64 = 11; // return_asset: receipt.escrow_id != object::id(escrow)
+    public const E_RECEIPT_ASSET_MISMATCH:   u64 = 12; // return_asset: receipt.asset_id != object::id(&asset)
+    public const E_NO_EARNINGS:              u64 = 13; // withdraw_earnings: owner_earnings == 0 after settlement
 
 
 2. TYPES
@@ -544,14 +543,14 @@ locked balances.
 
 #### Case: `Idle`
 
-- Assert `coin::value(&payment) == escrow.config.min_rent_price`, abort
-  `E_WRONG_PAYMENT_AMOUNT`.
-- `escrow.last_rent_price = escrow.config.min_rent_price;`
+- Assert `coin::value(&payment) >= escrow.config.min_rent_price`, abort
+  `E_INSUFFICIENT_PAYMENT`.
+- `escrow.last_rent_price = coin::value(&payment);`
+- `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
 - `escrow.phase_start_ms = clock.timestamp_ms();`
 - Mint `cap = tenant_cap::new(object::id(escrow), ctx)`.
 - `escrow.current_tenant_cap_id = some(object::id(&cap));`
 - `escrow.current_tenant_address = some(tx_context::sender(ctx));`
-- Move payment into `escrow.tenant_stake` via `balance::join`.
 - `escrow.state = Rented { phase: HandoverOpen };`
 - `transfer::transfer(cap, tx_context::sender(ctx));`
 - Emit `RentStarted { escrow_id, tenant: sender, tenant_cap_id, price_paid,
@@ -561,8 +560,7 @@ locked balances.
 
 - Let `price = current_price_descent(escrow, clock.timestamp_ms())`.
 - Assert `coin::value(&payment) >= price`, abort `E_INSUFFICIENT_PAYMENT`.
-- `escrow.last_rent_price = coin::value(&payment);` — the actual amount paid,
-  not the descent floor. Overpayment is accepted to tolerate PTB latency.
+- `escrow.last_rent_price = coin::value(&payment);`
 - `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
 - `escrow.phase_start_ms = clock.timestamp_ms();`
 - Mint `cap = tenant_cap::new(object::id(escrow), ctx)`.
@@ -575,10 +573,9 @@ locked balances.
 #### Case: `Rented { HandoverOpen }`
 
 - Assert `!escrow.retire_flag`, abort `E_RETIRE_FLAG_BLOCKS_BID`.
-- Let `expected = current_next_rent_price(escrow)` (delegates to
+- Let `floor = current_next_rent_price(escrow)` (delegates to
   `price_function::compute_next_rent_price`).
-- Assert `coin::value(&payment) == expected`, abort
-  `E_WRONG_PAYMENT_AMOUNT`.
+- Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - Let `remaining = (escrow.phase_start_ms + escrow.config.tenure_ceiling) -
   clock.timestamp_ms()`.
 - Let `countdown = min(escrow.config.handover_floor, remaining)`.
@@ -599,11 +596,9 @@ exits afterward.
   accepted before `retire` could have fired; the committed bid is
   honored, handover completes normally, and T(n+1) then enters
   `HandoverOpen` with the flag still set (no further bids accepted).
-- Let `expected = current_next_rent_price(escrow)`. `last_rent_price`
-  has not changed since the countdown started — subsequent bidders pay the
-  same amount.
-- Assert `coin::value(&payment) == expected`, abort
-  `E_WRONG_PAYMENT_AMOUNT`.
+- Let `floor = current_next_rent_price(escrow)`. `last_rent_price`
+  has not changed since the countdown started — floor is the same for all bidders.
+- Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - **Refund previous pending bid** (push before rotate):
   - Take the previous balance: `let prev = balance::withdraw_all(&mut escrow.pending_bid);`
   - `let refund_amount = balance::value(&prev);`
@@ -1066,9 +1061,9 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| R1 | Pay exactly `min_rent_price` | State → `Rented(HandoverOpen)`. `TenantCap` pushed to sender. `RentStarted` event. |
-| R2 | Pay less than `min_rent_price` | Aborts `E_WRONG_PAYMENT_AMOUNT`. |
-| R3 | Pay more than `min_rent_price` | Aborts `E_WRONG_PAYMENT_AMOUNT` (Idle is exact — only auction allows excess). |
+| R1 | Pay exactly `min_rent_price` | State → `Rented(HandoverOpen)`. `last_rent_price == min_rent_price`. `TenantCap` pushed to sender. `RentStarted` event. |
+| R2 | Pay less than `min_rent_price` | Aborts `E_INSUFFICIENT_PAYMENT`. |
+| R3 | Overpay from Idle | Accepted. `last_rent_price == full payment`. State → `Rented(HandoverOpen)`. |
 | R4 | Rent when `retire_flag` set and state was Idle | State has already been moved to `Retired` by `apply_pending_transitions`; dispatch hits the `Retired` arm → aborts `E_RETIRED_NO_BID`. |
 
 ### 10.3 `rent` — AtDutchAuction path
@@ -1085,7 +1080,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | # | Description | Expected |
 |---|---|---|
 | R9 | Pay exactly `next_rent_price` | State → `Rented(HandoverConfirmed)`. `handover_countdown_expiry` set. `BidPlaced` event. |
-| R10 | Pay more than `next_rent_price` | Aborts `E_WRONG_PAYMENT_AMOUNT`. |
+| R10 | Overpay above `next_rent_price` | Accepted. `pending_bid == full payment`. `BidPlaced` event. |
 | R11 | Bid with `retire_flag` set | Aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
 | R12 | Remaining rent time <= `handover_floor` (Dutch auction bypass) | `handover_countdown_expiry == phase_start_ms + tenure_ceiling`. |
 
@@ -1095,7 +1090,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 |---|---|---|
 | R13 | New bid supersedes pending | Previous pending refunded to previous address. `pending_bid == new bid`. `pending_tenant_address == new bidder`. `handover_countdown_expiry` unchanged. `BidSuperseded` event. |
 | R14 | Supersede with retire_flag set | Allowed — flag was set after this pending bid committed; the bid is honored. |
-| R15 | Supersede with wrong amount | Aborts `E_WRONG_PAYMENT_AMOUNT`. |
+| R15 | Supersede with insufficient amount | Aborts `E_INSUFFICIENT_PAYMENT`. |
 
 ### 10.6 `apply_pending_transitions`
 
@@ -1173,8 +1168,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_NOT_IDLE` | `public` | (reserved) |
 | `E_NOT_AUCTION` | `public` | (reserved) |
 | `E_NOT_RENTED` | `public` | (reserved) |
-| `E_WRONG_PAYMENT_AMOUNT` | `public` | rent. |
-| `E_INSUFFICIENT_PAYMENT` | `public` | rent (auction). |
+| `E_INSUFFICIENT_PAYMENT` | `public` | rent — payment below floor price (all acquisition paths). |
 | `E_RETIRE_FLAG_BLOCKS_BID` | `public` | rent (takeover, flagged). |
 | `E_RETIRED_NO_BID` | `public` | rent (Retired). |
 | `E_ALREADY_RETIRED` | `public` | retire. |

@@ -546,11 +546,6 @@ locked balances.
 
 - Assert `coin::value(&payment) == escrow.config.min_rent_price`, abort
   `E_WRONG_PAYMENT_AMOUNT`.
-- Assert `!escrow.retire_flag` — Idle+retire means the owner is about to
-  call `claim_asset`; rent during this window must abort. In practice
-  `apply_pending_transitions` has already moved Idle+retire to `Retired`,
-  so the `Retired` dispatch arm will catch this first. Defense-in-depth
-  check, but structurally redundant.
 - `escrow.last_rent_price = escrow.config.min_rent_price;`
 - `escrow.phase_start_ms = clock.timestamp_ms();`
 - Mint `cap = tenant_cap::new(object::id(escrow), ctx)`.

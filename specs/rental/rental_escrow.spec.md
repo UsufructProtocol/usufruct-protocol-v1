@@ -806,10 +806,10 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 6. **Mint + push new TenantCap:**
    - `let cap = tenant_cap::new(object::id(escrow), ctx);`
    - `let new_cap_id = object::id(&cap);`
-   - `transfer::transfer(cap, option::destroy_some(escrow.pending_tenant_address));`
-   — destructive read rotates the address field as part of the push.
+   - `let pending_addr = *option::borrow(&escrow.pending_tenant_address);`
+   - `transfer::transfer(cap, pending_addr);`
 7. **Rotate address fields:**
-   - `escrow.current_tenant_address = some(<pending_addr read in step 6>);`
+   - `escrow.current_tenant_address = some(pending_addr);`
    - `escrow.current_tenant_cap_id = some(new_cap_id);`
    - `escrow.pending_tenant_address = none();`
 8. **Reset phase anchors for the new tenant:**

@@ -660,7 +660,7 @@ if let Rented { .. } = escrow.state:
 if escrow.state == AtDutchAuction:
     let expiry = escrow.phase_start_ms + escrow.config.descent_ceiling;
     if clock.timestamp_ms() >= expiry:
-        do_auction_expiry(escrow, expiry, ctx)
+        do_auction_expiry(escrow, expiry)
         // Post: state = Idle
         // Post: phase_start_ms = expiry
 
@@ -882,7 +882,6 @@ recovery.
     fun do_auction_expiry<Asset: key + store, CoinType>(
         escrow:      &mut RentalEscrow<Asset, CoinType>,
         boundary_ms: u64,       // = phase_start_ms + descent_ceiling
-        ctx:         &mut TxContext,
     )
 
 **Preconditions:** `escrow.state == AtDutchAuction`.
@@ -897,8 +896,8 @@ recovery.
 
 **Note on `last_rent_price`:** not modified here. After auction expiry,
 `last_rent_price` holds what the last tenant paid. The next `rent()` from Idle
-overwrites it with `min_rent_price` — the price paid from Idle — as part of
-its normal acquisition logic.
+overwrites it with the actual payment (`>= min_rent_price`) as part of its
+normal acquisition logic.
 
 ---
 

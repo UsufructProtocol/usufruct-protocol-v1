@@ -204,7 +204,7 @@ structural invariant explicit.
 | `config` | Immutable `IntegrationConfig` — all protocol parameters. |
 | `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Target of `send_fee` transfers. |
 | `state` | Current `AssetState`. |
-| `last_rent_price` | Price paid by current tenant. Entry barrier for takeover. `0` when state is `Idle` (no meaning until first tenancy). Set to `min_rent_price` at the first `rent()`. Preserved across Idle re-entries so auction entry price can be derived. |
+| `last_rent_price` | Price paid by the most recent tenant. Entry barrier for takeover and starting price of the Dutch Auction descent. Initialized to `min_rent_price` at `integrate` — the price the first Idle acquisition will write anyway. Updated at every acquisition: `min_rent_price` from Idle, `next_rent_price` from Rented, and the actual amount paid from AtDutchAuction. |
 | `phase_start_ms` | Timestamp at which the current phase began. See §5 for exact assignment per transition. |
 | `current_tenant_cap_id` | `Some(id)` while `state` is `Rented`; `None` otherwise. The live `TenantCap` for the current tenant. Staleness enforced structurally — any other `TenantCap` with the same `escrow_id` fails `object::id(cap) == current_tenant_cap_id`. |
 | `current_tenant_address` | `Some(addr)` while `state` is `Rented`; `None` otherwise. Target of `remain_credit` push at handover. |
@@ -369,7 +369,7 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
 3. Read `fee_inbox_id = protocol_fee_inbox::fee_ref_inbox_id(fee_ref)`.
 4. Construct the escrow with:
    - `state = AssetState::Idle`
-   - `last_rent_price = 0`
+   - `last_rent_price = config::min_rent_price(&config)`
    - `phase_start_ms = 0`
    - All `Option` fields `None`, all `Balance` fields `balance::zero()`
    - `retire_flag = false`
@@ -907,9 +907,10 @@ recovery.
 4. Emit `AuctionExpired { escrow_id, next_state: escrow.state,
    timestamp_ms: boundary_ms }`.
 
-**Note on `last_rent_price`:** preserved across Idle. The next `rent()` from
-Idle sets `last_rent_price = min_rent_price` (resetting the cycle), so the
-stale value never affects pricing.
+**Note on `last_rent_price`:** not modified here. After auction expiry,
+`last_rent_price` holds what the last tenant paid. The next `rent()` from Idle
+overwrites it with `min_rent_price` — the price paid from Idle — as part of
+its normal acquisition logic.
 
 ---
 
@@ -1069,7 +1070,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `phase_start_ms == 0`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `AssetIntegrated` event emitted. |
+| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `AssetIntegrated` event emitted. |
 | T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. No depth check. |
 
 ### 10.2 `rent` — Idle path

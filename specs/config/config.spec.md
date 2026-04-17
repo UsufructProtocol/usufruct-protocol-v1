@@ -4,7 +4,7 @@ CONFIG MODULE — SPECIFICATION
 Module: `config`
 Design reference: design-compact.md §6
 Module map reference: module-map.spec.md §3
-Depends on: `curve`
+Depends on: `curve_shape`, `price_function`
 
 
 0. MODULE RESPONSIBILITY
@@ -25,8 +25,8 @@ embedded inside `RentalEscrow` at integration time and never mutated again.
 **Does not own:**
 
 - `CurveShape` and `PriceFunction` construction or evaluation — those live in
-  `curve`. `config::new_config` receives already-constructed values and does not
-  re-validate their internal fields.
+  `curve_shape` / `price_function`. `config::new_config` receives already-constructed
+  values and does not re-validate their internal fields.
 - Protocol state, fund movements, or capability objects.
 - Any Sui framework object operations (no `object::new`, no `transfer`).
 
@@ -261,10 +261,10 @@ round-trip holds against the reduced value, not the raw arguments:
 
 No private helpers. All logic is in `new_config`.
 
-**Integration flow:** an integrator calls `curve` constructors to build
-`CurveShape` and `PriceFunction` values, then calls `new_config` to get an
+**Integration flow:** an integrator calls `curve_shape` and `price_function` constructors
+to build `CurveShape` and `PriceFunction` values, then calls `new_config` to get an
 `IntegrationConfig`, then passes it to `rental_escrow::integrate`. All three
 layers are `public` and composable from a PTB. Error constants are `public`
 so the SDK can map abort codes to human-readable messages.
 
-**Depends on:** `curve` (type imports only — `CurveShape`, `PriceFunction`).
+**Depends on:** `curve_shape`, `price_function` (type imports only — `CurveShape`, `PriceFunction`).

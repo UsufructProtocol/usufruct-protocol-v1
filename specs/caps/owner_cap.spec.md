@@ -31,12 +31,14 @@ Depends on: nothing (`sui::object` only)
 - Tracking of the cap holder — the protocol is cap-holder-agnostic.
 
 **Key design properties:**
-- `key + store`: transferable and composable. An `OwnerCap` satisfies
-  the `Asset: key + store` bound of `RentalEscrow` and may itself be
-  integrated as an asset into another escrow, granting that escrow's
-  tenant temporary administrative authority over the wrapped escrow
-  (including `retire()`). The protocol does not impose a nesting-depth
-  limit.
+- `key + store`: transferable and composable. `store` is chosen for
+  operational composability — custody, multisig, secondary markets —
+  all of which require wrapping the cap inside external objects.
+  Integrability as an `Asset` in another escrow is an emergent
+  consequence of the same abilities, not an independent goal. The
+  ownership-chain opacity this introduces is inherent to any
+  `key + store` object in Sui and is no worse than the opacity of
+  the rented asset itself.
 - Mutual exclusivity: `OwnerCap` exists ↔ the underlying asset is held
   in its `RentalEscrow`. `burn` is called atomically with asset
   extraction in `claim_asset` — no `OwnerCap` outlives its escrow.
@@ -68,11 +70,11 @@ public struct OwnerCap has key, store {
 ```
 
 **Abilities:** `key + store`.
-- `key` — object identity. Required for `transfer::transfer` at mint
-  and for integration as an asset into another escrow.
-- `store` — enables transfer and wrapping by external code. Together
-  with `key`, satisfies the `Asset: key + store` bound of
-  `RentalEscrow<Asset, _>`, so the cap itself can be rented.
+- `key` — object identity. Required for `transfer::transfer` at mint.
+- `store` — composability with external objects: custody, multisig,
+  secondary markets. As a side effect, satisfies the `Asset: key +
+  store` bound of `RentalEscrow<Asset, _>` and lets the cap itself
+  be rented.
 
 **Fields:**
 
@@ -177,11 +179,12 @@ the cap is presented.
     or check the address of whoever holds the cap. Transferring the cap
     transfers authority unconditionally.
 
-**P4 — Recursive integrability:**
-    `key + store` allows `OwnerCap` to satisfy the `Asset: key + store`
-    bound of `RentalEscrow<Asset, _>`. The cap can itself be deposited
-    into a new escrow as the asset. `rental_escrow::integrate` imposes
-    no depth restriction on this composition.
+**P4 — Composability with operational intent:**
+    `store` is chosen for custody, multisig, and secondary-market
+    composition. Recursive integration as an `Asset` in another escrow
+    is an emergent consequence of `key + store`, not an independent
+    goal. `rental_escrow::integrate` imposes no restriction on this
+    composition.
 
 **P5 — No zero-state objects:**
     Every `OwnerCap` has a non-zero `escrow_id` (set at mint from a

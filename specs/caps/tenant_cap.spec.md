@@ -35,10 +35,9 @@ Depends on: nothing (`sui::object` only)
   module-level transfer function exists. The cap can never leave the
   holder's wallet except via `burn`.
   **Deliberate asymmetry with `OwnerCap` (`key + store`):**
-  `OwnerCap` is transferable because transferring ownership is a
-  first-class feature — selling the underlying asset is the intended
-  use case, and `store` also lets the cap itself be integrated as an
-  asset into another escrow.
+  `OwnerCap` is `key + store` because owners need operational
+  composability — custody, multisig, secondary markets — and selling
+  ownership is a first-class feature.
   `TenantCap` is non-transferable for two compounding reasons:
   1. `current_tenant_address` is registered at mint and has no update
      mechanism. If the cap were transferred externally, `remain_credit`

@@ -561,16 +561,15 @@ locked balances.
 
 - Let `price = current_price_descent(escrow, clock.timestamp_ms())`.
 - Assert `coin::value(&payment) >= price`, abort `E_INSUFFICIENT_PAYMENT`.
-- **Full payment becomes stake — no refund of excess.** Accepts overpayment
-  to tolerate latency between PTB construction and execution (the descent
-  price may have dropped a tick while the PTB was in flight). The overpayment
-  accrues to the owner via `used_credit` scaling, which is a fair outcome:
-  the owner sold at-or-above the expected floor.
-- `escrow.last_rent_price = coin::value(&payment);`
+- `escrow.last_rent_price = coin::value(&payment);` — the actual amount paid,
+  not the descent floor. Overpayment is accepted to tolerate PTB latency.
+- `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
 - `escrow.phase_start_ms = clock.timestamp_ms();`
-- Mint `cap`, set `current_tenant_*`, move payment to `tenant_stake` as in
-  the Idle path.
+- Mint `cap = tenant_cap::new(object::id(escrow), ctx)`.
+- `escrow.current_tenant_cap_id = some(object::id(&cap));`
+- `escrow.current_tenant_address = some(tx_context::sender(ctx));`
 - `escrow.state = Rented { phase: HandoverOpen };`
+- `transfer::transfer(cap, tx_context::sender(ctx));`
 - Emit `RentStarted { ..., from_state: AtDutchAuction, ... }`.
 
 #### Case: `Rented { HandoverOpen }`

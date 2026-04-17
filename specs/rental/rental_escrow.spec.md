@@ -210,7 +210,7 @@ structural invariant explicit.
 | `current_tenant_address` | `Some(addr)` while `state` is `Rented`; `None` otherwise. Target of `remain_credit` push at handover. |
 | `pending_tenant_address` | `Some(addr)` only while `state` is `Rented(HandoverConfirmed)`. Target of `TenantCap` push at handover completion. |
 | `handover_countdown_expiry` | `Some(ts)` only while `state` is `Rented(HandoverConfirmed)`. Deterministic from the first bid — subsequent bids do not alter it. |
-| `tenant_stake` | Balance paid by the current tenant. Non-zero only while `state` is `Rented`. Becomes `owner_earnings` (95%) + fee (5%) at tenure expiry. |
+| `tenant_stake` | Balance paid by the current tenant. Non-zero only while `state` is `Rented`. At handover: `used_credit` splits into `owner_earnings` (95%) + fee (5%); `remain_credit` pushed to displaced tenant; `pending_bid` becomes the new `tenant_stake`. At tenure expiry: full balance splits into `owner_earnings` (95%) + fee (5%). |
 | `pending_bid` | Balance paid by the pending tenant. Non-zero only while `state` is `Rented(HandoverConfirmed)`. Refunded on supersede; becomes new `tenant_stake` at handover. |
 | `owner_earnings` | Accumulated 95% share. Withdrawn via `withdraw_earnings` or swept at `claim_asset`. |
 | `retire_flag` | Once set by `retire()`, stays set. Blocks new bids from `rent()` in `Rented(HandoverOpen)`. Forces transition to `Retired` (bypassing auction) at tenure expiry / auction expiry. |

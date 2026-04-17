@@ -16,7 +16,7 @@ A market layer that makes the usage rights of any on-chain asset continuously li
 
 Given that the two patterns already solve the mechanism, LRP provides the market coordination layer on top.
 
-- **The asset is always rentable.** In every protocol state there is a price at which the usus is accessible. While rented, any actor can displace the current tenant by paying `next_rent_price`. While idle, anyone can enter at `min_rent_price`. During a Dutch Auction, the price descends until the market finds a buyer. The protocol never closes — the usus is always acquirable at some price.
+- **The asset is always rentable.** In every protocol state there is a price at which the usus is accessible. While rented, any actor can displace the current tenant by paying at least `next_rent_price`. While idle, anyone can enter at or above `min_rent_price`. During a Dutch Auction, anyone can enter at or above the current descending price. These are floors, not exact requirements — a tenant may pay more, which raises the barrier for future displacement. The protocol never closes — the usus is always acquirable at some price.
 
 - **The price self-regulates, and that regulation is configurable.** While the asset is rented, price can only move upward — each displacement requires `next_rent_price > last_rent_price`, defined by `f_next_rent_price`. When the market stops validating the current price and the active block expires, a Dutch Auction corrects it downward via `f_price_descent`. Both curves are configured by the integrator. Price ascends by competition, descends by abandonment — the direction is asymmetric by design.
 
@@ -64,10 +64,10 @@ integrate
 
 | Transition | Trigger |
 |---|---|
-| `Idle → Rented` | A user pays exactly `min_rent_price` |
-| `Rented → Rented` (takeover) | A new user pays `next_rent_price`; displaced tenant receives `remain_credit` |
+| `Idle → Rented` | A user pays `>= min_rent_price` |
+| `Rented → Rented` (takeover) | A new user pays `>= next_rent_price`; displaced tenant receives `remain_credit` |
 | `Rented → At Dutch Auction` | Tenant's time expires with no successor |
-| `At Dutch Auction → Rented` | A buyer accepts the current descending price |
+| `At Dutch Auction → Rented` | A buyer pays `>= current_price_descent` |
 | `At Dutch Auction → Idle` | Price descends to `min_rent_price` with no buyer |
 | `Any → Retired` | Owner calls `retire()` — immediate from `Idle` or `At Dutch Auction`; deferred until the active block ends from `Rented` |
 
@@ -109,7 +109,7 @@ The depth limit is two. An `OwnerCap` whose underlying escrow holds a real asset
 | `descent_ceiling` | Maximum duration of a Dutch Auction before price reaches `min_rent_price` and the asset returns to `Idle`. | `> 0` |
 | `f_credit_ascent` | Normalized shape `g : [0,1] → [0,1]`. Defines how the tenant's credit is consumed over the rental block. | `g(0)=0`, `g(1)=1`, bounded, strictly increasing |
 | `f_price_descent` | Normalized shape `h : [0,1] → [0,1]`. Defines how the auction discount deepens during a Dutch Auction. | `h(0)=0`, `h(1)=1`, bounded, strictly increasing |
-| `f_next_rent_price` | Maps `last_rent_price → next_rent_price`. The minimum price required to displace the current tenant. | `f(p) > p` |
+| `f_next_rent_price` | Maps `last_rent_price → next_rent_price`. The floor price required to displace the current tenant. A tenant may pay more; the actual amount paid becomes the new `last_rent_price`. | `f(p) > p` |
 | `payment_token` | The currency in which all prices, stakes, and earnings are denominated and settled. | Any `Coin<T>` |
 
 All parameters are set once at integration time and are **permanently immutable**. To change them, retire the asset and re-integrate under the new configuration.

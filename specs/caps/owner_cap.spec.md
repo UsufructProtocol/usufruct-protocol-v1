@@ -31,11 +31,12 @@ Depends on: nothing (`sui::object` only)
 - Tracking of the cap holder — the protocol is cap-holder-agnostic.
 
 **Key design properties:**
-- `key + store`: transferable and composable. An `OwnerCap` may itself
-  be integrated as an asset into a level-2 escrow, granting the level-2
-  tenant temporary administrative authority over the level-1 escrow
-  (including `retire()`). Maximum nesting depth: 2 — enforced at
-  `integrate` time in `rental_escrow`, not here.
+- `key + store`: transferable and composable. An `OwnerCap` satisfies
+  the `Asset: key + store` bound of `RentalEscrow` and may itself be
+  integrated as an asset into another escrow, granting that escrow's
+  tenant temporary administrative authority over the wrapped escrow
+  (including `retire()`). The protocol does not impose a nesting-depth
+  limit.
 - Mutual exclusivity: `OwnerCap` exists ↔ the underlying asset is held
   in its `RentalEscrow`. `burn` is called atomically with asset
   extraction in `claim_asset` — no `OwnerCap` outlives its escrow.
@@ -68,10 +69,10 @@ public struct OwnerCap has key, store {
 
 **Abilities:** `key + store`.
 - `key` — object identity. Required for `transfer::transfer` at mint
-  and for integration as an asset into a level-2 escrow.
-- `store` — enables transfer and wrapping by external code. Necessary
-  for level-2 escrow nesting (`key + store` is the asset requirement
-  of `RentalEscrow<Asset, _>`).
+  and for integration as an asset into another escrow.
+- `store` — enables transfer and wrapping by external code. Together
+  with `key`, satisfies the `Asset: key + store` bound of
+  `RentalEscrow<Asset, _>`, so the cap itself can be rented.
 
 **Fields:**
 
@@ -176,11 +177,11 @@ the cap is presented.
     or check the address of whoever holds the cap. Transferring the cap
     transfers authority unconditionally.
 
-**P4 — Level-2 nesting is structurally enabled, not enforced here:**
+**P4 — Recursive integrability:**
     `key + store` allows `OwnerCap` to satisfy the `Asset: key + store`
-    bound of `RentalEscrow<Asset, _>`. The maximum-nesting-depth check
-    (depth ≤ 2) is enforced in `rental_escrow::integrate`, which can
-    inspect the asset being deposited.
+    bound of `RentalEscrow<Asset, _>`. The cap can itself be deposited
+    into a new escrow as the asset. `rental_escrow::integrate` imposes
+    no depth restriction on this composition.
 
 **P5 — No zero-state objects:**
     Every `OwnerCap` has a non-zero `escrow_id` (set at mint from a

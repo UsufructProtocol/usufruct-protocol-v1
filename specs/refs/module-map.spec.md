@@ -350,7 +350,7 @@ Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
 
 | Type | Abilities | Notes |
 |---|---|---|
-| `OwnerCap` | `key, store` | Transferable. Can itself be integrated into a level-2 escrow. |
+| `OwnerCap` | `key, store` | Transferable. Satisfies the `Asset: key + store` bound and may itself be integrated as an asset. |
 
 **Fields:**
 - `id: UID`
@@ -702,7 +702,7 @@ so no coordination is needed to identify which coin to drain.
 - `asset: Asset` — the asset is always present while the escrow exists. There is no valid persistent state where the escrow exists without the asset. `claim_asset()` extracts the asset and deletes the escrow atomically. The PTB borrow mechanism (`borrow_asset`/`return_asset`) is an implementation detail — the temporary extraction never persists across transaction boundaries.
 - Fund flows are asymmetric: owner pulls via `withdraw_earnings()` and `claim_asset()`; admin pulls via `collect_fee_messages()`; tenants receive pushes to the address registered at mint time.
 - Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.
-- Maximum nesting depth for `OwnerCap` as asset: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.
+- `OwnerCap` as asset is permitted without depth limit. The protocol does not inspect the type of the wrapped asset at integration time — any `key + store` type, including `OwnerCap`, is accepted.
 - Object discovery: `AssetIntegrated` includes `escrow_id` so off-chain consumers can track all instances from events. Sui RPC (`suix_queryObjects` by type) serves as a bootstrap fallback.
 - `CoinType` is a phantom type parameter fixed at integration time. Any fungible token satisfying Move's abilities works — integrating protocols can use their own native tokens as the rental currency rather than USDC or USDT. A protocol that mints its own asset can rent it out denominated in its own coin, creating a self-contained economic loop without dependency on external stablecoins.
 

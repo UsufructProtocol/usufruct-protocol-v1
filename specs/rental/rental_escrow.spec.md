@@ -30,8 +30,8 @@ points, and the fund distribution logic for every boundary event.
   inside `Rented`.
 - `AssetReceipt` — hot potato struct with no abilities. Created by
   `borrow_asset`, consumed by `return_asset` in the same PTB.
-- All public entry points: `integrate`, `integrate_level_2`, `rent`, `retire`,
-  `claim_asset`, `withdraw_earnings`, `borrow_asset`, `return_asset`,
+- All public entry points: `integrate`, `rent`, `retire`, `claim_asset`,
+  `withdraw_earnings`, `borrow_asset`, `return_asset`,
   `apply_pending_transitions`.
 - Read-only queries: `current_state`, `current_used_credit`,
   `current_price_descent`, `current_next_rent_price`.
@@ -109,9 +109,6 @@ messages.
     public const E_NOT_RETIRED:              u64 = 12; // claim_asset() when state != Retired
     public const E_RECEIPT_ESCROW_MISMATCH:  u64 = 13; // return_asset: receipt.escrow_id != object::id(escrow)
     public const E_RECEIPT_ASSET_MISMATCH:   u64 = 14; // return_asset: receipt.asset_id != object::id(&asset)
-    public const E_ASSET_IS_OWNER_CAP:       u64 = 15; // integrate(): Asset is OwnerCap — use integrate_level_2
-    public const E_LEVEL_2_WRONG_ESCROW:     u64 = 16; // integrate_level_2: owner_cap.escrow_id != object::id(level_1_escrow)
-    public const E_NESTING_DEPTH_EXCEEDED:   u64 = 17; // integrate_level_2: level-1 asset is OwnerCap (would make this level ≥ 3)
 
 
 2. TYPES
@@ -368,18 +365,11 @@ settlement is lazy.
 **Purpose:** wraps `asset` in a new `RentalEscrow<Asset, CoinType>`, shares
 the escrow, mints one `OwnerCap`, and returns it to the PTB.
 
-**Preconditions:**
-- `Asset` must not be `OwnerCap` — caller must use `integrate_level_2`
-  instead. Enforced via `std::type_name::get<Asset>() !=
-  std::type_name::get<OwnerCap>()`, abort `E_ASSET_IS_OWNER_CAP`.
-
 **Behavior:**
-1. Assert `type_name::get<Asset>() != type_name::get<OwnerCap>()` —
-   prevents level-2 integration through this function.
-2. Allocate `uid = object::new(ctx)`. Compute `escrow_id = object::uid_to_inner(&uid)`.
-3. Mint `OwnerCap` via `owner_cap::new(escrow_id, ctx)`.
-4. Read `fee_inbox_id = protocol_fee_inbox::fee_ref_inbox_id(fee_ref)`.
-5. Construct the escrow with:
+1. Allocate `uid = object::new(ctx)`. Compute `escrow_id = object::uid_to_inner(&uid)`.
+2. Mint `OwnerCap` via `owner_cap::new(escrow_id, ctx)`.
+3. Read `fee_inbox_id = protocol_fee_inbox::fee_ref_inbox_id(fee_ref)`.
+4. Construct the escrow with:
    - `state = AssetState::Idle`
    - `last_rent_price = 0`
    - `phase_start_ms = clock.timestamp_ms()` (not strictly needed while Idle —
@@ -387,61 +377,29 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    - All `Option` fields `None`, all `Balance` fields `balance::zero()`
    - `retire_flag = false`
    - `integrated_at_ms = clock.timestamp_ms()`
-6. `transfer::share_object(escrow)`.
-7. Emit `AssetIntegrated { escrow_id, owner_cap_id, integrator, timestamp_ms }`.
-8. Return `OwnerCap`. The PTB routes it (typically via
+5. `transfer::share_object(escrow)`.
+6. Emit `AssetIntegrated { escrow_id, owner_cap_id, integrator, timestamp_ms }`.
+7. Return `OwnerCap`. The PTB routes it (typically via
    `transfer::public_transfer` to `tx_context::sender(ctx)`).
 
 **Why return the cap instead of pushing it:** `OwnerCap` has `store`; the PTB
-author may want to stash it in a multisig, a custody object, or use it
-immediately as input to a level-2 integration. Returning gives the PTB full
-control; pushing would force every integrator to issue a second transfer.
+author may want to stash it in a multisig, a custody object, or chain it as
+input to a subsequent PTB step. Returning gives the PTB full control; pushing
+would force every integrator to issue a second transfer.
+
+**`Asset = OwnerCap` is permitted.** `OwnerCap` has `key + store` and
+satisfies the `Asset` bound like any other integrable type. Renting an
+`OwnerCap` is equivalent to renting administrative authority over the
+wrapped escrow (including `retire()`) for the duration of the tenancy —
+a mechanism for implicit sale of the underlying asset. The protocol does
+not impose a nesting-depth limit: any type-level check would fail to
+prevent deeper chains composed via external `key + store` wrappers, so a
+self-imposed limit would be defense-in-type without real guarantee.
+Integrators who want to limit exposure must do so outside the protocol.
 
 ---
 
-### 4.2 `integrate_level_2`
-
-    public fun integrate_level_2<L1Asset: key + store, C1, CoinType>(
-        owner_cap:      OwnerCap,
-        level_1_escrow: &RentalEscrow<L1Asset, C1>,
-        config:         IntegrationConfig,
-        fee_ref:        &ProtocolFeeRef,
-        clock:          &Clock,
-        ctx:            &mut TxContext,
-    ): OwnerCap
-
-**Visibility:** `public`.
-
-**Purpose:** integrate an `OwnerCap` as an asset into a level-2 escrow.
-This enables implicit sale of the underlying asset: the level-2 tenant gains
-administrative authority over the level-1 escrow (including the ability to
-call `retire()` on it via the cap).
-
-**Preconditions — static and dynamic:**
-- `L1Asset` is the asset type of the level-1 escrow. It must not itself be
-  `OwnerCap` — this enforces the maximum-nesting-depth invariant (depth ≤ 2).
-- `owner_cap.escrow_id == object::id(level_1_escrow)` — prevents passing a
-  stale cap + wrong escrow reference.
-
-**Behavior:**
-1. Assert `owner_cap::escrow_id(&owner_cap) == object::id(level_1_escrow)`,
-   abort `E_LEVEL_2_WRONG_ESCROW`.
-2. Assert `type_name::get<L1Asset>() != type_name::get<OwnerCap>()`,
-   abort `E_NESTING_DEPTH_EXCEEDED`.
-3. Proceed identically to `integrate` with `Asset = OwnerCap`,
-   `CoinType = CoinType`. The deposited `owner_cap` becomes the level-2
-   escrow's `asset` field.
-4. Emit `AssetIntegrated` with the new (level-2) escrow ID.
-5. Return the newly minted level-2 `OwnerCap`.
-
-**Why a separate function:** `Asset` is a type parameter; at the Move type
-level we cannot inspect "the level-1 escrow's asset type" from inside a
-generic `integrate`. A dedicated signature with an explicit `L1Asset`
-parameter makes the depth-check statically provable via `type_name::get`.
-
----
-
-### 4.3 `retire`
+### 4.2 `retire`
 
     public fun retire<Asset: key + store, CoinType>(
         escrow:    &mut RentalEscrow<Asset, CoinType>,
@@ -486,7 +444,7 @@ asset. Does not mutate balances.
 
 ---
 
-### 4.4 `claim_asset`
+### 4.3 `claim_asset`
 
     public fun claim_asset<Asset: key + store, CoinType>(
         escrow:    RentalEscrow<Asset, CoinType>,
@@ -545,7 +503,7 @@ locked balances.
 
 ---
 
-### 4.5 `withdraw_earnings`
+### 4.4 `withdraw_earnings`
 
     public fun withdraw_earnings<Asset: key + store, CoinType>(
         escrow:    &mut RentalEscrow<Asset, CoinType>,
@@ -1112,11 +1070,6 @@ The borrow-return window is confined to a single PTB by the hot-potato
 pathological edge case) and `do_tenure_expiry` with zero stake produce
 zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
-**P13 — Nesting depth ≤ 2:**
-`integrate` refuses `Asset = OwnerCap`. `integrate_level_2` refuses
-`L1Asset = OwnerCap`. No path can construct a level-3 escrow.
-
-
 10. TEST CASES
 --------------
 
@@ -1125,10 +1078,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | # | Description | Expected |
 |---|---|---|
 | T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `integrated_at_ms == clock.now()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `AssetIntegrated` event emitted. |
-| T2 | `integrate<OwnerCap, C>` | Aborts with `E_ASSET_IS_OWNER_CAP`. |
-| T3 | `integrate_level_2` with `L1Asset != OwnerCap` | Returns a level-2 `OwnerCap`. Level-1 escrow unchanged. |
-| T4 | `integrate_level_2` with `L1Asset == OwnerCap` | Aborts with `E_NESTING_DEPTH_EXCEEDED`. |
-| T5 | `integrate_level_2` with mismatched `owner_cap` / `level_1_escrow` | Aborts with `E_LEVEL_2_WRONG_ESCROW`. |
+| T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. No depth check. |
 
 ### 10.2 `rent` — Idle path
 
@@ -1227,7 +1177,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 |---|---|---|
 | L1 | integrate → rent (Idle) → borrow → return → (time passes) → tenure expiry → auction expiry → rent (Idle) → retire → claim | All transitions fire correctly. Owner receives asset + earnings. Protocol fees accumulated in `ProtocolFeeInbox`. No orphaned balances. |
 | L2 | integrate → rent → takeover bid → handover → (new tenant active) → retire → tenure expiry → claim | `retire_flag` inherited by new tenant. Claim succeeds after their tenure ends. |
-| L3 | integrate_level_2 over an active level-1 escrow → level-2 tenant rents and exercises `retire` on level-1 via the wrapped OwnerCap | Level-1 escrow enters retire flow. Level-2 escrow unaffected (asset is the cap, which itself is now "pointing at a retiring escrow"). |
+| L3 | integrate an inner escrow → deposit its `OwnerCap` via `integrate` into an outer escrow → outer tenant borrows the cap and calls `retire` on the inner escrow | Inner escrow enters the retire flow. Outer escrow unaffected (its asset is the cap, which is now "pointing at a retiring escrow"). |
 
 
 11. MODULE BOUNDARY
@@ -1252,16 +1202,12 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_NOT_RETIRED` | `public` | claim_asset. |
 | `E_RECEIPT_ESCROW_MISMATCH` | `public` | return_asset. |
 | `E_RECEIPT_ASSET_MISMATCH` | `public` | return_asset. |
-| `E_ASSET_IS_OWNER_CAP` | `public` | integrate. |
-| `E_LEVEL_2_WRONG_ESCROW` | `public` | integrate_level_2. |
-| `E_NESTING_DEPTH_EXCEEDED` | `public` | integrate_level_2. |
 | `RentalEscrow<Asset, CoinType>` (type) | `public` | `key` only. Shared. |
 | `AssetState` (type) | `public` | `copy + drop + store`. External pattern-match. |
 | `RentPhase` (type) | `public` | `copy + drop + store`. |
 | `AssetReceipt` (type) | `public` | Hot potato (no abilities). |
 | All event structs | `public` | `copy + drop`. |
-| `integrate(...)` | `public` | Generic entry. Rejects `OwnerCap` as Asset. |
-| `integrate_level_2(...)` | `public` | Specialized for OwnerCap wrapping. |
+| `integrate(...)` | `public` | Generic entry. Accepts any `Asset: key + store`, including `OwnerCap`. |
 | `rent(...)` | `public` | Single entry for tenancy. |
 | `retire(...)` | `public` | Sets flag. Never returns asset. |
 | `claim_asset(...)` | `public` | Returns `(Asset, Coin<CoinType>)`. Deletes escrow. |

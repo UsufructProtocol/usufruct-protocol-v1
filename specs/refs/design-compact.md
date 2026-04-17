@@ -59,7 +59,7 @@ For rationale, incentive analysis, and examples see liquid-renting-protocol-desi
 - Owner: **pull** — `used_credit` accumulates in escrow, withdrawn actively with `OwnerCap`.
 - Tenant: **push** — `remain_credit` and superseded bid refunds pushed immediately to the address registered at mint time.
 
-**OwnerCap recursive property:** Because `OwnerCap` has `key + store`, it satisfies the integration requirements and may itself be deposited into a new escrow (level 2). The level 2 tenant holds temporary administrative authority over the level 1 escrow — including `retire()`. This enables implicit sale of the underlying asset. Maximum nesting depth: 2. Integration is rejected if the asset being integrated is an `OwnerCap` whose own escrow asset is also an `OwnerCap`.
+**OwnerCap recursive property:** Because `OwnerCap` has `key + store`, it satisfies the integration requirements and may itself be deposited into a new escrow. The outer tenant holds temporary administrative authority over the wrapped escrow — including `retire()` — for the duration of the tenancy. This enables implicit sale of the underlying asset. The protocol imposes no nesting-depth limit: any type-level check would fail to prevent deeper chains composed via external `key + store` wrappers, so the limit is neither stated nor enforced.
 
 Asset lives in the shared escrow for its entire lifecycle. Only access designation changes:
 

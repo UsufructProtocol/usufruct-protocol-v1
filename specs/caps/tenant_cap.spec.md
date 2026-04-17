@@ -37,7 +37,8 @@ Depends on: nothing (`sui::object` only)
   **Deliberate asymmetry with `OwnerCap` (`key + store`):**
   `OwnerCap` is transferable because transferring ownership is a
   first-class feature — selling the underlying asset is the intended
-  use case, and level-2 nesting requires `store`.
+  use case, and `store` also lets the cap itself be integrated as an
+  asset into another escrow.
   `TenantCap` is non-transferable for two compounding reasons:
   1. `current_tenant_address` is registered at mint and has no update
      mechanism. If the cap were transferred externally, `remain_credit`

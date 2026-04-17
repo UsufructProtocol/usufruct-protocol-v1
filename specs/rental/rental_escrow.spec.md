@@ -501,6 +501,7 @@ locked balances.
     public fun withdraw_earnings<Asset: key + store, CoinType>(
         escrow:    &mut RentalEscrow<Asset, CoinType>,
         owner_cap: &OwnerCap,
+        clock:     &Clock,
         ctx:       &mut TxContext,
     ): Coin<CoinType>
 
@@ -511,10 +512,8 @@ locked balances.
 **Behavior:**
 1. `owner_cap::assert_escrow(owner_cap, object::id(escrow))` —
    abort `E_OWNER_CAP_MISMATCH`.
-2. Does **not** call `apply_pending_transitions` — `owner_earnings` is a
-   post-settlement balance, and draining it does not depend on the state
-   machine. The owner who wants the most-recent boundary earnings credited
-   first should call `apply_pending_transitions` explicitly before this.
+2. `apply_pending_transitions(escrow, clock, ctx)` — settle any elapsed
+   boundaries first so the withdrawn amount includes all accrued earnings.
 3. `let amount = balance::value(&escrow.owner_earnings);`
 4. `let balance = balance::withdraw_all(&mut escrow.owner_earnings);`
 5. Emit `EarningsWithdrawn { escrow_id, amount }` if `amount > 0`

@@ -781,19 +781,17 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 
 **Algorithm:**
 
-1. Let `elapsed = boundary_ms - escrow.phase_start_ms`.
-2. Let `stake = balance::value(&escrow.tenant_stake);` — the current tenant's
-   payment. Used instead of `last_rent_price`, which now holds the pending
-   bidder's amount set during the countdown.
-3. Let `used_credit = curve_shape::compute_used_credit(
-   config::credit_curve(&escrow.config), elapsed,
-   config::tenure_ceiling(&escrow.config), stake);`
-4. Let `remain_credit = stake - used_credit`. (Invariant
-   `used_credit + remain_credit == stake` from curve bijectivity.)
-5. Compute `(owner_share, fee_share) = split_fee(used_credit)` — §7.4.
-6. **Take funds before any address rotation** (push-before-rotate invariant):
-   - Take `remain_balance` from `tenant_stake` (`balance::split`).
-   - Push `coin::from_balance(remain_balance, ctx)` via
+1. Let `used_credit = current_used_credit(escrow, boundary_ms)`.
+   (`boundary_ms == handover_countdown_expiry`, so the clamp is a no-op;
+   the call reads `balance::value(&escrow.tenant_stake)` as the principal —
+   see §8.2.)
+2. Let `remain_credit = balance::value(&escrow.tenant_stake) - used_credit`.
+   (Invariant `used_credit + remain_credit == tenant_stake` from curve
+   bijectivity.)
+3. Compute `(owner_share, fee_share) = split_fee(used_credit)` — §7.4.
+4. **Take funds before any address rotation** (push-before-rotate invariant):
+   - Take `remain_credit` balance from `tenant_stake` (`balance::split`).
+   - Push `coin::from_balance(remain_credit, ctx)` via
      `transfer::public_transfer` to
      `option::destroy_some(escrow.current_tenant_address)`.
    - Take `fee_balance = balance::split(&mut escrow.tenant_stake, fee_share)`.
@@ -801,30 +799,30 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    - Remaining `tenant_stake` = `owner_share` exactly. Move it into
      `owner_earnings` via `balance::join(&mut owner_earnings,
      balance::withdraw_all(&mut tenant_stake))`.
-7. **Rotate `pending_bid` → `tenant_stake`** (new tenant's stake):
+5. **Rotate `pending_bid` → `tenant_stake`** (new tenant's stake):
    - `balance::join(&mut escrow.tenant_stake,
      balance::withdraw_all(&mut escrow.pending_bid));`
    — `last_rent_price` already holds the pending bid amount (set at bid time).
-8. **Mint + push new TenantCap:**
+6. **Mint + push new TenantCap:**
    - `let cap = tenant_cap::new(object::id(escrow), ctx);`
    - `let new_cap_id = object::id(&cap);`
    - `transfer::transfer(cap, option::destroy_some(escrow.pending_tenant_address));`
    — destructive read rotates the address field as part of the push.
-9. **Rotate address fields:**
-   - `escrow.current_tenant_address = some(<pending_addr read in step 8>);`
+7. **Rotate address fields:**
+   - `escrow.current_tenant_address = some(<pending_addr read in step 6>);`
    - `escrow.current_tenant_cap_id = some(new_cap_id);`
    - `escrow.pending_tenant_address = none();`
-10. **Reset phase anchors for the new tenant:**
-    - `escrow.phase_start_ms = boundary_ms;`
-    - `escrow.handover_countdown_expiry = none();`
-    - `escrow.state = Rented { phase: HandoverOpen };`
-11. Emit `HandoverCompleted { escrow_id, displaced_tenant, new_tenant,
-    new_tenant_cap_id, used_credit, owner_share, protocol_fee, remain_credit,
-    timestamp_ms: boundary_ms }`.
+8. **Reset phase anchors for the new tenant:**
+   - `escrow.phase_start_ms = boundary_ms;`
+   - `escrow.handover_countdown_expiry = none();`
+   - `escrow.state = Rented { phase: HandoverOpen };`
+9. Emit `HandoverCompleted { escrow_id, displaced_tenant, new_tenant,
+   new_tenant_cap_id, used_credit, owner_share, protocol_fee, remain_credit,
+   timestamp_ms: boundary_ms }`.
 
 **Dutch Auction bypass (design-compact §4):** when `boundary_ms ==
-phase_start_ms + tenure_ceiling`, `used_credit` saturates to `stake`
-and `remain_credit = 0`. Step 5 pushes a zero coin (valid;
+phase_start_ms + tenure_ceiling`, `used_credit` saturates to `tenant_stake`
+and `remain_credit = 0`. Step 4 pushes a zero coin (valid;
 Sui allows zero-value `Coin` transfers, and `send_fee` short-circuits zero
 balances — no FeeMessage created). Handover completes normally; the
 subsequent tenure-expiry check in `apply_pending_transitions` sees
@@ -953,7 +951,12 @@ state without writing. Does not fire events. Does not touch balances.
         timestamp_ms: u64,
     ): u64
 
-Delegates to `curve_shape::compute_used_credit`.
+Delegates to `curve_shape::compute_used_credit`, passing
+`balance::value(&escrow.tenant_stake)` as the principal. Using
+`tenant_stake` rather than `last_rent_price` is correct in both sub-states:
+in `HandoverOpen` the two are equal; in `HandoverConfirmed` `last_rent_price`
+already holds the pending bid, so `tenant_stake` is the only accurate source
+for the current tenant's payment.
 
 **Clamping rule:** if `escrow.state` is `Rented { HandoverConfirmed }` and
 `timestamp_ms > handover_countdown_expiry`, the function clamps

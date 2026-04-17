@@ -677,15 +677,17 @@ return escrow.state
   Check 2 fails (not Rented), Check 3 fails (not AtDutchAuction). No
   operations, no events.
 - `Retired` as a starting state is also a fast path — all three checks fail.
-- **Check 1 always precedes Check 2 when `pending_bid` is non-zero.**
-  `rent()` clamps `handover_countdown_expiry = min(now + handover_floor,
-  phase_start_ms + tenure_ceiling)`, so the handover boundary is ≤ tenure
-  boundary. Check 2 never observes `Rented(HandoverConfirmed)` with an
-  orphaned `pending_bid`.
+- **`pending_bid` is never orphaned.** `rent()` clamps
+  `handover_countdown_expiry = min(now + handover_floor, phase_start_ms +
+  tenure_ceiling)`, so the handover boundary is always ≤ tenure boundary.
+  The only case where both thresholds coincide (`remaining <= handover_floor`,
+  producing `handover_countdown_expiry == phase_start_ms + tenure_ceiling`)
+  is resolved by Check 1 firing first — by algorithm order — leaving state
+  `HandoverOpen` and `pending_bid = 0` before Check 2 evaluates.
 
 **Emits one event per boundary fired** (`HandoverCompleted`,
 `TenureExpired`, `AuctionExpired`) at the boundary's exact timestamp —
-not `clock.now()`. When the boundary fires in the same call as a rent/retire,
+not `clock.timestamp_ms()`. When the boundary fires in the same call as a rent/retire,
 the caller observes the chain: e.g. `apply_pending_transitions` fires
 `HandoverCompleted`, then `rent()` fires `BidPlaced` on the settled state.
 

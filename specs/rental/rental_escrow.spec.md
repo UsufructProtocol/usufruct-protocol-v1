@@ -108,6 +108,7 @@ messages.
     public const E_NOT_RETIRED:              u64 = 11; // claim_asset() when state != Retired
     public const E_RECEIPT_ESCROW_MISMATCH:  u64 = 12; // return_asset: receipt.escrow_id != object::id(escrow)
     public const E_RECEIPT_ASSET_MISMATCH:   u64 = 13; // return_asset: receipt.asset_id != object::id(&asset)
+    public const E_NO_EARNINGS:              u64 = 14; // withdraw_earnings: owner_earnings == 0 after settlement
 
 
 2. TYPES
@@ -515,13 +516,10 @@ locked balances.
 2. `apply_pending_transitions(escrow, clock, ctx)` — settle any elapsed
    boundaries first so the withdrawn amount includes all accrued earnings.
 3. `let amount = balance::value(&escrow.owner_earnings);`
-4. `let balance = balance::withdraw_all(&mut escrow.owner_earnings);`
-5. Emit `EarningsWithdrawn { escrow_id, amount }` if `amount > 0`
-   (skip emission on zero drain to avoid log noise).
-6. Return `coin::from_balance(balance, ctx)`.
-
-**Empty drain:** if `owner_earnings` is zero, returns a zero-value `Coin`.
-Valid no-op — does not abort.
+4. Assert `amount > 0`, abort `E_NO_EARNINGS`.
+5. `let balance = balance::withdraw_all(&mut escrow.owner_earnings);`
+6. Emit `EarningsWithdrawn { escrow_id, amount }`.
+7. Return `coin::from_balance(balance, ctx)`.
 
 
 5. RENTAL FUNCTIONS
@@ -1146,7 +1144,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| W1 | Withdraw with zero earnings | Returns zero Coin. No event. |
+| W1 | Withdraw with zero earnings | Aborts `E_NO_EARNINGS`. |
 | W2 | Withdraw with positive earnings | Returns Coin of exact balance. `owner_earnings == 0` after. `EarningsWithdrawn` event. |
 | W3 | Withdraw with wrong cap | Aborts `E_OWNER_CAP_MISMATCH`. |
 
@@ -1189,6 +1187,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_NOT_RETIRED` | `public` | claim_asset. |
 | `E_RECEIPT_ESCROW_MISMATCH` | `public` | return_asset. |
 | `E_RECEIPT_ASSET_MISMATCH` | `public` | return_asset. |
+| `E_NO_EARNINGS` | `public` | withdraw_earnings. |
 | `RentalEscrow<Asset, CoinType>` (type) | `public` | `key` only. Shared. |
 | `AssetState` (type) | `public` | `copy + drop + store`. External pattern-match. |
 | `RentPhase` (type) | `public` | `copy + drop + store`. |

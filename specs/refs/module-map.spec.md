@@ -64,7 +64,6 @@ no consensus. All other operations stay on the single escrow object.
 ║  │    escrow exists ↔     │  │  · tenure_ceiling                │  ║
 ║  │    asset exists        │  │  · handover_floor                │  ║
 ║  └────────────────────────┘  │  · descent_ceiling               │  ║
-║                               │  · retire_floor                  │  ║
 ║  ┌────────────────────────┐  │  · CurveShape g  (credit)        │  ║
 ║  │  AssetState            │  │  · CurveShape h  (descent)       │  ║
 ║  │  Idle                  │  │  · PriceFunction                 │  ║
@@ -83,9 +82,9 @@ no consensus. All other operations stay on the single escrow object.
 ║  │  pending_bid     │         ┌───────────────────────────────────┐ ║
 ║  │  Balance<C>      │         │  Flags + routing                  │ ║
 ║  └──────────────────┘         │  · retire_flag: bool              │ ║
-║  ┌──────────────────┐         │  · integrated_at_ms: u64          │ ║
-║  │  owner_earnings  │         │  · fee_inbox_id: ID               │ ║
-║  │  Balance<C>      │         └───────────────────────────────────┘ ║
+║  ┌──────────────────┐         │  · fee_inbox_id: ID               │ ║
+║  │  owner_earnings  │         └───────────────────────────────────┘ ║
+║  │  Balance<C>      │                                               ║
 ║  └──────────────────┘                                               ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -314,7 +313,6 @@ No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 - `tenure_ceiling: u64` — ms
 - `handover_floor: u64` — ms
 - `descent_ceiling: u64` — ms
-- `retire_floor: u64` — ms
 - `credit_curve: CurveShape` — g, for `f_credit_ascent`
 - `descent_curve: CurveShape` — h, for `f_price_descent`
 - `price_function: PriceFunction` — for `f_next_rent_price`
@@ -323,7 +321,7 @@ No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 
 | Function | Purpose |
 |---|---|
-| `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
+| `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
 | One `public(package)` getter per field | Immutable access for `rental_escrow` |
 
 **Validation constraints (enforced in `new`):**
@@ -332,7 +330,6 @@ min_rent_price   > 0
 tenure_ceiling   > 0
 0 < handover_floor <= tenure_ceiling
 descent_ceiling  > 0
-retire_floor     >= 0   (always true for u64)
 ```
 
 **Status:** [ ] `IntegrationConfig` · [ ] `new` · [ ] getters
@@ -512,7 +509,6 @@ functions.
 - `tenant_stake: Balance<CoinType>`
 - `owner_earnings: Balance<CoinType>`
 - `retire_flag: bool`
-- `integrated_at_ms: u64`
 - `fee_inbox_id: ID` — ID of `ProtocolFeeInbox`. Registered at `integrate` via `ProtocolFeeRef`.
 
 **Public API:**

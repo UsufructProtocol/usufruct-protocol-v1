@@ -104,11 +104,10 @@ messages.
     public const E_INSUFFICIENT_PAYMENT:     u64 = 7;  // auction path: payment < price_descent(now)
     public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 8;  // rent() during Rented(HandoverOpen) with retire_flag
     public const E_RETIRED_NO_BID:           u64 = 9;  // rent() called when state is Retired
-    public const E_RETIRE_FLOOR_NOT_ELAPSED: u64 = 10; // retire() before integrated_at + retire_floor
-    public const E_ALREADY_RETIRED:          u64 = 11; // retire() when retire_flag already set
-    public const E_NOT_RETIRED:              u64 = 12; // claim_asset() when state != Retired
-    public const E_RECEIPT_ESCROW_MISMATCH:  u64 = 13; // return_asset: receipt.escrow_id != object::id(escrow)
-    public const E_RECEIPT_ASSET_MISMATCH:   u64 = 14; // return_asset: receipt.asset_id != object::id(&asset)
+    public const E_ALREADY_RETIRED:          u64 = 10; // retire() when retire_flag already set
+    public const E_NOT_RETIRED:              u64 = 11; // claim_asset() when state != Retired
+    public const E_RECEIPT_ESCROW_MISMATCH:  u64 = 12; // return_asset: receipt.escrow_id != object::id(escrow)
+    public const E_RECEIPT_ASSET_MISMATCH:   u64 = 13; // return_asset: receipt.asset_id != object::id(&asset)
 
 
 2. TYPES
@@ -167,7 +166,6 @@ public struct RentalEscrow<phantom Asset: key + store, phantom CoinType> has key
     asset:                      Asset,
     config:                     IntegrationConfig,
     fee_inbox_id:               ID,
-    integrated_at_ms:           u64,
     state:                      AssetState,
     last_rent_price:            u64,
     phase_start_ms:             u64,
@@ -205,7 +203,6 @@ structural invariant explicit.
 | `asset` | The integrated asset. `key + store` required. |
 | `config` | Immutable `IntegrationConfig` — all protocol parameters. |
 | `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Target of `send_fee` transfers. |
-| `integrated_at_ms` | Timestamp at integration. Used to enforce `retire_floor`. |
 | `state` | Current `AssetState`. |
 | `last_rent_price` | Price paid by current tenant. Entry barrier for takeover. `0` when state is `Idle` (no meaning until first tenancy). Set to `min_rent_price` at the first `rent()`. Preserved across Idle re-entries so auction entry price can be derived. |
 | `phase_start_ms` | Timestamp at which the current phase began. See §5 for exact assignment per transition. |
@@ -358,7 +355,6 @@ have no reason to read the clock.
         asset:    Asset,
         config:   IntegrationConfig,
         fee_ref:  &ProtocolFeeRef,
-        clock:    &Clock,
         ctx:      &mut TxContext,
     ): OwnerCap
 
@@ -374,11 +370,9 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
 4. Construct the escrow with:
    - `state = AssetState::Idle`
    - `last_rent_price = 0`
-   - `phase_start_ms = clock.timestamp_ms()` (not strictly needed while Idle —
-     set for consistency; no lazy boundary fires from Idle)
+   - `phase_start_ms = 0`
    - All `Option` fields `None`, all `Balance` fields `balance::zero()`
    - `retire_flag = false`
-   - `integrated_at_ms = clock.timestamp_ms()`
 5. `transfer::share_object(escrow)`.
 6. Emit `AssetIntegrated { escrow_id, owner_cap_id, integrator }`.
 7. Return `OwnerCap`. The PTB routes it (typically via
@@ -421,17 +415,15 @@ asset. Does not mutate balances.
 2. `apply_pending_transitions(escrow, clock, ctx)` — settle all elapsed
    boundaries first.
 3. Assert `!escrow.retire_flag`, abort `E_ALREADY_RETIRED`.
-4. Assert `clock.timestamp_ms() >= escrow.integrated_at_ms + config.retire_floor`,
-   abort `E_RETIRE_FLOOR_NOT_ELAPSED`.
-5. Set `escrow.retire_flag = true`.
-6. If `escrow.state` is `Idle` or `AtDutchAuction` (no active tenant, no
+4. Set `escrow.retire_flag = true`.
+5. If `escrow.state` is `Idle` or `AtDutchAuction` (no active tenant, no
    pending bid), transition immediately:
    - `AtDutchAuction` → set `state = Retired`. Emit `AuctionExpired { next_state: Retired, ... }`
      with `timestamp_ms = clock.timestamp_ms()` (not the would-be auction expiry —
      retire cuts it short).
    - `Idle` → set `state = Retired`. No auxiliary event (the state was
      already "empty"; `RetireFlagSet` covers it).
-7. Emit `RetireFlagSet { escrow_id, state_at_set: escrow.state }`.
+6. Emit `RetireFlagSet { escrow_id, state_at_set: escrow.state }`.
 
 **State after `retire` completes:**
 
@@ -479,8 +471,7 @@ deletes the escrow, returns the asset and earnings.
 
         let RentalEscrow {
             id, asset, config: _, fee_inbox_id: _,
-            integrated_at_ms: _, state: _,
-            last_rent_price: _, phase_start_ms: _,
+            state: _, last_rent_price: _, phase_start_ms: _,
             current_tenant_cap_id: _, current_tenant_address: _,
             pending_tenant_address: _, handover_countdown_expiry: _,
             tenant_stake, pending_bid, owner_earnings,
@@ -1078,7 +1069,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `integrated_at_ms == clock.now()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `AssetIntegrated` event emitted. |
+| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `phase_start_ms == 0`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `AssetIntegrated` event emitted. |
 | T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. No depth check. |
 
 ### 10.2 `rent` — Idle path
@@ -1144,16 +1135,15 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| C1 | `retire` before `retire_floor` elapsed | Aborts `E_RETIRE_FLOOR_NOT_ELAPSED`. |
-| C2 | `retire` from Idle | `retire_flag = true`. `state → Retired`. `RetireFlagSet`. |
-| C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. `AuctionExpired(next_state: Retired)` + `RetireFlagSet`. |
-| C4 | `retire` from Rented(HandoverOpen) | `retire_flag = true`. `state` unchanged. Subsequent `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
-| C5 | `retire` from Rented(HandoverConfirmed) | `retire_flag = true`. `state` unchanged. Handover completes normally; new tenant enters HandoverOpen with flag set. |
-| C6 | Second `retire` call | Aborts `E_ALREADY_RETIRED`. |
-| C7 | `claim_asset` when `state != Retired` | Aborts `E_NOT_RETIRED`. |
-| C8 | `claim_asset` with non-matching `OwnerCap` | Aborts `E_OWNER_CAP_MISMATCH`. |
-| C9 | `claim_asset` on Retired with accumulated earnings | Returns `(asset, coin == owner_earnings)`. OwnerCap burned. Escrow deleted. `AssetClaimed` event. |
-| C10 | Full retire-then-claim flow from Rented | `retire` → wait for tenure expiry → `apply_pending_transitions` moves to Retired → `claim_asset` succeeds. |
+| C1 | `retire` from Idle | `retire_flag = true`. `state → Retired`. `RetireFlagSet`. |
+| C2 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. `AuctionExpired(next_state: Retired)` + `RetireFlagSet`. |
+| C3 | `retire` from Rented(HandoverOpen) | `retire_flag = true`. `state` unchanged. Subsequent `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
+| C4 | `retire` from Rented(HandoverConfirmed) | `retire_flag = true`. `state` unchanged. Handover completes normally; new tenant enters HandoverOpen with flag set. |
+| C5 | Second `retire` call | Aborts `E_ALREADY_RETIRED`. |
+| C6 | `claim_asset` when `state != Retired` | Aborts `E_NOT_RETIRED`. |
+| C7 | `claim_asset` with non-matching `OwnerCap` | Aborts `E_OWNER_CAP_MISMATCH`. |
+| C8 | `claim_asset` on Retired with accumulated earnings | Returns `(asset, coin == owner_earnings)`. OwnerCap burned. Escrow deleted. `AssetClaimed` event. |
+| C9 | Full retire-then-claim flow from Rented | `retire` → wait for tenure expiry → `apply_pending_transitions` moves to Retired → `claim_asset` succeeds. |
 
 ### 10.9 `withdraw_earnings`
 
@@ -1198,7 +1188,6 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_INSUFFICIENT_PAYMENT` | `public` | rent (auction). |
 | `E_RETIRE_FLAG_BLOCKS_BID` | `public` | rent (takeover, flagged). |
 | `E_RETIRED_NO_BID` | `public` | rent (Retired). |
-| `E_RETIRE_FLOOR_NOT_ELAPSED` | `public` | retire. |
 | `E_ALREADY_RETIRED` | `public` | retire. |
 | `E_NOT_RETIRED` | `public` | claim_asset. |
 | `E_RECEIPT_ESCROW_MISMATCH` | `public` | return_asset. |
@@ -1240,13 +1229,12 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 1. Build `CurveShape` values via `curve_shape::new_*`.
 2. Build `PriceFunction` value via `price_function::new_*`.
 3. Build `IntegrationConfig` via `config::new_config(...)`.
-4. Call `rental_escrow::integrate(asset, config, fee_ref, clock, ctx)` →
+4. Call `rental_escrow::integrate(asset, config, fee_ref, ctx)` →
    receive `OwnerCap`.
 5. The escrow is now shared and addressable. Any participant may
    `apply_pending_transitions`, read state, or `rent`.
-6. The owner may `withdraw_earnings` at any time; `retire` when ready
-   (gated by `retire_floor`); and `claim_asset` once the state has
-   resolved to `Retired`.
+6. The owner may `withdraw_earnings` at any time; `retire` when ready;
+   and `claim_asset` once the state has resolved to `Retired`.
 
 All three layers (`curve_shape`, `price_function`, `config`, `rental_escrow`)
 are composable from a single PTB. No off-chain coordinator or keeper is

@@ -47,8 +47,6 @@ can map abort codes to human-readable messages (same convention as `curve`).
     public const E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 3;  // handover_floor > tenure_ceiling
     public const E_DESCENT_CEILING_ZERO:          u64 = 4;  // descent_ceiling == 0
 
-`retire_floor >= 0` is trivially satisfied for `u64` — no error constant needed.
-
 
 2. TYPE
 -------
@@ -63,7 +61,6 @@ public struct IntegrationConfig has copy, drop, store {
     tenure_ceiling:  u64,
     handover_floor:  u64,
     descent_ceiling: u64,
-    retire_floor:    u64,
     credit_curve:    CurveShape,
     descent_curve:   CurveShape,
     price_function:  PriceFunction,
@@ -87,7 +84,6 @@ public struct IntegrationConfig has copy, drop, store {
 | `tenure_ceiling` | milliseconds | Fixed duration of each rental block. |
 | `handover_floor` | milliseconds | Minimum bidding window after a takeover bid. |
 | `descent_ceiling` | milliseconds | Maximum Dutch Auction duration. |
-| `retire_floor` | milliseconds | Minimum time since integration before `retire()` may execute. 0 = no restriction. |
 | `credit_curve` | — | `CurveShape g` — shape of `f_credit_ascent`. |
 | `descent_curve` | — | `CurveShape h` — shape of `f_price_descent`. |
 | `price_function` | — | `PriceFunction` — shape of `f_next_rent_price`. |
@@ -105,7 +101,6 @@ All fields are private. Access via getters only.
         tenure_ceiling:  u64,
         handover_floor:  u64,
         descent_ceiling: u64,
-        retire_floor:    u64,
         credit_curve:    CurveShape,
         descent_curve:   CurveShape,
         price_function:  PriceFunction,
@@ -126,7 +121,7 @@ values via `curve` constructors (also `public`), then pass them to `new_config`.
 
 No validation is performed on `credit_curve`, `descent_curve`, or
 `price_function` field internals — those were validated by their constructors
-in `curve`.
+in `curve_shape` / `price_function`.
 
 ### Return
 
@@ -145,7 +140,6 @@ needs these in Move code.
     public(package) fun tenure_ceiling(cfg: &IntegrationConfig): u64
     public(package) fun handover_floor(cfg: &IntegrationConfig): u64
     public(package) fun descent_ceiling(cfg: &IntegrationConfig): u64
-    public(package) fun retire_floor(cfg: &IntegrationConfig): u64
     public(package) fun credit_curve(cfg: &IntegrationConfig): &CurveShape
     public(package) fun descent_curve(cfg: &IntegrationConfig): &CurveShape
     public(package) fun price_function(cfg: &IntegrationConfig): &PriceFunction
@@ -177,11 +171,7 @@ re-checking.
 **P3 — Handover contained within tenure:**
     cfg.handover_floor <= cfg.tenure_ceiling
 
-**P4 — retire_floor is unrestricted:**
-    cfg.retire_floor can be 0 (no restriction) or any u64 value.
-    0 means the owner may call `retire()` immediately after integration.
-
-**P5 — Getters are consistent:**
+**P4 — Getters are consistent:**
     For all fields f: getter_f(new_config(..., f, ...)) == f
     (Constructor stores values as-is; no normalization occurs in `config`.)
 
@@ -189,7 +179,7 @@ re-checking.
 6. TEST CASES
 -------------
 
-Format: `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function)`
+Format: `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, credit_curve, descent_curve, price_function)`
 
 Curve values use shorthand: `Lin` = `new_linear()`, `Smt` = `new_smoothstep()`,
 `Pow(n,d)` = `new_power_law(n, d)`, `Exp(a,neg)` = `new_exponential(a, neg)`,
@@ -198,18 +188,18 @@ Price function: `FD(d)` = `new_fixed_delta(d)`, `CD(bps,d)` = `new_compound_delt
 
 ### 6.1 Valid inputs (must not abort)
 
-| # | min_rent_price | tenure_ceiling | handover_floor | descent_ceiling | retire_floor | credit_curve | descent_curve | price_function | Notes |
-|---|---|---|---|---|---|---|---|---|---|
-| V1 | 1 | 1 | 1 | 1 | 0 | Lin | Lin | FD(1) | Minimal valid config. handover_floor == tenure_ceiling. |
-| V2 | 1_000_000 | 86_400_000 | 3_600_000 | 43_200_000 | 0 | Lin | Lin | FD(1) | Typical: 1h handover in 24h tenure, 12h auction. |
-| V3 | 100 | 10_000 | 5_000 | 10_000 | 7_200_000 | Smt | Smt | FD(10) | retire_floor > 0. |
-| V4 | 50 | 100_000 | 1 | 50_000 | 0 | Pow(1,2) | Lin | FD(1) | handover_floor = 1 (minimum). |
-| V5 | u64::MAX | 1_000 | 500 | 1_000 | 0 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
-| V6 | 1 | u64::MAX | 1 | u64::MAX | 0 | Log | Log | FD(1) | No upper bound on time parameters — including Logistic. |
-| V7 | 1_000 | 86_400_000 | 3_600_000 | 43_200_000 | 0 | Lin | Lin | CD(500,100) | CompoundDelta price function: 5% + 100 base units per cycle. |
+| # | min_rent_price | tenure_ceiling | handover_floor | descent_ceiling | credit_curve | descent_curve | price_function | Notes |
+|---|---|---|---|---|---|---|---|---|
+| V1 | 1 | 1 | 1 | 1 | Lin | Lin | FD(1) | Minimal valid config. handover_floor == tenure_ceiling. |
+| V2 | 1_000_000 | 86_400_000 | 3_600_000 | 43_200_000 | Lin | Lin | FD(1) | Typical: 1h handover in 24h tenure, 12h auction. |
+| V3 | 100 | 10_000 | 5_000 | 10_000 | Smt | Smt | FD(10) | Smoothstep curves, both directions. |
+| V4 | 50 | 100_000 | 1 | 50_000 | Pow(1,2) | Lin | FD(1) | handover_floor = 1 (minimum). |
+| V5 | u64::MAX | 1_000 | 500 | 1_000 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
+| V6 | 1 | u64::MAX | 1 | u64::MAX | Log | Log | FD(1) | No upper bound on time parameters — including Logistic. |
+| V7 | 1_000 | 86_400_000 | 3_600_000 | 43_200_000 | Lin | Lin | CD(500,100) | CompoundDelta price function: 5% + 100 base units per cycle. |
 
-**Note — unconstrained free variables:** `tenure_ceiling`, `descent_ceiling`,
-and `retire_floor` have no upper bound. Absurd values (e.g. `u64::MAX`) are
+**Note — unconstrained free variables:** `tenure_ceiling` and `descent_ceiling`
+have no upper bound. Absurd values (e.g. `u64::MAX`) are
 accepted by `new_config`; any resulting arithmetic overflow surfaces at runtime
 inside `curve` or `rental_escrow` via Move's checked arithmetic. Adding upper
 bounds here would be the same mistake as the removed Logistic constraint —
@@ -230,12 +220,11 @@ validation noise for inputs that never occur in practice.
 Verifies that every value passed to `new_config` is returned unchanged by its
 getter — the constructor does not transform, normalize, or discard any field.
 
-For any config `c` produced by `new_config(mrp, tc, hf, dsc, rf, g, h, pf)`:
+For any config `c` produced by `new_config(mrp, tc, hf, dsc, g, h, pf)`:
     min_rent_price(&c)  == mrp
     tenure_ceiling(&c)  == tc
     handover_floor(&c)  == hf
     descent_ceiling(&c) == dsc
-    retire_floor(&c)    == rf
     credit_curve(&c)    == &g
     descent_curve(&c)   == &h
     price_function(&c)  == &pf
@@ -266,7 +255,6 @@ round-trip holds against the reduced value, not the raw arguments:
 | `tenure_ceiling(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `handover_floor(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `descent_ceiling(cfg)` | `public(package)` | Getter — returns `u64`. |
-| `retire_floor(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `credit_curve(cfg)` | `public(package)` | Getter — returns `&CurveShape`. |
 | `descent_curve(cfg)` | `public(package)` | Getter — returns `&CurveShape`. |
 | `price_function(cfg)` | `public(package)` | Getter — returns `&PriceFunction`. |

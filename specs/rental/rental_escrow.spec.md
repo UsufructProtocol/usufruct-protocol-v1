@@ -791,9 +791,11 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 3. Compute `(owner_share, fee_share) = split_fee(used_credit)` — §7.4.
 4. **Take funds before any address rotation** (push-before-rotate invariant):
    - Take `remain_credit` balance from `tenant_stake` (`balance::split`).
-   - Push `coin::from_balance(remain_credit, ctx)` via
+   - `if remain_credit > 0` — push `coin::from_balance(remain_credit, ctx)` via
      `transfer::public_transfer` to
-     `option::destroy_some(escrow.current_tenant_address)`.
+     `*option::borrow(&escrow.current_tenant_address)`.
+     // When countdown == remaining_rent_time the curve saturates: used_credit
+     // remain_credit == 0. Skip push to avoid a zero-value Coin. // Consequence of `countdown = min(escrow.config.handover_floor, remaining)`.
    - Take `fee_balance = balance::split(&mut escrow.tenant_stake, fee_share)`.
    - Call `fee_message::send_fee<CoinType>(fee_balance, escrow.fee_inbox_id, ctx)`.
    - Remaining `tenant_stake` = `owner_share` exactly. Move it into
@@ -819,15 +821,6 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 9. Emit `HandoverCompleted { escrow_id, displaced_tenant, new_tenant,
    new_tenant_cap_id, used_credit, owner_share, protocol_fee, remain_credit,
    timestamp_ms: boundary_ms }`.
-
-**Dutch Auction bypass (design-compact §4):** when `boundary_ms ==
-phase_start_ms + tenure_ceiling`, `used_credit` saturates to `tenant_stake`
-and `remain_credit = 0`. Step 4 pushes a zero coin (valid;
-Sui allows zero-value `Coin` transfers, and `send_fee` short-circuits zero
-balances — no FeeMessage created). Handover completes normally; the
-subsequent tenure-expiry check in `apply_pending_transitions` sees
-`Rented(HandoverOpen)` with `now == phase_start_ms` and does not fire (the
-new tenant's cycle has just begun).
 
 ---
 

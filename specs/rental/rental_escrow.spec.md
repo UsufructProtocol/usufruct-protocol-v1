@@ -213,7 +213,7 @@ structural invariant explicit.
 | `tenant_stake` | Balance paid by the current tenant. Non-zero only while `state` is `Rented`. At handover: `used_credit` splits into `owner_earnings` (95%) + fee (5%); `remain_credit` pushed to displaced tenant; `pending_bid` becomes the new `tenant_stake`. At tenure expiry: full balance splits into `owner_earnings` (95%) + fee (5%). |
 | `pending_bid` | Balance paid by the pending tenant. Non-zero only while `state` is `Rented(HandoverConfirmed)`. Refunded on supersede; becomes new `tenant_stake` at handover. |
 | `owner_earnings` | Accumulated 95% share. Withdrawn via `withdraw_earnings` or swept at `claim_asset`. |
-| `retire_flag` | Once set by `retire()`, stays set. Blocks new bids from `rent()` in `Rented(HandoverOpen)`. Forces transition to `Retired` (bypassing auction) at tenure expiry / auction expiry. |
+| `retire_flag` | Once set by `retire()`, stays set. In `Rented(HandoverOpen)`: blocks new bids and redirects tenure expiry to `Retired` instead of `AtDutchAuction`. `Idle` and `AtDutchAuction`: `retire()` transitions to `Retired` immediately. Not checked in `do_handover`. |
 
 ### 2.4 AssetReceipt — hot potato
 
@@ -304,7 +304,7 @@ public struct TenureExpired has copy, drop {
 
 public struct AuctionExpired has copy, drop {
     escrow_id:        ID,
-    next_state:       AssetState,  // Idle or Retired
+    next_state:       AssetState,  // always Idle
     timestamp_ms:     u64,   // = phase_start_ms + descent_ceiling
 }
 
@@ -673,7 +673,7 @@ if escrow.state == AtDutchAuction:
     let expiry = escrow.phase_start_ms + escrow.config.descent_ceiling;
     if clock.timestamp_ms() >= expiry:
         do_auction_expiry(escrow, expiry, ctx)
-        // Post: state = Idle, unless retire_flag → Retired
+        // Post: state = Idle
         // Post: phase_start_ms = expiry
 
 return escrow.state
@@ -900,9 +900,7 @@ recovery.
 **Algorithm:**
 
 1. No balances to move — no funds were placed at auction entry.
-2. **Determine next state:**
-   - If `escrow.retire_flag`: `escrow.state = Retired`.
-   - Else: `escrow.state = Idle`.
+2. `escrow.state = Idle`.
 3. `escrow.phase_start_ms = boundary_ms;`
 4. Emit `AuctionExpired { escrow_id, next_state: escrow.state,
    timestamp_ms: boundary_ms }`.
@@ -1118,7 +1116,6 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | A4 | Called on AtDutchAuction, descent expiry reached | `do_auction_expiry` fires. Returns `Idle`. `AuctionExpired` emitted. |
 | A5 | Called after long inactivity: handover + tenure + auction all due | All three fire in order. Returns `Idle`. Three events emitted. |
 | A6 | Called with retire_flag, Rented(HandoverOpen), tenure expired | `do_tenure_expiry` fires with `next_state: Retired`. Returns `Retired`. |
-| A7 | Called with retire_flag, AtDutchAuction, descent expired | `do_auction_expiry` fires with `next_state: Retired`. Returns `Retired`. |
 
 ### 10.7 `borrow_asset` / `return_asset`
 

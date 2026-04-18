@@ -277,3 +277,44 @@ Both checks live in `rental_escrow`, not here.
 No error constants.
 
 **Depends on:** nothing (`sui::object` only).
+
+
+7. OBJECT DISPLAY
+-----------------
+
+![TenantCap](../../media/object-display/tenant-cap.png)
+
+`Display<TenantCap>` gives every cap a visual identity in wallets and explorers.
+Created once post-deployment via a PTB presenting `&Publisher` for the package
+and `&mut DisplayRegistry` (Sui framework shared object).
+
+### Fields
+
+| Key | Value | Notes |
+|---|---|---|
+| `name` | `Tenant Cap` | Static. |
+| `description` | `Grants temporary access to a rented asset in the Liquid Renting Protocol. Becomes stale when displaced by a new tenant.` | Static. |
+| `image_url` | `{IMAGE_BASE_URL}/tenant-cap.png` | Hosted URL. Source: `media/object-display/tenant-cap.png`. |
+| `project_url` | `https://liquidrenting.com` | Static. |
+| `creator` | `Liquid Renting Protocol` | Static. |
+
+`{IMAGE_BASE_URL}` is set at deployment time to the protocol's media hosting base URL.
+
+### Creation
+
+```move
+use sui::display_registry;
+
+let mut display = display_registry::new<TenantCap>(&publisher, registry);
+display.add(b"name".to_string(),        b"Tenant Cap".to_string());
+display.add(b"description".to_string(), b"Grants temporary access to a rented asset in the Liquid Renting Protocol. Becomes stale when displaced by a new tenant.".to_string());
+display.add(b"image_url".to_string(),   b"{IMAGE_BASE_URL}/tenant-cap.png".to_string());
+display.add(b"project_url".to_string(), b"https://liquidrenting.com".to_string());
+display.add(b"creator".to_string(),     b"Liquid Renting Protocol".to_string());
+display_registry::commit(display);
+```
+
+One `Display<TenantCap>` per package deployment. ID is deterministic from
+`DisplayRegistry` + type — no event scanning required.
+
+**Status:** [ ] `Display<TenantCap>` created and committed.

@@ -246,3 +246,44 @@ the cap is presented.
 | `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_ESCROW_MISMATCH` if mismatch. |
 
 **Depends on:** nothing (`sui::object` only).
+
+
+7. OBJECT DISPLAY
+-----------------
+
+![OwnerCap](../../media/object-display/owner-cap.png)
+
+`Display<OwnerCap>` gives every cap a visual identity in wallets and explorers.
+Created once post-deployment via a PTB presenting `&Publisher` for the package
+and `&mut DisplayRegistry` (Sui framework shared object).
+
+### Fields
+
+| Key | Value | Notes |
+|---|---|---|
+| `name` | `Owner Cap` | Static. |
+| `description` | `Grants owner authority over a RentalEscrow. Authorizes withdraw_earnings, retire, and claim_asset. Transferable — whoever holds this cap holds full ownership authority.` | Static. |
+| `image_url` | `{IMAGE_BASE_URL}/owner-cap.png` | Hosted URL. Source: `media/object-display/owner-cap.png`. |
+| `project_url` | `https://liquidrenting.com` | Static. |
+| `creator` | `Liquid Renting Protocol` | Static. |
+
+`{IMAGE_BASE_URL}` is set at deployment time to the protocol's media hosting base URL.
+
+### Creation
+
+```move
+use sui::display_registry;
+
+let mut display = display_registry::new<OwnerCap>(&publisher, registry);
+display.add(b"name".to_string(),        b"Owner Cap".to_string());
+display.add(b"description".to_string(), b"Grants owner authority over a RentalEscrow. Authorizes withdraw_earnings, retire, and claim_asset. Transferable — whoever holds this cap holds full ownership authority.".to_string());
+display.add(b"image_url".to_string(),   b"{IMAGE_BASE_URL}/owner-cap.png".to_string());
+display.add(b"project_url".to_string(), b"https://liquidrenting.com".to_string());
+display.add(b"creator".to_string(),     b"Liquid Renting Protocol".to_string());
+display_registry::commit(display);
+```
+
+One `Display<OwnerCap>` per package deployment. ID is deterministic from
+`DisplayRegistry` + type — no event scanning required.
+
+**Status:** [ ] `Display<OwnerCap>` created and committed.

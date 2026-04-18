@@ -279,3 +279,51 @@ The alternatives:
 
 `ProtocolFeeRef` is the minimal object that makes permissionless, type-safe,
 consensus-free registration of the fee inbox ID possible.
+
+
+8. OBJECT DISPLAY
+-----------------
+
+![ProtocolFeeInbox](../../media/object-display/protocol-fee-inbox.png)
+
+`Display<ProtocolFeeInbox>` gives the singleton inbox a visual identity in the
+deployer's wallet. Unlike `OwnerCap` and `TenantCap`, this is a protocol-level
+object — not a per-user capability. Its Display reflects that: no dynamic field
+references, purely descriptive.
+
+Created once post-deployment via a PTB presenting `&Publisher` for the package
+and `&mut DisplayRegistry` (Sui framework shared object).
+
+### Fields
+
+| Key | Value | Notes |
+|---|---|---|
+| `name` | `Protocol Fee Inbox` | Static. |
+| `description` | `Singleton fee inbox for the Liquid Renting Protocol. Accumulates FeeMessage objects transferred at each boundary event across all escrows.` | Static. |
+| `image_url` | `{IMAGE_BASE_URL}/protocol-fee-inbox.png` | Hosted URL. Source: `media/object-display/protocol-fee-inbox.png`. |
+| `project_url` | `https://liquidrenting.com` | Static. |
+| `creator` | `Liquid Renting Protocol` | Static. |
+
+`{IMAGE_BASE_URL}` is set at deployment time to the protocol's media hosting base URL.
+
+### Creation
+
+```move
+use sui::display_registry;
+
+let mut display = display_registry::new<ProtocolFeeInbox>(&publisher, registry);
+display.add(b"name".to_string(),        b"Protocol Fee Inbox".to_string());
+display.add(b"description".to_string(), b"Singleton fee inbox for the Liquid Renting Protocol. Accumulates FeeMessage objects transferred at each boundary event across all escrows.".to_string());
+display.add(b"image_url".to_string(),   b"{IMAGE_BASE_URL}/protocol-fee-inbox.png".to_string());
+display.add(b"project_url".to_string(), b"https://liquidrenting.com".to_string());
+display.add(b"creator".to_string(),     b"Liquid Renting Protocol".to_string());
+display_registry::commit(display);
+```
+
+One `Display<ProtocolFeeInbox>` per package deployment. ID is deterministic from
+`DisplayRegistry` + type — no event scanning required.
+
+**Note:** `ProtocolFeeRef` has no Display — it is a frozen infrastructure pointer,
+never held in a user wallet and not intended for human-facing rendering.
+
+**Status:** [ ] `Display<ProtocolFeeInbox>` created and committed.

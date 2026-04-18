@@ -928,9 +928,12 @@ fee_share) at 95/5.
 8. READ-ONLY QUERIES
 ---------------------
 
-All read-only functions are `public`. They do not mutate the escrow and are
-callable via `devInspectTransactionBlock` for free, and from within PTBs
-without consensus cost when the escrow is already referenced.
+All read-only functions are `public`. They do not mutate the escrow.
+Via `devInspectTransactionBlock` they execute for free with no consensus
+involvement. In a regular PTB, taking `&RentalEscrow` (shared object) still
+requires consensus, but read-only transactions on the same object can execute
+in parallel without ordering between them — reducing contention compared to
+mutable access.
 
 ### 8.1 `current_state`
 

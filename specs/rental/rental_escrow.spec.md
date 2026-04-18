@@ -24,7 +24,7 @@ points, and the fund distribution logic for every boundary event.
   object per integrated asset. Holds the asset, immutable `IntegrationConfig`,
   phase anchors, balance fields, addresses, and the retire flag.
 - `AssetState` — public enum: `Idle | Rented { phase: RentPhase } |
-  AtDutchAuction | Retired`. Copy/drop/store. Returned by `current_state` and
+  AtDutchAuction | Retired`. Copy/drop/store. Returned by
   `apply_pending_transitions`. External callers may pattern-match.
 - `RentPhase` — public enum: `HandoverOpen | HandoverConfirmed`. Carried
   inside `Rented`.
@@ -33,7 +33,7 @@ points, and the fund distribution logic for every boundary event.
 - All public entry points: `integrate`, `rent`, `retire`, `claim_asset`,
   `withdraw_earnings`, `borrow_asset`, `return_asset`,
   `apply_pending_transitions`.
-- Read-only queries: `current_state`, `current_used_credit`,
+- Read-only queries: `current_used_credit`,
   `current_price_descent`, `current_next_rent_price`.
 - Private settlement helpers: `do_handover`, `do_tenure_expiry`,
   `do_auction_expiry`, `split_fee`.
@@ -125,8 +125,7 @@ public enum AssetState has copy, drop, store {
 ```
 
 **Abilities:** `copy + drop + store`. Returned by value from
-`apply_pending_transitions` and `current_state`. Embedded inside
-`RentalEscrow`.
+`apply_pending_transitions`. Embedded inside `RentalEscrow`.
 
 **Semantics:**
 
@@ -935,22 +934,13 @@ requires consensus, but read-only transactions on the same object can execute
 in parallel without ordering between them — reducing contention compared to
 mutable access.
 
-### 8.1 `current_state`
+**Reading settled state:** use `apply_pending_transitions` via
+`devInspectTransactionBlock`. It resolves all pending transitions and returns
+the settled `AssetState` without committing the transaction — free, no
+consensus. This is more correct than a dedicated read-only query because it
+reflects the actual settled state, not a speculative computation.
 
-    public fun current_state<Asset: key + store, CoinType>(
-        escrow: &RentalEscrow<Asset, CoinType>,
-        clock:  &Clock,
-    ): AssetState
-
-Computes the settled state without mutating. Used by frontends and
-indexers to read "what state would `apply_pending_transitions` produce if
-called now?"
-
-**Algorithm:** replicates the three sequential checks of
-`apply_pending_transitions` but reads-only — it computes the would-be
-state without writing. Does not fire events. Does not touch balances.
-
-### 8.2 `current_used_credit`
+### 8.1 `current_used_credit`
 
     public fun current_used_credit<Asset: key + store, CoinType>(
         escrow:       &RentalEscrow<Asset, CoinType>,
@@ -970,7 +960,7 @@ for the current tenant's payment.
 displayed used_credit would otherwise exceed the amount actually consumed
 by the current tenant — misleading at the UI layer.
 
-### 8.3 `current_price_descent`
+### 8.2 `current_price_descent`
 
     public fun current_price_descent<Asset: key + store, CoinType>(
         escrow:       &RentalEscrow<Asset, CoinType>,
@@ -978,10 +968,10 @@ by the current tenant — misleading at the UI layer.
     ): u64
 
 Delegates to `curve_shape::compute_price_descent`. Only meaningful when
-`current_state(escrow) == AtDutchAuction`. Returns `min_rent_price` once
+`escrow.state == AtDutchAuction`. Returns `min_rent_price` once
 the descent is saturated.
 
-### 8.4 `current_next_rent_price`
+### 8.3 `current_next_rent_price`
 
     public fun current_next_rent_price<Asset: key + store, CoinType>(
         escrow: &RentalEscrow<Asset, CoinType>,
@@ -1202,7 +1192,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `borrow_asset(...)` | `public` | Returns `(Asset, AssetReceipt)`. |
 | `return_asset(...)` | `public` | Consumes `AssetReceipt`. |
 | `apply_pending_transitions(...)` | `public` | Permissionless settlement. Returns settled `AssetState`. |
-| `current_state(...)` | `public` | Read-only. |
+| `apply_pending_transitions(...)` via `devInspectTransactionBlock` | — | Free settled-state read. No consensus, no commit. |
 | `current_used_credit(...)` | `public` | Read-only. |
 | `current_price_descent(...)` | `public` | Read-only. |
 | `current_next_rent_price(...)` | `public` | Read-only. |

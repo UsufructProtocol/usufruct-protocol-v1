@@ -1103,8 +1103,9 @@ reflects the actual settled state, not a speculative computation.
         };
 
     // 2. Elapsed time since the current phase started.
-    //    Caller must ensure effective_ts >= escrow.phase_start_ms;
-    //    underflow aborts (u64 checked arithmetic).
+    //    If effective_ts < phase_start_ms (caller passed a timestamp before the phase
+    //    began), return 0 — no credit consumed yet.
+    if effective_ts < escrow.phase_start_ms { return 0 };
     let elapsed_ms = effective_ts - escrow.phase_start_ms;
 
     // 3. Delegate to curve evaluation.
@@ -1145,6 +1146,8 @@ Only meaningful when `escrow.state == AtDutchAuction`. Returns
 
     // Elapsed time since the auction started.
     // phase_start_ms is set to the tenure-expiry boundary when AtDutchAuction begins.
+    // If timestamp_ms < phase_start_ms, return last_rent_price — auction has not started yet.
+    if timestamp_ms < escrow.phase_start_ms { return escrow.last_rent_price };
     let elapsed_ms = timestamp_ms - escrow.phase_start_ms;
 
     // Delegates to curve evaluation.

@@ -737,14 +737,21 @@ integrating ecosystem.
    asset_id: object::id(&asset) }`.
 6. Return `(asset, receipt)`.
 
-**PTB clock-fixity invariant:** once step 3 passes, the `TenantCap` cannot
-become stale before `return_asset` completes. `borrow_asset` and
-`return_asset` execute within the same PTB; Sui fixes `clock::timestamp_ms()`
-at checkpoint time — it does not advance between PTB steps. Any handover due
+**Why `return_asset` requires no cap re-verification:** `return_asset` can
+only be called by a PTB that holds an `AssetReceipt`. An `AssetReceipt` can
+only exist if `borrow_asset` was called and succeeded in the same PTB — the
+hot-potato type makes it impossible to store, transfer, or fabricate. And
+`borrow_asset` only succeeds for the current tenant (steps 2–3). The receipt
+is therefore irrefutable proof that cap authorization was already verified.
+No re-check is needed.
+
+**PTB clock-fixity — supporting invariant:** Sui fixes `clock::timestamp_ms()`
+at checkpoint time; it does not advance between PTB steps. Any handover due
 at that timestamp was already resolved by `apply_pending_transitions` in
 step 1. No new transitions can fire within the same transaction, so
-`current_tenant_cap_id` cannot rotate again. `return_asset` therefore
-requires no cap re-verification.
+`current_tenant_cap_id` cannot rotate after the receipt is issued. This
+explains why no state change can have occurred between the two calls —
+but the primary authorization argument is the receipt itself.
 
 **No event emitted.** Borrow is a PTB-internal event with no observable
 state change across transactions; the receipt is consumed in the same PTB.

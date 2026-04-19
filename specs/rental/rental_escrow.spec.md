@@ -98,8 +98,8 @@ messages.
     public const E_TENANT_CAP_WRONG_ESCROW:  u64 = 1;  // cap.escrow_id != object::id(escrow)
     public const E_TENANT_CAP_STALE:         u64 = 2;  // object::id(cap) != current_tenant_cap_id
     public const E_NOT_IDLE:                 u64 = 3;  // rent() Idle-path: state is not Idle
-    public const E_NOT_AUCTION:              u64 = 4;  // (reserved — dispatch abort guard)
-    public const E_NOT_RENTED:               u64 = 5;  // (reserved — dispatch abort guard)
+    public const E_NOT_AUCTION:              u64 = 4;  // current_price_descent: state != AtDutchAuction
+    public const E_NOT_RENTED:               u64 = 5;  // current_used_credit / current_next_rent_price: state != Rented
     public const E_INSUFFICIENT_PAYMENT:     u64 = 6;  // payment < floor price (all acquisition paths)
     public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 7;  // rent() during Rented(HandoverOpen) with retire_flag
     public const E_RETIRED_NO_BID:              u64 = 8;  // rent() called when state is Retired
@@ -1088,15 +1088,18 @@ reflects the actual settled state, not a speculative computation.
 
 **Algorithm:**
 
-    // 1. Clamp to handover boundary when in HandoverConfirmed.
+    // 1. Guard — only meaningful in Rented state.
+    assert!(matches!(escrow.state, AssetState::Rented { .. }), E_NOT_RENTED);
+
+    // 2. Clamp to handover boundary when in HandoverConfirmed.
     //    Past that point the current tenant's stake is no longer growing —
     //    the boundary is where their credit froze.
     let effective_ts =
         if let Rented { HandoverConfirmed } = escrow.state {
             let expiry = *option::borrow(&escrow.handover_countdown_expiry);
-            if timestamp_ms > expiry { expiry } else { timestamp_ms }
+            std::u64::min(timestamp_ms, expiry)
         } else {
-            timestamp_ms
+            timestamp_ms  // HandoverOpen: compute_used_credit saturates at tenure_ceiling
         };
 
     // 2. Elapsed time since the current phase started.
@@ -1137,6 +1140,9 @@ Only meaningful when `escrow.state == AtDutchAuction`. Returns
 
 **Algorithm:**
 
+    // Guard — only meaningful in AtDutchAuction state.
+    assert!(escrow.state == AssetState::AtDutchAuction, E_NOT_AUCTION);
+
     // Elapsed time since the auction started.
     // phase_start_ms is set to the tenure-expiry boundary when AtDutchAuction begins.
     let elapsed_ms = timestamp_ms - escrow.phase_start_ms;
@@ -1166,6 +1172,9 @@ Only meaningful when `escrow.state == Rented`. No `timestamp_ms` parameter —
 `f_next_rent_price` depends only on `last_rent_price`, not on elapsed time.
 
 **Algorithm:**
+
+    // Guard — only meaningful in Rented state.
+    assert!(matches!(escrow.state, AssetState::Rented { .. }), E_NOT_RENTED);
 
     price_function::compute_next_rent_price(
         config::price_function(&escrow.config),
@@ -1340,7 +1349,19 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | W2 | Withdraw with positive earnings | Returns Coin of exact balance. `owner_earnings == 0` after. `EarningsWithdrawn` event. |
 | W3 | Withdraw with wrong cap | Aborts `E_OWNER_CAP_MISMATCH`. |
 
-### 10.10 Fee routing
+### 10.10 Read-only queries — state guard
+
+| # | Description | Expected |
+|---|---|---|
+| Q1 | `current_used_credit` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
+| Q2 | `current_used_credit` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
+| Q3 | `current_used_credit` called when state is `Retired` | Aborts `E_NOT_RENTED`. |
+| Q4 | `current_price_descent` called when state is `Idle` | Aborts `E_NOT_AUCTION`. |
+| Q5 | `current_price_descent` called when state is `Rented` | Aborts `E_NOT_AUCTION`. |
+| Q6 | `current_next_rent_price` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
+| Q7 | `current_next_rent_price` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
+
+### 10.11 Fee routing
 
 | # | Description | Expected |
 |---|---|---|
@@ -1369,8 +1390,8 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_TENANT_CAP_WRONG_ESCROW` | `public` | borrow_asset. |
 | `E_TENANT_CAP_STALE` | `public` | borrow_asset. |
 | `E_NOT_IDLE` | `public` | (reserved) |
-| `E_NOT_AUCTION` | `public` | (reserved) |
-| `E_NOT_RENTED` | `public` | (reserved) |
+| `E_NOT_AUCTION` | `public` | current_price_descent: state != AtDutchAuction. |
+| `E_NOT_RENTED` | `public` | current_used_credit / current_next_rent_price: state != Rented. |
 | `E_INSUFFICIENT_PAYMENT` | `public` | rent — payment below floor price (all acquisition paths). |
 | `E_RETIRE_FLAG_BLOCKS_BID` | `public` | rent (takeover, flagged). |
 | `E_RETIRED_NO_BID` | `public` | rent (Retired). |
@@ -1395,9 +1416,9 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `return_asset(...)` | `public` | Consumes `AssetReceipt`. |
 | `apply_pending_transitions(...)` | `public` | Permissionless settlement. Returns settled `AssetState`. |
 | `apply_pending_transitions(...)` via `devInspectTransactionBlock` | — | Free settled-state read. No consensus, no commit. |
-| `current_used_credit(...)` | `public` | Read-only. |
-| `current_price_descent(...)` | `public` | Read-only. |
-| `current_next_rent_price(...)` | `public` | Read-only. |
+| `current_used_credit(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
+| `current_price_descent(...)` | `public` | Read-only. Aborts `E_NOT_AUCTION` if state != AtDutchAuction. |
+| `current_next_rent_price(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
 | `do_handover(...)` | private | §7.1 |
 | `do_tenure_expiry(...)` | private | §7.2 |
 | `do_auction_expiry(...)` | private | §7.3 |

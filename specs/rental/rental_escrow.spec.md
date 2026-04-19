@@ -109,6 +109,7 @@ messages.
     public const E_RECEIPT_ESCROW_MISMATCH:     u64 = 12; // return_asset: receipt.escrow_id != object::id(escrow)
     public const E_RECEIPT_ASSET_MISMATCH:      u64 = 13; // return_asset: receipt.asset_id != object::id(&asset)
     public const E_NO_EARNINGS:                 u64 = 14; // withdraw_earnings: owner_earnings == 0 after settlement
+    public const E_ASSET_ALREADY_BORROWED:      u64 = 15; // borrow_asset called while asset is already out of escrow
 
 
 2. TYPES
@@ -726,7 +727,12 @@ integrating ecosystem.
    some(object::id(tenant_cap))`, abort `E_TENANT_CAP_STALE`. This
    check rejects both stale caps (displaced tenants) and caps from other
    escrows (covered by step 2, but layered here for clarity).
-4. `let asset = option::extract(&mut escrow.asset);`
+4. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
+   This is the only protocol state in which the internal `Option<Asset>` field
+   can be `None` — when a previous `borrow_asset` call in the same PTB has
+   already extracted the asset. Prevents a double-borrow from producing an
+   opaque framework abort via `option::extract`.
+   `let asset = option::extract(&mut escrow.asset);`
 5. Construct `receipt = AssetReceipt { escrow_id: object::id(escrow),
    asset_id: object::id(&asset) }`.
 6. Return `(asset, receipt)`.
@@ -1225,6 +1231,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | B5 | Return with receipt for a different escrow | Aborts `E_RECEIPT_ESCROW_MISMATCH`. |
 | B6 | Return a different asset (substitution attempt) | Aborts `E_RECEIPT_ASSET_MISMATCH`. |
 | B7 | Forget to return (receipt unconsumed) | PTB fails to type-check — hot potato must be consumed. |
+| B8 | `borrow_asset` called twice in the same PTB | Second call aborts `E_ASSET_ALREADY_BORROWED` — asset field is `None` after the first extraction. |
 
 ### 10.8 `retire` / `claim_asset`
 
@@ -1289,6 +1296,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_RECEIPT_ESCROW_MISMATCH` | `public` | return_asset. |
 | `E_RECEIPT_ASSET_MISMATCH` | `public` | return_asset. |
 | `E_NO_EARNINGS` | `public` | withdraw_earnings. |
+| `E_ASSET_ALREADY_BORROWED` | `public` | borrow_asset called while asset is already out of escrow. |
 | `RentalEscrow<Asset, CoinType>` (type) | `public` | `key` only. Shared. |
 | `AssetState` (type) | `public` | `copy + drop + store`. External pattern-match. |
 | `RentPhase` (type) | `public` | `copy + drop + store`. |

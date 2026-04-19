@@ -731,6 +731,15 @@ integrating ecosystem.
    asset_id: object::id(&asset) }`.
 6. Return `(asset, receipt)`.
 
+**PTB clock-fixity invariant:** once step 3 passes, the `TenantCap` cannot
+become stale before `return_asset` completes. `borrow_asset` and
+`return_asset` execute within the same PTB; Sui fixes `clock::timestamp_ms()`
+at checkpoint time — it does not advance between PTB steps. Any handover due
+at that timestamp was already resolved by `apply_pending_transitions` in
+step 1. No new transitions can fire within the same transaction, so
+`current_tenant_cap_id` cannot rotate again. `return_asset` therefore
+requires no cap re-verification.
+
 **No event emitted.** Borrow is a PTB-internal event with no observable
 state change across transactions; the receipt is consumed in the same PTB.
 
@@ -856,7 +865,8 @@ of liquid renting is already compatible at the contract level.
 4. `option::fill(&mut escrow.asset, asset);`
 5. Does **not** call `apply_pending_transitions` — returning an asset never
    needs to resolve boundary events; no balance is touched, no state field
-   changes.
+   changes. The PTB clock-fixity invariant (§6.1) guarantees no new
+   transition can have fired since `borrow_asset` ran in the same PTB.
 
 **No event emitted.** Same rationale as `borrow_asset`.
 

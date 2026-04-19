@@ -31,7 +31,7 @@ For rationale, incentive analysis, and examples see liquid-renting-protocol-desi
 | Rented (handover_confirmed) | Rented (new tenant) | If handover fires at or after tenure expiry: Dutch Auction bypassed, demand already confirmed. |
 | At Dutch Auction | Rented | Buyer pays current `price_descent`. New cycle begins. |
 | At Dutch Auction | Idle | `descent_ceiling` elapsed, no buyer. Price reached `min_rent_price`. |
-| Idle | Retired | Owner calls `retire()`. |
+| Idle | Retired | Owner calls `retire()`. `retire_floor` must have elapsed since integration. |
 | At Dutch Auction | Retired | Owner calls `retire()`: immediate termination. |
 | Rented (handover_open) | Retired | Owner calls `retire()`: sets `retire` flag. Blocks new bids. Tenant completes full block. At tenure expiry → Retired. |
 
@@ -251,12 +251,13 @@ All set once at integration time. Immutable for the lifetime of that instance. T
 | `tenure_ceiling` | `> 0`, `handover_floor <= tenure_ceiling` |
 | `handover_floor` | `0 < handover_floor <= tenure_ceiling` |
 | `descent_ceiling` | `> 0` |
+| `retire_floor` | `>= 0` (0 = no restriction). Minimum time since integration before `retire()` may execute. On-chain commitment to tenants for assets that benefit from stability guarantees. |
 | `g` (credit shape) | `g(0)=0, g(1)=1, bounded [0,1], strictly increasing` |
 | `h` (descent shape) | same constraints as `g` |
 | `f_next_rent_price` | `f(x) > x` for all valid x |
 | `payment_token` | Fungible token with deterministic value |
 
-**`retire()`:** Sole exit mechanism. Behavior by state:
+**`retire()`:** Sole exit mechanism. Gated by `retire_floor` — aborts if `clock.now() < integrated_at_ms + retire_floor`. Behavior by state:
 
 | State | Effect |
 |---|---|
@@ -344,7 +345,7 @@ Functions are pure and deterministic. No keeper, no off-chain coordinator, no li
 | `handover_floor` | Fixed duration of competitive bidding window after takeover bid. |
 | `handover_countdown_expiry` | Timestamp of access transfer. Computed deterministically at first bid, fixed. |
 | `descent_ceiling` | Max Dutch Auction duration. |
-
+| `retire_floor` | Minimum time since integration before any retirement may execute. |
 
 ### Actions
 

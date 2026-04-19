@@ -77,10 +77,10 @@ all others and is consumed by none.
 - **Push-before-rotate invariant** (inside `do_handover`): balances and caps
   are pushed to the current/pending addresses before those address fields are
   overwritten.
-- **Asset always present while escrow exists.** `asset: Asset` is a direct
-  field — not `Option`. The only window in which the asset is not inside the
-  escrow is a single PTB borrow (`borrow_asset` → `return_asset`), which is
-  enforced structurally by the hot-potato `AssetReceipt`.
+- **Asset always present while escrow exists.** `asset: Option<Asset>` is the
+  internal field representation. `None` exists only between `borrow_asset` and
+  `return_asset` within a single PTB — never across transaction boundaries.
+  The invariant is enforced by the hot-potato `AssetReceipt`, not by the type.
 - **Capability-based authorization.** `retire`, `claim_asset`, and
   `withdraw_earnings` take `&OwnerCap` and forward to
   `owner_cap::assert_escrow`. `borrow_asset` takes `&TenantCap` and checks
@@ -162,7 +162,7 @@ public enum RentPhase has copy, drop, store {
 ```move
 public struct RentalEscrow<phantom Asset: key + store, phantom CoinType> has key {
     id:                         UID,
-    asset:                      Asset,
+    asset:                      Option<Asset>,
     config:                     IntegrationConfig,
     fee_inbox_id:               ID,
     state:                      AssetState,
@@ -186,20 +186,21 @@ public struct RentalEscrow<phantom Asset: key + store, phantom CoinType> has key
   `store` would allow an external module to include `RentalEscrow` as a field
   of another type, breaking the one-shared-object-per-instance invariant.
 
-**Asset field — why not `Option<Asset>`:** the escrow and the asset are
-conceptually identical — the escrow exists iff the asset is inside it.
-`claim_asset` destructures the escrow and returns the asset in the same
-transaction. The borrow mechanism (`borrow_asset` / `return_asset`) uses
-`Asset` by value + hot-potato receipt, so the asset leaves and returns within
-a single PTB without ever persisting in an "escrow exists but is empty"
-state. Using a plain `Asset` field rather than `Option<Asset>` makes this
-structural invariant explicit.
+**Asset field — why `Option<Asset>`:** in Sui Move, a field cannot be moved
+out of a struct accessed via `&mut`. `borrow_asset` receives
+`&mut RentalEscrow<Asset, CoinType>` and must temporarily move the asset out.
+`Option<Asset>` enables this via `option::extract` (take, leaving `None`) and
+`option::fill` (restore). The `None` window exists only between `borrow_asset`
+and `return_asset` within a single PTB — never at a transaction boundary.
+This is the canonical Move borrow pattern, used internally by
+`sui::borrow::Referent<T>` in the Sui framework
+(https://docs.sui.io/guides/developer/objects/simulating-refs).
 
 **Field semantics:**
 
 | Field | Meaning |
 |---|---|
-| `asset` | The integrated asset. `key + store` required. |
+| `asset` | The integrated asset, wrapped in `Option`. `Some` at all transaction boundaries; `None` only within a PTB borrow window (`borrow_asset` → `return_asset`). Inner type requires `key + store`. |
 | `config` | Immutable `IntegrationConfig` — all protocol parameters. |
 | `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Target of `send_fee` transfers. |
 | `state` | Current `AssetState`. |
@@ -367,10 +368,11 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
 2. Mint `OwnerCap` via `owner_cap::new(escrow_id, ctx)`.
 3. Read `fee_inbox_id = protocol_fee_inbox::fee_ref_inbox_id(fee_ref)`.
 4. Construct the escrow with:
+   - `asset = option::some(asset)`
    - `state = AssetState::Idle`
    - `last_rent_price = config::min_rent_price(&config)`
    - `phase_start_ms = 0`
-   - All `Option` fields `None`, all `Balance` fields `balance::zero()`
+   - All remaining `Option` fields `None`, all `Balance` fields `balance::zero()`
    - `retire_flag = false`
 5. `transfer::share_object(escrow)`.
 6. Emit `AssetIntegrated { escrow_id, owner_cap_id, integrator }`.
@@ -469,13 +471,14 @@ deletes the escrow, returns the asset and earnings.
 5. Destructure the escrow:
 
         let RentalEscrow {
-            id, asset, config: _, fee_inbox_id: _,
+            id, asset: asset_opt, config: _, fee_inbox_id: _,
             state: _, last_rent_price: _, phase_start_ms: _,
             current_tenant_cap_id: _, current_tenant_address: _,
             pending_tenant_address: _, handover_countdown_expiry: _,
             tenant_stake, pending_bid, owner_earnings,
             retire_flag: _,
         } = escrow;
+        let asset = option::destroy_some(asset_opt);
 
 6. Both `tenant_stake` and `pending_bid` must be zero at this point — the
    only path to `Retired` drains them via `do_tenure_expiry` (stake) and,
@@ -716,24 +719,10 @@ integrating ecosystem.
    some(object::id(tenant_cap))`, abort `E_TENANT_CAP_STALE`. This
    check rejects both stale caps (displaced tenants) and caps from other
    escrows (covered by step 2, but layered here for clarity).
-4. Extract `asset` from the escrow. (In Move: a `mem::replace`-style
-   swap, or direct field move — the asset is moved out and the field is
-   statically unreachable until `return_asset` runs. See "Asset field
-   mechanism" below.)
+4. `let asset = option::extract(&mut escrow.asset);`
 5. Construct `receipt = AssetReceipt { escrow_id: object::id(escrow),
    asset_id: object::id(&asset) }`.
 6. Return `(asset, receipt)`.
-
-**Asset field mechanism:** the `asset: Asset` field is a direct (non-Option)
-field. To move it out temporarily, the implementation uses a private
-`Option<Asset>` wrapper internally — exposed as a structurally-invariant
-`Asset` to external readers. The wrapper is `Some` at every persistent
-state; the `None` window exists only between `borrow_asset` and
-`return_asset` inside a single PTB, never across transaction boundaries.
-
-*(Alternative: Sui dynamic fields. Either works; the spec fixes the
-observable invariant — asset present iff escrow exists persistently — and
-leaves the concrete field encoding to the implementation.)*
 
 **No event emitted.** Borrow is a PTB-internal event with no observable
 state change across transactions; the receipt is consumed in the same PTB.
@@ -756,7 +745,7 @@ state change across transactions; the receipt is consumed in the same PTB.
    `E_RECEIPT_ESCROW_MISMATCH`. Enforces return to the correct escrow.
 3. Assert `asset_id == object::id(&asset)`, abort
    `E_RECEIPT_ASSET_MISMATCH`. Enforces return of the exact asset borrowed.
-4. Insert `asset` back into the escrow's asset slot.
+4. `option::fill(&mut escrow.asset, asset);`
 5. Does **not** call `apply_pending_transitions` — returning an asset never
    needs to resolve boundary events; no balance is touched, no state field
    changes.
@@ -1041,9 +1030,10 @@ HandoverConfirmed }`. Both set together in `rent()` (takeover path) and
 cleared together in `do_handover`.
 
 **P11 — Asset present while escrow exists:**
-Across transaction boundaries, `escrow.asset` is always present.
-The borrow-return window is confined to a single PTB by the hot-potato
-`AssetReceipt`.
+A protocol guarantee, not a structural type guarantee. `escrow.asset` is
+`Option<Asset>`; `None` exists only within a PTB borrow window
+(`borrow_asset` → `return_asset`), never across transaction boundaries.
+Enforced by the hot-potato `AssetReceipt`.
 
 **P12 — Fee routing is idempotent at zero:**
 `do_handover` with `used_credit == 0` (e.g. handover at t = phase_start_ms,

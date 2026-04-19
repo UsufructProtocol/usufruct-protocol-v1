@@ -945,6 +945,25 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    new_tenant_cap_id, used_credit, owner_share, protocol_fee, remain_credit,
    timestamp_ms: boundary_ms }`.
 
+**Edge cases — both extremes are handled without special branching:**
+
+- **`used_credit == 0`** (very convex curve, handover fires very early):
+  `remain_credit == tenant_stake > 0`. The `if remain_credit > 0` guard fires —
+  the full stake is pushed to the displaced tenant as `Coin<C>`. `split_fee(0)`
+  returns `(0, 0)`. `send_fee` short-circuits on zero. `withdraw_all` on the
+  now-empty stake returns `Balance(0)`; `join` into `owner_earnings` is a no-op.
+  No zero-value coin transfer occurs.
+
+- **`used_credit == tenant_stake`** (Dutch Auction bypass — curve saturated,
+  `remain_credit == 0`): the `if remain_credit > 0` guard is skipped — no coin
+  is pushed to the displaced tenant. `split_fee(tenant_stake)` produces the
+  normal 95/5 split. `send_fee` and `withdraw_all` operate on non-zero balances.
+
+In both cases `balance::split(b, 0)`, `balance::withdraw_all(Balance(0))`, and
+`balance::join(_, Balance(0))` are valid operations — confirmed against the
+framework source: `split` asserts `self.value >= value` (holds for 0), and
+`withdraw_all` delegates to `split(self, self.value)`.
+
 ---
 
 ### 7.2 `do_tenure_expiry`
@@ -1226,6 +1245,8 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | A4 | Called on AtDutchAuction, descent expiry reached | `do_auction_expiry` fires. Returns `Idle`. `AuctionExpired` emitted. |
 | A5 | Called after long inactivity: handover + tenure + auction all due | All three fire in order. Returns `Idle`. Three events emitted. |
 | A6 | Called with retire_flag, Rented(HandoverOpen), tenure expired | `do_tenure_expiry` fires with `next_state: Retired`. Returns `Retired`. |
+| A7 | `do_handover` with `used_credit == 0` (very convex PowerLaw curve, handover fires immediately after bid) | `remain_credit == tenant_stake`. Full stake pushed to displaced tenant as `Coin<C>`. `owner_earnings` unchanged. No `FeeMessage` created (`send_fee` short-circuits). `HandoverCompleted` emitted with `used_credit: 0`, `owner_share: 0`, `protocol_fee: 0`. |
+| A8 | `do_handover` with `used_credit == tenant_stake` (Dutch Auction bypass — `remain_credit == 0`) | No coin pushed to displaced tenant. Full stake split 95/5 into `owner_earnings` and `FeeMessage`. `HandoverCompleted` emitted with `remain_credit: 0`. |
 
 ### 10.7 `borrow_asset` / `return_asset`
 

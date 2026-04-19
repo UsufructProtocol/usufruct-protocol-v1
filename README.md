@@ -105,7 +105,7 @@ The depth limit is two. An `OwnerCap` whose underlying escrow holds a real asset
 |---|---|---|
 | `min_rent_price` | Price floor. Lowest valid rental price and lower bound of the Dutch Auction. | `> 0` |
 | `tenure_ceiling` | Maximum duration of a single rental block. | `> 0`; `≥ handover_floor` |
-| `handover_floor` | Duration of the competitive bidding window after a takeover is initiated. The current tenant retains access for exactly this duration (bounded by remaining time). | `0 < x ≤ tenure_ceiling` |
+| `handover_floor` | Duration of the competitive bidding window after a takeover is initiated. The current tenant retains access for exactly this duration (bounded by remaining time). `0` = no bidding window, handover fires immediately. | `0 ≤ x ≤ tenure_ceiling` |
 | `descent_ceiling` | Maximum duration of a Dutch Auction before price reaches `min_rent_price` and the asset returns to `Idle`. | `> 0` |
 | `retire_floor` | Minimum time since integration before `retire()` may execute. An on-chain commitment to tenants: the asset cannot exit during this window. `0` = no restriction. | `>= 0` |
 | `f_credit_ascent` | Normalized shape `g : [0,1] → [0,1]`. Defines how the tenant's credit is consumed over the rental block. | `g(0)=0`, `g(1)=1`, bounded, strictly increasing |

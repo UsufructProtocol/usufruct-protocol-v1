@@ -330,7 +330,7 @@ No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 ```
 min_rent_price   > 0
 tenure_ceiling   > 0
-0 < handover_floor <= tenure_ceiling
+0 <= handover_floor <= tenure_ceiling
 descent_ceiling  > 0
 retire_floor     >= 0   (always true for u64)
 ```

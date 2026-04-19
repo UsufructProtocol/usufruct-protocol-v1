@@ -160,7 +160,7 @@ Computed deterministically at bid time. Fixed from that point. Subsequent bids d
 ### Constraint
 
 ```
-0 < handover_floor <= tenure_ceiling
+0 <= handover_floor <= tenure_ceiling
 ```
 
 ### Behavior during countdown
@@ -249,7 +249,7 @@ All set once at integration time. Immutable for the lifetime of that instance. T
 |---|---|
 | `min_rent_price` | `> 0` |
 | `tenure_ceiling` | `> 0`, `handover_floor <= tenure_ceiling` |
-| `handover_floor` | `0 < handover_floor <= tenure_ceiling` |
+| `handover_floor` | `0 <= handover_floor <= tenure_ceiling` (`0` = no bidding window, handover fires immediately) |
 | `descent_ceiling` | `> 0` |
 | `retire_floor` | `>= 0` (0 = no restriction). Minimum time since integration before `retire()` may execute. On-chain commitment to tenants for assets that benefit from stability guarantees. |
 | `g` (credit shape) | `g(0)=0, g(1)=1, bounded [0,1], strictly increasing` |

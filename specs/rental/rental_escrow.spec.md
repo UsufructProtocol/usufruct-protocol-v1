@@ -729,6 +729,84 @@ state change across transactions; the receipt is consumed in the same PTB.
 
 ---
 
+**PTB borrow window — where the tenant actually uses the asset:**
+
+This window is the core value exchange of the entire protocol. To understand
+it, three actors and two protocols must be distinguished:
+
+**Actors:**
+
+- **Integrating protocol** — the protocol that issued the asset and defines
+  what it does (a game, a marketplace, a DeFi app). Its functions take the
+  asset as an argument and give it meaning. It has no knowledge of rental
+  terms, tenants, or escrow state. It does not import `rental_escrow`.
+- **Owner** — the current holder of the asset who placed it into the escrow
+  via `integrate`. The owner may be the same entity as the integrating
+  protocol (e.g. the game studio renting out its own items) or a completely
+  independent actor (e.g. a user who bought the asset on a secondary market
+  and now wants to rent it out). The two do not need to coincide.
+- **Tenant** — the user who paid `rent()` and holds `TenantCap`. They
+  acquire temporary access to use the asset through the integrating
+  protocol's functions for the duration of their tenure.
+
+**Protocols:**
+
+- **`rental_escrow`** — the rental market layer. Generic over
+  `Asset: key + store`. Owns custody, enforces payment and time bounds,
+  manages the state machine. Has no knowledge of what the asset does.
+- **Integrating protocol** — defines the asset's utility. Has no knowledge
+  of rental terms or escrow state. Was not modified to support renting.
+
+The owner bridges the two at setup time: they call `integrate`, moving the
+asset out of their wallet and into `rental_escrow`. From that point,
+`rental_escrow` holds custody and tenants can rent it.
+
+The tenant bridges the two at use time — and this window is that moment:
+
+```
+  ┌─ rental_escrow ──────────────────────────────────────────────────┐
+  │                                                                  │
+  │  PTB step N:  borrow_asset(escrow, tenant_cap, clock, ctx)       │
+  │                   → (asset, receipt)                             │
+  │                          │                                       │
+  └──────────────────────────┼───────────────────────────────────────┘
+                             │  asset crosses the protocol boundary
+                             ▼
+  ┌─ integrating protocol ───────────────────────────────────────────┐
+  │                                                                  │
+  │  PTB steps (N+1 … M-1)                                          │
+  │                                                                  │
+  │  The tenant — the person who paid `rent()` and holds            │
+  │  `TenantCap` — calls the integrating protocol's own             │
+  │  functions, passing `asset` by value. This is the actual        │
+  │  use the tenant paid for: play with a game item, interact        │
+  │  with a marketplace listing, exercise a DeFi position, etc.     │
+  │                                                                  │
+  │  `receipt` must be threaded through unconsumed.                  │
+  │                                                                  │
+  └──────────────────────────┬───────────────────────────────────────┘
+                             │  asset crosses back
+                             ▼
+  ┌─ rental_escrow ──────────────────────────────────────────────────┐
+  │                                                                  │
+  │  PTB step M:  return_asset(escrow, asset, receipt)               │
+  │                                                                  │
+  └──────────────────────────────────────────────────────────────────┘
+```
+
+The hot-potato `AssetReceipt` structurally enforces this window: the PTB
+cannot type-check unless `receipt` is consumed by `return_asset` before the
+transaction boundary. The asset cannot be stored, transferred, or dropped
+inside the window — it must be passed by value and returned. The tenant
+cannot extend the window beyond a single PTB.
+
+This composition is zero-overhead for the integrating protocol: it requires
+no changes, imports no `rental_escrow` types, and is unaware that its asset
+is being rented. Any protocol that uses `key + store` objects gains a rental
+market by integrating with `rental_escrow`.
+
+---
+
 ### 6.2 `return_asset`
 
     public fun return_asset<Asset: key + store, CoinType>(

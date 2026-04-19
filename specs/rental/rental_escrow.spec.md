@@ -136,7 +136,7 @@ public enum AssetState has copy, drop, store {
 | `Idle` | No tenant. Asset available at `min_rent_price`. Entry: `rent()`. |
 | `Rented { HandoverOpen }` | Current tenant holds exclusive access. No pending bid. |
 | `Rented { HandoverConfirmed }` | Current tenant holds access until `handover_countdown_expiry`. A pending tenant has paid `>= next_rent_price`. |
-| `AtDutchAuction` | Price descends from `last_rent_price` toward `min_rent_price` via `compute_price_descent`. |
+| `AtDutchAuction` | Price descends from `last_rent_price` toward `min_rent_price`. See `current_price_descent` (§8.2). |
 | `Retired` | Terminal. `retire_flag` is set and the state machine has reached a point where the asset is extractable via `claim_asset`. |
 
 The `state` field is not directly writable from outside the module. All
@@ -902,10 +902,17 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 
 **Algorithm:**
 
-1. Let `used_credit = current_used_credit(escrow, boundary_ms)`.
-   (`boundary_ms == handover_countdown_expiry`, so the clamp is a no-op;
-   the call reads `balance::value(&escrow.tenant_stake)` as the principal —
-   see §8.2.)
+1. Compute `used_credit` directly at the boundary:
+   - `let elapsed_ms = boundary_ms - escrow.phase_start_ms;`
+   - `let g = curve_shape::evaluate_curve(config::credit_curve(&escrow.config),
+     elapsed_ms, config::tenure_ceiling(&escrow.config));`
+   - `let used_credit = math::mul_div(balance::value(&escrow.tenant_stake), g, SCALE);`
+
+   The state guard and the `HandoverConfirmed` clamp that protect the public
+   query `current_used_credit` (§8.1) are unnecessary here: `do_handover` only
+   runs when Check 1 of `apply_pending_transitions` has already confirmed
+   `state == Rented { HandoverConfirmed }` and
+   `boundary_ms == handover_countdown_expiry`.
 2. Let `remain_credit = balance::value(&escrow.tenant_stake) - used_credit`.
    (Invariant `used_credit + remain_credit == tenant_stake` from curve
    bijectivity.)
@@ -1088,7 +1095,7 @@ reflects the actual settled state, not a speculative computation.
 
 **Algorithm:**
 
-    // 1. Guard — only meaningful in Rented state.
+    // 1. State guard — only meaningful in Rented state.
     assert!(matches!(escrow.state, AssetState::Rented { .. }), E_NOT_RENTED);
 
     // 2. Clamp to handover boundary when in HandoverConfirmed.
@@ -1099,33 +1106,35 @@ reflects the actual settled state, not a speculative computation.
             let expiry = *option::borrow(&escrow.handover_countdown_expiry);
             std::u64::min(timestamp_ms, expiry)
         } else {
-            timestamp_ms  // HandoverOpen: compute_used_credit saturates at tenure_ceiling
+            timestamp_ms  // HandoverOpen: evaluate_curve saturates at tenure_ceiling
         };
 
-    // 2. Elapsed time since the current phase started.
+    // 3. Elapsed time since the current phase started.
     //    If effective_ts < phase_start_ms (caller passed a timestamp before the phase
     //    began), return 0 — no credit consumed yet.
     if effective_ts < escrow.phase_start_ms { return 0 };
     let elapsed_ms = effective_ts - escrow.phase_start_ms;
 
-    // 3. Delegate to curve evaluation.
-    //    Principal is tenant_stake, not last_rent_price: in HandoverConfirmed
-    //    last_rent_price already holds the pending bid amount, making
-    //    tenant_stake the only accurate source for the current tenant's payment.
-    //    compute_used_credit saturates at tenant_stake when elapsed >= tenure_ceiling.
-    curve_shape::compute_used_credit(
+    // 4. Evaluate the normalized credit curve.
+    let g = curve_shape::evaluate_curve(
         config::credit_curve(&escrow.config),
         elapsed_ms,
         config::tenure_ceiling(&escrow.config),
-        balance::value(&escrow.tenant_stake),
-    )
+    );
 
-**Two call sites:**
+    // 5. Scale by the current tenant's principal.
+    //    Principal is tenant_stake, not last_rent_price: in HandoverConfirmed
+    //    last_rent_price already holds the pending bid amount, making
+    //    tenant_stake the only accurate source for the current tenant's payment.
+    //    evaluate_curve returns SCALE when elapsed >= tenure_ceiling, so the
+    //    scaled result saturates at tenant_stake.
+    math::mul_div(balance::value(&escrow.tenant_stake), g, SCALE)
 
-| Caller | `timestamp_ms` passed | Purpose |
-|---|---|---|
-| `do_handover` (internal) | `handover_countdown_expiry` | used_credit at the exact boundary — the clamp is a no-op |
-| Frontend / read query (external) | `clock.timestamp_ms()` | live display of accrued credit |
+**Single call site.** `do_handover` inlines its own `evaluate_curve + mul_div`
+without going through this function (§7.1) — there is no state to guard
+against and no clamp to apply at the boundary. `current_used_credit` is
+consumed externally (frontends, `devInspectTransactionBlock`) where the
+state guard and the `HandoverConfirmed` clamp are meaningful.
 
 ---
 
@@ -1141,24 +1150,31 @@ Only meaningful when `escrow.state == AtDutchAuction`. Returns
 
 **Algorithm:**
 
-    // Guard — only meaningful in AtDutchAuction state.
+    // 1. State guard — only meaningful in AtDutchAuction state.
     assert!(escrow.state == AssetState::AtDutchAuction, E_NOT_AUCTION);
 
-    // Elapsed time since the auction started.
-    // phase_start_ms is set to the tenure-expiry boundary when AtDutchAuction begins.
-    // If timestamp_ms < phase_start_ms, return last_rent_price — auction has not started yet.
+    // 2. Elapsed time since the auction started.
+    //    phase_start_ms is set to the tenure-expiry boundary when AtDutchAuction begins.
+    //    If timestamp_ms < phase_start_ms, return last_rent_price — auction has not started yet.
     if timestamp_ms < escrow.phase_start_ms { return escrow.last_rent_price };
     let elapsed_ms = timestamp_ms - escrow.phase_start_ms;
 
-    // Delegates to curve evaluation.
-    // compute_price_descent saturates at min_rent_price when elapsed >= descent_ceiling.
-    curve_shape::compute_price_descent(
+    // 3. Evaluate the normalized descent curve.
+    let h = curve_shape::evaluate_curve(
         config::descent_curve(&escrow.config),
         elapsed_ms,
         config::descent_ceiling(&escrow.config),
-        escrow.last_rent_price,
-        config::min_rent_price(&escrow.config),
-    )
+    );
+
+    // 4. Scale by the spread, then descend from last_rent_price.
+    //    evaluate_curve returns SCALE when elapsed >= descent_ceiling, so
+    //    consumed == spread and the result saturates at min_rent_price.
+    //    Precondition last_rent_price >= min_rent_price is guaranteed by the
+    //    protocol — the first rent sets last_rent_price = min_rent_price and
+    //    it only increases thereafter.
+    let spread = escrow.last_rent_price - config::min_rent_price(&escrow.config);
+    let consumed = math::mul_div(spread, h, SCALE);
+    escrow.last_rent_price - consumed
 
 `last_rent_price` is the starting price of the descent — it was set by the
 last tenant's payment and preserved through tenure expiry and auction entry.
@@ -1428,8 +1444,8 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `split_fee(...)` | private | §7.4 |
 
 **Depends on:**
-- `math` — `mul_div` via `split_fee`.
-- `curve_shape` — `CurveShape`, `compute_used_credit`, `compute_price_descent`.
+- `math` — `mul_div` via `split_fee`, `current_used_credit`, `current_price_descent`, and `do_handover`.
+- `curve_shape` — `CurveShape`, `evaluate_curve`.
 - `price_function` — `PriceFunction`, `compute_next_rent_price`.
 - `config` — `IntegrationConfig` and `public(package)` getters.
 - `owner_cap` — `OwnerCap`, `new`, `burn`, `escrow_id`, `assert_escrow`.

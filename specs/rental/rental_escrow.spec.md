@@ -784,6 +784,11 @@ The tenant bridges the two at use time — and this window is that moment:
   │                                                                  │
   │  `receipt` must be threaded through unconsumed.                  │
   │                                                                  │
+  │  In practice, the integrating protocol's app constructs this     │
+  │  PTB for the tenant — the tenant interacts with the app's UI,   │
+  │  not with the raw PTB steps. The borrow/return wrapping is an   │
+  │  implementation detail the integrating protocol abstracts away.  │
+  │                                                                  │
   └──────────────────────────┬───────────────────────────────────────┘
                              │  asset crosses back
                              ▼
@@ -804,6 +809,24 @@ This composition is zero-overhead for the integrating protocol: it requires
 no changes, imports no `rental_escrow` types, and is unaware that its asset
 is being rented. Any protocol that uses `key + store` objects gains a rental
 market by integrating with `rental_escrow`.
+
+**Note on integration levels:** the integrating protocol never needs to
+change any contract code. The decoupling is complete: the asset is the
+only interface between the two protocols, and the integrating protocol's
+functions work identically whether the asset comes from an owner's wallet
+or from a liquid renting escrow. A power-user tenant can always construct
+the PTB manually — `borrow_asset`, call the integrating protocol's
+functions, `return_asset` — with zero involvement from the integrating
+protocol.
+
+For non-power-user tenants, the liquid renting SDK provides a tool to
+construct this PTB without exposing the escrow mechanics. The SDK operates
+exclusively at the frontend/backend layer — it generates PTBs, never
+deploys or modifies blockchain code. An integrating protocol that wants to
+surface liquid renting natively in its own app can adopt the SDK
+optionally, abstracting the borrow window entirely from its users. This is
+a UX choice, not a technical requirement. A protocol that has never heard
+of liquid renting is already compatible at the contract level.
 
 ---
 

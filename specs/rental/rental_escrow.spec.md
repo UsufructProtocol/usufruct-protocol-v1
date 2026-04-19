@@ -1086,18 +1086,44 @@ reflects the actual settled state, not a speculative computation.
         timestamp_ms: u64,
     ): u64
 
-Delegates to `curve_shape::compute_used_credit`, passing
-`balance::value(&escrow.tenant_stake)` as the principal. Using
-`tenant_stake` rather than `last_rent_price` is correct in both sub-states:
-in `HandoverOpen` the two are equal; in `HandoverConfirmed` `last_rent_price`
-already holds the pending bid, so `tenant_stake` is the only accurate source
-for the current tenant's payment.
+**Algorithm:**
 
-**Clamping rule:** if `escrow.state` is `Rented { HandoverConfirmed }` and
-`timestamp_ms > handover_countdown_expiry`, the function clamps
-`timestamp_ms` to `handover_countdown_expiry`. Past the boundary, the
-displayed used_credit would otherwise exceed the amount actually consumed
-by the current tenant — misleading at the UI layer.
+    // 1. Clamp to handover boundary when in HandoverConfirmed.
+    //    Past that point the current tenant's stake is no longer growing —
+    //    the boundary is where their credit froze.
+    let effective_ts =
+        if let Rented { HandoverConfirmed } = escrow.state {
+            let expiry = *option::borrow(&escrow.handover_countdown_expiry);
+            if timestamp_ms > expiry { expiry } else { timestamp_ms }
+        } else {
+            timestamp_ms
+        };
+
+    // 2. Elapsed time since the current phase started.
+    //    Caller must ensure effective_ts >= escrow.phase_start_ms;
+    //    underflow aborts (u64 checked arithmetic).
+    let elapsed_ms = effective_ts - escrow.phase_start_ms;
+
+    // 3. Delegate to curve evaluation.
+    //    Principal is tenant_stake, not last_rent_price: in HandoverConfirmed
+    //    last_rent_price already holds the pending bid amount, making
+    //    tenant_stake the only accurate source for the current tenant's payment.
+    //    compute_used_credit saturates at tenant_stake when elapsed >= tenure_ceiling.
+    curve_shape::compute_used_credit(
+        config::credit_curve(&escrow.config),
+        elapsed_ms,
+        config::tenure_ceiling(&escrow.config),
+        balance::value(&escrow.tenant_stake),
+    )
+
+**Two call sites:**
+
+| Caller | `timestamp_ms` passed | Purpose |
+|---|---|---|
+| `do_handover` (internal) | `handover_countdown_expiry` | used_credit at the exact boundary — the clamp is a no-op |
+| Frontend / read query (external) | `clock.timestamp_ms()` | live display of accrued credit |
+
+---
 
 ### 8.2 `current_price_descent`
 
@@ -1106,9 +1132,29 @@ by the current tenant — misleading at the UI layer.
         timestamp_ms: u64,
     ): u64
 
-Delegates to `curve_shape::compute_price_descent`. Only meaningful when
-`escrow.state == AtDutchAuction`. Returns `min_rent_price` once
-the descent is saturated.
+Only meaningful when `escrow.state == AtDutchAuction`. Returns
+`min_rent_price` once the descent saturates.
+
+**Algorithm:**
+
+    // Elapsed time since the auction started.
+    // phase_start_ms is set to the tenure-expiry boundary when AtDutchAuction begins.
+    let elapsed_ms = timestamp_ms - escrow.phase_start_ms;
+
+    // Delegates to curve evaluation.
+    // compute_price_descent saturates at min_rent_price when elapsed >= descent_ceiling.
+    curve_shape::compute_price_descent(
+        config::descent_curve(&escrow.config),
+        elapsed_ms,
+        config::descent_ceiling(&escrow.config),
+        escrow.last_rent_price,
+        config::min_rent_price(&escrow.config),
+    )
+
+`last_rent_price` is the starting price of the descent — it was set by the
+last tenant's payment and preserved through tenure expiry and auction entry.
+
+---
 
 ### 8.3 `current_next_rent_price`
 
@@ -1116,9 +1162,19 @@ the descent is saturated.
         escrow: &RentalEscrow<Asset, CoinType>,
     ): u64
 
-Delegates to `price_function::compute_next_rent_price(
-&escrow.config.price_function, escrow.last_rent_price)`. Only meaningful
-when the state is `Rented`.
+Only meaningful when `escrow.state == Rented`. No `timestamp_ms` parameter —
+`f_next_rent_price` depends only on `last_rent_price`, not on elapsed time.
+
+**Algorithm:**
+
+    price_function::compute_next_rent_price(
+        config::price_function(&escrow.config),
+        escrow.last_rent_price,
+    )
+
+In `HandoverConfirmed`, `last_rent_price` already holds the pending bidder's
+payment — so `current_next_rent_price` returns the price to supersede the
+pending bidder, not the current tenant.
 
 
 9. PROPERTIES

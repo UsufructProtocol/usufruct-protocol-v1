@@ -312,6 +312,14 @@ Functions are pure and deterministic. No keeper, no off-chain coordinator, no li
 10. GLOSSARY (CONDENSED)
 ------------------------
 
+### Actors
+
+| Actor | Meaning |
+|---|---|
+| **Owner** | The current holder of the asset who placed it into the escrow via `integrate`. Receives `used_credit` as earned rent. May be the same entity as the integrating protocol, or a completely independent actor (e.g. a secondary-market buyer). The two do not need to coincide. |
+| **Integrating Protocol** | The protocol that issued the asset and defines its utility. Its functions are what the tenant calls during the borrow window to use the asset. Has no knowledge of rental terms, tenants, or escrow state. Decoupled from the owner — any holder of a `key + store` asset it issued may act as owner. |
+| **Tenant (Tn)** | The party that holds usus and fructus at price Pn. Identified by position in the sequence T1, T2, …, Tn. |
+
 ### Prices
 
 | Term | Meaning |

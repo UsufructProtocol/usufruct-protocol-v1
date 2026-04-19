@@ -1242,7 +1242,9 @@ The protocol applies because yield optimization is a competitive service: multip
 
 **Tenant (Tn):** The party that holds the usus and fructus of an asset at price Pn. Identified by their position in the sequence T1, T2, ..., Tn.
 
-**Owner:** The integrating protocol that issued the asset. Receives `used_credit` as earned rent for every consumed time unit.
+**Owner:** The current holder of the asset who placed it into the escrow via `integrate`. Receives `used_credit` as earned rent for every consumed time unit. The owner may be the same entity as the integrating protocol — e.g. the studio that issued a game item and rents it out directly — or a completely independent actor — e.g. a user who acquired the asset on a secondary market and now wants to monetize it. The two do not need to coincide. The protocol makes no assumption about the relationship between them.
+
+**Integrating Protocol:** The protocol that originally issued the asset and defines its utility — a game, a marketplace, a DeFi application. Its functions give the asset meaning: they are what the tenant calls during the borrow window to actually use the asset. The integrating protocol has no knowledge of rental terms, tenants, or escrow state; it is not modified to support renting. It is decoupled from the owner: any holder of a `key + store` asset issued by the integrating protocol may act as owner, regardless of their relationship to the protocol that issued it.
 
 ### Roman Law Concepts
 

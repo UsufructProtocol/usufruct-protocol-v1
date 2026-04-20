@@ -1486,6 +1486,68 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | L2 | integrate → rent → takeover bid → handover → (new tenant active) → retire → tenure expiry → claim | `retire_flag` inherited by new tenant. Claim succeeds after their tenure ends. |
 | L3 | integrate an inner escrow → deposit its `OwnerCap` via `integrate` into an outer escrow → outer tenant borrows the cap and calls `retire` on the inner escrow | Inner escrow enters the retire flow. Outer escrow unaffected (its asset is the cap, which is now "pointing at a retiring escrow"). |
 
+### 10.13 APT + `rent()` composite matrix
+
+Every `rent()` call chains `apply_pending_transitions` (APT) before dispatching
+on the settled state. This matrix enumerates the reachable combinations of
+(pre-APT state × APT outcome × `rent()` branch) so the settlement-then-dispatch
+flow is exercised on every path the state machine admits. Tests are
+**table-driven**: one helper takes `(initial_state, elapsed_ms, retire_flag,
+payment)` and asserts `(post_state, events_emitted, balances)`. The golden-path
+standalone cases (R1 for Idle entry, R13 for HandoverConfirmed supersede)
+remain separate — they stay readable even if the parametric helper regresses,
+and a failure in the helper cannot mask a regression in the canonical paths.
+
+| # | Pre-APT | Elapsed conditions | APT fires | Post-APT | `rent()` branch | Expected |
+|---|---|---|---|---|---|---|
+| M1 | Idle | — | none | Idle | Idle | Cross-ref R1–R3. APT no-op, `install_new_tenant` writes on empty escrow. |
+| M2 | AtDutchAuction | `now < phase_start + descent_ceiling` | none | AtDutchAuction | AtDutchAuction | Cross-ref R5–R7. APT no-op, `compute_price_descent(now)` against preserved `phase_start_ms`. |
+| M3 | AtDutchAuction | `now ≥ phase_start + descent_ceiling` | C3 | Idle | Idle | `AuctionExpired(Idle)` then `RentStarted(from_state: Idle)`. `last_rent_price` is overwritten by payment inside `install_new_tenant` (do_auction_expiry preserves the stale value per §7.3). |
+| M4 | Rented(HandoverOpen), no retire_flag | tenure not expired | none | HandoverOpen | HandoverOpen | Cross-ref R9, R10, R12 (success paths). The subtraction `phase_start + tenure_ceiling - now` is u64-safe exactly because C2 did not fire. |
+| M5 | Rented(HandoverOpen) | tenure expired, no retire_flag | C2 | AtDutchAuction | AtDutchAuction | `TenureExpired(AtDutchAuction)` then `RentStarted(from_state: AtDutchAuction)`. `owner_earnings += stake × 0.95`; one `FeeMessage<C>` created and transferred to `fee_inbox_id`. |
+| M6 | Rented(HandoverOpen) | tenure + descent expired, no retire_flag | C2 → C3 | Idle | Idle | `TenureExpired` + `AuctionExpired` + `RentStarted(from_state: Idle)`. |
+| M7 | Rented(HandoverOpen) | tenure expired, retire_flag set | C2 | Retired | — | `rent()` aborts `E_RETIRED_NO_BID`. The abort rolls back the whole transaction — APT's state changes and `TenureExpired(Retired)` event do not persist. See abort-row note below. |
+| M8 | Rented(HandoverConfirmed), no retire_flag | handover not expired | none | HandoverConfirmed | HandoverConfirmed | Cross-ref R13, R15. APT no-op; supersede refund + push-before-rotate exercised. |
+| M9 | Rented(HandoverConfirmed) | handover expired, new tenure still active, no retire_flag | C1 | HandoverOpen | HandoverOpen | `HandoverCompleted` (push `remain_credit`, rotate `pending_bid → tenant_stake`, mint new `TenantCap`) then `BidPlaced` on the fresh open state with the caller as the new pending tenant. |
+| M10 | Rented(HandoverConfirmed) | handover + new tenure expired, no retire_flag | C1 → C2 | AtDutchAuction | AtDutchAuction | `HandoverCompleted` + `TenureExpired(AtDutchAuction)` + `RentStarted(from_state: AtDutchAuction)`. The stake consumed by C2 is the one rotated in from the original `pending_bid`, not the original tenant's. |
+| M11 | Rented(HandoverConfirmed) | all three boundaries expired, no retire_flag | C1 → C2 → C3 | Idle | Idle | Upper bound of the lazy chain (P4 §9). Four events: `HandoverCompleted`, `TenureExpired`, `AuctionExpired`, `RentStarted(from_state: Idle)`. |
+| M12 | Rented(HandoverConfirmed) | handover + new tenure expired, retire_flag set | C1 → C2 (→ Retired) | Retired | — | `rent()` aborts `E_RETIRED_NO_BID`. APT would execute `do_handover` (flag preserved by `do_handover`) then `do_tenure_expiry` (routes to Retired because of flag), but the abort rolls them back. See abort-row note below. |
+| M13 | Rented(HandoverConfirmed) | handover expired, new tenure still active, retire_flag set | C1 | HandoverOpen | — | `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. APT would complete the handover with flag preserved, but the abort rolls it back. Covers "T(n+1) enters HandoverOpen with flag active — no new bids" (design-compact §6). See abort-row note below. |
+| M14 | Rented(HandoverOpen), retire_flag set | tenure not expired | none | HandoverOpen | — | `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. APT is a no-op (nothing to roll back). Equivalent to R11 as a direct test; included here so the (pre-APT × retire_flag × APT outcome) matrix is exhaustive. |
+| M15 | Rented(HandoverConfirmed), retire_flag set | handover not expired | none | HandoverConfirmed | HandoverConfirmed | Supersede succeeds — `rent()` HandoverConfirmed branch does not check `retire_flag`. APT no-op. Equivalent to R14; included so retire_flag sub-variants are explicit in the matrix. |
+
+**Novel coverage:** M3, M5–M7, M9–M13 exercise paths where APT changes the
+state before dispatch — not reachable from the single-state tables §10.2–10.5.
+M1/M2/M4/M8/M14/M15 are matrix anchors where APT is a no-op; they map onto
+R-rows but are listed so the (pre-APT × retire_flag × APT outcome) matrix is
+exhaustive at 15 rows. Idle and AtDutchAuction have no retire_flag sub-variant
+because `retire()` on those states transitions directly to Retired (§4.2).
+
+**Abort-row testing strategy (M7, M12, M13):** when `rent()` aborts, Sui Move
+rolls back the whole transaction — APT's state mutations, balance movements,
+`FeeMessage<C>` transfers, and events are all reverted. To assert APT's work
+independently, split the test into two transactions: tx1 calls
+`apply_pending_transitions` standalone (observe settled state, events,
+balances); tx2 calls `rent()` (observe the expected abort code). Testing the
+composite in a single transaction can only assert the abort code — no
+mid-transaction APT effect is observable.
+
+**Phase-anchor correctness:** every row implicitly asserts that
+`phase_start_ms` equals the value assigned by the last transition fired
+before `rent()` body runs (§5 table in module-map.spec.md). After M10 it
+equals the new tenure's start (= previous `handover_countdown_expiry`) at
+APT exit, then gets overwritten with `clock.now()` by `install_new_tenant`
+inside the rent body.
+
+**Retire_flag coverage closure:**
+- HandoverOpen block on live bid: M14 (no APT transition, ≡ R11) + M13 (via APT).
+- HandoverConfirmed tolerates retire_flag on supersede: M15 (≡ R14).
+- Retired dispatch abort via APT: M7, M12.
+- Idle/AtDutchAuction immediate retire: C2, C3 (§10.8).
+
+Together these exercise every branch where `retire_flag` is read by `rent()`
+or by an APT-driven transition.
+
 
 11. MODULE BOUNDARY
 --------------------

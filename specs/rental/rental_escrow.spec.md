@@ -97,19 +97,18 @@ messages.
     public const E_OWNER_CAP_MISMATCH:       u64 = 0;  // forwarded from owner_cap::assert_escrow
     public const E_TENANT_CAP_WRONG_ESCROW:  u64 = 1;  // cap.escrow_id != object::id(escrow)
     public const E_TENANT_CAP_STALE:         u64 = 2;  // object::id(cap) != current_tenant_cap_id
-    public const E_NOT_IDLE:                 u64 = 3;  // rent() Idle-path: state is not Idle
-    public const E_NOT_AUCTION:              u64 = 4;  // compute_price_descent: state != AtDutchAuction
-    public const E_NOT_RENTED:               u64 = 5;  // compute_used_credit / compute_next_rent_price: state != Rented
-    public const E_INSUFFICIENT_PAYMENT:     u64 = 6;  // payment < floor price (all acquisition paths)
-    public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 7;  // rent() during Rented(HandoverOpen) with retire_flag
-    public const E_RETIRED_NO_BID:              u64 = 8;  // rent() called when state is Retired
-    public const E_RETIRE_FLOOR_NOT_ELAPSED:    u64 = 9;  // retire() before integrated_at_ms + retire_floor
-    public const E_ALREADY_RETIRED:             u64 = 10; // retire() when retire_flag already set
-    public const E_NOT_RETIRED:                 u64 = 11; // claim_asset() when state != Retired
-    public const E_RECEIPT_ESCROW_MISMATCH:     u64 = 12; // return_asset: receipt.escrow_id != object::id(escrow)
-    public const E_RECEIPT_ASSET_MISMATCH:      u64 = 13; // return_asset: receipt.asset_id != object::id(&asset)
-    public const E_NO_EARNINGS:                 u64 = 14; // withdraw_earnings: owner_earnings == 0 after settlement
-    public const E_ASSET_ALREADY_BORROWED:      u64 = 15; // borrow_asset called while asset is already out of escrow
+    public const E_NOT_AUCTION:              u64 = 3;  // compute_price_descent: state != AtDutchAuction
+    public const E_NOT_RENTED:               u64 = 4;  // compute_used_credit / compute_next_rent_price: state != Rented
+    public const E_INSUFFICIENT_PAYMENT:     u64 = 5;  // payment < floor price (all acquisition paths)
+    public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 6;  // rent() during Rented(HandoverOpen) with retire_flag
+    public const E_RETIRED_NO_BID:              u64 = 7;  // rent() called when state is Retired
+    public const E_RETIRE_FLOOR_NOT_ELAPSED:    u64 = 8;  // retire() before integrated_at_ms + retire_floor
+    public const E_ALREADY_RETIRED:             u64 = 9;  // retire() when retire_flag already set
+    public const E_NOT_RETIRED:                 u64 = 10; // claim_asset() when state != Retired
+    public const E_RECEIPT_ESCROW_MISMATCH:     u64 = 11; // return_asset: receipt.escrow_id != object::id(escrow)
+    public const E_RECEIPT_ASSET_MISMATCH:      u64 = 12; // return_asset: receipt.asset_id != object::id(&asset)
+    public const E_NO_EARNINGS:                 u64 = 13; // withdraw_earnings: owner_earnings == 0 after settlement
+    public const E_ASSET_ALREADY_BORROWED:      u64 = 14; // borrow_asset called while asset is already out of escrow
 
 
 2. TYPES
@@ -1493,7 +1492,6 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_OWNER_CAP_MISMATCH` | `public` | SDK error handling. Forwarded from `owner_cap`. |
 | `E_TENANT_CAP_WRONG_ESCROW` | `public` | borrow_asset. |
 | `E_TENANT_CAP_STALE` | `public` | borrow_asset. |
-| `E_NOT_IDLE` | `public` | (reserved) |
 | `E_NOT_AUCTION` | `public` | compute_price_descent: state != AtDutchAuction. |
 | `E_NOT_RENTED` | `public` | compute_used_credit / compute_next_rent_price: state != Rented. |
 | `E_INSUFFICIENT_PAYMENT` | `public` | rent — payment below floor price (all acquisition paths). |

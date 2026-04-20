@@ -555,30 +555,23 @@ locked balances.
 
 - Assert `coin::value(&payment) >= escrow.config.min_rent_price`, abort
   `E_INSUFFICIENT_PAYMENT`.
-- `escrow.last_rent_price = coin::value(&payment);`
-- `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
-- `escrow.phase_start_ms = clock.timestamp_ms();`
-- Mint `cap = tenant_cap::new(object::id(escrow), ctx)`.
-- `escrow.current_tenant_cap_id = some(object::id(&cap));`
-- `escrow.current_tenant_address = some(tx_context::sender(ctx));`
-- `escrow.state = Rented { phase: HandoverOpen };`
-- `transfer::transfer(cap, tx_context::sender(ctx));`
-- Emit `RentStarted { escrow_id, tenant: sender, tenant_cap_id, price_paid,
-  from_state: Idle }`.
+- Let `price_paid = coin::value(&payment);`
+- Let `tenant_cap_id = install_new_tenant(escrow, payment, clock, ctx);` — §7.5
+  is the single source of truth for "install tenant from payment into an
+  empty escrow". It handles balance absorption, phase anchor, cap mint and
+  push, address registration, and state transition to
+  `Rented { HandoverOpen }`.
+- Emit `RentStarted { escrow_id, tenant: tx_context::sender(ctx),
+  tenant_cap_id, price_paid, from_state: AssetState::Idle }`.
 
 #### Case: `AtDutchAuction`
 
 - Let `price = current_price_descent(escrow, clock.timestamp_ms())`.
 - Assert `coin::value(&payment) >= price`, abort `E_INSUFFICIENT_PAYMENT`.
-- `escrow.last_rent_price = coin::value(&payment);`
-- `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
-- `escrow.phase_start_ms = clock.timestamp_ms();`
-- Mint `cap = tenant_cap::new(object::id(escrow), ctx)`.
-- `escrow.current_tenant_cap_id = some(object::id(&cap));`
-- `escrow.current_tenant_address = some(tx_context::sender(ctx));`
-- `escrow.state = Rented { phase: HandoverOpen };`
-- `transfer::transfer(cap, tx_context::sender(ctx));`
-- Emit `RentStarted { ..., from_state: AtDutchAuction, ... }`.
+- Let `price_paid = coin::value(&payment);`
+- Let `tenant_cap_id = install_new_tenant(escrow, payment, clock, ctx);` — §7.5.
+- Emit `RentStarted { escrow_id, tenant: tx_context::sender(ctx),
+  tenant_cap_id, price_paid, from_state: AssetState::AtDutchAuction }`.
 
 #### Case: `Rented { HandoverOpen }`
 
@@ -1066,6 +1059,69 @@ fee_share) at 95/5.
 - `split_fee(1) == (1, 0)` — fee floors to zero on tiny amounts. `send_fee`
   short-circuits zero.
 
+---
+
+### 7.5 `install_new_tenant`
+
+    fun install_new_tenant<Asset: key + store, CoinType>(
+        escrow:  &mut RentalEscrow<Asset, CoinType>,
+        payment: Coin<CoinType>,
+        clock:   &Clock,
+        ctx:     &mut TxContext,
+    ): ID
+
+**Preconditions:** `escrow.state` is one of `{ Idle, AtDutchAuction }`. The
+caller has already validated `payment` against the applicable floor
+(`config.min_rent_price` for Idle, `current_price_descent(..., now)` for
+AtDutchAuction).
+
+**Purpose:** shared installation sequence for the two acquisition arms of
+`rent()` that land on an empty escrow — mint `TenantCap`, absorb payment,
+anchor the new phase, transition to `Rented { HandoverOpen }`. Both arms
+produce structurally identical post-state; the only arm-specific signal is
+the `from_state` field of the emitted `RentStarted` event, which the caller
+owns.
+
+**Algorithm:**
+
+1. `escrow.last_rent_price = coin::value(&payment);`
+2. `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
+3. `escrow.phase_start_ms = clock.timestamp_ms();`
+4. `let cap = tenant_cap::new(object::id(escrow), ctx);`
+5. `let new_cap_id = object::id(&cap);`
+6. `escrow.current_tenant_cap_id = some(new_cap_id);`
+7. `escrow.current_tenant_address = some(tx_context::sender(ctx));`
+8. `escrow.state = Rented { phase: HandoverOpen };`
+9. `transfer::transfer(cap, tx_context::sender(ctx));`
+10. Return `new_cap_id`.
+
+**Return value:** the new `TenantCap` ID, returned so the caller can emit
+`RentStarted { ..., tenant_cap_id: new_cap_id, ... }` with its arm-specific
+`from_state`.
+
+**Why the helper does not emit `RentStarted`:** the event's `from_state`
+field discriminates between `Idle` and `AtDutchAuction` callers. Keeping
+the emit at each arm preserves that signal explicitly at the callsite
+instead of threading an extra `from_state` argument through the helper.
+
+**Two call sites:**
+
+| Caller | Floor source | Event `from_state` |
+|---|---|---|
+| `rent()` Case `Idle` (§5.1) | `config.min_rent_price` | `AssetState::Idle` |
+| `rent()` Case `AtDutchAuction` (§5.1) | `current_price_descent(escrow, clock.timestamp_ms())` | `AssetState::AtDutchAuction` |
+
+Both arms share the same post-state; the helper is the single source of
+truth for "install a new tenant from payment into an empty escrow".
+
+**Not reused by `do_handover`:** `do_handover` also mints a `TenantCap` and
+transitions to `HandoverOpen`, but the surrounding state differs
+structurally — `pending_bid` rotates into `tenant_stake` (not a fresh
+payment), the target address is `pending_tenant_address` (not
+`sender(ctx)`), and `phase_start_ms = boundary_ms` (not `clock.now()`).
+Merging the two would force context-dependent branching inside the helper
+and obscure the distinct semantics of each rotation site.
+
 
 8. READ-ONLY QUERIES
 ---------------------
@@ -1446,6 +1502,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `do_tenure_expiry(...)` | private | §7.2 |
 | `do_auction_expiry(...)` | private | §7.3 |
 | `split_fee(...)` | private | §7.4 |
+| `install_new_tenant(...)` | private | §7.5 — shared install path for `rent()` Idle / AtDutchAuction arms. |
 
 **Depends on:**
 - `math` — `mul_div` via `split_fee`, `current_used_credit`, and `current_price_descent`.

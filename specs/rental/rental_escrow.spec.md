@@ -902,17 +902,14 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 
 **Algorithm:**
 
-1. Compute `used_credit` directly at the boundary:
-   - `let elapsed_ms = boundary_ms - escrow.phase_start_ms;`
-   - `let g = curve_shape::evaluate_curve(config::credit_curve(&escrow.config),
-     elapsed_ms, config::tenure_ceiling(&escrow.config));`
-   - `let used_credit = math::mul_div(balance::value(&escrow.tenant_stake), g, SCALE);`
-
-   The state guard and the `HandoverConfirmed` clamp that protect the public
-   query `current_used_credit` (§8.1) are unnecessary here: `do_handover` only
-   runs when Check 1 of `apply_pending_transitions` has already confirmed
-   `state == Rented { HandoverConfirmed }` and
-   `boundary_ms == handover_countdown_expiry`.
+1. Let `used_credit = current_used_credit(escrow, boundary_ms)` — §8.1 is the
+   single source of truth for "used credit at timestamp T". Its state guard
+   and `HandoverConfirmed` clamp are structurally satisfied here: Check 1 of
+   `apply_pending_transitions` already confirmed
+   `state == Rented { HandoverConfirmed }`, and
+   `boundary_ms == handover_countdown_expiry` makes the clamp a no-op. The
+   principal used is `balance::value(&escrow.tenant_stake)` (see §8.1 for
+   why `tenant_stake` and not `last_rent_price`).
 2. Let `remain_credit = balance::value(&escrow.tenant_stake) - used_credit`.
    (Invariant `used_credit + remain_credit == tenant_stake` from curve
    bijectivity.)
@@ -1130,11 +1127,18 @@ reflects the actual settled state, not a speculative computation.
     //    scaled result saturates at tenant_stake.
     math::mul_div(balance::value(&escrow.tenant_stake), g, SCALE)
 
-**Single call site.** `do_handover` inlines its own `evaluate_curve + mul_div`
-without going through this function (§7.1) — there is no state to guard
-against and no clamp to apply at the boundary. `current_used_credit` is
-consumed externally (frontends, `devInspectTransactionBlock`) where the
-state guard and the `HandoverConfirmed` clamp are meaningful.
+**Two call sites:**
+
+| Caller | `timestamp_ms` passed | Purpose |
+|---|---|---|
+| `do_handover` (internal, §7.1) | `handover_countdown_expiry` | used_credit at the exact boundary — clamp is a no-op; state guard is structurally satisfied |
+| Frontend / read query (external) | `clock.timestamp_ms()` | live display of accrued credit |
+
+Internal and external callers share the same function to guarantee a single
+source of truth for "used credit at timestamp T". The state guard and the
+`HandoverConfirmed` clamp are defensive — they protect against wrong-state
+external calls and unsettled boundaries. For `do_handover` both are
+structurally satisfied and evaluate as no-ops.
 
 ---
 
@@ -1444,7 +1448,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `split_fee(...)` | private | §7.4 |
 
 **Depends on:**
-- `math` — `mul_div` via `split_fee`, `current_used_credit`, `current_price_descent`, and `do_handover`.
+- `math` — `mul_div` via `split_fee`, `current_used_credit`, and `current_price_descent`.
 - `curve_shape` — `CurveShape`, `evaluate_curve`.
 - `price_function` — `PriceFunction`, `compute_next_rent_price`.
 - `config` — `IntegrationConfig` and `public(package)` getters.

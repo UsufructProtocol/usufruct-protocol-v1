@@ -9,24 +9,22 @@ Module map reference: module-map.spec.md §2
 0. MODULE RESPONSIBILITY
 ------------------------
 
-`curve_shape` defines the `CurveShape` type and evaluates it.
-It is the bridge between raw arithmetic (`math`) and protocol-level credit/price
-computations (`rental_escrow`).
+`curve_shape` defines the `CurveShape` type and evaluates normalized shape
+functions. It is pure math over a fixed-point representation — no protocol
+concepts, no state, no scaling by principals.
 
 **Owns:**
 
 - `CurveShape` — enumerated functional forms for `f_credit_ascent` and
   `f_price_descent`. All dispatch on this type lives here.
-- `evaluate_curve` — private dispatcher. Single entry point for evaluating
-  any `CurveShape` at a given (t, t_max) pair. Returns a value in [0, SCALE].
+- `evaluate_curve` — `public(package)` dispatcher. Single entry point for
+  evaluating any `CurveShape` at a given (t, t_max) pair. Returns a value in
+  [0, SCALE].
 - `LOGISTIC_K: u64 = 12` and `LOGISTIC_DENOM: u64` — module-level constants.
   Both are hardcoded literals. Move `const` does not support function calls, so
   `LOGISTIC_DENOM` cannot be derived from `exp_scaled` at compile time — its value
   is established by running the algorithm once during initial implementation (same
   approach as the golden vectors in `math.spec.md`), then fixed as a literal.
-- `compute_used_credit`, `compute_price_descent` — `public(package)` protocol-level
-  wrappers. Called by `rental_escrow` via `current_used_credit`,
-  `current_price_descent`.
 
 **Does not own:**
 
@@ -36,6 +34,10 @@ computations (`rental_escrow`).
 - Protocol state (`RentalEscrow`, phase anchors).
 - Fund movements (`Balance`, `Coin`).
 - Access control (`OwnerCap`, `TenantCap`).
+- Protocol-level scaling (mapping a normalized curve output to `last_rent_price`,
+  `tenant_stake`, or a spread) — lives in `rental_escrow`. The protocol layer
+  validates inputs (state, clamps, `elapsed_ms`) and applies the single
+  `mul_div` that scales `evaluate_curve`'s output to a price or credit.
 - Raw arithmetic primitives (`mul_div`, `nth_root_u128`, `exp_scaled`) — those
   live in `math`.
 
@@ -141,12 +143,12 @@ directly without validation.
     // Returns CurveShape::Exponential { alpha_abs, alpha_neg }.
 
 
-3. EVALUATE_CURVE (private)
-----------------------------
+3. EVALUATE_CURVE
+-----------------
 
 ### Signature
 
-    fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64): u64
+    public(package) fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64): u64
 
 ### Semantics
 
@@ -154,11 +156,14 @@ Evaluates the normalized shape function g at x = t / t_max.
 Returns g(x) * SCALE, in [0, SCALE].
 
 `t_max > 0` is guaranteed by `IntegrationConfig` constraints.
-Private — used only by `compute_used_credit` and `compute_price_descent`.
+Called by `rental_escrow` (from `compute_used_credit` and
+`compute_price_descent`) with protocol-level inputs already validated and
+normalized at the escrow layer. This module does not validate state, phase
+timing, or principals — it only evaluates the curve.
 
 ### Implementation
 
-    fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64): u64 {
+    public(package) fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64): u64 {
         if t == 0      { return 0 };
         if t >= t_max  { return SCALE };
 
@@ -427,75 +432,8 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
 `Logistic` has no fields — nothing to validate at construction time.
 
 
-9. COMPUTE_USED_CREDIT
------------------------
-
-### Signature
-
-    public(package) fun compute_used_credit(
-        shape: &CurveShape,
-        elapsed_ms: u64,
-        tenure_ceiling: u64,
-        last_rent_price: u64,
-    ): u64
-
-### Semantics
-
-    used_credit = last_rent_price * g(elapsed_ms / tenure_ceiling)
-
-### Algorithm
-
-    let g_x = evaluate_curve(shape, elapsed_ms, tenure_ceiling);
-    math::mul_div(last_rent_price, g_x, SCALE)
-
-### Saturation
-
-If `elapsed_ms >= tenure_ceiling`, `evaluate_curve` returns SCALE and
-`used_credit = last_rent_price` (fully consumed).
-
-Caller must ensure `elapsed_ms` is not derived from a future timestamp
-relative to `phase_start_ms`.
-
-
-10. COMPUTE_PRICE_DESCENT
---------------------------
-
-### Signature
-
-    public(package) fun compute_price_descent(
-        shape: &CurveShape,
-        elapsed_ms: u64,
-        descent_ceiling: u64,
-        last_rent_price: u64,
-        min_rent_price: u64,
-    ): u64
-
-### Semantics
-
-    price = last_rent_price - (last_rent_price - min_rent_price) * h(elapsed_ms / descent_ceiling)
-
-### Algorithm
-
-    let h_x = evaluate_curve(shape, elapsed_ms, descent_ceiling);
-    let spread = last_rent_price - min_rent_price;
-    let consumed = math::mul_div(spread, h_x, SCALE);
-    last_rent_price - consumed
-
-### Saturation
-
-If `elapsed_ms >= descent_ceiling`, `evaluate_curve` returns SCALE and
-`price = min_rent_price`.
-
-### Precondition
-
-Caller must ensure `last_rent_price >= min_rent_price`. The protocol
-guarantees this invariant — the first rent sets
-`last_rent_price = min_rent_price` and it only increases thereafter.
-Violation would underflow the u64 subtraction `last_rent_price - min_rent_price`.
-
-
-11. MODULE BOUNDARY
---------------------
+9. MODULE BOUNDARY
+-------------------
 
 `curve_shape.move` exports:
 
@@ -510,9 +448,7 @@ Violation would underflow the u64 subtraction `last_rent_price - min_rent_price`
 | `new_logistic()` | `public` | Called by integrators to build `CurveShape`. |
 | `new_power_law(alpha_num, alpha_den)` | `public` | Called by integrators. Validates + normalizes. |
 | `new_exponential(alpha_abs, alpha_neg)` | `public` | Called by integrators. Validates. |
-| `compute_used_credit(...)` | `public(package)` | Called by `rental_escrow`. |
-| `compute_price_descent(...)` | `public(package)` | Called by `rental_escrow`. |
-| `evaluate_curve(...)` | private | Dispatcher — match on `CurveShape`. |
+| `evaluate_curve(...)` | `public(package)` | Called by `rental_escrow`. Dispatcher — match on `CurveShape`. |
 | `eval_linear(...)` | private | §4 |
 | `eval_smoothstep(...)` | private | §5 |
 | `eval_power_law(...)` | private | §6 |
@@ -530,7 +466,7 @@ Error constants are `public` so the SDK can map abort codes to human-readable me
 **Depends on:** `math` (for `mul_div`, `nth_root_u128`, `exp_scaled`).
 
 
-12. TEST CASES
+10. TEST CASES
 --------------
 
 Tests follow the same convention as `math.spec.md`: exact values are given where
@@ -543,7 +479,7 @@ Three categories per function:
 - **Properties** — invariants that must hold for all valid inputs in the stated domain
 
 
-### 12.1 `evaluate_curve` — dispatcher edge cases
+### 10.1 `evaluate_curve` — dispatcher edge cases
 
 These apply regardless of the variant passed. Tested once per variant to confirm
 the dispatcher short-circuits before reaching `eval_*`.
@@ -555,7 +491,7 @@ the dispatcher short-circuits before reaching `eval_*`.
 | any | `t_max + 1` | `t_max` | `SCALE` |
 
 
-### 12.2 `eval_linear`
+### 10.2 `eval_linear`
 
 #### Golden vectors
 
@@ -575,7 +511,7 @@ the dispatcher short-circuits before reaching `eval_*`.
 - **Midpoint:** `eval_linear(t_max/2, t_max) = SCALE/2` when `t_max` is even
 
 
-### 12.3 `eval_smoothstep`
+### 10.3 `eval_smoothstep`
 
 #### Golden vectors
 
@@ -595,7 +531,7 @@ the dispatcher short-circuits before reaching `eval_*`.
 - **Above linear:** `eval_smoothstep(t) > eval_linear(t)` for `t ∈ (t_max/2, t_max)`
 
 
-### 12.4 `eval_power_law`
+### 10.4 `eval_power_law`
 
 #### Golden vectors
 
@@ -622,7 +558,7 @@ Representative inputs to cover:
   (constructor reduces 2/4 → 1/2 via gcd)
 
 
-### 12.5 `eval_exponential`
+### 10.5 `eval_exponential`
 
 #### Golden vectors
 
@@ -648,7 +584,7 @@ Representative inputs to cover:
   Proof: `f_α(x) + f_{-α}(1-x) = 1` for all x (see §7). Maximum deviation: a few ULP.
 
 
-### 12.6 `eval_logistic`
+### 10.6 `eval_logistic`
 
 #### Golden vectors
 
@@ -670,22 +606,3 @@ Representative inputs to cover:
 - **Above linear:** `eval_logistic(t) > eval_linear(t)` for `t ∈ (t_max/2, t_max)`
 
 
-### 12.7 `compute_used_credit`
-
-#### Properties
-
-- **Range:** `result ∈ [0, last_rent_price]`
-- **Zero start:** `elapsed_ms = 0 → result = 0`
-- **Saturation:** `elapsed_ms >= tenure_ceiling → result = last_rent_price`
-- **Monotonicity:** `e1 < e2 → compute_used_credit(e1) ≤ compute_used_credit(e2)`
-- **Complement:** `result + (last_rent_price - result) = last_rent_price` (confirms no overflow)
-
-
-### 12.8 `compute_price_descent`
-
-#### Properties
-
-- **Range:** `result ∈ [min_rent_price, last_rent_price]`
-- **Zero start:** `elapsed_ms = 0 → result = last_rent_price`
-- **Saturation:** `elapsed_ms >= descent_ceiling → result = min_rent_price`
-- **Monotone decreasing:** `e1 < e2 → compute_price_descent(e1) ≥ compute_price_descent(e2)`

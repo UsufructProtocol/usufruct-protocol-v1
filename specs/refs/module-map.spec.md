@@ -64,6 +64,7 @@ no consensus. All other operations stay on the single escrow object.
 ║  │    escrow exists ↔     │  │  · tenure_ceiling                │  ║
 ║  │    asset exists        │  │  · handover_floor                │  ║
 ║  └────────────────────────┘  │  · descent_ceiling               │  ║
+║                               │  · retire_floor                  │  ║
 ║  ┌────────────────────────┐  │  · CurveShape g  (credit)        │  ║
 ║  │  AssetState            │  │  · CurveShape h  (descent)       │  ║
 ║  │  Idle                  │  │  · PriceFunction                 │  ║
@@ -82,9 +83,9 @@ no consensus. All other operations stay on the single escrow object.
 ║  │  pending_bid     │         ┌───────────────────────────────────┐ ║
 ║  │  Balance<C>      │         │  Flags + routing                  │ ║
 ║  └──────────────────┘         │  · retire_flag: bool              │ ║
-║  ┌──────────────────┐         │  · fee_inbox_id: ID               │ ║
-║  │  owner_earnings  │         └───────────────────────────────────┘ ║
-║  │  Balance<C>      │                                               ║
+║  ┌──────────────────┐         │  · integrated_at_ms: u64          │ ║
+║  │  owner_earnings  │         │  · fee_inbox_id: ID               │ ║
+║  │  Balance<C>      │         └───────────────────────────────────┘ ║
 ║  └──────────────────┘                                               ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -144,7 +145,7 @@ objects — fastpath, no consensus.
 | `integrate` | serial on RentalEscrow · read `ProtocolFeeRef` (frozen — no consensus) |
 | `claim_asset` | serial on RentalEscrow only — transfer-to-object does not touch `ProtocolFeeInbox` |
 | `collect_fee_messages<C>` | owned `ProtocolFeeInbox` only — fastpath, no consensus, one call per CoinType |
-| `current_state`, `current_used_credit`, `current_price_descent`, `current_next_rent_price` | read-only (`&RentalEscrow`) — no contention |
+| `current_state`, `compute_used_credit`, `compute_price_descent`, `compute_next_rent_price` | read-only (`&RentalEscrow`) — no contention |
 
 ---
 
@@ -254,11 +255,9 @@ shape functions. All functions are pure — no objects, no mutation, no Sui stat
 
 | Function | Visibility | Signature | Purpose |
 |---|---|---|---|
-| `evaluate_curve` | private | `(shape: &CurveShape, t: u64, t_max: u64): u64` | Evaluate normalized shape at `x = t/t_max`, result in `[0, SCALE]`. Short-circuits at `t == 0 → 0` and `t >= t_max → SCALE`. |
-| `compute_used_credit` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, tenure_ceiling: u64, last_rent_price: u64): u64` | `last_rent_price * g(elapsed / tenure_ceiling)`. Saturates at `last_rent_price`. |
-| `compute_price_descent` | `public(package)` | `(shape: &CurveShape, elapsed_ms: u64, descent_ceiling: u64, last_rent_price: u64, min_rent_price: u64): u64` | `last_rent_price - (last_rent_price - min_rent_price) * h(elapsed / descent_ceiling)`. Saturates at `min_rent_price`. |
+| `evaluate_curve` | `public(package)` | `(shape: &CurveShape, t: u64, t_max: u64): u64` | Evaluate normalized shape at `x = t/t_max`, result in `[0, SCALE]`. Short-circuits at `t == 0 → 0` and `t >= t_max → SCALE`. Protocol-level scaling (by `tenant_stake`, spread) is applied by `rental_escrow` callers. |
 
-**Status:** [ ] `CurveShape` · [ ] `evaluate_curve` · [ ] `compute_used_credit` · [ ] `compute_price_descent`
+**Status:** [ ] `CurveShape` · [ ] `evaluate_curve`
 
 **Depends on:** `math`.
 
@@ -287,10 +286,11 @@ Note: there is no standalone `Percentage` variant. Pure percentage behavior is e
 
 | Function | Visibility | Signature | Purpose |
 |---|---|---|---|
-| `evaluate_price_fn` | private | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatch on `PriceFunction` variant. Called only by `compute_next_rent_price`. |
-| `compute_next_rent_price` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Thin wrapper over `evaluate_price_fn`. Result always `> last_rent_price`. |
+| `evaluate_price_fn` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatcher — match on `PriceFunction` variant. Called by `rental_escrow::compute_next_rent_price`. Result always `> last_rent_price` (constructor-enforced). |
+| `eval_fixed_delta` | private | `(last_rent_price: u64, delta: u64): u64` | `last_rent_price + delta`. |
+| `eval_compound_delta` | private | `(last_rent_price: u64, bps: u64, delta: u64): u64` | `mul_div(last_rent_price, 10000 + bps, 10000) + delta`. |
 
-**Status:** [ ] `PriceFunction` · [ ] `evaluate_price_fn` · [ ] `compute_next_rent_price`
+**Status:** [ ] `PriceFunction` · [ ] `evaluate_price_fn`
 
 **Depends on:** `math`.
 
@@ -313,6 +313,7 @@ No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 - `tenure_ceiling: u64` — ms
 - `handover_floor: u64` — ms
 - `descent_ceiling: u64` — ms
+- `retire_floor: u64` — ms
 - `credit_curve: CurveShape` — g, for `f_credit_ascent`
 - `descent_curve: CurveShape` — h, for `f_price_descent`
 - `price_function: PriceFunction` — for `f_next_rent_price`
@@ -321,15 +322,16 @@ No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
 
 | Function | Purpose |
 |---|---|
-| `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
+| `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
 | One `public(package)` getter per field | Immutable access for `rental_escrow` |
 
 **Validation constraints (enforced in `new`):**
 ```
 min_rent_price   > 0
 tenure_ceiling   > 0
-0 < handover_floor <= tenure_ceiling
+0 <= handover_floor <= tenure_ceiling
 descent_ceiling  > 0
+retire_floor     >= 0   (always true for u64)
 ```
 
 **Status:** [ ] `IntegrationConfig` · [ ] `new` · [ ] getters
@@ -388,7 +390,7 @@ Stale caps from displaced tenants are inert.
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::rent` (Idle, AtDutchAuction) and `rental_escrow::do_handover` (handover completion). |
+| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::install_new_tenant` (shared body of `rent()` Idle / AtDutchAuction) and `rental_escrow::do_handover` (handover completion). |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 
@@ -509,6 +511,7 @@ functions.
 - `tenant_stake: Balance<CoinType>`
 - `owner_earnings: Balance<CoinType>`
 - `retire_flag: bool`
+- `integrated_at_ms: u64`
 - `fee_inbox_id: ID` — ID of `ProtocolFeeInbox`. Registered at `integrate` via `ProtocolFeeRef`.
 
 **Public API:**
@@ -516,7 +519,7 @@ functions.
 | Function | Visibility | Summary |
 |---|---|---|
 | `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `fee_ref_inbox_id(fee_ref)` and stores it as `fee_inbox_id`. Returns `OwnerCap`. |
-| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `compute_next_rent_price()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `compute_next_rent_price()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
+| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
@@ -524,11 +527,11 @@ functions.
 | `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
 | `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order. Returns `AssetState` — the settled state after all transitions. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state on-chain, credit pending earnings, and read the resulting state in one transaction. See §Pending Transitions. |
 | `current_state` | `public` | `(escrow: &RentalEscrow, clock: &Clock): AssetState`. Read-only. Computes the settled state without mutating — free via `devInspectTransactionBlock`. Does not advance state on-chain. Use when the caller only needs to read state without paying gas. |
-| `current_used_credit` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Clamps `timestamp_ms` to `handover_countdown_expiry` if state is `HandoverConfirmed` — prevents showing used_credit beyond the boundary. Delegates to `curve::compute_used_credit`. Used internally by `do_handover` (passes `handover_countdown_expiry`) and externally by frontends (pass `clock.timestamp_ms()`). |
-| `current_price_descent` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Current Dutch Auction price at `timestamp_ms`. Only meaningful when state is `AtDutchAuction`. Delegates to `curve::compute_price_descent`. |
-| `current_next_rent_price` | `public` | `(escrow: &RentalEscrow): u64`. Read-only query. Price to displace the current tenant. Only meaningful when state is `Rented`. Delegates to `curve::compute_next_rent_price`. |
+| `compute_used_credit` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Aborts `E_NOT_RENTED` if state is not `Rented`. Clamps `timestamp_ms` to `handover_countdown_expiry` if state is `HandoverConfirmed` — prevents showing used_credit beyond the boundary. Calls `curve_shape::evaluate_curve` and scales by `tenant_stake` with `math::mul_div`. |
+| `compute_price_descent` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Aborts `E_NOT_AUCTION` if state is not `AtDutchAuction`. Calls `curve_shape::evaluate_curve` and descends from `last_rent_price` by the spread with `math::mul_div`. |
+| `compute_next_rent_price` | `public` | `(escrow: &RentalEscrow): u64`. Read-only query. Aborts `E_NOT_RENTED` if state is not `Rented`. Delegates to `price_function::evaluate_price_fn`. |
 
-**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `apply_pending_transitions` · [ ] `current_state` · [ ] `current_used_credit` · [ ] `current_price_descent` · [ ] `current_next_rent_price`
+**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `apply_pending_transitions` · [ ] `current_state` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
 
 **`phase_start_ms` assignment:**
 
@@ -552,6 +555,7 @@ when a transition logically occurred and when it was executed.
 | `do_tenure_expiry` | Executes tenure boundary: split full `tenant_stake` (95/5) into `owner_earnings` (95%) and `send_fee()` call (5% → `FeeMessage<C>` → transfer-to-object → `fee_inbox_id`). Transition to `AtDutchAuction` or `Retired`. |
 | `do_auction_expiry` | Transition to `Idle`. No funds to move. |
 | `split_fee` | Pure: splits an amount into (amount×0.95, amount×0.05) tuple. |
+| `install_new_tenant` | Shared acquisition path for `rent()` Idle / AtDutchAuction arms: absorb payment into `tenant_stake`, anchor `phase_start_ms = clock.now()`, mint + push `TenantCap`, register addresses, transition to `Rented { HandoverOpen }`. Returns the new `TenantCap` ID so the caller emits `RentStarted` with its arm-specific `from_state`. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
 `protocol_fee_inbox`, `fee_message`.

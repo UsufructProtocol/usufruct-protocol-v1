@@ -43,9 +43,8 @@ can map abort codes to human-readable messages (same convention as `curve`).
 
     public const E_MIN_RENT_PRICE_ZERO:           u64 = 0;  // min_rent_price == 0
     public const E_TENURE_CEILING_ZERO:           u64 = 1;  // tenure_ceiling == 0
-    public const E_HANDOVER_FLOOR_ZERO:           u64 = 2;  // handover_floor == 0
-    public const E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 3;  // handover_floor > tenure_ceiling
-    public const E_DESCENT_CEILING_ZERO:          u64 = 4;  // descent_ceiling == 0
+    public const E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 2;  // handover_floor > tenure_ceiling
+    public const E_DESCENT_CEILING_ZERO:          u64 = 3;  // descent_ceiling == 0
 
 
 2. TYPE
@@ -61,6 +60,7 @@ public struct IntegrationConfig has copy, drop, store {
     tenure_ceiling:  u64,
     handover_floor:  u64,
     descent_ceiling: u64,
+    retire_floor:    u64,
     credit_curve:    CurveShape,
     descent_curve:   CurveShape,
     price_function:  PriceFunction,
@@ -82,8 +82,9 @@ public struct IntegrationConfig has copy, drop, store {
 |---|---|---|
 | `min_rent_price` | payment token base denomination | Price floor. Idle entry price; Dutch Auction lower bound. |
 | `tenure_ceiling` | milliseconds | Fixed duration of each rental block. |
-| `handover_floor` | milliseconds | Minimum bidding window after a takeover bid. |
+| `handover_floor` | milliseconds | Bidding window after a takeover bid. `0` = handover fires immediately — no competitive bidding window. |
 | `descent_ceiling` | milliseconds | Maximum Dutch Auction duration. |
+| `retire_floor` | milliseconds | Minimum time since integration before `retire()` may execute. `0` = no restriction — owner may retire immediately. An on-chain commitment to tenants: the asset cannot exit during this window regardless of state. |
 | `credit_curve` | — | `CurveShape g` — shape of `f_credit_ascent`. |
 | `descent_curve` | — | `CurveShape h` — shape of `f_price_descent`. |
 | `price_function` | — | `PriceFunction` — shape of `f_next_rent_price`. |
@@ -101,6 +102,7 @@ All fields are private. Access via getters only.
         tenure_ceiling:  u64,
         handover_floor:  u64,
         descent_ceiling: u64,
+        retire_floor:    u64,
         credit_curve:    CurveShape,
         descent_curve:   CurveShape,
         price_function:  PriceFunction,
@@ -115,9 +117,9 @@ values via `curve` constructors (also `public`), then pass them to `new_config`.
 
     assert!(min_rent_price > 0,              E_MIN_RENT_PRICE_ZERO)
     assert!(tenure_ceiling > 0,              E_TENURE_CEILING_ZERO)
-    assert!(handover_floor > 0,              E_HANDOVER_FLOOR_ZERO)
     assert!(handover_floor <= tenure_ceiling, E_HANDOVER_FLOOR_EXCEEDS_TENURE)
     assert!(descent_ceiling > 0,             E_DESCENT_CEILING_ZERO)
+    // retire_floor >= 0 is trivially satisfied for u64 — no error constant needed.
 
 No validation is performed on `credit_curve`, `descent_curve`, or
 `price_function` field internals — those were validated by their constructors
@@ -127,6 +129,88 @@ in `curve_shape` / `price_function`.
 
 On success, returns an `IntegrationConfig` with all fields set to the provided
 values. No implicit defaults.
+
+
+### `retire_floor` — design rationale
+
+At first glance, `retire_floor` is counter-incentivized: the owner who sets it is
+the same actor who pays the cost — a self-imposed restriction on their own exit
+flexibility — with no direct benefit to themselves. An owner acting purely in
+self-interest would set `retire_floor = 0`.
+
+The value of `retire_floor` is not for the owner; it is a credible commitment to
+potential tenants. For most assets, the rental price is market-driven and tenant
+trust in the owner's continuity of participation is not a prerequisite for
+engagement. But certain categories of asset derive a material fraction of their
+rental value from the guarantee that the owner will not withdraw arbitrarily:
+
+- **Protocol admin caps** — a tenant considering renting an `adminCap` needs
+  assurance that the rental market will remain active for a meaningful period.
+  Without `retire_floor`, the owner could retire immediately from `Idle` or
+  `AtDutchAuction` between tenures, collapsing the market arbitrarily. A
+  `retire_floor` commitment gives prospective tenants confidence that the
+  opportunity to acquire the cap will persist for a minimum horizon.
+- **Yield-bearing rights** — assets representing ongoing revenue streams (e.g. a
+  claim on protocol fees or staking rewards) are worth more to a tenant when the
+  owner commits to keeping the yield source active inside the protocol for a
+  minimum horizon.
+- **Time-sensitive or expiring assets** — assets whose value decays or terminates
+  at a known future date (e.g. a governance vote right, an option-like position)
+  benefit from an owner commitment that prevents early withdrawal before the value
+  event occurs, making the rental market viable for tenants who need certainty over
+  that window.
+
+In these cases, an owner who sets a meaningful `retire_floor` signals verifiable
+on-chain commitment — not reputation, not terms-of-service, but an immutable
+parameter in the shared object that any participant can read. This can increase
+asset valorization by expanding the pool of tenants willing to engage.
+
+`retire_floor = 0` remains valid and is the correct default for owners who do not
+need to signal this commitment.
+
+
+### `handover_floor` — design rationale
+
+`handover_floor` serves two simultaneous functions:
+
+**1. Time guarantee for the displaced tenant.** When a new tenant displaces the
+current one, the current tenant retains full access to the asset for exactly
+`handover_floor` (bounded by remaining tenure time). This window is known and
+fixed at integration time — the current tenant entered their position knowing
+how much time they are guaranteed before any handover can execute. It makes
+rational entry possible at any point in the rental cycle: a tenant never faces
+instant, unannounced displacement.
+
+**2. Competitive bidding window.** During the `handover_floor` window, any actor
+may supersede the pending bid by paying at least `next_rent_price`. The
+`handover_countdown_expiry` does not reset with each supersede — it runs to
+completion regardless. Access transfers to the **last** valid bidder when it
+expires. This creates a price discovery window where future tenants compete
+against each other, driving the price upward before the handover settles.
+
+These two functions are inseparable: the same window that protects the displaced
+tenant is the window that enables competitive price discovery.
+
+**Special cases:**
+
+- **`handover_floor = 0`** — the handover fires immediately on bid. No time
+  guarantee for the displaced tenant; no competitive bidding window. The first
+  bidder at `next_rent_price` wins instantly. Suitable for integrators who do not
+  need either guarantee and want fully frictionless displacement.
+
+- **`handover_floor > 0`** — the standard configuration. Both guarantees are
+  active. The size of `handover_floor` controls the trade-off between tenant
+  stability (larger = more protection for the current tenant) and market
+  responsiveness (smaller = faster rotation).
+
+- **`handover_floor = tenure_ceiling`** — the current tenant is guaranteed their
+  full block before any handover can execute. A new tenant pays `next_rent_price`
+  and waits for the entire remaining tenure before gaining access. This replicates
+  traditional fixed-term renting — a sequential queue of full blocks — while
+  retaining all liquid renting mechanics: price escalation, fee distribution,
+  and the Dutch Auction on tenure expiry. `remain_credit` is always zero at
+  handover in this configuration — the full block is consumed before access transfers. The protocol
+  does not special-case this; it emerges naturally from the parameter choice.
 
 
 4. GETTERS
@@ -140,6 +224,7 @@ needs these in Move code.
     public(package) fun tenure_ceiling(cfg: &IntegrationConfig): u64
     public(package) fun handover_floor(cfg: &IntegrationConfig): u64
     public(package) fun descent_ceiling(cfg: &IntegrationConfig): u64
+    public(package) fun retire_floor(cfg: &IntegrationConfig): u64
     public(package) fun credit_curve(cfg: &IntegrationConfig): &CurveShape
     public(package) fun descent_curve(cfg: &IntegrationConfig): &CurveShape
     public(package) fun price_function(cfg: &IntegrationConfig): &PriceFunction
@@ -163,15 +248,19 @@ re-checking.
 **P1 — Price floor positive:**
     cfg.min_rent_price > 0
 
-**P2 — Time parameters positive:**
+**P2 — Time parameters positive (except handover_floor):**
     cfg.tenure_ceiling > 0
-    cfg.handover_floor > 0
+    cfg.handover_floor >= 0   (0 = no bidding window — handover fires immediately)
     cfg.descent_ceiling > 0
 
 **P3 — Handover contained within tenure:**
     cfg.handover_floor <= cfg.tenure_ceiling
 
-**P4 — Getters are consistent:**
+**P4 — retire_floor is unrestricted:**
+    cfg.retire_floor can be 0 (no restriction) or any u64 value.
+    0 means the owner may call `retire()` immediately after integration.
+
+**P5 — Getters are consistent:**
     For all fields f: getter_f(new_config(..., f, ...)) == f
     (Constructor stores values as-is; no normalization occurs in `config`.)
 
@@ -179,7 +268,7 @@ re-checking.
 6. TEST CASES
 -------------
 
-Format: `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, credit_curve, descent_curve, price_function)`
+Format: `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function)`
 
 Curve values use shorthand: `Lin` = `new_linear()`, `Smt` = `new_smoothstep()`,
 `Pow(n,d)` = `new_power_law(n, d)`, `Exp(a,neg)` = `new_exponential(a, neg)`,
@@ -188,18 +277,18 @@ Price function: `FD(d)` = `new_fixed_delta(d)`, `CD(bps,d)` = `new_compound_delt
 
 ### 6.1 Valid inputs (must not abort)
 
-| # | min_rent_price | tenure_ceiling | handover_floor | descent_ceiling | credit_curve | descent_curve | price_function | Notes |
-|---|---|---|---|---|---|---|---|---|
-| V1 | 1 | 1 | 1 | 1 | Lin | Lin | FD(1) | Minimal valid config. handover_floor == tenure_ceiling. |
-| V2 | 1_000_000 | 86_400_000 | 3_600_000 | 43_200_000 | Lin | Lin | FD(1) | Typical: 1h handover in 24h tenure, 12h auction. |
-| V3 | 100 | 10_000 | 5_000 | 10_000 | Smt | Smt | FD(10) | Smoothstep curves, both directions. |
-| V4 | 50 | 100_000 | 1 | 50_000 | Pow(1,2) | Lin | FD(1) | handover_floor = 1 (minimum). |
-| V5 | u64::MAX | 1_000 | 500 | 1_000 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
-| V6 | 1 | u64::MAX | 1 | u64::MAX | Log | Log | FD(1) | No upper bound on time parameters — including Logistic. |
-| V7 | 1_000 | 86_400_000 | 3_600_000 | 43_200_000 | Lin | Lin | CD(500,100) | CompoundDelta price function: 5% + 100 base units per cycle. |
+| # | min_rent_price | tenure_ceiling | handover_floor | descent_ceiling | retire_floor | credit_curve | descent_curve | price_function | Notes |
+|---|---|---|---|---|---|---|---|---|---|
+| V1 | 1 | 1 | 0 | 1 | 0 | Lin | Lin | FD(1) | Minimal valid config. handover_floor = 0 (immediate handover). |
+| V2 | 1_000_000 | 86_400_000 | 3_600_000 | 43_200_000 | 0 | Lin | Lin | FD(1) | Typical: 1h handover in 24h tenure, 12h auction, no retire floor. |
+| V3 | 100 | 10_000 | 5_000 | 10_000 | 7_200_000 | Smt | Smt | FD(10) | retire_floor = 2h — owner commits to keeping asset in escrow for 2h. |
+| V4 | 50 | 100_000 | 0 | 50_000 | 0 | Pow(1,2) | Lin | FD(1) | handover_floor = 0 (no bidding window). |
+| V5 | u64::MAX | 1_000 | 500 | 1_000 | 0 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
+| V6 | 1 | u64::MAX | 1 | u64::MAX | u64::MAX | Log | Log | FD(1) | No upper bound on time parameters — including retire_floor. |
+| V7 | 1_000 | 86_400_000 | 3_600_000 | 43_200_000 | 0 | Lin | Lin | CD(500,100) | CompoundDelta price function: 5% + 100 base units per cycle. |
 
-**Note — unconstrained free variables:** `tenure_ceiling` and `descent_ceiling`
-have no upper bound. Absurd values (e.g. `u64::MAX`) are
+**Note — unconstrained free variables:** `tenure_ceiling`, `descent_ceiling`,
+and `retire_floor` have no upper bound. Absurd values (e.g. `u64::MAX`) are
 accepted by `new_config`; any resulting arithmetic overflow surfaces at runtime
 inside `curve` or `rental_escrow` via Move's checked arithmetic. Adding upper
 bounds here would be the same mistake as the removed Logistic constraint —
@@ -211,20 +300,20 @@ validation noise for inputs that never occur in practice.
 |---|---|---|
 | I1 | min_rent_price = 0 | E_MIN_RENT_PRICE_ZERO (0) |
 | I2 | tenure_ceiling = 0 | E_TENURE_CEILING_ZERO (1) |
-| I3 | handover_floor = 0 | E_HANDOVER_FLOOR_ZERO (2) |
-| I4 | handover_floor > tenure_ceiling (e.g. floor=100, ceiling=50) | E_HANDOVER_FLOOR_EXCEEDS_TENURE (3) |
-| I5 | descent_ceiling = 0 | E_DESCENT_CEILING_ZERO (4) |
+| I3 | handover_floor > tenure_ceiling (e.g. floor=100, ceiling=50) | E_HANDOVER_FLOOR_EXCEEDS_TENURE (2) |
+| I4 | descent_ceiling = 0 | E_DESCENT_CEILING_ZERO (3) |
 
 ### 6.3 Getter round-trip (must hold for all valid configs)
 
 Verifies that every value passed to `new_config` is returned unchanged by its
 getter — the constructor does not transform, normalize, or discard any field.
 
-For any config `c` produced by `new_config(mrp, tc, hf, dsc, g, h, pf)`:
+For any config `c` produced by `new_config(mrp, tc, hf, dsc, rf, g, h, pf)`:
     min_rent_price(&c)  == mrp
     tenure_ceiling(&c)  == tc
     handover_floor(&c)  == hf
     descent_ceiling(&c) == dsc
+    retire_floor(&c)    == rf
     credit_curve(&c)    == &g
     descent_curve(&c)   == &h
     price_function(&c)  == &pf
@@ -246,15 +335,15 @@ round-trip holds against the reduced value, not the raw arguments:
 |--------|------------|-------|
 | `E_MIN_RENT_PRICE_ZERO: u64 = 0` | `public` | SDK error handling. |
 | `E_TENURE_CEILING_ZERO: u64 = 1` | `public` | SDK error handling. |
-| `E_HANDOVER_FLOOR_ZERO: u64 = 2` | `public` | SDK error handling. |
-| `E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 3` | `public` | SDK error handling. |
-| `E_DESCENT_CEILING_ZERO: u64 = 4` | `public` | SDK error handling. |
+| `E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 2` | `public` | SDK error handling. |
+| `E_DESCENT_CEILING_ZERO: u64 = 3` | `public` | SDK error handling. |
 | `IntegrationConfig` (type) | `public` | `copy + drop + store`. Embedded in `RentalEscrow`. |
 | `new_config(...)` | `public` | Validated constructor. |
 | `min_rent_price(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `tenure_ceiling(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `handover_floor(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `descent_ceiling(cfg)` | `public(package)` | Getter — returns `u64`. |
+| `retire_floor(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `credit_curve(cfg)` | `public(package)` | Getter — returns `&CurveShape`. |
 | `descent_curve(cfg)` | `public(package)` | Getter — returns `&CurveShape`. |
 | `price_function(cfg)` | `public(package)` | Getter — returns `&PriceFunction`. |

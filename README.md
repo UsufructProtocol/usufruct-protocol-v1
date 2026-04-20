@@ -67,7 +67,7 @@ integrate
 | `Idle → Rented` | A user pays `>= min_rent_price` |
 | `Rented → Rented` (takeover) | A new user pays `>= next_rent_price`; displaced tenant receives `remain_credit` |
 | `Rented → At Dutch Auction` | Tenant's time expires with no successor |
-| `At Dutch Auction → Rented` | A buyer pays `>= current_price_descent` |
+| `At Dutch Auction → Rented` | A buyer pays `>= compute_price_descent` |
 | `At Dutch Auction → Idle` | Price descends to `min_rent_price` with no buyer |
 | `Any → Retired` | Owner calls `retire()` — immediate from `Idle` or `At Dutch Auction`; deferred until the active block ends from `Rented` |
 
@@ -85,7 +85,7 @@ integrate
 
 Because `OwnerCap` has `key + store`, it satisfies the asset integration requirements of the protocol — it is a freely transferable object with an exercisable usus. This means an `OwnerCap` can itself be deposited into a new (level 2) escrow instance.
 
-A level 2 tenant who holds `OwnerCap_1` during their rental block has full administrative access to the level 1 escrow: they can withdraw accumulated earnings and call `retire()`. If the level 1 asset is in `Idle` or `At Dutch Auction`, the asset exits immediately. If it is in `Rented`, retirement is deferred: the flag is set but the asset does not exit until the active block concludes. In that case, whoever holds `OwnerCap_1` at the moment the level 1 block expires — not necessarily the tenant who called `retire()` — is the one who receives the underlying asset. The level 2 state machine runs independently: if the level 2 `handover_countdown` expires before the level 1 block ends, a new level 2 tenant may take over `OwnerCap_1` and claim the asset on retirement. What has occurred is an ownership transfer, mediated entirely by the rental market. The protocol did not design for sale — it discovered that ownership transfer is a special case of capability transfer.
+A level 2 tenant who holds `OwnerCap_1` during their rental block has full administrative access to the level 1 escrow: they can withdraw accumulated earnings and call `retire()`. `retire()` is only available once `retire_floor` has elapsed since level 1 integration — an on-chain commitment the integrator made to tenants at integration time. Once callable, if the level 1 asset is in `Idle` or `At Dutch Auction`, the asset exits immediately. If it is in `Rented`, retirement is deferred: the flag is set but the asset does not exit until the active block concludes. In that case, whoever holds `OwnerCap_1` at the moment the level 1 block expires — not necessarily the tenant who called `retire()` — is the one who receives the underlying asset. The level 2 state machine runs independently: if the level 2 `handover_countdown` expires before the level 1 block ends, a new level 2 tenant may take over `OwnerCap_1` and claim the asset on retirement. What has occurred is an ownership transfer, mediated entirely by the rental market. The protocol did not design for sale — it discovered that ownership transfer is a special case of capability transfer.
 
 The depth limit is two. An `OwnerCap` whose underlying escrow holds a real asset is valid. An `OwnerCap` whose underlying escrow holds another `OwnerCap` is rejected at integration time. At depth 3, the chain of value becomes unobservable: the outer escrow makes claims about an asset it cannot directly verify. The restriction is not a constraint against composability — it is a guarantee that every escrow in the protocol is always one level of indirection from a real asset.
 
@@ -105,8 +105,9 @@ The depth limit is two. An `OwnerCap` whose underlying escrow holds a real asset
 |---|---|---|
 | `min_rent_price` | Price floor. Lowest valid rental price and lower bound of the Dutch Auction. | `> 0` |
 | `tenure_ceiling` | Maximum duration of a single rental block. | `> 0`; `≥ handover_floor` |
-| `handover_floor` | Duration of the competitive bidding window after a takeover is initiated. The current tenant retains access for exactly this duration (bounded by remaining time). | `0 < x ≤ tenure_ceiling` |
+| `handover_floor` | Duration of the competitive bidding window after a takeover is initiated. The current tenant retains access for exactly this duration (bounded by remaining time). `0` = no bidding window, handover fires immediately. | `0 ≤ x ≤ tenure_ceiling` |
 | `descent_ceiling` | Maximum duration of a Dutch Auction before price reaches `min_rent_price` and the asset returns to `Idle`. | `> 0` |
+| `retire_floor` | Minimum time since integration before `retire()` may execute. An on-chain commitment to tenants: the asset cannot exit during this window. `0` = no restriction. | `>= 0` |
 | `f_credit_ascent` | Normalized shape `g : [0,1] → [0,1]`. Defines how the tenant's credit is consumed over the rental block. | `g(0)=0`, `g(1)=1`, bounded, strictly increasing |
 | `f_price_descent` | Normalized shape `h : [0,1] → [0,1]`. Defines how the auction discount deepens during a Dutch Auction. | `h(0)=0`, `h(1)=1`, bounded, strictly increasing |
 | `f_next_rent_price` | Maps `last_rent_price → next_rent_price`. The floor price required to displace the current tenant. A tenant may pay more; the actual amount paid becomes the new `last_rent_price`. | `f(p) > p` |

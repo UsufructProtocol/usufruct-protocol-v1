@@ -23,10 +23,11 @@ movements, no Sui framework dependencies.
 
 **Does not own:**
 
-- `CurveShape`, `PriceFunction` — live in `curve`.
-- `evaluate_curve`, `compute_used_credit`, `compute_price_descent`,
-  `compute_next_rent_price` — live in `curve`.
-- Integration-time validation — lives in `curve` constructors (`config::new` assembles, does not re-validate).
+- `CurveShape` — lives in `curve_shape`. `PriceFunction` — lives in `price_function`.
+- `evaluate_curve` — lives in `curve_shape`.
+- `evaluate_price_fn` — lives in `price_function`.
+- Protocol-level scaling of curve outputs (by `tenant_stake`, spread) — lives in `rental_escrow`.
+- Integration-time validation — lives in the primitive modules' constructors (`config::new` assembles, does not re-validate).
 - Protocol state, fund movements, access control, event emission.
 
 **Dependency direction:** `math` calls nothing outside its own module.

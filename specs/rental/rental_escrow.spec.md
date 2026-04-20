@@ -33,8 +33,8 @@ points, and the fund distribution logic for every boundary event.
 - All public entry points: `integrate`, `rent`, `retire`, `claim_asset`,
   `withdraw_earnings`, `borrow_asset`, `return_asset`,
   `apply_pending_transitions`.
-- Read-only queries: `current_used_credit`,
-  `current_price_descent`, `current_next_rent_price`.
+- Read-only queries: `compute_used_credit`,
+  `compute_price_descent`, `compute_next_rent_price`.
 - Private settlement helpers: `do_handover`, `do_tenure_expiry`,
   `do_auction_expiry`, `split_fee`.
 - Protocol state-machine events: `AssetIntegrated`, `RentStarted`,
@@ -77,10 +77,10 @@ all others and is consumed by none.
 - **Push-before-rotate invariant** (inside `do_handover`): balances and caps
   are pushed to the current/pending addresses before those address fields are
   overwritten.
-- **Asset always present while escrow exists.** `asset: Asset` is a direct
-  field — not `Option`. The only window in which the asset is not inside the
-  escrow is a single PTB borrow (`borrow_asset` → `return_asset`), which is
-  enforced structurally by the hot-potato `AssetReceipt`.
+- **Asset always present while escrow exists.** `asset: Option<Asset>` is the
+  internal field representation. `None` exists only between `borrow_asset` and
+  `return_asset` within a single PTB — never across transaction boundaries.
+  The invariant is enforced by the hot-potato `AssetReceipt`, not by the type.
 - **Capability-based authorization.** `retire`, `claim_asset`, and
   `withdraw_earnings` take `&OwnerCap` and forward to
   `owner_cap::assert_escrow`. `borrow_asset` takes `&TenantCap` and checks
@@ -98,16 +98,18 @@ messages.
     public const E_TENANT_CAP_WRONG_ESCROW:  u64 = 1;  // cap.escrow_id != object::id(escrow)
     public const E_TENANT_CAP_STALE:         u64 = 2;  // object::id(cap) != current_tenant_cap_id
     public const E_NOT_IDLE:                 u64 = 3;  // rent() Idle-path: state is not Idle
-    public const E_NOT_AUCTION:              u64 = 4;  // (reserved — dispatch abort guard)
-    public const E_NOT_RENTED:               u64 = 5;  // (reserved — dispatch abort guard)
+    public const E_NOT_AUCTION:              u64 = 4;  // compute_price_descent: state != AtDutchAuction
+    public const E_NOT_RENTED:               u64 = 5;  // compute_used_credit / compute_next_rent_price: state != Rented
     public const E_INSUFFICIENT_PAYMENT:     u64 = 6;  // payment < floor price (all acquisition paths)
     public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 7;  // rent() during Rented(HandoverOpen) with retire_flag
-    public const E_RETIRED_NO_BID:           u64 = 8;  // rent() called when state is Retired
-    public const E_ALREADY_RETIRED:          u64 = 9;  // retire() when retire_flag already set
-    public const E_NOT_RETIRED:              u64 = 10; // claim_asset() when state != Retired
-    public const E_RECEIPT_ESCROW_MISMATCH:  u64 = 11; // return_asset: receipt.escrow_id != object::id(escrow)
-    public const E_RECEIPT_ASSET_MISMATCH:   u64 = 12; // return_asset: receipt.asset_id != object::id(&asset)
-    public const E_NO_EARNINGS:              u64 = 13; // withdraw_earnings: owner_earnings == 0 after settlement
+    public const E_RETIRED_NO_BID:              u64 = 8;  // rent() called when state is Retired
+    public const E_RETIRE_FLOOR_NOT_ELAPSED:    u64 = 9;  // retire() before integrated_at_ms + retire_floor
+    public const E_ALREADY_RETIRED:             u64 = 10; // retire() when retire_flag already set
+    public const E_NOT_RETIRED:                 u64 = 11; // claim_asset() when state != Retired
+    public const E_RECEIPT_ESCROW_MISMATCH:     u64 = 12; // return_asset: receipt.escrow_id != object::id(escrow)
+    public const E_RECEIPT_ASSET_MISMATCH:      u64 = 13; // return_asset: receipt.asset_id != object::id(&asset)
+    public const E_NO_EARNINGS:                 u64 = 14; // withdraw_earnings: owner_earnings == 0 after settlement
+    public const E_ASSET_ALREADY_BORROWED:      u64 = 15; // borrow_asset called while asset is already out of escrow
 
 
 2. TYPES
@@ -134,7 +136,7 @@ public enum AssetState has copy, drop, store {
 | `Idle` | No tenant. Asset available at `min_rent_price`. Entry: `rent()`. |
 | `Rented { HandoverOpen }` | Current tenant holds exclusive access. No pending bid. |
 | `Rented { HandoverConfirmed }` | Current tenant holds access until `handover_countdown_expiry`. A pending tenant has paid `>= next_rent_price`. |
-| `AtDutchAuction` | Price descends from `last_rent_price` toward `min_rent_price` via `compute_price_descent`. |
+| `AtDutchAuction` | Price descends from `last_rent_price` toward `min_rent_price`. See `compute_price_descent` (§8.2). |
 | `Retired` | Terminal. `retire_flag` is set and the state machine has reached a point where the asset is extractable via `claim_asset`. |
 
 The `state` field is not directly writable from outside the module. All
@@ -162,9 +164,10 @@ public enum RentPhase has copy, drop, store {
 ```move
 public struct RentalEscrow<phantom Asset: key + store, phantom CoinType> has key {
     id:                         UID,
-    asset:                      Asset,
+    asset:                      Option<Asset>,
     config:                     IntegrationConfig,
     fee_inbox_id:               ID,
+    integrated_at_ms:           u64,
     state:                      AssetState,
     last_rent_price:            u64,
     phase_start_ms:             u64,
@@ -186,22 +189,24 @@ public struct RentalEscrow<phantom Asset: key + store, phantom CoinType> has key
   `store` would allow an external module to include `RentalEscrow` as a field
   of another type, breaking the one-shared-object-per-instance invariant.
 
-**Asset field — why not `Option<Asset>`:** the escrow and the asset are
-conceptually identical — the escrow exists iff the asset is inside it.
-`claim_asset` destructures the escrow and returns the asset in the same
-transaction. The borrow mechanism (`borrow_asset` / `return_asset`) uses
-`Asset` by value + hot-potato receipt, so the asset leaves and returns within
-a single PTB without ever persisting in an "escrow exists but is empty"
-state. Using a plain `Asset` field rather than `Option<Asset>` makes this
-structural invariant explicit.
+**Asset field — why `Option<Asset>`:** in Sui Move, a field cannot be moved
+out of a struct accessed via `&mut`. `borrow_asset` receives
+`&mut RentalEscrow<Asset, CoinType>` and must temporarily move the asset out.
+`Option<Asset>` enables this via `option::extract` (take, leaving `None`) and
+`option::fill` (restore). The `None` window exists only between `borrow_asset`
+and `return_asset` within a single PTB — never at a transaction boundary.
+This is the canonical Move borrow pattern, used internally by
+`sui::borrow::Referent<T>` in the Sui framework
+(https://docs.sui.io/guides/developer/objects/simulating-refs).
 
 **Field semantics:**
 
 | Field | Meaning |
 |---|---|
-| `asset` | The integrated asset. `key + store` required. |
+| `asset` | The integrated asset, wrapped in `Option`. `Some` at all transaction boundaries; `None` only within a PTB borrow window (`borrow_asset` → `return_asset`). Inner type requires `key + store`. |
 | `config` | Immutable `IntegrationConfig` — all protocol parameters. |
 | `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Target of `send_fee` transfers. |
+| `integrated_at_ms` | Timestamp at integration. Used to enforce `retire_floor`: `retire()` aborts if `clock.timestamp_ms() < integrated_at_ms + config.retire_floor`. |
 | `state` | Current `AssetState`. |
 | `last_rent_price` | Price paid by the most recent tenant. Entry barrier for takeover and starting price of the Dutch Auction descent. Initialized to `min_rent_price` at `integrate` — the price the first Idle acquisition will write anyway. Updated at every acquisition: `min_rent_price` from Idle, `next_rent_price` from Rented, and the actual amount paid from AtDutchAuction. |
 | `phase_start_ms` | Timestamp at which the current phase began. See §5 for exact assignment per transition. |
@@ -354,6 +359,7 @@ have no reason to read the clock.
         asset:    Asset,
         config:   IntegrationConfig,
         fee_ref:  &ProtocolFeeRef,
+        clock:    &Clock,
         ctx:      &mut TxContext,
     ): OwnerCap
 
@@ -367,10 +373,12 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
 2. Mint `OwnerCap` via `owner_cap::new(escrow_id, ctx)`.
 3. Read `fee_inbox_id = protocol_fee_inbox::fee_ref_inbox_id(fee_ref)`.
 4. Construct the escrow with:
+   - `asset = option::some(asset)`
    - `state = AssetState::Idle`
    - `last_rent_price = config::min_rent_price(&config)`
    - `phase_start_ms = 0`
-   - All `Option` fields `None`, all `Balance` fields `balance::zero()`
+   - `integrated_at_ms = clock.timestamp_ms()`
+   - All remaining `Option` fields `None`, all `Balance` fields `balance::zero()`
    - `retire_flag = false`
 5. `transfer::share_object(escrow)`.
 6. Emit `AssetIntegrated { escrow_id, owner_cap_id, integrator }`.
@@ -414,15 +422,17 @@ asset. Does not mutate balances.
 2. `apply_pending_transitions(escrow, clock, ctx)` — settle all elapsed
    boundaries first.
 3. Assert `!escrow.retire_flag`, abort `E_ALREADY_RETIRED`.
-4. Set `escrow.retire_flag = true`.
-5. If `escrow.state` is `Idle` or `AtDutchAuction` (no active tenant, no
+4. Assert `clock.timestamp_ms() >= escrow.integrated_at_ms +
+   config::retire_floor(&escrow.config)`, abort `E_RETIRE_FLOOR_NOT_ELAPSED`.
+5. Set `escrow.retire_flag = true`.
+6. If `escrow.state` is `Idle` or `AtDutchAuction` (no active tenant, no
    pending bid), transition immediately:
    - `AtDutchAuction` → set `state = Retired`. Emit `AuctionExpired { next_state: Retired, ... }`
      with `timestamp_ms = clock.timestamp_ms()` (not the would-be auction expiry —
      retire cuts it short).
    - `Idle` → set `state = Retired`. No auxiliary event (the state was
      already "empty"; `RetireFlagSet` covers it).
-6. Emit `RetireFlagSet { escrow_id, state_at_set: escrow.state }`.
+7. Emit `RetireFlagSet { escrow_id, state_at_set: escrow.state }`.
 
 **State after `retire` completes:**
 
@@ -469,13 +479,14 @@ deletes the escrow, returns the asset and earnings.
 5. Destructure the escrow:
 
         let RentalEscrow {
-            id, asset, config: _, fee_inbox_id: _,
-            state: _, last_rent_price: _, phase_start_ms: _,
+            id, asset: asset_opt, config: _, fee_inbox_id: _,
+            integrated_at_ms: _, state: _, last_rent_price: _, phase_start_ms: _,
             current_tenant_cap_id: _, current_tenant_address: _,
             pending_tenant_address: _, handover_countdown_expiry: _,
             tenant_stake, pending_bid, owner_earnings,
             retire_flag: _,
         } = escrow;
+        let asset = option::destroy_some(asset_opt);
 
 6. Both `tenant_stake` and `pending_bid` must be zero at this point — the
    only path to `Retired` drains them via `do_tenure_expiry` (stake) and,
@@ -544,36 +555,29 @@ locked balances.
 
 - Assert `coin::value(&payment) >= escrow.config.min_rent_price`, abort
   `E_INSUFFICIENT_PAYMENT`.
-- `escrow.last_rent_price = coin::value(&payment);`
-- `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
-- `escrow.phase_start_ms = clock.timestamp_ms();`
-- Mint `cap = tenant_cap::new(object::id(escrow), ctx)`.
-- `escrow.current_tenant_cap_id = some(object::id(&cap));`
-- `escrow.current_tenant_address = some(tx_context::sender(ctx));`
-- `escrow.state = Rented { phase: HandoverOpen };`
-- `transfer::transfer(cap, tx_context::sender(ctx));`
-- Emit `RentStarted { escrow_id, tenant: sender, tenant_cap_id, price_paid,
-  from_state: Idle }`.
+- Let `price_paid = coin::value(&payment);`
+- Let `tenant_cap_id = install_new_tenant(escrow, payment, clock, ctx);` — §7.5
+  is the single source of truth for "install tenant from payment into an
+  empty escrow". It handles balance absorption, phase anchor, cap mint and
+  push, address registration, and state transition to
+  `Rented { HandoverOpen }`.
+- Emit `RentStarted { escrow_id, tenant: tx_context::sender(ctx),
+  tenant_cap_id, price_paid, from_state: AssetState::Idle }`.
 
 #### Case: `AtDutchAuction`
 
-- Let `price = current_price_descent(escrow, clock.timestamp_ms())`.
+- Let `price = compute_price_descent(escrow, clock.timestamp_ms())`.
 - Assert `coin::value(&payment) >= price`, abort `E_INSUFFICIENT_PAYMENT`.
-- `escrow.last_rent_price = coin::value(&payment);`
-- `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
-- `escrow.phase_start_ms = clock.timestamp_ms();`
-- Mint `cap = tenant_cap::new(object::id(escrow), ctx)`.
-- `escrow.current_tenant_cap_id = some(object::id(&cap));`
-- `escrow.current_tenant_address = some(tx_context::sender(ctx));`
-- `escrow.state = Rented { phase: HandoverOpen };`
-- `transfer::transfer(cap, tx_context::sender(ctx));`
-- Emit `RentStarted { ..., from_state: AtDutchAuction, ... }`.
+- Let `price_paid = coin::value(&payment);`
+- Let `tenant_cap_id = install_new_tenant(escrow, payment, clock, ctx);` — §7.5.
+- Emit `RentStarted { escrow_id, tenant: tx_context::sender(ctx),
+  tenant_cap_id, price_paid, from_state: AssetState::AtDutchAuction }`.
 
 #### Case: `Rented { HandoverOpen }`
 
 - Assert `!escrow.retire_flag`, abort `E_RETIRE_FLAG_BLOCKS_BID`.
-- Let `floor = current_next_rent_price(escrow)` (delegates to
-  `price_function::compute_next_rent_price`).
+- Let `floor = compute_next_rent_price(escrow)` (delegates to
+  `price_function::evaluate_price_fn`).
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - Let `remaining = (escrow.phase_start_ms + escrow.config.tenure_ceiling) -
   clock.timestamp_ms()`.
@@ -596,7 +600,7 @@ exits afterward.
   accepted before `retire` could have fired; the committed bid is
   honored, handover completes normally, and T(n+1) then enters
   `HandoverOpen` with the flag still set (no further bids accepted).
-- Let `floor = current_next_rent_price(escrow)` — `last_rent_price` holds
+- Let `floor = compute_next_rent_price(escrow)` — `last_rent_price` holds
   the previous bidder's payment, so the floor escalates with each supersede.
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - **Refund previous pending bid** (push before rotate):
@@ -716,27 +720,135 @@ integrating ecosystem.
    some(object::id(tenant_cap))`, abort `E_TENANT_CAP_STALE`. This
    check rejects both stale caps (displaced tenants) and caps from other
    escrows (covered by step 2, but layered here for clarity).
-4. Extract `asset` from the escrow. (In Move: a `mem::replace`-style
-   swap, or direct field move — the asset is moved out and the field is
-   statically unreachable until `return_asset` runs. See "Asset field
-   mechanism" below.)
+4. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
+   This is the only protocol state in which the internal `Option<Asset>` field
+   can be `None` — when a previous `borrow_asset` call in the same PTB has
+   already extracted the asset. Prevents a double-borrow from producing an
+   opaque framework abort via `option::extract`.
+   `let asset = option::extract(&mut escrow.asset);`
 5. Construct `receipt = AssetReceipt { escrow_id: object::id(escrow),
    asset_id: object::id(&asset) }`.
 6. Return `(asset, receipt)`.
 
-**Asset field mechanism:** the `asset: Asset` field is a direct (non-Option)
-field. To move it out temporarily, the implementation uses a private
-`Option<Asset>` wrapper internally — exposed as a structurally-invariant
-`Asset` to external readers. The wrapper is `Some` at every persistent
-state; the `None` window exists only between `borrow_asset` and
-`return_asset` inside a single PTB, never across transaction boundaries.
+**Why `return_asset` requires no cap re-verification:** `return_asset` can
+only be called by a PTB that holds an `AssetReceipt`. An `AssetReceipt` can
+only exist if `borrow_asset` was called and succeeded in the same PTB — the
+hot-potato type makes it impossible to store, transfer, or fabricate. And
+`borrow_asset` only succeeds for the current tenant (steps 2–3). The receipt
+is therefore irrefutable proof that cap authorization was already verified.
+No re-check is needed.
 
-*(Alternative: Sui dynamic fields. Either works; the spec fixes the
-observable invariant — asset present iff escrow exists persistently — and
-leaves the concrete field encoding to the implementation.)*
+**PTB clock-fixity — supporting invariant:** Sui fixes `clock::timestamp_ms()`
+at checkpoint time; it does not advance between PTB steps. Any handover due
+at that timestamp was already resolved by `apply_pending_transitions` in
+step 1. No new transitions can fire within the same transaction, so
+`current_tenant_cap_id` cannot rotate after the receipt is issued. This
+explains why no state change can have occurred between the two calls —
+but the primary authorization argument is the receipt itself.
 
 **No event emitted.** Borrow is a PTB-internal event with no observable
 state change across transactions; the receipt is consumed in the same PTB.
+
+---
+
+**PTB borrow window — where the tenant actually uses the asset:**
+
+This window is the core value exchange of the entire protocol. To understand
+it, three actors and two protocols must be distinguished:
+
+**Actors:**
+
+- **Integrating protocol** — the protocol that issued the asset and defines
+  what it does (a game, a marketplace, a DeFi app). Its functions take the
+  asset as an argument and give it meaning. It has no knowledge of rental
+  terms, tenants, or escrow state. It does not import `rental_escrow`.
+- **Owner** — the current holder of the asset who placed it into the escrow
+  via `integrate`. The owner may be the same entity as the integrating
+  protocol (e.g. the game studio renting out its own items) or a completely
+  independent actor (e.g. a user who bought the asset on a secondary market
+  and now wants to rent it out). The two do not need to coincide.
+- **Tenant** — the user who paid `rent()` and holds `TenantCap`. They
+  acquire temporary access to use the asset through the integrating
+  protocol's functions for the duration of their tenure.
+
+**Protocols:**
+
+- **`rental_escrow`** — the rental market layer. Generic over
+  `Asset: key + store`. Owns custody, enforces payment and time bounds,
+  manages the state machine. Has no knowledge of what the asset does.
+- **Integrating protocol** — defines the asset's utility. Has no knowledge
+  of rental terms or escrow state. Was not modified to support renting.
+
+The owner bridges the two at setup time: they call `integrate`, moving the
+asset out of their wallet and into `rental_escrow`. From that point,
+`rental_escrow` holds custody and tenants can rent it.
+
+The tenant bridges the two at use time — and this window is that moment:
+
+```
+  ┌─ rental_escrow ──────────────────────────────────────────────────┐
+  │                                                                  │
+  │  PTB step N:  borrow_asset(escrow, tenant_cap, clock, ctx)       │
+  │                   → (asset, receipt)                             │
+  │                          │                                       │
+  └──────────────────────────┼───────────────────────────────────────┘
+                             │  asset crosses the protocol boundary
+                             ▼
+  ┌─ integrating protocol ───────────────────────────────────────────┐
+  │                                                                  │
+  │  PTB steps (N+1 … M-1)                                          │
+  │                                                                  │
+  │  The tenant — the person who paid `rent()` and holds            │
+  │  `TenantCap` — calls the integrating protocol's own             │
+  │  functions, passing `asset` by value. This is the actual        │
+  │  use the tenant paid for: play with a game item, interact        │
+  │  with a marketplace listing, exercise a DeFi position, etc.     │
+  │                                                                  │
+  │  `receipt` must be threaded through unconsumed.                  │
+  │                                                                  │
+  │  In practice, the integrating protocol's app constructs this     │
+  │  PTB for the tenant — the tenant interacts with the app's UI,   │
+  │  not with the raw PTB steps. The borrow/return wrapping is an   │
+  │  implementation detail the integrating protocol abstracts away.  │
+  │                                                                  │
+  └──────────────────────────┬───────────────────────────────────────┘
+                             │  asset crosses back
+                             ▼
+  ┌─ rental_escrow ──────────────────────────────────────────────────┐
+  │                                                                  │
+  │  PTB step M:  return_asset(escrow, asset, receipt)               │
+  │                                                                  │
+  └──────────────────────────────────────────────────────────────────┘
+```
+
+The hot-potato `AssetReceipt` structurally enforces this window: the PTB
+cannot type-check unless `receipt` is consumed by `return_asset` before the
+transaction boundary. The asset cannot be stored, transferred, or dropped
+inside the window — it must be passed by value and returned. The tenant
+cannot extend the window beyond a single PTB.
+
+This composition is zero-overhead for the integrating protocol: it requires
+no changes, imports no `rental_escrow` types, and is unaware that its asset
+is being rented. Any protocol that uses `key + store` objects gains a rental
+market by integrating with `rental_escrow`.
+
+**Note on integration levels:** the integrating protocol never needs to
+change any contract code. The decoupling is complete: the asset is the
+only interface between the two protocols, and the integrating protocol's
+functions work identically whether the asset comes from an owner's wallet
+or from a liquid renting escrow. A power-user tenant can always construct
+the PTB manually — `borrow_asset`, call the integrating protocol's
+functions, `return_asset` — with zero involvement from the integrating
+protocol.
+
+For non-power-user tenants, the liquid renting SDK provides a tool to
+construct this PTB without exposing the escrow mechanics. The SDK operates
+exclusively at the frontend/backend layer — it generates PTBs, never
+deploys or modifies blockchain code. An integrating protocol that wants to
+surface liquid renting natively in its own app can adopt the SDK
+optionally, abstracting the borrow window entirely from its users. This is
+a UX choice, not a technical requirement. A protocol that has never heard
+of liquid renting is already compatible at the contract level.
 
 ---
 
@@ -756,10 +868,11 @@ state change across transactions; the receipt is consumed in the same PTB.
    `E_RECEIPT_ESCROW_MISMATCH`. Enforces return to the correct escrow.
 3. Assert `asset_id == object::id(&asset)`, abort
    `E_RECEIPT_ASSET_MISMATCH`. Enforces return of the exact asset borrowed.
-4. Insert `asset` back into the escrow's asset slot.
+4. `option::fill(&mut escrow.asset, asset);`
 5. Does **not** call `apply_pending_transitions` — returning an asset never
    needs to resolve boundary events; no balance is touched, no state field
-   changes.
+   changes. The PTB clock-fixity invariant (§6.1) guarantees no new
+   transition can have fired since `borrow_asset` ran in the same PTB.
 
 **No event emitted.** Same rationale as `borrow_asset`.
 
@@ -782,10 +895,14 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 
 **Algorithm:**
 
-1. Let `used_credit = current_used_credit(escrow, boundary_ms)`.
-   (`boundary_ms == handover_countdown_expiry`, so the clamp is a no-op;
-   the call reads `balance::value(&escrow.tenant_stake)` as the principal —
-   see §8.2.)
+1. Let `used_credit = compute_used_credit(escrow, boundary_ms)` — §8.1 is the
+   single source of truth for "used credit at timestamp T". Its state guard
+   and `HandoverConfirmed` clamp are structurally satisfied here: Check 1 of
+   `apply_pending_transitions` already confirmed
+   `state == Rented { HandoverConfirmed }`, and
+   `boundary_ms == handover_countdown_expiry` makes the clamp a no-op. The
+   principal used is `balance::value(&escrow.tenant_stake)` (see §8.1 for
+   why `tenant_stake` and not `last_rent_price`).
 2. Let `remain_credit = balance::value(&escrow.tenant_stake) - used_credit`.
    (Invariant `used_credit + remain_credit == tenant_stake` from curve
    bijectivity.)
@@ -824,6 +941,25 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 9. Emit `HandoverCompleted { escrow_id, displaced_tenant, new_tenant,
    new_tenant_cap_id, used_credit, owner_share, protocol_fee, remain_credit,
    timestamp_ms: boundary_ms }`.
+
+**Edge cases — both extremes are handled without special branching:**
+
+- **`used_credit == 0`** (very convex curve, handover fires very early):
+  `remain_credit == tenant_stake > 0`. The `if remain_credit > 0` guard fires —
+  the full stake is pushed to the displaced tenant as `Coin<C>`. `split_fee(0)`
+  returns `(0, 0)`. `send_fee` short-circuits on zero. `withdraw_all` on the
+  now-empty stake returns `Balance(0)`; `join` into `owner_earnings` is a no-op.
+  No zero-value coin transfer occurs.
+
+- **`used_credit == tenant_stake`** (Dutch Auction bypass — curve saturated,
+  `remain_credit == 0`): the `if remain_credit > 0` guard is skipped — no coin
+  is pushed to the displaced tenant. `split_fee(tenant_stake)` produces the
+  normal 95/5 split. `send_fee` and `withdraw_all` operate on non-zero balances.
+
+In both cases `balance::split(b, 0)`, `balance::withdraw_all(Balance(0))`, and
+`balance::join(_, Balance(0))` are valid operations — confirmed against the
+framework source: `split` asserts `self.value >= value` (holds for 0), and
+`withdraw_all` delegates to `split(self, self.value)`.
 
 ---
 
@@ -923,6 +1059,69 @@ fee_share) at 95/5.
 - `split_fee(1) == (1, 0)` — fee floors to zero on tiny amounts. `send_fee`
   short-circuits zero.
 
+---
+
+### 7.5 `install_new_tenant`
+
+    fun install_new_tenant<Asset: key + store, CoinType>(
+        escrow:  &mut RentalEscrow<Asset, CoinType>,
+        payment: Coin<CoinType>,
+        clock:   &Clock,
+        ctx:     &mut TxContext,
+    ): ID
+
+**Preconditions:** `escrow.state` is one of `{ Idle, AtDutchAuction }`. The
+caller has already validated `payment` against the applicable floor
+(`config.min_rent_price` for Idle, `compute_price_descent(..., now)` for
+AtDutchAuction).
+
+**Purpose:** shared installation sequence for the two acquisition arms of
+`rent()` that land on an empty escrow — mint `TenantCap`, absorb payment,
+anchor the new phase, transition to `Rented { HandoverOpen }`. Both arms
+produce structurally identical post-state; the only arm-specific signal is
+the `from_state` field of the emitted `RentStarted` event, which the caller
+owns.
+
+**Algorithm:**
+
+1. `escrow.last_rent_price = coin::value(&payment);`
+2. `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
+3. `escrow.phase_start_ms = clock.timestamp_ms();`
+4. `let cap = tenant_cap::new(object::id(escrow), ctx);`
+5. `let new_cap_id = object::id(&cap);`
+6. `escrow.current_tenant_cap_id = some(new_cap_id);`
+7. `escrow.current_tenant_address = some(tx_context::sender(ctx));`
+8. `escrow.state = Rented { phase: HandoverOpen };`
+9. `transfer::transfer(cap, tx_context::sender(ctx));`
+10. Return `new_cap_id`.
+
+**Return value:** the new `TenantCap` ID, returned so the caller can emit
+`RentStarted { ..., tenant_cap_id: new_cap_id, ... }` with its arm-specific
+`from_state`.
+
+**Why the helper does not emit `RentStarted`:** the event's `from_state`
+field discriminates between `Idle` and `AtDutchAuction` callers. Keeping
+the emit at each arm preserves that signal explicitly at the callsite
+instead of threading an extra `from_state` argument through the helper.
+
+**Two call sites:**
+
+| Caller | Floor source | Event `from_state` |
+|---|---|---|
+| `rent()` Case `Idle` (§5.1) | `config.min_rent_price` | `AssetState::Idle` |
+| `rent()` Case `AtDutchAuction` (§5.1) | `compute_price_descent(escrow, clock.timestamp_ms())` | `AssetState::AtDutchAuction` |
+
+Both arms share the same post-state; the helper is the single source of
+truth for "install a new tenant from payment into an empty escrow".
+
+**Not reused by `do_handover`:** `do_handover` also mints a `TenantCap` and
+transitions to `HandoverOpen`, but the surrounding state differs
+structurally — `pending_bid` rotates into `tenant_stake` (not a fresh
+payment), the target address is `pending_tenant_address` (not
+`sender(ctx)`), and `phase_start_ms = boundary_ms` (not `clock.now()`).
+Merging the two would force context-dependent branching inside the helper
+and obscure the distinct semantics of each rotation site.
+
 
 8. READ-ONLY QUERIES
 ---------------------
@@ -940,46 +1139,152 @@ the settled `AssetState` without committing the transaction — free, no
 consensus. This is more correct than a dedicated read-only query because it
 reflects the actual settled state, not a speculative computation.
 
-### 8.1 `current_used_credit`
+**Naming convention — `compute_*`:**
 
-    public fun current_used_credit<Asset: key + store, CoinType>(
+All protocol-level read-only queries use the `compute_*` prefix uniformly.
+`compute_X(escrow, ...)` reads as "compute the value of X from the escrow's
+state (and the supplied inputs)" — an honest description regardless of
+whether a timestamp is passed:
+
+- `compute_used_credit(escrow, timestamp_ms)` (§8.1) and
+  `compute_price_descent(escrow, timestamp_ms)` (§8.2) take an arbitrary
+  timestamp and evaluate at that instant — not necessarily `clock.now()`.
+  External callers typically pass `clock.timestamp_ms()` for "live" reads,
+  but internal callers (e.g. `do_handover` passing `boundary_ms`) evaluate
+  at past or boundary timestamps.
+- `compute_next_rent_price(escrow)` (§8.3) depends only on escrow state,
+  so it needs no timestamp.
+
+The `current_*` prefix is deliberately not used: it implies "now", and
+a function accepting an arbitrary timestamp — or that any external caller
+may inspect at an arbitrary point in a PTB — lies under that prefix.
+Uniform `compute_*` keeps one convention for three functions that all do
+the same thing semantically: produce a value from escrow state.
+
+### 8.1 `compute_used_credit`
+
+    public fun compute_used_credit<Asset: key + store, CoinType>(
         escrow:       &RentalEscrow<Asset, CoinType>,
         timestamp_ms: u64,
     ): u64
 
-Delegates to `curve_shape::compute_used_credit`, passing
-`balance::value(&escrow.tenant_stake)` as the principal. Using
-`tenant_stake` rather than `last_rent_price` is correct in both sub-states:
-in `HandoverOpen` the two are equal; in `HandoverConfirmed` `last_rent_price`
-already holds the pending bid, so `tenant_stake` is the only accurate source
-for the current tenant's payment.
+**Algorithm:**
 
-**Clamping rule:** if `escrow.state` is `Rented { HandoverConfirmed }` and
-`timestamp_ms > handover_countdown_expiry`, the function clamps
-`timestamp_ms` to `handover_countdown_expiry`. Past the boundary, the
-displayed used_credit would otherwise exceed the amount actually consumed
-by the current tenant — misleading at the UI layer.
+    // 1. State guard — only meaningful in Rented state.
+    assert!(matches!(escrow.state, AssetState::Rented { .. }), E_NOT_RENTED);
 
-### 8.2 `current_price_descent`
+    // 2. Clamp to handover boundary when in HandoverConfirmed.
+    //    Past that point the current tenant's stake is no longer growing —
+    //    the boundary is where their credit froze.
+    let effective_ts =
+        if let Rented { HandoverConfirmed } = escrow.state {
+            let expiry = *option::borrow(&escrow.handover_countdown_expiry);
+            std::u64::min(timestamp_ms, expiry)
+        } else {
+            timestamp_ms  // HandoverOpen: evaluate_curve saturates at tenure_ceiling
+        };
 
-    public fun current_price_descent<Asset: key + store, CoinType>(
+    // 3. Elapsed time since the current phase started.
+    //    If effective_ts < phase_start_ms (caller passed a timestamp before the phase
+    //    began), return 0 — no credit consumed yet.
+    if effective_ts < escrow.phase_start_ms { return 0 };
+    let elapsed_ms = effective_ts - escrow.phase_start_ms;
+
+    // 4. Evaluate the normalized credit curve.
+    let g = curve_shape::evaluate_curve(
+        config::credit_curve(&escrow.config),
+        elapsed_ms,
+        config::tenure_ceiling(&escrow.config),
+    );
+
+    // 5. Scale by the current tenant's principal.
+    //    Principal is tenant_stake, not last_rent_price: in HandoverConfirmed
+    //    last_rent_price already holds the pending bid amount, making
+    //    tenant_stake the only accurate source for the current tenant's payment.
+    //    evaluate_curve returns SCALE when elapsed >= tenure_ceiling, so the
+    //    scaled result saturates at tenant_stake.
+    math::mul_div(balance::value(&escrow.tenant_stake), g, SCALE)
+
+**Two call sites:**
+
+| Caller | `timestamp_ms` passed | Purpose |
+|---|---|---|
+| `do_handover` (internal, §7.1) | `handover_countdown_expiry` | used_credit at the exact boundary — clamp is a no-op; state guard is structurally satisfied |
+| Frontend / read query (external) | `clock.timestamp_ms()` | live display of accrued credit |
+
+Internal and external callers share the same function to guarantee a single
+source of truth for "used credit at timestamp T". The state guard and the
+`HandoverConfirmed` clamp are defensive — they protect against wrong-state
+external calls and unsettled boundaries. For `do_handover` both are
+structurally satisfied and evaluate as no-ops.
+
+---
+
+### 8.2 `compute_price_descent`
+
+    public fun compute_price_descent<Asset: key + store, CoinType>(
         escrow:       &RentalEscrow<Asset, CoinType>,
         timestamp_ms: u64,
     ): u64
 
-Delegates to `curve_shape::compute_price_descent`. Only meaningful when
-`escrow.state == AtDutchAuction`. Returns `min_rent_price` once
-the descent is saturated.
+Only meaningful when `escrow.state == AtDutchAuction`. Returns
+`min_rent_price` once the descent saturates.
 
-### 8.3 `current_next_rent_price`
+**Algorithm:**
 
-    public fun current_next_rent_price<Asset: key + store, CoinType>(
+    // 1. State guard — only meaningful in AtDutchAuction state.
+    assert!(escrow.state == AssetState::AtDutchAuction, E_NOT_AUCTION);
+
+    // 2. Elapsed time since the auction started.
+    //    phase_start_ms is set to the tenure-expiry boundary when AtDutchAuction begins.
+    //    If timestamp_ms < phase_start_ms, return last_rent_price — auction has not started yet.
+    if timestamp_ms < escrow.phase_start_ms { return escrow.last_rent_price };
+    let elapsed_ms = timestamp_ms - escrow.phase_start_ms;
+
+    // 3. Evaluate the normalized descent curve.
+    let h = curve_shape::evaluate_curve(
+        config::descent_curve(&escrow.config),
+        elapsed_ms,
+        config::descent_ceiling(&escrow.config),
+    );
+
+    // 4. Scale by the spread, then descend from last_rent_price.
+    //    evaluate_curve returns SCALE when elapsed >= descent_ceiling, so
+    //    consumed == spread and the result saturates at min_rent_price.
+    //    Precondition last_rent_price >= min_rent_price is guaranteed by the
+    //    protocol — the first rent sets last_rent_price = min_rent_price and
+    //    it only increases thereafter.
+    let spread = escrow.last_rent_price - config::min_rent_price(&escrow.config);
+    let consumed = math::mul_div(spread, h, SCALE);
+    escrow.last_rent_price - consumed
+
+`last_rent_price` is the starting price of the descent — it was set by the
+last tenant's payment and preserved through tenure expiry and auction entry.
+
+---
+
+### 8.3 `compute_next_rent_price`
+
+    public fun compute_next_rent_price<Asset: key + store, CoinType>(
         escrow: &RentalEscrow<Asset, CoinType>,
     ): u64
 
-Delegates to `price_function::compute_next_rent_price(
-&escrow.config.price_function, escrow.last_rent_price)`. Only meaningful
-when the state is `Rented`.
+Only meaningful when `escrow.state == Rented`. No `timestamp_ms` parameter —
+`f_next_rent_price` depends only on `last_rent_price`, not on elapsed time.
+
+**Algorithm:**
+
+    // Guard — only meaningful in Rented state.
+    assert!(matches!(escrow.state, AssetState::Rented { .. }), E_NOT_RENTED);
+
+    price_function::evaluate_price_fn(
+        config::price_function(&escrow.config),
+        escrow.last_rent_price,
+    )
+
+In `HandoverConfirmed`, `last_rent_price` already holds the pending bidder's
+payment — so `compute_next_rent_price` returns the price to supersede the
+pending bidder, not the current tenant.
 
 
 9. PROPERTIES
@@ -1041,9 +1346,10 @@ HandoverConfirmed }`. Both set together in `rent()` (takeover path) and
 cleared together in `do_handover`.
 
 **P11 — Asset present while escrow exists:**
-Across transaction boundaries, `escrow.asset` is always present.
-The borrow-return window is confined to a single PTB by the hot-potato
-`AssetReceipt`.
+A protocol guarantee, not a structural type guarantee. `escrow.asset` is
+`Option<Asset>`; `None` exists only within a PTB borrow window
+(`borrow_asset` → `return_asset`), never across transaction boundaries.
+Enforced by the hot-potato `AssetReceipt`.
 
 **P12 — Fee routing is idempotent at zero:**
 `do_handover` with `used_credit == 0` (e.g. handover at t = phase_start_ms,
@@ -1057,7 +1363,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `AssetIntegrated` event emitted. |
+| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `AssetIntegrated` event emitted. |
 | T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. No depth check. |
 
 ### 10.2 `rent` — Idle path
@@ -1073,7 +1379,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| R5 | Pay exactly `current_price_descent(now)` | State → `Rented(HandoverOpen)`. `last_rent_price == payment`. `RentStarted{ from_state: AtDutchAuction }`. |
+| R5 | Pay exactly `compute_price_descent(now)` | State → `Rented(HandoverOpen)`. `last_rent_price == payment`. `RentStarted{ from_state: AtDutchAuction }`. |
 | R6 | Overpay (e.g. PTB latency) | Accepted. `last_rent_price == full payment`. No refund. |
 | R7 | Underpay | Aborts `E_INSUFFICIENT_PAYMENT`. |
 | R8 | Descent fully elapsed, pay `min_rent_price` | State → `Rented(HandoverOpen)`. |
@@ -1105,6 +1411,8 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | A4 | Called on AtDutchAuction, descent expiry reached | `do_auction_expiry` fires. Returns `Idle`. `AuctionExpired` emitted. |
 | A5 | Called after long inactivity: handover + tenure + auction all due | All three fire in order. Returns `Idle`. Three events emitted. |
 | A6 | Called with retire_flag, Rented(HandoverOpen), tenure expired | `do_tenure_expiry` fires with `next_state: Retired`. Returns `Retired`. |
+| A7 | `do_handover` with `used_credit == 0` (very convex PowerLaw curve, handover fires immediately after bid) | `remain_credit == tenant_stake`. Full stake pushed to displaced tenant as `Coin<C>`. `owner_earnings` unchanged. No `FeeMessage` created (`send_fee` short-circuits). `HandoverCompleted` emitted with `used_credit: 0`, `owner_share: 0`, `protocol_fee: 0`. |
+| A8 | `do_handover` with `used_credit == tenant_stake` (Dutch Auction bypass — `remain_credit == 0`) | No coin pushed to displaced tenant. Full stake split 95/5 into `owner_earnings` and `FeeMessage`. `HandoverCompleted` emitted with `remain_credit: 0`. |
 
 ### 10.7 `borrow_asset` / `return_asset`
 
@@ -1117,20 +1425,22 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | B5 | Return with receipt for a different escrow | Aborts `E_RECEIPT_ESCROW_MISMATCH`. |
 | B6 | Return a different asset (substitution attempt) | Aborts `E_RECEIPT_ASSET_MISMATCH`. |
 | B7 | Forget to return (receipt unconsumed) | PTB fails to type-check — hot potato must be consumed. |
+| B8 | `borrow_asset` called twice in the same PTB | Second call aborts `E_ASSET_ALREADY_BORROWED` — asset field is `None` after the first extraction. |
 
 ### 10.8 `retire` / `claim_asset`
 
 | # | Description | Expected |
 |---|---|---|
-| C1 | `retire` from Idle | `retire_flag = true`. `state → Retired`. `RetireFlagSet`. |
-| C2 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. `AuctionExpired(next_state: Retired)` + `RetireFlagSet`. |
-| C3 | `retire` from Rented(HandoverOpen) | `retire_flag = true`. `state` unchanged. Subsequent `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
-| C4 | `retire` from Rented(HandoverConfirmed) | `retire_flag = true`. `state` unchanged. Handover completes normally; new tenant enters HandoverOpen with flag set. |
-| C5 | Second `retire` call | Aborts `E_ALREADY_RETIRED`. |
-| C6 | `claim_asset` when `state != Retired` | Aborts `E_NOT_RETIRED`. |
-| C7 | `claim_asset` with non-matching `OwnerCap` | Aborts `E_OWNER_CAP_MISMATCH`. |
-| C8 | `claim_asset` on Retired with accumulated earnings | Returns `(asset, coin == owner_earnings)`. OwnerCap burned. Escrow deleted. `AssetClaimed` event. |
-| C9 | Full retire-then-claim flow from Rented | `retire` → wait for tenure expiry → `apply_pending_transitions` moves to Retired → `claim_asset` succeeds. |
+| C1 | `retire` before `retire_floor` elapsed | Aborts `E_RETIRE_FLOOR_NOT_ELAPSED`. |
+| C2 | `retire` from Idle (after `retire_floor`) | `retire_flag = true`. `state → Retired`. `RetireFlagSet`. |
+| C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. `AuctionExpired(next_state: Retired)` + `RetireFlagSet`. |
+| C4 | `retire` from Rented(HandoverOpen) | `retire_flag = true`. `state` unchanged. Subsequent `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
+| C5 | `retire` from Rented(HandoverConfirmed) | `retire_flag = true`. `state` unchanged. Handover completes normally; new tenant enters HandoverOpen with flag set. |
+| C6 | Second `retire` call | Aborts `E_ALREADY_RETIRED`. |
+| C7 | `claim_asset` when `state != Retired` | Aborts `E_NOT_RETIRED`. |
+| C8 | `claim_asset` with non-matching `OwnerCap` | Aborts `E_OWNER_CAP_MISMATCH`. |
+| C9 | `claim_asset` on Retired with accumulated earnings | Returns `(asset, coin == owner_earnings)`. OwnerCap burned. Escrow deleted. `AssetClaimed` event. |
+| C10 | Full retire-then-claim flow from Rented | `retire` → wait for tenure expiry → `apply_pending_transitions` moves to Retired → `claim_asset` succeeds. |
 
 ### 10.9 `withdraw_earnings`
 
@@ -1140,7 +1450,19 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | W2 | Withdraw with positive earnings | Returns Coin of exact balance. `owner_earnings == 0` after. `EarningsWithdrawn` event. |
 | W3 | Withdraw with wrong cap | Aborts `E_OWNER_CAP_MISMATCH`. |
 
-### 10.10 Fee routing
+### 10.10 Read-only queries — state guard
+
+| # | Description | Expected |
+|---|---|---|
+| Q1 | `compute_used_credit` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
+| Q2 | `compute_used_credit` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
+| Q3 | `compute_used_credit` called when state is `Retired` | Aborts `E_NOT_RENTED`. |
+| Q4 | `compute_price_descent` called when state is `Idle` | Aborts `E_NOT_AUCTION`. |
+| Q5 | `compute_price_descent` called when state is `Rented` | Aborts `E_NOT_AUCTION`. |
+| Q6 | `compute_next_rent_price` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
+| Q7 | `compute_next_rent_price` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
+
+### 10.11 Fee routing
 
 | # | Description | Expected |
 |---|---|---|
@@ -1169,16 +1491,18 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_TENANT_CAP_WRONG_ESCROW` | `public` | borrow_asset. |
 | `E_TENANT_CAP_STALE` | `public` | borrow_asset. |
 | `E_NOT_IDLE` | `public` | (reserved) |
-| `E_NOT_AUCTION` | `public` | (reserved) |
-| `E_NOT_RENTED` | `public` | (reserved) |
+| `E_NOT_AUCTION` | `public` | compute_price_descent: state != AtDutchAuction. |
+| `E_NOT_RENTED` | `public` | compute_used_credit / compute_next_rent_price: state != Rented. |
 | `E_INSUFFICIENT_PAYMENT` | `public` | rent — payment below floor price (all acquisition paths). |
 | `E_RETIRE_FLAG_BLOCKS_BID` | `public` | rent (takeover, flagged). |
 | `E_RETIRED_NO_BID` | `public` | rent (Retired). |
+| `E_RETIRE_FLOOR_NOT_ELAPSED` | `public` | retire. |
 | `E_ALREADY_RETIRED` | `public` | retire. |
 | `E_NOT_RETIRED` | `public` | claim_asset. |
 | `E_RECEIPT_ESCROW_MISMATCH` | `public` | return_asset. |
 | `E_RECEIPT_ASSET_MISMATCH` | `public` | return_asset. |
 | `E_NO_EARNINGS` | `public` | withdraw_earnings. |
+| `E_ASSET_ALREADY_BORROWED` | `public` | borrow_asset called while asset is already out of escrow. |
 | `RentalEscrow<Asset, CoinType>` (type) | `public` | `key` only. Shared. |
 | `AssetState` (type) | `public` | `copy + drop + store`. External pattern-match. |
 | `RentPhase` (type) | `public` | `copy + drop + store`. |
@@ -1193,18 +1517,19 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `return_asset(...)` | `public` | Consumes `AssetReceipt`. |
 | `apply_pending_transitions(...)` | `public` | Permissionless settlement. Returns settled `AssetState`. |
 | `apply_pending_transitions(...)` via `devInspectTransactionBlock` | — | Free settled-state read. No consensus, no commit. |
-| `current_used_credit(...)` | `public` | Read-only. |
-| `current_price_descent(...)` | `public` | Read-only. |
-| `current_next_rent_price(...)` | `public` | Read-only. |
+| `compute_used_credit(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
+| `compute_price_descent(...)` | `public` | Read-only. Aborts `E_NOT_AUCTION` if state != AtDutchAuction. |
+| `compute_next_rent_price(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
 | `do_handover(...)` | private | §7.1 |
 | `do_tenure_expiry(...)` | private | §7.2 |
 | `do_auction_expiry(...)` | private | §7.3 |
 | `split_fee(...)` | private | §7.4 |
+| `install_new_tenant(...)` | private | §7.5 — shared install path for `rent()` Idle / AtDutchAuction arms. |
 
 **Depends on:**
-- `math` — `mul_div` via `split_fee`.
-- `curve_shape` — `CurveShape`, `compute_used_credit`, `compute_price_descent`.
-- `price_function` — `PriceFunction`, `compute_next_rent_price`.
+- `math` — `mul_div` via `split_fee`, `compute_used_credit`, and `compute_price_descent`.
+- `curve_shape` — `CurveShape`, `evaluate_curve`.
+- `price_function` — `PriceFunction`, `evaluate_price_fn`.
 - `config` — `IntegrationConfig` and `public(package)` getters.
 - `owner_cap` — `OwnerCap`, `new`, `burn`, `escrow_id`, `assert_escrow`.
 - `tenant_cap` — `TenantCap`, `new`, `escrow_id`.
@@ -1216,7 +1541,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 1. Build `CurveShape` values via `curve_shape::new_*`.
 2. Build `PriceFunction` value via `price_function::new_*`.
 3. Build `IntegrationConfig` via `config::new_config(...)`.
-4. Call `rental_escrow::integrate(asset, config, fee_ref, ctx)` →
+4. Call `rental_escrow::integrate(asset, config, fee_ref, clock, ctx)` →
    receive `OwnerCap`.
 5. The escrow is now shared and addressable. Any participant may
    `apply_pending_transitions`, read state, or `rent`.

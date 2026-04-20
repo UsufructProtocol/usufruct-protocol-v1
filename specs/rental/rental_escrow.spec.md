@@ -208,7 +208,7 @@ This is the canonical Move borrow pattern, used internally by
 | `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Target of `send_fee` transfers. |
 | `integrated_at_ms` | Timestamp at integration. Used to enforce `retire_floor`: `retire()` aborts if `clock.timestamp_ms() < integrated_at_ms + config.retire_floor`. |
 | `state` | Current `AssetState`. |
-| `last_rent_price` | Price paid by the most recent tenant. Entry barrier for takeover and starting price of the Dutch Auction descent. Initialized to `min_rent_price` at `integrate` — the price the first Idle acquisition will write anyway. Updated at every acquisition: `min_rent_price` from Idle, `next_rent_price` from Rented, and the actual amount paid from AtDutchAuction. |
+| `last_rent_price` | Price paid by the most recent tenant. Entry barrier for takeover and starting price of the Dutch Auction descent. Initialized to `min_rent_price` at `integrate` as a sentinel — the first Idle acquisition overwrites it with its own `coin::value(&payment)`. Updated at every acquisition to `coin::value(&payment)` — always ≥ the arm-specific floor (`min_rent_price` from Idle, `compute_price_descent(now)` from AtDutchAuction, `compute_next_rent_price(escrow)` from Rented). Overpayment is absorbed verbatim; there is no refund path. |
 | `phase_start_ms` | Timestamp at which the current phase began. See §5 for exact assignment per transition. |
 | `current_tenant_cap_id` | `Some(id)` while `state` is `Rented`; `None` otherwise. The live `TenantCap` for the current tenant. Staleness enforced structurally — any other `TenantCap` with the same `escrow_id` fails `object::id(cap) == current_tenant_cap_id`. |
 | `current_tenant_address` | `Some(addr)` while `state` is `Rented`; `None` otherwise. Target of `remain_credit` push at handover. |
@@ -1252,8 +1252,11 @@ Only meaningful when `escrow.state == AtDutchAuction`. Returns
     //    evaluate_curve returns SCALE when elapsed >= descent_ceiling, so
     //    consumed == spread and the result saturates at min_rent_price.
     //    Precondition last_rent_price >= min_rent_price is guaranteed by the
-    //    protocol — the first rent sets last_rent_price = min_rent_price and
-    //    it only increases thereafter.
+    //    protocol — every acquisition asserts payment >= arm-specific floor,
+    //    and all floors (min_rent_price, compute_price_descent, compute_next_rent_price)
+    //    are themselves >= min_rent_price. Note last_rent_price does NOT
+    //    monotonically increase: a rent from AtDutchAuction can write a value
+    //    below the previous last_rent_price (but still >= min_rent_price).
     let spread = escrow.last_rent_price - config::min_rent_price(&escrow.config);
     let consumed = math::mul_div(spread, h, SCALE);
     escrow.last_rent_price - consumed

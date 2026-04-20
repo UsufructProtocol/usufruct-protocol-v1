@@ -67,7 +67,7 @@ integrate
 | `Idle → Rented` | A user pays `>= min_rent_price` |
 | `Rented → Rented` (takeover) | A new user pays `>= next_rent_price`; displaced tenant receives `remain_credit` |
 | `Rented → At Dutch Auction` | Tenant's time expires with no successor |
-| `At Dutch Auction → Rented` | A buyer pays `>= current_price_descent` |
+| `At Dutch Auction → Rented` | A buyer pays `>= compute_price_descent` |
 | `At Dutch Auction → Idle` | Price descends to `min_rent_price` with no buyer |
 | `Any → Retired` | Owner calls `retire()` — immediate from `Idle` or `At Dutch Auction`; deferred until the active block ends from `Rented` |
 

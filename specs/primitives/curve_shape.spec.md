@@ -156,10 +156,10 @@ Evaluates the normalized shape function g at x = t / t_max.
 Returns g(x) * SCALE, in [0, SCALE].
 
 `t_max > 0` is guaranteed by `IntegrationConfig` constraints.
-Called by `rental_escrow` (from `current_used_credit`, `current_price_descent`,
-and `do_handover`) with protocol-level inputs already validated and normalized
-at the escrow layer. This module does not validate state, phase timing, or
-principals — it only evaluates the curve.
+Called by `rental_escrow` (from `compute_used_credit` and
+`compute_price_descent`) with protocol-level inputs already validated and
+normalized at the escrow layer. This module does not validate state, phase
+timing, or principals — it only evaluates the curve.
 
 ### Implementation
 

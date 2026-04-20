@@ -33,8 +33,8 @@ points, and the fund distribution logic for every boundary event.
 - All public entry points: `integrate`, `rent`, `retire`, `claim_asset`,
   `withdraw_earnings`, `borrow_asset`, `return_asset`,
   `apply_pending_transitions`.
-- Read-only queries: `current_used_credit`,
-  `current_price_descent`, `current_next_rent_price`.
+- Read-only queries: `compute_used_credit`,
+  `compute_price_descent`, `current_next_rent_price`.
 - Private settlement helpers: `do_handover`, `do_tenure_expiry`,
   `do_auction_expiry`, `split_fee`.
 - Protocol state-machine events: `AssetIntegrated`, `RentStarted`,
@@ -98,8 +98,8 @@ messages.
     public const E_TENANT_CAP_WRONG_ESCROW:  u64 = 1;  // cap.escrow_id != object::id(escrow)
     public const E_TENANT_CAP_STALE:         u64 = 2;  // object::id(cap) != current_tenant_cap_id
     public const E_NOT_IDLE:                 u64 = 3;  // rent() Idle-path: state is not Idle
-    public const E_NOT_AUCTION:              u64 = 4;  // current_price_descent: state != AtDutchAuction
-    public const E_NOT_RENTED:               u64 = 5;  // current_used_credit / current_next_rent_price: state != Rented
+    public const E_NOT_AUCTION:              u64 = 4;  // compute_price_descent: state != AtDutchAuction
+    public const E_NOT_RENTED:               u64 = 5;  // compute_used_credit / current_next_rent_price: state != Rented
     public const E_INSUFFICIENT_PAYMENT:     u64 = 6;  // payment < floor price (all acquisition paths)
     public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 7;  // rent() during Rented(HandoverOpen) with retire_flag
     public const E_RETIRED_NO_BID:              u64 = 8;  // rent() called when state is Retired
@@ -136,7 +136,7 @@ public enum AssetState has copy, drop, store {
 | `Idle` | No tenant. Asset available at `min_rent_price`. Entry: `rent()`. |
 | `Rented { HandoverOpen }` | Current tenant holds exclusive access. No pending bid. |
 | `Rented { HandoverConfirmed }` | Current tenant holds access until `handover_countdown_expiry`. A pending tenant has paid `>= next_rent_price`. |
-| `AtDutchAuction` | Price descends from `last_rent_price` toward `min_rent_price`. See `current_price_descent` (§8.2). |
+| `AtDutchAuction` | Price descends from `last_rent_price` toward `min_rent_price`. See `compute_price_descent` (§8.2). |
 | `Retired` | Terminal. `retire_flag` is set and the state machine has reached a point where the asset is extractable via `claim_asset`. |
 
 The `state` field is not directly writable from outside the module. All
@@ -566,7 +566,7 @@ locked balances.
 
 #### Case: `AtDutchAuction`
 
-- Let `price = current_price_descent(escrow, clock.timestamp_ms())`.
+- Let `price = compute_price_descent(escrow, clock.timestamp_ms())`.
 - Assert `coin::value(&payment) >= price`, abort `E_INSUFFICIENT_PAYMENT`.
 - Let `price_paid = coin::value(&payment);`
 - Let `tenant_cap_id = install_new_tenant(escrow, payment, clock, ctx);` — §7.5.
@@ -895,7 +895,7 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 
 **Algorithm:**
 
-1. Let `used_credit = current_used_credit(escrow, boundary_ms)` — §8.1 is the
+1. Let `used_credit = compute_used_credit(escrow, boundary_ms)` — §8.1 is the
    single source of truth for "used credit at timestamp T". Its state guard
    and `HandoverConfirmed` clamp are structurally satisfied here: Check 1 of
    `apply_pending_transitions` already confirmed
@@ -1072,7 +1072,7 @@ fee_share) at 95/5.
 
 **Preconditions:** `escrow.state` is one of `{ Idle, AtDutchAuction }`. The
 caller has already validated `payment` against the applicable floor
-(`config.min_rent_price` for Idle, `current_price_descent(..., now)` for
+(`config.min_rent_price` for Idle, `compute_price_descent(..., now)` for
 AtDutchAuction).
 
 **Purpose:** shared installation sequence for the two acquisition arms of
@@ -1109,7 +1109,7 @@ instead of threading an extra `from_state` argument through the helper.
 | Caller | Floor source | Event `from_state` |
 |---|---|---|
 | `rent()` Case `Idle` (§5.1) | `config.min_rent_price` | `AssetState::Idle` |
-| `rent()` Case `AtDutchAuction` (§5.1) | `current_price_descent(escrow, clock.timestamp_ms())` | `AssetState::AtDutchAuction` |
+| `rent()` Case `AtDutchAuction` (§5.1) | `compute_price_descent(escrow, clock.timestamp_ms())` | `AssetState::AtDutchAuction` |
 
 Both arms share the same post-state; the helper is the single source of
 truth for "install a new tenant from payment into an empty escrow".
@@ -1139,9 +1139,25 @@ the settled `AssetState` without committing the transaction — free, no
 consensus. This is more correct than a dedicated read-only query because it
 reflects the actual settled state, not a speculative computation.
 
-### 8.1 `current_used_credit`
+**Naming convention — `compute_*` vs. `current_*`:**
 
-    public fun current_used_credit<Asset: key + store, CoinType>(
+- `compute_*(escrow, timestamp_ms)` — takes an arbitrary timestamp. The
+  returned value is the quantity evaluated *at that instant*, not at
+  `clock.now()`. External callers typically pass `clock.timestamp_ms()` and
+  read "live" values, but internal callers (e.g. `do_handover` passing
+  `boundary_ms`) evaluate at past or boundary timestamps. Applies to
+  `compute_used_credit` (§8.1) and `compute_price_descent` (§8.2).
+- `current_*(escrow)` — takes no timestamp. The returned value depends
+  only on escrow state, so "current" is literal: the answer at the settled
+  state right now. Applies to `current_next_rent_price` (§8.3), whose
+  formula reads `last_rent_price` and nothing time-dependent.
+
+This split is deliberate: "current" implies "now", and a function that
+accepts an arbitrary timestamp would lie under that prefix.
+
+### 8.1 `compute_used_credit`
+
+    public fun compute_used_credit<Asset: key + store, CoinType>(
         escrow:       &RentalEscrow<Asset, CoinType>,
         timestamp_ms: u64,
     ): u64
@@ -1198,9 +1214,9 @@ structurally satisfied and evaluate as no-ops.
 
 ---
 
-### 8.2 `current_price_descent`
+### 8.2 `compute_price_descent`
 
-    public fun current_price_descent<Asset: key + store, CoinType>(
+    public fun compute_price_descent<Asset: key + store, CoinType>(
         escrow:       &RentalEscrow<Asset, CoinType>,
         timestamp_ms: u64,
     ): u64
@@ -1357,7 +1373,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| R5 | Pay exactly `current_price_descent(now)` | State → `Rented(HandoverOpen)`. `last_rent_price == payment`. `RentStarted{ from_state: AtDutchAuction }`. |
+| R5 | Pay exactly `compute_price_descent(now)` | State → `Rented(HandoverOpen)`. `last_rent_price == payment`. `RentStarted{ from_state: AtDutchAuction }`. |
 | R6 | Overpay (e.g. PTB latency) | Accepted. `last_rent_price == full payment`. No refund. |
 | R7 | Underpay | Aborts `E_INSUFFICIENT_PAYMENT`. |
 | R8 | Descent fully elapsed, pay `min_rent_price` | State → `Rented(HandoverOpen)`. |
@@ -1432,11 +1448,11 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 
 | # | Description | Expected |
 |---|---|---|
-| Q1 | `current_used_credit` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
-| Q2 | `current_used_credit` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
-| Q3 | `current_used_credit` called when state is `Retired` | Aborts `E_NOT_RENTED`. |
-| Q4 | `current_price_descent` called when state is `Idle` | Aborts `E_NOT_AUCTION`. |
-| Q5 | `current_price_descent` called when state is `Rented` | Aborts `E_NOT_AUCTION`. |
+| Q1 | `compute_used_credit` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
+| Q2 | `compute_used_credit` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
+| Q3 | `compute_used_credit` called when state is `Retired` | Aborts `E_NOT_RENTED`. |
+| Q4 | `compute_price_descent` called when state is `Idle` | Aborts `E_NOT_AUCTION`. |
+| Q5 | `compute_price_descent` called when state is `Rented` | Aborts `E_NOT_AUCTION`. |
 | Q6 | `current_next_rent_price` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
 | Q7 | `current_next_rent_price` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
 
@@ -1469,8 +1485,8 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_TENANT_CAP_WRONG_ESCROW` | `public` | borrow_asset. |
 | `E_TENANT_CAP_STALE` | `public` | borrow_asset. |
 | `E_NOT_IDLE` | `public` | (reserved) |
-| `E_NOT_AUCTION` | `public` | current_price_descent: state != AtDutchAuction. |
-| `E_NOT_RENTED` | `public` | current_used_credit / current_next_rent_price: state != Rented. |
+| `E_NOT_AUCTION` | `public` | compute_price_descent: state != AtDutchAuction. |
+| `E_NOT_RENTED` | `public` | compute_used_credit / current_next_rent_price: state != Rented. |
 | `E_INSUFFICIENT_PAYMENT` | `public` | rent — payment below floor price (all acquisition paths). |
 | `E_RETIRE_FLAG_BLOCKS_BID` | `public` | rent (takeover, flagged). |
 | `E_RETIRED_NO_BID` | `public` | rent (Retired). |
@@ -1495,8 +1511,8 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `return_asset(...)` | `public` | Consumes `AssetReceipt`. |
 | `apply_pending_transitions(...)` | `public` | Permissionless settlement. Returns settled `AssetState`. |
 | `apply_pending_transitions(...)` via `devInspectTransactionBlock` | — | Free settled-state read. No consensus, no commit. |
-| `current_used_credit(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
-| `current_price_descent(...)` | `public` | Read-only. Aborts `E_NOT_AUCTION` if state != AtDutchAuction. |
+| `compute_used_credit(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
+| `compute_price_descent(...)` | `public` | Read-only. Aborts `E_NOT_AUCTION` if state != AtDutchAuction. |
 | `current_next_rent_price(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
 | `do_handover(...)` | private | §7.1 |
 | `do_tenure_expiry(...)` | private | §7.2 |
@@ -1505,7 +1521,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `install_new_tenant(...)` | private | §7.5 — shared install path for `rent()` Idle / AtDutchAuction arms. |
 
 **Depends on:**
-- `math` — `mul_div` via `split_fee`, `current_used_credit`, and `current_price_descent`.
+- `math` — `mul_div` via `split_fee`, `compute_used_credit`, and `compute_price_descent`.
 - `curve_shape` — `CurveShape`, `evaluate_curve`.
 - `price_function` — `PriceFunction`, `compute_next_rent_price`.
 - `config` — `IntegrationConfig` and `public(package)` getters.

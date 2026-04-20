@@ -1376,7 +1376,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | R1 | Pay exactly `min_rent_price` | State → `Rented(HandoverOpen)`. `last_rent_price == min_rent_price`. `TenantCap` pushed to sender. `RentStarted` event. |
 | R2 | Pay less than `min_rent_price` | Aborts `E_INSUFFICIENT_PAYMENT`. |
 | R3 | Overpay from Idle | Accepted. `last_rent_price == full payment`. State → `Rented(HandoverOpen)`. |
-| R4 | Rent when `retire_flag` set and state was Idle | State has already been moved to `Retired` by `apply_pending_transitions`; dispatch hits the `Retired` arm → aborts `E_RETIRED_NO_BID`. |
+| R4 | Rent when `retire_flag` set and state was Idle | State was moved to `Retired` by the prior `retire()` call (§4.2 step 6, Idle branch); `apply_pending_transitions` is a no-op here. Dispatch hits the `Retired` arm → aborts `E_RETIRED_NO_BID`. |
 
 ### 10.3 `rent` — AtDutchAuction path
 

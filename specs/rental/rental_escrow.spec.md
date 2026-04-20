@@ -1491,12 +1491,36 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 Every `rent()` call chains `apply_pending_transitions` (APT) before dispatching
 on the settled state. This matrix enumerates the reachable combinations of
 (pre-APT state × APT outcome × `rent()` branch) so the settlement-then-dispatch
-flow is exercised on every path the state machine admits. Tests are
-**table-driven**: one helper takes `(initial_state, elapsed_ms, retire_flag,
-payment)` and asserts `(post_state, events_emitted, balances)`. The golden-path
-standalone cases (R1 for Idle entry, R13 for HandoverConfirmed supersede)
-remain separate — they stay readable even if the parametric helper regresses,
-and a failure in the helper cannot mask a regression in the canonical paths.
+flow is exercised on every path the state machine admits.
+
+**Test structure under Move's test framework.** Move's `#[test]` fns take no
+parameters, `#[expected_failure]` is strictly function-level, and there is no
+try/catch or abort-catching primitive — an abort inside a looped test
+terminates the whole test. Success and abort rows therefore cannot share a
+single parametric loop. The matrix maps to two clusters:
+
+1. **Success cluster (11 rows: M1–M6, M8–M11, M15)** — one `#[test]` fn
+   iterates a `vector<Case>` of records and calls a `#[test_only]` helper
+   `check_case((pre_state, elapsed_ms, retire_flag, payment),
+   expected(post_state, events, balances))`. Each iteration opens a fresh
+   `test_scenario`, builds the pre-APT state via a setup helper, advances the
+   clock with `scenario.later_epoch(...)`, calls `rent()`, and asserts the
+   post-state / emitted events / balance deltas. Adding a row is one line.
+2. **Abort cluster (4 rows: M7, M12, M13, M14)** — one
+   `#[test, expected_failure(abort_code = E_...)]` fn per row. `expected_failure`
+   catches the abort at the function boundary, so looping over abort rows is
+   not possible. For the abort-row testing strategy (M7, M12, M13), the fn
+   runs two transactions via `test_scenario::next_tx`: tx1 calls
+   `apply_pending_transitions` standalone to exercise and assert APT's work
+   (this tx **must succeed** — if it aborts, the framework would accept the
+   wrong abort code and mask the bug), tx2 calls `rent()` which aborts with
+   the expected code. M14 is a pure rent-abort — APT is a no-op, so no tx1
+   is needed.
+
+The golden-path standalone cases (R1 for Idle entry, R13 for HandoverConfirmed
+supersede) remain separate from the success-cluster loop — they stay readable
+even if the parametric helper regresses, and a failure in the helper cannot
+mask a regression in the canonical paths.
 
 | # | Pre-APT | Elapsed conditions | APT fires | Post-APT | `rent()` branch | Expected |
 |---|---|---|---|---|---|---|

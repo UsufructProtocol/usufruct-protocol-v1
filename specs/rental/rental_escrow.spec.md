@@ -426,11 +426,16 @@ asset. Does not mutate balances.
 5. Set `escrow.retire_flag = true`.
 6. If `escrow.state` is `Idle` or `AtDutchAuction` (no active tenant, no
    pending bid), transition immediately:
-   - `AtDutchAuction` → set `state = Retired`. Emit `AuctionExpired { next_state: Retired, ... }`
+   - `AtDutchAuction` → set `state = Retired`, set `phase_start_ms =
+     clock.timestamp_ms()`. Emit `AuctionExpired { next_state: Retired, ... }`
      with `timestamp_ms = clock.timestamp_ms()` (not the would-be auction expiry —
      retire cuts it short).
-   - `Idle` → set `state = Retired`. No auxiliary event (the state was
-     already "empty"; `RetireFlagSet` covers it).
+   - `Idle` → set `state = Retired`, set `phase_start_ms = clock.timestamp_ms()`.
+     No auxiliary event (the state was already "empty"; `RetireFlagSet` covers it).
+   Both branches update `phase_start_ms` as bookkeeping, following the
+   convention that every transition site records the moment of transition
+   (see `do_tenure_expiry` §7.2 and `do_auction_expiry` §7.3). The field is
+   not read in `Retired`, but the uniform invariant simplifies auditing.
 7. Emit `RetireFlagSet { escrow_id, state_at_set: escrow.state }`.
 
 **State after `retire` completes:**

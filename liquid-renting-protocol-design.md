@@ -1037,6 +1037,24 @@ The protocol fee rate is **5%**, hardcoded at the module level and identical acr
 
 **Hardcoded, not governable.** A configurable fee rate introduces a governance attack surface: whoever controls the governance mechanism controls the fee. Hardcoding eliminates this surface entirely. Integrators and tenants know the exact protocol economics at integration time, with no risk of mid-lifecycle modification. If the fee rate must change, it changes in a new version of the module — applicable only to future integrations. Existing instances run under the rate they entered with, consistent with the immutability guarantee that governs all other protocol parameters.
 
+### Value Capture Alternative: Liquid Renting Renting Itself
+
+The direct collection model described above — where the protocol team holds the `ProtocolFeeInbox` and drains `FeeMessage<C>` objects at their discretion — is not the only viable revenue capture model. A structurally distinct alternative emerges naturally from the protocol's own composition primitives.
+
+**The pattern.** The `ProtocolFeeInbox` has `key + store` abilities. It is therefore a valid asset for integration into a `RentalEscrow`. The protocol may deposit its own fee inbox into a rental escrow, selecting SUI or a stablecoin as the `payment_token`. Tenants compete for time-bounded blocks during which they hold the right to drain the accumulated `FeeMessage<C>` objects. The protocol team, as `OwnerCap` holder, receives `owner_earnings` in the chosen currency — clean, passive, and denominated in a single liquid token — without ever touching the heterogeneous fee basket directly.
+
+This is the protocol using itself. The `ProtocolFeeInbox` is the most valuable asset the protocol controls: it accumulates fees from every escrow, across every integration, in every currency. No new module is required. No new mechanism is introduced. The same state machine, the same capability model, the same integration parameters govern the inbox rental as govern any other asset in the protocol.
+
+**What this model provides.** Placing the inbox in escrow converts a heterogeneous, operationally demanding treasury into a single passive revenue stream. The team receives one currency — SUI or a stablecoin — while tenants absorb the complexity of liquidating the diverse fee basket. Fees accumulate inside the inbox and are flushed cyclically with each tenant rotation, reducing the concentration risk inherent in a monotonically growing treasury. The bid price for each rental block is a continuous, publicly observable market signal of the protocol's aggregate fee value — a real-time NPV denominated in a liquid currency, requiring no internal computation or external oracle. The mechanism is passive by construction: `owner_earnings` accumulate without any action from the team.
+
+**What this model does not provide.** Tenants receive the fee basket and capture their liquidation margin. The team permanently cedes that margin in exchange for operational simplicity. Whether this trade is economically favorable depends on a comparison the protocol must evaluate empirically: does the team's accumulated expertise in managing its own fee basket — including knowledge of integrator tokens, their liquidity cycles, and optimal liquidation timing — exceed the efficiency of a competitive tenant market? Owned objects require no consensus to drain, which makes direct collection cheaper than it might appear. This question requires thorough study before any commitment.
+
+**Reversibility.** This alternative is fully reversible. The `ProtocolFeeInbox` may be withdrawn from the escrow via `retire()` once `retire_floor` has elapsed, and direct collection resumes without structural consequence. There is no token whose value is coupled to the inbox being in escrow. The two models are mutually exclusive per deployment instance but interchangeable across instances. The team may transition between them as protocol conditions evolve.
+
+**The selection criterion.** Direct collection is the correct default: it captures the full fee value and imposes no structural commitment. The inbox-in-escrow model becomes worth considering when operational complexity at scale — the breadth of currencies, the cost of managing long-tail tokens, the organizational burden of an active treasury — outweighs the margin ceded to tenants. That crossover depends on the composition of the fee basket, the team's liquidation capability, and the depth of the tenant market for inbox access. Neither model is universally superior. The decision is empirical, not architectural.
+
+What is architectural — and worth noting — is that the choice exists at all. The protocol did not design a special revenue distribution mechanism. The same public integration surface available to any third party is equally available to the protocol itself.
+
 ---
 
 ## 13. Attack Vectors and Protocol Resilience

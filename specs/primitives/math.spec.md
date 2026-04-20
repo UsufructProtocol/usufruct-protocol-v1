@@ -25,7 +25,7 @@ movements, no Sui framework dependencies.
 
 - `CurveShape` — lives in `curve_shape`. `PriceFunction` — lives in `price_function`.
 - `evaluate_curve` — lives in `curve_shape`.
-- `compute_next_rent_price` — lives in `price_function`.
+- `evaluate_price_fn` — lives in `price_function`.
 - Protocol-level scaling of curve outputs (by `tenant_stake`, spread) — lives in `rental_escrow`.
 - Integration-time validation — lives in the primitive modules' constructors (`config::new` assembles, does not re-validate).
 - Protocol state, fund movements, access control, event emission.

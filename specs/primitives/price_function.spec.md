@@ -17,10 +17,10 @@ escalates between consecutive rental periods.
 
 - `PriceFunction` — enumerated functional forms for `f_next_rent_price`.
   All dispatch on this type lives here.
-- `evaluate_price_fn` — private dispatcher. Single entry point for evaluating
-  any `PriceFunction` at a given `last_rent_price`.
-- `compute_next_rent_price` — `public(package)` protocol-level wrapper.
-  Called by `rental_escrow` via `current_next_rent_price`.
+- `evaluate_price_fn` — `public(package)` dispatcher. Single entry point for
+  evaluating any `PriceFunction` at a given `last_rent_price`. Called directly
+  by `rental_escrow::compute_next_rent_price`; the escrow layer owns all
+  state validation (e.g. `E_NOT_RENTED`) around the call.
 
 **Does not own:**
 
@@ -121,26 +121,20 @@ construct `PriceFunction` values through these functions.
     // Returns PriceFunction::CompoundDelta { bps, delta }.
 
 
-3. COMPUTE_NEXT_RENT_PRICE
----------------------------
+3. EVALUATE_PRICE_FN
+--------------------
 
 ### Signature
 
-    public(package) fun compute_next_rent_price(
-        price_fn: &PriceFunction,
+    public(package) fun evaluate_price_fn(
+        price_fn:        &PriceFunction,
         last_rent_price: u64,
     ): u64
 
 ### Semantics
 
-    compute_next_rent_price(price_fn, last_rent_price)
-        → evaluate_price_fn(price_fn, last_rent_price)
-
-Thin wrapper. All logic lives in the private layer below.
-
----
-
-### `evaluate_price_fn` (private dispatcher)
+Single protocol-level entry point. Dispatches on `PriceFunction` and returns
+the next rent price.
 
     fun evaluate_price_fn(price_fn: &PriceFunction, last_rent_price: u64): u64 {
         match price_fn {
@@ -148,6 +142,12 @@ Thin wrapper. All logic lives in the private layer below.
             PriceFunction::CompoundDelta { bps, delta } => eval_compound_delta(last_rent_price, *bps, *delta),
         }
     }
+
+This module does not own state-level validation: callers that need to gate
+the evaluation by protocol state (e.g. assert `state == Rented`) do so at
+their own layer. `rental_escrow::compute_next_rent_price` is the external
+call site and performs the `E_NOT_RENTED` guard before invoking
+`evaluate_price_fn`.
 
 ---
 
@@ -180,8 +180,7 @@ Guaranteed result > last_rent_price by constructor field constraints (§2.3).
 | `E_BPS_RANGE: u64 = 1` | `public` | SDK error handling. |
 | `new_fixed_delta(delta)` | `public` | Called by integrators to build `PriceFunction`. |
 | `new_compound_delta(bps, delta)` | `public` | Called by integrators. Validates. |
-| `compute_next_rent_price(...)` | `public(package)` | Called by `rental_escrow`. |
-| `evaluate_price_fn(...)` | private | Dispatcher — match on `PriceFunction`. |
+| `evaluate_price_fn(...)` | `public(package)` | Dispatcher — match on `PriceFunction`. Called by `rental_escrow::compute_next_rent_price`. |
 | `eval_fixed_delta(...)` | private | §3 |
 | `eval_compound_delta(...)` | private | §3 |
 
@@ -245,9 +244,12 @@ Three categories per function:
   `result = last_rent_price + delta` (percentage component lost to floor rounding)
 
 
-### 5.3 `compute_next_rent_price`
+### 5.3 `evaluate_price_fn`
 
 #### Properties
 
 - **Strict increase:** `result > last_rent_price` for all valid inputs
 - **Determinism:** same `(price_fn, last_rent_price)` → same result always
+- **Dispatch correctness:** result matches the branch-specific formula
+  (§5.1 for `FixedDelta`, §5.2 for `CompoundDelta`) — the dispatcher adds
+  no transformation beyond the `match`.

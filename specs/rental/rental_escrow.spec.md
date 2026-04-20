@@ -34,7 +34,7 @@ points, and the fund distribution logic for every boundary event.
   `withdraw_earnings`, `borrow_asset`, `return_asset`,
   `apply_pending_transitions`.
 - Read-only queries: `compute_used_credit`,
-  `compute_price_descent`, `current_next_rent_price`.
+  `compute_price_descent`, `compute_next_rent_price`.
 - Private settlement helpers: `do_handover`, `do_tenure_expiry`,
   `do_auction_expiry`, `split_fee`.
 - Protocol state-machine events: `AssetIntegrated`, `RentStarted`,
@@ -99,7 +99,7 @@ messages.
     public const E_TENANT_CAP_STALE:         u64 = 2;  // object::id(cap) != current_tenant_cap_id
     public const E_NOT_IDLE:                 u64 = 3;  // rent() Idle-path: state is not Idle
     public const E_NOT_AUCTION:              u64 = 4;  // compute_price_descent: state != AtDutchAuction
-    public const E_NOT_RENTED:               u64 = 5;  // compute_used_credit / current_next_rent_price: state != Rented
+    public const E_NOT_RENTED:               u64 = 5;  // compute_used_credit / compute_next_rent_price: state != Rented
     public const E_INSUFFICIENT_PAYMENT:     u64 = 6;  // payment < floor price (all acquisition paths)
     public const E_RETIRE_FLAG_BLOCKS_BID:   u64 = 7;  // rent() during Rented(HandoverOpen) with retire_flag
     public const E_RETIRED_NO_BID:              u64 = 8;  // rent() called when state is Retired
@@ -576,8 +576,8 @@ locked balances.
 #### Case: `Rented { HandoverOpen }`
 
 - Assert `!escrow.retire_flag`, abort `E_RETIRE_FLAG_BLOCKS_BID`.
-- Let `floor = current_next_rent_price(escrow)` (delegates to
-  `price_function::compute_next_rent_price`).
+- Let `floor = compute_next_rent_price(escrow)` (delegates to
+  `price_function::evaluate_price_fn`).
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - Let `remaining = (escrow.phase_start_ms + escrow.config.tenure_ceiling) -
   clock.timestamp_ms()`.
@@ -600,7 +600,7 @@ exits afterward.
   accepted before `retire` could have fired; the committed bid is
   honored, handover completes normally, and T(n+1) then enters
   `HandoverOpen` with the flag still set (no further bids accepted).
-- Let `floor = current_next_rent_price(escrow)` — `last_rent_price` holds
+- Let `floor = compute_next_rent_price(escrow)` — `last_rent_price` holds
   the previous bidder's payment, so the floor escalates with each supersede.
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - **Refund previous pending bid** (push before rotate):
@@ -1139,21 +1139,27 @@ the settled `AssetState` without committing the transaction — free, no
 consensus. This is more correct than a dedicated read-only query because it
 reflects the actual settled state, not a speculative computation.
 
-**Naming convention — `compute_*` vs. `current_*`:**
+**Naming convention — `compute_*`:**
 
-- `compute_*(escrow, timestamp_ms)` — takes an arbitrary timestamp. The
-  returned value is the quantity evaluated *at that instant*, not at
-  `clock.now()`. External callers typically pass `clock.timestamp_ms()` and
-  read "live" values, but internal callers (e.g. `do_handover` passing
-  `boundary_ms`) evaluate at past or boundary timestamps. Applies to
-  `compute_used_credit` (§8.1) and `compute_price_descent` (§8.2).
-- `current_*(escrow)` — takes no timestamp. The returned value depends
-  only on escrow state, so "current" is literal: the answer at the settled
-  state right now. Applies to `current_next_rent_price` (§8.3), whose
-  formula reads `last_rent_price` and nothing time-dependent.
+All protocol-level read-only queries use the `compute_*` prefix uniformly.
+`compute_X(escrow, ...)` reads as "compute the value of X from the escrow's
+state (and the supplied inputs)" — an honest description regardless of
+whether a timestamp is passed:
 
-This split is deliberate: "current" implies "now", and a function that
-accepts an arbitrary timestamp would lie under that prefix.
+- `compute_used_credit(escrow, timestamp_ms)` (§8.1) and
+  `compute_price_descent(escrow, timestamp_ms)` (§8.2) take an arbitrary
+  timestamp and evaluate at that instant — not necessarily `clock.now()`.
+  External callers typically pass `clock.timestamp_ms()` for "live" reads,
+  but internal callers (e.g. `do_handover` passing `boundary_ms`) evaluate
+  at past or boundary timestamps.
+- `compute_next_rent_price(escrow)` (§8.3) depends only on escrow state,
+  so it needs no timestamp.
+
+The `current_*` prefix is deliberately not used: it implies "now", and
+a function accepting an arbitrary timestamp — or that any external caller
+may inspect at an arbitrary point in a PTB — lies under that prefix.
+Uniform `compute_*` keeps one convention for three functions that all do
+the same thing semantically: produce a value from escrow state.
 
 ### 8.1 `compute_used_credit`
 
@@ -1257,9 +1263,9 @@ last tenant's payment and preserved through tenure expiry and auction entry.
 
 ---
 
-### 8.3 `current_next_rent_price`
+### 8.3 `compute_next_rent_price`
 
-    public fun current_next_rent_price<Asset: key + store, CoinType>(
+    public fun compute_next_rent_price<Asset: key + store, CoinType>(
         escrow: &RentalEscrow<Asset, CoinType>,
     ): u64
 
@@ -1271,13 +1277,13 @@ Only meaningful when `escrow.state == Rented`. No `timestamp_ms` parameter —
     // Guard — only meaningful in Rented state.
     assert!(matches!(escrow.state, AssetState::Rented { .. }), E_NOT_RENTED);
 
-    price_function::compute_next_rent_price(
+    price_function::evaluate_price_fn(
         config::price_function(&escrow.config),
         escrow.last_rent_price,
     )
 
 In `HandoverConfirmed`, `last_rent_price` already holds the pending bidder's
-payment — so `current_next_rent_price` returns the price to supersede the
+payment — so `compute_next_rent_price` returns the price to supersede the
 pending bidder, not the current tenant.
 
 
@@ -1453,8 +1459,8 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | Q3 | `compute_used_credit` called when state is `Retired` | Aborts `E_NOT_RENTED`. |
 | Q4 | `compute_price_descent` called when state is `Idle` | Aborts `E_NOT_AUCTION`. |
 | Q5 | `compute_price_descent` called when state is `Rented` | Aborts `E_NOT_AUCTION`. |
-| Q6 | `current_next_rent_price` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
-| Q7 | `current_next_rent_price` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
+| Q6 | `compute_next_rent_price` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
+| Q7 | `compute_next_rent_price` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
 
 ### 10.11 Fee routing
 
@@ -1486,7 +1492,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `E_TENANT_CAP_STALE` | `public` | borrow_asset. |
 | `E_NOT_IDLE` | `public` | (reserved) |
 | `E_NOT_AUCTION` | `public` | compute_price_descent: state != AtDutchAuction. |
-| `E_NOT_RENTED` | `public` | compute_used_credit / current_next_rent_price: state != Rented. |
+| `E_NOT_RENTED` | `public` | compute_used_credit / compute_next_rent_price: state != Rented. |
 | `E_INSUFFICIENT_PAYMENT` | `public` | rent — payment below floor price (all acquisition paths). |
 | `E_RETIRE_FLAG_BLOCKS_BID` | `public` | rent (takeover, flagged). |
 | `E_RETIRED_NO_BID` | `public` | rent (Retired). |
@@ -1513,7 +1519,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 | `apply_pending_transitions(...)` via `devInspectTransactionBlock` | — | Free settled-state read. No consensus, no commit. |
 | `compute_used_credit(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
 | `compute_price_descent(...)` | `public` | Read-only. Aborts `E_NOT_AUCTION` if state != AtDutchAuction. |
-| `current_next_rent_price(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
+| `compute_next_rent_price(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
 | `do_handover(...)` | private | §7.1 |
 | `do_tenure_expiry(...)` | private | §7.2 |
 | `do_auction_expiry(...)` | private | §7.3 |
@@ -1523,7 +1529,7 @@ zero fee, which `send_fee` short-circuits without creating a `FeeMessage`.
 **Depends on:**
 - `math` — `mul_div` via `split_fee`, `compute_used_credit`, and `compute_price_descent`.
 - `curve_shape` — `CurveShape`, `evaluate_curve`.
-- `price_function` — `PriceFunction`, `compute_next_rent_price`.
+- `price_function` — `PriceFunction`, `evaluate_price_fn`.
 - `config` — `IntegrationConfig` and `public(package)` getters.
 - `owner_cap` — `OwnerCap`, `new`, `burn`, `escrow_id`, `assert_escrow`.
 - `tenant_cap` — `TenantCap`, `new`, `escrow_id`.

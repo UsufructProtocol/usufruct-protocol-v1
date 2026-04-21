@@ -283,13 +283,12 @@ authoritative — it comes from `object::uid_to_inner` inside `integrate`).
 No state mutation.
 
 **Why split from `new_config`.** `new_config` runs in the PTB *before*
-`rental_escrow::integrate` — there is no `escrow_id` yet. The only other
-option would be to fold construction + emission into a single
-escrow-scoped call, which would break PTB composability (integrators could
-no longer build `CurveShape` / `PriceFunction` / `IntegrationConfig`
-independently). The split follows the same pattern as
-`fee_message::new(...)` + `send_message(msg, tenant)`: pure builder,
-separate emitter called at the point the contextual data becomes known.
+`rental_escrow::integrate` — there is no `escrow_id` yet. Folding
+construction + emission into a single escrow-scoped call would break PTB
+composability: integrators could no longer build `CurveShape` /
+`PriceFunction` / `IntegrationConfig` as independent PTB steps. The split
+keeps `new_config` as a pure builder and adds a separate emitter invoked
+at the point the contextual data (the `escrow_id`) becomes known.
 
 **Emit-last compliance.** Called from `rental_escrow::integrate` *after*
 the escrow has been constructed with `config` embedded (so the config↔

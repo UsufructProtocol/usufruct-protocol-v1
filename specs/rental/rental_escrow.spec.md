@@ -349,6 +349,76 @@ time. Duplicating it in the event body would add no information and
 would force `&Clock` into the signature of functions that otherwise
 have no reason to read the clock.
 
+### Star schema — the protocol's event emission strategy
+
+The full event surface of the protocol — this module plus the three
+child-object modules (`owner_cap`, `tenant_cap`, `fee_message`) — is
+shaped as a **SQL star schema** anchored on `escrow_id` as the root
+foreign key. Every event emitted anywhere in the package carries
+`escrow_id`, so an off-chain indexer can ingest them into a unified
+view of per-escrow activity with zero envelope-metadata dependency.
+
+Around that root, three satellite dimensions exist, one per
+protocol-internal child-object type. Each dimension has its own
+natural primary key — the child object's own ID — and a pair of
+lifecycle events (create / destroy, send / collect) joined on that
+PK. Address fields are non-redundant across each pair: they appear
+only on the event where they are first-observed or where they diverge
+from their counterpart.
+
+```
+                    ┌──────────────────────────────────┐
+                    │         escrows (root fact)      │
+                    │           PK: escrow_id          │
+                    │                                  │
+                    │  AssetIntegrated  RentStarted    │
+                    │  BidPlaced        BidSuperseded  │
+                    │  HandoverCompleted               │
+                    │  TenureExpired    AuctionExpired │
+                    │  RetireFlagSet    AssetClaimed   │
+                    │  EarningsWithdrawn               │
+                    └──────────────┬───────────────────┘
+                                   │  FK: escrow_id
+                                   │  (on every row below)
+            ┌──────────────────────┼──────────────────────────┐
+            │                      │                          │
+            ▼                      ▼                          ▼
+ ┌───────────────────┐  ┌────────────────────┐  ┌────────────────────────┐
+ │     owner_cap     │  │     tenant_cap     │  │      fee_message       │
+ │  PK: owner_cap_id │  │ PK: tenant_cap_id  │  │   PK: fee_message_id   │
+ │                   │  │                    │  │                        │
+ │  OwnerCapMinted   │  │  TenantCapMinted   │  │   FeeMessageSent       │
+ │    owner          │  │    tenant          │  │     tenant             │
+ │                   │  │                    │  │                        │
+ │  OwnerCapBurned   │  │  TenantCapBurned   │  │   FeeMessageCollected  │
+ │    owner          │  │    —               │  │     collector          │
+ └───────────────────┘  └────────────────────┘  └────────────────────────┘
+   key + store →          key only →                 key only →
+   owner may diverge      mint-tenant ≡              tenant first-observed
+   across mint/burn       burn-tenant →              at send; collector
+   → kept on both         no JOIN loss               first-observed at
+     events                 → dropped on Burned        consume
+```
+
+**Star schema properties:**
+
+| Property | Consequence |
+|---|---|
+| **`escrow_id` on every row.** | Any analytical question ("activity on escrow X") answers with a single `WHERE escrow_id = X`. No cross-table joins needed for scoping. |
+| **Child PK pairs lifecycle.** | `owner_cap_id`, `tenant_cap_id`, `fee_message_id` each join their Minted↔Burned / Sent↔Collected pair. Full object history = one JOIN. |
+| **Addresses are first-observed, never duplicated.** | Redundancy recoverable by PK-JOIN is dropped. `TenantCapBurned` has no `tenant` (non-transferable → JOIN recovers it). `FeeMessageCollected` has no `tenant` (JOIN on `fee_message_id` recovers it). `OwnerCapBurned` keeps `owner` — `key + store` transferability means the burn-sender is genuinely new information. |
+| **No envelope dependence.** | Events never require the indexer to join against `SuiEvent.timestampMs` or `SuiEvent.sender` to reconstruct meaning — except for pure wall-clock ordering of immediate events (which the envelope provides for free). |
+| **Cross-module events are self-contained.** | An indexer ingesting only `fee_message` events can answer every fee-message-level question; likewise for each cap module. Cross-module JOINs are always on `escrow_id`, never on implicit co-emission. |
+
+**Strategy statement.** This star schema is the protocol's uniform
+event-emission strategy. Every future event added to the package
+anywhere **must**: (a) carry `escrow_id`, (b) if it concerns a
+child object's lifecycle, carry that object's own ID as lifecycle PK,
+and (c) carry address fields only where first-observed or divergent.
+Deviations — co-emission dependencies, envelope-metadata reliance,
+redundant addresses across a PK-joinable pair — degrade the schema
+and are disallowed.
+
 
 4. LIFECYCLE FUNCTIONS
 -----------------------

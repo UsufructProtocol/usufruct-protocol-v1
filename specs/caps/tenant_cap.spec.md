@@ -16,11 +16,13 @@ Depends on: nothing (`sui::object` only)
 - `TenantCap` — `key` only. One minted per tenant transition event
   (not per bid). Non-transferable by type. Can become stale after
   displacement — inert, failing the ID check in `rental_escrow`.
-- `new(escrow_id, ctx): TenantCap` — `public(package)`. Mint. Called
-  by `rental_escrow::rent` (from Idle, AtDutchAuction) and by
-  `rental_escrow::do_handover` (handover completion).
-- `burn(cap)` — `public`. Voluntary destroy by cap holder for gas
+- `new(escrow_id, tenant, ctx): TenantCap` — `public(package)`. Mint.
+  Called by `rental_escrow::rent` (from Idle, AtDutchAuction) and by
+  `rental_escrow::do_handover` (handover completion). `tenant` is the
+  recipient address, recorded in the `TenantCapMinted` event.
+- `burn(cap, ctx)` — `public`. Voluntary destroy by cap holder for gas
   recovery. No state mutation. The protocol never forces this.
+  `tx_context::sender(ctx)` is recorded in the `TenantCapBurned` event.
 - `escrow_id(cap): ID` — `public`. Getter.
 - Lifecycle events: `TenantCapMinted`, `TenantCapBurned`. Emitted from
   inside this module (Sui Verifier requires the emitted type to be
@@ -145,11 +147,13 @@ calling module — this is why the cap lifecycle events live here.
 public struct TenantCapMinted has copy, drop {
     tenant_cap_id: ID,
     escrow_id:     ID,
+    tenant:        address,
 }
 
 public struct TenantCapBurned has copy, drop {
     tenant_cap_id: ID,
     escrow_id:     ID,
+    tenant:        address,
 }
 ```
 
@@ -162,17 +166,37 @@ is internal to this module. `event::emit` requires these abilities.
 - `escrow_id` — the `ID` of the `RentalEscrow` this cap was minted
   for. A cap has no meaning independent of its escrow; every
   cap-level consumer needs the pair.
+- `tenant` — the recipient at mint (passed by `rental_escrow::rent` or
+  `do_handover`) and the burning address at burn
+  (`tx_context::sender(ctx)`). Since `TenantCap` is non-transferable
+  (`key` only, no `store`), the two are always the same address for a
+  given cap — but the field is present on both events for **schema
+  symmetry with `owner_cap`**: indexers ingest both tables into a
+  unified `cap_events` view with a single `holder` column, and queries
+  ("has address X ever held a cap on escrow Y?") run uniformly across
+  cap types without conditional field handling.
 
-**No `holder` or `sender` field.** `new` returns the cap by value —
-the module does not know which address the caller will push it to.
-`burn` is `public` and consumes the cap by value; the sender is
-available on the event envelope and duplicating it in the body would
-add no information.
+**Design intent — events as SQL rows keyed by `escrow_id`:** the
+protocol's event layer feeds an off-chain indexer whose schema is
+anchored on `escrow_id` as the natural primary / foreign key. Each
+event is a flat row that answers natural analytical questions —
+*"how many tenancies has address X held?"*, *"what is the tenant
+churn on escrow Y?"* — from a single `SELECT`, without joining against
+`RentStarted`, `HandoverCompleted`, or Sui envelope metadata. Carrying
+`tenant` here (even though it is derivable by joining `RentStarted` /
+`HandoverCompleted` on `escrow_id` + timestamp) keeps the cap event
+self-describing and lets off-chain tooling learn tenancy patterns from
+the cap event stream alone. Downstream, this enables schema-level
+uniformity with `owner_cap` (same column for `holder`) and
+protocol-version portability (no assumption about which state-machine
+events are simultaneously available).
 
 **No `timestamp_ms` field.** The module has no authoritative time to
 report: `new` may be called from a lazy-settlement path whose logical
 moment is in the past, so `clock.now()` would record settlement time,
-not logical time. The module emits identity only.
+not logical time. Consumers order by checkpoint timestamp + tx
+position (attached by Sui to the envelope for free). The module emits
+identity and the holder address only.
 
 
 4. FUNCTIONS
@@ -180,45 +204,61 @@ not logical time. The module emits identity only.
 
 ### `new`
 
-    public(package) fun new(escrow_id: ID, ctx: &mut TxContext): TenantCap
+    public(package) fun new(
+        escrow_id: ID,
+        tenant:    address,
+        ctx:       &mut TxContext,
+    ): TenantCap
 
 **Visibility:** `public(package)` — callable only by `rental_escrow`.
 
-**Purpose:** mints a `TenantCap` bound to a specific escrow.
+**Purpose:** mints a `TenantCap` bound to a specific escrow and
+records the intended recipient in the event stream.
 
 **Behavior:**
 1. Construct `cap = TenantCap { id: object::new(ctx), escrow_id }`.
-2. Emit `TenantCapMinted { tenant_cap_id: object::uid_to_inner(&cap.id),
-   escrow_id }` — emission runs last, after the cap has been
-   constructed.
-3. Return `cap`.
+2. `let tenant_cap_id = object::uid_to_inner(&cap.id);`
+3. Emit `TenantCapMinted { tenant_cap_id, escrow_id, tenant }` —
+   emission runs last, after the cap has been constructed.
+4. Return `cap`. The caller (`rental_escrow::rent` or `do_handover`)
+   is responsible for delivering it to `tenant` via
+   `transfer::transfer(cap, tenant)`. The module does not perform the
+   transfer; the `tenant` argument is a declarative annotation for the
+   indexer, not a runtime check. The `tenant` field is not stored on
+   the `TenantCap` struct — the cap is non-transferable by type so a
+   stored field would be redundant; the event row is the sole record.
 
 **Call sites:**
-- `rental_escrow::rent` (from Idle, AtDutchAuction) — pushed via
-  `transfer::transfer` to `tx_context::sender(ctx)`.
-- `rental_escrow::do_handover` — pushed via `transfer::transfer` to
-  `pending_tenant_address` (not `tx.sender()`).
+- `rental_escrow::rent` (from Idle, AtDutchAuction) — passes
+  `tx_context::sender(ctx)` as `tenant`, then pushes the cap there.
+- `rental_escrow::do_handover` — passes `pending_tenant_address` as
+  `tenant`, then pushes the cap there.
 
 ---
 
 ### `burn`
 
-    public fun burn(cap: TenantCap)
+    public fun burn(cap: TenantCap, ctx: &TxContext)
 
 **Visibility:** `public` — callable by any holder (current or displaced
 tenant).
 
 **Purpose:** voluntary destruction of a `TenantCap` for gas recovery.
 Serves both current tenants (end of use) and displaced tenants (stale
-cap cleanup). Has no effect on escrow state.
+cap cleanup). Has no effect on escrow state. Records the burning
+address so the event row is self-describing and schema-symmetric with
+`OwnerCapBurned`.
 
 **Behavior:**
 1. Destructure: `let TenantCap { id, escrow_id } = cap;`.
 2. Capture `tenant_cap_id = object::uid_to_inner(&id);` — must be read
    before `object::delete` consumes the `UID`.
-3. Call `object::delete(id);`.
-4. Emit `TenantCapBurned { tenant_cap_id, escrow_id }` — emission runs
-   last, after the cap is actually destroyed.
+3. `let tenant = tx_context::sender(ctx);` — the holder presenting the
+   cap. Because `TenantCap` is non-transferable (`key` only), this
+   address equals the original mint recipient.
+4. Call `object::delete(id);`.
+5. Emit `TenantCapBurned { tenant_cap_id, escrow_id, tenant }` —
+   emission runs last, after the cap is actually destroyed.
 
 **No state mutation:** burning a cap does not affect
 `escrow.current_tenant_cap_id`. The escrow is not notified. A burned
@@ -287,16 +327,17 @@ Both checks live in `rental_escrow`, not here.
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `new(escrow_id, ctx)` | Returns `TenantCap` with `cap.escrow_id == escrow_id`. Object has a fresh UID. One `TenantCapMinted { tenant_cap_id, escrow_id }` event emitted with `tenant_cap_id == object::id(&cap)` and matching `escrow_id`. |
-| N2 | Two calls with same `escrow_id` | Two distinct `TenantCap` objects (distinct UIDs), both bound to the same escrow_id. Two `TenantCapMinted` events, each carrying the distinct `tenant_cap_id`. |
-| N3 | Two calls with distinct `escrow_id`s | Two caps with distinct `escrow_id` fields. Two `TenantCapMinted` events with matching pairs. |
+| N1 | `new(escrow_id, tenant, ctx)` | Returns `TenantCap` with `cap.escrow_id == escrow_id`. Object has a fresh UID. One `TenantCapMinted { tenant_cap_id, escrow_id, tenant }` event emitted with `tenant_cap_id == object::id(&cap)`, matching `escrow_id`, and `tenant` equal to the argument. |
+| N2 | Two calls with same `escrow_id`, same `tenant`, same tx | Two distinct `TenantCap` objects (distinct UIDs), both bound to the same escrow_id and same tenant. Two `TenantCapMinted` events with distinct `tenant_cap_id` and identical `(escrow_id, tenant)`. |
+| N3 | Two calls with distinct `escrow_id`s and distinct `tenant`s | Two caps with distinct triples. Two `TenantCapMinted` events with matching triples. |
+| N4 | `new` passing a `tenant` different from `tx_context::sender(ctx)` (the `do_handover` case, where `tenant == pending_tenant_address`) | Event `tenant` equals the argument, not the tx sender. Asserts the field is declarative, not a runtime echo of sender. |
 
 ### 6.2 `burn`
 
 | # | Description | Expected |
 |---|---|---|
-| B1 | `burn(cap)` on a current cap | UID deleted. No abort. No escrow state change. One `TenantCapBurned { tenant_cap_id, escrow_id }` event with the pair the cap carried at mint. |
-| B2 | `burn(cap)` on a stale cap | UID deleted. No abort. Identical behavior — module is unaware of staleness. `TenantCapBurned` emitted identically. |
+| B1 | `burn(cap, ctx)` on a current cap | UID deleted. No abort. No escrow state change. One `TenantCapBurned { tenant_cap_id, escrow_id, tenant }` event with the pair the cap carried at mint and `tenant == tx_context::sender(ctx)` (equal to the mint recipient by non-transferability). |
+| B2 | `burn(cap, ctx)` on a stale cap | UID deleted. No abort. Identical behavior — module is unaware of staleness. `TenantCapBurned` emitted identically, with `tenant` equal to the displaced tenant. |
 | B3 | `burn` consumes by value | Compiler enforces — no double-burn. |
 
 ### 6.3 `escrow_id`
@@ -309,9 +350,9 @@ Both checks live in `rental_escrow`, not here.
 
 | # | Description | Expected |
 |---|---|---|
-| L1 | `new` → `escrow_id` check → `burn` | Full lifecycle. No abort. One `TenantCapMinted` at `new`, one `TenantCapBurned` at `burn`, both carrying the same `(tenant_cap_id, escrow_id)` pair. |
-| L2 | `new` (cap A) → `new` (cap B, same escrow) → both have distinct `object::id` | Staleness mechanic relies on distinct IDs — confirmed at mint. Two `TenantCapMinted` events with distinct `tenant_cap_id`, identical `escrow_id`. |
-| L3 | Stale cap: `burn` available after displacement | Holder can clean up regardless of escrow state. `TenantCapBurned` emitted with the stale cap's `tenant_cap_id`. |
+| L1 | `new` → `escrow_id` check → `burn` | Full lifecycle. No abort. One `TenantCapMinted` at `new`, one `TenantCapBurned` at `burn`, both carrying the same `(tenant_cap_id, escrow_id, tenant)` triple — `tenant` identical across both events by non-transferability. |
+| L2 | `new` (cap A, tenant T1) → `new` (cap B, same escrow, tenant T2) → both have distinct `object::id` | Staleness mechanic relies on distinct IDs — confirmed at mint. Two `TenantCapMinted` events with distinct `tenant_cap_id`, identical `escrow_id`, distinct `tenant`. |
+| L3 | Stale cap: `burn` available after displacement | Holder can clean up regardless of escrow state. `TenantCapBurned` emitted with the stale cap's `tenant_cap_id` and `tenant == tx_context::sender(ctx)` (the displaced tenant). |
 
 
 7. MODULE BOUNDARY
@@ -324,8 +365,8 @@ Both checks live in `rental_escrow`, not here.
 | `TenantCap` (type) | `public` | `key` only. Non-transferable. One per tenant transition event. |
 | `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. |
 | `TenantCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
-| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::rent` and `rental_escrow::do_handover`. Emits `TenantCapMinted`. |
-| `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned`. |
+| `new(escrow_id, tenant, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::rent` and `rental_escrow::do_handover`. Emits `TenantCapMinted { tenant_cap_id, escrow_id, tenant }`. |
+| `burn(cap, ctx)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant = tx_context::sender(ctx) }`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 
 No error constants.

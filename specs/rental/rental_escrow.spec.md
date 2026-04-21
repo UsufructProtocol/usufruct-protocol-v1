@@ -370,7 +370,11 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
 
 **Behavior:**
 1. Allocate `uid = object::new(ctx)`. Compute `escrow_id = object::uid_to_inner(&uid)`.
-2. Mint `OwnerCap` via `owner_cap::new(escrow_id, ctx)`.
+2. Mint `OwnerCap` via `owner_cap::new(escrow_id, tx_context::sender(ctx), ctx)`.
+   The sender is the default recipient; PTBs that wish to deliver the cap
+   to a distinct address (custody, multisig) can transfer it further after
+   `integrate` returns, but the `OwnerCapMinted.owner` field records the
+   integrator at mint time.
 3. Read `fee_inbox_id = protocol_fee_inbox::fee_ref_inbox_id(fee_ref)`.
 4. Construct the escrow with:
    - `asset = option::some(asset)`
@@ -500,7 +504,10 @@ deletes the escrow, returns the asset and earnings.
    An abort here indicates a state-machine bug; the destroy-zero call aborts
    on non-zero, which serves as a structural assertion.
 7. `let earnings = coin::from_balance(owner_earnings, ctx);`
-8. `owner_cap::burn(owner_cap);`
+8. `owner_cap::burn(owner_cap, ctx);` — `OwnerCapBurned.owner` records
+   `tx_context::sender(ctx)`, the address that presented the cap (the
+   owner at claim time, which may differ from the mint recipient since
+   `OwnerCap` is transferable).
 9. `object::delete(id);`
 10. Emit `AssetClaimed { escrow_id, owner_cap_id, swept_earnings }`.
 11. Return `(asset, earnings)`.
@@ -936,9 +943,13 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
      balance::withdraw_all(&mut escrow.pending_bid));`
    — `last_rent_price` already holds the pending bid amount (set at bid time).
 6. **Mint + push new TenantCap:**
-   - `let cap = tenant_cap::new(object::id(escrow), ctx);`
-   - `let new_cap_id = object::id(&cap);`
    - `let pending_addr = *option::borrow(&escrow.pending_tenant_address);`
+   - `let cap = tenant_cap::new(object::id(escrow), pending_addr, ctx);`
+     — `TenantCapMinted.tenant` records `pending_addr`, the new tenant
+     installed by this handover. The address is not `tx_context::sender`
+     (the caller of `apply_pending_transitions` may be a keeper or any
+     permissionless settler, not the incoming tenant).
+   - `let new_cap_id = object::id(&cap);`
    - `transfer::transfer(cap, pending_addr);`
 7. **Rotate address fields:**
    - `escrow.current_tenant_address = some(pending_addr);`
@@ -1115,13 +1126,17 @@ owns.
 1. `escrow.last_rent_price = coin::value(&payment);`
 2. `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
 3. `escrow.phase_start_ms = clock.timestamp_ms();`
-4. `let cap = tenant_cap::new(object::id(escrow), ctx);`
-5. `let new_cap_id = object::id(&cap);`
-6. `escrow.current_tenant_cap_id = some(new_cap_id);`
-7. `escrow.current_tenant_address = some(tx_context::sender(ctx));`
-8. `escrow.state = Rented { phase: HandoverOpen };`
-9. `transfer::transfer(cap, tx_context::sender(ctx));`
-10. Return `new_cap_id`.
+4. `let tenant_addr = tx_context::sender(ctx);`
+5. `let cap = tenant_cap::new(object::id(escrow), tenant_addr, ctx);` —
+   `TenantCapMinted.tenant` records `tenant_addr`. Unlike `do_handover`,
+   here the sender IS the new tenant (paid `rent()` directly), so passing
+   the sender is correct and matches the transfer target below.
+6. `let new_cap_id = object::id(&cap);`
+7. `escrow.current_tenant_cap_id = some(new_cap_id);`
+8. `escrow.current_tenant_address = some(tenant_addr);`
+9. `escrow.state = Rented { phase: HandoverOpen };`
+10. `transfer::transfer(cap, tenant_addr);`
+11. Return `new_cap_id`.
 
 **Return value:** the new `TenantCap` ID, returned so the caller can emit
 `RentStarted { ..., tenant_cap_id: new_cap_id, ... }` with its arm-specific
@@ -1358,8 +1373,11 @@ transitions on a flagged escrow terminate in `Retired` rather than
 **P7 — OwnerCap uniqueness:**
 Exactly one live `OwnerCap` per escrow at any time. Minted once in
 `integrate`, burned once in `claim_asset`. Enforced by visibility of
-`owner_cap::new` / `owner_cap::burn` (both `public(package)` with a single
-call site each).
+`owner_cap::new(escrow_id, owner, ctx)` / `owner_cap::burn(cap, ctx)`
+(both `public(package)` with a single call site each). The recipient
+and burner addresses are recorded in `OwnerCapMinted` / `OwnerCapBurned`
+respectively so the cap's full lifecycle is reconstructible from the
+event stream alone.
 
 **P8 — TenantCap staleness is inert:**
 Displaced tenants' `TenantCap` objects remain in their wallets but fail

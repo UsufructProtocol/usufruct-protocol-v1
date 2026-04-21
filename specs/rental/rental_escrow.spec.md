@@ -256,7 +256,7 @@ event verifier requires the emitted type to be internal to the calling
 module — this is why there is no standalone events module.
 
 ```move
-public struct AssetIntegrated has copy, drop {
+public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
 }
@@ -311,6 +311,7 @@ public struct AuctionExpired has copy, drop {
 
 public struct RetireFlagSet has copy, drop {
     escrow_id:        ID,
+    owner:            address,     // cap holder at retire time (first-observed)
     state_at_set:     AssetState,  // settled state when retire was called
 }
 
@@ -338,12 +339,44 @@ public struct AssetClaimed has copy, drop {
 public struct EarningsWithdrawn has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
+    owner:            address,   // cap holder at withdraw time (first-observed)
     amount:           u64,
 }
 ```
 
 **Sui Verifier constraint:** every event struct has `copy + drop` and is
 internal to this module. `event::emit` requires these abilities.
+
+**`AssetIntegrated` is phantom-generic over the escrow's type parameters.**
+The root-fact creation event carries `Asset` and `CoinType` as phantom type
+parameters so the off-chain indexer recovers both from the event type tag
+(`AssetIntegrated<0x...::game::Sword, 0x2::sui::SUI>`) without paying any
+on-chain bytes. This is the unique entry point: downstream fact rows
+(`RentStarted`, `HandoverCompleted`, etc.) are non-generic and recover
+`Asset` / `CoinType` by PK-JOIN on `escrow_id` back to `AssetIntegrated`.
+Rationale: `Asset` and `CoinType` are escrow-level configuration (generics
+of `RentalEscrow<Asset, CoinType>`), not `IntegrationConfig`-level
+parameters — `IntegrationConfig` is coin-agnostic and asset-agnostic.
+
+**Cap-gated ops that do not co-emit a cap lifecycle event carry the
+cap holder's address.** `RetireFlagSet` and `EarningsWithdrawn` both
+take `&OwnerCap` — the cap is neither minted nor burned in these calls
+— so no `OwnerCap*` event is co-emitted. `OwnerCap` has `key + store`,
+so the caller address at retire-time / withdraw-time may differ from
+`OwnerCapMinted.owner` (mint-time) and from every other cap-gated
+call. It is **first-observed** and PK-unrecoverable per star-schema
+invariant (c), so both events carry `owner: address =
+tx_context::sender(ctx)`. The field name is `owner` — not `caller` —
+because the protocol defines "owner" as whoever holds the cap at call
+time (README, "The caps"), so this is protocol semantics, not
+transaction metadata.
+
+`AssetClaimed` does **not** carry `owner`: `claim_asset` consumes the
+cap by value and calls `owner_cap::burn`, which emits
+`OwnerCapBurned.owner` in the same transaction. The claim-time caller
+address is therefore PK-recoverable by JOIN on `owner_cap_id` into
+`owner_cap_burned` — duplicating it on `AssetClaimed` would violate
+invariant (c).
 
 **Timestamp convention:** only boundary events — `HandoverCompleted`,
 `TenureExpired`, `AuctionExpired` — carry a `timestamp_ms` field. Its
@@ -447,6 +480,8 @@ immutable, so there is no update or burn event).
 | **Addresses are first-observed, never duplicated.** | Redundancy recoverable by PK-JOIN is dropped. `TenantCapBurned` has no `tenant` (non-transferable → JOIN recovers it). `FeeMessageCollected` has no `tenant` (JOIN on `fee_message_id` recovers it). `OwnerCapBurned` keeps `owner` — `key + store` transferability means the burn-sender is genuinely new information. Fact-table events also comply: `AssetIntegrated` omits `integrator` (JOIN on `owner_cap_id` to `OwnerCapMinted`), `RentStarted` omits `tenant` (JOIN on `tenant_cap_id` to `TenantCapMinted`), `HandoverCompleted` omits `new_tenant` (JOIN on `new_tenant_cap_id`). `HandoverCompleted.displaced_tenant` is kept — no PK reaches the outgoing cap from this row. |
 | **Fact-table rows carry child PK-FKs to dimensions they co-emit with.** | `AssetIntegrated.owner_cap_id`, `RentStarted.tenant_cap_id`, `HandoverCompleted.new_tenant_cap_id`, `AssetBorrowed.tenant_cap_id`, `AssetReturned.tenant_cap_id`, `AssetClaimed.owner_cap_id`, `EarningsWithdrawn.owner_cap_id` — every fact row whose semantics touch a child object exposes that child's PK so the indexer can JOIN into the dimension without envelope-timing. |
 | **Borrow/return measure actual usage.** | `AssetBorrowed` / `AssetReturned` pair JOIN on `tenant_cap_id` within a single tenancy (multiple pairs possible — a tenant may borrow and return N times during their block). Provides the off-chain indexer a measurable signal of "did the tenant actually use the capability?" — the core liquid-renting demand metric, previously invisible (borrow was PTB-internal only). |
+| **`AssetIntegrated` is the Asset/CoinType dictionary.** | `AssetIntegrated<Asset, CoinType>` is the only event phantom-generic on the escrow's type params. Any query that needs to group or filter by `Asset` or `CoinType` JOINs on `escrow_id` back to `asset_integrated` and reads the type tag — including queries over `IntegrationConfigRegistered` (min_rent_price, tenure_ceiling, curves) that want to bucket by coin. The `config` module stays coin-agnostic. |
+| **Owner address on `&OwnerCap`-gated ops.** | `RetireFlagSet.owner` and `EarningsWithdrawn.owner` record the cap holder at call time. These ops take the cap by reference — no `OwnerCap*` lifecycle event is co-emitted — so the address is first-observed and PK-unrecoverable. `AssetClaimed` does not carry `owner` because it consumes the cap by value; `OwnerCapBurned.owner` co-emits the same address and is reachable by JOIN on `owner_cap_id` (invariant c). Enables per-human queries (withdraw frequency per owner, multi-cap operators). |
 | **Intent vs settlement on retirement.** | `RetireFlagSet` records the owner's intent (when `retire()` was called, from which settled state). `AssetRetired` records the actual transition to `Retired` — immediate for `from_state ∈ {Idle, AtDutchAuction}`, deferred to the next tenure expiry for `from_state = Rented`. Co-emission matrix: `TenureExpired.next_state = Retired` ⇔ `AssetRetired` with `from_state = Rented` is co-emitted. Both events are needed — `TenureExpired` carries the stake-settlement facts (`owner_share`, `protocol_fee`, tenant), `AssetRetired` carries the pure state-transition fact. |
 | **No envelope dependence.** | Events never require the indexer to join against `SuiEvent.timestampMs` or `SuiEvent.sender` to reconstruct meaning — except for pure wall-clock ordering of immediate events (which the envelope provides for free). |
 | **Cross-module events are self-contained.** | An indexer ingesting only `fee_message` events can answer every fee-message-level question; likewise for each cap module. Cross-module JOINs are always on `escrow_id`, never on implicit co-emission. |
@@ -503,11 +538,14 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    has already been constructed (step 4) and the config↔escrow_id binding
    is a realized semantic fact (emit-last).
 6. `transfer::share_object(escrow)`.
-7. Emit `AssetIntegrated { escrow_id, owner_cap_id }`. The integrator
-   address is not carried here — it is already recorded on the
-   co-emitted `OwnerCapMinted.owner` row and recoverable by JOIN on
-   `owner_cap_id` (star-schema invariant c: no PK-recoverable
-   redundancy).
+7. Emit `AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id }`.
+   Both type parameters are phantom — no on-chain payload — and are
+   recovered by the indexer from the event type tag, making this event
+   the root dictionary row for every downstream JOIN that needs
+   `Asset` or `CoinType`. The integrator address is not carried here —
+   already recorded on the co-emitted `OwnerCapMinted.owner` row and
+   recoverable by JOIN on `owner_cap_id` (star-schema invariant c: no
+   PK-recoverable redundancy).
 8. Return `OwnerCap`. The PTB routes it (typically via
    `transfer::public_transfer` to `tx_context::sender(ctx)`).
 
@@ -564,7 +602,10 @@ asset. Does not mutate balances.
    convention that every transition site records the moment of transition
    (see `do_tenure_expiry` §7.2 and `do_auction_expiry` §7.3). The field is
    not read in `Retired`, but the uniform invariant simplifies auditing.
-8. Emit `RetireFlagSet { escrow_id, state_at_set: prior_state }`.
+8. Emit `RetireFlagSet { escrow_id, owner: tx_context::sender(ctx),
+   state_at_set: prior_state }`. The `owner` field captures the cap
+   holder at retire time — first-observed, PK-unrecoverable (cap is
+   transferable between mint and this call).
 9. If `prior_state` was `Idle` or `AtDutchAuction`, emit
    `AssetRetired { escrow_id, from_state: prior_state }`. Emit-last: the
    state machine has already reached `Retired` (step 7). For the `Rented`
@@ -639,9 +680,9 @@ deletes the escrow, returns the asset and earnings.
    - `let owner_cap_id = object::id(owner_cap);`
    - `let swept_earnings = coin::value(&earnings);`
 9. `owner_cap::burn(owner_cap, ctx);` — `OwnerCapBurned.owner` records
-   `tx_context::sender(ctx)`, the address that presented the cap (the
-   owner at claim time, which may differ from the mint recipient since
-   `OwnerCap` is transferable).
+   `tx_context::sender(ctx)`, the claim-time caller. This address is
+   recoverable on `AssetClaimed` by JOIN on `owner_cap_id`, which is
+   why `AssetClaimed` does not duplicate it (invariant c).
 10. `object::delete(id);`
 11. Emit `AssetClaimed { escrow_id, owner_cap_id, swept_earnings }` —
     emit-last, after the cap is burned and the escrow UID is deleted.
@@ -674,13 +715,15 @@ locked balances.
 3. `let amount = balance::value(&escrow.owner_earnings);`
 4. Assert `amount > 0`, abort `E_NO_EARNINGS`.
 5. `let balance = balance::withdraw_all(&mut escrow.owner_earnings);`
-6. Emit `EarningsWithdrawn { escrow_id, owner_cap_id: object::id(owner_cap), amount }`.
-   `owner_cap_id` is carried so the withdrawer is recoverable via
-   PK-JOIN into `owner_cap_minted` / `owner_cap_burned` (star-schema
-   invariant d: no envelope dependence for address recovery).
-   `OwnerCap` is `key + store` and may be transferred between mint and
-   this call, so the JOIN target is the Mint row for the cap's identity,
-   with any subsequent transfers observable at system level on Sui.
+6. Emit `EarningsWithdrawn { escrow_id, owner_cap_id: object::id(owner_cap),
+   owner: tx_context::sender(ctx), amount }`. `owner_cap_id` is the cap's
+   identity PK. `owner` is the cap holder at this call — first-observed
+   and PK-unrecoverable: `OwnerCap` is `key + store` and may have
+   changed hands between `OwnerCapMinted` and now (or be held inside a
+   level-2 tenant cap), and no `OwnerCap*` lifecycle event co-emits
+   here. Without this field, per-owner queries (withdraw frequency per
+   address, multi-cap operators) would have to rely on envelope
+   `sender` — forbidden by invariant (d).
 7. Return `coin::from_balance(balance, ctx)`.
 
 
@@ -1606,7 +1649,7 @@ post-condition via the owner-share branch alone.
 
 | # | Description | Expected |
 |---|---|---|
-| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated` events emitted (config first, then asset). |
+| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated<SomeAsset, C>` events emitted (config first, then asset). Event type tag of `AssetIntegrated` carries both phantom type params — asserts the indexer can recover Asset and CoinType without reading the on-chain object. |
 | T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. No depth check. |
 
 ### 10.2 `rent` — Idle path
@@ -1678,8 +1721,8 @@ post-condition via the owner-share branch alone.
 | # | Description | Expected |
 |---|---|---|
 | C1 | `retire` before `retire_floor` elapsed | Aborts `E_RETIRE_FLOOR_NOT_ELAPSED`. |
-| C2 | `retire` from Idle (after `retire_floor`) | `retire_flag = true`. `state → Retired`. Events in order: `RetireFlagSet(state_at_set: Idle)`, `AssetRetired(from_state: Idle)`. |
-| C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. Events in order: `AuctionExpired(next_state: Retired)`, `RetireFlagSet(state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)`. |
+| C2 | `retire` from Idle (after `retire_floor`) | `retire_flag = true`. `state → Retired`. Events in order: `RetireFlagSet(owner, state_at_set: Idle)` with `owner == tx_context::sender(ctx)`, `AssetRetired(from_state: Idle)`. |
+| C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. Events in order: `AuctionExpired(next_state: Retired)`, `RetireFlagSet(owner, state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)`. |
 | C4 | `retire` from Rented(HandoverOpen) | `retire_flag = true`. `state` unchanged. Subsequent `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
 | C5 | `retire` from Rented(HandoverConfirmed) | `retire_flag = true`. `state` unchanged. Handover completes normally; new tenant enters HandoverOpen with flag set. |
 | C6 | Second `retire` call | Aborts `E_ALREADY_RETIRED`. |
@@ -1696,7 +1739,8 @@ post-condition via the owner-share branch alone.
 | # | Description | Expected |
 |---|---|---|
 | W1 | Withdraw with zero earnings | Aborts `E_NO_EARNINGS`. |
-| W2 | Withdraw with positive earnings | Returns Coin of exact balance. `owner_earnings == 0` after. `EarningsWithdrawn { escrow_id, owner_cap_id, amount }` event with `owner_cap_id == object::id(owner_cap)`. |
+| W2 | Withdraw with positive earnings | Returns Coin of exact balance. `owner_earnings == 0` after. `EarningsWithdrawn { escrow_id, owner_cap_id, owner, amount }` event with `owner_cap_id == object::id(owner_cap)` and `owner == tx_context::sender(ctx)`. |
+| W2a | Same cap transferred between two distinct addresses, each withdraws once | Two `EarningsWithdrawn` rows sharing `owner_cap_id` but with different `owner` values. Confirms `owner` is first-observed per call — not cached from mint-time. |
 | W3 | Withdraw with wrong cap | Aborts `E_OWNER_CAP_MISMATCH`. |
 | W4 | Withdraw when pre-call state is `Rented(HandoverOpen)` and tenure has expired — APT fires `do_tenure_expiry` before drain | APT credits `owner_earnings += tenant_stake × 0.95`, routes `tenant_stake × 0.05` as `FeeMessage<C>` to `fee_inbox_id`, state → `AtDutchAuction`. Withdraw returns `Coin == (pre_earnings + stake × 0.95)`; `owner_earnings == 0` after. Events in order: `TenureExpired`, then `EarningsWithdrawn`. Asserts APT materializes earnings that a drain-only implementation would miss. |
 | W5 | Withdraw when pre-call state is `Rented(HandoverConfirmed)` and handover has expired — APT fires `do_handover` before drain | APT credits `owner_earnings += used_credit × 0.95`, pushes `remain_credit` to displaced tenant, rotates `pending_bid → tenant_stake`, mints + pushes new `TenantCap`, state → `Rented(HandoverOpen)` with T(n+1) installed. Withdraw returns `Coin == (pre_earnings + used_credit × 0.95)`. Events in order: `HandoverCompleted`, then `EarningsWithdrawn`. Exercises the C1-path credit (distinct from W4's C2-path). |

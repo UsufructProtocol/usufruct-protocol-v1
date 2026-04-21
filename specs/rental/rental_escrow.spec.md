@@ -291,6 +291,7 @@ public struct HandoverCompleted has copy, drop {
     owner_share:       u64,   // used_credit × 0.95
     protocol_fee:      u64,   // used_credit × 0.05
     remain_credit:     u64,   // refunded to displaced tenant
+    new_rent_price:    u64,   // winning bid amount, now written to escrow.last_rent_price
     timestamp_ms:      u64,   // = handover_countdown_expiry
 }
 
@@ -299,6 +300,7 @@ public struct TenureExpired has copy, drop {
     tenant:           address,
     owner_share:      u64,   // tenant_stake × 0.95
     protocol_fee:     u64,   // tenant_stake × 0.05
+    last_rent_price:  u64,   // frozen at expiry — anchor of Dutch descent if next_state=AtDutchAuction
     next_state:       AssetState,  // AtDutchAuction or Retired
     timestamp_ms:     u64,   // = phase_start_ms + tenure_ceiling
 }
@@ -410,6 +412,26 @@ envelope is authoritative. Carrying a `timestamp_ms` field on
 depending on `from_state`; recovery by JOIN is cheaper and structurally
 unambiguous.
 
+**Price-anchor fields — `new_rent_price` on `HandoverCompleted`,
+`last_rent_price` on `TenureExpired`.** The state field
+`escrow.last_rent_price` is the anchor for two downstream computations
+— `f_next_rent_price(last_rent_price)` (takeover floor, §8.1) and
+`compute_price_descent` (Dutch descent, §8.2). Both events carry it
+explicitly because it is **not** PK-JOIN-recoverable: its value at any
+given transition is written across a chain of `BidPlaced` /
+`BidSuperseded` events of variable length inside the preceding handover
+window, or by an earlier `RentStarted`. Reconstructing it off-chain
+requires either stateful replay or a multi-hop `ORDER BY ts DESC LIMIT
+1` walk — qualitatively distinct from a single JOIN on a child PK, and
+fragile under partial ingestion. Emitting the value at every transition
+that writes or freezes it makes each fact row self-describing for
+price-floor and Dutch-price analytics. This is consistent with
+invariant (c): the rule constrains redundant **addresses** recoverable
+by PK-JOIN, not amounts recoverable only by chain-walk. `AuctionExpired`
+does not need its own field — its anchor is the directly preceding
+`TenureExpired`, PK-JOIN-recoverable 1:1 by `escrow_id` and temporal
+order.
+
 ### Star schema — the protocol's event emission strategy
 
 The full event surface of the protocol — this module plus the three
@@ -483,6 +505,7 @@ immutable, so there is no update or burn event).
 | **`AssetIntegrated` is the Asset/CoinType dictionary.** | `AssetIntegrated<Asset, CoinType>` is the only event phantom-generic on the escrow's type params. Any query that needs to group or filter by `Asset` or `CoinType` JOINs on `escrow_id` back to `asset_integrated` and reads the type tag — including queries over `IntegrationConfigRegistered` (min_rent_price, tenure_ceiling, curves) that want to bucket by coin. The `config` module stays coin-agnostic. |
 | **Owner address on `&OwnerCap`-gated ops.** | `RetireFlagSet.owner` and `EarningsWithdrawn.owner` record the cap holder at call time. These ops take the cap by reference — no `OwnerCap*` lifecycle event is co-emitted — so the address is first-observed and PK-unrecoverable. `AssetClaimed` does not carry `owner` because it consumes the cap by value; `OwnerCapBurned.owner` co-emits the same address and is reachable by JOIN on `owner_cap_id` (invariant c). Enables per-human queries (withdraw frequency per owner, multi-cap operators). |
 | **Intent vs settlement on retirement.** | `RetireFlagSet` records the owner's intent (when `retire()` was called, from which settled state). `AssetRetired` records the actual transition to `Retired` — immediate for `from_state ∈ {Idle, AtDutchAuction}`, deferred to the next tenure expiry for `from_state = Rented`. Co-emission matrix: `TenureExpired.next_state = Retired` ⇔ `AssetRetired` with `from_state = Rented` is co-emitted. Both events are needed — `TenureExpired` carries the stake-settlement facts (`owner_share`, `protocol_fee`, tenant), `AssetRetired` carries the pure state-transition fact. |
+| **Price-anchor fields on block-boundary events.** | `HandoverCompleted.new_rent_price` carries the winning bid amount just written to `escrow.last_rent_price`; `TenureExpired.last_rent_price` carries the same state field frozen at tenure expiry. These fields are **not** PK-JOIN-recoverable — they live across a variable-length chain of `BidPlaced` / `BidSuperseded` events inside the preceding handover window, or in an earlier `RentStarted`. Emitting them in-row makes (a) the takeover-floor query `floor = f_next_rent_price(last_rent_price)` answerable from `HandoverCompleted` alone, and (b) the Dutch current price `price(t) = last_rent_price − h(t)·(last_rent_price − min_rent_price)` answerable from `TenureExpired` + `IntegrationConfigRegistered` alone — no stateful replay in the indexer. Consistent with invariant (c): the rule targets redundant **addresses** recoverable by single PK-JOIN, not amounts recoverable only by chain-walk. |
 | **No envelope dependence.** | Events never require the indexer to join against `SuiEvent.timestampMs` or `SuiEvent.sender` to reconstruct meaning — except for pure wall-clock ordering of immediate events (which the envelope provides for free). |
 | **Cross-module events are self-contained.** | An indexer ingesting only `fee_message` events can answer every fee-message-level question; likewise for each cap module. Cross-module JOINs are always on `escrow_id`, never on implicit co-emission. |
 
@@ -1180,12 +1203,16 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    - `escrow.state = Rented { phase: HandoverOpen };`
 9. Emit `HandoverCompleted { escrow_id, displaced_tenant,
    new_tenant_cap_id, used_credit, owner_share, protocol_fee, remain_credit,
-   timestamp_ms: boundary_ms }`. The new tenant's address is not
-   carried — it is already on the co-emitted `TenantCapMinted.tenant`
-   row and recoverable by JOIN on `new_tenant_cap_id`.
-   `displaced_tenant` *is* carried: no PK path reaches the outgoing
-   cap from this row, so recovering it via JOIN would force
-   envelope-timing reconstruction (violating invariant d).
+   new_rent_price: escrow.last_rent_price, timestamp_ms: boundary_ms }`.
+   `new_rent_price` is the winning bid amount — `escrow.last_rent_price`
+   was already written to this value at bid time (`BidPlaced` /
+   `BidSuperseded`, §6 / §5) and is unchanged by `do_handover`; reading
+   it here is the canonical snapshot of the new block's price. The new
+   tenant's address is not carried — it is already on the co-emitted
+   `TenantCapMinted.tenant` row and recoverable by JOIN on
+   `new_tenant_cap_id`. `displaced_tenant` *is* carried: no PK path
+   reaches the outgoing cap from this row, so recovering it via JOIN
+   would force envelope-timing reconstruction (violating invariant d).
 
 **Edge cases — both extremes fall out of the two `if ... > 0` guards above
 (`remain_credit`, `protocol_fee`):**
@@ -1269,7 +1296,12 @@ Two cases:
      escrow.phase_start_ms = boundary_ms;`.
      `last_rent_price` is preserved — it is the starting price of the descent.
 8. Emit `TenureExpired { escrow_id, tenant, owner_share, protocol_fee,
-   next_state: escrow.state, timestamp_ms: boundary_ms }`.
+   last_rent_price: escrow.last_rent_price, next_state: escrow.state,
+   timestamp_ms: boundary_ms }`. `last_rent_price` is preserved by step
+   7 (see AtDutchAuction branch) and frozen into this row: it is the
+   anchor of the subsequent Dutch descent (if `next_state =
+   AtDutchAuction`) and makes the Dutch current-price computation a
+   single-event query.
 9. If `escrow.state == Retired` (the `retire_flag` branch of step 7),
    emit `AssetRetired { escrow_id, from_state: Rented }` immediately
    after `TenureExpired`. Structural co-emission: the indexer recovers

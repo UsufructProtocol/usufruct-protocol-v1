@@ -20,14 +20,19 @@ for protocol fees at each boundary event.
 - `new<C>(...)` — `public(package)`. Sole constructor. Wraps the given
   balance and identity fields into a `FeeMessage<C>` and returns it to
   the caller. Makes no assumption about the wrapped value.
-- `send_message<C>(...)` — `public(package)`. Transfers a
+- `send_message<C>(..., tenant)` — `public(package)`. Transfers a
   `FeeMessage<C>` to its encoded `fee_inbox_id` via transfer-to-object.
   Sole sink for newly-constructed messages (enforced by linearity:
   `FeeMessage` has `key` only, so no external storage path exists).
+  `tenant` is the address whose stake produced the fee — recorded on
+  the `FeeMessageSent<C>` event row.
 - `receive_message<C>(...)` — private. Receives one `FeeMessage<C>` from
   the inbox via `transfer::receive`. Single-object step.
-- `consume_message<C>(...)` — private. Destructures a `FeeMessage<C>`,
-  deletes its `UID`, and returns its `Balance<C>`.
+- `consume_message<C>(msg, ctx)` — private. Destructures a
+  `FeeMessage<C>`, deletes its `UID`, captures
+  `tx_context::sender(ctx)` as `collector`, and returns its
+  `Balance<C>`. The `collector` address is recorded on the
+  `FeeMessageCollected<C>` event row.
 - `collect_fee_messages<C>(...)` — `public`. Pipeline of
   `receive_message` + `consume_message` over a vector, with an internal
   `Balance<C>` accumulator. Single pass — O(n). Returns `Coin<C>`.
@@ -121,9 +126,12 @@ See §1 for the rationale against asserting `balance > 0`.
 ---------
 
 The module records the lifecycle of each `FeeMessage<C>`: one event at
-posting to the inbox, one event at consumption. Both events are
-symmetric — they carry the same identity tuple so each can be read
-standalone without joining against the other.
+posting to the inbox, one event at consumption. The two events share
+an identity pair (`fee_message_id`, `fee_inbox_id`, `escrow_id`,
+`amount`) and each carries an address that is *first-observed at that
+stage* — `tenant` on Sent, `collector` on Collected. Addresses do not
+duplicate across the pair: the common `fee_message_id` acts as a
+primary key for a Sent↔Collected JOIN.
 
 ### FeeMessageSent — event
 
@@ -133,6 +141,7 @@ public struct FeeMessageSent<phantom CoinType> has copy, drop {
     fee_inbox_id:   ID,
     escrow_id:      ID,
     amount:         u64,
+    tenant:         address,
 }
 ```
 
@@ -140,10 +149,11 @@ public struct FeeMessageSent<phantom CoinType> has copy, drop {
 
 | Field | Type | Meaning |
 |---|---|---|
-| `fee_message_id` | `ID` | Identity of the newly created `FeeMessage<CoinType>`. |
+| `fee_message_id` | `ID` | Identity of the newly created `FeeMessage<CoinType>`. Primary key for the Sent↔Collected JOIN. |
 | `fee_inbox_id` | `ID` | The `ProtocolFeeInbox` that received the message. |
 | `escrow_id` | `ID` | The originating escrow whose boundary event produced this fee. |
 | `amount` | `u64` | `balance::value(&balance)` at creation. Any value including zero, mirroring the wrapped balance. |
+| `tenant` | `address` | The tenant whose stake funded this fee. Passed by `rental_escrow`: `displaced_tenant` at handover, `current_tenant_address` at tenure expiry. Declarative — not stored on the `FeeMessage<C>` struct and not derivable elsewhere in this module. |
 
 **Emission site:** `send_message<C>`, after
 `transfer::transfer(msg, fee_inbox_id.to_address())`. Exactly one
@@ -158,6 +168,7 @@ public struct FeeMessageCollected<phantom CoinType> has copy, drop {
     fee_inbox_id:   ID,
     escrow_id:      ID,
     amount:         u64,
+    collector:      address,
 }
 ```
 
@@ -165,10 +176,11 @@ public struct FeeMessageCollected<phantom CoinType> has copy, drop {
 
 | Field | Type | Meaning |
 |---|---|---|
-| `fee_message_id` | `ID` | Identity of the `FeeMessage<CoinType>` that was consumed. |
+| `fee_message_id` | `ID` | Identity of the `FeeMessage<CoinType>` that was consumed. Joinable to `FeeMessageSent.fee_message_id`. |
 | `fee_inbox_id` | `ID` | The `ProtocolFeeInbox` the message was drained from. Copied from the consumed object's `fee_inbox_id` field. |
 | `escrow_id` | `ID` | The originating escrow. Copied from the consumed object's `escrow_id` field. |
 | `amount` | `u64` | `balance::value(&balance)` at the moment of consumption. |
+| `collector` | `address` | `tx_context::sender(ctx)` at consume time — the admin who drained the message. First-observed at this stage; not available at mint or post. |
 
 **Emission site:** `consume_message<C>`, after `object::delete(id)`.
 Exactly one emission per consumed message. Because
@@ -176,12 +188,20 @@ Exactly one emission per consumed message. Because
 of N messages produces N `FeeMessageCollected<C>` events in the same
 transaction.
 
-**Symmetry with `FeeMessageSent`:** the two events carry the same
-identity tuple (`fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`).
-Off-chain indexers can group by `escrow_id` (per-asset fee history), by
-`fee_inbox_id` (global drain reconciliation), or join Sent↔Collected by
-`fee_message_id` — each event is self-describing and can be queried
-without cross-event joins.
+**Design intent — events as SQL rows keyed by natural PKs:** the
+protocol's event layer feeds an off-chain indexer whose schema is
+anchored on `escrow_id` as the root foreign key and on
+`fee_message_id` as the primary key that pairs Sent and Collected.
+Address data lives only where it is first-observed: `tenant` (the
+stake funder) is known at post time and is recorded on Sent only;
+`collector` (the drainer) is known at consume time and is recorded
+on Collected only. The shared `fee_message_id` is the JOIN key — an
+indexer answers *"who drained the fee produced by tenant X on escrow
+Y?"* with a single Sent↔Collected JOIN, without either row carrying
+both addresses. Same discipline as cap lifecycle events
+(`TenantCapMinted` / `TenantCapBurned`, `OwnerCapMinted` /
+`OwnerCapBurned`), where the cap's own ID is the PK and addresses
+only appear on events where they are first-observed or diverge.
 
 **No aggregate drain event:** `collect_fee_messages<C>` does not emit a
 summary event. Total amount and message count are reconstructible
@@ -264,12 +284,13 @@ transaction.
 
 ### `send_message`
 
-    public(package) fun send_message<C>(msg: FeeMessage<C>)
+    public(package) fun send_message<C>(msg: FeeMessage<C>, tenant: address)
 
 **Visibility:** `public(package)` — callable only by `rental_escrow`.
 
 **Purpose:** transfers a `FeeMessage<C>` to its encoded
-`fee_inbox_id` via transfer-to-object and emits `FeeMessageSent<C>`.
+`fee_inbox_id` via transfer-to-object and emits `FeeMessageSent<C>`
+with the tenant whose stake funded the fee.
 
 **Behavior:**
 1. Capture identity from `msg` before the transfer consumes it:
@@ -278,11 +299,20 @@ transaction.
    - `let escrow_id      = msg.escrow_id;`
    - `let amount         = balance::value(&msg.balance);`
 2. `transfer::transfer(msg, fee_inbox_id.to_address());`
-3. `event::emit(FeeMessageSent<C> { fee_message_id, fee_inbox_id, escrow_id, amount });`
+3. `event::emit(FeeMessageSent<C> { fee_message_id, fee_inbox_id, escrow_id, amount, tenant });`
 
 **No external ID arguments:** destination and traceability come from
 the object itself (`msg.fee_inbox_id`, `msg.escrow_id`). The caller
-does not repeat identity data that the constructor already captured.
+only supplies `tenant` — which the module cannot derive from any
+local source (the `FeeMessage<C>` struct intentionally does not store
+it; it is first-observed at post time and recorded on the Sent event
+only).
+
+**`tenant` is declarative:** this module performs no runtime check
+against it. The caller (`rental_escrow`) is authoritative: at
+`do_handover` it passes `displaced_tenant`; at `do_tenure_expiry` it
+passes the current tenant's address. The field is the sole record of
+"who funded this fee" in the event stream.
 
 **Why transfer-to-object, not `&mut ProtocolFeeInbox`:**
 `ProtocolFeeInbox` is an owned object. In Sui, owned objects can only
@@ -322,21 +352,28 @@ be called in the module that defines the child type — here, `fee_message.move`
 
 ### `consume_message`
 
-    fun consume_message<C>(msg: FeeMessage<C>): Balance<C>
+    fun consume_message<C>(msg: FeeMessage<C>, ctx: &TxContext): Balance<C>
 
 **Visibility:** private — called only by `collect_fee_messages`.
 
 **Purpose:** destructs a `FeeMessage<C>`, deletes its object identity,
-and returns its balance.
+captures the draining caller as `collector`, and returns its balance.
 
 **Behavior:**
 1. Destructure: `FeeMessage { id, fee_inbox_id, escrow_id, balance } = msg`.
 2. Capture `let fee_message_id = object::uid_to_inner(&id);` and
    `let amount = balance::value(&balance);` — bound before
    `object::delete(id)` consumes the `UID`.
-3. `object::delete(id);`
-4. `event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount });`
-5. Returns `balance`.
+3. `let collector = tx_context::sender(ctx);` — the admin presenting
+   the inbox and its receive tickets.
+4. `object::delete(id);`
+5. `event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount, collector });`
+6. Returns `balance`.
+
+**Why `ctx: &TxContext` (not `&mut`):** only a read of
+`tx_context::sender(ctx)` is needed — no new objects are created in
+this function. `collect_fee_messages` already holds `&mut TxContext`
+and can pass it as `&` to `consume_message`.
 
 **No `inbox` argument:** deletion requires only the object itself.
 `&mut ProtocolFeeInbox` is not needed here — it was only required for
@@ -365,7 +402,7 @@ a single `Coin<C>`.
 1. Initializes `total: Balance<C> = balance::zero()`.
 2. For each `ticket` in `tickets`:
    a. `let msg = receive_message(inbox, ticket)`
-   b. `balance::join(&mut total, consume_message(msg))`
+   b. `balance::join(&mut total, consume_message(msg, ctx))`
 3. Returns `coin::from_balance(total, ctx)`.
 
 **Single pass — O(n):** each `FeeMessage` is received and consumed in
@@ -419,14 +456,18 @@ of N messages produces N events in the same transaction. See §3.
 
 **P4 — Lifecycle events:**
     Each `FeeMessage<C>` produces two module-local events:
-    `FeeMessageSent<C>` at posting (emitted in `send_message` after the
-    transfer) and `FeeMessageCollected<C>` at consumption (emitted in
-    `consume_message` after `object::delete`). Both carry the same
-    identity tuple: `fee_message_id`, `fee_inbox_id`, `escrow_id`, and
-    `amount`. Consumers can group by any of these dimensions —
-    per-escrow fee history, per-inbox drain reconciliation, or
-    Sent↔Collected pairing by `fee_message_id` — without joining
-    against external state.
+    `FeeMessageSent<C>` at posting (emitted in `send_message` after
+    the transfer) and `FeeMessageCollected<C>` at consumption
+    (emitted in `consume_message` after `object::delete`). Both
+    carry the shared identity tuple `(fee_message_id, fee_inbox_id,
+    escrow_id, amount)`; `fee_message_id` is the primary key pairing
+    the two. Address data is non-redundant across the pair: `tenant`
+    appears on Sent only (first-observed at post time, supplied by
+    `rental_escrow`); `collector` appears on Collected only
+    (first-observed at consume time, captured as
+    `tx_context::sender(ctx)`). Indexers recover the full
+    per-fee-message history — *"who funded, who drained"* — with a
+    single Sent↔Collected JOIN on `fee_message_id`.
 
 **P5 — Coin accumulation:**
     All balances from one `collect_fee_messages<C>` call are
@@ -448,10 +489,10 @@ of N messages produces N events in the same transaction. See §3.
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `new<C>` with any balance | Returns a `FeeMessage<C>` owned by the caller with matching `fee_inbox_id`, `escrow_id`, and `balance::value` equal to the input (including zero). No abort. |
-| S1 | `new + send_message` with `balance > 0` | `FeeMessage<C>` created and transferred to `fee_inbox_id`. `balance::value` at the child equals the input. |
-| S2 | `new + send_message` with `balance == 0` | `FeeMessage<C>` created and transferred to `fee_inbox_id` with `balance::value == 0`. No abort. (Not the recommended caller pattern — callers normally `balance::destroy_zero` instead — but structurally valid.) |
-| S3 | `new + send_message` called twice with the same `fee_inbox_id` | Two distinct `FeeMessage<C>` objects exist as children of `fee_inbox_id`. |
+| N1 | `new<C>` with any balance | Returns a `FeeMessage<C>` owned by the caller with matching `fee_inbox_id`, `escrow_id`, and `balance::value` equal to the input (including zero). No abort. `tenant` is not a struct field and is not stored. |
+| S1 | `new + send_message(msg, tenant)` with `balance > 0` | `FeeMessage<C>` created and transferred to `fee_inbox_id`. `balance::value` at the child equals the input. |
+| S2 | `new + send_message(msg, tenant)` with `balance == 0` | `FeeMessage<C>` created and transferred to `fee_inbox_id` with `balance::value == 0`. No abort. (Not the recommended caller pattern — callers normally `balance::destroy_zero` instead — but structurally valid.) |
+| S3 | `new + send_message` called twice with the same `fee_inbox_id`, possibly distinct `tenant`s | Two distinct `FeeMessage<C>` objects exist as children of `fee_inbox_id`. Two `FeeMessageSent<C>` events with distinct `fee_message_id` and their respective `tenant` values. |
 | S4 | `new + send_message` in `<SUI>` and `<USDC>` with the same `fee_inbox_id` | Two objects of distinct types exist as children. No conflict. |
 
 ### 6.2 `receive_message` and `consume_message`
@@ -461,7 +502,7 @@ Private functions — tested directly from `#[test]` functions within the module
 | # | Description | Expected |
 |---|---|---|
 | R1 | `receive_message` on a valid ticket | Returns `FeeMessage<C>` with correct `balance`. Object no longer owned by inbox. |
-| C1 | `consume_message` on a received `FeeMessage` | Returns `Balance<C>` equal to original fee. Object's `UID` deleted. |
+| C1 | `consume_message(msg, ctx)` on a received `FeeMessage` | Returns `Balance<C>` equal to original fee. Object's `UID` deleted. `collector` captured as `tx_context::sender(ctx)`. |
 
 ### 6.3 `collect_fee_messages`
 
@@ -482,13 +523,14 @@ Private functions — tested directly from `#[test]` functions within the module
 
 | # | Description | Expected |
 |---|---|---|
-| E1 | `new + send_message<C>` with any balance | Exactly one `FeeMessageSent<C>` emitted with `fee_message_id` equal to the created object's ID, `fee_inbox_id` and `escrow_id` equal to the values passed to `new`, and `amount` equal to `balance::value(&balance)`. `new` alone emits no event. |
+| E1 | `new + send_message<C>(msg, tenant)` with any balance | Exactly one `FeeMessageSent<C>` emitted with `fee_message_id` equal to the created object's ID, `fee_inbox_id` and `escrow_id` equal to the values passed to `new`, `amount` equal to `balance::value(&balance)`, and `tenant` equal to the address passed to `send_message`. `new` alone emits no event. |
 | E2 | Caller handles zero balance out-of-module (`balance::destroy_zero` without calling `new`) | No `FeeMessageSent<C>` event emitted. (This module is not involved.) |
-| E3 | `consume_message<C>` on a received message with balance `B` | Exactly one `FeeMessageCollected<C>` emitted with `fee_message_id`, `fee_inbox_id`, and `escrow_id` equal to the values carried by the consumed object, and `amount == B`. Emission occurs after `object::delete`. |
-| E4 | `collect_fee_messages<C>` over N tickets with balances `B1..BN` | Exactly N `FeeMessageCollected<C>` events emitted in the tx, one per consumed message. Each event's `fee_inbox_id` and `escrow_id` match the consumed object. `sum(amounts in events) == B1+..+BN`. `FeeMessageSent<C>` events of the prior sends are not re-emitted. |
+| E3 | `consume_message<C>(msg, ctx)` on a received message with balance `B` | Exactly one `FeeMessageCollected<C>` emitted with `fee_message_id`, `fee_inbox_id`, and `escrow_id` equal to the values carried by the consumed object, `amount == B`, and `collector == tx_context::sender(ctx)`. Emission occurs after `object::delete`. |
+| E4 | `collect_fee_messages<C>` over N tickets with balances `B1..BN` | Exactly N `FeeMessageCollected<C>` events emitted in the tx, one per consumed message. Each event's `fee_inbox_id` and `escrow_id` match the consumed object; each event's `collector` equals the single `tx_context::sender(ctx)` of the drain tx. `sum(amounts in events) == B1+..+BN`. `FeeMessageSent<C>` events of the prior sends are not re-emitted. |
 | E5 | `collect_fee_messages<C>` over an empty vector | No `FeeMessageCollected<C>` events emitted. |
-| E6 | Sent↔Collected symmetry | For any `FeeMessage<C>` whose `FeeMessageSent<C>` was observed at send time, its `FeeMessageCollected<C>` at drain carries identical `fee_message_id`, `fee_inbox_id`, `escrow_id`, and `amount`. |
-| E7 | Emit-last ordering | In a single tx where `send_message` produces a `FeeMessageSent<C>`, the event's `fee_message_id` matches an object that is owned by `fee_inbox_id` at end-of-tx. In a single tx where `consume_message` produces a `FeeMessageCollected<C>`, the referenced object no longer exists at end-of-tx. |
+| E6 | Sent↔Collected JOIN on `fee_message_id` | For any `FeeMessage<C>` whose `FeeMessageSent<C>` was observed at send time, its `FeeMessageCollected<C>` at drain shares identical `fee_message_id`, `fee_inbox_id`, `escrow_id`, and `amount`. Address fields do not overlap: `tenant` on Sent, `collector` on Collected — joining by `fee_message_id` recovers both without duplication. |
+| E7 | `tenant` passed distinct from `tx_context::sender(ctx)` at send | Event `tenant` equals the `send_message` argument — asserts the field is declarative, not a runtime echo of sender (matches the `do_handover` case where the tx sender is permissionless, not the tenant). |
+| E8 | Emit-last ordering | In a single tx where `send_message` produces a `FeeMessageSent<C>`, the event's `fee_message_id` matches an object that is owned by `fee_inbox_id` at end-of-tx. In a single tx where `consume_message` produces a `FeeMessageCollected<C>`, the referenced object no longer exists at end-of-tx. |
 
 
 7. MODULE BOUNDARY
@@ -502,9 +544,9 @@ Private functions — tested directly from `#[test]` functions within the module
 | `FeeMessageSent<C>` (event) | `public` | Emitted in `send_message`, after transfer. |
 | `FeeMessageCollected<C>` (event) | `public` | Emitted in `consume_message`, after `object::delete`. |
 | `new<C>(balance, fee_inbox_id, escrow_id, ctx)` | `public(package)` | Sole constructor. Wraps the balance and returns `FeeMessage<C>` to the caller. Makes no assumption about the wrapped balance. No events. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
-| `send_message<C>(msg)` | `public(package)` | Transfers `msg` to its encoded `fee_inbox_id`; emits `FeeMessageSent<C>`. Called by `rental_escrow` immediately after `new`. |
+| `send_message<C>(msg, tenant)` | `public(package)` | Transfers `msg` to its encoded `fee_inbox_id`; emits `FeeMessageSent<C> { ..., tenant }`. Called by `rental_escrow` immediately after `new` — `tenant` is `displaced_tenant` at handover or the outgoing tenant's address at tenure expiry. |
 | `receive_message<C>(inbox, ticket)` | private | Receives one `FeeMessage<C>` from inbox via `transfer::receive`. |
-| `consume_message<C>(msg)` | private | Destructures `FeeMessage<C>`, deletes UID, emits `FeeMessageCollected<C>`, returns `Balance<C>`. |
+| `consume_message<C>(msg, ctx)` | private | Destructures `FeeMessage<C>`, deletes UID, captures `collector = tx_context::sender(ctx)`, emits `FeeMessageCollected<C> { ..., collector }`, returns `Balance<C>`. |
 | `collect_fee_messages<C>(inbox, tickets, ctx)` | `public` | Pipeline of receive + consume over all tickets. Returns `Coin<C>`. Emits one `FeeMessageCollected<C>` per consumed message (via `consume_message`); no aggregate event. Called by admin PTB. |
 
 No error constants.

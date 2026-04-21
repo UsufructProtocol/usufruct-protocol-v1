@@ -931,7 +931,10 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    - `if protocol_fee > 0`:
      - `let fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee);`
      - `let msg = fee_message::new<CoinType>(fee_balance, escrow.fee_inbox_id, object::id(escrow), ctx);`
-     - `fee_message::send_message(msg);`
+     - `fee_message::send_message(msg, displaced_tenant);`
+     // `displaced_tenant` is the stake funder — already bound at step 4.
+     // The resulting `FeeMessageSent<C>.tenant` records whose elapsed-time
+     // consumption produced this fee.
      // Gate mirrors the `remain_credit > 0` branch above: when `protocol_fee == 0`
      // we skip the split entirely instead of creating and destroying a zero
      // `Balance<CoinType>`. No `FeeMessage<C>` is constructed on the zero path.
@@ -1023,7 +1026,10 @@ Two cases:
    - `if protocol_fee > 0`:
      - `let fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee);`
      - `let msg = fee_message::new<CoinType>(fee_balance, escrow.fee_inbox_id, object::id(escrow), ctx);`
-     - `fee_message::send_message(msg);`
+     - `fee_message::send_message(msg, tenant);`
+     // `tenant` is the outgoing tenant's address — bound at step 2.
+     // The resulting `FeeMessageSent<C>.tenant` records whose stake funded
+     // this fee (full saturation at tenure expiry).
    - Same pattern as §7.1: skip the split entirely when the fee rounds to
      zero (reachable only at pathological `stake_total < 20`, since fee =
      `mul_div(stake, 500, 10_000)`; protocols enforcing `min_rent_price ≥ 20`
@@ -1525,7 +1531,7 @@ post-condition via the owner-share branch alone.
 
 | # | Description | Expected |
 |---|---|---|
-| F1 | `do_handover` with non-zero `used_credit` | `owner_earnings += 0.95 × used_credit`. One `FeeMessage<C>` constructed via `fee_message::new(fee_balance, escrow.fee_inbox_id, object::id(escrow), ctx)` and posted via `fee_message::send_message`, with balance `0.05 × used_credit` and `escrow_id == object::id(escrow)`. `HandoverCompleted` event includes both shares. |
+| F1 | `do_handover` with non-zero `used_credit` | `owner_earnings += 0.95 × used_credit`. One `FeeMessage<C>` constructed via `fee_message::new(fee_balance, escrow.fee_inbox_id, object::id(escrow), ctx)` and posted via `fee_message::send_message(msg, displaced_tenant)`, with balance `0.05 × used_credit` and `escrow_id == object::id(escrow)`. `HandoverCompleted` event includes both shares. |
 | F2 | `do_handover` at Dutch Auction bypass (used_credit = last_rent_price) | `remain_credit == 0`, zero push to displaced tenant. Fee and owner share computed on full `last_rent_price`. Fee path as in F1. |
 | F3 | `do_tenure_expiry` | `owner_earnings += 0.95 × stake`. One `FeeMessage<C>` of `0.05 × stake` constructed + sent as in F1. |
 | F4 | Fee on tiny `used_credit` (`split_fee` floors fee to zero) | `if protocol_fee > 0` guard short-circuits: no split, no `fee_message::new` call, no `FeeMessage<C>` constructed. `owner_share == used_credit`. |

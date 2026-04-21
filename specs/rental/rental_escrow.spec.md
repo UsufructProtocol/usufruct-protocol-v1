@@ -356,13 +356,16 @@ foreign key. Every event emitted anywhere in the package carries
 `escrow_id`, so an off-chain indexer can ingest them into a unified
 view of per-escrow activity with zero envelope-metadata dependency.
 
-Around that root, three satellite dimensions exist, one per
-protocol-internal child-object type. Each dimension has its own
-natural primary key — the child object's own ID — and a pair of
-lifecycle events (create / destroy, send / collect) joined on that
-PK. Address fields are non-redundant across each pair: they appear
-only on the event where they are first-observed or where they diverge
-from their counterpart.
+Around that root, four satellite dimensions exist. Three are
+protocol-internal child-object types (`owner_cap`, `tenant_cap`,
+`fee_message`), each with its own natural primary key — the child
+object's own ID — and a pair of lifecycle events (create / destroy,
+send / collect) joined on that PK. Address fields are non-redundant
+across each pair: they appear only on the event where they are
+first-observed or where they diverge from their counterpart. The
+fourth satellite is `config` — a 1:1 dimension keyed only by
+`escrow_id`, with a single emission at integration time (configs are
+immutable, so there is no update or burn event).
 
 ```
                     ┌──────────────────────────────────┐
@@ -378,24 +381,29 @@ from their counterpart.
                     └──────────────┬───────────────────┘
                                    │  FK: escrow_id
                                    │  (on every row below)
-            ┌──────────────────────┼──────────────────────────┐
-            │                      │                          │
-            ▼                      ▼                          ▼
- ┌───────────────────┐  ┌────────────────────┐  ┌────────────────────────┐
- │     owner_cap     │  │     tenant_cap     │  │      fee_message       │
- │  PK: owner_cap_id │  │ PK: tenant_cap_id  │  │   PK: fee_message_id   │
- │                   │  │                    │  │                        │
- │  OwnerCapMinted   │  │  TenantCapMinted   │  │   FeeMessageSent       │
- │    owner          │  │    tenant          │  │     tenant             │
- │                   │  │                    │  │                        │
- │  OwnerCapBurned   │  │  TenantCapBurned   │  │   FeeMessageCollected  │
- │    owner          │  │    —               │  │     collector          │
- └───────────────────┘  └────────────────────┘  └────────────────────────┘
-   key + store →          key only →                 key only →
-   owner may diverge      mint-tenant ≡              tenant first-observed
-   across mint/burn       burn-tenant →              at send; collector
-   → kept on both         no JOIN loss               first-observed at
-     events                 → dropped on Burned        consume
+     ┌──────────────┬──────────────┼──────────────┬─────────────────┐
+     │              │              │              │                 │
+     ▼              ▼              ▼              ▼                 ▼
+┌──────────┐  ┌───────────┐  ┌────────────┐  ┌──────────────────────────┐
+│  config  │  │ owner_cap │  │ tenant_cap │  │       fee_message        │
+│ PK:      │  │ PK:       │  │ PK:        │  │ PK: fee_message_id       │
+│ escrow_id│  │ owner_    │  │ tenant_    │  │                          │
+│   (1:1)  │  │  cap_id   │  │  cap_id    │  │   FeeMessageSent         │
+│          │  │           │  │            │  │     tenant               │
+│ Integra- │  │ OwnerCap  │  │ TenantCap  │  │                          │
+│ tionCfg  │  │  Minted   │  │  Minted    │  │   FeeMessageCollected    │
+│ Regis-   │  │    owner  │  │    tenant  │  │     collector            │
+│ tered    │  │           │  │            │  │                          │
+│          │  │ OwnerCap  │  │ TenantCap  │  │                          │
+│ (once)   │  │  Burned   │  │  Burned    │  │                          │
+│          │  │    owner  │  │    —       │  │                          │
+└──────────┘  └───────────┘  └────────────┘  └──────────────────────────┘
+   no UID →    key + store →   key only →        key only →
+   immutable    owner may       mint-tenant ≡     tenant first-observed
+   snapshot     diverge across  burn-tenant →     at send; collector
+   at integrate mint/burn       no JOIN loss      first-observed at
+                → kept on both  → dropped on      consume
+                  events          Burned
 ```
 
 **Star schema properties:**
@@ -404,6 +412,7 @@ from their counterpart.
 |---|---|
 | **`escrow_id` on every row.** | Any analytical question ("activity on escrow X") answers with a single `WHERE escrow_id = X`. No cross-table joins needed for scoping. |
 | **Child PK pairs lifecycle.** | `owner_cap_id`, `tenant_cap_id`, `fee_message_id` each join their Minted↔Burned / Sent↔Collected pair. Full object history = one JOIN. |
+| **1:1 config satellite.** | `IntegrationConfigRegistered` is emitted exactly once per escrow, at integration, from the `config` module. It has no child UID — the only key is `escrow_id`, the root FK itself. This lets analytical queries group escrows by any integration parameter (tenure, curve shapes, price function) with a single JOIN on `escrow_id`, without having to read the on-chain object. |
 | **Addresses are first-observed, never duplicated.** | Redundancy recoverable by PK-JOIN is dropped. `TenantCapBurned` has no `tenant` (non-transferable → JOIN recovers it). `FeeMessageCollected` has no `tenant` (JOIN on `fee_message_id` recovers it). `OwnerCapBurned` keeps `owner` — `key + store` transferability means the burn-sender is genuinely new information. Fact-table events also comply: `AssetIntegrated` omits `integrator` (JOIN on `owner_cap_id` to `OwnerCapMinted`), `RentStarted` omits `tenant` (JOIN on `tenant_cap_id` to `TenantCapMinted`), `HandoverCompleted` omits `new_tenant` (JOIN on `new_tenant_cap_id`). `HandoverCompleted.displaced_tenant` is kept — no PK reaches the outgoing cap from this row. |
 | **Fact-table rows carry child PK-FKs to dimensions they co-emit with.** | `AssetIntegrated.owner_cap_id`, `RentStarted.tenant_cap_id`, `HandoverCompleted.new_tenant_cap_id`, `AssetClaimed.owner_cap_id`, `EarningsWithdrawn.owner_cap_id` — every fact row whose semantics touch a child object exposes that child's PK so the indexer can JOIN into the dimension without envelope-timing. |
 | **No envelope dependence.** | Events never require the indexer to join against `SuiEvent.timestampMs` or `SuiEvent.sender` to reconstruct meaning — except for pure wall-clock ordering of immediate events (which the envelope provides for free). |
@@ -453,13 +462,20 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    - `integrated_at_ms = clock.timestamp_ms()`
    - All remaining `Option` fields `None`, all `Balance` fields `balance::zero()`
    - `retire_flag = false`
-5. `transfer::share_object(escrow)`.
-6. Emit `AssetIntegrated { escrow_id, owner_cap_id }`. The integrator
+5. Call `config::emit_registration(&escrow.config, escrow_id)` to emit
+   `IntegrationConfigRegistered` carrying the full parameter snapshot keyed
+   by `escrow_id`. Emitted from the `config` module per the module-ownership
+   principle. Must happen *before* `share_object` consumes `escrow` by
+   value; safe to borrow `&escrow.config` at this point because the escrow
+   has already been constructed (step 4) and the config↔escrow_id binding
+   is a realized semantic fact (emit-last).
+6. `transfer::share_object(escrow)`.
+7. Emit `AssetIntegrated { escrow_id, owner_cap_id }`. The integrator
    address is not carried here — it is already recorded on the
    co-emitted `OwnerCapMinted.owner` row and recoverable by JOIN on
    `owner_cap_id` (star-schema invariant c: no PK-recoverable
    redundancy).
-7. Return `OwnerCap`. The PTB routes it (typically via
+8. Return `OwnerCap`. The PTB routes it (typically via
    `transfer::public_transfer` to `tx_context::sender(ctx)`).
 
 **Why return the cap instead of pushing it:** `OwnerCap` has `store`; the PTB
@@ -1523,7 +1539,7 @@ post-condition via the owner-share branch alone.
 
 | # | Description | Expected |
 |---|---|---|
-| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `AssetIntegrated` event emitted. |
+| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated` events emitted (config first, then asset). |
 | T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. No depth check. |
 
 ### 10.2 `rent` — Idle path

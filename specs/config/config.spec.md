@@ -21,6 +21,12 @@ embedded inside `RentalEscrow` at integration time and never mutated again.
 - `new_config(...)` — the sole constructor. `public`. Validates all protocol
   invariants and aborts on any violation.
 - One `public(package)` getter per field. Return immutable references or copy values.
+- `IntegrationConfigRegistered` — event struct capturing the full parameter
+  snapshot at integration time, keyed by `escrow_id`.
+- `emit_registration(cfg, escrow_id)` — `public(package)` emitter called from
+  `rental_escrow::integrate` once the escrow ID is known. Split from
+  `new_config` because the config is built in the PTB before the escrow
+  exists, so the ID cannot be captured inside the constructor.
 
 **Does not own:**
 
@@ -213,7 +219,86 @@ tenant is the window that enables competitive price discovery.
   does not special-case this; it emerges naturally from the parameter choice.
 
 
-4. GETTERS
+4. EVENT AND EMITTER
+--------------------
+
+### `IntegrationConfigRegistered` — event
+
+Emitted exactly once per integration, at `rental_escrow::integrate` time,
+after the escrow is constructed and before it is shared. Carries a full
+snapshot of the immutable parameters the integrator committed to, keyed
+by `escrow_id`.
+
+```move
+public struct IntegrationConfigRegistered has copy, drop {
+    escrow_id:       ID,
+    min_rent_price:  u64,
+    tenure_ceiling:  u64,
+    handover_floor:  u64,
+    descent_ceiling: u64,
+    retire_floor:    u64,
+    credit_curve:    CurveShape,
+    descent_curve:   CurveShape,
+    price_function:  PriceFunction,
+}
+```
+
+**Abilities:** `copy + drop` — required by `event::emit`. `CurveShape` and
+`PriceFunction` both have `copy + drop`, so the whole struct satisfies the
+Sui event verifier.
+
+**Field semantics:** each scalar and curve field mirrors the corresponding
+`IntegrationConfig` field by value (see §2 for units and meaning).
+`escrow_id` is the root FK that ties this row to every other event for the
+same escrow; it is the protocol's uniform schema anchor (see
+`rental_escrow.spec.md §3` — "Star schema").
+
+**Star-schema role.** `IntegrationConfigRegistered` is a **1:1 satellite
+dimension** of the `escrows` fact table, emitted exactly once per escrow at
+integration and never again (configs are immutable; no burn / update event
+exists). It carries no child PK of its own — the config has no UID — so the
+only key is `escrow_id`.
+
+**Why emit all parameters at once.** The off-chain indexer needs to know
+*which parameter combinations produce good liquid-renting mechanics*. A
+single event carrying the full snapshot lets analytical queries group
+escrows by any parameter (e.g. `WHERE tenure_ceiling > X`) without reading
+the on-chain object. Splitting the snapshot across multiple events would
+force envelope-timing joins — disallowed by star-schema invariant (d).
+
+### `emit_registration` — function
+
+```move
+public(package) fun emit_registration(cfg: &IntegrationConfig, escrow_id: ID)
+```
+
+**Visibility:** `public(package)` — only `rental_escrow::integrate` is
+expected to call it. Not exposed to PTBs: an integrator cannot emit a
+registration event decoupled from an actual escrow construction.
+
+**Behavior:** reads every field of `cfg` and emits a single
+`IntegrationConfigRegistered` event with those values plus `escrow_id`. No
+validation (inputs were already validated by `new_config`; `escrow_id` is
+authoritative — it comes from `object::uid_to_inner` inside `integrate`).
+No state mutation.
+
+**Why split from `new_config`.** `new_config` runs in the PTB *before*
+`rental_escrow::integrate` — there is no `escrow_id` yet. The only other
+option would be to fold construction + emission into a single
+escrow-scoped call, which would break PTB composability (integrators could
+no longer build `CurveShape` / `PriceFunction` / `IntegrationConfig`
+independently). The split follows the same pattern as
+`fee_message::new(...)` + `send_message(msg, tenant)`: pure builder,
+separate emitter called at the point the contextual data becomes known.
+
+**Emit-last compliance.** Called from `rental_escrow::integrate` *after*
+the escrow has been constructed with `config` embedded (so the config↔
+escrow_id binding is a realized semantic fact) and *before* `share_object`
+consumes the escrow value. Placing the call any earlier would emit before
+the semantic operation the event describes.
+
+
+5. GETTERS
 ----------
 
 One `public(package)` getter per field. All take `&IntegrationConfig`.
@@ -238,7 +323,7 @@ getters would remain valid without signature changes.
 No setter exists. `IntegrationConfig` is write-once.
 
 
-5. PROPERTIES
+6. PROPERTIES
 -------------
 
 The following hold for any `IntegrationConfig` successfully constructed via
@@ -265,7 +350,7 @@ re-checking.
     (Constructor stores values as-is; no normalization occurs in `config`.)
 
 
-6. TEST CASES
+7. TEST CASES
 -------------
 
 Format: `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function)`
@@ -326,7 +411,7 @@ round-trip holds against the reduced value, not the raw arguments:
     credit_curve(&c) == &PowerLaw { alpha_num: 2, alpha_den: 4 }  // WRONG
 
 
-7. MODULE BOUNDARY
+8. MODULE BOUNDARY
 ------------------
 
 `config.move` exports:
@@ -338,7 +423,9 @@ round-trip holds against the reduced value, not the raw arguments:
 | `E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 2` | `public` | SDK error handling. |
 | `E_DESCENT_CEILING_ZERO: u64 = 3` | `public` | SDK error handling. |
 | `IntegrationConfig` (type) | `public` | `copy + drop + store`. Embedded in `RentalEscrow`. |
+| `IntegrationConfigRegistered` (type) | `public` | Event. `copy + drop`. Emitted once at integration time. |
 | `new_config(...)` | `public` | Validated constructor. |
+| `emit_registration(cfg, escrow_id)` | `public(package)` | Emits `IntegrationConfigRegistered`. Called from `rental_escrow::integrate` after escrow construction. |
 | `min_rent_price(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `tenure_ceiling(cfg)` | `public(package)` | Getter — returns `u64`. |
 | `handover_floor(cfg)` | `public(package)` | Getter — returns `u64`. |
@@ -348,7 +435,7 @@ round-trip holds against the reduced value, not the raw arguments:
 | `descent_curve(cfg)` | `public(package)` | Getter — returns `&CurveShape`. |
 | `price_function(cfg)` | `public(package)` | Getter — returns `&PriceFunction`. |
 
-No private helpers. All logic is in `new_config`.
+No private helpers. All logic is in `new_config` and `emit_registration`.
 
 **Integration flow:** an integrator calls `curve_shape` and `price_function` constructors
 to build `CurveShape` and `PriceFunction` values, then calls `new_config` to get an

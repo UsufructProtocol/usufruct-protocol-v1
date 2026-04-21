@@ -314,6 +314,21 @@ public struct RetireFlagSet has copy, drop {
     state_at_set:     AssetState,  // settled state when retire was called
 }
 
+public struct AssetRetired has copy, drop {
+    escrow_id:        ID,
+    from_state:       AssetState,  // Idle | AtDutchAuction | Rented
+}
+
+public struct AssetBorrowed has copy, drop {
+    escrow_id:        ID,
+    tenant_cap_id:    ID,
+}
+
+public struct AssetReturned has copy, drop {
+    escrow_id:        ID,
+    tenant_cap_id:    ID,
+}
+
 public struct AssetClaimed has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
@@ -339,13 +354,28 @@ state machine even when settlement is lazy and runs in a later
 checkpoint than the boundary itself.
 
 Immediate events (`AssetIntegrated`, `RentStarted`, `BidPlaced`,
-`BidSuperseded`, `RetireFlagSet`, `AssetClaimed`, `EarningsWithdrawn`)
-do not carry a `timestamp_ms` field. Consumers read the event-envelope
-timestamp (`SuiEvent.timestampMs`, the checkpoint time of the emitting
+`BidSuperseded`, `RetireFlagSet`, `AssetRetired`, `AssetBorrowed`,
+`AssetReturned`, `AssetClaimed`, `EarningsWithdrawn`) do not carry a
+`timestamp_ms` field. Consumers read the event-envelope timestamp
+(`SuiEvent.timestampMs`, the checkpoint time of the emitting
 transaction), which is authoritative for anything that happens at tx
 time. Duplicating it in the event body would add no information and
 would force `&Clock` into the signature of functions that otherwise
 have no reason to read the clock.
+
+**`AssetRetired` — timestamp recovery rule.** `AssetRetired` has two
+disparate emission sites: immediate (from `retire()` when settled state
+is `Idle` or `AtDutchAuction`) and deferred (from
+`apply_pending_transitions` → `do_tenure_expiry` when `retire_flag` is
+set and tenure expires, `from_state = Rented`). The deferred case
+co-emits with `TenureExpired` in the same transaction, so the
+authoritative boundary time is recoverable by JOIN on `escrow_id` to
+`TenureExpired.timestamp_ms` (= `phase_start_ms + tenure_ceiling`). The
+immediate case has no boundary — tx time == semantic time — so the
+envelope is authoritative. Carrying a `timestamp_ms` field on
+`AssetRetired` itself would give the same field two different meanings
+depending on `from_state`; recovery by JOIN is cheaper and structurally
+unambiguous.
 
 ### Star schema — the protocol's event emission strategy
 
@@ -376,8 +406,9 @@ immutable, so there is no update or burn event).
                     │  BidPlaced        BidSuperseded  │
                     │  HandoverCompleted               │
                     │  TenureExpired    AuctionExpired │
-                    │  RetireFlagSet    AssetClaimed   │
-                    │  EarningsWithdrawn               │
+                    │  RetireFlagSet    AssetRetired   │
+                    │  AssetBorrowed    AssetReturned  │
+                    │  AssetClaimed     EarningsWithdrawn│
                     └──────────────┬───────────────────┘
                                    │  FK: escrow_id
                                    │  (on every row below)
@@ -414,7 +445,9 @@ immutable, so there is no update or burn event).
 | **Child PK pairs lifecycle.** | `owner_cap_id`, `tenant_cap_id`, `fee_message_id` each join their Minted↔Burned / Sent↔Collected pair. Full object history = one JOIN. |
 | **1:1 config satellite.** | `IntegrationConfigRegistered` is emitted exactly once per escrow, at integration, from the `config` module. It has no child UID — the only key is `escrow_id`, the root FK itself. This lets analytical queries group escrows by any integration parameter (tenure, curve shapes, price function) with a single JOIN on `escrow_id`, without having to read the on-chain object. |
 | **Addresses are first-observed, never duplicated.** | Redundancy recoverable by PK-JOIN is dropped. `TenantCapBurned` has no `tenant` (non-transferable → JOIN recovers it). `FeeMessageCollected` has no `tenant` (JOIN on `fee_message_id` recovers it). `OwnerCapBurned` keeps `owner` — `key + store` transferability means the burn-sender is genuinely new information. Fact-table events also comply: `AssetIntegrated` omits `integrator` (JOIN on `owner_cap_id` to `OwnerCapMinted`), `RentStarted` omits `tenant` (JOIN on `tenant_cap_id` to `TenantCapMinted`), `HandoverCompleted` omits `new_tenant` (JOIN on `new_tenant_cap_id`). `HandoverCompleted.displaced_tenant` is kept — no PK reaches the outgoing cap from this row. |
-| **Fact-table rows carry child PK-FKs to dimensions they co-emit with.** | `AssetIntegrated.owner_cap_id`, `RentStarted.tenant_cap_id`, `HandoverCompleted.new_tenant_cap_id`, `AssetClaimed.owner_cap_id`, `EarningsWithdrawn.owner_cap_id` — every fact row whose semantics touch a child object exposes that child's PK so the indexer can JOIN into the dimension without envelope-timing. |
+| **Fact-table rows carry child PK-FKs to dimensions they co-emit with.** | `AssetIntegrated.owner_cap_id`, `RentStarted.tenant_cap_id`, `HandoverCompleted.new_tenant_cap_id`, `AssetBorrowed.tenant_cap_id`, `AssetReturned.tenant_cap_id`, `AssetClaimed.owner_cap_id`, `EarningsWithdrawn.owner_cap_id` — every fact row whose semantics touch a child object exposes that child's PK so the indexer can JOIN into the dimension without envelope-timing. |
+| **Borrow/return measure actual usage.** | `AssetBorrowed` / `AssetReturned` pair JOIN on `tenant_cap_id` within a single tenancy (multiple pairs possible — a tenant may borrow and return N times during their block). Provides the off-chain indexer a measurable signal of "did the tenant actually use the capability?" — the core liquid-renting demand metric, previously invisible (borrow was PTB-internal only). |
+| **Intent vs settlement on retirement.** | `RetireFlagSet` records the owner's intent (when `retire()` was called, from which settled state). `AssetRetired` records the actual transition to `Retired` — immediate for `from_state ∈ {Idle, AtDutchAuction}`, deferred to the next tenure expiry for `from_state = Rented`. Co-emission matrix: `TenureExpired.next_state = Retired` ⇔ `AssetRetired` with `from_state = Rented` is co-emitted. Both events are needed — `TenureExpired` carries the stake-settlement facts (`owner_share`, `protocol_fee`, tenant), `AssetRetired` carries the pure state-transition fact. |
 | **No envelope dependence.** | Events never require the indexer to join against `SuiEvent.timestampMs` or `SuiEvent.sender` to reconstruct meaning — except for pure wall-clock ordering of immediate events (which the envelope provides for free). |
 | **Cross-module events are self-contained.** | An indexer ingesting only `fee_message` events can answer every fee-message-level question; likewise for each cap module. Cross-module JOINs are always on `escrow_id`, never on implicit co-emission. |
 
@@ -518,19 +551,25 @@ asset. Does not mutate balances.
 4. Assert `clock.timestamp_ms() >= escrow.integrated_at_ms +
    config::retire_floor(&escrow.config)`, abort `E_RETIRE_FLOOR_NOT_ELAPSED`.
 5. Set `escrow.retire_flag = true`.
-6. If `escrow.state` is `Idle` or `AtDutchAuction` (no active tenant, no
+6. Let `prior_state = escrow.state` — bind before any state mutation so the
+   subsequent `AssetRetired` emit can report the pre-transition state.
+7. If `prior_state` is `Idle` or `AtDutchAuction` (no active tenant, no
    pending bid), transition immediately:
    - `AtDutchAuction` → set `state = Retired`, set `phase_start_ms =
      clock.timestamp_ms()`. Emit `AuctionExpired { next_state: Retired, ... }`
      with `timestamp_ms = clock.timestamp_ms()` (not the would-be auction expiry —
      retire cuts it short).
    - `Idle` → set `state = Retired`, set `phase_start_ms = clock.timestamp_ms()`.
-     No auxiliary event (the state was already "empty"; `RetireFlagSet` covers it).
    Both branches update `phase_start_ms` as bookkeeping, following the
    convention that every transition site records the moment of transition
    (see `do_tenure_expiry` §7.2 and `do_auction_expiry` §7.3). The field is
    not read in `Retired`, but the uniform invariant simplifies auditing.
-7. Emit `RetireFlagSet { escrow_id, state_at_set: escrow.state }`.
+8. Emit `RetireFlagSet { escrow_id, state_at_set: prior_state }`.
+9. If `prior_state` was `Idle` or `AtDutchAuction`, emit
+   `AssetRetired { escrow_id, from_state: prior_state }`. Emit-last: the
+   state machine has already reached `Retired` (step 7). For the `Rented`
+   branch there is no `AssetRetired` here — the transition is deferred to
+   `do_tenure_expiry` (§7.2) and emitted there alongside `TenureExpired`.
 
 **State after `retire` completes:**
 
@@ -853,7 +892,12 @@ integrating ecosystem.
    `let asset = option::extract(&mut escrow.asset);`
 5. Construct `receipt = AssetReceipt { escrow_id: object::id(escrow),
    asset_id: object::id(&asset) }`.
-6. Return `(asset, receipt)`.
+6. Emit `AssetBorrowed { escrow_id: receipt.escrow_id,
+   tenant_cap_id: object::id(tenant_cap) }`. Emit-last: the extraction
+   (step 4) has already succeeded and the receipt (step 5) witnesses the
+   asset has left the escrow. The tenant's identity is recoverable by
+   JOIN on `tenant_cap_id` to `TenantCapMinted` — not duplicated here.
+7. Return `(asset, receipt)`.
 
 **Why `return_asset` requires no cap re-verification:** `return_asset` can
 only be called by a PTB that holds an `AssetReceipt`. An `AssetReceipt` can
@@ -871,8 +915,14 @@ step 1. No new transitions can fire within the same transaction, so
 explains why no state change can have occurred between the two calls —
 but the primary authorization argument is the receipt itself.
 
-**No event emitted.** Borrow is a PTB-internal event with no observable
-state change across transactions; the receipt is consumed in the same PTB.
+**Event rationale.** `AssetBorrowed` is the first observable record that
+the capability actually leaves custody to be used. The hot-potato
+receipt guarantees the borrow is paired with a `return_asset` in the
+same PTB, but it does not reach the off-chain indexer — only emitted
+events do. Without `AssetBorrowed` / `AssetReturned`, the indexer
+cannot distinguish a tenant who actively uses the asset from one who
+merely holds the capability — the core demand signal of liquid renting
+would be invisible.
 
 ---
 
@@ -993,13 +1043,23 @@ of liquid renting is already compatible at the contract level.
    `E_RECEIPT_ESCROW_MISMATCH`. Enforces return to the correct escrow.
 3. Assert `asset_id == object::id(&asset)`, abort
    `E_RECEIPT_ASSET_MISMATCH`. Enforces return of the exact asset borrowed.
-4. `option::fill(&mut escrow.asset, asset);`
-5. Does **not** call `apply_pending_transitions` — returning an asset never
+4. Let `tenant_cap_id = *option::borrow(&escrow.current_tenant_cap_id);`
+   Safe: PTB clock-fixity (§6.1) guarantees `current_tenant_cap_id` has
+   not rotated since `borrow_asset` succeeded earlier in the same PTB —
+   it is the same tenant cap that authorized the borrow.
+5. `option::fill(&mut escrow.asset, asset);`
+6. Emit `AssetReturned { escrow_id, tenant_cap_id }`. Emit-last: the
+   asset has already been restored to the escrow (step 5) so the
+   `AssetReturned` semantic is realized.
+7. Does **not** call `apply_pending_transitions` — returning an asset never
    needs to resolve boundary events; no balance is touched, no state field
    changes. The PTB clock-fixity invariant (§6.1) guarantees no new
    transition can have fired since `borrow_asset` ran in the same PTB.
 
-**No event emitted.** Same rationale as `borrow_asset`.
+**Event rationale.** See §6.1 — `AssetReturned` closes the borrow pair
+the indexer needs to measure actual capability usage. JOIN on
+`tenant_cap_id` to the preceding `AssetBorrowed` reconstructs the full
+borrow window.
 
 
 7. PRIVATE HELPERS
@@ -1167,6 +1227,13 @@ Two cases:
      `last_rent_price` is preserved — it is the starting price of the descent.
 8. Emit `TenureExpired { escrow_id, tenant, owner_share, protocol_fee,
    next_state: escrow.state, timestamp_ms: boundary_ms }`.
+9. If `escrow.state == Retired` (the `retire_flag` branch of step 7),
+   emit `AssetRetired { escrow_id, from_state: Rented }` immediately
+   after `TenureExpired`. Structural co-emission: the indexer recovers
+   the authoritative transition timestamp by JOIN on `escrow_id` to the
+   co-emitted `TenureExpired.timestamp_ms`. Emit order is
+   `TenureExpired` first (stake settlement), `AssetRetired` second
+   (state-machine transition); both belong to the same semantic moment.
 
 **Note:** the displaced tenant's `TenantCap` is not burned here. It becomes
 stale (ID no longer matches `current_tenant_cap_id` which is now `None`) and
@@ -1594,8 +1661,9 @@ post-condition via the owner-share branch alone.
 
 | # | Description | Expected |
 |---|---|---|
-| B1 | Borrow with valid current cap | Returns `(asset, receipt)`. |
-| B2 | Return via correct receipt + same asset | Asset back in escrow. Receipt consumed. |
+| B1 | Borrow with valid current cap | Returns `(asset, receipt)`. `AssetBorrowed { escrow_id, tenant_cap_id }` event where `tenant_cap_id == object::id(tenant_cap)`. |
+| B2 | Return via correct receipt + same asset | Asset back in escrow. Receipt consumed. `AssetReturned { escrow_id, tenant_cap_id }` event where `tenant_cap_id` matches the B1 borrow — JOIN on `tenant_cap_id` reconstructs the borrow window. |
+| B2a | Multiple borrow/return pairs in the same tenancy | Each pair emits its own `AssetBorrowed` / `AssetReturned` on the same `tenant_cap_id`; indexer can count usage frequency per tenant. |
 | B3 | Borrow with a stale cap (previous tenant after handover) | Aborts `E_TENANT_CAP_STALE`. |
 | B4 | Borrow with cap for a different escrow | Aborts `E_TENANT_CAP_WRONG_ESCROW`. |
 | B5 | Return with receipt for a different escrow | Aborts `E_RECEIPT_ESCROW_MISMATCH`. |
@@ -1610,17 +1678,17 @@ post-condition via the owner-share branch alone.
 | # | Description | Expected |
 |---|---|---|
 | C1 | `retire` before `retire_floor` elapsed | Aborts `E_RETIRE_FLOOR_NOT_ELAPSED`. |
-| C2 | `retire` from Idle (after `retire_floor`) | `retire_flag = true`. `state → Retired`. `RetireFlagSet`. |
-| C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. `AuctionExpired(next_state: Retired)` + `RetireFlagSet`. |
+| C2 | `retire` from Idle (after `retire_floor`) | `retire_flag = true`. `state → Retired`. Events in order: `RetireFlagSet(state_at_set: Idle)`, `AssetRetired(from_state: Idle)`. |
+| C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. Events in order: `AuctionExpired(next_state: Retired)`, `RetireFlagSet(state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)`. |
 | C4 | `retire` from Rented(HandoverOpen) | `retire_flag = true`. `state` unchanged. Subsequent `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
 | C5 | `retire` from Rented(HandoverConfirmed) | `retire_flag = true`. `state` unchanged. Handover completes normally; new tenant enters HandoverOpen with flag set. |
 | C6 | Second `retire` call | Aborts `E_ALREADY_RETIRED`. |
 | C7 | `claim_asset` when `state != Retired` | Aborts `E_NOT_RETIRED`. |
 | C8 | `claim_asset` with non-matching `OwnerCap` | Aborts `E_OWNER_CAP_MISMATCH`. |
 | C9 | `claim_asset` on Retired with accumulated earnings | Returns `(asset, coin == owner_earnings)`. OwnerCap burned. Escrow deleted. `AssetClaimed` event. |
-| C10 | Full retire-then-claim flow from Rented | `retire` → wait for tenure expiry → `apply_pending_transitions` moves to Retired → `claim_asset` succeeds. |
-| C11 | `claim_asset` with `retire_flag` already set, pre-APT state `Rented(HandoverConfirmed)`, both handover and T(n+1)'s tenure expired — APT chains C1 → C2(→Retired) before claim's own logic | APT fires `do_handover`: T(n+1) installed, `owner_earnings += used_credit × 0.95`, `remain_credit` pushed to T(n), new `TenantCap` pushed to T(n+1), `retire_flag` preserved. APT then fires `do_tenure_expiry` with the flag set: `owner_earnings += T(n+1)_stake × 0.95`, state → `Retired`. Claim body asserts `state == Retired` ✓ and returns `(asset, Coin == accumulated owner_earnings)`. Events in order: `HandoverCompleted`, `TenureExpired(next_state: Retired)`, `AssetClaimed`. Pairs with C10 (which covers the chain starting from HandoverOpen). |
-| C12 | `retire` called when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no prior retire_flag) — APT fires C2 moving state to `AtDutchAuction` before retire's own logic | APT fires `do_tenure_expiry` with flag unset: `owner_earnings += tenant_stake × 0.95`, state → `AtDutchAuction`, `TenureExpired` emitted with `timestamp_ms = boundary`. Retire body then asserts `!retire_flag` ✓ and sets it; §4.2 step 6 matches the AtDutchAuction branch: `state → Retired`, `phase_start_ms = clock.now()`, emits `AuctionExpired(next_state: Retired, timestamp_ms = clock.now())` + `RetireFlagSet(state_at_set: Retired)`. Asserts retire's dispatch branch is driven by the post-APT state, not the pre-call state (C4 covers the static Rented pre-state where APT is a no-op). |
+| C10 | Full retire-then-claim flow from Rented | `retire` (tx1) emits `RetireFlagSet(state_at_set: Rented(HandoverOpen))` only — no `AssetRetired` yet (deferred). Tenure expiry resolved in tx2 by `apply_pending_transitions`: state → `Retired`, events in order `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`. `claim_asset` (tx3) succeeds. |
+| C11 | `claim_asset` with `retire_flag` already set, pre-APT state `Rented(HandoverConfirmed)`, both handover and T(n+1)'s tenure expired — APT chains C1 → C2(→Retired) before claim's own logic | APT fires `do_handover`: T(n+1) installed, `owner_earnings += used_credit × 0.95`, `remain_credit` pushed to T(n), new `TenantCap` pushed to T(n+1), `retire_flag` preserved. APT then fires `do_tenure_expiry` with the flag set: `owner_earnings += T(n+1)_stake × 0.95`, state → `Retired`. Claim body asserts `state == Retired` ✓ and returns `(asset, Coin == accumulated owner_earnings)`. Events in order: `HandoverCompleted`, `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`, `AssetClaimed`. Pairs with C10 (which covers the chain starting from HandoverOpen). |
+| C12 | `retire` called when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no prior retire_flag) — APT fires C2 moving state to `AtDutchAuction` before retire's own logic | APT fires `do_tenure_expiry` with flag unset: `owner_earnings += tenant_stake × 0.95`, state → `AtDutchAuction`, `TenureExpired` emitted with `timestamp_ms = boundary`. Retire body then asserts `!retire_flag` ✓ and sets it; §4.2 step 6 matches the AtDutchAuction branch: `state → Retired`, `phase_start_ms = clock.now()`, emits `AuctionExpired(next_state: Retired, timestamp_ms = clock.now())`, `RetireFlagSet(state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)` in order. Asserts retire's dispatch branch is driven by the post-APT state, not the pre-call state (C4 covers the static Rented pre-state where APT is a no-op). |
 | C13 | `retire` called when pre-APT state is `Rented(HandoverConfirmed)` and handover has expired (no prior retire_flag) — APT fires C1 moving state to `Rented(HandoverOpen)` with T(n+1) installed before retire's own logic | APT fires `do_handover`: T(n+1) installed, owner earnings credited, `HandoverCompleted` emitted. Retire body then sets `retire_flag = true`; state is `Rented(HandoverOpen)` so §4.2 step 6 is a no-op (no immediate transition). Emits `RetireFlagSet(state_at_set: Rented(HandoverOpen))`. Flag now applies to T(n+1)'s tenure — any subsequent `rent()` from another bidder aborts `E_RETIRE_FLAG_BLOCKS_BID`. Distinct from C5, where retire runs on `Rented(HandoverConfirmed)` directly (APT no-op) and the flag is inherited by T(n+1) via the later handover. |
 
 ### 10.9 `withdraw_earnings`

@@ -259,6 +259,7 @@ module — this is why there is no standalone events module.
 public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
+    asset_id:         ID,   // object::id(&asset) at integrate time
 }
 
 public struct RentStarted has copy, drop {
@@ -503,6 +504,7 @@ immutable, so there is no update or burn event).
 | **Fact-table rows carry child PK-FKs to dimensions they co-emit with.** | `AssetIntegrated.owner_cap_id`, `RentStarted.tenant_cap_id`, `HandoverCompleted.new_tenant_cap_id`, `AssetBorrowed.tenant_cap_id`, `AssetReturned.tenant_cap_id`, `AssetClaimed.owner_cap_id`, `EarningsWithdrawn.owner_cap_id` — every fact row whose semantics touch a child object exposes that child's PK so the indexer can JOIN into the dimension without envelope-timing. |
 | **Borrow/return measure actual usage.** | `AssetBorrowed` / `AssetReturned` pair JOIN on `tenant_cap_id` within a single tenancy (multiple pairs possible — a tenant may borrow and return N times during their block). Provides the off-chain indexer a measurable signal of "did the tenant actually use the capability?" — the core liquid-renting demand metric, previously invisible (borrow was PTB-internal only). |
 | **`AssetIntegrated` is the Asset/CoinType dictionary.** | `AssetIntegrated<Asset, CoinType>` is the only event phantom-generic on the escrow's type params. Any query that needs to group or filter by `Asset` or `CoinType` JOINs on `escrow_id` back to `asset_integrated` and reads the type tag — including queries over `IntegrationConfigRegistered` (min_rent_price, tenure_ceiling, curves) that want to bucket by coin. The `config` module stays coin-agnostic. |
+| **`AssetIntegrated.asset_id` enables level-2 linkage and asset-instance tracing.** | The object ID of the wrapped asset at integrate time. Level-2 escrows (`Asset = rental_escrow::OwnerCap`) pair to their underlying level-1 escrow via `asset_id = level-1 OwnerCap ID` → JOIN on `owner_cap_id` to `OwnerCapMinted.escrow_id`. The same-asset-across-integrations thread (integrate → retire → re-integrate) becomes queryable with `GROUP BY asset_id`. Without this field the mapping is only reachable through Sui's object-state-changes layer, not through the protocol's event surface. |
 | **Owner address on `&OwnerCap`-gated ops.** | `RetireFlagSet.owner` and `EarningsWithdrawn.owner` record the cap holder at call time. These ops take the cap by reference — no `OwnerCap*` lifecycle event is co-emitted — so the address is first-observed and PK-unrecoverable. `AssetClaimed` does not carry `owner` because it consumes the cap by value; `OwnerCapBurned.owner` co-emits the same address and is reachable by JOIN on `owner_cap_id` (invariant c). Enables per-human queries (withdraw frequency per owner, multi-cap operators). |
 | **Intent vs settlement on retirement.** | `RetireFlagSet` records the owner's intent (when `retire()` was called, from which settled state). `AssetRetired` records the actual transition to `Retired` — immediate for `from_state ∈ {Idle, AtDutchAuction}`, deferred to the next tenure expiry for `from_state = Rented`. Co-emission matrix: `TenureExpired.next_state = Retired` ⇔ `AssetRetired` with `from_state = Rented` is co-emitted. Both events are needed — `TenureExpired` carries the stake-settlement facts (`owner_share`, `protocol_fee`, tenant), `AssetRetired` carries the pure state-transition fact. |
 | **Price-anchor fields on block-boundary events.** | `HandoverCompleted.new_rent_price` carries the winning bid amount just written to `escrow.last_rent_price`; `TenureExpired.last_rent_price` carries the same state field frozen at tenure expiry. These fields are **not** PK-JOIN-recoverable — they live across a variable-length chain of `BidPlaced` / `BidSuperseded` events inside the preceding handover window, or in an earlier `RentStarted`. Emitting them in-row makes (a) the takeover-floor query `floor = f_next_rent_price(last_rent_price)` answerable from `HandoverCompleted` alone, and (b) the Dutch current price `price(t) = last_rent_price − h(t)·(last_rent_price − min_rent_price)` answerable from `TenureExpired` + `IntegrationConfigRegistered` alone — no stateful replay in the indexer. Consistent with invariant (c): the rule targets redundant **addresses** recoverable by single PK-JOIN, not amounts recoverable only by chain-walk. |
@@ -545,7 +547,11 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    `integrate` returns, but the `OwnerCapMinted.owner` field records the
    integrator at mint time.
 3. Read `fee_inbox_id = protocol_fee_inbox::fee_ref_inbox_id(fee_ref)`.
-4. Construct the escrow with:
+4. Capture `asset_id = object::id(&asset)` — needed by the emit in
+   step 7. Must be read before the `option::some(asset)` wrap below,
+   since after wrapping the asset is moved into the escrow and the
+   escrow itself is consumed by `share_object` in step 6. Then
+   construct the escrow with:
    - `asset = option::some(asset)`
    - `state = AssetState::Idle`
    - `last_rent_price = config::min_rent_price(&config)`
@@ -561,14 +567,21 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    has already been constructed (step 4) and the config↔escrow_id binding
    is a realized semantic fact (emit-last).
 6. `transfer::share_object(escrow)`.
-7. Emit `AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id }`.
-   Both type parameters are phantom — no on-chain payload — and are
-   recovered by the indexer from the event type tag, making this event
-   the root dictionary row for every downstream JOIN that needs
-   `Asset` or `CoinType`. The integrator address is not carried here —
-   already recorded on the co-emitted `OwnerCapMinted.owner` row and
-   recoverable by JOIN on `owner_cap_id` (star-schema invariant c: no
-   PK-recoverable redundancy).
+7. Emit `AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id,
+   asset_id }`. Both type parameters are phantom — no on-chain payload
+   — and are recovered by the indexer from the event type tag, making
+   this event the root dictionary row for every downstream JOIN that
+   needs `Asset` or `CoinType`. `asset_id` is the object ID of the
+   wrapped asset at integrate time; it anchors (a) level-2 linkage
+   when `Asset = rental_escrow::OwnerCap`, pairing the level-2 escrow
+   to a specific level-1 `OwnerCap`, (b) cross-integration lifecycle
+   tracing of the same asset instance (integrate → retire → re-integrate
+   under a new escrow), and (c) integrator-catalog cross-reference
+   queries without dropping to Sui's object-state-changes layer. The
+   integrator address is not carried here — already recorded on the
+   co-emitted `OwnerCapMinted.owner` row and recoverable by JOIN on
+   `owner_cap_id` (star-schema invariant c: no PK-recoverable
+   redundancy).
 8. Return `OwnerCap`. The PTB routes it (typically via
    `transfer::public_transfer` to `tx_context::sender(ctx)`).
 
@@ -1681,8 +1694,8 @@ post-condition via the owner-share branch alone.
 
 | # | Description | Expected |
 |---|---|---|
-| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated<SomeAsset, C>` events emitted (config first, then asset). Event type tag of `AssetIntegrated` carries both phantom type params — asserts the indexer can recover Asset and CoinType without reading the on-chain object. |
-| T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. No depth check. |
+| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated<SomeAsset, C>` events emitted (config first, then asset). Event type tag of `AssetIntegrated` carries both phantom type params — asserts the indexer can recover Asset and CoinType without reading the on-chain object. `AssetIntegrated.asset_id == object::id(&input_asset)` — asserts the wrapped instance is identifiable. |
+| T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. `AssetIntegrated.asset_id == object::id(&input_owner_cap)` — this is the level-1 `OwnerCap`'s ID; JOINing on `owner_cap_id` in `OwnerCapMinted` recovers the level-1 escrow, closing the level-2 → level-1 linkage from events alone. No depth check. |
 
 ### 10.2 `rent` — Idle path
 

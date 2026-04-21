@@ -577,13 +577,20 @@ deletes the escrow, returns the asset and earnings.
    An abort here indicates a state-machine bug; the destroy-zero call aborts
    on non-zero, which serves as a structural assertion.
 7. `let earnings = coin::from_balance(owner_earnings, ctx);`
-8. `owner_cap::burn(owner_cap, ctx);` — `OwnerCapBurned.owner` records
+8. **Pre-bind event locals** (emit-last: the two destructive ops below
+   consume the `UID`s needed for the event body — bind IDs to locals
+   first):
+   - `let escrow_id    = object::uid_to_inner(&id);`
+   - `let owner_cap_id = object::id(owner_cap);`
+   - `let swept_earnings = coin::value(&earnings);`
+9. `owner_cap::burn(owner_cap, ctx);` — `OwnerCapBurned.owner` records
    `tx_context::sender(ctx)`, the address that presented the cap (the
    owner at claim time, which may differ from the mint recipient since
    `OwnerCap` is transferable).
-9. `object::delete(id);`
-10. Emit `AssetClaimed { escrow_id, owner_cap_id, swept_earnings }`.
-11. Return `(asset, earnings)`.
+10. `object::delete(id);`
+11. Emit `AssetClaimed { escrow_id, owner_cap_id, swept_earnings }` —
+    emit-last, after the cap is burned and the escrow UID is deleted.
+12. Return `(asset, earnings)`.
 
 **Why both returned:** the owner gets everything they are owed atomically in
 one call — the asset, the accumulated earnings. No residual state, no
@@ -697,19 +704,27 @@ exits afterward.
 - Let `floor = compute_next_rent_price(escrow)` — `last_rent_price` holds
   the previous bidder's payment, so the floor escalates with each supersede.
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
+- **Pre-bind event locals** (emit-last: capture values before the
+  state rotations consume the source data; emit runs after all
+  mutations so the escrow's post-state matches the event semantics):
+  - `let displaced_bidder = *option::borrow(&escrow.pending_tenant_address);`
+  - `let new_bidder      = tx_context::sender(ctx);`
+  - `let new_bid_amount  = coin::value(&payment);`
 - **Refund previous pending bid** (push before rotate):
   - Take the previous balance: `let prev = balance::withdraw_all(&mut escrow.pending_bid);`
-  - `let refund_amount = balance::value(&prev);`
-  - `transfer::public_transfer(coin::from_balance(prev, ctx),
-    option::destroy_some(escrow.pending_tenant_address));`
-  - Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
-    new_bidder, new_bid_amount }`.
-- `escrow.last_rent_price = coin::value(&payment);`
-- `balance::join(&mut escrow.pending_bid, coin::into_balance(payment));`
-- `escrow.pending_tenant_address = some(tx_context::sender(ctx));`
+  - `let refunded_amount = balance::value(&prev);`
+  - `transfer::public_transfer(coin::from_balance(prev, ctx), displaced_bidder);`
+- **Rotate to new bid:**
+  - `escrow.last_rent_price = new_bid_amount;`
+  - `balance::join(&mut escrow.pending_bid, coin::into_balance(payment));`
+  - `escrow.pending_tenant_address = some(new_bidder);`
 - `handover_countdown_expiry` is **not** updated — subsequent bids do not
   reset the countdown (design-compact §4).
 - `state` remains `Rented { HandoverConfirmed }`.
+- Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
+  new_bidder, new_bid_amount }` — emit-last: all state rotations
+  complete, so the escrow's post-state (new bidder installed, old
+  refunded) matches the event's semantics.
 
 #### Case: `Retired`
 

@@ -33,8 +33,9 @@ points, and the fund distribution logic for every boundary event.
 - All public entry points: `integrate`, `rent`, `retire`, `claim_asset`,
   `withdraw_earnings`, `borrow_asset`, `return_asset`,
   `apply_pending_transitions`.
-- Read-only queries: `compute_used_credit`,
-  `compute_price_descent`, `compute_next_rent_price`.
+- Public read-only queries: `compute_used_credit`, `compute_floor_price`.
+- Package-visible price helpers: `compute_price_descent`,
+  `compute_next_rent_price` (backing `compute_floor_price` and `rent()`).
 - Private settlement helpers: `do_handover`, `do_tenure_expiry`,
   `do_auction_expiry`, `split_fee`.
 - Protocol state-machine events: `AssetIntegrated`, `RentStarted`,
@@ -98,18 +99,17 @@ messages.
     public const E_OWNER_CAP_MISMATCH:          u64 = 0;  // forwarded from owner_cap::assert_escrow
     public const E_TENANT_CAP_WRONG_ESCROW:     u64 = 1;  // cap.escrow_id != object::id(escrow)
     public const E_TENANT_CAP_STALE:            u64 = 2;  // object::id(cap) != current_tenant_cap_id
-    public const E_NOT_AUCTION:                 u64 = 3;  // compute_price_descent: state != AtDutchAuction
-    public const E_NOT_RENTED:                  u64 = 4;  // compute_used_credit / compute_next_rent_price: state != Rented
-    public const E_INSUFFICIENT_PAYMENT:        u64 = 5;  // payment < floor price (all acquisition paths)
-    public const E_RETIRE_FLAG_BLOCKS_BID:      u64 = 6;  // rent() during Rented(HandoverOpen) with retire_flag
-    public const E_RETIRED_NO_BID:              u64 = 7;  // rent() called when state is Retired
-    public const E_RETIRE_FLOOR_NOT_ELAPSED:    u64 = 8;  // retire() before integrated_at_ms + retire_floor
-    public const E_ALREADY_RETIRED:             u64 = 9;  // retire() when retire_flag already set
-    public const E_NOT_RETIRED:                 u64 = 10; // claim_asset() when state != Retired
-    public const E_RECEIPT_ESCROW_MISMATCH:     u64 = 11; // return_asset: receipt.escrow_id != object::id(escrow)
-    public const E_RECEIPT_ASSET_MISMATCH:      u64 = 12; // return_asset: receipt.asset_id != object::id(&asset)
-    public const E_NO_EARNINGS:                 u64 = 13; // withdraw_earnings: owner_earnings == 0 after settlement
-    public const E_ASSET_ALREADY_BORROWED:      u64 = 14; // borrow_asset called while asset is already out of escrow
+    public const E_NOT_RENTED:                  u64 = 3;  // compute_used_credit: state != Rented
+    public const E_INSUFFICIENT_PAYMENT:        u64 = 4;  // payment < floor price (all acquisition paths)
+    public const E_RETIRE_FLAG_BLOCKS_BID:      u64 = 5;  // rent() during Rented(HandoverOpen) with retire_flag
+    public const E_RETIRED_NO_BID:              u64 = 6;  // rent() / compute_floor_price: state is Retired (asset not rentable)
+    public const E_RETIRE_FLOOR_NOT_ELAPSED:    u64 = 7;  // retire() before integrated_at_ms + retire_floor
+    public const E_ALREADY_RETIRED:             u64 = 8;  // retire() when retire_flag already set
+    public const E_NOT_RETIRED:                 u64 = 9;  // claim_asset() when state != Retired
+    public const E_RECEIPT_ESCROW_MISMATCH:     u64 = 10; // return_asset: receipt.escrow_id != object::id(escrow)
+    public const E_RECEIPT_ASSET_MISMATCH:      u64 = 11; // return_asset: receipt.asset_id != object::id(&asset)
+    public const E_NO_EARNINGS:                 u64 = 12; // withdraw_earnings: owner_earnings == 0 after settlement
+    public const E_ASSET_ALREADY_BORROWED:      u64 = 13; // borrow_asset called while asset is already out of escrow
 
 
 2. TYPES
@@ -783,6 +783,13 @@ locked balances.
    post-settlement `escrow.state`.
 2. Dispatch on `escrow.state`:
 
+The per-arm floor queries invoked below (`compute_price_descent`,
+`compute_next_rent_price`) are `public(package)` helpers (§8.2, §8.3). `rent()`
+dispatches by state before calling them, so the functions carry no state guard
+— calling them here does not incur a second, defensive validation. The same
+helpers also back the public `compute_floor_price` (§8.4); external callers
+reach the same numbers through that unified entry point.
+
 #### Case: `Idle`
 
 - Assert `coin::value(&payment) >= escrow.config.min_rent_price`, abort
@@ -1448,12 +1455,11 @@ and obscure the distinct semantics of each rotation site.
 8. READ-ONLY QUERIES
 ---------------------
 
-All read-only functions are `public`. They do not mutate the escrow.
-Via `devInspectTransactionBlock` they execute for free with no consensus
-involvement. In a regular PTB, taking `&RentalEscrow` (shared object) still
-requires consensus, but read-only transactions on the same object can execute
-in parallel without ordering between them — reducing contention compared to
-mutable access.
+Read-only functions do not mutate the escrow. Via `devInspectTransactionBlock`
+they execute for free with no consensus involvement. In a regular PTB, taking
+`&RentalEscrow` (shared object) still requires consensus, but read-only
+transactions on the same object can execute in parallel without ordering
+between them — reducing contention compared to mutable access.
 
 **Reading settled state:** use `apply_pending_transitions` via
 `devInspectTransactionBlock`. It resolves all pending transitions and returns
@@ -1461,15 +1467,47 @@ the settled `AssetState` without committing the transaction — free, no
 consensus. This is more correct than a dedicated read-only query because it
 reflects the actual settled state, not a speculative computation.
 
+**Public API surface — two queries:**
+
+| Function | Visibility | Returns |
+|---|---|---|
+| `compute_used_credit(escrow, timestamp_ms)` (§8.1) | `public` | credit consumed by the current tenant at `timestamp_ms` |
+| `compute_floor_price(escrow, timestamp_ms)` (§8.4) | `public` | minimum payment required to acquire the asset in the current state |
+
+These two cover every externally observable read: "how much has my tenancy
+consumed" and "what would it cost to become tenant right now". Both can abort
+on precondition violation — a deliberate choice. Abort codes carry named
+semantic load (§1 is `public` for exactly this reason); an SDK receiving
+`E_NOT_RENTED` or `E_RETIRED_NO_BID` maps it to a user-facing condition
+directly. A sentinel return (`Option<u64>`, magic `0`) would collapse that
+information and force the caller into a secondary state fetch.
+
+**Per-arm price helpers — `public(package)`:**
+
+The price dispatched by `compute_floor_price` is computed by two arm-specific
+helpers, visible only inside the package:
+
+| Helper | Visibility | Arms served |
+|---|---|---|
+| `compute_price_descent(escrow, timestamp_ms)` (§8.2) | `public(package)` | `AtDutchAuction` |
+| `compute_next_rent_price(escrow)` (§8.3) | `public(package)` | `Rented{HandoverOpen}`, `Rented{HandoverConfirmed}` |
+
+Both are called from exactly two sites: `compute_floor_price` (which dispatches
+by state before calling) and `rent()` Cases (§5.1, which dispatches by state
+before calling). Neither helper carries a state guard — it would be structurally
+unreachable, defensive against nothing. Keeping them `public(package)` makes
+that guarantee a visibility-level fact rather than a prose claim.
+
 **Naming convention — `compute_*`:**
 
-All protocol-level read-only queries use the `compute_*` prefix uniformly.
+All read-only queries use the `compute_*` prefix uniformly.
 `compute_X(escrow, ...)` reads as "compute the value of X from the escrow's
 state (and the supplied inputs)" — an honest description regardless of
 whether a timestamp is passed:
 
-- `compute_used_credit(escrow, timestamp_ms)` (§8.1) and
-  `compute_price_descent(escrow, timestamp_ms)` (§8.2) take an arbitrary
+- `compute_used_credit(escrow, timestamp_ms)` (§8.1),
+  `compute_price_descent(escrow, timestamp_ms)` (§8.2), and
+  `compute_floor_price(escrow, timestamp_ms)` (§8.4) take an arbitrary
   timestamp and evaluate at that instant — not necessarily `clock.now()`.
   External callers typically pass `clock.timestamp_ms()` for "live" reads,
   but internal callers (e.g. `do_handover` passing `boundary_ms`) evaluate
@@ -1480,7 +1518,7 @@ whether a timestamp is passed:
 The `current_*` prefix is deliberately not used: it implies "now", and
 a function accepting an arbitrary timestamp — or that any external caller
 may inspect at an arbitrary point in a PTB — lies under that prefix.
-Uniform `compute_*` keeps one convention for three functions that all do
+Uniform `compute_*` keeps one convention for four functions that all do
 the same thing semantically: produce a value from escrow state.
 
 ### 8.1 `compute_used_credit`
@@ -1544,33 +1582,31 @@ structurally satisfied and evaluate as no-ops.
 
 ### 8.2 `compute_price_descent`
 
-    public fun compute_price_descent<Asset: key + store, CoinType>(
+    public(package) fun compute_price_descent<Asset: key + store, CoinType>(
         escrow:       &RentalEscrow<Asset, CoinType>,
         timestamp_ms: u64,
     ): u64
 
-Only meaningful when `escrow.state == AtDutchAuction`. Returns
-`min_rent_price` once the descent saturates.
+**Precondition:** `escrow.state == AtDutchAuction`. Structurally guaranteed by
+both call sites — no runtime guard. Returns `min_rent_price` once the descent
+saturates.
 
 **Algorithm:**
 
-    // 1. State guard — only meaningful in AtDutchAuction state.
-    assert!(escrow.state == AssetState::AtDutchAuction, E_NOT_AUCTION);
-
-    // 2. Elapsed time since the auction started.
+    // 1. Elapsed time since the auction started.
     //    phase_start_ms is set to the tenure-expiry boundary when AtDutchAuction begins.
     //    If timestamp_ms < phase_start_ms, return last_rent_price — auction has not started yet.
     if timestamp_ms < escrow.phase_start_ms { return escrow.last_rent_price };
     let elapsed_ms = timestamp_ms - escrow.phase_start_ms;
 
-    // 3. Evaluate the normalized descent curve.
+    // 2. Evaluate the normalized descent curve.
     let h = curve_shape::evaluate_curve(
         config::descent_curve(&escrow.config),
         elapsed_ms,
         config::descent_ceiling(&escrow.config),
     );
 
-    // 4. Scale by the spread, then descend from last_rent_price.
+    // 3. Scale by the spread, then descend from last_rent_price.
     //    evaluate_curve returns SCALE when elapsed >= descent_ceiling, so
     //    consumed == spread and the result saturates at min_rent_price.
     //    Precondition last_rent_price >= min_rent_price is guaranteed by the
@@ -1586,21 +1622,32 @@ Only meaningful when `escrow.state == AtDutchAuction`. Returns
 `last_rent_price` is the starting price of the descent — it was set by the
 last tenant's payment and preserved through tenure expiry and auction entry.
 
+**Two call sites (both dispatch by state before calling, so precondition holds):**
+
+| Caller | Purpose |
+|---|---|
+| `rent()` Case `AtDutchAuction` (§5.1) | acquisition floor at `clock.timestamp_ms()` |
+| `compute_floor_price` (§8.4), `AtDutchAuction` arm | public query — SDK/frontend reads live or hypothetical descent price |
+
+**Why no state guard:** with `public(package)` visibility, every caller is
+inside this package and has already dispatched on `escrow.state`. A guard
+here would be defensive against a call path that cannot exist. See §8
+preamble, "Per-arm price helpers".
+
 ---
 
 ### 8.3 `compute_next_rent_price`
 
-    public fun compute_next_rent_price<Asset: key + store, CoinType>(
+    public(package) fun compute_next_rent_price<Asset: key + store, CoinType>(
         escrow: &RentalEscrow<Asset, CoinType>,
     ): u64
 
-Only meaningful when `escrow.state == Rented`. No `timestamp_ms` parameter —
-`f_next_rent_price` depends only on `last_rent_price`, not on elapsed time.
+**Precondition:** `escrow.state` matches `Rented { .. }`. Structurally
+guaranteed by all call sites — no runtime guard. No `timestamp_ms`
+parameter — `f_next_rent_price` depends only on `last_rent_price`, not
+on elapsed time.
 
 **Algorithm:**
-
-    // Guard — only meaningful in Rented state.
-    assert!(matches!(escrow.state, AssetState::Rented { .. }), E_NOT_RENTED);
 
     price_function::evaluate_price_fn(
         config::price_function(&escrow.config),
@@ -1610,6 +1657,88 @@ Only meaningful when `escrow.state == Rented`. No `timestamp_ms` parameter —
 In `HandoverConfirmed`, `last_rent_price` already holds the pending bidder's
 payment — so `compute_next_rent_price` returns the price to supersede the
 pending bidder, not the current tenant.
+
+**Three call sites (all dispatch by state before calling):**
+
+| Caller | Purpose |
+|---|---|
+| `rent()` Case `Rented{HandoverOpen}` (§5.1) | takeover floor for a new bid |
+| `rent()` Case `Rented{HandoverConfirmed}` (§5.1) | supersede floor — escalates with each bid since `last_rent_price` already holds the pending bidder's payment |
+| `compute_floor_price` (§8.4), `Rented{_}` arm | public query — SDK/frontend reads the current takeover/supersede floor |
+
+**Why no state guard:** see §8.2 and §8 preamble. Same structural argument
+— `public(package)` + pre-dispatched callers = guard unreachable.
+
+---
+
+### 8.4 `compute_floor_price`
+
+    public fun compute_floor_price<Asset: key + store, CoinType>(
+        escrow:       &RentalEscrow<Asset, CoinType>,
+        timestamp_ms: u64,
+    ): u64
+
+Single public entry point for "minimum payment required to acquire the asset
+at `timestamp_ms`". Dispatches by `escrow.state` to the arm-specific helper.
+
+**Algorithm:**
+
+    match (escrow.state) {
+        AssetState::Idle                         => config::min_rent_price(&escrow.config),
+        AssetState::Rented { .. }                => compute_next_rent_price(escrow),
+        AssetState::AtDutchAuction               => compute_price_descent(escrow, timestamp_ms),
+        AssetState::Retired                      => abort E_RETIRED_NO_BID,
+    }
+
+**Dispatch table:**
+
+| State | Returns | Rationale |
+|---|---|---|
+| `Idle` | `config.min_rent_price` | floor is the configured minimum; time-invariant — `timestamp_ms` unused |
+| `Rented { HandoverOpen }` | `compute_next_rent_price(escrow)` | takeover floor, driven by `last_rent_price`; time-invariant — `timestamp_ms` unused |
+| `Rented { HandoverConfirmed }` | `compute_next_rent_price(escrow)` | supersede floor, driven by the pending bidder's payment (already written to `last_rent_price`); time-invariant — `timestamp_ms` unused |
+| `AtDutchAuction` | `compute_price_descent(escrow, timestamp_ms)` | current Dutch price at `timestamp_ms`; time-varying |
+| `Retired` | aborts `E_RETIRED_NO_BID` | asset is not rentable — same abort code that `rent()` raises on the same state |
+
+**Why abort on `Retired` (not `Option<u64>` / sentinel):**
+
+The error constants in §1 are `public` so the SDK can map abort codes to
+human-readable messages — abort codes are the protocol's semantic signalling
+channel between contract and client. `E_RETIRED_NO_BID` names the exact
+condition ("asset retired, no acquisition possible"). Collapsing that to
+`None` forces the SDK into a secondary `escrow.state` read to reconstruct
+the reason — information already present on the abort path is lost in the
+type. Aborting also keeps `compute_floor_price` symmetric with every other
+public function on the protocol (`rent`, `borrow_asset`, `retire`,
+`claim_asset`, `withdraw_earnings`, `compute_used_credit`), all of which
+abort on precondition violation.
+
+**Reuse of `E_RETIRED_NO_BID`:** the condition — "caller asks to acquire a
+Retired escrow" — is semantically identical whether the caller is `rent()`
+(write path) or `compute_floor_price` (read path). One named condition, one
+constant.
+
+**Why `timestamp_ms` is always taken, even when unused:** the parameter
+signals "this function accepts a point in time", and is honest for the only
+arm that reads it (`AtDutchAuction`). The three time-invariant arms ignore
+it rather than overloading the function with a second signature. External
+callers that want a live read pass `clock.timestamp_ms()`; frontends
+painting the descent curve pass hypothetical future timestamps; both are
+first-class uses.
+
+**No internal callers.** `rent()` dispatches its own state and calls
+`compute_price_descent` / `compute_next_rent_price` directly as
+`public(package)` — skipping the second dispatch that `compute_floor_price`
+would perform. `compute_floor_price` exists exclusively for external
+callers (SDK, frontend, `devInspectTransactionBlock`).
+
+**UX note — lifecycle price chart:** a frontend graphing "price to acquire"
+across the full escrow lifecycle calls `compute_floor_price(escrow,
+clock.now())` whenever `state ∈ {Idle, Rented{_}, AtDutchAuction}`, and
+renders a "not rentable" marker on catching `E_RETIRED_NO_BID`. The same
+function also answers hypothetical "what would I pay at t = T" queries by
+passing any `timestamp_ms` — critical for rendering the Dutch descent curve
+ahead of time.
 
 
 9. PROPERTIES
@@ -1790,17 +1919,27 @@ post-condition via the owner-share branch alone.
 | W4 | Withdraw when pre-call state is `Rented(HandoverOpen)` and tenure has expired — APT fires `do_tenure_expiry` before drain | APT credits `owner_earnings += tenant_stake × 0.95`, routes `tenant_stake × 0.05` as `FeeMessage<C>` to `fee_inbox_id`, state → `AtDutchAuction`. Withdraw returns `Coin == (pre_earnings + stake × 0.95)`; `owner_earnings == 0` after. Events in order: `TenureExpired`, then `EarningsWithdrawn`. Asserts APT materializes earnings that a drain-only implementation would miss. |
 | W5 | Withdraw when pre-call state is `Rented(HandoverConfirmed)` and handover has expired — APT fires `do_handover` before drain | APT credits `owner_earnings += used_credit × 0.95`, pushes `remain_credit` to displaced tenant, rotates `pending_bid → tenant_stake`, mints + pushes new `TenantCap`, state → `Rented(HandoverOpen)` with T(n+1) installed. Withdraw returns `Coin == (pre_earnings + used_credit × 0.95)`. Events in order: `HandoverCompleted`, then `EarningsWithdrawn`. Exercises the C1-path credit (distinct from W4's C2-path). |
 
-### 10.10 Read-only queries — state guard
+### 10.10 Read-only queries
 
 | # | Description | Expected |
 |---|---|---|
 | Q1 | `compute_used_credit` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
 | Q2 | `compute_used_credit` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
 | Q3 | `compute_used_credit` called when state is `Retired` | Aborts `E_NOT_RENTED`. |
-| Q4 | `compute_price_descent` called when state is `Idle` | Aborts `E_NOT_AUCTION`. |
-| Q5 | `compute_price_descent` called when state is `Rented` | Aborts `E_NOT_AUCTION`. |
-| Q6 | `compute_next_rent_price` called when state is `Idle` | Aborts `E_NOT_RENTED`. |
-| Q7 | `compute_next_rent_price` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
+| Q4 | `compute_floor_price` called when state is `Idle` | Returns `config.min_rent_price`. |
+| Q5 | `compute_floor_price` called when state is `Rented{HandoverOpen}` | Returns `compute_next_rent_price(escrow)` — equivalent to `price_function::evaluate_price_fn(config.price_function, escrow.last_rent_price)`. |
+| Q6 | `compute_floor_price` called when state is `Rented{HandoverConfirmed}` | Returns `compute_next_rent_price(escrow)`. Since `last_rent_price` already holds the pending bidder's payment, this is the supersede floor, not the takeover floor. |
+| Q7 | `compute_floor_price` called when state is `AtDutchAuction` and `timestamp_ms` within descent window | Returns `compute_price_descent(escrow, timestamp_ms)` — non-abortive, time-dependent. |
+| Q8 | `compute_floor_price` called when state is `AtDutchAuction` after `descent_ceiling` elapsed | Returns `config.min_rent_price` (saturation point of the Dutch descent). |
+| Q9 | `compute_floor_price` called when state is `Retired` | Aborts `E_RETIRED_NO_BID`. Same abort code that `rent()` raises on the same state — one named condition, one constant. |
+| Q10 | `compute_floor_price` value equals the floor actually enforced by `rent()` | For any state in which `rent()` does not abort on state, the value returned by `compute_floor_price(escrow, clock.now())` is exactly the threshold against which `rent()` asserts `coin::value(&payment) >= ...` (modulo the `retire_flag` check in `Rented{HandoverOpen}`, which is a separate precondition). Asserts that the public query and the enforcement path agree. |
+
+**Note on `compute_price_descent` and `compute_next_rent_price`:** these are
+`public(package)` helpers (§8.2, §8.3) with no state guard. They are not
+reachable from outside the package, so no state-guard test is applicable —
+their correctness is covered by the `compute_floor_price` dispatch tests above
+and by the `rent()` acquisition tests (R5–R8 for `compute_price_descent`, R9–R15
+for `compute_next_rent_price`).
 
 ### 10.11 Fee routing
 
@@ -1916,11 +2055,10 @@ or by an APT-driven transition.
 | `E_OWNER_CAP_MISMATCH` | `public` | SDK error handling. Forwarded from `owner_cap`. |
 | `E_TENANT_CAP_WRONG_ESCROW` | `public` | borrow_asset. |
 | `E_TENANT_CAP_STALE` | `public` | borrow_asset. |
-| `E_NOT_AUCTION` | `public` | compute_price_descent: state != AtDutchAuction. |
-| `E_NOT_RENTED` | `public` | compute_used_credit / compute_next_rent_price: state != Rented. |
+| `E_NOT_RENTED` | `public` | compute_used_credit: state != Rented. |
 | `E_INSUFFICIENT_PAYMENT` | `public` | rent — payment below floor price (all acquisition paths). |
 | `E_RETIRE_FLAG_BLOCKS_BID` | `public` | rent (takeover, flagged). |
-| `E_RETIRED_NO_BID` | `public` | rent (Retired). |
+| `E_RETIRED_NO_BID` | `public` | rent / compute_floor_price: state is Retired (asset not rentable). |
 | `E_RETIRE_FLOOR_NOT_ELAPSED` | `public` | retire. |
 | `E_ALREADY_RETIRED` | `public` | retire. |
 | `E_NOT_RETIRED` | `public` | claim_asset. |
@@ -1943,8 +2081,9 @@ or by an APT-driven transition.
 | `apply_pending_transitions(...)` | `public` | Permissionless settlement. Returns settled `AssetState`. |
 | `apply_pending_transitions(...)` via `devInspectTransactionBlock` | — | Free settled-state read. No consensus, no commit. |
 | `compute_used_credit(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
-| `compute_price_descent(...)` | `public` | Read-only. Aborts `E_NOT_AUCTION` if state != AtDutchAuction. |
-| `compute_next_rent_price(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
+| `compute_floor_price(...)` | `public` | Read-only. Dispatches by state — returns min_rent_price (Idle), compute_next_rent_price (Rented), compute_price_descent (AtDutchAuction). Aborts `E_RETIRED_NO_BID` on Retired. |
+| `compute_price_descent(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (AtDutchAuction arm) and `rent()` Case AtDutchAuction. No state guard — structurally guaranteed by callers. |
+| `compute_next_rent_price(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (Rented arms) and `rent()` Cases Rented(HandoverOpen|HandoverConfirmed). No state guard — structurally guaranteed by callers. |
 | `do_handover(...)` | private | §7.1 |
 | `do_tenure_expiry(...)` | private | §7.2 |
 | `do_auction_expiry(...)` | private | §7.3 |

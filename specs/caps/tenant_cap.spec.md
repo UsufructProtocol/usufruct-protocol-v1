@@ -169,11 +169,10 @@ the module does not know which address the caller will push it to.
 available on the event envelope and duplicating it in the body would
 add no information.
 
-**No `timestamp_ms` field.** Both events fire synchronously at the
-call site — not at a lazy boundary in the past. The event-envelope
-timestamp (`SuiEvent.timestampMs`, the checkpoint time of the emitting
-transaction) is authoritative and duplicating it in the event body
-would add no information.
+**No `timestamp_ms` field.** The module has no authoritative time to
+report: `new` may be called from a lazy-settlement path whose logical
+moment is in the past, so `clock.now()` would record settlement time,
+not logical time. The module emits identity only.
 
 
 4. FUNCTIONS

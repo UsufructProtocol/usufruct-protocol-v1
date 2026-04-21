@@ -131,11 +131,10 @@ field would be speculative and occasionally misleading. Consumers
 cross-reference with the transaction's object-change effects to
 reconstruct custody.
 
-**No `timestamp_ms` field.** Both events fire synchronously at the call
-site — not at a lazy boundary in the past. The event-envelope timestamp
-(`SuiEvent.timestampMs`, the checkpoint time of the emitting
-transaction) is authoritative and duplicating it in the event body
-would add no information.
+**No `timestamp_ms` field.** The module has no authoritative time to
+report: the call-site wall-clock is not necessarily the logical moment
+the event belongs to, and threading `&Clock` would only record call
+time. The module emits identity only.
 
 
 4. FUNCTIONS

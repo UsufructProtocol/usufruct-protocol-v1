@@ -25,6 +25,9 @@ Depends on: nothing (`sui::object` only)
 - `assert_escrow(cap, escrow_id)` — `public(package)`. Aborts if
   `cap.escrow_id != escrow_id`. Used by `rental_escrow` to verify the
   presented cap belongs to the escrow being operated on.
+- Lifecycle events: `OwnerCapMinted`, `OwnerCapBurned`. Emitted from
+  inside this module (Sui Verifier requires the emitted type to be
+  internal to the emitting module).
 
 **Does not own:**
 - Any escrow state or fund balances — those live in `RentalEscrow`.
@@ -90,7 +93,52 @@ and called only once per escrow (at `integrate`); `burn` is
 escrow in the same call.
 
 
-3. FUNCTIONS
+3. EVENTS
+---------
+
+All events are defined inline and emitted from this module. The Sui
+Move event verifier requires the emitted type to be internal to the
+calling module — this is why the cap lifecycle events live here rather
+than in `rental_escrow`.
+
+```move
+public struct OwnerCapMinted has copy, drop {
+    owner_cap_id: ID,
+    escrow_id:    ID,
+}
+
+public struct OwnerCapBurned has copy, drop {
+    owner_cap_id: ID,
+    escrow_id:    ID,
+}
+```
+
+**Sui Verifier constraint:** every event struct has `copy + drop` and
+is internal to this module. `event::emit` requires these abilities.
+
+**Field selection:**
+- `owner_cap_id` — the `ID` of the cap itself. Primary key for any
+  consumer indexing cap objects by identity.
+- `escrow_id` — the `ID` of the `RentalEscrow` the cap authorizes. A
+  cap has no meaning independent of its escrow; every cap-level
+  consumer needs the pair.
+
+**No `holder` or `sender` field.** `new` returns the cap by value to
+the PTB — the module does not know where the cap is routed after
+return. `burn` receives the cap by value — the final holder is not
+necessarily the tx sender (e.g. custody contracts). Including such a
+field would be speculative and occasionally misleading. Consumers
+cross-reference with the transaction's object-change effects to
+reconstruct custody.
+
+**No `timestamp_ms` field.** Both events fire synchronously at the call
+site — not at a lazy boundary in the past. The event-envelope timestamp
+(`SuiEvent.timestampMs`, the checkpoint time of the emitting
+transaction) is authoritative and duplicating it in the event body
+would add no information.
+
+
+4. FUNCTIONS
 ------------
 
 ### `new`
@@ -102,9 +150,12 @@ escrow in the same call.
 **Purpose:** mints an `OwnerCap` bound to a specific escrow.
 
 **Behavior:**
-Creates `OwnerCap { id: object::new(ctx), escrow_id }` and returns it.
-The caller (`rental_escrow::integrate`) is responsible for returning
-it to the PTB — the PTB delivers it to the integrating owner.
+1. Construct `cap = OwnerCap { id: object::new(ctx), escrow_id }`.
+2. Emit `OwnerCapMinted { owner_cap_id: object::uid_to_inner(&cap.id),
+   escrow_id }`.
+3. Return `cap`. The caller (`rental_escrow::integrate`) is responsible
+   for returning it to the PTB — the PTB delivers it to the integrating
+   owner.
 
 **Call site:** `rental_escrow::integrate` — once per integration.
 
@@ -120,8 +171,12 @@ it to the PTB — the PTB delivers it to the integrating owner.
 further owner-privileged operations on the (now-deleted) escrow.
 
 **Behavior:**
-1. Destructures: `OwnerCap { id, escrow_id: _ } = cap`
-2. Calls `object::delete(id)`.
+1. Destructure: `let OwnerCap { id, escrow_id } = cap;`.
+2. Capture `owner_cap_id = object::uid_to_inner(&id);` — must be read
+   before `object::delete` consumes the `UID`.
+3. Call `object::delete(id);`.
+4. Emit `OwnerCapBurned { owner_cap_id, escrow_id }` — emission runs
+   last, after the cap is actually destroyed.
 
 **Call site:** `rental_escrow::claim_asset` — once per escrow lifetime,
 atomically with asset extraction and escrow deletion.
@@ -161,7 +216,7 @@ assert!(cap.escrow_id == escrow_id, E_ESCROW_MISMATCH)
 the cap is presented.
 
 
-4. PROPERTIES
+5. PROPERTIES
 -------------
 
 **P1 — One cap per escrow:**
@@ -192,30 +247,30 @@ the cap is presented.
     no inert shells remain.
 
 
-5. TEST CASES
+6. TEST CASES
 -------------
 
-### 5.1 `new`
+### 6.1 `new`
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `new(escrow_id, ctx)` | Returns `OwnerCap` with `cap.escrow_id == escrow_id`. Object has a fresh UID. |
-| N2 | Two calls with distinct `escrow_id`s | Two distinct `OwnerCap` objects, each bound to its own escrow_id. |
+| N1 | `new(escrow_id, ctx)` | Returns `OwnerCap` with `cap.escrow_id == escrow_id`. Object has a fresh UID. One `OwnerCapMinted { owner_cap_id, escrow_id }` event emitted with `owner_cap_id == object::id(&cap)` and matching `escrow_id`. |
+| N2 | Two calls with distinct `escrow_id`s | Two distinct `OwnerCap` objects, each bound to its own escrow_id. Two `OwnerCapMinted` events, one per call, each carrying the matching pair. |
 
-### 5.2 `burn`
+### 6.2 `burn`
 
 | # | Description | Expected |
 |---|---|---|
-| B1 | `burn(cap)` | Cap's UID deleted. No abort. |
+| B1 | `burn(cap)` | Cap's UID deleted. No abort. One `OwnerCapBurned { owner_cap_id, escrow_id }` event emitted with the pair the cap carried at mint. |
 | B2 | `burn` consumes the cap (by value) | Compiler enforces — no double-burn possible. |
 
-### 5.3 `escrow_id`
+### 6.3 `escrow_id`
 
 | # | Description | Expected |
 |---|---|---|
 | G1 | `escrow_id(&cap)` after `new(id, ctx)` | Returns `id`. |
 
-### 5.4 `assert_escrow`
+### 6.4 `assert_escrow`
 
 | # | Description | Expected |
 |---|---|---|
@@ -223,15 +278,15 @@ the cap is presented.
 | A2 | `assert_escrow(&cap, different_id)` | Aborts with `E_ESCROW_MISMATCH`. |
 | A3 | Cap minted for escrow A, asserted against escrow B | Aborts with `E_ESCROW_MISMATCH`. |
 
-### 5.5 Lifecycle
+### 6.5 Lifecycle
 
 | # | Description | Expected |
 |---|---|---|
-| L1 | `new` → `assert_escrow` (matching) → `burn` | Full lifecycle completes. No abort. |
-| L2 | `new` → `assert_escrow` (mismatched) | Aborts before burn. Cap not consumed. |
+| L1 | `new` → `assert_escrow` (matching) → `burn` | Full lifecycle completes. No abort. One `OwnerCapMinted` and one `OwnerCapBurned` event, both carrying the same `(owner_cap_id, escrow_id)` pair. |
+| L2 | `new` → `assert_escrow` (mismatched) | Aborts before burn. Cap not consumed. `OwnerCapMinted` emitted at `new`; no `OwnerCapBurned` (burn never ran). |
 
 
-6. MODULE BOUNDARY
+7. MODULE BOUNDARY
 ------------------
 
 `owner_cap.move` exports:
@@ -240,15 +295,17 @@ the cap is presented.
 |---|---|---|
 | `OwnerCap` (type) | `public` | `key + store`. One per escrow. Transferable. |
 | `E_ESCROW_MISMATCH` | `public` | Abort code for cap/escrow mismatch in `assert_escrow`. |
-| `new(escrow_id, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. |
-| `burn(cap)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. |
+| `OwnerCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. |
+| `OwnerCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
+| `new(escrow_id, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. Emits `OwnerCapMinted`. |
+| `burn(cap)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. Emits `OwnerCapBurned`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 | `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_ESCROW_MISMATCH` if mismatch. |
 
-**Depends on:** nothing (`sui::object` only).
+**Depends on:** `sui::object`, `sui::event`.
 
 
-7. OBJECT DISPLAY
+8. OBJECT DISPLAY
 -----------------
 
 ![OwnerCap](../../media/object-display/owner-cap.png)

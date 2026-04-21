@@ -22,6 +22,9 @@ Depends on: nothing (`sui::object` only)
 - `burn(cap)` — `public`. Voluntary destroy by cap holder for gas
   recovery. No state mutation. The protocol never forces this.
 - `escrow_id(cap): ID` — `public`. Getter.
+- Lifecycle events: `TenantCapMinted`, `TenantCapBurned`. Emitted from
+  inside this module (Sui Verifier requires the emitted type to be
+  internal to the emitting module).
 
 **Does not own:**
 - Staleness enforcement — a stale cap is inert because its ID no longer
@@ -131,7 +134,49 @@ exists plus zero or more stale caps from prior tenants. Only the
 current one passes the ID check.
 
 
-3. FUNCTIONS
+3. EVENTS
+---------
+
+All events are defined inline and emitted from this module. The Sui
+Move event verifier requires the emitted type to be internal to the
+calling module — this is why the cap lifecycle events live here.
+
+```move
+public struct TenantCapMinted has copy, drop {
+    tenant_cap_id: ID,
+    escrow_id:     ID,
+}
+
+public struct TenantCapBurned has copy, drop {
+    tenant_cap_id: ID,
+    escrow_id:     ID,
+}
+```
+
+**Sui Verifier constraint:** every event struct has `copy + drop` and
+is internal to this module. `event::emit` requires these abilities.
+
+**Field selection:**
+- `tenant_cap_id` — the `ID` of the cap itself. Primary key for any
+  consumer indexing cap objects by identity.
+- `escrow_id` — the `ID` of the `RentalEscrow` this cap was minted
+  for. A cap has no meaning independent of its escrow; every
+  cap-level consumer needs the pair.
+
+**No `holder` or `sender` field.** `new` returns the cap by value —
+the module does not know which address the caller will push it to.
+`burn` is `public` and consumes the cap by value; the sender is
+available on the event envelope and duplicating it in the body would
+add no information.
+
+**No `timestamp_ms` field.** Both events fire synchronously at the
+call site — not at a lazy boundary in the past. The event-envelope
+timestamp (`SuiEvent.timestampMs`, the checkpoint time of the emitting
+transaction) is authoritative and duplicating it in the event body
+would add no information.
+
+
+4. FUNCTIONS
 ------------
 
 ### `new`
@@ -143,7 +188,11 @@ current one passes the ID check.
 **Purpose:** mints a `TenantCap` bound to a specific escrow.
 
 **Behavior:**
-Creates `TenantCap { id: object::new(ctx), escrow_id }` and returns it.
+1. Construct `cap = TenantCap { id: object::new(ctx), escrow_id }`.
+2. Emit `TenantCapMinted { tenant_cap_id: object::uid_to_inner(&cap.id),
+   escrow_id }` — emission runs last, after the cap has been
+   constructed.
+3. Return `cap`.
 
 **Call sites:**
 - `rental_escrow::rent` (from Idle, AtDutchAuction) — pushed via
@@ -165,8 +214,12 @@ Serves both current tenants (end of use) and displaced tenants (stale
 cap cleanup). Has no effect on escrow state.
 
 **Behavior:**
-1. Destructures: `TenantCap { id, escrow_id: _ } = cap`
-2. Calls `object::delete(id)`.
+1. Destructure: `let TenantCap { id, escrow_id } = cap;`.
+2. Capture `tenant_cap_id = object::uid_to_inner(&id);` — must be read
+   before `object::delete` consumes the `UID`.
+3. Call `object::delete(id);`.
+4. Emit `TenantCapBurned { tenant_cap_id, escrow_id }` — emission runs
+   last, after the cap is actually destroyed.
 
 **No state mutation:** burning a cap does not affect
 `escrow.current_tenant_cap_id`. The escrow is not notified. A burned
@@ -196,7 +249,7 @@ object::id(cap) == escrow.current_tenant_cap_id    // second: not stale
 Both checks live in `rental_escrow`, not here.
 
 
-4. PROPERTIES
+5. PROPERTIES
 -------------
 
 **P1 — Minted only at tenant transition:**
@@ -228,41 +281,41 @@ Both checks live in `rental_escrow`, not here.
     delivery paths.
 
 
-5. TEST CASES
+6. TEST CASES
 -------------
 
-### 5.1 `new`
+### 6.1 `new`
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `new(escrow_id, ctx)` | Returns `TenantCap` with `cap.escrow_id == escrow_id`. Object has a fresh UID. |
-| N2 | Two calls with same `escrow_id` | Two distinct `TenantCap` objects (distinct UIDs), both bound to the same escrow_id. |
-| N3 | Two calls with distinct `escrow_id`s | Two caps with distinct `escrow_id` fields. |
+| N1 | `new(escrow_id, ctx)` | Returns `TenantCap` with `cap.escrow_id == escrow_id`. Object has a fresh UID. One `TenantCapMinted { tenant_cap_id, escrow_id }` event emitted with `tenant_cap_id == object::id(&cap)` and matching `escrow_id`. |
+| N2 | Two calls with same `escrow_id` | Two distinct `TenantCap` objects (distinct UIDs), both bound to the same escrow_id. Two `TenantCapMinted` events, each carrying the distinct `tenant_cap_id`. |
+| N3 | Two calls with distinct `escrow_id`s | Two caps with distinct `escrow_id` fields. Two `TenantCapMinted` events with matching pairs. |
 
-### 5.2 `burn`
+### 6.2 `burn`
 
 | # | Description | Expected |
 |---|---|---|
-| B1 | `burn(cap)` on a current cap | UID deleted. No abort. No escrow state change. |
-| B2 | `burn(cap)` on a stale cap | UID deleted. No abort. Identical behavior — module is unaware of staleness. |
+| B1 | `burn(cap)` on a current cap | UID deleted. No abort. No escrow state change. One `TenantCapBurned { tenant_cap_id, escrow_id }` event with the pair the cap carried at mint. |
+| B2 | `burn(cap)` on a stale cap | UID deleted. No abort. Identical behavior — module is unaware of staleness. `TenantCapBurned` emitted identically. |
 | B3 | `burn` consumes by value | Compiler enforces — no double-burn. |
 
-### 5.3 `escrow_id`
+### 6.3 `escrow_id`
 
 | # | Description | Expected |
 |---|---|---|
 | G1 | `escrow_id(&cap)` after `new(id, ctx)` | Returns `id`. |
 
-### 5.4 Lifecycle
+### 6.4 Lifecycle
 
 | # | Description | Expected |
 |---|---|---|
-| L1 | `new` → `escrow_id` check → `burn` | Full lifecycle. No abort. |
-| L2 | `new` (cap A) → `new` (cap B, same escrow) → both have distinct `object::id` | Staleness mechanic relies on distinct IDs — confirmed at mint. |
-| L3 | Stale cap: `burn` available after displacement | Holder can clean up regardless of escrow state. |
+| L1 | `new` → `escrow_id` check → `burn` | Full lifecycle. No abort. One `TenantCapMinted` at `new`, one `TenantCapBurned` at `burn`, both carrying the same `(tenant_cap_id, escrow_id)` pair. |
+| L2 | `new` (cap A) → `new` (cap B, same escrow) → both have distinct `object::id` | Staleness mechanic relies on distinct IDs — confirmed at mint. Two `TenantCapMinted` events with distinct `tenant_cap_id`, identical `escrow_id`. |
+| L3 | Stale cap: `burn` available after displacement | Holder can clean up regardless of escrow state. `TenantCapBurned` emitted with the stale cap's `tenant_cap_id`. |
 
 
-6. MODULE BOUNDARY
+7. MODULE BOUNDARY
 ------------------
 
 `tenant_cap.move` exports:
@@ -270,16 +323,18 @@ Both checks live in `rental_escrow`, not here.
 | Symbol | Visibility | Notes |
 |---|---|---|
 | `TenantCap` (type) | `public` | `key` only. Non-transferable. One per tenant transition event. |
-| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::rent` and `rental_escrow::do_handover`. |
-| `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
+| `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. |
+| `TenantCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
+| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::rent` and `rental_escrow::do_handover`. Emits `TenantCapMinted`. |
+| `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 
 No error constants.
 
-**Depends on:** nothing (`sui::object` only).
+**Depends on:** `sui::object`, `sui::event`.
 
 
-7. OBJECT DISPLAY
+8. OBJECT DISPLAY
 -----------------
 
 ![TenantCap](../../media/object-display/tenant-cap.png)

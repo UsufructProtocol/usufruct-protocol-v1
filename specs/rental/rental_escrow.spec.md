@@ -51,13 +51,15 @@ points, and the fund distribution logic for every boundary event.
   live in `owner_cap` / `tenant_cap`. This module calls their constructors and
   destructors.
 - `PaymentReceipt` struct and lifecycle — lives in `payment_receipt`. This
-  module calls `payment_receipt::new` in the two `Rented` sub-branches of
-  `rent()` for the symbolic mint-and-push, then `transfer::transfer`s the
-  receipt to the bidder. The receipt has no protocol power and is
-  invisible to every other call site.
+  module calls `payment_receipt::mint_to` in the two `Rented` sub-branches
+  of `rent()` for the symbolic mint-and-push; the receipt is constructed
+  and transferred to the bidder inside `payment_receipt` (required: its
+  `transfer::transfer` only compiles in the owning module). The receipt
+  has no protocol power and is invisible to every other call site.
 - `FeeMessage<C>` type or the drain path — lives in `fee_message`. This module
-  only calls `fee_message::new` + `fee_message::send_message` at boundary
-  events where a non-zero protocol fee exists.
+  only calls `fee_message::post` at boundary events where a non-zero
+  protocol fee exists; construction, transfer-to-inbox and event emission
+  are fused inside that call.
 - `ProtocolFeeInbox` / `ProtocolFeeRef` — live in `protocol_fee_inbox`. This
   module reads `fee_ref_inbox_id(&fee_ref)` at `integrate` to store the inbox
   ID.
@@ -210,7 +212,7 @@ This is the canonical Move borrow pattern, used internally by
 |---|---|
 | `asset` | The integrated asset, wrapped in `Option`. `Some` at all transaction boundaries; `None` only within a PTB borrow window (`borrow_asset` → `return_asset`). Inner type requires `key + store`. |
 | `config` | Immutable `IntegrationConfig` — all protocol parameters. |
-| `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Passed to `fee_message::new` at each boundary event so the resulting `FeeMessage<C>` carries its routing target. |
+| `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Passed to `fee_message::post` at each boundary event so the resulting `FeeMessage<C>` carries its routing target. |
 | `integrated_at_ms` | Timestamp at integration. Used to enforce `retire_floor`: `retire()` aborts if `clock.timestamp_ms() < integrated_at_ms + config.retire_floor`. |
 | `state` | Current `AssetState`. |
 | `last_rent_price` | Price paid by the most recent tenant. Entry barrier for takeover and starting price of the Dutch Auction descent. Initialized to `min_rent_price` at `integrate` as a sentinel — the first Idle acquisition overwrites it with its own `coin::value(&payment)`. Updated at every acquisition to `coin::value(&payment)` — always ≥ the arm-specific floor (`min_rent_price` from Idle, `compute_price_descent(now)` from AtDutchAuction, `compute_next_rent_price(escrow)` from Rented). Overpayment is absorbed verbatim; there is no refund path. |
@@ -839,14 +841,18 @@ reach the same numbers through that unified entry point.
 - Let `floor = compute_next_rent_price(escrow)` (delegates to
   `price_function::evaluate_price_fn`).
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
-- Let `bid_amount = coin::value(&payment);` — capture before the coin is
-  consumed by `balance::join`; reused below for the receipt mint, the
-  `last_rent_price` write, and the `BidPlaced` event.
+- **Pre-bind event locals** (symmetric with the HandoverConfirmed
+  branch; capture before the state rotations consume the source data so
+  emit-last runs against post-state):
+  - `let pending_tenant = tx_context::sender(ctx);`
+  - `let bid_amount     = coin::value(&payment);` — captured before
+    `balance::join` consumes the coin; reused for the receipt mint, the
+    `last_rent_price` write, and the `BidPlaced` event.
 - Let `remaining = (escrow.phase_start_ms + escrow.config.tenure_ceiling) -
   clock.timestamp_ms()`.
 - Let `countdown = min(escrow.config.handover_floor, remaining)`.
 - `escrow.handover_countdown_expiry = some(clock.timestamp_ms() + countdown);`
-- `escrow.pending_tenant_address = some(tx_context::sender(ctx));`
+- `escrow.pending_tenant_address = some(pending_tenant);`
 - `escrow.last_rent_price = bid_amount;`
 - `balance::join(&mut escrow.pending_bid, coin::into_balance(payment));`
 - `escrow.state = Rented { phase: HandoverConfirmed };`
@@ -856,9 +862,11 @@ reach the same numbers through that unified entry point.
   `payment_receipt.spec.md`:
   - `let coin_type  = type_name::get<CoinType>().into_string();`
   - `let asset_type = type_name::get<Asset>().into_string();`
-  - `let receipt = payment_receipt::new(object::id(escrow), bid_amount,
-    coin_type, asset_type, ctx);`
-  - `transfer::transfer(receipt, tx_context::sender(ctx));`
+  - `payment_receipt::mint_to(object::id(escrow), bid_amount,
+    coin_type, asset_type, pending_tenant, ctx);` — fused
+    mint-and-transfer inside `payment_receipt` (required:
+    `transfer::transfer<PaymentReceipt>` only compiles in the owning
+    module).
 - Emit `BidPlaced { escrow_id, pending_tenant, bid_amount,
   handover_countdown_expiry }` — emit-last: all state mutations and the
   receipt delivery complete, so the escrow's post-state and the sender's
@@ -900,9 +908,9 @@ exits afterward.
   cannot revoke it). See `payment_receipt.spec.md`:
   - `let coin_type  = type_name::get<CoinType>().into_string();`
   - `let asset_type = type_name::get<Asset>().into_string();`
-  - `let receipt = payment_receipt::new(object::id(escrow), new_bid_amount,
-    coin_type, asset_type, ctx);`
-  - `transfer::transfer(receipt, new_bidder);`
+  - `payment_receipt::mint_to(object::id(escrow), new_bid_amount,
+    coin_type, asset_type, new_bidder, ctx);` — fused
+    mint-and-transfer inside `payment_receipt`.
 - Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
   new_bidder, new_bid_amount }` — emit-last: all state rotations, the
   refund push, and the receipt delivery complete, so the escrow's
@@ -1231,11 +1239,10 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
      // Consequence of `countdown = min(escrow.config.handover_floor, remaining)`.
    - `if protocol_fee > 0`:
      - `let fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee);`
-     - `let msg = fee_message::new<CoinType>(fee_balance, escrow.fee_inbox_id, object::id(escrow), ctx);`
-     - `fee_message::send_message(msg, displaced_tenant);`
-     // `displaced_tenant` is the stake funder — already bound at step 4.
-     // The resulting `FeeMessageSent<C>.tenant` records whose elapsed-time
-     // consumption produced this fee.
+     - `fee_message::post<CoinType>(fee_balance, object::id(escrow), displaced_tenant, escrow.fee_inbox_id, ctx);`
+     // `displaced_tenant` is the stake funder — already bound at step 4;
+     // passed as `tenant` and recorded on `FeeMessageSent<C>.tenant`.
+     // Fused construction+transfer+emit inside `fee_message::post`.
      // Gate mirrors the `remain_credit > 0` branch above: when `protocol_fee == 0`
      // we skip the split entirely instead of creating and destroying a zero
      // `Balance<CoinType>`. No `FeeMessage<C>` is constructed on the zero path.
@@ -1246,15 +1253,17 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    - `balance::join(&mut escrow.tenant_stake,
      balance::withdraw_all(&mut escrow.pending_bid));`
    — `last_rent_price` already holds the pending bid amount (set at bid time).
-6. **Mint + push new TenantCap:**
+6. **Mint + push new TenantCap** (fused inside `tenant_cap::mint_to`;
+   required because `transfer::transfer<TenantCap>` only compiles in
+   the owning module):
    - `let pending_addr = *option::borrow(&escrow.pending_tenant_address);`
-   - `let cap = tenant_cap::new(object::id(escrow), pending_addr, ctx);`
+   - `let new_cap_id = tenant_cap::mint_to(object::id(escrow), pending_addr, ctx);`
      — `TenantCapMinted.tenant` records `pending_addr`, the new tenant
      installed by this handover. The address is not `tx_context::sender`
      (the caller of `apply_pending_transitions` may be a keeper or any
-     permissionless settler, not the incoming tenant).
-   - `let new_cap_id = object::id(&cap);`
-   - `transfer::transfer(cap, pending_addr);`
+     permissionless settler, not the incoming tenant). The transfer to
+     `pending_addr` happens inside `mint_to`; the returned `ID` is
+     consumed at step 7 to update `current_tenant_cap_id`.
 7. **Rotate address fields:**
    - `escrow.current_tenant_address = some(pending_addr);`
    - `escrow.current_tenant_cap_id = some(new_cap_id);`
@@ -1291,7 +1300,7 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
   `remain_credit == 0`): the `if remain_credit > 0` guard is skipped — no coin
   is pushed to the displaced tenant. `split_fee(tenant_stake)` produces the
   normal 95/5 split, so the `if protocol_fee > 0` guard fires —
-  `fee_message::new` + `send_message` routes a non-zero `FeeMessage<C>` and
+  `fee_message::post` routes a non-zero `FeeMessage<C>` and
   `withdraw_all` moves the owner share into `owner_earnings`.
 
 In the `used_credit == 0` branch, after the full-stake push to the displaced
@@ -1300,8 +1309,8 @@ tenant the stake is empty. `balance::withdraw_all(Balance(0))` returns
 operations against the framework source (`withdraw_all` delegates to
 `split(self, self.value)`, and `split` asserts `self.value >= value` which
 holds for 0). No zero-valued `Balance<CoinType>` is ever handed to
-`fee_message::new`: the `if protocol_fee > 0` guard filters those out at the
-call site.
+`fee_message::post`: the `if protocol_fee > 0` guard filters those out at
+the call site.
 
 ---
 
@@ -1335,11 +1344,11 @@ Two cases:
 4. Route the protocol fee through `fee_message`, gating on `protocol_fee > 0`:
    - `if protocol_fee > 0`:
      - `let fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee);`
-     - `let msg = fee_message::new<CoinType>(fee_balance, escrow.fee_inbox_id, object::id(escrow), ctx);`
-     - `fee_message::send_message(msg, tenant);`
-     // `tenant` is the outgoing tenant's address — bound at step 2.
-     // The resulting `FeeMessageSent<C>.tenant` records whose stake funded
-     // this fee (full saturation at tenure expiry).
+     - `fee_message::post<CoinType>(fee_balance, object::id(escrow), tenant, escrow.fee_inbox_id, ctx);`
+     // `tenant` is the outgoing tenant's address — bound at step 2;
+     // recorded verbatim on `FeeMessageSent<C>.tenant` (whose stake
+     // funded this fee — full saturation at tenure expiry).
+     // Fused construction+transfer+emit inside `fee_message::post`.
    - Same pattern as §7.1: skip the split entirely when the fee rounds to
      zero (reachable only at pathological `stake_total < 20`, since fee =
      `mul_div(stake, 500, 10_000)`; protocols enforcing `min_rent_price ≥ 20`
@@ -1423,8 +1432,8 @@ fee_share) at 95/5.
 - `split_fee(0) == (0, 0)`.
 - `split_fee(1) == (1, 0)` — fee floors to zero on tiny amounts. Callers
   (`do_handover`, `do_tenure_expiry`) gate on `protocol_fee > 0` and skip the
-  split + `fee_message::new` when it is zero, so no zero-balance `FeeMessage<C>`
-  is ever constructed.
+  split + `fee_message::post` when it is zero, so no zero-balance
+  `FeeMessage<C>` is ever constructed.
 
 ---
 
@@ -1455,16 +1464,16 @@ owns.
 2. `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
 3. `escrow.phase_start_ms = clock.timestamp_ms();`
 4. `let tenant_addr = tx_context::sender(ctx);`
-5. `let cap = tenant_cap::new(object::id(escrow), tenant_addr, ctx);` —
+5. `let new_cap_id = tenant_cap::mint_to(object::id(escrow), tenant_addr, ctx);` —
+   fused mint-and-transfer inside `tenant_cap` (required:
+   `transfer::transfer<TenantCap>` only compiles in the owning module).
    `TenantCapMinted.tenant` records `tenant_addr`. Unlike `do_handover`,
    here the sender IS the new tenant (paid `rent()` directly), so passing
-   the sender is correct and matches the transfer target below.
-6. `let new_cap_id = object::id(&cap);`
-7. `escrow.current_tenant_cap_id = some(new_cap_id);`
-8. `escrow.current_tenant_address = some(tenant_addr);`
-9. `escrow.state = Rented { phase: HandoverOpen };`
-10. `transfer::transfer(cap, tenant_addr);`
-11. Return `new_cap_id`.
+   the sender is correct and matches the delivery target.
+6. `escrow.current_tenant_cap_id = some(new_cap_id);`
+7. `escrow.current_tenant_address = some(tenant_addr);`
+8. `escrow.state = Rented { phase: HandoverOpen };`
+9. Return `new_cap_id`.
 
 **Return value:** the new `TenantCap` ID, returned so the caller can emit
 `RentStarted { ..., tenant_cap_id: new_cap_id, ... }` with its arm-specific
@@ -1853,10 +1862,10 @@ Enforced by the hot-potato `AssetReceipt`.
 **P12 — Fee routing is idempotent at zero:**
 `do_handover` with `used_credit == 0` (e.g. handover at t = phase_start_ms,
 pathological edge case) and `do_tenure_expiry` with zero stake produce
-`protocol_fee == 0`. Both functions gate the `fee_message::new` +
-`send_message` pair behind `if protocol_fee > 0`, so no `FeeMessage<C>` is
-constructed on the zero path. The escrow balances settle to their normal
-post-condition via the owner-share branch alone.
+`protocol_fee == 0`. Both functions gate the `fee_message::post` call
+behind `if protocol_fee > 0`, so no `FeeMessage<C>` is constructed on
+the zero path. The escrow balances settle to their normal post-condition
+via the owner-share branch alone.
 
 10. TEST CASES
 --------------
@@ -1913,7 +1922,7 @@ post-condition via the owner-share branch alone.
 | A4 | Called on AtDutchAuction, descent expiry reached | `do_auction_expiry` fires. Returns `Idle`. `AuctionExpired` emitted. |
 | A5 | Called after long inactivity: handover + tenure + auction all due | All three fire in order. Returns `Idle`. Three events emitted. |
 | A6 | Called with retire_flag, Rented(HandoverOpen), tenure expired | `do_tenure_expiry` fires with `next_state: Retired`. Returns `Retired`. |
-| A7 | `do_handover` with `used_credit == 0` (very convex PowerLaw curve, handover fires immediately after bid) | `remain_credit == tenant_stake`. Full stake pushed to displaced tenant as `Coin<C>`. `owner_earnings` unchanged. No `FeeMessage<C>` constructed (the `if protocol_fee > 0` guard skips `fee_message::new` + `send_message`). `HandoverCompleted` emitted with `used_credit: 0`, `owner_share: 0`, `protocol_fee: 0`. |
+| A7 | `do_handover` with `used_credit == 0` (very convex PowerLaw curve, handover fires immediately after bid) | `remain_credit == tenant_stake`. Full stake pushed to displaced tenant as `Coin<C>`. `owner_earnings` unchanged. No `FeeMessage<C>` constructed (the `if protocol_fee > 0` guard skips `fee_message::post`). `HandoverCompleted` emitted with `used_credit: 0`, `owner_share: 0`, `protocol_fee: 0`. |
 | A8 | `do_handover` with `used_credit == tenant_stake` (Dutch Auction bypass — `remain_credit == 0`) | No coin pushed to displaced tenant. Full stake split 95/5 into `owner_earnings` and `FeeMessage`. `HandoverCompleted` emitted with `remain_credit: 0`. |
 
 ### 10.7 `borrow_asset` / `return_asset`
@@ -1987,10 +1996,10 @@ for `compute_next_rent_price`).
 
 | # | Description | Expected |
 |---|---|---|
-| F1 | `do_handover` with non-zero `used_credit` | `owner_earnings += 0.95 × used_credit`. One `FeeMessage<C>` constructed via `fee_message::new(fee_balance, escrow.fee_inbox_id, object::id(escrow), ctx)` and posted via `fee_message::send_message(msg, displaced_tenant)`, with balance `0.05 × used_credit` and `escrow_id == object::id(escrow)`. `HandoverCompleted` event includes both shares. |
+| F1 | `do_handover` with non-zero `used_credit` | `owner_earnings += 0.95 × used_credit`. One `FeeMessage<C>` posted via `fee_message::post<CoinType>(fee_balance, object::id(escrow), displaced_tenant, escrow.fee_inbox_id, ctx)`, with balance `0.05 × used_credit` and `escrow_id == object::id(escrow)`. `HandoverCompleted` event includes both shares. |
 | F2 | `do_handover` at Dutch Auction bypass (used_credit = last_rent_price) | `remain_credit == 0`, zero push to displaced tenant. Fee and owner share computed on full `last_rent_price`. Fee path as in F1. |
 | F3 | `do_tenure_expiry` | `owner_earnings += 0.95 × stake`. One `FeeMessage<C>` of `0.05 × stake` constructed + sent as in F1. |
-| F4 | Fee on tiny `used_credit` (`split_fee` floors fee to zero) | `if protocol_fee > 0` guard short-circuits: no split, no `fee_message::new` call, no `FeeMessage<C>` constructed. `owner_share == used_credit`. |
+| F4 | Fee on tiny `used_credit` (`split_fee` floors fee to zero) | `if protocol_fee > 0` guard short-circuits: no split, no `fee_message::post` call, no `FeeMessage<C>` constructed. `owner_share == used_credit`. |
 
 ### 10.12 Full lifecycle
 
@@ -2138,9 +2147,10 @@ or by an APT-driven transition.
 - `price_function` — `PriceFunction`, `evaluate_price_fn`.
 - `config` — `IntegrationConfig` and `public(package)` getters.
 - `owner_cap` — `OwnerCap`, `new`, `burn`, `escrow_id`, `assert_escrow`.
-- `tenant_cap` — `TenantCap`, `new`, `escrow_id`.
+- `tenant_cap` — `TenantCap`, `mint_to`, `escrow_id`.
+- `payment_receipt` — `mint_to`.
 - `protocol_fee_inbox` — `ProtocolFeeRef`, `fee_ref_inbox_id`.
-- `fee_message` — `new`, `send_message`.
+- `fee_message` — `post`.
 
 **Integration flow for a third-party integrator:**
 

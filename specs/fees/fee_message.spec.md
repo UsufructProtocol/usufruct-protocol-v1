@@ -17,15 +17,18 @@ for protocol fees at each boundary event.
 - `FeeMessage<phantom C>` — `key` only. Created at boundary events
   (handover, tenure expiry) to wrap a protocol fee balance. Transferred
   to `ProtocolFeeInbox` via transfer-to-object. Deleted at drain time.
-- `post<C>(balance, escrow_id, funder, fee_inbox_id, ctx)` —
+- `post<C>(balance, escrow_id, tenant, fee_inbox_id, ctx)` —
   `public(package)`. Sole public entry point for fee posting: constructs
   a `FeeMessage<C>` inline, transfers it to `fee_inbox_id` via
   transfer-to-object, and emits `FeeMessageSent<C>`. Fused form — the
   `FeeMessage<C>` object never exists as a local in any caller, so no
   orphan-constructor surface is reachable from outside this module.
-  `funder` is the address whose stake produced the fee; it is recorded
-  on the `FeeMessageSent<C>` event row under the canonical `tenant`
-  field, but is not stored on the `FeeMessage<C>` struct.
+  `tenant` is the address whose stake produced the fee — metadata only,
+  recorded on the `FeeMessageSent<C>` event row but not stored on the
+  `FeeMessage<C>` struct. Routing target is `fee_inbox_id`, which sits
+  in the recipient slot just before `ctx`; `tenant` cannot be mistaken
+  for a transfer destination because the fused signature makes
+  `fee_inbox_id`'s role unambiguous.
 - `receive_message<C>(...)` — private. Receives one `FeeMessage<C>` from
   the inbox via `transfer::receive`. Single-object step.
 - `consume_message<C>(msg, ctx)` — private. Destructures a
@@ -241,7 +244,7 @@ time.
     public(package) fun post<C>(
         balance:      Balance<C>,
         escrow_id:    ID,
-        funder:       address,
+        tenant:       address,
         fee_inbox_id: ID,
         ctx:          &mut TxContext,
     )
@@ -251,8 +254,8 @@ time.
 **Purpose:** sole public entry point for posting a protocol fee to the
 inbox. Constructs a `FeeMessage<C>` inline, transfers it to
 `fee_inbox_id` via transfer-to-object, and emits
-`FeeMessageSent<C> { ..., tenant: funder }`. Fused form — no
-intermediate `FeeMessage<C>` ever escapes this function.
+`FeeMessageSent<C> { ..., tenant }`. Fused form — no intermediate
+`FeeMessage<C>` ever escapes this function.
 
 **Behavior:**
 1. Bind identity locals from the constructor inputs and the wrapped
@@ -270,7 +273,7 @@ intermediate `FeeMessage<C>` ever escapes this function.
    let fee_message_id = object::uid_to_inner(&msg.id);
    ```
 3. `transfer::transfer(msg, fee_inbox_id.to_address());`
-4. `event::emit(FeeMessageSent<C> { fee_message_id, fee_inbox_id, escrow_id, amount, tenant: funder });`
+4. `event::emit(FeeMessageSent<C> { fee_message_id, fee_inbox_id, escrow_id, amount, tenant });`
 
 **No preconditions enforced.** By convention:
 - `fee_inbox_id` is the ID of the `ProtocolFeeInbox` singleton (as
@@ -284,18 +287,21 @@ intermediate `FeeMessage<C>` ever escapes this function.
 **Argument roles:**
 - `balance`, `escrow_id`, `fee_inbox_id` — constructor inputs; become
   fields of the `FeeMessage<C>` object.
-- `funder` — metadata for the event row only. Routing target is
-  `fee_inbox_id` (not `funder`); `funder` is never used as a transfer
+- `tenant` — metadata for the event row only. Routing target is
+  `fee_inbox_id` (not `tenant`); `tenant` is never used as a transfer
   destination. The `FeeMessage<C>` struct intentionally does not
   store it — it is first-observed at post time and recorded on the
-  `FeeMessageSent<C>` event under the canonical `tenant` field, which
-  preserves the star-schema dimension name across analytics joins.
+  `FeeMessageSent<C>` event under the canonical `tenant` field
+  (star-schema dimension name).
 - `fee_inbox_id` is placed just before `ctx` per the protocol-wide
   convention that transfer-target arguments sit in the recipient
   position, even when the target is an object ID rather than a raw
-  address.
+  address. The fused signature makes the routing role of
+  `fee_inbox_id` unambiguous, which is why `tenant` can sit mid-list
+  as pure metadata without confusing a reader into thinking it is a
+  destination.
 
-**`funder` is declarative:** this module performs no runtime check
+**`tenant` is declarative:** this module performs no runtime check
 against it. The caller (`rental_escrow`) is authoritative: at
 `do_handover` it passes `displaced_tenant`; at `do_tenure_expiry` it
 passes the current tenant's address. The field is the sole record of
@@ -495,11 +501,11 @@ of N messages produces N events in the same transaction. See §3.
 
 | # | Description | Expected |
 |---|---|---|
-| S1 | `post<C>(balance, escrow_id, funder, fee_inbox_id, ctx)` with `balance > 0` | A `FeeMessage<C>` exists as a child of `fee_inbox_id` with matching `fee_inbox_id`, `escrow_id`, and `balance::value` equal to the input. `funder` is not a struct field. One `FeeMessageSent<C>` event emitted with `tenant == funder`. |
+| S1 | `post<C>(balance, escrow_id, tenant, fee_inbox_id, ctx)` with `balance > 0` | A `FeeMessage<C>` exists as a child of `fee_inbox_id` with matching `fee_inbox_id`, `escrow_id`, and `balance::value` equal to the input. `tenant` is not a struct field. One `FeeMessageSent<C>` event emitted with the `tenant` argument on the event's `tenant` field. |
 | S2 | `post<C>` with `balance == 0` | `FeeMessage<C>` created and transferred to `fee_inbox_id` with `balance::value == 0`. No abort. (Not the recommended caller pattern — callers normally `balance::destroy_zero` instead — but structurally valid.) Event emitted with `amount == 0`. |
-| S3 | `post` called twice with the same `fee_inbox_id`, possibly distinct `funder`s | Two distinct `FeeMessage<C>` objects exist as children of `fee_inbox_id`. Two `FeeMessageSent<C>` events with distinct `fee_message_id` and their respective `tenant` values. |
+| S3 | `post` called twice with the same `fee_inbox_id`, possibly distinct `tenant`s | Two distinct `FeeMessage<C>` objects exist as children of `fee_inbox_id`. Two `FeeMessageSent<C>` events with distinct `fee_message_id` and their respective `tenant` values. |
 | S4 | `post` in `<SUI>` and `<USDC>` with the same `fee_inbox_id` | Two objects of distinct types exist as children. No conflict. |
-| S5 | `funder` distinct from `tx_context::sender(ctx)` | Event `tenant` equals the `funder` argument — asserts the field is declarative, not a runtime echo of sender. Matches the `do_handover` case where the tx sender is permissionless, not the fee-funding tenant. |
+| S5 | `tenant` argument distinct from `tx_context::sender(ctx)` | Event `tenant` equals the argument — asserts the field is declarative, not a runtime echo of sender. Matches the `do_handover` case where the tx sender is permissionless, not the fee-funding tenant. |
 
 ### 6.2 `receive_message` and `consume_message`
 
@@ -529,7 +535,7 @@ Private functions — tested directly from `#[test]` functions within the module
 
 | # | Description | Expected |
 |---|---|---|
-| E1 | `post<C>(balance, escrow_id, funder, fee_inbox_id, ctx)` with any balance | Exactly one `FeeMessageSent<C>` emitted with `fee_message_id` equal to the created object's ID, `fee_inbox_id` and `escrow_id` equal to the arguments, `amount` equal to `balance::value(&balance)`, and `tenant` equal to `funder`. |
+| E1 | `post<C>(balance, escrow_id, tenant, fee_inbox_id, ctx)` with any balance | Exactly one `FeeMessageSent<C>` emitted with `fee_message_id` equal to the created object's ID, `fee_inbox_id` and `escrow_id` equal to the arguments, `amount` equal to `balance::value(&balance)`, and event `tenant` equal to the `tenant` argument. |
 | E2 | Caller handles zero balance out-of-module (`balance::destroy_zero` without calling `post`) | No `FeeMessageSent<C>` event emitted. (This module is not involved.) |
 | E3 | `consume_message<C>(msg, ctx)` on a received message with balance `B` | Exactly one `FeeMessageCollected<C>` emitted with `fee_message_id`, `fee_inbox_id`, and `escrow_id` equal to the values carried by the consumed object, `amount == B`, and `collector == tx_context::sender(ctx)`. Emission occurs after `object::delete`. |
 | E4 | `collect_fee_messages<C>` over N tickets with balances `B1..BN` | Exactly N `FeeMessageCollected<C>` events emitted in the tx, one per consumed message. Each event's `fee_inbox_id` and `escrow_id` match the consumed object; each event's `collector` equals the single `tx_context::sender(ctx)` of the drain tx. `sum(amounts in events) == B1+..+BN`. `FeeMessageSent<C>` events of the prior posts are not re-emitted. |
@@ -548,7 +554,7 @@ Private functions — tested directly from `#[test]` functions within the module
 | `FeeMessage<C>` (type) | `public` | `key` only. Per-boundary-event fee message. No separable public constructor. |
 | `FeeMessageSent<C>` (event) | `public` | Emitted in `post`, after transfer. |
 | `FeeMessageCollected<C>` (event) | `public` | Emitted in `consume_message`, after `object::delete`. |
-| `post<C>(balance, escrow_id, funder, fee_inbox_id, ctx)` | `public(package)` | Sole public entry point. Constructs a `FeeMessage<C>` inline, transfers it to `fee_inbox_id` via transfer-to-object, and emits `FeeMessageSent<C> { ..., tenant: funder }`. Makes no assumption about the wrapped balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow` — `funder` is `displaced_tenant` at handover or the outgoing tenant's address at tenure expiry. |
+| `post<C>(balance, escrow_id, tenant, fee_inbox_id, ctx)` | `public(package)` | Sole public entry point. Constructs a `FeeMessage<C>` inline, transfers it to `fee_inbox_id` via transfer-to-object, and emits `FeeMessageSent<C> { ..., tenant }`. Makes no assumption about the wrapped balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow` — `tenant` is `displaced_tenant` at handover or the outgoing tenant's address at tenure expiry. |
 | `receive_message<C>(inbox, ticket)` | private | Receives one `FeeMessage<C>` from inbox via `transfer::receive`. |
 | `consume_message<C>(msg, ctx)` | private | Destructures `FeeMessage<C>`, deletes UID, captures `collector = tx_context::sender(ctx)`, emits `FeeMessageCollected<C> { ..., collector }`, returns `Balance<C>`. |
 | `collect_fee_messages<C>(inbox, tickets, ctx)` | `public` | Pipeline of receive + consume over all tickets. Returns `Coin<C>`. Emits one `FeeMessageCollected<C>` per consumed message (via `consume_message`); no aggregate event. Called by admin PTB. |

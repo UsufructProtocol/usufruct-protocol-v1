@@ -3,7 +3,7 @@ FEE MESSAGE MODULE — SPECIFICATION
 
 Module: `fee_message`
 Design reference: design-compact.md §3 (fund flows — protocol fee)
-Module map reference: module-map.spec.md §9
+Module map reference: module-map.spec.md §10
 Depends on: `protocol_fee_inbox`, `sui::event`, `sui::object`
 
 

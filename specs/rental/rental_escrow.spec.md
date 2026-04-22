@@ -5,9 +5,9 @@ Module: `rental_escrow`
 Design reference: design-compact.md §1 (state machine), §2 (access model),
   §3 (fund flows), §4 (handover countdown), §6 (integration parameters / retire),
   §9 (lazy evaluation)
-Module map reference: module-map.spec.md §10
+Module map reference: module-map.spec.md §11
 Depends on: `math`, `curve_shape`, `price_function`, `config`, `owner_cap`,
-  `tenant_cap`, `protocol_fee_inbox`, `fee_message`
+  `tenant_cap`, `payment_receipt`, `protocol_fee_inbox`, `fee_message`
 
 
 0. MODULE RESPONSIBILITY
@@ -50,6 +50,11 @@ points, and the fund distribution logic for every boundary event.
 - `OwnerCap` / `TenantCap` struct definitions or mint/burn internals —
   live in `owner_cap` / `tenant_cap`. This module calls their constructors and
   destructors.
+- `PaymentReceipt` struct and lifecycle — lives in `payment_receipt`. This
+  module calls `payment_receipt::new` in the two `Rented` sub-branches of
+  `rent()` for the symbolic mint-and-push, then `transfer::transfer`s the
+  receipt to the bidder. The receipt has no protocol power and is
+  invisible to every other call site.
 - `FeeMessage<C>` type or the drain path — lives in `fee_message`. This module
   only calls `fee_message::new` + `fee_message::send_message` at boundary
   events where a non-zero protocol fee exists.
@@ -520,6 +525,19 @@ Deviations — co-emission dependencies, envelope-metadata reliance,
 redundant addresses across a PK-joinable pair — degrade the schema
 and are disallowed.
 
+**Deliberate exclusion — `PaymentReceipt`.** The `payment_receipt`
+module (minted and pushed to the bidder in the two `Rented`
+sub-branches of `rent()`) emits **no** events and is therefore
+**not** a satellite of this star schema. Each receipt mint corresponds
+1:1 to exactly one `BidPlaced` or `BidSuperseded` row, which already
+carries `escrow_id` and the bidder's address in the same transaction;
+an indexer that wishes to track receipts per wallet can do so by
+filtering Sui's object-creation envelope on the `PaymentReceipt`
+type tag. The receipt carries no protocol authority — its purpose is
+the bidder's wallet UX (symmetric delivery with the `TenantCap`
+pushed from `Idle` / `AtDutchAuction`), not the accountant's ledger.
+Full rationale: `payment_receipt.spec.md` §3.
+
 
 4. LIFECYCLE FUNCTIONS
 -----------------------
@@ -821,16 +839,30 @@ reach the same numbers through that unified entry point.
 - Let `floor = compute_next_rent_price(escrow)` (delegates to
   `price_function::evaluate_price_fn`).
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
+- Let `bid_amount = coin::value(&payment);` — capture before the coin is
+  consumed by `balance::join`; reused below for the receipt mint, the
+  `last_rent_price` write, and the `BidPlaced` event.
 - Let `remaining = (escrow.phase_start_ms + escrow.config.tenure_ceiling) -
   clock.timestamp_ms()`.
 - Let `countdown = min(escrow.config.handover_floor, remaining)`.
 - `escrow.handover_countdown_expiry = some(clock.timestamp_ms() + countdown);`
 - `escrow.pending_tenant_address = some(tx_context::sender(ctx));`
-- `escrow.last_rent_price = coin::value(&payment);`
+- `escrow.last_rent_price = bid_amount;`
 - `balance::join(&mut escrow.pending_bid, coin::into_balance(payment));`
 - `escrow.state = Rented { phase: HandoverConfirmed };`
+- **Mint and push `PaymentReceipt`** (delivery symmetry with the Idle /
+  AtDutchAuction branches, which deliver `TenantCap` in-tx via
+  `install_new_tenant`). The receipt has no protocol power — see
+  `payment_receipt.spec.md`:
+  - `let coin_type  = type_name::get<CoinType>().into_string();`
+  - `let asset_type = type_name::get<Asset>().into_string();`
+  - `let receipt = payment_receipt::new(object::id(escrow), bid_amount,
+    coin_type, asset_type, ctx);`
+  - `transfer::transfer(receipt, tx_context::sender(ctx));`
 - Emit `BidPlaced { escrow_id, pending_tenant, bid_amount,
-  handover_countdown_expiry }`.
+  handover_countdown_expiry }` — emit-last: all state mutations and the
+  receipt delivery complete, so the escrow's post-state and the sender's
+  wallet match the event's semantics.
 
 **Retire flag rationale:** blocking new bids is what "retire during Rented"
 means — the current tenant completes their block uncontested and the asset
@@ -862,10 +894,20 @@ exits afterward.
 - `handover_countdown_expiry` is **not** updated — subsequent bids do not
   reset the countdown (design-compact §4).
 - `state` remains `Rented { HandoverConfirmed }`.
+- **Mint and push `PaymentReceipt` for the new bidder** (same delivery
+  symmetry as the HandoverOpen branch; the displaced bidder keeps the
+  receipt minted on their own prior bid — the protocol does not and
+  cannot revoke it). See `payment_receipt.spec.md`:
+  - `let coin_type  = type_name::get<CoinType>().into_string();`
+  - `let asset_type = type_name::get<Asset>().into_string();`
+  - `let receipt = payment_receipt::new(object::id(escrow), new_bid_amount,
+    coin_type, asset_type, ctx);`
+  - `transfer::transfer(receipt, new_bidder);`
 - Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
-  new_bidder, new_bid_amount }` — emit-last: all state rotations
-  complete, so the escrow's post-state (new bidder installed, old
-  refunded) matches the event's semantics.
+  new_bidder, new_bid_amount }` — emit-last: all state rotations, the
+  refund push, and the receipt delivery complete, so the escrow's
+  post-state (new bidder installed, old refunded, new receipt in new
+  bidder's wallet) matches the event's semantics.
 
 #### Case: `Retired`
 

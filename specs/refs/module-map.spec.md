@@ -174,19 +174,21 @@ liquid_renting = "0x0"
             \    /
              \  /
               \/
-           config    owner_cap    tenant_cap    protocol_fee_inbox
-               ^          ^            ^              ^
-                \         |            |              |
-                 \        |            |    fee_message
-                  \       |            |              ^
-                   \      |            |             /
-                                    rental_escrow
+           config   owner_cap   tenant_cap   payment_receipt   protocol_fee_inbox
+               ^         ^           ^             ^                  ^
+                \        |           |             |                  |
+                 \       |           |             |       fee_message
+                  \      |           |             |                  ^
+                   \     |           |             |                 /
+                                        rental_escrow
 ```
 
 Arrows point from dependency to dependent.
 `rental_escrow` is the integration point; every other module is independent of it.
 `rental_escrow` also imports `protocol_fee_inbox` directly (for `ProtocolFeeRef` in
 `integrate`) in addition to `fee_message`.
+`payment_receipt` is a leaf like the cap modules — depends only on `sui::object`,
+`sui::transfer`, `std::ascii::String`.
 
 **Events:** there is no standalone `events` module. Each module owns its own
 observability — event structs are defined in the module that emits them.
@@ -400,16 +402,53 @@ Stale caps from displaced tenants are inert.
 
 ---
 
-### 7. ~~`events.move`~~ — No standalone events module
+### 7. `payment_receipt.move` — Symbolic bid-payment receipt
+
+**Responsibility:** `PaymentReceipt` object. Minted and pushed to the bidder
+at every successful `rent()` call in a `Rented` sub-branch, closing the UX
+asymmetry with the `Idle` / `AtDutchAuction` branches (which already deliver
+`TenantCap` in-tx). Carries no protocol authority — purely wallet-side.
+
+**Types:**
+
+| Type | Abilities | Notes |
+|---|---|---|
+| `PaymentReceipt` | `key` | Non-transferable (no `store`). Non-generic. |
+
+**`PaymentReceipt` fields:**
+- `id: UID`
+- `escrow_id: ID`
+- `amount: u64`
+- `coin_type: std::ascii::String` — canonical type string of `CoinType`, derived at mint.
+- `asset_type: std::ascii::String` — canonical type string of `Asset`, derived at mint.
+
+**Exports:**
+
+| Function | Visibility | Purpose |
+|---|---|---|
+| `new(escrow_id, amount, coin_type, asset_type, ctx): PaymentReceipt` | `public(package)` | Mint. Called by `rental_escrow::rent` in both `Rented { HandoverOpen }` and `Rented { HandoverConfirmed }` sub-branches, after `E_INSUFFICIENT_PAYMENT`. The caller derives both type strings from its own generic parameters via `type_name::get<T>().into_string()`. |
+| `burn(receipt)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
+
+No error constants. No events (see `payment_receipt.spec.md` §3 for the
+deliberate exclusion from the star schema).
+
+**Status:** [ ] `PaymentReceipt` · [ ] `new` · [ ] `burn`
+
+**Depends on:** nothing (only `sui::object`, `sui::transfer`, `std::ascii::String`).
+
+---
+
+### 8. ~~`events.move`~~ — No standalone events module
 
 Event structs live in the module that emits them. See **Events** note in the
 dependency graph above. Protocol state-machine events are specified in
 `rental_escrow.spec.md`. Cap lifecycle events in `owner_cap.spec.md` and
 `tenant_cap.spec.md`. Fee events in `fee_message.spec.md`.
+`payment_receipt` emits no events by design.
 
 ---
 
-### 8. `protocol_fee_inbox.move` — Protocol fee inbox
+### 9. `protocol_fee_inbox.move` — Protocol fee inbox
 
 **Responsibility:** `ProtocolFeeInbox` singleton and `ProtocolFeeRef` frozen pointer.
 `ProtocolFeeInbox` is the transfer-to-object target for all `FeeMessage<C>` objects
@@ -444,7 +483,7 @@ inbox's ID — passed to `integrate` by any integrator without consensus overhea
 
 ---
 
-### 9. `fee_message.move` — Protocol fee message and drain
+### 10. `fee_message.move` — Protocol fee message and drain
 
 **Responsibility:** `FeeMessage<C>` per-boundary-event fee object, and all
 fund-routing logic: `send_fee` creates and routes to the inbox at each boundary;
@@ -476,7 +515,7 @@ module (`key` only type).
 
 ---
 
-### 10. `rental_escrow.move` — Core escrow and public API
+### 11. `rental_escrow.move` — Core escrow and public API
 
 **Responsibility:** The central shared object, state machine, lazy evaluation,
 all public entry points, and fund distribution logic.
@@ -519,7 +558,7 @@ functions.
 | Function | Visibility | Summary |
 |---|---|---|
 | `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `fee_ref_inbox_id(fee_ref)` and stores it as `fee_inbox_id`. Accepts `&Clock` — reads `clock.timestamp_ms()` and stores it as `integrated_at_ms` (used by `retire_floor` enforcement). Returns `OwnerCap`. |
-| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`. `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
+| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`, mints + pushes a symbolic `PaymentReceipt` to the bidder (no protocol authority). Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`, mints + pushes a symbolic `PaymentReceipt` to the new bidder (no protocol authority; displaced bidder keeps the receipt they minted on their prior bid). `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
@@ -558,7 +597,7 @@ when a transition logically occurred and when it was executed.
 | `install_new_tenant` | Shared acquisition path for `rent()` Idle / AtDutchAuction arms: absorb payment into `tenant_stake`, anchor `phase_start_ms = clock.now()`, mint + push `TenantCap`, register addresses, transition to `Rented { HandoverOpen }`. Returns the new `TenantCap` ID so the caller emits `RentStarted` with its arm-specific `from_state`. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
-`protocol_fee_inbox`, `fee_message`.
+`payment_receipt`, `protocol_fee_inbox`, `fee_message`.
 
 ---
 
@@ -718,14 +757,16 @@ sources/
     config.move                   §4   — IntegrationConfig struct + validation
     owner_cap.move                §5   — OwnerCap object (includes cap lifecycle events)
     tenant_cap.move               §6   — TenantCap object (includes cap lifecycle events)
-    protocol_fee_inbox.move       §8   — ProtocolFeeInbox + ProtocolFeeRef
-    fee_message.move              §9   — FeeMessage + send_fee + drain
-    rental_escrow.move            §10  — RentalEscrow shared object + full public API
+    payment_receipt.move          §7   — PaymentReceipt symbolic object (no events)
+    protocol_fee_inbox.move       §9   — ProtocolFeeInbox + ProtocolFeeRef
+    fee_message.move              §10  — FeeMessage + send_fee + drain
+    rental_escrow.move            §11  — RentalEscrow shared object + full public API
 tests/
     math_tests.move
     curve_shape_tests.move
     price_function_tests.move
     config_tests.move
+    payment_receipt_tests.move
     fee_message_tests.move
     rental_escrow_tests.move
 Move.toml
@@ -883,11 +924,12 @@ Build bottom-up following the dependency graph:
 4.  config                    (depends on curve_shape, price_function)
 5.  owner_cap                 (leaf)
 6.  tenant_cap                (leaf)
-7.  protocol_fee_inbox        (leaf)
-8.  fee_message               (depends on protocol_fee_inbox)
-9.  rental_escrow             (depends on all above)
+7.  payment_receipt           (leaf)
+8.  protocol_fee_inbox        (leaf)
+9.  fee_message               (depends on protocol_fee_inbox)
+10. rental_escrow             (depends on all above)
 ```
 
 Steps 2–3 are independent of each other (both depend only on math) and can be built in parallel.
-Steps 5–7 are independent leaves — build in parallel.
-Step 4 (config) waits on steps 2–3. Step 8 waits on step 7. Step 9 waits on all.
+Steps 5–8 are independent leaves — build in parallel.
+Step 4 (config) waits on steps 2–3. Step 9 waits on step 8. Step 10 waits on all.

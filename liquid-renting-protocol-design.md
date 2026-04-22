@@ -45,8 +45,9 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 13. [Attack Vectors and Protocol Resilience](#13-attack-vectors-and-protocol-resilience)
 14. [Integration Design Space](#14-integration-design-space)
 15. [The Native Token Demand Circuit](#15-the-native-token-demand-circuit)
-16. [The Protocol in Practice](#16-the-protocol-in-practice)
-17. [Glossary](#17-glossary)
+16. [Scalability Strategy](#16-scalability-strategy)
+17. [The Protocol in Practice](#17-the-protocol-in-practice)
+18. [Glossary](#18-glossary)
 
 ---
 
@@ -1210,7 +1211,78 @@ The protocol's success and the integrating protocol's token economy are not inde
 
 ---
 
-## 16. The Protocol in Practice
+## 16. Scalability Strategy
+
+The Liquid Renting Protocol is designed to scale horizontally. Each integrated asset lives in its own independent `RentalEscrow<Asset, CoinType>` shared object, and operations on different escrows execute in parallel without contention. There is no global shared state in the steady-state critical path — no central treasury, no global registry, no protocol-wide counter. Scalability is a structural property of the object model, not a runtime optimization.
+
+### The Escrow as an Independent Execution Lane
+
+Every integrated asset is wrapped in a distinct `RentalEscrow` shared object at integration time. All protocol operations on that asset — `rent`, `apply_pending_transitions`, `borrow_asset`, `return_asset`, `retire`, `claim_asset`, `withdraw_earnings` — take the escrow by mutable reference. Two operations on the **same** escrow serialize through consensus; two operations on **different** escrows execute in parallel.
+
+This is the maximum parallelism compatible with correctness. The state machine (§3, §4) requires atomicity within each escrow: a single tenant at a time, a single pending bid at a time, a single handover at a time. Serializing operations on the same escrow preserves those invariants. Parallelizing operations across escrows captures the throughput ceiling of Sui's executor, which is designed to saturate CPU through disjoint-object parallelism.
+
+Aggregate throughput therefore scales linearly with the number of active escrows, bounded only by the parallelism of the validator set — not by any property internal to the protocol.
+
+### The Clock as a Read-Only Dependency
+
+Every mutating operation reads the on-chain clock to settle elapsed boundaries and evaluate time-dependent prices. The clock is a singleton shared object located at address `0x6`, which raises a legitimate question: does universal clock access create cross-escrow contention?
+
+It does not. The Sui object model treats shared objects accessed via immutable reference as non-contentious by construction. Three structural properties combine to produce this guarantee:
+
+- **Versioning.** An immutable reference to a shared object participates in scheduling but does not increment the object's version. Multiple transactions reading the clock share the same logical version without serializing against each other.
+- **Execution.** Transactions declaring a shared input as `mutable: false` are explicitly marked as parallelizable against other read-only users of the same object. The executor runs them concurrently.
+- **Congestion.** The `SharedObjectCongestionTracker` that governs Sui's local fee markets charges no budget against immutable shared inputs. The clock therefore cannot become a congestion hotspot that defers unrelated transactions.
+
+The effect is that the clock behaves, for all purposes of cross-escrow scalability, as if it were a free ambient input. Two operations `(&mut EscrowA, &Clock)` and `(&mut EscrowB, &Clock)` contend on nothing.
+
+### What Is Kept Out of the Critical Path
+
+The scalability of the protocol rests on what is deliberately **not** present as shared mutable state in the steady-state flow. The design places every participant and every auxiliary object in an ownership mode that avoids consensus when possible, and reduces consensus participation to its minimum when not.
+
+| Object | Ownership mode | Consensus cost |
+|---|---|---|
+| `RentalEscrow` | shared mutable | one consensus pass per operation — the lane itself |
+| `Clock` | shared immutable | participates in scheduling; no contention, no congestion budget |
+| `OwnerCap`, `TenantCap` | owned (`key + store`) | fastpath — no consensus |
+| `FeeMessage<CoinType>` | owned, routed via transfer-to-object | no consensus |
+| `ProtocolFeeInbox` | owned by the protocol operator | fastpath drain — no consensus |
+| `IntegrationConfig` | embedded value inside the escrow | no separate object |
+
+No field, counter, registry, or treasury exists at global scope. The protocol operator collects fees through an owned inbox; integration parameters live inside each escrow; capabilities live with their holders. Every cross-escrow operation is independent by construction.
+
+### The Per-Operation Cost Budget
+
+Each mutating operation pays a fixed cost budget composed of two parts:
+
+- **One consensus pass** on the escrow itself. Unavoidable: the escrow is shared, and permissionless access to `rent` requires any address to be able to contend for the current tenancy. Moving the escrow to single-owner would force rental operations into the owning address's fastpath, eliminating the open bidding that the protocol's design requires.
+- **O(1) state-machine work.** The lazy settlement engine executes at most three sequential transitions per call — a structural property of the state machine, grounded in the lazy-evaluation model of §11. There is no unbounded iteration, no list traversal, no pending-queue scan.
+
+The gas cost of an operation is therefore bounded independently of protocol history, age of the escrow, or number of previous tenants. An escrow rented a thousand times costs the same per operation as one rented once.
+
+### Lazy Evaluation as a Throughput Multiplier
+
+The absence of keepers, cron jobs, or scheduled callbacks is not only an operational simplification — it directly multiplies the protocol's effective throughput.
+
+Every time-triggered transition — handover completion, tenure expiry, Dutch Auction expiry — materializes piggybacked on the next mutating operation, or on a dedicated `apply_pending_transitions` call if an external consumer needs settled state. A protocol that required a keeper to fire these transitions would pay three additional transactions per full tenancy cycle per escrow. Here it pays zero. The transitions are semantic consequences of the clock advancing, not events that require on-chain work.
+
+At scale this compounds: ten thousand escrows running tenancy cycles produce zero keeper traffic, zero scheduled callbacks, zero maintenance overhead. The only transactions that hit the chain are the ones that reflect genuine market activity.
+
+### What Does Not Scale — and Why That Is Correct
+
+Two things are intentionally non-parallel, and both are inherent to the semantics of the protocol:
+
+- **Operations on the same escrow.** Two tenants cannot simultaneously claim the same asset, two bidders cannot simultaneously supersede each other, two retirements cannot collide. The single-escrow serialization is what enforces this. Parallelizing within an escrow would either introduce race conditions or require reconciliation logic — both unnecessary when the state machine is small enough to settle in a single consensus pass.
+- **High-frequency renting of a single asset.** The throughput ceiling per escrow is the commit cadence of the validator network. A use case requiring sub-second rental rotations on one asset is outside the design target — the protocol serves rentals whose natural time scale is at least the order of the commit cadence, and typically much longer (hours, days, weeks).
+
+Neither limitation is a cost the protocol pays for scalability elsewhere. They are direct reflections of what the protocol is: a market for the exclusive use of an asset, operating at the native cadence of on-chain consensus.
+
+### Summary
+
+Scalability in the Liquid Renting Protocol is not a property bolted on top of the design — it is a direct consequence of the object model. Horizontal parallelism across escrows is unlimited. Per-escrow throughput is bounded by consensus cadence, which is precisely the cost required for atomicity. The clock introduces no cross-escrow contention. No global shared object exists in the critical path. The only transactions the chain processes are those reflecting actual market activity. The protocol's architecture aligns cleanly with Sui's execution model: it pays consensus exactly where the semantics demand it, and nowhere else.
+
+---
+
+## 17. The Protocol in Practice
 
 The following instantiations illustrate which protocol mechanic does the work, and what problem it solves that a static rental model could not.
 
@@ -1254,7 +1326,7 @@ The protocol applies because yield optimization is a competitive service: multip
 
 ---
 
-## 17. Glossary
+## 18. Glossary
 
 ### Actors
 

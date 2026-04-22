@@ -21,9 +21,14 @@ authority** and is invisible to every call site outside this module.
   in `Rented { HandoverOpen }` or `Rented { HandoverConfirmed }`. Holds the
   escrow identity, the amount paid, and the canonical type strings for coin
   and asset.
-- `new(escrow_id, amount, coin_type, asset_type, ctx): PaymentReceipt` —
-  `public(package)`. Mint. Called by `rental_escrow::rent` in both Rented
-  sub-branches, after the `E_INSUFFICIENT_PAYMENT` check passes.
+- `mint_to(escrow_id, amount, coin_type, asset_type, recipient, ctx)` —
+  `public(package)`. Fused mint + delivery. Constructs the receipt inline
+  and transfers it to `recipient`. No return value — the caller
+  (`rental_escrow`) has no use for the receipt's `ID`. The transfer lives
+  inside this module: `transfer::transfer<PaymentReceipt>` only compiles
+  here (Sui verifier rejects it for a `key`-only foreign type). Called by
+  `rental_escrow::rent` in both Rented sub-branches, after the
+  `E_INSUFFICIENT_PAYMENT` check passes.
 - `burn(receipt)` — `public`. Voluntary destroy by holder for gas recovery.
   No state mutation anywhere. The protocol never forces this.
 
@@ -33,8 +38,8 @@ authority** and is invisible to every call site outside this module.
 - Any event stream — see §3.
 - Type-parameter plumbing — `rental_escrow::rent` already has `<Asset,
   CoinType>` in scope and derives the canonical strings via
-  `type_name::get<T>().into_string()` before calling `new`. This module is a
-  passive data container.
+  `type_name::get<T>().into_string()` before calling `mint_to`. This module
+  is a passive data container.
 
 **Key design properties:**
 
@@ -90,9 +95,10 @@ authority** and is invisible to every call site outside this module.
 ------------------
 
 None. No function in this module has validatable preconditions that require
-named abort codes. `new` is a pure constructor with no runtime checks (all
-validation — sufficient payment, correct state — happens at the call site in
-`rental_escrow::rent`). `burn` is unconditional.
+named abort codes. `mint_to` is a pure constructor-plus-transfer with no
+runtime checks (all validation — sufficient payment, correct state —
+happens at the call site in `rental_escrow::rent`). `burn` is
+unconditional.
 
 
 2. TYPE
@@ -117,8 +123,9 @@ public struct PaymentReceipt has key {
 ```
 
 **Abilities:** `key` only.
-- `key` — object identity. Required for `transfer::transfer` (push to
-  sender in `rental_escrow::rent`).
+- `key` — object identity. Required for `transfer::transfer` inside
+  `mint_to` (same module; the verifier rejects `transfer::transfer` of a
+  `key`-only type from any other module).
 - No `store` — non-transferable. Cannot be wrapped or moved by external
   code. The holder's only exit is `burn`.
 
@@ -207,46 +214,52 @@ reading Sui's object-creation envelope filtered by the
 4. FUNCTIONS
 ------------
 
-### `new`
+### `mint_to`
 
-    public(package) fun new(
+    public(package) fun mint_to(
         escrow_id:  ID,
         amount:     u64,
         coin_type:  String,
         asset_type: String,
+        recipient:  address,
         ctx:        &mut TxContext,
-    ): PaymentReceipt
+    )
 
 **Visibility:** `public(package)` — callable only by `rental_escrow`.
 
-**Purpose:** constructs a `PaymentReceipt` from already-derived inputs. The
-caller has validated the payment (`E_INSUFFICIENT_PAYMENT`), captured
-`amount = coin::value(&payment)` before consuming the coin, and derived the
-two type strings from the generic parameters of the surrounding
+**Purpose:** fused mint + delivery. Constructs a `PaymentReceipt` from
+already-derived inputs and transfers it to `recipient`. The caller has
+validated the payment (`E_INSUFFICIENT_PAYMENT`), captured
+`amount = coin::value(&payment)` before consuming the coin, and derived
+the two type strings from the generic parameters of the surrounding
 `rental_escrow::rent<Asset, CoinType>` call.
 
 **Behavior:**
-1. Construct and return
+1. Construct inline:
    ```
-   PaymentReceipt {
+   let receipt = PaymentReceipt {
        id: object::new(ctx),
        escrow_id,
        amount,
        coin_type,
        asset_type,
-   }
+   };
    ```
+2. `transfer::transfer(receipt, recipient);`
 
 That is the entire body. No events, no mutation of any shared state, no
-additional derivation — the caller owns all of that.
+return value. The caller never holds a `PaymentReceipt` as a local.
 
-**Delivery:** `rental_escrow::rent` calls `transfer::transfer(receipt,
-tx_context::sender(ctx))` immediately after `new` returns, pushing the
-receipt to the bidder. This module does not perform the transfer.
+**Why the transfer lives here, not in the caller:** the Sui bytecode
+verifier enforces that `transfer::transfer<T>` for a `key`-only type `T`
+can only appear inside the module that defines `T`. A
+`rental_escrow`-side `transfer::transfer(receipt, recipient)` would fail
+to compile. The fused form is the only working shape.
 
 **Call sites:** `rental_escrow::rent`, in both `Rented { HandoverOpen }`
 and `Rented { HandoverConfirmed }` sub-branches, after the
-`E_INSUFFICIENT_PAYMENT` check. No other call site exists or will exist.
+`E_INSUFFICIENT_PAYMENT` check. Passes `tx_context::sender(ctx)` as
+`recipient`. No other call site exists or will exist.
 
 ---
 
@@ -275,17 +288,18 @@ stale, no fund moves. The object simply ceases to exist.
 -------------
 
 **P1 — Minted only at successful bids in Rented states:**
-    `new` is `public(package)` and called exclusively from `rental_escrow::
-    rent` in the two `Rented` sub-branches, after
+    `mint_to` is `public(package)` and called exclusively from
+    `rental_escrow::rent` in the two `Rented` sub-branches, after
     `E_INSUFFICIENT_PAYMENT` has passed. No other path creates a
     `PaymentReceipt`. 1:1 correspondence with `BidPlaced` /
     `BidSuperseded`.
 
-**P2 — Non-transferable by type:**
-    `key` only, no `store`. No transfer function exists in this module.
-    The Sui type system enforces this — no external code can move the
-    receipt between addresses. Mint-recipient ≡ burn-tx sender (when
-    `burn` is eventually called).
+**P2 — Non-transferable by type, single delivery channel:**
+    `key` only, no `store`. The only `transfer::transfer<PaymentReceipt>`
+    call in the entire protocol lives inside `mint_to` of this module;
+    the Sui bytecode verifier rejects it at any other call site. No
+    external code can move the receipt between addresses after mint.
+    Mint-recipient ≡ burn-tx sender (when `burn` is eventually called).
 
 **P3 — Zero protocol power:**
     No function in any module of the protocol reads, mutates, or checks a
@@ -313,13 +327,14 @@ stale, no fund moves. The object simply ceases to exist.
 6. TEST CASES
 -------------
 
-### 6.1 `new`
+### 6.1 `mint_to`
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `new(escrow_id, amount, coin_type, asset_type, ctx)` | Returns `PaymentReceipt` with the four input fields exactly as passed. Object has a fresh UID. **No event emitted.** |
-| N2 | Two calls with same inputs in the same tx | Two distinct `PaymentReceipt` objects (distinct UIDs), identical content in all other fields. |
+| N1 | `mint_to(escrow_id, amount, coin_type, asset_type, recipient, ctx)` | After the call, `test_scenario::take_from_address<PaymentReceipt>(scenario, recipient)` yields a receipt with the four input fields exactly as passed and a fresh UID. **No event emitted.** |
+| N2 | Two calls with same inputs in the same tx | Two distinct `PaymentReceipt` objects in `recipient`'s account (distinct UIDs), identical content in all other fields. |
 | N3 | Two calls with distinct amounts / types | Two receipts with matching fields per call. Asserts fields are copied verbatim from arguments, not derived internally. |
+| N4 | `mint_to` passing a `recipient` different from `tx_context::sender(ctx)` | The receipt lands in `recipient`'s account, **not** in the sender's. Asserts delivery routes through the argument. (Not a path exercised by `rental_escrow::rent`, which always passes the sender — included for completeness of the fused-delivery contract.) |
 
 ### 6.2 `burn`
 
@@ -332,7 +347,7 @@ stale, no fund moves. The object simply ceases to exist.
 
 | # | Description | Expected |
 |---|---|---|
-| L1 | `new` → `burn` | Full lifecycle. No abort. No events emitted in either step. |
+| L1 | `mint_to` → take from `recipient` → `burn` | Full lifecycle. No abort. No events emitted in either step. |
 
 
 7. MODULE BOUNDARY
@@ -342,8 +357,8 @@ stale, no fund moves. The object simply ceases to exist.
 
 | Symbol | Visibility | Notes |
 |---|---|---|
-| `PaymentReceipt` (type) | `public` | `key` only. Non-transferable. Symbolic — no protocol authority. |
-| `new(escrow_id, amount, coin_type, asset_type, ctx): PaymentReceipt` | `public(package)` | Mint. Called only by `rental_escrow::rent` in the Rented sub-branches. No event emitted. |
+| `PaymentReceipt` (type) | `public` | `key` only. Non-transferable by type; single delivery channel (`mint_to`). Symbolic — no protocol authority. |
+| `mint_to(escrow_id, amount, coin_type, asset_type, recipient, ctx)` | `public(package)` | Fused mint + delivery. Constructs the receipt and transfers it to `recipient`. No return value. Called only by `rental_escrow::rent` in the Rented sub-branches, with `recipient == tx_context::sender(ctx)`. No event emitted. |
 | `burn(receipt)` | `public` | Voluntary destroy for gas recovery. No state mutation. No event emitted. |
 
 No error constants. No events.

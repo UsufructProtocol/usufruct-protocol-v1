@@ -16,10 +16,15 @@ Depends on: nothing (`sui::object` only)
 - `TenantCap` — `key` only. One minted per tenant transition event
   (not per bid). Non-transferable by type. Can become stale after
   displacement — inert, failing the ID check in `rental_escrow`.
-- `new(escrow_id, tenant, ctx): TenantCap` — `public(package)`. Mint.
+- `mint_to(escrow_id, tenant, ctx): ID` — `public(package)`. Fused
+  mint + delivery. Constructs the cap, emits `TenantCapMinted`,
+  transfers the cap to `tenant`, and returns its `ID` to the caller
+  (needed by `rental_escrow` to update `current_tenant_cap_id`).
   Called by `rental_escrow::rent` (from Idle, AtDutchAuction) and by
-  `rental_escrow::do_handover` (handover completion). `tenant` is the
-  recipient address, recorded in the `TenantCapMinted` event.
+  `rental_escrow::do_handover` (handover completion). The transfer
+  lives inside this module — `rental_escrow` never performs
+  `transfer::transfer<TenantCap>`, which the Sui bytecode verifier
+  would reject for a `key`-only foreign type.
 - `burn(cap)` — `public`. Voluntary destroy by cap holder for gas
   recovery. No state mutation. The protocol never forces this.
   `TenantCapBurned` carries only the cap/escrow identity pair — the
@@ -73,16 +78,20 @@ Depends on: nothing (`sui::object` only)
   — its object ID no longer matches `escrow.current_tenant_cap_id`.
   Stale caps are inert: `borrow_asset` rejects them via the ID check.
   `burn` is the sole exit path, available at the holder's discretion.
-- **All TenantCap deliveries are pushes:**
+- **All TenantCap deliveries are pushes — performed by this module:**
   `rent()` has a single signature across all states. In Rented states
   no cap is minted — returning `Option<TenantCap>` would be required
   for a return-based design, which is inconsistent and awkward.
-  Instead, all deliveries use `transfer::transfer`:
-  - `rent()` from Idle/AtDutchAuction → pushes to `tx_context::sender(ctx)`.
-  - `do_handover()` → pushes to `pending_tenant_address` (not
-    `tx.sender()`; push is the only viable mechanism here).
-  Uniform push across all mint sites keeps the delivery model simple
-  and consistent.
+  Instead, all deliveries happen inside `mint_to`, which internally
+  calls `transfer::transfer(cap, tenant)`:
+  - `rental_escrow::rent` from Idle/AtDutchAuction calls
+    `mint_to(escrow_id, tx_context::sender(ctx), ctx)`.
+  - `rental_escrow::do_handover` calls
+    `mint_to(escrow_id, pending_tenant_address, ctx)`.
+  The caller never holds a `TenantCap` as a local — which is what
+  makes the pattern type-safe. `transfer::transfer<TenantCap>` only
+  compiles inside this module (the verifier forbids it in any other),
+  so `mint_to` is the single physically possible delivery channel.
 - **TenantCap as signal:** the cap appearing in the wallet is the
   clearest notification of tenancy. No indexer query or event
   subscription needed.
@@ -92,7 +101,7 @@ Depends on: nothing (`sui::object` only)
 ------------------
 
 None. No function in this module has validatable preconditions that
-require named abort codes. `burn` is unconditional; `new` has no
+require named abort codes. `burn` is unconditional; `mint_to` has no
 preconditions.
 
 
@@ -113,9 +122,10 @@ public struct TenantCap has key {
 ```
 
 **Abilities:** `key` only.
-- `key` — object identity. Required for `transfer::transfer` (push to
-  tenant address) and for the ID-based staleness check in
-  `rental_escrow`.
+- `key` — object identity. Required for `transfer::transfer` inside
+  `mint_to` (same module; the verifier rejects `transfer::transfer` of
+  a `key`-only type from any other module) and for the ID-based
+  staleness check in `rental_escrow`.
 - No `store` — non-transferable. Cannot be wrapped or moved by external
   code. The holder's only exit is `burn`.
 
@@ -191,7 +201,7 @@ appears on both events because each row carries genuinely new
 information.
 
 **No `timestamp_ms` field.** The module has no authoritative time to
-report: `new` may be called from a lazy-settlement path whose logical
+report: `mint_to` may be called from a lazy-settlement path whose logical
 moment is in the past, so `clock.now()` would record settlement time,
 not logical time. Consumers order by checkpoint timestamp + tx
 position (attached by Sui to the envelope for free). The module emits
@@ -201,37 +211,50 @@ identity and the holder address only.
 4. FUNCTIONS
 ------------
 
-### `new`
+### `mint_to`
 
-    public(package) fun new(
+    public(package) fun mint_to(
         escrow_id: ID,
         tenant:    address,
         ctx:       &mut TxContext,
-    ): TenantCap
+    ): ID
 
 **Visibility:** `public(package)` — callable only by `rental_escrow`.
 
-**Purpose:** mints a `TenantCap` bound to a specific escrow and
-records the intended recipient in the event stream.
+**Purpose:** fused mint + delivery. Constructs a `TenantCap` bound to
+the given escrow, emits `TenantCapMinted`, transfers the cap to
+`tenant`, and returns its `ID` to the caller. The returned `ID` is
+consumed by `rental_escrow` to update `escrow.current_tenant_cap_id`;
+no caller ever holds the cap itself.
 
 **Behavior:**
-1. Construct `cap = TenantCap { id: object::new(ctx), escrow_id }`.
-2. `let tenant_cap_id = object::uid_to_inner(&cap.id);`
-3. Emit `TenantCapMinted { tenant_cap_id, escrow_id, tenant }` —
-   emission runs last, after the cap has been constructed.
-4. Return `cap`. The caller (`rental_escrow::rent` or `do_handover`)
-   is responsible for delivering it to `tenant` via
-   `transfer::transfer(cap, tenant)`. The module does not perform the
-   transfer; the `tenant` argument is a declarative annotation for the
-   indexer, not a runtime check. The `tenant` field is not stored on
-   the `TenantCap` struct — the cap is non-transferable by type so a
-   stored field would be redundant; the event row is the sole record.
+1. Construct `let cap = TenantCap { id: object::new(ctx), escrow_id };`.
+2. `let tenant_cap_id = object::uid_to_inner(&cap.id);` — bound before
+   the transfer consumes `cap`.
+3. `transfer::transfer(cap, tenant);`
+4. `event::emit(TenantCapMinted { tenant_cap_id, escrow_id, tenant });`
+   — emit-last, after the cap has both been constructed and delivered.
+5. Return `tenant_cap_id`.
+
+The `tenant` field is not stored on the `TenantCap` struct — the cap
+is non-transferable by type so a stored field would be redundant; the
+event row is the sole record of the mint recipient.
+
+**Why the transfer lives here, not in the caller:** the Sui bytecode
+verifier enforces that `transfer::transfer<T>` for a `key`-only type
+`T` can only appear inside the module that defines `T`. A
+`rental_escrow`-side `transfer::transfer(cap, tenant)` would fail to
+compile. The fused form is the only working shape; any future call
+site must route through `mint_to`.
 
 **Call sites:**
 - `rental_escrow::rent` (from Idle, AtDutchAuction) — passes
-  `tx_context::sender(ctx)` as `tenant`, then pushes the cap there.
+  `tx_context::sender(ctx)` as `tenant`; `mint_to` transfers the cap
+  internally. Caller stores the returned `ID` in
+  `escrow.current_tenant_cap_id`.
 - `rental_escrow::do_handover` — passes `pending_tenant_address` as
-  `tenant`, then pushes the cap there.
+  `tenant`; `mint_to` transfers the cap internally. Caller stores the
+  returned `ID` in `escrow.current_tenant_cap_id`.
 
 ---
 
@@ -293,7 +316,7 @@ Both checks live in `rental_escrow`, not here.
 -------------
 
 **P1 — Minted only at tenant transition:**
-    `new` is `public(package)` and called only at `rent()` (Idle,
+    `mint_to` is `public(package)` and called only at `rent()` (Idle,
     AtDutchAuction) and `do_handover()`. Bids during Rented states do
     not mint a cap. No orphaned caps from superseded bidders.
 
@@ -312,26 +335,30 @@ Both checks live in `rental_escrow`, not here.
     unaware. The only consequence is that the object ceases to exist —
     it can no longer be presented to `borrow_asset`.
 
-**P5 — All deliveries are pushes:**
+**P5 — All deliveries are pushes, performed by `mint_to`:**
     `rent()` has a single signature and does not mint a cap in Rented
     states. A return-based design would require `Option<TenantCap>`,
-    which is inconsistent. All mint sites use `transfer::transfer`:
-    `rent()` pushes to `tx_context::sender(ctx)`; `do_handover()`
-    pushes to `pending_tenant_address`. Uniform mechanism across all
-    delivery paths.
+    which is inconsistent. All mint sites route through
+    `mint_to(escrow_id, recipient, ctx)`, which internally performs
+    `transfer::transfer(cap, recipient)`: `rental_escrow::rent` passes
+    `tx_context::sender(ctx)` as the recipient; `do_handover` passes
+    `pending_tenant_address`. **Enforced by the type system:**
+    `transfer::transfer<TenantCap>` only compiles inside this module,
+    so `mint_to` is the only physically possible delivery channel — no
+    external call site can bypass it even by accident.
 
 
 6. TEST CASES
 -------------
 
-### 6.1 `new`
+### 6.1 `mint_to`
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `new(escrow_id, tenant, ctx)` | Returns `TenantCap` with `cap.escrow_id == escrow_id`. Object has a fresh UID. One `TenantCapMinted { tenant_cap_id, escrow_id, tenant }` event emitted with `tenant_cap_id == object::id(&cap)`, matching `escrow_id`, and `tenant` equal to the argument. |
-| N2 | Two calls with same `escrow_id`, same `tenant`, same tx | Two distinct `TenantCap` objects (distinct UIDs), both bound to the same escrow_id and same tenant. Two `TenantCapMinted` events with distinct `tenant_cap_id` and identical `(escrow_id, tenant)`. |
-| N3 | Two calls with distinct `escrow_id`s and distinct `tenant`s | Two caps with distinct triples. Two `TenantCapMinted` events with matching triples. |
-| N4 | `new` passing a `tenant` different from `tx_context::sender(ctx)` (the `do_handover` case, where `tenant == pending_tenant_address`) | Event `tenant` equals the argument, not the tx sender. Asserts the field is declarative, not a runtime echo of sender. |
+| N1 | `mint_to(escrow_id, tenant, ctx)` | Returns `ID`. After the call, `test_scenario::take_from_address<TenantCap>(scenario, tenant)` yields a cap with `cap.escrow_id == escrow_id` and `object::id(&cap) == returned_id`. One `TenantCapMinted { tenant_cap_id: returned_id, escrow_id, tenant }` event emitted. |
+| N2 | Two calls with same `escrow_id`, same `tenant`, same tx | Two distinct `TenantCap` objects (distinct UIDs) end up in `tenant`'s account, both bound to the same escrow_id. Two `TenantCapMinted` events with distinct `tenant_cap_id` and identical `(escrow_id, tenant)`. Two distinct `ID`s returned. |
+| N3 | Two calls with distinct `escrow_id`s and distinct `tenant`s | Each cap lands in its respective `tenant` account. Two `TenantCapMinted` events with matching triples. |
+| N4 | `mint_to` passing a `tenant` different from `tx_context::sender(ctx)` (the `do_handover` case, where `tenant == pending_tenant_address`) | The cap is retrievable via `take_from_address(scenario, tenant)`, **not** from the sender's account. Event `tenant` equals the argument, not the tx sender. Asserts delivery routes through the argument, not through the transaction sender. |
 
 ### 6.2 `burn`
 
@@ -346,14 +373,14 @@ Both checks live in `rental_escrow`, not here.
 
 | # | Description | Expected |
 |---|---|---|
-| G1 | `escrow_id(&cap)` after `new(id, ctx)` | Returns `id`. |
+| G1 | `escrow_id(&cap)` on a cap retrieved from `tenant`'s account after `mint_to(id, tenant, ctx)` | Returns `id`. |
 
 ### 6.4 Lifecycle
 
 | # | Description | Expected |
 |---|---|---|
-| L1 | `new` → `escrow_id` check → `burn` | Full lifecycle. No abort. One `TenantCapMinted { tenant_cap_id, escrow_id, tenant }` at `new`, one `TenantCapBurned { tenant_cap_id, escrow_id }` at `burn`, sharing the `(tenant_cap_id, escrow_id)` pair. `tenant` present on Minted only. |
-| L2 | `new` (cap A, tenant T1) → `new` (cap B, same escrow, tenant T2) → both have distinct `object::id` | Staleness mechanic relies on distinct IDs — confirmed at mint. Two `TenantCapMinted` events with distinct `tenant_cap_id`, identical `escrow_id`, distinct `tenant`. |
+| L1 | `mint_to` → take cap from recipient → `escrow_id` check → `burn` | Full lifecycle. No abort. One `TenantCapMinted { tenant_cap_id, escrow_id, tenant }` at `mint_to`, one `TenantCapBurned { tenant_cap_id, escrow_id }` at `burn`, sharing the `(tenant_cap_id, escrow_id)` pair. `tenant` present on Minted only. |
+| L2 | `mint_to` (cap A, tenant T1) → `mint_to` (cap B, same escrow, tenant T2) → both returned `ID`s distinct | Staleness mechanic relies on distinct IDs — confirmed at mint. Two `TenantCapMinted` events with distinct `tenant_cap_id`, identical `escrow_id`, distinct `tenant`. |
 | L3 | Stale cap: `burn` available after displacement | Holder can clean up regardless of escrow state. `TenantCapBurned` emitted with the stale cap's `(tenant_cap_id, escrow_id)`. |
 
 
@@ -364,10 +391,10 @@ Both checks live in `rental_escrow`, not here.
 
 | Symbol | Visibility | Notes |
 |---|---|---|
-| `TenantCap` (type) | `public` | `key` only. Non-transferable. One per tenant transition event. |
-| `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. |
+| `TenantCap` (type) | `public` | `key` only. Non-transferable by type; single delivery channel (`mint_to`). One per tenant transition event. |
+| `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `mint_to`. |
 | `TenantCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
-| `new(escrow_id, tenant, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::rent` and `rental_escrow::do_handover`. Emits `TenantCapMinted { tenant_cap_id, escrow_id, tenant }`. |
+| `mint_to(escrow_id, tenant, ctx): ID` | `public(package)` | Fused mint + delivery. Constructs the cap, transfers it to `tenant`, emits `TenantCapMinted { tenant_cap_id, escrow_id, tenant }`, returns `tenant_cap_id`. Called by `rental_escrow::rent` and `rental_escrow::do_handover`. The transfer lives here (required: `transfer::transfer<TenantCap>` only compiles in this module). |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned { tenant_cap_id, escrow_id }`. Holder address recoverable by JOIN on `tenant_cap_id` against `TenantCapMinted`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 

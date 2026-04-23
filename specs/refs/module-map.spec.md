@@ -498,7 +498,14 @@ module (`key` only type).
 
 **Fields (`FeeMessage`):**
 - `id: UID`
+- `escrow_id: ID`
 - `balance: Balance<CoinType>`
+
+No `fee_inbox_id` field — the routing inbox is the transfer-to-object
+parent relation tracked by Sui; `transfer::receive` aborts at drain if
+the presented parent does not own the ticket, so a stored ID would be
+strictly redundant for correctness. `fee_inbox_id` is still emitted on
+both lifecycle events.
 
 **Exports:**
 
@@ -506,8 +513,8 @@ module (`key` only type).
 |---|---|---|
 | `send_fee<C>(balance, fee_inbox_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
 | `receive_message<C>(inbox, ticket)` | private | Receives one `FeeMessage<C>` from inbox via `transfer::receive`. |
-| `consume_message<C>(msg)` | private | Destructures `FeeMessage<C>`, deletes UID, returns `Balance<C>`. |
-| `collect_fee_messages<C>(inbox, tickets, ctx): Coin<C>` | `public` | Pipeline of `receive_message` + `consume_message`. Single pass O(n). Returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
+| `consume_message<C>(msg, fee_inbox_id, collector)` | private | Destructures `FeeMessage<C>`, deletes UID, emits `FeeMessageCollected<C>`, returns `Balance<C>`. Both scalar parameters are hoisted once by `collect_fee_messages` (`object::id(inbox)` and `tx_context::sender(ctx)`) and passed down — invariant within a drain tx. |
+| `collect_fee_messages<C>(inbox, tickets, ctx): Coin<C>` | `public` | Pipeline of `receive_message` + `consume_message` over `tickets` via `vector::do!`. Single pass O(n). Returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
 
 **Status:** [x] `FeeMessage` · [x] `send_fee` · [x] `receive_message` · [x] `consume_message` · [x] `collect_fee_messages`
 

@@ -25,6 +25,11 @@ concepts, no state, no scaling by principals.
   `LOGISTIC_DENOM` cannot be derived from `exp_scaled` at compile time — its value
   is established by running the algorithm once during initial implementation (same
   approach as the golden vectors in `math.spec.md`), then fixed as a literal.
+- `exp_a_norm(alpha_abs, alpha_neg)` — 16-arm lookup table of algorithm-derived
+  u128 literals for the Exponential variant (§7). Same pinning pattern as
+  `LOGISTIC_DENOM`: each of the 16 values depends on `math::exp_scaled`, which
+  Move `const` cannot invoke, so the values are produced once during initial
+  implementation and fixed as match-arm literals.
 
 **Does not own:**
 
@@ -50,9 +55,17 @@ call `curve_shape`. `curve_shape` calls nothing outside `math`.
 
 All curve evaluations operate on a fixed-point representation with:
 
-    SCALE: u64 = 1_000_000_000   (10^9)
+    SCALE:      u64  = 1_000_000_000                (10^9)
+    SCALE_U128: u128 = SCALE as u128                 (10^9)
+    SCALE_SQ:   u128 = SCALE_U128 * SCALE_U128       (10^18, fits u128 ✓)
+    SCALE_CB:   u128 = SCALE_SQ   * SCALE_U128       (10^27, fits u128 ✓)
 
 A curve output value `v` in [0, SCALE] represents the rational g(x) = v / SCALE.
+
+The u128 variants are precomputed at module scope to avoid re-materializing
+the cast / multiplication on every `eval_*` call. Used by `eval_smoothstep`
+(§5), `eval_power_law` Step 2 (§6), `eval_exponential` (§7), and
+`eval_logistic` (§8).
 
 Intermediates use u128 to avoid overflow. Final results are cast back to u64.
 
@@ -215,10 +228,8 @@ Let `x = t * SCALE / t_max` (x in [0, SCALE]).
 
     let x: u64 = math::mul_div(t, SCALE, t_max);    // x in [0, SCALE]
     let x128  = x as u128;
-    let s128  = SCALE as u128;
-    let num   = x128 * x128 * (3 * s128 - 2 * x128);
-    let den   = s128 * s128;
-    (num / den) as u64
+    let num   = x128 * x128 * (3 * SCALE_U128 - 2 * x128);
+    (num / SCALE_SQ) as u64
 
 ### Overflow analysis
 
@@ -272,9 +283,11 @@ Let n = alpha_num, d = alpha_den.
 
 Step 1 — compute x^n scaled:
 
-    let mut acc: u64 = math::mul_div(t, SCALE, t_max);    // x * SCALE
+    // x · SCALE is loop-invariant — compute once, reuse across iterations.
+    let x_scaled: u64 = math::mul_div(t, SCALE, t_max);
+    let mut acc:  u64 = x_scaled;
     for _ in 1..n {
-        acc = math::mul_div(acc, math::mul_div(t, SCALE, t_max), SCALE);
+        acc = math::mul_div(acc, x_scaled, SCALE);
     }
     // acc = x^n * SCALE
 
@@ -285,9 +298,9 @@ Equivalently: R = floor( nth_root(acc * SCALE^(d-1), d) )
 
     let scale_pow: u128 = match d {
         1 => 1,
-        2 => SCALE as u128,
-        3 => (SCALE as u128) * (SCALE as u128),
-        _ => (SCALE as u128) * (SCALE as u128) * (SCALE as u128),  // d=4
+        2 => SCALE_U128,
+        3 => SCALE_SQ,
+        _ => SCALE_CB,  // d=4
     };
     let target: u128 = (acc as u128) * scale_pow;
     let R: u64 = math::nth_root_u128(target, d) as u64;
@@ -332,29 +345,77 @@ and therefore the curve shape:
 
 ### Algorithm
 
-    let a   = alpha_abs as u64;   // ∈ [1, 8]
-    let neg = alpha_neg;
+    let a = alpha_abs as u64;   // ∈ [1, 8]
 
-    // e^(α·x): y_num = a*t, y_den = t_max, sign = neg
-    let exp_ax = math::exp_scaled(a * t, t_max, neg);
+    // e^(α·x) · TS — varies per call (depends on t, t_max).
+    let exp_ax = math::exp_scaled(a * t, t_max, alpha_neg);
 
-    // e^α: y_num = a, y_den = 1, sign = neg
-    let exp_a  = math::exp_scaled(a, 1, neg);
-
-    if !neg {
-        // α > 0: both exp_ax > TS and exp_a > TS
-        let num = exp_ax - TAYLOR_SCALE;
-        let den = exp_a  - TAYLOR_SCALE;
-        (num * SCALE as u128 / den) as u64
+    // |e^(α·x) · TS − TS| — magnitude of numerator.
+    let num = if alpha_neg {
+        TAYLOR_SCALE - exp_ax   // α < 0: exp_ax < TS
     } else {
-        // α < 0: both exp_ax < TS and exp_a < TS
-        // (e^(α·x) - 1) and (e^α - 1) are both negative — ratio is positive
-        let num = TAYLOR_SCALE - exp_ax;   // magnitude of numerator
-        let den = TAYLOR_SCALE - exp_a;    // magnitude of denominator
-        (num * SCALE as u128 / den) as u64
-    }
+        exp_ax - TAYLOR_SCALE   // α > 0: exp_ax > TS
+    };
+
+    // |e^α · TS − TS| — pinned algorithm-derived constant, module-level lookup.
+    let den = exp_a_norm(alpha_abs, alpha_neg);
+
+    (num * SCALE_U128 / den) as u64
 
 `TAYLOR_SCALE` is defined in `math` — see math.spec.md §1.
+
+### Precomputed `exp_a_norm` table
+
+`|e^α · TS − TS|` depends only on `(alpha_abs, alpha_neg)` — both are fixed
+at construction. The domain is finite: `alpha_abs ∈ [1, 8]`, `alpha_neg ∈
+{true, false}` → 16 pairs total. Following the `LOGISTIC_DENOM` precedent
+(§8), algorithm-derived values that Move `const` cannot compute are pinned
+as literals at module scope instead of recomputed per call.
+
+    fun exp_a_norm(alpha_abs: u8, alpha_neg: bool): u128 {
+        match (alpha_abs, alpha_neg) {
+            (1, false) => /* e^1·TS − TS, algorithm-derived literal */,
+            (1, true)  => /* TS − e^−1·TS, algorithm-derived literal */,
+            (2, false) => /* algorithm-derived literal */,
+            (2, true)  => /* algorithm-derived literal */,
+            (3, false) => /* algorithm-derived literal */,
+            (3, true)  => /* algorithm-derived literal */,
+            (4, false) => /* algorithm-derived literal */,
+            (4, true)  => /* algorithm-derived literal */,
+            (5, false) => /* algorithm-derived literal */,
+            (5, true)  => /* algorithm-derived literal */,
+            (6, false) => /* algorithm-derived literal */,
+            (6, true)  => /* algorithm-derived literal */,
+            (7, false) => /* algorithm-derived literal */,
+            (7, true)  => /* algorithm-derived literal */,
+            (8, false) => /* algorithm-derived literal */,
+            (8, true)  => /* algorithm-derived literal */,
+        }
+    }
+
+**Establishing values:** during initial implementation, for each of the 16
+pairs run the following derivation and record the output as the match arm's
+literal (same methodology as the golden vectors in `math.spec.md` §4 and
+`LOGISTIC_DENOM` in §8):
+
+    let a = alpha_abs as u64;
+    let exp_a = math::exp_scaled(a, 1, alpha_neg);
+    let norm  = if alpha_neg { TAYLOR_SCALE - exp_a } else { exp_a - TAYLOR_SCALE };
+    // record `norm` as the `(alpha_abs, alpha_neg)` arm's literal
+
+**Why module scope, not a variant field:** storing `exp_a_norm` as a
+`CurveShape::Exponential` field would cost 16 bytes per escrow in
+persistent Sui object storage (BCS does not pad to max-variant size, but
+the field is paid once per `Exponential` instance). The module-level table
+costs 16 literals once in bytecode, with O(1) lookup via match, and
+preserves the variant posture that fields carry only definition inputs —
+derived values live alongside `LOGISTIC_DENOM`.
+
+**Eliminating the per-call Taylor series:** the original formulation called
+`math::exp_scaled(a, 1, neg)` on every evaluation — up to 32 u128
+multiplications and divisions per call. With the table, `eval_exponential`
+runs exactly one Taylor series per call (`exp_ax`), halving the curve's
+evaluation cost on the hot path walked by every lazy-price read.
 
 ### Constraints validated by constructor
 
@@ -382,8 +443,9 @@ distinguishable from `Smoothstep` without being extreme.
 
 ### Module-level constants
 
-    const LOGISTIC_K: u64     = 12;
-    const LOGISTIC_DENOM: u64 = /* algorithm-derived — establish during initial implementation */;
+    const LOGISTIC_K:           u64  = 12;
+    const LOGISTIC_DENOM:       u64  = /* algorithm-derived — establish during initial implementation */;
+    const LOGISTIC_SIGMA_FLOOR: u128 = (SCALE_U128 - (LOGISTIC_DENOM as u128)) / 2;   // σ(−6) · SCALE
 
 Move `const` only admits literals and simple arithmetic — function calls are not
 allowed. `LOGISTIC_DENOM` must be hardcoded as a literal whose value is produced by
@@ -392,7 +454,11 @@ running the following derivation once and recording the output (K=32, floor roun
     let TS: u128  = TAYLOR_SCALE;
     let ek6: u128 = math::exp_scaled(6, 1, false);   // e^6 · TS  (K=32)
     // (σ(6) − σ(−6)) · SCALE  =  (ek6 − TS) · SCALE / (ek6 + TS)
-    LOGISTIC_DENOM = ((ek6 - TS) * SCALE as u128 / (ek6 + TS)) as u64;
+    LOGISTIC_DENOM = ((ek6 - TS) * SCALE_U128 / (ek6 + TS)) as u64;
+
+`LOGISTIC_SIGMA_FLOOR` is derived from `LOGISTIC_DENOM` via cast + arithmetic
+(admitted by Move `const`), so it evaluates at compile time once
+`LOGISTIC_DENOM` has been pinned.
 
 Mathematical reference: (σ(6) − σ(−6)) · SCALE ≈ 995_054_750. The exact
 algorithm-derived value may differ by a few ULP due to floor rounding in
@@ -401,7 +467,6 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
 ### Runtime algorithm
 
     let TS: u128 = TAYLOR_SCALE;
-    let S:  u128 = SCALE as u128;
 
     // y = 12 · (x − 0.5) = 12 · (t − t_max/2) / t_max
     let two_t = 2 * t;
@@ -412,13 +477,10 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
     };
     let y_den: u64 = 2 * t_max;
 
-    let ey: u128 = math::exp_scaled(y_num_abs, y_den, y_neg);   // e^y * TS
-    let sigma_y: u128 = ey * S / (ey + TS);                     // σ(y) * SCALE
+    let ey: u128 = math::exp_scaled(y_num_abs, y_den, y_neg);        // e^y · TS
+    let sigma_y: u128 = ey * SCALE_U128 / (ey + TS);                  // σ(y) · SCALE
 
-    // σ(−6) * SCALE = (SCALE − LOGISTIC_DENOM) / 2
-    let sigma_floor: u128 = (S - LOGISTIC_DENOM as u128) / 2;
-
-    ((sigma_y - sigma_floor) * S / LOGISTIC_DENOM as u128) as u64
+    ((sigma_y - LOGISTIC_SIGMA_FLOOR) * SCALE_U128 / LOGISTIC_DENOM as u128) as u64
 
 
 ### Overflow analysis
@@ -453,6 +515,7 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
 | `eval_smoothstep(...)` | private | §5 |
 | `eval_power_law(...)` | private | §6 |
 | `eval_exponential(...)` | private | §7 |
+| `exp_a_norm(alpha_abs, alpha_neg)` | private | §7 — 16-arm lookup, algorithm-derived literals |
 | `eval_logistic(...)` | private | §8 |
 
 `CurveShape` is defined in this module and embedded in `IntegrationConfig`
@@ -559,6 +622,14 @@ Representative inputs to cover:
 
 
 ### 10.5 `eval_exponential`
+
+#### Precomputed `exp_a_norm` table
+
+The 16 literals of `exp_a_norm(alpha_abs, alpha_neg)` (§7) are also
+algorithm-derived — establish all 16 during initial implementation using the
+procedure documented in §7. They are not a separate test surface: correct
+`exp_a_norm` literals are a precondition for the golden vectors below to
+reproduce.
 
 #### Golden vectors
 

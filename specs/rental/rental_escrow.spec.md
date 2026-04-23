@@ -221,9 +221,9 @@ This is the canonical Move borrow pattern, used internally by
 | `current_tenant_address` | `Some(addr)` while `state` is `Rented`; `None` otherwise. Target of `remain_credit` push at handover. |
 | `pending_tenant_address` | `Some(addr)` only while `state` is `Rented(HandoverConfirmed)`. Target of `TenantCap` push at handover completion. |
 | `handover_countdown_expiry` | `Some(ts)` only while `state` is `Rented(HandoverConfirmed)`. Deterministic from the first bid — subsequent bids do not alter it. |
-| `tenant_stake` | Balance paid by the current tenant. Non-zero only while `state` is `Rented`. At handover: `used_credit` splits into `owner_earnings` (95%) + fee (5%); `remain_credit` pushed to displaced tenant; `pending_bid` becomes the new `tenant_stake`. At tenure expiry: full balance splits into `owner_earnings` (95%) + fee (5%). |
+| `tenant_stake` | Balance paid by the current tenant. Non-zero only while `state` is `Rented`. At handover: `used_credit` splits into `owner_earnings` (90%) + fee (10%); `remain_credit` pushed to displaced tenant; `pending_bid` becomes the new `tenant_stake`. At tenure expiry: full balance splits into `owner_earnings` (90%) + fee (10%). |
 | `pending_bid` | Balance paid by the pending tenant. Non-zero only while `state` is `Rented(HandoverConfirmed)`. Refunded on supersede; becomes new `tenant_stake` at handover. |
-| `owner_earnings` | Accumulated 95% share. Withdrawn via `withdraw_earnings` or swept at `claim_asset`. |
+| `owner_earnings` | Accumulated 90% share. Withdrawn via `withdraw_earnings` or swept at `claim_asset`. |
 | `retire_flag` | Once set by `retire()`, stays set. In `Rented(HandoverOpen)`: blocks new bids and redirects tenure expiry to `Retired` instead of `AtDutchAuction`. `Idle` and `AtDutchAuction`: `retire()` transitions to `Retired` immediately. Not checked in `do_handover`. |
 
 ### 2.4 AssetReceipt — hot potato
@@ -296,8 +296,8 @@ public struct HandoverCompleted has copy, drop {
     displaced_tenant:  address,
     new_tenant_cap_id: ID,
     used_credit:       u64,   // amount consumed by owner (pre-fee split)
-    owner_share:       u64,   // used_credit × 0.95
-    protocol_fee:      u64,   // used_credit × 0.05
+    owner_share:       u64,   // used_credit × 0.90
+    protocol_fee:      u64,   // used_credit × 0.10
     remain_credit:     u64,   // refunded to displaced tenant
     new_rent_price:    u64,   // winning bid amount, now written to escrow.last_rent_price
     timestamp_ms:      u64,   // = handover_countdown_expiry
@@ -306,8 +306,8 @@ public struct HandoverCompleted has copy, drop {
 public struct TenureExpired has copy, drop {
     escrow_id:        ID,
     tenant:           address,
-    owner_share:      u64,   // tenant_stake × 0.95
-    protocol_fee:     u64,   // tenant_stake × 0.05
+    owner_share:      u64,   // tenant_stake × 0.90
+    protocol_fee:     u64,   // tenant_stake × 0.10
     last_rent_price:  u64,   // frozen at expiry — anchor of Dutch descent if next_state=AtDutchAuction
     next_state:       AssetState,  // AtDutchAuction or Retired
     timestamp_ms:     u64,   // = phase_start_ms + tenure_ceiling
@@ -1417,20 +1417,21 @@ normal acquisition logic.
     fun split_fee(amount: u64): (u64, u64)
 
 **Purpose:** pure function that splits an amount into (owner_share,
-fee_share) at 95/5.
+fee_share) at 90/10.
 
 **Algorithm:**
 
-    let fee   = math::mul_div(amount, 500, 10_000);   // 5% = 500 bps
+    let fee   = math::mul_div(amount, 1_000, 10_000);  // 10% = 1000 bps
     let owner = amount - fee;
     (owner, fee)
 
 **Properties:**
 - `owner + fee == amount` always (no rounding loss — subtraction is exact).
-- `fee <= floor(amount * 0.05)` — floor rounding favors the owner by at most
+- `fee <= floor(amount * 0.10)` — floor rounding favors the owner by at most
   1 base unit. Economically negligible; structurally simple.
 - `split_fee(0) == (0, 0)`.
-- `split_fee(1) == (1, 0)` — fee floors to zero on tiny amounts. Callers
+- `split_fee(n) == (n, 0)` for `n < 10` — fee floors to zero on amounts
+  below 10 base units. Callers
   (`do_handover`, `do_tenure_expiry`) gate on `protocol_fee > 0` and skip the
   split + `fee_message::post` when it is zero, so no zero-balance
   `FeeMessage<C>` is ever constructed.
@@ -1939,7 +1940,7 @@ via the owner-share branch alone.
 | B7 | Forget to return (receipt unconsumed) | PTB fails to type-check — hot potato must be consumed. |
 | B8 | `borrow_asset` called twice in the same PTB | Second call aborts `E_ASSET_ALREADY_BORROWED` — asset field is `None` after the first extraction. |
 | B9 | `borrow_asset` called by T(n) with T(n)'s cap when pre-APT state is `Rented(HandoverConfirmed)` and handover has expired — APT fires C1 rotating `current_tenant_cap_id` to T(n+1) before the staleness check | Split-tx per §10.13 abort-row strategy. **tx1** (standalone `apply_pending_transitions`): fires `do_handover` — T(n+1) installed, `current_tenant_cap_id` rotates to T(n+1)'s cap ID, `HandoverCompleted` emitted, `owner_earnings` credited, new `TenantCap` pushed to T(n+1), state → `Rented(HandoverOpen)`. **tx2** (`borrow_asset` with T(n)'s cap): §6.1 step 2 passes (cap belongs to this escrow), step 3 fails — `current_tenant_cap_id` now holds T(n+1)'s ID, not T(n)'s — aborts `E_TENANT_CAP_STALE`. Distinct from B3 (cap that was already stale pre-call): here the cap becomes stale **during** the call via APT's own work. Asserts §6.1 step 1 runs before step 3. |
-| B10 | `borrow_asset` called by T(n) with T(n)'s cap when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no handover pending) — APT fires C2 clearing `current_tenant_cap_id` before the staleness check | Split-tx per §10.13 abort-row strategy. **tx1** (standalone `apply_pending_transitions`): fires `do_tenure_expiry` — `tenant_stake × 0.95` → `owner_earnings`, `FeeMessage<C>` routed, `current_tenant_cap_id = none`, `current_tenant_address = none`, state → `AtDutchAuction`, `TenureExpired` emitted. **tx2** (`borrow_asset` with T(n)'s cap): step 3 fails — `current_tenant_cap_id` is `None`, so `None == some(...)` is false — aborts `E_TENANT_CAP_STALE`. Complements B9: same abort code, different APT transition (C2 clears vs C1 rotates). |
+| B10 | `borrow_asset` called by T(n) with T(n)'s cap when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no handover pending) — APT fires C2 clearing `current_tenant_cap_id` before the staleness check | Split-tx per §10.13 abort-row strategy. **tx1** (standalone `apply_pending_transitions`): fires `do_tenure_expiry` — `tenant_stake × 0.90` → `owner_earnings`, `FeeMessage<C>` routed, `current_tenant_cap_id = none`, `current_tenant_address = none`, state → `AtDutchAuction`, `TenureExpired` emitted. **tx2** (`borrow_asset` with T(n)'s cap): step 3 fails — `current_tenant_cap_id` is `None`, so `None == some(...)` is false — aborts `E_TENANT_CAP_STALE`. Complements B9: same abort code, different APT transition (C2 clears vs C1 rotates). |
 
 ### 10.8 `retire` / `claim_asset`
 
@@ -1955,8 +1956,8 @@ via the owner-share branch alone.
 | C8 | `claim_asset` with non-matching `OwnerCap` | Aborts `E_OWNER_CAP_MISMATCH`. |
 | C9 | `claim_asset` on Retired with accumulated earnings | Returns `(asset, coin == owner_earnings)`. OwnerCap burned. Escrow deleted. `AssetClaimed` event. |
 | C10 | Full retire-then-claim flow from Rented | `retire` (tx1) emits `RetireFlagSet(state_at_set: Rented(HandoverOpen))` only — no `AssetRetired` yet (deferred). Tenure expiry resolved in tx2 by `apply_pending_transitions`: state → `Retired`, events in order `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`. `claim_asset` (tx3) succeeds. |
-| C11 | `claim_asset` with `retire_flag` already set, pre-APT state `Rented(HandoverConfirmed)`, both handover and T(n+1)'s tenure expired — APT chains C1 → C2(→Retired) before claim's own logic | APT fires `do_handover`: T(n+1) installed, `owner_earnings += used_credit × 0.95`, `remain_credit` pushed to T(n), new `TenantCap` pushed to T(n+1), `retire_flag` preserved. APT then fires `do_tenure_expiry` with the flag set: `owner_earnings += T(n+1)_stake × 0.95`, state → `Retired`. Claim body asserts `state == Retired` ✓ and returns `(asset, Coin == accumulated owner_earnings)`. Events in order: `HandoverCompleted`, `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`, `AssetClaimed`. Pairs with C10 (which covers the chain starting from HandoverOpen). |
-| C12 | `retire` called when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no prior retire_flag) — APT fires C2 moving state to `AtDutchAuction` before retire's own logic | APT fires `do_tenure_expiry` with flag unset: `owner_earnings += tenant_stake × 0.95`, state → `AtDutchAuction`, `TenureExpired` emitted with `timestamp_ms = boundary`. Retire body then asserts `!retire_flag` ✓ and sets it; §4.2 step 6 matches the AtDutchAuction branch: `state → Retired`, `phase_start_ms = clock.now()`, emits `AuctionExpired(next_state: Retired, timestamp_ms = clock.now())`, `RetireFlagSet(state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)` in order. Asserts retire's dispatch branch is driven by the post-APT state, not the pre-call state (C4 covers the static Rented pre-state where APT is a no-op). |
+| C11 | `claim_asset` with `retire_flag` already set, pre-APT state `Rented(HandoverConfirmed)`, both handover and T(n+1)'s tenure expired — APT chains C1 → C2(→Retired) before claim's own logic | APT fires `do_handover`: T(n+1) installed, `owner_earnings += used_credit × 0.90`, `remain_credit` pushed to T(n), new `TenantCap` pushed to T(n+1), `retire_flag` preserved. APT then fires `do_tenure_expiry` with the flag set: `owner_earnings += T(n+1)_stake × 0.90`, state → `Retired`. Claim body asserts `state == Retired` ✓ and returns `(asset, Coin == accumulated owner_earnings)`. Events in order: `HandoverCompleted`, `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`, `AssetClaimed`. Pairs with C10 (which covers the chain starting from HandoverOpen). |
+| C12 | `retire` called when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no prior retire_flag) — APT fires C2 moving state to `AtDutchAuction` before retire's own logic | APT fires `do_tenure_expiry` with flag unset: `owner_earnings += tenant_stake × 0.90`, state → `AtDutchAuction`, `TenureExpired` emitted with `timestamp_ms = boundary`. Retire body then asserts `!retire_flag` ✓ and sets it; §4.2 step 6 matches the AtDutchAuction branch: `state → Retired`, `phase_start_ms = clock.now()`, emits `AuctionExpired(next_state: Retired, timestamp_ms = clock.now())`, `RetireFlagSet(state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)` in order. Asserts retire's dispatch branch is driven by the post-APT state, not the pre-call state (C4 covers the static Rented pre-state where APT is a no-op). |
 | C13 | `retire` called when pre-APT state is `Rented(HandoverConfirmed)` and handover has expired (no prior retire_flag) — APT fires C1 moving state to `Rented(HandoverOpen)` with T(n+1) installed before retire's own logic | APT fires `do_handover`: T(n+1) installed, owner earnings credited, `HandoverCompleted` emitted. Retire body then sets `retire_flag = true`; state is `Rented(HandoverOpen)` so §4.2 step 6 is a no-op (no immediate transition). Emits `RetireFlagSet(state_at_set: Rented(HandoverOpen))`. Flag now applies to T(n+1)'s tenure — any subsequent `rent()` from another bidder aborts `E_RETIRE_FLAG_BLOCKS_BID`. Distinct from C5, where retire runs on `Rented(HandoverConfirmed)` directly (APT no-op) and the flag is inherited by T(n+1) via the later handover. |
 
 ### 10.9 `withdraw_earnings`
@@ -1967,8 +1968,8 @@ via the owner-share branch alone.
 | W2 | Withdraw with positive earnings | Returns Coin of exact balance. `owner_earnings == 0` after. `EarningsWithdrawn { escrow_id, owner_cap_id, owner, amount }` event with `owner_cap_id == object::id(owner_cap)` and `owner == tx_context::sender(ctx)`. |
 | W2a | Same cap transferred between two distinct addresses, each withdraws once | Two `EarningsWithdrawn` rows sharing `owner_cap_id` but with different `owner` values. Confirms `owner` is first-observed per call — not cached from mint-time. |
 | W3 | Withdraw with wrong cap | Aborts `E_OWNER_CAP_MISMATCH`. |
-| W4 | Withdraw when pre-call state is `Rented(HandoverOpen)` and tenure has expired — APT fires `do_tenure_expiry` before drain | APT credits `owner_earnings += tenant_stake × 0.95`, routes `tenant_stake × 0.05` as `FeeMessage<C>` to `fee_inbox_id`, state → `AtDutchAuction`. Withdraw returns `Coin == (pre_earnings + stake × 0.95)`; `owner_earnings == 0` after. Events in order: `TenureExpired`, then `EarningsWithdrawn`. Asserts APT materializes earnings that a drain-only implementation would miss. |
-| W5 | Withdraw when pre-call state is `Rented(HandoverConfirmed)` and handover has expired — APT fires `do_handover` before drain | APT credits `owner_earnings += used_credit × 0.95`, pushes `remain_credit` to displaced tenant, rotates `pending_bid → tenant_stake`, mints + pushes new `TenantCap`, state → `Rented(HandoverOpen)` with T(n+1) installed. Withdraw returns `Coin == (pre_earnings + used_credit × 0.95)`. Events in order: `HandoverCompleted`, then `EarningsWithdrawn`. Exercises the C1-path credit (distinct from W4's C2-path). |
+| W4 | Withdraw when pre-call state is `Rented(HandoverOpen)` and tenure has expired — APT fires `do_tenure_expiry` before drain | APT credits `owner_earnings += tenant_stake × 0.90`, routes `tenant_stake × 0.10` as `FeeMessage<C>` to `fee_inbox_id`, state → `AtDutchAuction`. Withdraw returns `Coin == (pre_earnings + stake × 0.90)`; `owner_earnings == 0` after. Events in order: `TenureExpired`, then `EarningsWithdrawn`. Asserts APT materializes earnings that a drain-only implementation would miss. |
+| W5 | Withdraw when pre-call state is `Rented(HandoverConfirmed)` and handover has expired — APT fires `do_handover` before drain | APT credits `owner_earnings += used_credit × 0.90`, pushes `remain_credit` to displaced tenant, rotates `pending_bid → tenant_stake`, mints + pushes new `TenantCap`, state → `Rented(HandoverOpen)` with T(n+1) installed. Withdraw returns `Coin == (pre_earnings + used_credit × 0.90)`. Events in order: `HandoverCompleted`, then `EarningsWithdrawn`. Exercises the C1-path credit (distinct from W4's C2-path). |
 
 ### 10.10 Read-only queries
 
@@ -1996,9 +1997,9 @@ for `compute_next_rent_price`).
 
 | # | Description | Expected |
 |---|---|---|
-| F1 | `do_handover` with non-zero `used_credit` | `owner_earnings += 0.95 × used_credit`. One `FeeMessage<C>` posted via `fee_message::post<CoinType>(fee_balance, object::id(escrow), displaced_tenant, escrow.fee_inbox_id, ctx)`, with balance `0.05 × used_credit` and `escrow_id == object::id(escrow)`. `HandoverCompleted` event includes both shares. |
+| F1 | `do_handover` with non-zero `used_credit` | `owner_earnings += 0.90 × used_credit`. One `FeeMessage<C>` posted via `fee_message::post<CoinType>(fee_balance, object::id(escrow), displaced_tenant, escrow.fee_inbox_id, ctx)`, with balance `0.10 × used_credit` and `escrow_id == object::id(escrow)`. `HandoverCompleted` event includes both shares. |
 | F2 | `do_handover` at Dutch Auction bypass (used_credit = last_rent_price) | `remain_credit == 0`, zero push to displaced tenant. Fee and owner share computed on full `last_rent_price`. Fee path as in F1. |
-| F3 | `do_tenure_expiry` | `owner_earnings += 0.95 × stake`. One `FeeMessage<C>` of `0.05 × stake` constructed + sent as in F1. |
+| F3 | `do_tenure_expiry` | `owner_earnings += 0.90 × stake`. One `FeeMessage<C>` of `0.10 × stake` constructed + sent as in F1. |
 | F4 | Fee on tiny `used_credit` (`split_fee` floors fee to zero) | `if protocol_fee > 0` guard short-circuits: no split, no `fee_message::post` call, no `FeeMessage<C>` constructed. `owner_share == used_credit`. |
 
 ### 10.12 Full lifecycle
@@ -2051,7 +2052,7 @@ mask a regression in the canonical paths.
 | M2 | AtDutchAuction | `now < phase_start + descent_ceiling` | none | AtDutchAuction | AtDutchAuction | Cross-ref R5–R7. APT no-op, `compute_price_descent(now)` against preserved `phase_start_ms`. |
 | M3 | AtDutchAuction | `now ≥ phase_start + descent_ceiling` | C3 | Idle | Idle | `AuctionExpired(Idle)` then `RentStarted(from_state: Idle)`. `last_rent_price` is overwritten by payment inside `install_new_tenant` (do_auction_expiry preserves the stale value per §7.3). |
 | M4 | Rented(HandoverOpen), no retire_flag | tenure not expired | none | HandoverOpen | HandoverOpen | Cross-ref R9, R10, R12 (success paths). The subtraction `phase_start + tenure_ceiling - now` is u64-safe exactly because C2 did not fire. |
-| M5 | Rented(HandoverOpen) | tenure expired, no retire_flag | C2 | AtDutchAuction | AtDutchAuction | `TenureExpired(AtDutchAuction)` then `RentStarted(from_state: AtDutchAuction)`. `owner_earnings += stake × 0.95`; one `FeeMessage<C>` created and transferred to `fee_inbox_id`. |
+| M5 | Rented(HandoverOpen) | tenure expired, no retire_flag | C2 | AtDutchAuction | AtDutchAuction | `TenureExpired(AtDutchAuction)` then `RentStarted(from_state: AtDutchAuction)`. `owner_earnings += stake × 0.90`; one `FeeMessage<C>` created and transferred to `fee_inbox_id`. |
 | M6 | Rented(HandoverOpen) | tenure + descent expired, no retire_flag | C2 → C3 | Idle | Idle | `TenureExpired` + `AuctionExpired` + `RentStarted(from_state: Idle)`. |
 | M7 | Rented(HandoverOpen) | tenure expired, retire_flag set | C2 | Retired | — | `rent()` aborts `E_RETIRED_NO_BID`. The abort rolls back the whole transaction — APT's state changes and `TenureExpired(Retired)` event do not persist. See abort-row note below. |
 | M8 | Rented(HandoverConfirmed), no retire_flag | handover not expired | none | HandoverConfirmed | HandoverConfirmed | Cross-ref R13, R15. APT no-op; supersede refund + push-before-rotate exercised. |

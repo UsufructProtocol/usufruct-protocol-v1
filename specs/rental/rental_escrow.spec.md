@@ -104,7 +104,7 @@ All constants are `public` so the SDK can map abort codes to human-readable
 messages.
 
     public const E_OWNER_CAP_MISMATCH:          u64 = 0;  // forwarded from owner_cap::assert_escrow
-    public const E_TENANT_CAP_WRONG_ESCROW:     u64 = 1;  // cap.escrow_id != object::id(escrow)
+    public const E_TENANT_CAP_WRONG_ESCROW:     u64 = 1;  // forwarded from tenant_cap::assert_escrow
     public const E_TENANT_CAP_STALE:            u64 = 2;  // object::id(cap) != current_tenant_cap_id
     public const E_NOT_RENTED:                  u64 = 3;  // compute_used_credit: state != Rented
     public const E_INSUFFICIENT_PAYMENT:        u64 = 4;  // payment < floor price (all acquisition paths)
@@ -1016,8 +1016,10 @@ integrating ecosystem.
 1. `apply_pending_transitions(escrow, clock, ctx)` — settle first. A
    handover that completes here will rotate `current_tenant_cap_id` before
    the staleness check — the displaced tenant correctly fails.
-2. Assert `tenant_cap::escrow_id(tenant_cap) == object::id(escrow)`,
-   abort `E_TENANT_CAP_WRONG_ESCROW`.
+2. `tenant_cap::assert_escrow(tenant_cap, object::id(escrow))` — abort
+   `tenant_cap::E_ESCROW_MISMATCH` (surfaced as `E_TENANT_CAP_WRONG_ESCROW`
+   in this module's constant table). Parallels the `owner_cap::assert_escrow`
+   call shape used in `retire` / `claim_asset` / `withdraw_earnings`.
 3. Assert `escrow.current_tenant_cap_id ==
    some(object::id(tenant_cap))`, abort `E_TENANT_CAP_STALE`. This
    check rejects both stale caps (displaced tenants) and caps from other
@@ -2107,7 +2109,7 @@ or by an APT-driven transition.
 | Symbol | Visibility | Notes |
 |---|---|---|
 | `E_OWNER_CAP_MISMATCH` | `public` | SDK error handling. Forwarded from `owner_cap`. |
-| `E_TENANT_CAP_WRONG_ESCROW` | `public` | borrow_asset. |
+| `E_TENANT_CAP_WRONG_ESCROW` | `public` | SDK error handling. Forwarded from `tenant_cap::assert_escrow`. |
 | `E_TENANT_CAP_STALE` | `public` | borrow_asset. |
 | `E_NOT_RENTED` | `public` | compute_used_credit: state != Rented. |
 | `E_INSUFFICIENT_PAYMENT` | `public` | rent — payment below floor price (all acquisition paths). |

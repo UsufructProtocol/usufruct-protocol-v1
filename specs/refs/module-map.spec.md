@@ -392,11 +392,18 @@ Stale caps from displaced tenants are inert.
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `new(escrow_id, ctx): TenantCap` | `public(package)` | Mint. Called by `rental_escrow::install_new_tenant` (shared body of `rent()` Idle / AtDutchAuction) and `rental_escrow::do_handover` (handover completion). |
-| `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
+| `mint_to(escrow_id, tenant, ctx): ID` | `public(package)` | Fused mint + delivery. Constructs the cap, transfers to `tenant`, emits `TenantCapMinted`, returns the cap's `ID`. Called by `rental_escrow::install_new_tenant` (shared body of `rent()` Idle / AtDutchAuction) and `rental_escrow::do_handover` (handover completion). Transfer lives in this module — `transfer::transfer<TenantCap>` only compiles here. |
+| `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
+| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_ESCROW_MISMATCH` if `cap.escrow_id != escrow_id`. Called by `rental_escrow::borrow_asset`. Parallels `owner_cap::assert_escrow`. |
 
-**Status:** [ ] `TenantCap` · [ ] `new` · [ ] `burn` · [ ] `escrow_id`
+**Error constants:**
+
+| Constant | Value | Abort site |
+|---|---|---|
+| `E_ESCROW_MISMATCH` | `0` | `assert_escrow` |
+
+**Status:** [ ] `TenantCap` · [ ] `mint_to` · [ ] `burn` · [ ] `escrow_id` · [ ] `assert_escrow`
 
 **Depends on:** nothing (only `sui::object`).
 

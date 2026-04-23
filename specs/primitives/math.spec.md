@@ -138,6 +138,10 @@ Newton-Raphson integer root:
     let shift = (bits + d - 1) / d;        // ceil(bits / d)
     let mut x: u128 = 1 << shift;          // guaranteed x0 >= n^(1/d)
 
+    // Hoist loop-invariant casts: d is a function parameter, never reassigned.
+    let d_128: u128 = d as u128;
+    let d_minus_one: u128 = d_128 - 1;
+
     loop:
         // dispatch on d — .pow() does not exist in Move
         let x_pow: u128 = match d {
@@ -145,7 +149,7 @@ Newton-Raphson integer root:
             3 => x * x,
             _ => x * x * x,   // d=4
         };
-        let x_new = ((d as u128 - 1) * x + n / x_pow) / (d as u128);
+        let x_new = (d_minus_one * x + n / x_pow) / d_128;
         if x_new >= x: return x   // converged — x is the floor
         x = x_new
 
@@ -229,17 +233,21 @@ Error introduced by the integer division is at most 1 ULP — within the 10^-9 b
     Early exit fires well before k=32 for small y — gas cost increase
     is only realized near the upper bound (|y| → 8).
 
+    // Hoist loop-invariant casts out of the body.
+    let y_num_128: u128 = y_num as u128
+    let y_den_128: u128 = y_den as u128
+
     acc: u128 = TAYLOR_SCALE   // term_0 = 1 * TS
     term: u128 = TAYLOR_SCALE  // running term
 
     for k in 1..=K:
-        term = term * (y_num as u128) / (k as u128 * y_den as u128)
-        acc  = acc + term
-        if term == 0: break    // early exit
+        term = term * y_num_128 / (k as u128 * y_den_128)
+        if term == 0: break    // early exit — once term is 0, all subsequent terms are 0
+        acc = acc + term
 
     return acc
 
-Note: divisor `k * y_den` computed in u128 to avoid u64 overflow for large y_den.
+Note: divisor `k * y_den_128` computed in u128 to avoid u64 overflow for large y_den.
 
 ### Overflow analysis
 

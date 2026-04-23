@@ -731,12 +731,14 @@ deletes the escrow, returns the asset and earnings.
 7. `let earnings = coin::from_balance(owner_earnings, ctx);`
 8. **Pre-bind event locals** (emit-last: the two destructive ops below
    consume the `UID`s needed for the event body — bind IDs to locals
-   first):
-   - `let escrow_id    = object::uid_to_inner(&id);`
-   - `let owner_cap_id = object::id(owner_cap);`
+   first; also hoist the burn-time caller address here so the `burn`
+   signature advertises exactly what it records):
+   - `let escrow_id      = object::uid_to_inner(&id);`
+   - `let owner_cap_id   = object::id(owner_cap);`
    - `let swept_earnings = coin::value(&earnings);`
-9. `owner_cap::burn(owner_cap, ctx);` — `OwnerCapBurned.owner` records
-   `tx_context::sender(ctx)`, the claim-time caller. This address is
+   - `let owner          = tx_context::sender(ctx);`
+9. `owner_cap::burn(owner_cap, owner);` — `OwnerCapBurned.owner`
+   records the claim-time caller passed in explicitly. This address is
    recoverable on `AssetClaimed` by JOIN on `owner_cap_id`, which is
    why `AssetClaimed` does not duplicate it (invariant c).
 10. `object::delete(id);`
@@ -1833,7 +1835,7 @@ transitions on a flagged escrow terminate in `Retired` rather than
 **P7 — OwnerCap uniqueness:**
 Exactly one live `OwnerCap` per escrow at any time. Minted once in
 `integrate`, burned once in `claim_asset`. Enforced by visibility of
-`owner_cap::new(escrow_id, owner, ctx)` / `owner_cap::burn(cap, ctx)`
+`owner_cap::new(escrow_id, owner, ctx)` / `owner_cap::burn(cap, owner)`
 (both `public(package)` with a single call site each). The recipient
 and burner addresses are recorded in `OwnerCapMinted` / `OwnerCapBurned`
 respectively so the cap's full lifecycle is reconstructible from the

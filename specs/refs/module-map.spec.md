@@ -361,8 +361,8 @@ Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `new(escrow_id, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. |
-| `burn(cap)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. |
+| `new(escrow_id, owner, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. Emits `OwnerCapMinted { owner_cap_id, escrow_id, owner }`. |
+| `burn(cap, owner)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. `owner: address` is the burn-time holder (hoisted by the caller from `tx_context::sender`); recorded in `OwnerCapBurned`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 | `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts if `cap.escrow_id != escrow_id`. |
 

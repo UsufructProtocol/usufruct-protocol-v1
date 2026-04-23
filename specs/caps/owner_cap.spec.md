@@ -20,9 +20,10 @@ Depends on: nothing (`sui::object` only)
 - `new(escrow_id, owner, ctx): OwnerCap` — `public(package)`. Mint.
   Called only by `rental_escrow::integrate`. `owner` is the recipient
   address, recorded in the `OwnerCapMinted` event.
-- `burn(cap, ctx)` — `public(package)`. Destroy. Called only by
-  `rental_escrow::claim_asset`. `tx_context::sender(ctx)` is recorded
-  in the `OwnerCapBurned` event as the cap holder at burn time.
+- `burn(cap, owner)` — `public(package)`. Destroy. Called only by
+  `rental_escrow::claim_asset`. `owner` is the cap holder at burn time
+  (typically `tx_context::sender(ctx)` hoisted at the call site),
+  recorded in the `OwnerCapBurned` event.
 - `escrow_id(cap): ID` — `public`. Getter.
 - `assert_escrow(cap, escrow_id)` — `public(package)`. Aborts if
   `cap.escrow_id != escrow_id`. Used by `rental_escrow` to verify the
@@ -191,29 +192,38 @@ custody integrations pass the final beneficiary address.
 
 ### `burn`
 
-    public(package) fun burn(cap: OwnerCap, ctx: &TxContext)
+    public(package) fun burn(cap: OwnerCap, owner: address)
 
 **Visibility:** `public(package)` — callable only by `rental_escrow`.
 
 **Purpose:** destroys an `OwnerCap` at retirement, preventing any
 further owner-privileged operations on the (now-deleted) escrow.
-Records the burning address so the event row is self-describing.
+Records the `owner` argument in the event stream as the holder at burn
+time — declarative, like `owner` in `new`.
 
 **Behavior:**
 1. Destructure: `let OwnerCap { id, escrow_id } = cap;`.
 2. Capture `owner_cap_id = object::uid_to_inner(&id);` — must be read
    before `object::delete` consumes the `UID`.
-3. `let owner = tx_context::sender(ctx);` — the address that presented
-   the cap (owner at burn time). Since `OwnerCap` has `key + store`,
-   this may differ from the mint-time recipient.
-4. Call `object::delete(id);`.
-5. Emit `OwnerCapBurned { owner_cap_id, escrow_id, owner }` — emission
+3. Call `object::delete(id);`.
+4. Emit `OwnerCapBurned { owner_cap_id, escrow_id, owner }` — emission
    runs last, after the cap is actually destroyed.
+
+**Signature rationale:** `owner: address` is passed in rather than
+derived from `&TxContext` inside the body. The signature advertises
+the exact datum the function records — parallel to
+`new(escrow_id, owner, ctx)` which also takes `owner` declaratively.
+`burn` no longer needs `&TxContext` at all: all it does is consume the
+cap, destroy the `UID`, and emit.
 
 **Call site:** `rental_escrow::claim_asset` — once per escrow lifetime,
 atomically with asset extraction and escrow deletion. `claim_asset`
-already gates on `owner_cap::assert_escrow(cap, escrow_id)`, so the
-`tx_context::sender` captured here is the legitimate owner at burn.
+already gates on `owner_cap::assert_escrow(cap, escrow_id)` and then
+binds `let owner = tx_context::sender(ctx);` once, passing it to
+`burn`. Since the cap is presented by value and the escrow is deleted
+in the same call, `owner` at this boundary is the legitimate holder at
+burn time; since `OwnerCap` has `key + store`, that may differ from
+the mint-time recipient recorded in `OwnerCapMinted`.
 
 ---
 
@@ -296,9 +306,9 @@ the cap is presented.
 
 | # | Description | Expected |
 |---|---|---|
-| B1 | `burn(cap, ctx)` | Cap's UID deleted. No abort. One `OwnerCapBurned { owner_cap_id, escrow_id, owner }` event emitted with `(owner_cap_id, escrow_id)` the cap carried and `owner == tx_context::sender(ctx)`. |
+| B1 | `burn(cap, owner)` | Cap's UID deleted. No abort. One `OwnerCapBurned { owner_cap_id, escrow_id, owner }` event emitted with `(owner_cap_id, escrow_id)` the cap carried and `owner` equal to the argument. |
 | B2 | `burn` consumes the cap (by value) | Compiler enforces — no double-burn possible. |
-| B3 | `burn(cap, ctx)` where the cap was originally minted for address A but presented by address B (legal because `OwnerCap` has `store` and can be moved) | Event's `owner` field equals B (sender at burn), not A (recipient at mint). Asserts Burned captures the **burn-time** holder, distinct from Minted's recipient. |
+| B3 | Cap originally minted with `owner = A`, burned with `owner = B` (legal because `OwnerCap` has `store` and can be moved between mint and burn) | Event's `owner` field equals B, not A. Asserts Burned captures the **burn-time** holder as declared by the caller, distinct from Minted's recipient. |
 
 ### 6.3 `escrow_id`
 
@@ -334,7 +344,7 @@ the cap is presented.
 | `OwnerCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. |
 | `OwnerCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
 | `new(escrow_id, owner, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. Emits `OwnerCapMinted { owner_cap_id, escrow_id, owner }`. |
-| `burn(cap, ctx)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. Emits `OwnerCapBurned { owner_cap_id, escrow_id, owner = tx_context::sender(ctx) }`. |
+| `burn(cap, owner)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. Emits `OwnerCapBurned { owner_cap_id, escrow_id, owner }` with `owner` from the caller (the binding of `tx_context::sender(ctx)` hoisted at the call site). |
 | `escrow_id(cap): ID` | `public` | Getter. |
 | `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_ESCROW_MISMATCH` if mismatch. |
 

@@ -409,8 +409,8 @@ No error constants.
 ![TenantCap](../../media/object-display/tenant-cap.png)
 
 `Display<TenantCap>` gives every cap a visual identity in wallets and explorers.
-Created once post-deployment via a PTB presenting `&Publisher` for the package
-and `&mut DisplayRegistry` (Sui framework shared object).
+Created once post-deployment via a PTB presenting `&mut Publisher` for the
+package and `&mut DisplayRegistry` (Sui framework shared object at `0xd`).
 
 ### Fields
 
@@ -429,16 +429,24 @@ and `&mut DisplayRegistry` (Sui framework shared object).
 ```move
 use sui::display_registry;
 
-let mut display = display_registry::new<TenantCap>(&publisher, registry);
-display.add(b"name".to_string(),        b"Tenant Cap".to_string());
-display.add(b"description".to_string(), b"Grants temporary access to a rented asset in the Liquid Renting Protocol. Becomes stale when displaced by a new tenant.".to_string());
-display.add(b"image_url".to_string(),   b"{IMAGE_BASE_URL}/tenant-cap.png".to_string());
-display.add(b"project_url".to_string(), b"https://liquidrenting.com".to_string());
-display.add(b"creator".to_string(),     b"Liquid Renting Protocol".to_string());
-display_registry::commit(display);
+let (mut display, cap) = display_registry::new_with_publisher<TenantCap>(
+    registry,   // &mut DisplayRegistry (shared object 0xd)
+    publisher,  // &mut Publisher
+    ctx,
+);
+display_registry::set(&mut display, &cap, b"name".to_string(),        b"Tenant Cap".to_string());
+display_registry::set(&mut display, &cap, b"description".to_string(), b"Grants temporary access to a rented asset in the Liquid Renting Protocol. Becomes stale when displaced by a new tenant.".to_string());
+display_registry::set(&mut display, &cap, b"image_url".to_string(),   b"{IMAGE_BASE_URL}/tenant-cap.png".to_string());
+display_registry::set(&mut display, &cap, b"project_url".to_string(), b"https://liquidrenting.com".to_string());
+display_registry::set(&mut display, &cap, b"creator".to_string(),     b"Liquid Renting Protocol".to_string());
+display_registry::share(display);
+transfer::public_transfer(cap, ctx.sender());  // cap retained by deployer for future edits
 ```
 
-One `Display<TenantCap>` per package deployment. ID is deterministic from
-`DisplayRegistry` + type — no event scanning required.
+One `Display<TenantCap>` per package deployment — enforced by `DisplayRegistry`.
+ID is deterministic from `DisplayRegistry` + type — no event scanning required.
+The returned `DisplayCap<TenantCap>` is required to call `set` / `unset` / `clear`
+later; keeping it with the deployer preserves the ability to edit the Display
+post-deployment.
 
 **Status:** [ ] `Display<TenantCap>` created and committed.

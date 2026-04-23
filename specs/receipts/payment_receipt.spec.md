@@ -372,8 +372,8 @@ No error constants. No events.
 ![PaymentReceipt](../../media/object-display/payment-receipt.png)
 
 `Display<PaymentReceipt>` gives every receipt a visual identity in wallets and
-explorers. Created once post-deployment via a PTB presenting `&Publisher`
-for the package and `&mut DisplayRegistry` (Sui framework shared object).
+explorers. Created once post-deployment via a PTB presenting `&mut Publisher`
+for the package and `&mut DisplayRegistry` (Sui framework shared object at `0xd`).
 
 **One registration covers all instantiations.** Because `PaymentReceipt` is
 a single concrete type (non-generic), the registered template applies to
@@ -400,16 +400,24 @@ resolved from each object's own fields at render time.
 ```move
 use sui::display_registry;
 
-let mut display = display_registry::new<PaymentReceipt>(&publisher, registry);
-display.add(b"name".to_string(),        b"Payment Receipt".to_string());
-display.add(b"description".to_string(), b"Receipt of a rental bid payment of {amount} {coin_type} on asset type {asset_type}. Symbolic — carries no protocol authority.".to_string());
-display.add(b"image_url".to_string(),   b"{IMAGE_BASE_URL}/payment-receipt.png".to_string());
-display.add(b"project_url".to_string(), b"https://liquidrenting.com".to_string());
-display.add(b"creator".to_string(),     b"Liquid Renting Protocol".to_string());
-display_registry::commit(display);
+let (mut display, cap) = display_registry::new_with_publisher<PaymentReceipt>(
+    registry,   // &mut DisplayRegistry (shared object 0xd)
+    publisher,  // &mut Publisher
+    ctx,
+);
+display_registry::set(&mut display, &cap, b"name".to_string(),        b"Payment Receipt".to_string());
+display_registry::set(&mut display, &cap, b"description".to_string(), b"Receipt of a rental bid payment of {amount} {coin_type} on asset type {asset_type}. Symbolic — carries no protocol authority.".to_string());
+display_registry::set(&mut display, &cap, b"image_url".to_string(),   b"{IMAGE_BASE_URL}/payment-receipt.png".to_string());
+display_registry::set(&mut display, &cap, b"project_url".to_string(), b"https://liquidrenting.com".to_string());
+display_registry::set(&mut display, &cap, b"creator".to_string(),     b"Liquid Renting Protocol".to_string());
+display_registry::share(display);
+transfer::public_transfer(cap, ctx.sender());  // cap retained by deployer for future edits
 ```
 
-One `Display<PaymentReceipt>` per package deployment. ID is deterministic from
-`DisplayRegistry` + type — no event scanning required.
+One `Display<PaymentReceipt>` per package deployment — enforced by
+`DisplayRegistry`. ID is deterministic from `DisplayRegistry` + type — no event
+scanning required. The returned `DisplayCap<PaymentReceipt>` is required to
+call `set` / `unset` / `clear` later; keeping it with the deployer preserves the
+ability to edit the Display post-deployment.
 
 **Status:** [ ] `Display<PaymentReceipt>` created and committed.

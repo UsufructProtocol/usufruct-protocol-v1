@@ -402,7 +402,7 @@ Stale caps from displaced tenants are inert.
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
 | `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_TENANT_CAP_WRONG_ESCROW` if `cap.escrow_id != escrow_id`. Called by `rental_escrow::borrow_asset`. Parallels `owner_cap::assert_escrow`. |
-| `assert_current(cap, current_tenant_cap_id)` | `public(package)` | Aborts with `E_TENANT_CAP_STALE` if `current_tenant_cap_id: Option<ID>` is not `some(object::id(cap))`. Called by `rental_escrow::borrow_asset` after `assert_escrow`. Rejects displaced-tenant caps and caps presented after tenure-expiry clears the slot. |
+| `assert_current(cap, current_tenant_cap_id)` | `public(package)` | Aborts with `E_TENANT_CAP_STALE` if `object::id(cap) != current_tenant_cap_id`. Takes `ID`, not `Option<ID>` — the caller unwraps its own representation of "slot empty" first (in `rental_escrow::borrow_asset`, an `is_some` guard aborting the same `E_TENANT_CAP_STALE`). Called after `assert_escrow`. Rejects displaced-tenant caps; tenure-expiry-cleared slots abort at the caller's unwrap guard. |
 
 **Error constants:**
 

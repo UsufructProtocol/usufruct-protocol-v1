@@ -1022,13 +1022,19 @@ integrating ecosystem.
    `tenant_cap::E_TENANT_CAP_WRONG_ESCROW`. Parallels the
    `owner_cap::assert_escrow` call shape used in `retire` /
    `claim_asset` / `withdraw_earnings`.
-3. `tenant_cap::assert_current(tenant_cap, escrow.current_tenant_cap_id)`
-   — aborts `tenant_cap::E_TENANT_CAP_STALE`. Rejects both stale caps
-   (displaced by a later `do_handover`) and caps presented after a
-   tenure-expiry that cleared `current_tenant_cap_id` to `None`. The
-   helper takes the escrow's `Option<ID>` by value and compares
-   against `object::id(cap)` — pure cap-identity check, no escrow
-   state reads inside the helper.
+3. Unwrap and check staleness:
+   ```
+   assert!(escrow.current_tenant_cap_id.is_some(), tenant_cap::E_TENANT_CAP_STALE);
+   tenant_cap::assert_current(tenant_cap, *escrow.current_tenant_cap_id.borrow());
+   ```
+   Rejects both stale caps (displaced by a later `do_handover` ⇒
+   `Some(other_id)` path, aborts inside the helper) and caps presented
+   after a tenure-expiry that cleared `current_tenant_cap_id` to
+   `None` (aborts at the `is_some` guard). Both surface as
+   `tenant_cap::E_TENANT_CAP_STALE` — one uniform abort code for
+   both staleness paths. The helper takes `ID`, not `Option<ID>` —
+   representation of "slot empty" is this module's concern, so the
+   unwrap happens here at the call site.
 4. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
    This is the only protocol state in which the internal `Option<Asset>` field
    can be `None` — when a previous `borrow_asset` call in the same PTB has
@@ -1949,7 +1955,7 @@ via the owner-share branch alone.
 | B7 | Forget to return (receipt unconsumed) | PTB fails to type-check — hot potato must be consumed. |
 | B8 | `borrow_asset` called twice in the same PTB | Second call aborts `E_ASSET_ALREADY_BORROWED` — asset field is `None` after the first extraction. |
 | B9 | `borrow_asset` called by T(n) with T(n)'s cap when pre-APT state is `Rented(HandoverConfirmed)` and handover has expired — APT fires C1 rotating `current_tenant_cap_id` to T(n+1) before the staleness check | Split-tx per §10.13 abort-row strategy. **tx1** (standalone `apply_pending_transitions`): fires `do_handover` — T(n+1) installed, `current_tenant_cap_id` rotates to T(n+1)'s cap ID, `HandoverCompleted` emitted, `owner_earnings` credited, new `TenantCap` pushed to T(n+1), state → `Rented(HandoverOpen)`. **tx2** (`borrow_asset` with T(n)'s cap): §6.1 step 2 passes (cap belongs to this escrow), step 3 fails — `current_tenant_cap_id` now holds T(n+1)'s ID, not T(n)'s — aborts `tenant_cap::E_TENANT_CAP_STALE`. Distinct from B3 (cap that was already stale pre-call): here the cap becomes stale **during** the call via APT's own work. Asserts §6.1 step 1 runs before step 3. |
-| B10 | `borrow_asset` called by T(n) with T(n)'s cap when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no handover pending) — APT fires C2 clearing `current_tenant_cap_id` before the staleness check | Split-tx per §10.13 abort-row strategy. **tx1** (standalone `apply_pending_transitions`): fires `do_tenure_expiry` — `tenant_stake × 0.90` → `owner_earnings`, `FeeMessage<C>` routed, `current_tenant_cap_id = none`, `current_tenant_address = none`, state → `AtDutchAuction`, `TenureExpired` emitted. **tx2** (`borrow_asset` with T(n)'s cap): step 3 fails — `current_tenant_cap_id` is `None`, so `None == some(...)` is false — aborts `tenant_cap::E_TENANT_CAP_STALE`. Complements B9: same abort code, different APT transition (C2 clears vs C1 rotates). |
+| B10 | `borrow_asset` called by T(n) with T(n)'s cap when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no handover pending) — APT fires C2 clearing `current_tenant_cap_id` before the staleness check | Split-tx per §10.13 abort-row strategy. **tx1** (standalone `apply_pending_transitions`): fires `do_tenure_expiry` — `tenant_stake × 0.90` → `owner_earnings`, `FeeMessage<C>` routed, `current_tenant_cap_id = none`, `current_tenant_address = none`, state → `AtDutchAuction`, `TenureExpired` emitted. **tx2** (`borrow_asset` with T(n)'s cap): step 3's `is_some` guard on `escrow.current_tenant_cap_id` fails — slot was cleared — aborts `tenant_cap::E_TENANT_CAP_STALE` before `assert_current` runs. Complements B9: same abort code, different APT transition (C2 clears ⇒ unwrap-guard path; C1 rotates ⇒ helper-internal path). |
 
 ### 10.8 `retire` / `claim_asset`
 

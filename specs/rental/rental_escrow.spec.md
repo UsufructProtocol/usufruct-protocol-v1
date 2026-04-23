@@ -649,9 +649,10 @@ asset. Does not mutate balances.
 
 **Behavior:**
 1. `assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), E_WRONG_ESCROW_OWNER_CAP);`
-   — inline escrow-match gate. Abort code is rental-local because
-   the "wrong escrow" semantic is this module's interpretation of
-   the cap/escrow ID mismatch.
+   — **security-critical** escrow-match gate (PTB-pairing attack;
+   see `claim_asset` step 2 for the full threat model). Abort code
+   is rental-local because the "wrong escrow" semantic is this
+   module's interpretation of the cap/escrow ID mismatch.
 2. `apply_pending_transitions(escrow, clock, ctx)` — settle all elapsed
    boundaries first.
 3. Assert `!escrow.retire_flag`, abort `E_ALREADY_RETIRED`.
@@ -715,9 +716,15 @@ deletes the escrow, returns the asset and earnings.
 **Behavior:**
 1. Consume both `escrow` and `owner_cap` by value.
 2. `assert!(owner_cap::escrow_id(&owner_cap) == object::id(&escrow), E_WRONG_ESCROW_OWNER_CAP);`
-   — inline escrow-match gate. Redundant safety: the cap could not
-   have been minted otherwise, but the assertion prevents a
-   cross-escrow cap passed through a malicious PTB.
+   — **security-critical** escrow-match gate. PTBs can pair any
+   `&OwnerCap` with any `RentalEscrow` passed as argument; the type
+   system does not constrain that pairing. Without this assert,
+   Alice could pass her own legitimate `OwnerCapA` alongside Bob's
+   shared `EscrowB` and `claim_asset` would delete `EscrowB`,
+   extract its asset, and burn `OwnerCapA` — Alice walks away with
+   Bob's asset. The check is load-bearing, not a sanity check: the
+   cap being honestly minted for `EscrowA` says nothing about which
+   escrow was passed as the other argument at call time.
 3. Call `apply_pending_transitions(&mut escrow, clock, ctx)` — settle any
    remaining elapsed boundaries.
 4. Assert `escrow.state == Retired`, abort `E_NOT_RETIRED`. This covers
@@ -780,7 +787,8 @@ locked balances.
 
 **Behavior:**
 1. `assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), E_WRONG_ESCROW_OWNER_CAP);`
-   — inline escrow-match gate.
+   — **security-critical** escrow-match gate (PTB-pairing attack;
+   see `claim_asset` step 2 for the full threat model).
 2. `apply_pending_transitions(escrow, clock, ctx)` — settle any elapsed
    boundaries first so the withdrawn amount includes all accrued earnings.
 3. `let amount = balance::value(&escrow.owner_earnings);`
@@ -1030,21 +1038,35 @@ integrating ecosystem.
    handover that completes here will rotate `current_tenant_cap_id` before
    the staleness check — the displaced tenant correctly fails.
 2. `assert!(tenant_cap::escrow_id(tenant_cap) == object::id(escrow), E_WRONG_ESCROW_TENANT_CAP);`
-   — inline escrow-match gate. Parallels the owner-cap escrow-match
-   used in `retire` / `claim_asset` / `withdraw_earnings`.
-3. Unwrap and check staleness:
+   — **security-critical** escrow-match gate. Same threat model as
+   `claim_asset` step 2: PTBs can pair any `&TenantCap` with any
+   `&mut RentalEscrow` argument, and the type system does not
+   constrain that pairing. Without this assert, a tenant holding a
+   legitimate cap for `EscrowA` could pair it with `EscrowB` (for
+   which they are not the tenant) and extract `EscrowB`'s asset.
+3. **Security-critical** staleness check. Defends against a
+   different attack than step 2: *displaced-tenant retention*.
+   After `do_handover`, the evicted tenant still holds their old
+   `TenantCap` — it is `key`-only (non-transferable) but `burn` is
+   voluntary, so the holder is not forced to destroy it. Step 2
+   alone accepts that cap because `cap.escrow_id` still matches;
+   only the current-id comparison exposes the displacement.
+
    ```
    assert!(escrow.current_tenant_cap_id.is_some(), E_STALE_TENANT_CAP);
    assert!(object::id(tenant_cap) == *escrow.current_tenant_cap_id.borrow(), E_STALE_TENANT_CAP);
    ```
-   Rejects both stale caps (displaced by a later `do_handover` ⇒
-   `Some(other_id)` path, aborts at the identity compare) and caps
-   presented after a tenure-expiry that cleared
-   `current_tenant_cap_id` to `None` (aborts at the `is_some`
-   guard). Both surface as `E_STALE_TENANT_CAP` — one uniform abort
-   code for both staleness paths, because `None ⇒ every cap is
-   stale` and `Some(other) ⇒ this cap is stale` are the same
-   semantic to the consumer.
+
+   Rejects:
+   - Displaced caps (`Some(other_id)` path — a later `do_handover`
+     rotated the slot; aborts at the identity compare).
+   - Caps presented after `do_tenure_expiry` cleared the slot
+     (`None` path; aborts at the `is_some` guard).
+
+   Both surface as `E_STALE_TENANT_CAP` — one uniform abort code
+   for both staleness paths, because `None ⇒ every cap is stale`
+   and `Some(other) ⇒ this cap is stale` are the same semantic to
+   the consumer.
 4. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
    This is the only protocol state in which the internal `Option<Asset>` field
    can be `None` — when a previous `borrow_asset` call in the same PTB has
@@ -1201,9 +1223,24 @@ of liquid renting is already compatible at the contract level.
 **Behavior:**
 1. Destructure `receipt`: `let AssetReceipt { escrow_id, asset_id } = receipt;`
 2. Assert `escrow_id == object::id(escrow)`, abort
-   `E_RECEIPT_ESCROW_MISMATCH`. Enforces return to the correct escrow.
+   `E_RECEIPT_ESCROW_MISMATCH`.
 3. Assert `asset_id == object::id(&asset)`, abort
-   `E_RECEIPT_ASSET_MISMATCH`. Enforces return of the exact asset borrowed.
+   `E_RECEIPT_ASSET_MISMATCH`.
+
+**Together these encode: "the same asset returns to the same
+escrow."**
+
+- `asset_id` ties receipt to asset: prevents substitution
+  (returning a type-compatible but different object — `Asset` is a
+  generic `key + store` type, so two instances of `T` are
+  structurally indistinguishable except by `object::id`).
+- `escrow_id` ties receipt to destination: prevents cross-return
+  (redirecting to a different escrow the caller happens to hold
+  tenancy of, with compatible `Asset` type).
+
+The hot-potato itself only forces *that* a return happens in the
+same PTB; these two fields force *what* that return looks like.
+Both asserts are independent — neither alone is sufficient.
 4. Let `tenant_cap_id = *option::borrow(&escrow.current_tenant_cap_id);`
    Safe: PTB clock-fixity (§6.1) guarantees `current_tenant_cap_id` has
    not rotated since `borrow_asset` succeeded earlier in the same PTB —

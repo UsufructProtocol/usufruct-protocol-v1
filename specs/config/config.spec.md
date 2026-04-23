@@ -231,27 +231,22 @@ by `escrow_id`.
 
 ```move
 public struct IntegrationConfigRegistered has copy, drop {
-    escrow_id:       ID,
-    min_rent_price:  u64,
-    tenure_ceiling:  u64,
-    handover_floor:  u64,
-    descent_ceiling: u64,
-    retire_floor:    u64,
-    credit_curve:    CurveShape,
-    descent_curve:   CurveShape,
-    price_function:  PriceFunction,
+    escrow_id: ID,
+    config:    IntegrationConfig,
 }
 ```
 
-**Abilities:** `copy + drop` — required by `event::emit`. `CurveShape` and
-`PriceFunction` both have `copy + drop`, so the whole struct satisfies the
-Sui event verifier.
+**Abilities:** `copy + drop` — required by `event::emit`. `IntegrationConfig`
+has `copy + drop + store`, so the nested form satisfies the Sui event
+verifier.
 
-**Field semantics:** each scalar and curve field mirrors the corresponding
-`IntegrationConfig` field by value (see §2 for units and meaning).
-`escrow_id` is the root FK that ties this row to every other event for the
-same escrow; it is the protocol's uniform schema anchor (see
-`rental_escrow.spec.md §3` — "Star schema").
+**Field semantics:**
+- `escrow_id` is the root FK that ties this row to every other event for
+  the same escrow; it is the protocol's uniform schema anchor (see
+  `rental_escrow.spec.md §3` — "Star schema").
+- `config` carries the full immutable parameter snapshot by value. Field
+  units and meanings are defined in §2 and not restated here — the single
+  struct is the source of truth.
 
 **Star-schema role.** `IntegrationConfigRegistered` is a **1:1 satellite
 dimension** of the `escrows` fact table, emitted exactly once per escrow at
@@ -259,12 +254,16 @@ integration and never again (configs are immutable; no burn / update event
 exists). It carries no child PK of its own — the config has no UID — so the
 only key is `escrow_id`.
 
-**Why emit all parameters at once.** The off-chain indexer needs to know
+**Why emit the full snapshot at once.** The off-chain indexer needs to know
 *which parameter combinations produce good liquid-renting mechanics*. A
-single event carrying the full snapshot lets analytical queries group
-escrows by any parameter (e.g. `WHERE tenure_ceiling > X`) without reading
-the on-chain object. Splitting the snapshot across multiple events would
-force envelope-timing joins — disallowed by star-schema invariant (d).
+single event carrying the full `IntegrationConfig` lets analytical queries
+group escrows by any parameter (e.g. `WHERE config.tenure_ceiling > X`)
+without reading the on-chain object. Splitting the snapshot across multiple
+events would force envelope-timing joins — disallowed by star-schema
+invariant (d). Nesting the struct inside the event (rather than mirroring
+its fields flat) keeps `IntegrationConfig` as the single source of truth:
+new config fields propagate to the event automatically, with no triplicated
+mirror to keep in sync.
 
 ### `emit_registration` — function
 
@@ -276,8 +275,8 @@ public(package) fun emit_registration(cfg: &IntegrationConfig, escrow_id: ID)
 expected to call it. Not exposed to PTBs: an integrator cannot emit a
 registration event decoupled from an actual escrow construction.
 
-**Behavior:** reads every field of `cfg` and emits a single
-`IntegrationConfigRegistered` event with those values plus `escrow_id`. No
+**Behavior:** emits a single `IntegrationConfigRegistered { escrow_id,
+config: *cfg }`. `*cfg` is a cheap `copy` (all fields have `copy`). No
 validation (inputs were already validated by `new_config`; `escrow_id` is
 authoritative — it comes from `object::uid_to_inner` inside `integrate`).
 No state mutation.

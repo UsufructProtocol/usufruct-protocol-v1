@@ -399,18 +399,15 @@ Stale caps from displaced tenants are inert.
 |---|---|---|
 | `mint_to(escrow_id, tenant, ctx): ID` | `public(package)` | Fused mint + delivery. Constructs the cap, transfers to `tenant`, emits `TenantCapMinted`, returns the cap's `ID`. Called by `rental_escrow::install_new_tenant` (shared body of `rent()` Idle / AtDutchAuction) and `rental_escrow::do_handover` (handover completion). Transfer lives in this module — `transfer::transfer<TenantCap>` only compiles here. |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned`. |
-| `escrow_id(cap): ID` | `public` | Getter. |
-| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_TENANT_CAP_WRONG_ESCROW` if `cap.escrow_id != escrow_id`. Called by `rental_escrow::borrow_asset`. |
-| `assert_current(cap, current_tenant_cap_id)` | `public(package)` | Aborts with `E_TENANT_CAP_STALE` if `object::id(cap) != current_tenant_cap_id`. Takes `ID`, not `Option<ID>` — the caller unwraps its own representation of "slot empty" first (in `rental_escrow::borrow_asset`, an `is_some` guard aborting the same `E_TENANT_CAP_STALE`). Called after `assert_escrow`. Rejects displaced-tenant caps; tenure-expiry-cleared slots abort at the caller's unwrap guard. |
+| `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow::borrow_asset` to compare against the target escrow's ID inline (abort constants `E_WRONG_ESCROW_TENANT_CAP` and `E_STALE_TENANT_CAP` live in rental_escrow). |
 
-**Error constants:**
+**Error constants:** none. The two gating checks that used to live
+here as `assert_escrow` and `assert_current` have moved to
+`rental_escrow::borrow_asset` as inline asserts with rental-side
+constants — "wrong escrow" and "stale" are the consumer's semantic
+interpretations of ID mismatches, not cap-intrinsic properties.
 
-| Constant | Value | Abort site |
-|---|---|---|
-| `E_TENANT_CAP_WRONG_ESCROW` | `0` | `assert_escrow` |
-| `E_TENANT_CAP_STALE` | `1` | `assert_current` |
-
-**Status:** [ ] `TenantCap` · [ ] `mint_to` · [ ] `burn` · [ ] `escrow_id` · [ ] `assert_escrow` · [ ] `assert_current`
+**Status:** [ ] `TenantCap` · [ ] `mint_to` · [ ] `burn` · [ ] `escrow_id`
 
 **Depends on:** nothing (only `sui::object`).
 

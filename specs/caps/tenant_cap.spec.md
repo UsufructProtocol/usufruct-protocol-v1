@@ -31,22 +31,13 @@ Depends on: nothing (`sui::object` only)
   holder address is recoverable by joining on `tenant_cap_id` against
   the `TenantCapMinted` row (non-transferable by type ⇒ mint-tenant ≡
   burn-tenant).
-- `escrow_id(cap): ID` — `public`. Getter.
-- `assert_escrow(cap, escrow_id)` — `public(package)`. Aborts if
-  `cap.escrow_id != escrow_id`. Used by `rental_escrow::borrow_asset`
-  to verify the presented cap belongs to the escrow being operated on.
-  Parallels the inline owner-cap escrow-match used in
-  `rental_escrow::retire` / `claim_asset` / `withdraw_earnings`.
-- `assert_current(cap, current_tenant_cap_id)` — `public(package)`.
-  Aborts if `object::id(cap) != current_tenant_cap_id`. Used by
-  `rental_escrow::borrow_asset` to reject stale caps (displaced
-  tenants). The argument is `ID`, not `Option<ID>` — how the caller
-  represents "no current tenant" (Option, sentinel, Table lookup) is
-  the caller's concern; this helper only performs the ID-equality
-  check against cap-intrinsic identity. In `rental_escrow`, the
-  caller unwraps its `Option<ID>` first, aborting
-  `E_TENANT_CAP_STALE` on `None` (no tenant is current ⇒ every cap is
-  stale) before calling this helper.
+- `escrow_id(cap): ID` — `public`. Getter. Read by
+  `rental_escrow::borrow_asset` to compare inline against the target
+  escrow's ID (escrow-match gating). The abort on mismatch
+  (`E_WRONG_ESCROW_TENANT_CAP`) and the staleness abort
+  (`E_STALE_TENANT_CAP`) both live in `rental_escrow` — "wrong
+  escrow" and "stale" are the consumer's semantic interpretations
+  of ID mismatches, not cap-intrinsic properties.
 - Lifecycle events: `TenantCapMinted`, `TenantCapBurned`. Emitted from
   inside this module (Sui Verifier requires the emitted type to be
   internal to the emitting module).
@@ -115,25 +106,14 @@ Depends on: nothing (`sui::object` only)
 1. ERROR CONSTANTS
 ------------------
 
-| Constant | Value | Abort site |
-|---|---|---|
-| `E_TENANT_CAP_WRONG_ESCROW` | `0` | `assert_escrow` — presented cap does not belong to the target escrow |
-| `E_TENANT_CAP_STALE`        | `1` | `assert_current` — presented cap is not the current tenant cap of the target escrow (displaced or post-tenure-expiry) |
-
-`burn` is unconditional; `mint_to` has no preconditions; `escrow_id` is
-a pure getter. Both aborts belong to `assert_*` helpers that the
-escrow module calls at `borrow_asset` — one checks a cap-intrinsic
-field (`cap.escrow_id`), the other checks cap identity against an
-escrow-tracked `ID` passed in by the caller. The subject prefix is
-preserved in the constant name so the abort is self-describing when
-surfaced without module context (logs, error maps, test traces).
-
-`E_TENANT_CAP_STALE` is also the abort code the caller uses at the
-`Option<ID>`-unwrap step that precedes `assert_current` (see
-`rental_escrow::borrow_asset` §6.1 step 3). The semantic is the
-same: a `None` slot means no cap is current, so any presented cap is
-stale. Keeping one constant for both cases produces a single,
-uniform abort across the two staleness-rejection paths.
+None. `tenant_cap` has no abort sites: `mint_to` and `burn` are
+unconditional, `escrow_id` is a pure getter. The two gating checks
+that used to abort here (`assert_escrow`, `assert_current`) lived
+only to serve `rental_escrow::borrow_asset`; both have moved to the
+call site as inline asserts with rental-local constants
+(`E_WRONG_ESCROW_TENANT_CAP`, `E_STALE_TENANT_CAP`). The rationale:
+"wrong escrow" and "stale" are the consumer's interpretations of ID
+mismatches, not cap-intrinsic properties.
 
 
 2. TYPE
@@ -334,97 +314,16 @@ minted for.
 
 **Behavior:** returns `cap.escrow_id`.
 
-**Note:** `rental_escrow::borrow_asset` performs two checks in
-sequence, both delegated to this module:
+**Note:** `rental_escrow::borrow_asset` performs two gating checks
+inline at the call site:
 ```
-tenant_cap::assert_escrow(cap, object::id(escrow));                              // first: correct escrow
-assert!(escrow.current_tenant_cap_id.is_some(), E_TENANT_CAP_STALE);             // unwrap guard
-tenant_cap::assert_current(cap, *escrow.current_tenant_cap_id.borrow());         // second: not stale
+assert!(tenant_cap::escrow_id(cap) == object::id(escrow), E_WRONG_ESCROW_TENANT_CAP);
+assert!(escrow.current_tenant_cap_id.is_some(), E_STALE_TENANT_CAP);
+assert!(object::id(cap) == *escrow.current_tenant_cap_id.borrow(), E_STALE_TENANT_CAP);
 ```
-The escrow-match check asserts against a cap-intrinsic field
-(`cap.escrow_id`). The staleness check asserts against cap identity —
-also intrinsic — and the caller passes the unwrapped `ID` after
-handling the `Option`'s `None` case itself. Both helpers live here
-because both predicates are about the cap; the escrow-side state is
-pulled in as a primitive `ID`, not as the escrow's specific
-representation of "slot vacant".
-
----
-
-### `assert_escrow`
-
-    public(package) fun assert_escrow(cap: &TenantCap, escrow_id: ID)
-
-**Visibility:** `public(package)` — called only by `rental_escrow`.
-
-**Purpose:** asserts the presented cap belongs to the target escrow.
-Aborts with `E_TENANT_CAP_WRONG_ESCROW` if it does not.
-
-**Behavior:**
-```
-assert!(cap.escrow_id == escrow_id, E_TENANT_CAP_WRONG_ESCROW)
-```
-
-**Call sites:** `rental_escrow::borrow_asset` — once per call, before
-the staleness check and before asset extraction.
-
-**Why the helper exists:** parallels the inline owner-cap
-escrow-match used in `rental_escrow::retire` / `claim_asset` /
-`withdraw_earnings`. The check inspects only `cap.escrow_id` —
-intrinsic to the cap. (Note: this helper is itself pending
-removal; see `rental_escrow.spec.md §1` for the direction —
-cap-gating predicates and their abort codes live at the caller.)
-
----
-
-### `assert_current`
-
-    public(package) fun assert_current(
-        cap: &TenantCap,
-        current_tenant_cap_id: ID,
-    )
-
-**Visibility:** `public(package)` — called only by `rental_escrow`.
-
-**Purpose:** asserts the presented cap is the current tenant cap of
-the target escrow — i.e. not stale. Aborts with `E_TENANT_CAP_STALE`
-if it is not.
-
-**Behavior:**
-```
-assert!(object::id(cap) == current_tenant_cap_id, E_TENANT_CAP_STALE)
-```
-
-A `Some(other_id)` in the escrow (a later tenant's cap was installed
-by `do_handover`) fails this check after the caller unwraps. The
-`None` case — `do_tenure_expiry` cleared the slot — is handled by
-the caller *before* this helper runs: the caller asserts
-`is_some` with the same `E_TENANT_CAP_STALE` abort code. Both paths
-surface as the same staleness abort to external consumers.
-
-**Why the helper takes `ID`, not `Option<ID>`:** `Option<ID>` is
-`rental_escrow`'s chosen representation for "slot empty"; other
-hypothetical callers might use a sentinel or a `Table` lookup. The
-helper's single responsibility is ID equality on a `TenantCap`. The
-caller handles its own "slot empty" encoding and decides what error
-to surface in that case (in `rental_escrow`, it reuses
-`E_TENANT_CAP_STALE` because the semantic is the same).
-
-**Call sites:** `rental_escrow::borrow_asset` — once per call, after
-`assert_escrow` and after an `is_some` guard that unwraps the
-escrow's `Option<ID>`.
-
-**Why the helper lives here (not in `rental_escrow`):** the predicate
-*"cap X is the current one given tracked id Y"* is entirely about cap
-identity. The `ID` read from the escrow is pure data — no cap-module
-type depends on `rental_escrow`'s types, and no escrow-side logic is
-implied. The split between `tenant_cap` and `rental_escrow` stays
-clean: `rental_escrow` owns *who is current* (state writes at
-`install_new_tenant` / `do_handover` / `do_tenure_expiry`);
-`tenant_cap` owns *what it means for a cap to be that one* (identity
-comparison + abort code). The two helpers expose the full cap-side
-gating surface, keeping `borrow_asset` at ctrl-flow-only — read
-state, unwrap, pass to helpers, extract.
+Both abort constants live in `rental_escrow` — the cap module
+exposes only the binding (via `escrow_id`) and lets the consumer
+define what "wrong escrow" and "stale" mean for its own operations.
 
 
 5. PROPERTIES
@@ -490,34 +389,19 @@ state, unwrap, pass to helpers, extract.
 |---|---|---|
 | G1 | `escrow_id(&cap)` on a cap retrieved from `tenant`'s account after `mint_to(id, tenant, ctx)` | Returns `id`. |
 
-### 6.4 `assert_escrow`
-
-| # | Description | Expected |
-|---|---|---|
-| A1 | `assert_escrow(&cap, cap.escrow_id)` | No abort. |
-| A2 | `assert_escrow(&cap, other_id)` | Aborts with `E_TENANT_CAP_WRONG_ESCROW`. |
-| A3 | Cap minted for escrow A, asserted against escrow B | Aborts with `E_TENANT_CAP_WRONG_ESCROW`. Mirrors `owner_cap` A3 — asserts the abort depends on `cap.escrow_id`, not on the tx sender. |
-
-### 6.5 `assert_current`
-
-| # | Description | Expected |
-|---|---|---|
-| C1 | `assert_current(&cap, object::id(&cap))` | No abort. |
-| C2 | `assert_current(&cap, other_cap_id)` where `other_cap_id` is a different tenant's cap ID | Aborts with `E_TENANT_CAP_STALE`. Post-handover scenario: escrow has rotated `current_tenant_cap_id` to the new tenant's cap; displaced tenant's cap is now stale. |
-
-The `None`-slot case (`do_tenure_expiry` cleared
-`current_tenant_cap_id`) is not tested at this helper — the caller
-(`rental_escrow::borrow_asset`) unwraps the `Option<ID>` and aborts
-`E_TENANT_CAP_STALE` on `None` before `assert_current` runs. That
-path is covered by `rental_escrow` test B10.
-
-### 6.6 Lifecycle
+### 6.4 Lifecycle
 
 | # | Description | Expected |
 |---|---|---|
 | L1 | `mint_to` → take cap from recipient → `escrow_id` check → `burn` | Full lifecycle. No abort. One `TenantCapMinted { tenant_cap_id, escrow_id, tenant }` at `mint_to`, one `TenantCapBurned { tenant_cap_id, escrow_id }` at `burn`, sharing the `(tenant_cap_id, escrow_id)` pair. `tenant` present on Minted only. |
 | L2 | `mint_to` (cap A, tenant T1) → `mint_to` (cap B, same escrow, tenant T2) → both returned `ID`s distinct | Staleness mechanic relies on distinct IDs — confirmed at mint. Two `TenantCapMinted` events with distinct `tenant_cap_id`, identical `escrow_id`, distinct `tenant`. |
 | L3 | Stale cap: `burn` available after displacement | Holder can clean up regardless of escrow state. `TenantCapBurned` emitted with the stale cap's `(tenant_cap_id, escrow_id)`. |
+
+Escrow-mismatch and staleness abort paths are tested in
+`rental_escrow` at `borrow_asset` (B3, B4, B9, B10) — the
+predicates are inline asserts at the call site and the abort
+constants are rental-side; `tenant_cap` itself has no abort to
+test.
 
 
 7. MODULE BOUNDARY
@@ -528,15 +412,17 @@ path is covered by `rental_escrow` test B10.
 | Symbol | Visibility | Notes |
 |---|---|---|
 | `TenantCap` (type) | `public` | `key` only. Non-transferable by type; single delivery channel (`mint_to`). One per tenant transition event. |
-| `E_TENANT_CAP_WRONG_ESCROW` | `public` | Abort code for cap/escrow mismatch in `assert_escrow`. Value `0`. |
-| `E_TENANT_CAP_STALE` | `public` | Abort code for staleness mismatch in `assert_current`. Value `1`. |
 | `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `mint_to`. |
 | `TenantCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
 | `mint_to(escrow_id, tenant, ctx): ID` | `public(package)` | Fused mint + delivery. Constructs the cap, transfers it to `tenant`, emits `TenantCapMinted { tenant_cap_id, escrow_id, tenant }`, returns `tenant_cap_id`. Called by `rental_escrow::rent` and `rental_escrow::do_handover`. The transfer lives here (required: `transfer::transfer<TenantCap>` only compiles in this module). |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned { tenant_cap_id, escrow_id }`. Holder address recoverable by JOIN on `tenant_cap_id` against `TenantCapMinted`. |
-| `escrow_id(cap): ID` | `public` | Getter. |
-| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_TENANT_CAP_WRONG_ESCROW` if mismatch. Called by `rental_escrow::borrow_asset`. |
-| `assert_current(cap, current_tenant_cap_id)` | `public(package)` | Aborts with `E_TENANT_CAP_STALE` if `object::id(cap) != current_tenant_cap_id`. Takes `ID`, not `Option<ID>` — the caller unwraps its own representation of "slot empty" before calling. Called by `rental_escrow::borrow_asset` after `assert_escrow` and an `is_some` guard. |
+| `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow` at `borrow_asset` to compare against the target escrow's ID inline (abort constants `E_WRONG_ESCROW_TENANT_CAP` and `E_STALE_TENANT_CAP` live in rental_escrow). |
+
+**No abort codes exported.** The two gating checks that used to
+live here as `assert_escrow` / `assert_current` have moved to
+`rental_escrow::borrow_asset` as inline asserts with rental-side
+constants — "wrong escrow" and "stale" are the consumer's
+semantics, not the cap's.
 
 **Depends on:** `sui::object`, `sui::event`.
 

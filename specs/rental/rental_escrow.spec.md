@@ -883,13 +883,14 @@ reach the same numbers through that unified entry point.
   AtDutchAuction branches, which deliver `TenantCap` in-tx via
   `install_new_tenant`). The receipt has no protocol power — see
   `payment_receipt.spec.md`:
-  - `let coin_type  = type_name::get<CoinType>().into_string();`
-  - `let asset_type = type_name::get<Asset>().into_string();`
-  - `payment_receipt::mint_to(object::id(escrow), bid_amount,
-    coin_type, asset_type, pending_tenant, ctx);` — fused
-    mint-and-transfer inside `payment_receipt` (required:
-    `transfer::transfer<PaymentReceipt>` only compiles in the owning
-    module).
+  - `payment_receipt::mint_to<Asset, CoinType>(object::id(escrow),
+    bid_amount, pending_tenant, ctx);` — fused mint-and-transfer
+    inside `payment_receipt`. The two generics forward from `rent`'s
+    own parameters; `coin_type` / `asset_type` are derived from them
+    inside `mint_to` via `type_name::get<T>().into_string()` and stored
+    as fields on the receipt. The transfer must live inside
+    `payment_receipt`: `transfer::transfer<PaymentReceipt>` only
+    compiles in the owning module.
 - Emit `BidPlaced { escrow_id, pending_tenant, bid_amount,
   handover_countdown_expiry }` — emit-last: all state mutations and the
   receipt delivery complete, so the escrow's post-state and the sender's
@@ -929,11 +930,10 @@ exits afterward.
   symmetry as the HandoverOpen branch; the displaced bidder keeps the
   receipt minted on their own prior bid — the protocol does not and
   cannot revoke it). See `payment_receipt.spec.md`:
-  - `let coin_type  = type_name::get<CoinType>().into_string();`
-  - `let asset_type = type_name::get<Asset>().into_string();`
-  - `payment_receipt::mint_to(object::id(escrow), new_bid_amount,
-    coin_type, asset_type, new_bidder, ctx);` — fused
-    mint-and-transfer inside `payment_receipt`.
+  - `payment_receipt::mint_to<Asset, CoinType>(object::id(escrow),
+    new_bid_amount, new_bidder, ctx);` — fused mint-and-transfer
+    inside `payment_receipt`; generics forward from `rent` and the
+    canonical type strings are derived inside `mint_to`.
 - Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
   new_bidder, new_bid_amount }` — emit-last: all state rotations, the
   refund push, and the receipt delivery complete, so the escrow's

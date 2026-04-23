@@ -5,7 +5,8 @@ Module: `payment_receipt`
 Design reference: design-compact.md §1 (state machine — Rented branch of rent()),
   §2 (access model — delivery symmetry)
 Module map reference: module-map.spec.md §7
-Depends on: nothing (`sui::object`, `sui::transfer`, `std::ascii::String`)
+Depends on: nothing (`sui::object`, `sui::transfer`, `std::ascii::String`,
+  `std::type_name`)
 
 
 0. MODULE RESPONSIBILITY
@@ -21,14 +22,16 @@ authority** and is invisible to every call site outside this module.
   in `Rented { HandoverOpen }` or `Rented { HandoverConfirmed }`. Holds the
   escrow identity, the amount paid, and the canonical type strings for coin
   and asset.
-- `mint_to(escrow_id, amount, coin_type, asset_type, recipient, ctx)` —
-  `public(package)`. Fused mint + delivery. Constructs the receipt inline
-  and transfers it to `recipient`. No return value — the caller
-  (`rental_escrow`) has no use for the receipt's `ID`. The transfer lives
-  inside this module: `transfer::transfer<PaymentReceipt>` only compiles
-  here (Sui verifier rejects it for a `key`-only foreign type). Called by
-  `rental_escrow::rent` in both Rented sub-branches, after the
-  `E_INSUFFICIENT_PAYMENT` check passes.
+- `mint_to<Asset, CoinType>(escrow_id, amount, recipient, ctx)` —
+  `public(package)`. Fused mint + delivery. Constructs the receipt
+  inline — deriving `coin_type` and `asset_type` from the generic
+  parameters via `type_name::get<T>().into_string()` — and transfers it
+  to `recipient`. No return value — the caller (`rental_escrow`) has no
+  use for the receipt's `ID`. The transfer lives inside this module:
+  `transfer::transfer<PaymentReceipt>` only compiles here (Sui verifier
+  rejects it for a `key`-only foreign type). Called by
+  `rental_escrow::rent<Asset, CoinType>` in both Rented sub-branches,
+  after the `E_INSUFFICIENT_PAYMENT` check passes.
 - `burn(receipt)` — `public`. Voluntary destroy by holder for gas recovery.
   No state mutation anywhere. The protocol never forces this.
 
@@ -36,10 +39,16 @@ authority** and is invisible to every call site outside this module.
 - Any protocol authorization — the receipt is not checked by any call site.
 - Any escrow state or fund flows — those live in `rental_escrow`.
 - Any event stream — see §3.
-- Type-parameter plumbing — `rental_escrow::rent` already has `<Asset,
-  CoinType>` in scope and derives the canonical strings via
-  `type_name::get<T>().into_string()` before calling `mint_to`. This module
-  is a passive data container.
+
+**Owns the capture format for generic-type identity.** `mint_to` takes
+`<Asset, CoinType>` as generics and derives the canonical type strings
+inline via `type_name::get<T>().into_string()`. The struct layout stores
+the result, so the decision "how this protocol represents a generic
+parameter in a receipt's fields" belongs to `payment_receipt`: any
+future evolution of that encoding (hashed form, shortened form,
+trailing-null stripping) is one edit here, not an adapter-code edit at
+every caller. Generics cross the function boundary at compile time; the
+struct itself stays non-generic (see §2).
 
 **Key design properties:**
 
@@ -136,8 +145,8 @@ public struct PaymentReceipt has key {
 | `id` | `UID` | Object identity. |
 | `escrow_id` | `ID` | ID of the `RentalEscrow` the bid was placed on. |
 | `amount` | `u64` | Payment amount in base units of `CoinType`, captured at mint. Equal to `coin::value(&payment)` at the call site. |
-| `coin_type` | `String` | Canonical type string of `CoinType`, derived by `type_name::get<CoinType>().into_string()` at the call site. Example: `"0000…0002::sui::SUI"`. |
-| `asset_type` | `String` | Canonical type string of `Asset`, derived by `type_name::get<Asset>().into_string()` at the call site. |
+| `coin_type` | `String` | Canonical type string of `CoinType`, derived inside `mint_to` via `type_name::get<CoinType>().into_string()`. Example: `"0000…0002::sui::SUI"`. |
+| `asset_type` | `String` | Canonical type string of `Asset`, derived inside `mint_to` via `type_name::get<Asset>().into_string()`. |
 
 **Why non-generic despite generic origin:**
 
@@ -153,6 +162,13 @@ Storing the canonical type strings as fields shifts a few dozen bytes
 on-chain per object in exchange for a **single `Display<PaymentReceipt>`
 registration** that covers every present and future instantiation via
 template field interpolation. This is the scalable trade-off.
+
+**Generic function, non-generic struct.** `mint_to<Asset, CoinType>`
+takes the two generics at its boundary and derives the canonical strings
+inline (see §4); the struct itself carries no type parameters. Generics
+live at the function boundary — compile-time, monomorphized away — while
+concrete `String` fields live on the object, supporting the single
+global `Display<PaymentReceipt>` registration above.
 
 **No identity check anywhere.** Unlike `TenantCap`, which is compared by ID
 against `escrow.current_tenant_cap_id` to enforce staleness, a
@@ -216,33 +232,31 @@ reading Sui's object-creation envelope filtered by the
 
 ### `mint_to`
 
-    public(package) fun mint_to(
-        escrow_id:  ID,
-        amount:     u64,
-        coin_type:  String,
-        asset_type: String,
-        recipient:  address,
-        ctx:        &mut TxContext,
+    public(package) fun mint_to<Asset, CoinType>(
+        escrow_id: ID,
+        amount:    u64,
+        recipient: address,
+        ctx:       &mut TxContext,
     )
 
 **Visibility:** `public(package)` — callable only by `rental_escrow`.
 
-**Purpose:** fused mint + delivery. Constructs a `PaymentReceipt` from
-already-derived inputs and transfers it to `recipient`. The caller has
-validated the payment (`E_INSUFFICIENT_PAYMENT`), captured
-`amount = coin::value(&payment)` before consuming the coin, and derived
-the two type strings from the generic parameters of the surrounding
-`rental_escrow::rent<Asset, CoinType>` call.
+**Purpose:** fused mint + delivery. Derives the two canonical type
+strings from the generics in scope, constructs a `PaymentReceipt`, and
+transfers it to `recipient`. The caller has validated the payment
+(`E_INSUFFICIENT_PAYMENT`) and captured `amount = coin::value(&payment)`
+before consuming the coin; the two generics propagate from the
+surrounding `rental_escrow::rent<Asset, CoinType>` call.
 
 **Behavior:**
-1. Construct inline:
+1. Construct inline, deriving the two type strings from the generics:
    ```
    let receipt = PaymentReceipt {
        id: object::new(ctx),
        escrow_id,
        amount,
-       coin_type,
-       asset_type,
+       coin_type:  type_name::get<CoinType>().into_string(),
+       asset_type: type_name::get<Asset>().into_string(),
    };
    ```
 2. `transfer::transfer(receipt, recipient);`
@@ -256,10 +270,11 @@ can only appear inside the module that defines `T`. A
 `rental_escrow`-side `transfer::transfer(receipt, recipient)` would fail
 to compile. The fused form is the only working shape.
 
-**Call sites:** `rental_escrow::rent`, in both `Rented { HandoverOpen }`
-and `Rented { HandoverConfirmed }` sub-branches, after the
-`E_INSUFFICIENT_PAYMENT` check. Passes `tx_context::sender(ctx)` as
-`recipient`. No other call site exists or will exist.
+**Call sites:** `rental_escrow::rent<Asset, CoinType>`, in both
+`Rented { HandoverOpen }` and `Rented { HandoverConfirmed }`
+sub-branches, after the `E_INSUFFICIENT_PAYMENT` check. Passes
+`tx_context::sender(ctx)` as `recipient`; the two generics forward from
+`rent`'s own parameters. No other call site exists or will exist.
 
 ---
 
@@ -331,10 +346,10 @@ stale, no fund moves. The object simply ceases to exist.
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `mint_to(escrow_id, amount, coin_type, asset_type, recipient, ctx)` | After the call, `test_scenario::take_from_address<PaymentReceipt>(scenario, recipient)` yields a receipt with the four input fields exactly as passed and a fresh UID. **No event emitted.** |
-| N2 | Two calls with same inputs in the same tx | Two distinct `PaymentReceipt` objects in `recipient`'s account (distinct UIDs), identical content in all other fields. |
-| N3 | Two calls with distinct amounts / types | Two receipts with matching fields per call. Asserts fields are copied verbatim from arguments, not derived internally. |
-| N4 | `mint_to` passing a `recipient` different from `tx_context::sender(ctx)` | The receipt lands in `recipient`'s account, **not** in the sender's. Asserts delivery routes through the argument. (Not a path exercised by `rental_escrow::rent`, which always passes the sender — included for completeness of the fused-delivery contract.) |
+| N1 | `mint_to<Asset, CoinType>(escrow_id, amount, recipient, ctx)` | After the call, `test_scenario::take_from_address<PaymentReceipt>(scenario, recipient)` yields a receipt with `escrow_id` / `amount` copied verbatim from arguments, `coin_type` / `asset_type` equal to `type_name::get<CoinType>().into_string()` / `type_name::get<Asset>().into_string()`, and a fresh UID. **No event emitted.** |
+| N2 | Two calls with same inputs and same generics in the same tx | Two distinct `PaymentReceipt` objects in `recipient`'s account (distinct UIDs), identical content in all other fields. |
+| N3 | Two calls with distinct amounts and distinct generics (e.g. `mint_to<AssetA, CoinA>` and `mint_to<AssetB, CoinB>`) | Two receipts with matching fields per call. Asserts that `coin_type` / `asset_type` are **derived inside `mint_to` from the generic parameters**, not supplied by the caller as strings — the module owns the capture format. |
+| N4 | `mint_to<Asset, CoinType>` passing a `recipient` different from `tx_context::sender(ctx)` | The receipt lands in `recipient`'s account, **not** in the sender's. Asserts delivery routes through the argument. (Not a path exercised by `rental_escrow::rent`, which always passes the sender — included for completeness of the fused-delivery contract.) |
 
 ### 6.2 `burn`
 
@@ -358,12 +373,13 @@ stale, no fund moves. The object simply ceases to exist.
 | Symbol | Visibility | Notes |
 |---|---|---|
 | `PaymentReceipt` (type) | `public` | `key` only. Non-transferable by type; single delivery channel (`mint_to`). Symbolic — no protocol authority. |
-| `mint_to(escrow_id, amount, coin_type, asset_type, recipient, ctx)` | `public(package)` | Fused mint + delivery. Constructs the receipt and transfers it to `recipient`. No return value. Called only by `rental_escrow::rent` in the Rented sub-branches, with `recipient == tx_context::sender(ctx)`. No event emitted. |
+| `mint_to<Asset, CoinType>(escrow_id, amount, recipient, ctx)` | `public(package)` | Fused mint + delivery. Derives `coin_type` / `asset_type` from the generics via `type_name::get<T>().into_string()`, constructs the receipt, and transfers it to `recipient`. No return value. Called only by `rental_escrow::rent<Asset, CoinType>` in the Rented sub-branches, with `recipient == tx_context::sender(ctx)`. No event emitted. |
 | `burn(receipt)` | `public` | Voluntary destroy for gas recovery. No state mutation. No event emitted. |
 
 No error constants. No events.
 
-**Depends on:** `sui::object`, `sui::transfer`, `std::ascii::String`.
+**Depends on:** `sui::object`, `sui::transfer`, `std::ascii::String`,
+`std::type_name`.
 
 
 8. OBJECT DISPLAY

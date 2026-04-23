@@ -188,7 +188,7 @@ Arrows point from dependency to dependent.
 `rental_escrow` also imports `protocol_fee_inbox` directly (for `ProtocolFeeRef` in
 `integrate`) in addition to `fee_message`.
 `payment_receipt` is a leaf like the cap modules — depends only on `sui::object`,
-`sui::transfer`, `std::ascii::String`.
+`sui::transfer`, `std::ascii::String`, `std::type_name`.
 
 **Events:** there is no standalone `events` module. Each module owns its own
 observability — event structs are defined in the module that emits them.
@@ -437,15 +437,15 @@ asymmetry with the `Idle` / `AtDutchAuction` branches (which already deliver
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `new(escrow_id, amount, coin_type, asset_type, ctx): PaymentReceipt` | `public(package)` | Mint. Called by `rental_escrow::rent` in both `Rented { HandoverOpen }` and `Rented { HandoverConfirmed }` sub-branches, after `E_INSUFFICIENT_PAYMENT`. The caller derives both type strings from its own generic parameters via `type_name::get<T>().into_string()`. |
+| `mint_to<Asset, CoinType>(escrow_id, amount, recipient, ctx)` | `public(package)` | Fused mint + delivery. Derives `coin_type` / `asset_type` from the generics via `type_name::get<T>().into_string()` and transfers the receipt to `recipient`. No return value. Called by `rental_escrow::rent<Asset, CoinType>` in both `Rented { HandoverOpen }` and `Rented { HandoverConfirmed }` sub-branches, after `E_INSUFFICIENT_PAYMENT`, with `recipient == tx_context::sender(ctx)`. |
 | `burn(receipt)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
 
 No error constants. No events (see `payment_receipt.spec.md` §3 for the
 deliberate exclusion from the star schema).
 
-**Status:** [ ] `PaymentReceipt` · [ ] `new` · [ ] `burn`
+**Status:** [ ] `PaymentReceipt` · [ ] `mint_to` · [ ] `burn`
 
-**Depends on:** nothing (only `sui::object`, `sui::transfer`, `std::ascii::String`).
+**Depends on:** nothing (only `sui::object`, `sui::transfer`, `std::ascii::String`, `std::type_name`).
 
 ---
 

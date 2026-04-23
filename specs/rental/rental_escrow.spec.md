@@ -91,9 +91,13 @@ all others and is consumed by none.
   `return_asset` within a single PTB — never across transaction boundaries.
   The invariant is enforced by the hot-potato `AssetReceipt`, not by the type.
 - **Capability-based authorization.** `retire`, `claim_asset`, and
-  `withdraw_earnings` take `&OwnerCap` and forward to
-  `owner_cap::assert_escrow`. `borrow_asset` takes `&TenantCap` and checks
-  `object::id(cap) == current_tenant_cap_id` (staleness check). No address
+  `withdraw_earnings` take `&OwnerCap` and assert inline
+  `owner_cap::escrow_id(cap) == object::id(escrow)` (aborts
+  `E_WRONG_ESCROW_OWNER_CAP`). `borrow_asset` takes `&TenantCap` and
+  checks both cap/escrow binding and `object::id(cap) ==
+  current_tenant_cap_id` (staleness) inline. Cap modules expose only
+  getters and lifecycle; the gating predicates and their abort
+  codes live here, where the operation semantic lives. No address
   check is performed anywhere.
 
 
@@ -101,12 +105,14 @@ all others and is consumed by none.
 ------------------
 
 All constants are `public` so the SDK can map abort codes to human-readable
-messages. Only errors that `rental_escrow` itself raises live here;
-cap-gated entries that delegate to `owner_cap::assert_escrow`,
-`tenant_cap::assert_escrow`, or `tenant_cap::assert_current` surface
-aborts from those modules directly — the constants for those aborts
-live in the cap modules, not here (see `owner_cap.spec.md §1` and
-`tenant_cap.spec.md §1`).
+messages. All errors raised on the rental-flow paths — including the
+cap-gating checks at `retire` / `claim_asset` / `withdraw_earnings` /
+`borrow_asset` — live here. Cap modules (`owner_cap`, `tenant_cap`)
+expose only lifecycle and getters; they own no abort codes. The
+rationale: "wrong escrow", "stale tenant cap", etc. are
+interpretations the consumer places on an ID mismatch — that
+semantic belongs where the operation is being gated, not in the cap
+type itself.
 
     public const E_NOT_RENTED:                  u64 = 0;  // compute_used_credit: state != Rented
     public const E_INSUFFICIENT_PAYMENT:        u64 = 1;  // payment < floor price (all acquisition paths)
@@ -119,6 +125,7 @@ live in the cap modules, not here (see `owner_cap.spec.md §1` and
     public const E_RECEIPT_ASSET_MISMATCH:      u64 = 8;  // return_asset: receipt.asset_id != object::id(&asset)
     public const E_NO_EARNINGS:                 u64 = 9;  // withdraw_earnings: owner_earnings == 0 after settlement
     public const E_ASSET_ALREADY_BORROWED:      u64 = 10; // borrow_asset called while asset is already out of escrow
+    public const E_WRONG_ESCROW_OWNER_CAP:      u64 = 11; // retire / claim_asset / withdraw_earnings: owner_cap::escrow_id(cap) != object::id(escrow)
 
 
 2. TYPES
@@ -639,8 +646,10 @@ Integrators who want to limit exposure must do so outside the protocol.
 asset. Does not mutate balances.
 
 **Behavior:**
-1. `owner_cap::assert_escrow(owner_cap, object::id(escrow))` — aborts
-   `owner_cap::E_OWNER_CAP_WRONG_ESCROW` if mismatch.
+1. `assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), E_WRONG_ESCROW_OWNER_CAP);`
+   — inline escrow-match gate. Abort code is rental-local because
+   the "wrong escrow" semantic is this module's interpretation of
+   the cap/escrow ID mismatch.
 2. `apply_pending_transitions(escrow, clock, ctx)` — settle all elapsed
    boundaries first.
 3. Assert `!escrow.retire_flag`, abort `E_ALREADY_RETIRED`.
@@ -703,10 +712,10 @@ deletes the escrow, returns the asset and earnings.
 
 **Behavior:**
 1. Consume both `escrow` and `owner_cap` by value.
-2. `owner_cap::assert_escrow(&owner_cap, object::id(&escrow))` — aborts
-   `owner_cap::E_OWNER_CAP_WRONG_ESCROW` on mismatch (redundant safety —
-   the cap could not have been minted otherwise, but the assertion
-   prevents a cross-escrow cap passed through a malicious PTB).
+2. `assert!(owner_cap::escrow_id(&owner_cap) == object::id(&escrow), E_WRONG_ESCROW_OWNER_CAP);`
+   — inline escrow-match gate. Redundant safety: the cap could not
+   have been minted otherwise, but the assertion prevents a
+   cross-escrow cap passed through a malicious PTB.
 3. Call `apply_pending_transitions(&mut escrow, clock, ctx)` — settle any
    remaining elapsed boundaries.
 4. Assert `escrow.state == Retired`, abort `E_NOT_RETIRED`. This covers
@@ -768,8 +777,8 @@ locked balances.
 **Purpose:** pull `owner_earnings` without exiting the protocol.
 
 **Behavior:**
-1. `owner_cap::assert_escrow(owner_cap, object::id(escrow))` — aborts
-   `owner_cap::E_OWNER_CAP_WRONG_ESCROW` on mismatch.
+1. `assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), E_WRONG_ESCROW_OWNER_CAP);`
+   — inline escrow-match gate.
 2. `apply_pending_transitions(escrow, clock, ctx)` — settle any elapsed
    boundaries first so the withdrawn amount includes all accrued earnings.
 3. `let amount = balance::value(&escrow.owner_earnings);`
@@ -1019,9 +1028,9 @@ integrating ecosystem.
    handover that completes here will rotate `current_tenant_cap_id` before
    the staleness check — the displaced tenant correctly fails.
 2. `tenant_cap::assert_escrow(tenant_cap, object::id(escrow))` — aborts
-   `tenant_cap::E_TENANT_CAP_WRONG_ESCROW`. Parallels the
-   `owner_cap::assert_escrow` call shape used in `retire` /
-   `claim_asset` / `withdraw_earnings`.
+   `tenant_cap::E_TENANT_CAP_WRONG_ESCROW`. Parallels the inline
+   owner-cap escrow-match used in `retire` / `claim_asset` /
+   `withdraw_earnings`.
 3. Unwrap and check staleness:
    ```
    assert!(escrow.current_tenant_cap_id.is_some(), tenant_cap::E_TENANT_CAP_STALE);
@@ -1968,7 +1977,7 @@ via the owner-share branch alone.
 | C5 | `retire` from Rented(HandoverConfirmed) | `retire_flag = true`. `state` unchanged. Handover completes normally; new tenant enters HandoverOpen with flag set. |
 | C6 | Second `retire` call | Aborts `E_ALREADY_RETIRED`. |
 | C7 | `claim_asset` when `state != Retired` | Aborts `E_NOT_RETIRED`. |
-| C8 | `claim_asset` with non-matching `OwnerCap` | Aborts `owner_cap::E_OWNER_CAP_WRONG_ESCROW`. |
+| C8 | `claim_asset` with non-matching `OwnerCap` | Aborts `E_WRONG_ESCROW_OWNER_CAP`. |
 | C9 | `claim_asset` on Retired with accumulated earnings | Returns `(asset, coin == owner_earnings)`. OwnerCap burned. Escrow deleted. `AssetClaimed` event. |
 | C10 | Full retire-then-claim flow from Rented | `retire` (tx1) emits `RetireFlagSet(state_at_set: Rented(HandoverOpen))` only — no `AssetRetired` yet (deferred). Tenure expiry resolved in tx2 by `apply_pending_transitions`: state → `Retired`, events in order `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`. `claim_asset` (tx3) succeeds. |
 | C11 | `claim_asset` with `retire_flag` already set, pre-APT state `Rented(HandoverConfirmed)`, both handover and T(n+1)'s tenure expired — APT chains C1 → C2(→Retired) before claim's own logic | APT fires `do_handover`: T(n+1) installed, `owner_earnings += used_credit × 0.90`, `remain_credit` pushed to T(n), new `TenantCap` pushed to T(n+1), `retire_flag` preserved. APT then fires `do_tenure_expiry` with the flag set: `owner_earnings += T(n+1)_stake × 0.90`, state → `Retired`. Claim body asserts `state == Retired` ✓ and returns `(asset, Coin == accumulated owner_earnings)`. Events in order: `HandoverCompleted`, `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`, `AssetClaimed`. Pairs with C10 (which covers the chain starting from HandoverOpen). |
@@ -1982,7 +1991,7 @@ via the owner-share branch alone.
 | W1 | Withdraw with zero earnings | Aborts `E_NO_EARNINGS`. |
 | W2 | Withdraw with positive earnings | Returns Coin of exact balance. `owner_earnings == 0` after. `EarningsWithdrawn { escrow_id, owner_cap_id, owner, amount }` event with `owner_cap_id == object::id(owner_cap)` and `owner == tx_context::sender(ctx)`. |
 | W2a | Same cap transferred between two distinct addresses, each withdraws once | Two `EarningsWithdrawn` rows sharing `owner_cap_id` but with different `owner` values. Confirms `owner` is first-observed per call — not cached from mint-time. |
-| W3 | Withdraw with wrong cap | Aborts `owner_cap::E_OWNER_CAP_WRONG_ESCROW`. |
+| W3 | Withdraw with wrong cap | Aborts `E_WRONG_ESCROW_OWNER_CAP`. |
 | W4 | Withdraw when pre-call state is `Rented(HandoverOpen)` and tenure has expired — APT fires `do_tenure_expiry` before drain | APT credits `owner_earnings += tenant_stake × 0.90`, routes `tenant_stake × 0.10` as `FeeMessage<C>` to `fee_inbox_id`, state → `AtDutchAuction`. Withdraw returns `Coin == (pre_earnings + stake × 0.90)`; `owner_earnings == 0` after. Events in order: `TenureExpired`, then `EarningsWithdrawn`. Asserts APT materializes earnings that a drain-only implementation would miss. |
 | W5 | Withdraw when pre-call state is `Rented(HandoverConfirmed)` and handover has expired — APT fires `do_handover` before drain | APT credits `owner_earnings += used_credit × 0.90`, pushes `remain_credit` to displaced tenant, rotates `pending_bid → tenant_stake`, mints + pushes new `TenantCap`, state → `Rented(HandoverOpen)` with T(n+1) installed. Withdraw returns `Coin == (pre_earnings + used_credit × 0.90)`. Events in order: `HandoverCompleted`, then `EarningsWithdrawn`. Exercises the C1-path credit (distinct from W4's C2-path). |
 

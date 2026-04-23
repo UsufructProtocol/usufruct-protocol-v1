@@ -24,10 +24,13 @@ Depends on: nothing (`sui::object` only)
   `rental_escrow::claim_asset`. `owner` is the cap holder at burn time
   (typically `tx_context::sender(ctx)` hoisted at the call site),
   recorded in the `OwnerCapBurned` event.
-- `escrow_id(cap): ID` — `public`. Getter.
-- `assert_escrow(cap, escrow_id)` — `public(package)`. Aborts if
-  `cap.escrow_id != escrow_id`. Used by `rental_escrow` to verify the
-  presented cap belongs to the escrow being operated on.
+- `escrow_id(cap): ID` — `public`. Getter. Used by `rental_escrow`
+  to read the cap's bound escrow and compare inline against the
+  target escrow's ID (escrow-match gating for `retire`,
+  `claim_asset`, `withdraw_earnings`). The abort on mismatch lives
+  in `rental_escrow` — that is where the gate's semantic
+  interpretation ("this cap does not authorize operations on this
+  escrow") belongs.
 - Lifecycle events: `OwnerCapMinted`, `OwnerCapBurned`. Emitted from
   inside this module (Sui Verifier requires the emitted type to be
   internal to the emitting module).
@@ -48,16 +51,23 @@ Depends on: nothing (`sui::object` only)
 - Mutual exclusivity: `OwnerCap` exists ↔ the underlying asset is held
   in its `RentalEscrow`. `burn` is called atomically with asset
   extraction in `claim_asset` — no `OwnerCap` outlives its escrow.
-- Authorization is cap-based, not address-based. `rental_escrow` calls
-  `assert_escrow` rather than checking `tx_context::sender`.
+- Authorization is cap-based, not address-based. `rental_escrow`
+  compares `cap.escrow_id` (via the public getter) to the target
+  escrow's ID rather than checking `tx_context::sender`. The
+  abort code for the mismatch lives in `rental_escrow`, not here —
+  this module exposes the binding as data and lets the consumer
+  define what "wrong escrow" means for its own operations.
 
 
 1. ERROR CONSTANTS
 ------------------
 
-| Constant | Value | Abort site |
-|---|---|---|
-| `E_OWNER_CAP_WRONG_ESCROW` | `0` | `assert_escrow` — presented cap does not belong to the target escrow |
+None. `owner_cap` has no abort sites: `new` and `burn` are
+unconditional, `escrow_id` is a pure getter. The escrow-match check
+that used to abort here lives in `rental_escrow` as an inline
+assert with a rental-side constant (`E_WRONG_ESCROW_OWNER_CAP`),
+because the semantic of "wrong escrow" is the consumer's
+interpretation of an ID mismatch, not a cap-intrinsic property.
 
 
 2. TYPE
@@ -218,12 +228,13 @@ cap, destroy the `UID`, and emit.
 
 **Call site:** `rental_escrow::claim_asset` — once per escrow lifetime,
 atomically with asset extraction and escrow deletion. `claim_asset`
-already gates on `owner_cap::assert_escrow(cap, escrow_id)` and then
-binds `let owner = tx_context::sender(ctx);` once, passing it to
-`burn`. Since the cap is presented by value and the escrow is deleted
-in the same call, `owner` at this boundary is the legitimate holder at
-burn time; since `OwnerCap` has `key + store`, that may differ from
-the mint-time recipient recorded in `OwnerCapMinted`.
+gates inline on `owner_cap::escrow_id(&cap) == object::id(&escrow)`
+(aborting `rental_escrow::E_WRONG_ESCROW_OWNER_CAP` on mismatch) and
+then binds `let owner = tx_context::sender(ctx);` once, passing it
+to `burn`. Since the cap is presented by value and the escrow is
+deleted in the same call, `owner` at this boundary is the legitimate
+holder at burn time; since `OwnerCap` has `key + store`, that may
+differ from the mint-time recipient recorded in `OwnerCapMinted`.
 
 ---
 
@@ -241,25 +252,6 @@ for.
 
 ---
 
-### `assert_escrow`
-
-    public(package) fun assert_escrow(cap: &OwnerCap, escrow_id: ID)
-
-**Visibility:** `public(package)` — called only by `rental_escrow`.
-
-**Purpose:** asserts the presented cap belongs to the target escrow.
-Aborts with `E_OWNER_CAP_WRONG_ESCROW` if it does not.
-
-**Behavior:**
-```
-assert!(cap.escrow_id == escrow_id, E_OWNER_CAP_WRONG_ESCROW)
-```
-
-**Call sites:** `rental_escrow::retire`, `rental_escrow::claim_asset`,
-`rental_escrow::withdraw_earnings` — once per call, immediately after
-the cap is presented.
-
-
 5. PROPERTIES
 -------------
 
@@ -274,9 +266,11 @@ the cap is presented.
     after the escrow `X` is deleted.
 
 **P3 — Authorization is cap-bound, not address-bound:**
-    `assert_escrow` checks `cap.escrow_id`. The protocol does not record
-    or check the address of whoever holds the cap. Transferring the cap
-    transfers authority unconditionally.
+    `rental_escrow` gates owner ops on
+    `owner_cap::escrow_id(&cap) == object::id(&escrow)` — a pure
+    cap-field read compared to the target escrow's ID. The protocol
+    does not record or check the address of whoever holds the cap.
+    Transferring the cap transfers authority unconditionally.
 
 **P4 — Composability with operational intent:**
     `store` is chosen for custody, multisig, and secondary-market
@@ -316,20 +310,16 @@ the cap is presented.
 |---|---|---|
 | G1 | `escrow_id(&cap)` after `new(id, ctx)` | Returns `id`. |
 
-### 6.4 `assert_escrow`
+### 6.4 Lifecycle
 
 | # | Description | Expected |
 |---|---|---|
-| A1 | `assert_escrow(&cap, cap.escrow_id)` | No abort. |
-| A2 | `assert_escrow(&cap, different_id)` | Aborts with `E_OWNER_CAP_WRONG_ESCROW`. |
-| A3 | Cap minted for escrow A, asserted against escrow B | Aborts with `E_OWNER_CAP_WRONG_ESCROW`. |
+| L1 | `new` → `burn` | Full lifecycle completes. No abort. One `OwnerCapMinted` and one `OwnerCapBurned` event, both carrying the same `(owner_cap_id, escrow_id)` pair. `owner` fields reflect the declared mint recipient and the burn-time argument respectively. |
 
-### 6.5 Lifecycle
-
-| # | Description | Expected |
-|---|---|---|
-| L1 | `new` → `assert_escrow` (matching) → `burn` | Full lifecycle completes. No abort. One `OwnerCapMinted` and one `OwnerCapBurned` event, both carrying the same `(owner_cap_id, escrow_id)` pair. `owner` fields reflect the declared mint recipient and the burn-time sender respectively. |
-| L2 | `new` → `assert_escrow` (mismatched) | Aborts before burn. Cap not consumed. `OwnerCapMinted` emitted at `new`; no `OwnerCapBurned` (burn never ran). |
+Escrow-mismatch abort paths are tested in `rental_escrow` at each
+call site (`retire`, `claim_asset`, `withdraw_earnings`) — the
+predicate is a one-line inline assert and the abort constant is
+rental-side; `owner_cap` itself has no abort to test.
 
 
 7. MODULE BOUNDARY
@@ -340,13 +330,16 @@ the cap is presented.
 | Symbol | Visibility | Notes |
 |---|---|---|
 | `OwnerCap` (type) | `public` | `key + store`. One per escrow. Transferable. |
-| `E_OWNER_CAP_WRONG_ESCROW` | `public` | Abort code for cap/escrow mismatch in `assert_escrow`. |
 | `OwnerCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. |
 | `OwnerCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
 | `new(escrow_id, owner, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. Emits `OwnerCapMinted { owner_cap_id, escrow_id, owner }`. |
 | `burn(cap, owner)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. Emits `OwnerCapBurned { owner_cap_id, escrow_id, owner }` with `owner` from the caller (the binding of `tx_context::sender(ctx)` hoisted at the call site). |
-| `escrow_id(cap): ID` | `public` | Getter. |
-| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_OWNER_CAP_WRONG_ESCROW` if mismatch. |
+| `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow` at each owner-gated entry to compare against the target escrow's ID inline (abort constant lives there). |
+
+**No abort codes exported.** The escrow-match check that used to
+live here as `assert_escrow` has moved to `rental_escrow` as an
+inline assert with a rental-side constant — the semantic of
+"wrong escrow" is the consumer's, not the cap's.
 
 **Depends on:** `sui::object`, `sui::event`.
 

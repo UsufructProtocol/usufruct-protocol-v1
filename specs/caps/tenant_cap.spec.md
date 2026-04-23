@@ -35,7 +35,8 @@ Depends on: nothing (`sui::object` only)
 - `assert_escrow(cap, escrow_id)` — `public(package)`. Aborts if
   `cap.escrow_id != escrow_id`. Used by `rental_escrow::borrow_asset`
   to verify the presented cap belongs to the escrow being operated on.
-  Parallels `owner_cap::assert_escrow`.
+  Parallels the inline owner-cap escrow-match used in
+  `rental_escrow::retire` / `claim_asset` / `withdraw_earnings`.
 - `assert_current(cap, current_tenant_cap_id)` — `public(package)`.
   Aborts if `object::id(cap) != current_tenant_cap_id`. Used by
   `rental_escrow::borrow_asset` to reject stale caps (displaced
@@ -367,12 +368,12 @@ assert!(cap.escrow_id == escrow_id, E_TENANT_CAP_WRONG_ESCROW)
 **Call sites:** `rental_escrow::borrow_asset` — once per call, before
 the staleness check and before asset extraction.
 
-**Why the helper exists:** parallels `owner_cap::assert_escrow`. The
-two cap modules expose the same escrow-match helper with the same
-signature, so callers in `rental_escrow` use a uniform call shape
-(`<cap_module>::assert_escrow(cap, object::id(escrow))`) across
-cap-gated entry points. The check inspects only `cap.escrow_id` —
-intrinsic to the cap.
+**Why the helper exists:** parallels the inline owner-cap
+escrow-match used in `rental_escrow::retire` / `claim_asset` /
+`withdraw_earnings`. The check inspects only `cap.escrow_id` —
+intrinsic to the cap. (Note: this helper is itself pending
+removal; see `rental_escrow.spec.md §1` for the direction —
+cap-gating predicates and their abort codes live at the caller.)
 
 ---
 
@@ -527,14 +528,14 @@ path is covered by `rental_escrow` test B10.
 | Symbol | Visibility | Notes |
 |---|---|---|
 | `TenantCap` (type) | `public` | `key` only. Non-transferable by type; single delivery channel (`mint_to`). One per tenant transition event. |
-| `E_TENANT_CAP_WRONG_ESCROW` | `public` | Abort code for cap/escrow mismatch in `assert_escrow`. Value `0`, parallel to `owner_cap::E_OWNER_CAP_WRONG_ESCROW`. |
+| `E_TENANT_CAP_WRONG_ESCROW` | `public` | Abort code for cap/escrow mismatch in `assert_escrow`. Value `0`. |
 | `E_TENANT_CAP_STALE` | `public` | Abort code for staleness mismatch in `assert_current`. Value `1`. |
 | `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `mint_to`. |
 | `TenantCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
 | `mint_to(escrow_id, tenant, ctx): ID` | `public(package)` | Fused mint + delivery. Constructs the cap, transfers it to `tenant`, emits `TenantCapMinted { tenant_cap_id, escrow_id, tenant }`, returns `tenant_cap_id`. Called by `rental_escrow::rent` and `rental_escrow::do_handover`. The transfer lives here (required: `transfer::transfer<TenantCap>` only compiles in this module). |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned { tenant_cap_id, escrow_id }`. Holder address recoverable by JOIN on `tenant_cap_id` against `TenantCapMinted`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
-| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_TENANT_CAP_WRONG_ESCROW` if mismatch. Parallels `owner_cap::assert_escrow`. Called by `rental_escrow::borrow_asset`. |
+| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_TENANT_CAP_WRONG_ESCROW` if mismatch. Called by `rental_escrow::borrow_asset`. |
 | `assert_current(cap, current_tenant_cap_id)` | `public(package)` | Aborts with `E_TENANT_CAP_STALE` if `object::id(cap) != current_tenant_cap_id`. Takes `ID`, not `Option<ID>` — the caller unwraps its own representation of "slot empty" before calling. Called by `rental_escrow::borrow_asset` after `assert_escrow` and an `is_some` guard. |
 
 **Depends on:** `sui::object`, `sui::event`.

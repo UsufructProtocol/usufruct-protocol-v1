@@ -25,11 +25,13 @@ concepts, no state, no scaling by principals.
   `LOGISTIC_DENOM` cannot be derived from `exp_scaled` at compile time — its value
   is established by running the algorithm once during initial implementation (same
   approach as the golden vectors in `math.spec.md`), then fixed as a literal.
-- `exp_a_norm(alpha_abs, alpha_neg)` — 16-arm lookup table of algorithm-derived
-  u128 literals for the Exponential variant (§7). Same pinning pattern as
-  `LOGISTIC_DENOM`: each of the 16 values depends on `math::exp_scaled`, which
-  Move `const` cannot invoke, so the values are produced once during initial
-  implementation and fixed as match-arm literals.
+- `EXP_A_NORM_{1..8}_{POS,NEG}` — 16 module-level `const` declarations of
+  algorithm-derived u128 values for the Exponential variant (§7). Same pinning
+  pattern as `LOGISTIC_DENOM`: each depends on `math::exp_scaled`, which Move
+  `const` cannot invoke, so the values are produced once during initial
+  implementation and fixed as named module-level literals. The private
+  `exp_a_norm(alpha_abs, alpha_neg)` function is a pure dispatcher over these
+  16 constants.
 
 **Does not own:**
 
@@ -364,52 +366,80 @@ and therefore the curve shape:
 
 `TAYLOR_SCALE` is defined in `math` — see math.spec.md §1.
 
-### Precomputed `exp_a_norm` table
+### Module-level constants
 
 `|e^α · TS − TS|` depends only on `(alpha_abs, alpha_neg)` — both are fixed
 at construction. The domain is finite: `alpha_abs ∈ [1, 8]`, `alpha_neg ∈
 {true, false}` → 16 pairs total. Following the `LOGISTIC_DENOM` precedent
 (§8), algorithm-derived values that Move `const` cannot compute are pinned
-as literals at module scope instead of recomputed per call.
+as named `const` declarations at module scope instead of recomputed per call.
 
-    fun exp_a_norm(alpha_abs: u8, alpha_neg: bool): u128 {
-        match (alpha_abs, alpha_neg) {
-            (1, false) => /* e^1·TS − TS, algorithm-derived literal */,
-            (1, true)  => /* TS − e^−1·TS, algorithm-derived literal */,
-            (2, false) => /* algorithm-derived literal */,
-            (2, true)  => /* algorithm-derived literal */,
-            (3, false) => /* algorithm-derived literal */,
-            (3, true)  => /* algorithm-derived literal */,
-            (4, false) => /* algorithm-derived literal */,
-            (4, true)  => /* algorithm-derived literal */,
-            (5, false) => /* algorithm-derived literal */,
-            (5, true)  => /* algorithm-derived literal */,
-            (6, false) => /* algorithm-derived literal */,
-            (6, true)  => /* algorithm-derived literal */,
-            (7, false) => /* algorithm-derived literal */,
-            (7, true)  => /* algorithm-derived literal */,
-            (8, false) => /* algorithm-derived literal */,
-            (8, true)  => /* algorithm-derived literal */,
-        }
-    }
+Naming convention: `EXP_A_NORM_{alpha_abs}_{POS|NEG}`, where `POS` corresponds
+to `alpha_neg = false` (α > 0) and `NEG` to `alpha_neg = true` (α < 0).
 
-**Establishing values:** during initial implementation, for each of the 16
-pairs run the following derivation and record the output as the match arm's
-literal (same methodology as the golden vectors in `math.spec.md` §4 and
-`LOGISTIC_DENOM` in §8):
+    // α > 0  (alpha_neg = false)  →  convex
+    const EXP_A_NORM_1_POS: u128 = /* algorithm-derived: e^1·TS − TS */;
+    const EXP_A_NORM_2_POS: u128 = /* algorithm-derived: e^2·TS − TS */;
+    const EXP_A_NORM_3_POS: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_4_POS: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_5_POS: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_6_POS: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_7_POS: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_8_POS: u128 = /* algorithm-derived */;
+
+    // α < 0  (alpha_neg = true)   →  concave
+    const EXP_A_NORM_1_NEG: u128 = /* algorithm-derived: TS − e^−1·TS */;
+    const EXP_A_NORM_2_NEG: u128 = /* algorithm-derived: TS − e^−2·TS */;
+    const EXP_A_NORM_3_NEG: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_4_NEG: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_5_NEG: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_6_NEG: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_7_NEG: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_8_NEG: u128 = /* algorithm-derived */;
+
+Move `const` cannot invoke `math::exp_scaled`, so each literal is produced by
+running the following derivation once per `(alpha_abs, alpha_neg)` pair and
+recording the output (same methodology as `LOGISTIC_DENOM` in §8 and the
+golden vectors in `math.spec.md` §4):
 
     let a = alpha_abs as u64;
     let exp_a = math::exp_scaled(a, 1, alpha_neg);
     let norm  = if alpha_neg { TAYLOR_SCALE - exp_a } else { exp_a - TAYLOR_SCALE };
-    // record `norm` as the `(alpha_abs, alpha_neg)` arm's literal
+    // record `norm` as the literal for EXP_A_NORM_{alpha_abs}_{POS|NEG}
+
+### Lookup dispatcher
+
+`exp_a_norm` reduces to a pure dispatcher over the 16 constants above:
+
+    fun exp_a_norm(alpha_abs: u8, alpha_neg: bool): u128 {
+        match (alpha_abs, alpha_neg) {
+            // α > 0 (convex)
+            (1, false) => EXP_A_NORM_1_POS,
+            (2, false) => EXP_A_NORM_2_POS,
+            (3, false) => EXP_A_NORM_3_POS,
+            (4, false) => EXP_A_NORM_4_POS,
+            (5, false) => EXP_A_NORM_5_POS,
+            (6, false) => EXP_A_NORM_6_POS,
+            (7, false) => EXP_A_NORM_7_POS,
+            (8, false) => EXP_A_NORM_8_POS,
+            // α < 0 (concave)
+            (1, true)  => EXP_A_NORM_1_NEG,
+            (2, true)  => EXP_A_NORM_2_NEG,
+            (3, true)  => EXP_A_NORM_3_NEG,
+            (4, true)  => EXP_A_NORM_4_NEG,
+            (5, true)  => EXP_A_NORM_5_NEG,
+            (6, true)  => EXP_A_NORM_6_NEG,
+            (7, true)  => EXP_A_NORM_7_NEG,
+            (8, true)  => EXP_A_NORM_8_NEG,
+        }
+    }
 
 **Why module scope, not a variant field:** storing `exp_a_norm` as a
 `CurveShape::Exponential` field would cost 16 bytes per escrow in
-persistent Sui object storage (BCS does not pad to max-variant size, but
-the field is paid once per `Exponential` instance). The module-level table
-costs 16 literals once in bytecode, with O(1) lookup via match, and
-preserves the variant posture that fields carry only definition inputs —
-derived values live alongside `LOGISTIC_DENOM`.
+persistent Sui object storage. The 16 module-level constants cost 16
+literals once in bytecode, with O(1) lookup via match, and preserve the
+variant posture that fields carry only definition inputs — derived values
+live alongside `LOGISTIC_DENOM` and `LOGISTIC_SIGMA_FLOOR`.
 
 **Eliminating the per-call Taylor series:** the original formulation called
 `math::exp_scaled(a, 1, neg)` on every evaluation — up to 32 u128
@@ -515,7 +545,7 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
 | `eval_smoothstep(...)` | private | §5 |
 | `eval_power_law(...)` | private | §6 |
 | `eval_exponential(...)` | private | §7 |
-| `exp_a_norm(alpha_abs, alpha_neg)` | private | §7 — 16-arm lookup, algorithm-derived literals |
+| `exp_a_norm(alpha_abs, alpha_neg)` | private | §7 — dispatcher over the 16 `EXP_A_NORM_*` module constants |
 | `eval_logistic(...)` | private | §8 |
 
 `CurveShape` is defined in this module and embedded in `IntegrationConfig`
@@ -623,12 +653,12 @@ Representative inputs to cover:
 
 ### 10.5 `eval_exponential`
 
-#### Precomputed `exp_a_norm` table
+#### Precomputed `EXP_A_NORM_*` constants
 
-The 16 literals of `exp_a_norm(alpha_abs, alpha_neg)` (§7) are also
+The 16 module-level `EXP_A_NORM_{1..8}_{POS,NEG}` constants (§7) are
 algorithm-derived — establish all 16 during initial implementation using the
 procedure documented in §7. They are not a separate test surface: correct
-`exp_a_norm` literals are a precondition for the golden vectors below to
+`EXP_A_NORM_*` values are a precondition for the golden vectors below to
 reproduce.
 
 #### Golden vectors

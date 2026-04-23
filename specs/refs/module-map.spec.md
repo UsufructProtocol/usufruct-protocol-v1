@@ -364,7 +364,13 @@ Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
 | `new(escrow_id, owner, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. Emits `OwnerCapMinted { owner_cap_id, escrow_id, owner }`. |
 | `burn(cap, owner)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. `owner: address` is the burn-time holder (hoisted by the caller from `tx_context::sender`); recorded in `OwnerCapBurned`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
-| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts if `cap.escrow_id != escrow_id`. |
+| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_OWNER_CAP_WRONG_ESCROW` if `cap.escrow_id != escrow_id`. Called by `rental_escrow::retire` / `claim_asset` / `withdraw_earnings`. |
+
+**Error constants:**
+
+| Constant | Value | Abort site |
+|---|---|---|
+| `E_OWNER_CAP_WRONG_ESCROW` | `0` | `assert_escrow` |
 
 **Status:** [ ] `OwnerCap` · [ ] `new` · [ ] `burn` · [ ] `escrow_id` · [ ] `assert_escrow`
 
@@ -395,15 +401,17 @@ Stale caps from displaced tenants are inert.
 | `mint_to(escrow_id, tenant, ctx): ID` | `public(package)` | Fused mint + delivery. Constructs the cap, transfers to `tenant`, emits `TenantCapMinted`, returns the cap's `ID`. Called by `rental_escrow::install_new_tenant` (shared body of `rent()` Idle / AtDutchAuction) and `rental_escrow::do_handover` (handover completion). Transfer lives in this module — `transfer::transfer<TenantCap>` only compiles here. |
 | `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned`. |
 | `escrow_id(cap): ID` | `public` | Getter. |
-| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_ESCROW_MISMATCH` if `cap.escrow_id != escrow_id`. Called by `rental_escrow::borrow_asset`. Parallels `owner_cap::assert_escrow`. |
+| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_TENANT_CAP_WRONG_ESCROW` if `cap.escrow_id != escrow_id`. Called by `rental_escrow::borrow_asset`. Parallels `owner_cap::assert_escrow`. |
+| `assert_current(cap, current_tenant_cap_id)` | `public(package)` | Aborts with `E_TENANT_CAP_STALE` if `current_tenant_cap_id: Option<ID>` is not `some(object::id(cap))`. Called by `rental_escrow::borrow_asset` after `assert_escrow`. Rejects displaced-tenant caps and caps presented after tenure-expiry clears the slot. |
 
 **Error constants:**
 
 | Constant | Value | Abort site |
 |---|---|---|
-| `E_ESCROW_MISMATCH` | `0` | `assert_escrow` |
+| `E_TENANT_CAP_WRONG_ESCROW` | `0` | `assert_escrow` |
+| `E_TENANT_CAP_STALE` | `1` | `assert_current` |
 
-**Status:** [ ] `TenantCap` · [ ] `mint_to` · [ ] `burn` · [ ] `escrow_id` · [ ] `assert_escrow`
+**Status:** [ ] `TenantCap` · [ ] `mint_to` · [ ] `burn` · [ ] `escrow_id` · [ ] `assert_escrow` · [ ] `assert_current`
 
 **Depends on:** nothing (only `sui::object`).
 

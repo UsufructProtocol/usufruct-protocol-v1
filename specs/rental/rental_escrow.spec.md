@@ -1016,14 +1016,17 @@ integrating ecosystem.
 1. `apply_pending_transitions(escrow, clock, ctx)` — settle first. A
    handover that completes here will rotate `current_tenant_cap_id` before
    the staleness check — the displaced tenant correctly fails.
-2. `tenant_cap::assert_escrow(tenant_cap, object::id(escrow))` — abort
-   `tenant_cap::E_ESCROW_MISMATCH` (surfaced as `E_TENANT_CAP_WRONG_ESCROW`
-   in this module's constant table). Parallels the `owner_cap::assert_escrow`
-   call shape used in `retire` / `claim_asset` / `withdraw_earnings`.
-3. Assert `escrow.current_tenant_cap_id ==
-   some(object::id(tenant_cap))`, abort `E_TENANT_CAP_STALE`. This
-   check rejects both stale caps (displaced tenants) and caps from other
-   escrows (covered by step 2, but layered here for clarity).
+2. `tenant_cap::assert_escrow(tenant_cap, object::id(escrow))` — aborts
+   `tenant_cap::E_TENANT_CAP_WRONG_ESCROW`. Parallels the
+   `owner_cap::assert_escrow` call shape used in `retire` /
+   `claim_asset` / `withdraw_earnings`.
+3. `tenant_cap::assert_current(tenant_cap, escrow.current_tenant_cap_id)`
+   — aborts `tenant_cap::E_TENANT_CAP_STALE`. Rejects both stale caps
+   (displaced by a later `do_handover`) and caps presented after a
+   tenure-expiry that cleared `current_tenant_cap_id` to `None`. The
+   helper takes the escrow's `Option<ID>` by value and compares
+   against `object::id(cap)` — pure cap-identity check, no escrow
+   state reads inside the helper.
 4. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
    This is the only protocol state in which the internal `Option<Asset>` field
    can be `None` — when a previous `borrow_asset` call in the same PTB has

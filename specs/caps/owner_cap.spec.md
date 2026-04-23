@@ -57,7 +57,7 @@ Depends on: nothing (`sui::object` only)
 
 | Constant | Value | Abort site |
 |---|---|---|
-| `E_ESCROW_MISMATCH` | `0` | `assert_escrow` — presented cap does not belong to the target escrow |
+| `E_OWNER_CAP_WRONG_ESCROW` | `0` | `assert_escrow` — presented cap does not belong to the target escrow |
 
 
 2. TYPE
@@ -248,11 +248,11 @@ for.
 **Visibility:** `public(package)` — called only by `rental_escrow`.
 
 **Purpose:** asserts the presented cap belongs to the target escrow.
-Aborts with `E_ESCROW_MISMATCH` if it does not.
+Aborts with `E_OWNER_CAP_WRONG_ESCROW` if it does not.
 
 **Behavior:**
 ```
-assert!(cap.escrow_id == escrow_id, E_ESCROW_MISMATCH)
+assert!(cap.escrow_id == escrow_id, E_OWNER_CAP_WRONG_ESCROW)
 ```
 
 **Call sites:** `rental_escrow::retire`, `rental_escrow::claim_asset`,
@@ -321,8 +321,8 @@ the cap is presented.
 | # | Description | Expected |
 |---|---|---|
 | A1 | `assert_escrow(&cap, cap.escrow_id)` | No abort. |
-| A2 | `assert_escrow(&cap, different_id)` | Aborts with `E_ESCROW_MISMATCH`. |
-| A3 | Cap minted for escrow A, asserted against escrow B | Aborts with `E_ESCROW_MISMATCH`. |
+| A2 | `assert_escrow(&cap, different_id)` | Aborts with `E_OWNER_CAP_WRONG_ESCROW`. |
+| A3 | Cap minted for escrow A, asserted against escrow B | Aborts with `E_OWNER_CAP_WRONG_ESCROW`. |
 
 ### 6.5 Lifecycle
 
@@ -340,13 +340,13 @@ the cap is presented.
 | Symbol | Visibility | Notes |
 |---|---|---|
 | `OwnerCap` (type) | `public` | `key + store`. One per escrow. Transferable. |
-| `E_ESCROW_MISMATCH` | `public` | Abort code for cap/escrow mismatch in `assert_escrow`. |
+| `E_OWNER_CAP_WRONG_ESCROW` | `public` | Abort code for cap/escrow mismatch in `assert_escrow`. |
 | `OwnerCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. |
 | `OwnerCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. |
 | `new(escrow_id, owner, ctx): OwnerCap` | `public(package)` | Mint. Called only by `rental_escrow::integrate`. Emits `OwnerCapMinted { owner_cap_id, escrow_id, owner }`. |
 | `burn(cap, owner)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. Emits `OwnerCapBurned { owner_cap_id, escrow_id, owner }` with `owner` from the caller (the binding of `tx_context::sender(ctx)` hoisted at the call site). |
 | `escrow_id(cap): ID` | `public` | Getter. |
-| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_ESCROW_MISMATCH` if mismatch. |
+| `assert_escrow(cap, escrow_id)` | `public(package)` | Aborts with `E_OWNER_CAP_WRONG_ESCROW` if mismatch. |
 
 **Depends on:** `sui::object`, `sui::event`.
 

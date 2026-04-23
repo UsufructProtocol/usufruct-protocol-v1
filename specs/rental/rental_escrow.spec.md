@@ -61,7 +61,7 @@ points, and the fund distribution logic for every boundary event.
   protocol fee exists; construction, transfer-to-inbox and event emission
   are fused inside that call.
 - `ProtocolFeeInbox` / `ProtocolFeeRef` — live in `protocol_fee_inbox`. This
-  module reads `fee_ref_inbox_id(&fee_ref)` at `integrate` to store the inbox
+  module reads `inbox_id(&fee_ref)` at `integrate` to store the inbox
   ID.
 - Raw arithmetic (`mul_div`, roots, exp) — lives in `math`.
 
@@ -566,7 +566,7 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    to a distinct address (custody, multisig) can transfer it further after
    `integrate` returns, but the `OwnerCapMinted.owner` field records the
    integrator at mint time.
-3. Read `fee_inbox_id = protocol_fee_inbox::fee_ref_inbox_id(fee_ref)`.
+3. Read `fee_inbox_id = protocol_fee_inbox::inbox_id(fee_ref)`.
 4. Capture `asset_id = object::id(&asset)` — needed by the emit in
    step 7. Must be read before the `option::some(asset)` wrap below,
    since after wrapping the asset is moved into the escrow and the
@@ -2150,7 +2150,7 @@ or by an APT-driven transition.
 - `owner_cap` — `OwnerCap`, `new`, `burn`, `escrow_id`, `assert_escrow`.
 - `tenant_cap` — `TenantCap`, `mint_to`, `escrow_id`.
 - `payment_receipt` — `mint_to`.
-- `protocol_fee_inbox` — `ProtocolFeeRef`, `fee_ref_inbox_id`.
+- `protocol_fee_inbox` — `ProtocolFeeRef`, `inbox_id`.
 - `fee_message` — `post`.
 
 **Integration flow for a third-party integrator:**

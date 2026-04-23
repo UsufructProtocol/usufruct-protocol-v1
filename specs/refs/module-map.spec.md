@@ -475,9 +475,9 @@ inbox's ID — passed to `integrate` by any integrator without consensus overhea
 |---|---|---|
 | `init(ctx)` | private | Creates `ProtocolFeeInbox` (transfers to deployer) and `ProtocolFeeRef` (freezes). |
 | `uid_mut(inbox): &mut UID` | `public(package)` | Exposes `&mut UID` for `transfer::receive` in `fee_message`. |
-| `fee_ref_inbox_id(fee_ref): ID` | `public` | Returns `inbox_id`. Used by `rental_escrow::integrate`. |
+| `inbox_id(fee_ref): ID` | `public` | Returns `inbox_id`. Used by `rental_escrow::integrate`. |
 
-**Status:** [x] `ProtocolFeeInbox` · [x] `ProtocolFeeRef` · [x] `init` · [x] `uid_mut` · [x] `fee_ref_inbox_id`
+**Status:** [x] `ProtocolFeeInbox` · [x] `ProtocolFeeRef` · [x] `init` · [x] `uid_mut` · [x] `inbox_id`
 
 **Depends on:** nothing.
 
@@ -557,7 +557,7 @@ functions.
 
 | Function | Visibility | Summary |
 |---|---|---|
-| `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `fee_ref_inbox_id(fee_ref)` and stores it as `fee_inbox_id`. Accepts `&Clock` — reads `clock.timestamp_ms()` and stores it as `integrated_at_ms` (used by `retire_floor` enforcement). Returns `OwnerCap`. |
+| `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `inbox_id(fee_ref)` and stores it as `fee_inbox_id`. Accepts `&Clock` — reads `clock.timestamp_ms()` and stores it as `integrated_at_ms` (used by `retire_floor` enforcement). Returns `OwnerCap`. |
 | `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`, mints + pushes a symbolic `PaymentReceipt` to the bidder (no protocol authority). Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`, mints + pushes a symbolic `PaymentReceipt` to the new bidder (no protocol authority; displaced bidder keeps the receipt they minted on their prior bid). `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
@@ -737,7 +737,7 @@ so no coordination is needed to identify which coin to drain.
 - All timestamps in milliseconds (`sui::clock::Clock::timestamp_ms`).
 - All prices in base token units (no decimals at protocol level).
 - Asset requires `key + store` abilities to live inside `RentalEscrow`.
-- `integrate()` creates and shares 1 object: `RentalEscrow`. It takes `&ProtocolFeeRef` (frozen — no consensus) and stores `fee_ref_inbox_id(fee_ref)` as `fee_inbox_id`. Publish-time `init()` creates two singletons: `ProtocolFeeInbox` (transferred to deployer) and `ProtocolFeeRef` (frozen).
+- `integrate()` creates and shares 1 object: `RentalEscrow`. It takes `&ProtocolFeeRef` (frozen — no consensus) and stores `inbox_id(fee_ref)` as `fee_inbox_id`. Publish-time `init()` creates two singletons: `ProtocolFeeInbox` (transferred to deployer) and `ProtocolFeeRef` (frozen).
 - `asset: Asset` — the asset is always present while the escrow exists. There is no valid persistent state where the escrow exists without the asset. `claim_asset()` extracts the asset and deletes the escrow atomically. The PTB borrow mechanism (`borrow_asset`/`return_asset`) is an implementation detail — the temporary extraction never persists across transaction boundaries.
 - Fund flows are asymmetric: owner pulls via `withdraw_earnings()` and `claim_asset()`; admin pulls via `collect_fee_messages()`; tenants receive pushes to the address registered at mint time.
 - Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `burn(cap)` is available for gas recovery.

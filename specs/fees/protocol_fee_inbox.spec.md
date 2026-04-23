@@ -25,8 +25,11 @@ Depends on: nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`)
 - `uid_mut(inbox)` — `public(package)`. Exposes `&mut UID` of
   `ProtocolFeeInbox` so `fee_message` can call
   `transfer::receive` against it.
-- `fee_ref_inbox_id(ref)` — `public`. Getter for `ProtocolFeeRef.inbox_id`.
+- `inbox_id(fee_ref)` — `public`. Getter for `ProtocolFeeRef.inbox_id`.
   Used by `rental_escrow::integrate` to extract and store the fee inbox ID.
+  Named after the field it returns — the `&ProtocolFeeRef` parameter
+  disambiguates at the call site, matching the peer convention in
+  `owner_cap::escrow_id`, `tenant_cap::escrow_id`, `payment_receipt::escrow_id`.
 
 **Does not own:**
 - Any balance or fund logic.
@@ -118,10 +121,18 @@ without going through consensus — immutable objects bypass the sequencer.
 **Visibility:** private (package initializer — called by Sui runtime at publish).
 
 **Behavior:**
-1. Creates a `ProtocolFeeInbox` with a fresh `UID`. Stores its ID.
-2. Transfers `ProtocolFeeInbox` to `ctx.sender()` (the deployer).
-3. Creates a `ProtocolFeeRef` with `inbox_id` set to the stored ID.
+1. Constructs a `ProtocolFeeInbox` with a fresh `UID`.
+2. Constructs a `ProtocolFeeRef` with `inbox_id: object::id(&inbox)` — read
+   inline from the still-live `inbox` local, no bridging variable.
+3. Transfers `ProtocolFeeInbox` to `ctx.sender()` (the deployer) via
+   `transfer::public_transfer` — idiomatic for `key + store` types, which
+   are already externally transferable by any holder.
 4. Freezes `ProtocolFeeRef` via `transfer::freeze_object`.
+
+Construction of both objects is grouped; dispatch of both (transfer, freeze)
+is grouped after. The data flow `inbox → fee_ref` is expressed directly in
+the constructor argument rather than via an intermediate `inbox_id: ID`
+local.
 
 **Side effects:** one `ProtocolFeeInbox` transferred to deployer; one
 `ProtocolFeeRef` frozen on-chain. No shared objects created. No events emitted.
@@ -148,9 +159,9 @@ No external module can obtain `&mut UID` of `ProtocolFeeInbox`.
 
 ---
 
-### `fee_ref_inbox_id`
+### `inbox_id`
 
-    public fun fee_ref_inbox_id(fee_ref: &ProtocolFeeRef): ID
+    public fun inbox_id(fee_ref: &ProtocolFeeRef): ID
 
 **Visibility:** `public` — callable by any module, including `rental_escrow`.
 
@@ -158,6 +169,12 @@ No external module can obtain `&mut UID` of `ProtocolFeeInbox`.
 `rental_escrow::integrate` to read and store the fee inbox ID.
 
 **Behavior:** returns `fee_ref.inbox_id`.
+
+**Naming:** the function is named after the field it returns. At every
+call site the `&ProtocolFeeRef` parameter type disambiguates the receiver,
+so no `fee_ref_` prefix is needed. This mirrors the peer getters in
+`owner_cap::escrow_id`, `tenant_cap::escrow_id`, and
+`payment_receipt::escrow_id`.
 
 
 4. PROPERTIES
@@ -194,7 +211,7 @@ No external module can obtain `&mut UID` of `ProtocolFeeInbox`.
 | # | Description | Expected |
 |---|---|---|
 | T1 | Publish package — `init` runs | One `ProtocolFeeInbox` owned by deployer. One `ProtocolFeeRef` frozen on-chain. |
-| T2 | `fee_ref_inbox_id` on `ProtocolFeeRef` | Returns ID equal to `object::id(&fee_inbox)`. |
+| T2 | `inbox_id` on `ProtocolFeeRef` | Returns ID equal to `object::id(&fee_inbox)`. |
 | T3 | Transfer `ProtocolFeeInbox` to a new address | New holder can present `&mut ProtocolFeeInbox` to drain-gated functions. |
 
 ### 5.2 Authorization gate
@@ -230,7 +247,7 @@ Tested indirectly via `fee_message::collect_fee_messages`.
 | `ProtocolFeeRef` (type) | `public` | `key` only. Frozen. Immutable pointer to `ProtocolFeeInbox`. |
 | `init(ctx)` | private | Package initializer. Creates both objects. Runs once at publish. |
 | `uid_mut(inbox)` | `public(package)` | Returns `&mut UID`. Bridge for `transfer::receive` in `fee_message`. |
-| `fee_ref_inbox_id(fee_ref)` | `public` | Returns `inbox_id`. Used by `rental_escrow::integrate`. |
+| `inbox_id(fee_ref)` | `public` | Returns `inbox_id`. Used by `rental_escrow::integrate`. |
 
 No error constants.
 

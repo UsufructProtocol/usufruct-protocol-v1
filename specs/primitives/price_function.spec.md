@@ -42,8 +42,12 @@ escalates between consecutive rental periods.
 
 All validation aborts originate in the constructors defined in §2.3.
 
-    const E_FIXED_DELTA_ZERO: u64 = 0;  // fixed_delta / compound_delta: delta == 0
-    const E_BPS_RANGE:        u64 = 1;  // compound_delta: bps ∉ [1, u64::MAX−10000]
+    const E_DELTA_ZERO: u64 = 0;  // new_fixed_delta, new_compound_delta: delta == 0
+    const E_BPS_RANGE:  u64 = 1;  // new_compound_delta: bps ∉ [1, u64::MAX − BPS_PER_UNIT]
+
+**Module constants:**
+
+    const BPS_PER_UNIT: u64 = 10_000;  // basis points per one whole unit (100% = 10_000 bps)
 
 
 2. TYPE
@@ -68,10 +72,10 @@ public enum PriceFunction has copy, drop, store {
 **Field-level constraints (validated by constructors in §2.3):**
 
 - `FixedDelta`:    `delta > 0`
-- `CompoundDelta`: `bps ∈ [1, u64::MAX - 10000]` so `10000 + bps` does not overflow u64; `delta > 0`
+- `CompoundDelta`: `bps ∈ [1, u64::MAX - BPS_PER_UNIT]` so `BPS_PER_UNIT + bps` does not overflow u64; `delta > 0`
 
 Both variants guarantee `f(x) > x` for all `x > 0` from field constraints alone — no
-cross-field validation required. For `CompoundDelta`: `mul_div(x, 10000 + bps, 10000) >= x`
+cross-field validation required. For `CompoundDelta`: `mul_div(x, BPS_PER_UNIT + bps, BPS_PER_UNIT) >= x`
 always (denominator ≤ numerator factor), so `+ delta > 0` ensures strict increase regardless
 of floor rounding on the percentage component.
 
@@ -80,15 +84,15 @@ of floor rounding on the percentage component.
 | Variant | Formula |
 |---------|---------|
 | `FixedDelta { delta }` | `f(x) = x + delta` |
-| `CompoundDelta { bps, delta }` | `f(x) = mul_div(x, 10000 + bps, 10000) + delta` |
+| `CompoundDelta { bps, delta }` | `f(x) = mul_div(x, BPS_PER_UNIT + bps, BPS_PER_UNIT) + delta` |
 
-where `bps` is basis points (100 bps = 1%, 10000 bps = 100%).
+where `bps` is basis points (100 bps = 1%, `BPS_PER_UNIT` = 10_000 bps = 100%).
 `delta` is a raw amount in the payment token's base denomination — same unit as
 `min_rent_price` and `last_rent_price`. It is not scaled by `SCALE` (10^9).
 Pure percentage behavior: use `CompoundDelta { bps, delta: 1 }` (1 base unit).
 
 **Floor threshold for the percentage component** — the bps contribution is zero when
-`last_rent_price < 10000 / bps`. Below this threshold only `delta` contributes.
+`last_rent_price < BPS_PER_UNIT / bps`. Below this threshold only `delta` contributes.
 
 | bps | % | Min price for bps to contribute |
 |-----|---|---------------------------------|
@@ -111,13 +115,13 @@ construct `PriceFunction` values through these functions.
 
     public fun new_fixed_delta(delta: u64): PriceFunction
     // Validates:
-    //   assert!(delta > 0, E_FIXED_DELTA_ZERO)
+    //   assert!(delta > 0, E_DELTA_ZERO)
     // Returns PriceFunction::FixedDelta { delta }.
 
     public fun new_compound_delta(bps: u64, delta: u64): PriceFunction
     // Validates:
-    //   assert!(bps >= 1 && bps <= u64::MAX - 10000, E_BPS_RANGE)
-    //   assert!(delta > 0,                            E_FIXED_DELTA_ZERO)
+    //   assert!(bps >= 1 && bps <= u64::MAX - BPS_PER_UNIT, E_BPS_RANGE)
+    //   assert!(delta > 0,                                  E_DELTA_ZERO)
     // Returns PriceFunction::CompoundDelta { bps, delta }.
 
 
@@ -161,7 +165,7 @@ call site and performs the `E_NOT_RENTED` guard before invoking
 
     fun eval_compound_delta(last_rent_price: u64, bps: u64, delta: u64): u64
 
-    math::mul_div(last_rent_price, 10000 + bps, 10000) + delta
+    math::mul_div(last_rent_price, BPS_PER_UNIT + bps, BPS_PER_UNIT) + delta
 
 ### Overflow
 
@@ -176,7 +180,7 @@ Guaranteed result > last_rent_price by constructor field constraints (§2.3).
 
 | Symbol | Visibility | Notes |
 |--------|-----------|-------|
-| `E_FIXED_DELTA_ZERO: u64 = 0` | `public` | SDK error handling. |
+| `E_DELTA_ZERO: u64 = 0` | `public` | SDK error handling. |
 | `E_BPS_RANGE: u64 = 1` | `public` | SDK error handling. |
 | `new_fixed_delta(delta)` | `public` | Called by integrators to build `PriceFunction`. |
 | `new_compound_delta(bps, delta)` | `public` | Called by integrators. Validates. |
@@ -240,7 +244,7 @@ Three categories per function:
 
 - **Strict increase:** `result > last_rent_price` for all valid inputs
 - **Minimum increase:** `result >= last_rent_price + delta`
-- **Percentage floor:** when `last_rent_price < 10_000 / bps`,
+- **Percentage floor:** when `last_rent_price < BPS_PER_UNIT / bps`,
   `result = last_rent_price + delta` (percentage component lost to floor rounding)
 
 

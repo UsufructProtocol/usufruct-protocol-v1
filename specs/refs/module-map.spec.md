@@ -608,11 +608,12 @@ when a transition logically occurred and when it was executed.
 
 | Function | Purpose |
 |---|---|
-| `do_handover` | Executes handover boundary: push `remain_credit`, split `used_credit` (95/5) into `owner_earnings` (95%) and `send_fee()` call (5% → `FeeMessage<C>` → transfer-to-object → `fee_inbox_id`), move `pending_bid` → `tenant_stake`, mint + push `TenantCap`, rotate addresses. Push-before-rotate invariant enforced here. |
-| `do_tenure_expiry` | Executes tenure boundary: split full `tenant_stake` (95/5) into `owner_earnings` (95%) and `send_fee()` call (5% → `FeeMessage<C>` → transfer-to-object → `fee_inbox_id`). Transition to `AtDutchAuction` or `Retired`. |
+| `do_handover` | Executes handover boundary: push `remain_credit` to displaced tenant, delegate stake settlement to `settle_stake_earnings(used_credit, ...)` which splits 90/10 into `owner_earnings` (90%) and a `FeeMessage<C>` transferred to `fee_inbox_id` (10%), move `pending_bid` → `tenant_stake`, mint + push `TenantCap`, rotate addresses. Push-before-rotate invariant enforced here. |
+| `do_tenure_expiry` | Executes tenure boundary: delegate full-stake settlement to `settle_stake_earnings(stake_total, ...)` which splits 90/10 into `owner_earnings` (90%) and a `FeeMessage<C>` transferred to `fee_inbox_id` (10%). Transition to `AtDutchAuction` or `Retired`. |
 | `do_auction_expiry` | Transition to `Idle`. No funds to move. |
-| `split_fee` | Pure: splits an amount into (amount×0.95, amount×0.05) tuple. |
+| `split_fee` | Pure: splits an amount into (amount×0.90, amount×0.10) tuple. |
 | `install_new_tenant` | Shared acquisition path for `rent()` Idle / AtDutchAuction arms: absorb payment into `tenant_stake`, anchor `phase_start_ms = clock.now()`, mint + push `TenantCap`, register addresses, transition to `Rented { HandoverOpen }`. Returns the new `TenantCap` ID so the caller emits `RentStarted` with its arm-specific `from_state`. |
+| `settle_stake_earnings` | Shared stake-settlement tail for `do_handover` and `do_tenure_expiry`: given `principal == balance::value(&escrow.tenant_stake)` and the `payer` address, splits 90/10, routes the fee iff > 0 via `fee_message::post`, drains the remainder into `owner_earnings`. Returns `(owner_share, protocol_fee)` for the caller's event emit. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
 `payment_receipt`, `protocol_fee_inbox`, `fee_message`.

@@ -37,7 +37,7 @@ points, and the fund distribution logic for every boundary event.
 - Package-visible price helpers: `compute_price_descent`,
   `compute_next_rent_price` (backing `compute_floor_price` and `rent()`).
 - Private settlement helpers: `do_handover`, `do_tenure_expiry`,
-  `do_auction_expiry`, `split_fee`.
+  `do_auction_expiry`, `split_fee`, `settle_stake_earnings`.
 - Protocol state-machine events: `AssetIntegrated`, `RentStarted`,
   `BidPlaced`, `BidSuperseded`, `HandoverCompleted`, `TenureExpired`,
   `AuctionExpired`, `RetireFlagSet`, `AssetClaimed`, `EarningsWithdrawn`.
@@ -1305,8 +1305,9 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 2. Let `remain_credit = balance::value(&escrow.tenant_stake) - used_credit`.
    (Invariant `used_credit + remain_credit == tenant_stake` from curve
    bijectivity.)
-3. Compute `(owner_share, protocol_fee) = split_fee(used_credit)` — §7.4.
-4. **Take funds before any address rotation** (push-before-rotate invariant):
+3. **Push `remain_credit` before any address rotation** (push-before-rotate
+   invariant): bring `tenant_stake` down to exactly `used_credit` so §7.6's
+   precondition holds.
    - `let displaced_tenant = *option::borrow(&escrow.current_tenant_address);`
    - `if remain_credit > 0`:
      - `let remain_balance = balance::split(&mut escrow.tenant_stake, remain_credit);`
@@ -1315,18 +1316,14 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
      // used_credit == tenant_stake and remain_credit == 0. Skipping the split
      // avoids creating a zero Balance that Move requires to be consumed.
      // Consequence of `countdown = min(escrow.config.handover_floor, remaining)`.
-   - `if protocol_fee > 0`:
-     - `let fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee);`
-     - `fee_message::post<CoinType>(fee_balance, object::id(escrow), displaced_tenant, escrow.fee_inbox_id, ctx);`
-     // `displaced_tenant` is the stake funder — already bound at step 4;
-     // passed as `tenant` and recorded on `FeeMessageSent<C>.tenant`.
-     // Fused construction+transfer+emit inside `fee_message::post`.
-     // Gate mirrors the `remain_credit > 0` branch above: when `protocol_fee == 0`
-     // we skip the split entirely instead of creating and destroying a zero
-     // `Balance<CoinType>`. No `FeeMessage<C>` is constructed on the zero path.
-   - Remaining `escrow.tenant_stake` = `owner_share` exactly. Move it into
-     `owner_earnings` via `balance::join(&mut escrow.owner_earnings,
-     balance::withdraw_all(&mut escrow.tenant_stake))`.
+4. **Settle `used_credit`** — §7.6 is the single source of truth for
+   "split 90/10, route fee iff > 0, drain remainder into owner_earnings".
+   Precondition `balance::value(&escrow.tenant_stake) == used_credit` is
+   established by step 3.
+   - `let (owner_share, protocol_fee) = settle_stake_earnings(escrow, used_credit, displaced_tenant, ctx);`
+     — `displaced_tenant` is the stake funder; `FeeMessageSent<C>.tenant`
+     records it verbatim. The returned `(owner_share, protocol_fee)` is
+     consumed by the `HandoverCompleted` emit at step 9.
 5. **Rotate `pending_bid` → `tenant_stake`** (new tenant's stake):
    - `balance::join(&mut escrow.tenant_stake,
      balance::withdraw_all(&mut escrow.pending_bid));`
@@ -1363,32 +1360,35 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    reaches the outgoing cap from this row, so recovering it via JOIN
    would force envelope-timing reconstruction (violating invariant d).
 
-**Edge cases — both extremes fall out of the two `if ... > 0` guards above
-(`remain_credit`, `protocol_fee`):**
+**Edge cases — both extremes fall out of the `if remain_credit > 0` guard
+(step 3) and the `if protocol_fee > 0` gate inside `settle_stake_earnings`
+(§7.6):**
 
 - **`used_credit == 0`** (very convex curve, handover fires very early):
   `remain_credit == tenant_stake > 0`. The `if remain_credit > 0` guard fires —
-  the full stake is pushed to the displaced tenant as `Coin<C>`. `split_fee(0)`
-  returns `(0, 0)`, so the `if protocol_fee > 0` guard is skipped — no fee
-  split and no `FeeMessage<C>` construction. `withdraw_all` on the now-empty
-  stake returns `Balance(0)`; `join` into `owner_earnings` is a no-op. No
-  zero-value coin transfer occurs.
+  the full stake is pushed to the displaced tenant as `Coin<C>`. Step 4 then
+  calls `settle_stake_earnings(escrow, 0, ...)`: `split_fee(0)` returns
+  `(0, 0)`, the in-helper `if protocol_fee > 0` gate is skipped — no fee
+  split and no `FeeMessage<C>` construction — and the helper's
+  `withdraw_all` on the now-empty stake returns `Balance(0)`, joined as a
+  no-op into `owner_earnings`. No zero-value coin transfer occurs.
 
 - **`used_credit == tenant_stake`** (Dutch Auction bypass — curve saturated,
   `remain_credit == 0`): the `if remain_credit > 0` guard is skipped — no coin
-  is pushed to the displaced tenant. `split_fee(tenant_stake)` produces the
-  normal 90/10 split, so the `if protocol_fee > 0` guard fires —
-  `fee_message::post` routes a non-zero `FeeMessage<C>` and
+  is pushed to the displaced tenant. Step 4 then calls
+  `settle_stake_earnings(escrow, tenant_stake, ...)`: `split_fee` produces
+  the normal 90/10 split, the in-helper `if protocol_fee > 0` gate fires —
+  `fee_message::post` routes a non-zero `FeeMessage<C>` — and the helper's
   `withdraw_all` moves the owner share into `owner_earnings`.
 
 In the `used_credit == 0` branch, after the full-stake push to the displaced
-tenant the stake is empty. `balance::withdraw_all(Balance(0))` returns
-`Balance(0)` and `balance::join(_, Balance(0))` is a no-op — both are valid
-operations against the framework source (`withdraw_all` delegates to
-`split(self, self.value)`, and `split` asserts `self.value >= value` which
-holds for 0). No zero-valued `Balance<CoinType>` is ever handed to
-`fee_message::post`: the `if protocol_fee > 0` guard filters those out at
-the call site.
+tenant the stake is empty when the helper runs.
+`balance::withdraw_all(Balance(0))` returns `Balance(0)` and
+`balance::join(_, Balance(0))` is a no-op — both are valid operations
+against the framework source (`withdraw_all` delegates to `split(self,
+self.value)`, and `split` asserts `self.value >= value` which holds for 0).
+No zero-valued `Balance<CoinType>` is ever handed to `fee_message::post`:
+the in-helper `if protocol_fee > 0` gate filters those out.
 
 ---
 
@@ -1418,40 +1418,34 @@ Two cases:
 1. Let `stake_total = balance::value(&escrow.tenant_stake)` — equal to
    `escrow.last_rent_price` (used_credit saturated to full).
 2. Let `tenant = *option::borrow(&escrow.current_tenant_address);`
-3. Compute `(owner_share, protocol_fee) = split_fee(stake_total)`.
-4. Route the protocol fee through `fee_message`, gating on `protocol_fee > 0`:
-   - `if protocol_fee > 0`:
-     - `let fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee);`
-     - `fee_message::post<CoinType>(fee_balance, object::id(escrow), tenant, escrow.fee_inbox_id, ctx);`
-     // `tenant` is the outgoing tenant's address — bound at step 2;
-     // recorded verbatim on `FeeMessageSent<C>.tenant` (whose stake
-     // funded this fee — full saturation at tenure expiry).
-     // Fused construction+transfer+emit inside `fee_message::post`.
-   - Same pattern as §7.1: skip the split entirely when the fee rounds to
-     zero (reachable only at pathological `stake_total < BPS_PER_UNIT /
-     PROTOCOL_FEE_BPS == 10`, since fee = `mul_div(stake, PROTOCOL_FEE_BPS,
-     BPS_PER_UNIT)`; protocols enforcing `min_rent_price ≥ 10` will never see
-     this branch, but the gate keeps the function structurally total).
-5. Move remaining stake into earnings:
-   `balance::join(&mut escrow.owner_earnings,
-    balance::withdraw_all(&mut escrow.tenant_stake));`
-6. **Clear tenant fields** (no new tenant to register):
+3. **Settle the full stake** — §7.6 is the single source of truth for
+   "split 90/10, route fee iff > 0, drain remainder into owner_earnings".
+   Precondition `balance::value(&escrow.tenant_stake) == stake_total` holds
+   directly — tenure expiry does not pre-split the stake.
+   - `let (owner_share, protocol_fee) = settle_stake_earnings(escrow, stake_total, tenant, ctx);`
+     — `tenant` is the outgoing tenant bound at step 2; `FeeMessageSent<C>.tenant`
+     records it verbatim. The in-helper `if protocol_fee > 0` gate short-circuits
+     on pathological `stake_total < BPS_PER_UNIT / PROTOCOL_FEE_BPS == 10`
+     (since fee = `mul_div(stake, PROTOCOL_FEE_BPS, BPS_PER_UNIT)` floors to
+     zero); protocols enforcing `min_rent_price ≥ 10` never see this branch,
+     but the gate keeps the function structurally total.
+4. **Clear tenant fields** (no new tenant to register):
    - `escrow.current_tenant_cap_id = none();`
    - `escrow.current_tenant_address = none();`
-7. **Determine next state:**
+5. **Determine next state:**
    - If `escrow.retire_flag`: `escrow.state = Retired`.
      `escrow.phase_start_ms = boundary_ms;` (bookkeeping).
    - Else: `escrow.state = AtDutchAuction;
      escrow.phase_start_ms = boundary_ms;`.
      `last_rent_price` is preserved — it is the starting price of the descent.
-8. Emit `TenureExpired { escrow_id, tenant, owner_share, protocol_fee,
+6. Emit `TenureExpired { escrow_id, tenant, owner_share, protocol_fee,
    last_rent_price: escrow.last_rent_price, next_state: escrow.state,
    timestamp_ms: boundary_ms }`. `last_rent_price` is preserved by step
-   7 (see AtDutchAuction branch) and frozen into this row: it is the
+   5 (see AtDutchAuction branch) and frozen into this row: it is the
    anchor of the subsequent Dutch descent (if `next_state =
    AtDutchAuction`) and makes the Dutch current-price computation a
    single-event query.
-9. If `escrow.state == Retired` (the `retire_flag` branch of step 7),
+7. If `escrow.state == Retired` (the `retire_flag` branch of step 5),
    emit `AssetRetired { escrow_id, from_state: Rented }` immediately
    after `TenureExpired`. Structural co-emission: the indexer recovers
    the authoritative transition timestamp by JOIN on `escrow_id` to the
@@ -1580,6 +1574,81 @@ payment), the target address is `pending_tenant_address` (not
 `sender(ctx)`), and `phase_start_ms = boundary_ms` (not `clock.now()`).
 Merging the two would force context-dependent branching inside the helper
 and obscure the distinct semantics of each rotation site.
+
+
+### 7.6 `settle_stake_earnings`
+
+    fun settle_stake_earnings<Asset: key + store, CoinType>(
+        escrow:    &mut RentalEscrow<Asset, CoinType>,
+        principal: u64,
+        payer:     address,
+        ctx:       &mut TxContext,
+    ): (u64, u64)
+
+**Purpose:** shared stake-settlement tail for `do_handover` (§7.1 step 4)
+and `do_tenure_expiry` (§7.2 step 3). Splits `principal` 90/10, routes the
+fee via `fee_message::post` (gated on `> 0`), drains the remainder into
+`owner_earnings`. Returns `(owner_share, protocol_fee)` for the caller's
+event emission.
+
+**Preconditions:**
+- `balance::value(&escrow.tenant_stake) == principal` — the caller has
+  already drained any non-settlement portion before invoking the helper
+  (`remain_credit` in the handover path; nothing in the tenure path). The
+  helper is an unconditional settlement of whatever is in `tenant_stake`;
+  the amount is passed explicitly so `split_fee` and the returned shares
+  agree with the caller's event.
+- `payer` is the address whose stake funded `principal` — recorded on
+  `FeeMessageSent<C>.tenant`: `displaced_tenant` in `do_handover`
+  (outgoing current tenant whose `tenant_stake` is being settled at
+  handover); `tenant` in `do_tenure_expiry` (outgoing current tenant whose
+  stake saturated to full at tenure expiry).
+
+**Algorithm:**
+
+    let (owner_share, protocol_fee) = split_fee(principal);
+
+    if protocol_fee > 0 {
+        let fee_balance = balance::split(&mut escrow.tenant_stake, protocol_fee);
+        fee_message::post<CoinType>(
+            fee_balance, object::id(escrow), payer,
+            escrow.fee_inbox_id, ctx,
+        );
+    };
+    balance::join(
+        &mut escrow.owner_earnings,
+        balance::withdraw_all(&mut escrow.tenant_stake),
+    );
+    (owner_share, protocol_fee)
+
+**Postconditions:**
+- `escrow.tenant_stake` is empty (`balance::zero()`).
+- `escrow.owner_earnings` grew by `owner_share`.
+- A `FeeMessage<C>` carrying `protocol_fee` was routed to `fee_inbox_id` iff
+  `protocol_fee > 0`.
+
+**Why the gate on `protocol_fee > 0`:** §7.4 `split_fee` floors the fee to
+zero when `principal < BPS_PER_UNIT / PROTOCOL_FEE_BPS == 10`. Constructing
+and consuming a zero-valued `Balance<CoinType>` — or a zero-valued
+`FeeMessage<C>` — would be valid Move but semantically noisy and would emit
+a `FeeMessageSent<C>` row the indexer cannot usefully aggregate. The gate
+is a structural filter; see §9 P12.
+
+**Why the helper does not emit `HandoverCompleted` / `TenureExpired`:** the
+two events carry arm-specific fields (`HandoverCompleted.displaced_tenant`
++ `new_tenant_cap_id` + `used_credit` + `remain_credit` + `new_rent_price`;
+`TenureExpired.tenant` + `last_rent_price` + `next_state`) beyond the
+shared `(owner_share, protocol_fee)`. Emit-last at the caller keeps each
+event's semantic timestamp aligned with the full boundary transition
+(`do_handover` through the TenantCap rotation; `do_tenure_expiry` through
+the next-state decision) rather than with a partial stake settlement.
+
+**Two call sites:**
+
+| Caller | `principal` | `payer` | Tenant-stake state at entry |
+|---|---|---|---|
+| `do_handover` (§7.1 step 4) | `used_credit` | `displaced_tenant` | equals `used_credit` — step 3 pushed `remain_credit` out |
+| `do_tenure_expiry` (§7.2 step 3) | `stake_total` | `tenant` | equals `stake_total` — no pre-split |
 
 
 8. READ-ONLY QUERIES
@@ -2216,6 +2285,7 @@ or by an APT-driven transition.
 | `do_auction_expiry(...)` | private | §7.3 |
 | `split_fee(...)` | private | §7.4 |
 | `install_new_tenant(...)` | private | §7.5 — shared install path for `rent()` Idle / AtDutchAuction arms. |
+| `settle_stake_earnings(...)` | private | §7.6 — shared stake-settlement tail for `do_handover` and `do_tenure_expiry`. |
 
 **Depends on:**
 - `math` — `mul_div` via `split_fee`, `compute_used_credit`, and `compute_price_descent`.

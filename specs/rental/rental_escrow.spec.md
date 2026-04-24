@@ -882,8 +882,7 @@ reach the same numbers through that unified entry point.
   `price_function::evaluate_price_fn`).
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - Let `pending_tenant = tx_context::sender(ctx);`
-- Let `remaining = (escrow.phase_start_ms + escrow.config.tenure_ceiling) -
-  clock.timestamp_ms()`.
+- Let `remaining = tenure_expiry_ms(escrow) - clock.timestamp_ms()` — §8.5.
 - Let `countdown = min(escrow.config.handover_floor, remaining)`.
 - `escrow.handover_countdown_expiry = some(clock.timestamp_ms() + countdown);`
 - `escrow.pending_tenant_address = some(pending_tenant);`
@@ -969,7 +968,7 @@ if let Rented { phase: HandoverConfirmed } = escrow.state:
 
 // Check 2 — tenure expiry (reads state possibly mutated by Check 1)
 if let Rented { .. } = escrow.state:
-    let expiry = escrow.phase_start_ms + escrow.config.tenure_ceiling;
+    let expiry = tenure_expiry_ms(escrow);                // §8.5
     if clock.timestamp_ms() >= expiry:
         do_tenure_expiry(escrow, expiry, ctx)
         // Post: state = AtDutchAuction, unless retire_flag → Retired
@@ -977,7 +976,7 @@ if let Rented { .. } = escrow.state:
 
 // Check 3 — auction expiry (reads state possibly mutated by Check 2)
 if escrow.state == AtDutchAuction:
-    let expiry = escrow.phase_start_ms + escrow.config.descent_ceiling;
+    let expiry = descent_expiry_ms(escrow);               // §8.5
     if clock.timestamp_ms() >= expiry:
         do_auction_expiry(escrow, expiry)
         // Post: state = Idle
@@ -1976,6 +1975,44 @@ function also answers hypothetical "what would I pay at t = T" queries by
 passing any `timestamp_ms` — critical for rendering the Dutch descent curve
 ahead of time.
 
+---
+
+### 8.5 Boundary-timestamp helpers — `public(package)`
+
+Two package-internal one-liners that name the boundary arithmetic
+`escrow.phase_start_ms + escrow.config.<ceiling>`. Visible only inside
+the package and used by `rent()` (§5.1) and `apply_pending_transitions`
+(§5.2). The name transports the semantic — "the tenure / descent boundary
+for the current phase" — which bare arithmetic does not.
+
+    public(package) fun tenure_expiry_ms<Asset: key + store, CoinType>(
+        escrow: &RentalEscrow<Asset, CoinType>,
+    ): u64 {
+        escrow.phase_start_ms + config::tenure_ceiling(&escrow.config)
+    }
+
+    public(package) fun descent_expiry_ms<Asset: key + store, CoinType>(
+        escrow: &RentalEscrow<Asset, CoinType>,
+    ): u64 {
+        escrow.phase_start_ms + config::descent_ceiling(&escrow.config)
+    }
+
+**Call sites:**
+
+| Helper | Caller | Purpose |
+|---|---|---|
+| `tenure_expiry_ms` | `rent()` Case `Rented{HandoverOpen}` (§5.1) | compute `remaining = tenure_expiry_ms(escrow) - clock.timestamp_ms()` for the handover-countdown clamp |
+| `tenure_expiry_ms` | `apply_pending_transitions` Check 2 (§5.2) | compare against `clock.timestamp_ms()` to decide whether tenure expiry fires |
+| `descent_expiry_ms` | `apply_pending_transitions` Check 3 (§5.2) | compare against `clock.timestamp_ms()` to decide whether auction expiry fires |
+
+**Visibility:** `public(package)` — parallel to `compute_price_descent` and
+`compute_next_rent_price` (§8.2 / §8.3). Not on the SDK surface; external
+callers wanting these boundaries read them off the corresponding event
+rows (`HandoverCompleted.timestamp_ms`, `TenureExpired.timestamp_ms`,
+`AuctionExpired.timestamp_ms`) or derive them by reading
+`IntegrationConfigRegistered.tenure_ceiling` / `.descent_ceiling` plus the
+escrow's `phase_start_ms` — all already in the event surface (§3).
+
 
 9. PROPERTIES
 -------------
@@ -2317,6 +2354,8 @@ or by an APT-driven transition.
 | `compute_floor_price(...)` | `public` | Read-only. Dispatches by state — returns min_rent_price (Idle), compute_next_rent_price (Rented), compute_price_descent (AtDutchAuction). Aborts `E_RETIRED_NO_BID` on Retired. |
 | `compute_price_descent(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (AtDutchAuction arm) and `rent()` Case AtDutchAuction. No state guard — structurally guaranteed by callers. |
 | `compute_next_rent_price(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (Rented arms) and `rent()` Cases Rented(HandoverOpen|HandoverConfirmed). No state guard — structurally guaranteed by callers. |
+| `tenure_expiry_ms(...)` | `public(package)` | §8.5 — `phase_start_ms + tenure_ceiling`. Used by `rent()` HandoverOpen and `apply_pending_transitions` Check 2. |
+| `descent_expiry_ms(...)` | `public(package)` | §8.5 — `phase_start_ms + descent_ceiling`. Used by `apply_pending_transitions` Check 3. |
 | `do_handover(...)` | private | §7.1 |
 | `do_tenure_expiry(...)` | private | §7.2 |
 | `do_auction_expiry(...)` | private | §7.3 |

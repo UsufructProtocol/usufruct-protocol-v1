@@ -358,7 +358,63 @@ Curve values use shorthand: `Lin` = `new_linear()`, `Smt` = `new_smoothstep()`,
 `Log` = `new_logistic()`.
 Price function: `FD(d)` = `new_fixed_delta(d)`, `CD(bps,d)` = `new_compound_delta(bps, d)`.
 
-### 6.1 Valid inputs (must not abort)
+
+### 7.0 Test strategy
+
+**Test module.** `#[test_only] module liquid_renting::config_tests`.
+Function names describe the asserted behaviour (e.g.
+`new_config_rejects_min_rent_price_zero`,
+`emit_registration_carries_full_config_snapshot`).
+
+**Idioms.**
+
+- `new_config` success rows (§7.1) translate as **one parametric loop**
+  over a `vector<Case>` where each `Case` carries the eight scalar inputs
+  plus the pre-built `CurveShape`/`PriceFunction` values. The loop runs
+  `new_config(...)`, then the §7.3 round-trip predicate on the returned
+  config.
+- `new_config` abort rows (§7.2) translate as **one
+  `#[test, expected_failure(abort_code = config::E_<NAME>)]` function
+  each** — never mixed with success rows. Multi-violation inputs are
+  omitted on purpose (§7.2 note).
+- `emit_registration` rows (§7.4) require `sui::test_scenario` because
+  `event::emit` records into transaction effects. Each scenario runs
+  through two txs: tx1 builds the config and calls
+  `emit_registration_for_testing`, tx2 inspects
+  `test_scenario::num_user_events(&effects)` and the typed event vector.
+
+**Fixtures.** For `new_config` tests, `tx_context::dummy()` is sufficient
+(constructor takes no ctx). For `emit_registration` tests,
+`sui::test_scenario::begin(@0xA)` is the canonical entry. The test module
+declares the helper roster:
+
+```
+#[test_only] public fun emit_registration_for_testing(
+    cfg: &IntegrationConfig, escrow_id: ID)
+#[test_only] public fun capture_registered(
+    effects: &TransactionEffects): vector<IntegrationConfigRegistered>
+```
+
+`emit_registration_for_testing` is a thin wrapper over the
+`public(package)` `emit_registration` (the test module is not in the same
+package). `capture_registered` uses `event::events_by_type<T>()` to pull
+the typed payloads.
+
+**Curve / price-function builders.** Tests construct `CurveShape` and
+`PriceFunction` values via the `new_*` constructors from `curve_shape` /
+`price_function`. No dedicated fixtures — the shorthand in §7.1 (`Lin`,
+`Pow(1,2)`, `FD(1)`, …) maps directly to one `new_*` call each. For the
+gcd-normalized PowerLaw round-trip (§7.3), tests construct with
+`new_power_law(2, 4)` and compare against `new_power_law(1, 2)` — both
+paths produce variants whose stored fields are `PowerLaw { 1, 2 }`.
+
+**Canonical test config.** Where a test just needs "some valid config"
+and the exact field values do not matter, use V2 (§7.1 row 2) as the
+canonical fixture — it has no extreme boundaries and exercises every
+variant category (Lin curves + FD price function).
+
+
+### 7.1 Valid inputs (must not abort)
 
 | # | min_rent_price | tenure_ceiling | handover_floor | descent_ceiling | retire_floor | credit_curve | descent_curve | price_function | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -369,6 +425,10 @@ Price function: `FD(d)` = `new_fixed_delta(d)`, `CD(bps,d)` = `new_compound_delt
 | V5 | u64::MAX | 1_000 | 500 | 1_000 | 0 | Exp(3,false) | Exp(3,true) | FD(1) | max min_rent_price, mixed Exp curves. |
 | V6 | 1 | u64::MAX | 1 | u64::MAX | u64::MAX | Log | Log | FD(1) | No upper bound on time parameters — including retire_floor. |
 | V7 | 1_000 | 86_400_000 | 3_600_000 | 43_200_000 | 0 | Lin | Lin | CD(500,100) | CompoundDelta price function: 5% + 100 base units per cycle. |
+| **[new] V8** | 1 | 1_000 | 1_000 | 1 | 0 | Lin | Lin | FD(1) | `handover_floor == tenure_ceiling` — upper boundary of P3. Replicates traditional fixed-term renting (§3 "handover_floor = tenure_ceiling" rationale). |
+| **[new] V9** | 1 | u64::MAX | u64::MAX | 1 | 0 | Lin | Lin | FD(1) | P3 boundary at u64 extreme — guards that the `handover_floor <= tenure_ceiling` assert uses `<=` not `<`, and that both values saturated together are accepted. |
+| **[new] V10** | 1 | 1_000 | 0 | 1 | 0 | Pow(2,4) | Pow(6,3) | FD(1) | PowerLaw inputs requiring gcd normalization — exercises the §7.3 "stored != raw" clause with both `credit_curve` (stored `PowerLaw{1,2}`) and `descent_curve` (stored `PowerLaw{2,1}`). |
+| **[new] V11** | 1 | 1_000 | 500 | 1 | 0 | Exp(1,false) | Exp(8,true) | CD(1,1) | Extreme α values (min convex, max concave) + minimum `CompoundDelta` — exercises storage/round-trip of nested `Exponential` fields both signs. |
 
 **Note — unconstrained free variables:** `tenure_ceiling`, `descent_ceiling`,
 and `retire_floor` have no upper bound. Absurd values (e.g. `u64::MAX`) are
@@ -377,36 +437,120 @@ inside `curve` or `rental_escrow` via Move's checked arithmetic. Adding upper
 bounds here would be the same mistake as the removed Logistic constraint —
 validation noise for inputs that never occur in practice.
 
-### 6.2 Invalid inputs (must abort with stated error code)
+### 7.2 Invalid inputs (must abort with stated error code)
 
 | # | Input description | Expected abort |
 |---|---|---|
-| I1 | min_rent_price = 0 | E_MIN_RENT_PRICE_ZERO (0) |
-| I2 | tenure_ceiling = 0 | E_TENURE_CEILING_ZERO (1) |
-| I3 | handover_floor > tenure_ceiling (e.g. floor=100, ceiling=50) | E_HANDOVER_FLOOR_EXCEEDS_TENURE (2) |
-| I4 | descent_ceiling = 0 | E_DESCENT_CEILING_ZERO (3) |
+| I1 | min_rent_price = 0 | `E_MIN_RENT_PRICE_ZERO` |
+| I2 | tenure_ceiling = 0 (all other fields valid) | `E_TENURE_CEILING_ZERO` |
+| I3 | handover_floor > tenure_ceiling (floor=100, ceiling=50) | `E_HANDOVER_FLOOR_EXCEEDS_TENURE` |
+| I4 | descent_ceiling = 0 | `E_DESCENT_CEILING_ZERO` |
+| **[new] I5** | handover_floor = tenure_ceiling + 1 (floor=1_001, ceiling=1_000) | `E_HANDOVER_FLOOR_EXCEEDS_TENURE` — smallest strictly-greater case, guards off-by-one on the `<=` check |
+| **[new] I6** | handover_floor = u64::MAX, tenure_ceiling = u64::MAX − 1 | `E_HANDOVER_FLOOR_EXCEEDS_TENURE` — u64-saturated boundary, confirms the check is a plain unsigned compare (no arithmetic that could overflow) |
 
-### 6.3 Getter round-trip (must hold for all valid configs)
+**Abort-ordering note.** The validation sequence in §3 is: `min_rent_price`
+→ `tenure_ceiling` → `handover_floor <= tenure_ceiling` →
+`descent_ceiling`. Rows I1–I6 each set exactly one field to an invalid
+value so the expected abort code is unambiguous. Multi-violation inputs
+(e.g. `min_rent_price = 0` AND `tenure_ceiling = 0`) are omitted — they
+would couple the test to the order above. If the implementation reorders
+the asserts, rows I1–I6 still pass; a multi-violation row would not.
 
-Verifies that every value passed to `new_config` is returned unchanged by its
-getter — the constructor does not transform, normalize, or discard any field.
 
-For any config `c` produced by `new_config(mrp, tc, hf, dsc, rf, g, h, pf)`:
-    min_rent_price(&c)  == mrp
-    tenure_ceiling(&c)  == tc
-    handover_floor(&c)  == hf
-    descent_ceiling(&c) == dsc
-    retire_floor(&c)    == rf
-    credit_curve(&c)    == &g
-    descent_curve(&c)   == &h
-    price_function(&c)  == &pf
+### 7.3 Getter round-trip (must hold for all valid configs)
 
-Note on `CurveShape`: `new_power_law` normalizes by gcd before storing, so the
-round-trip holds against the reduced value, not the raw arguments:
+Verifies that every value passed to `new_config` is returned unchanged by
+its getter — the constructor does not transform, normalize, or discard any
+field. **[property P5]** Translates as one predicate applied inside the
+§7.1 parametric loop:
+
+```
+let c = new_config(mrp, tc, hf, dsc, rf, &g, &h, &pf);
+assert_eq!(min_rent_price(&c),  mrp);
+assert_eq!(tenure_ceiling(&c),  tc);
+assert_eq!(handover_floor(&c),  hf);
+assert_eq!(descent_ceiling(&c), dsc);
+assert_eq!(retire_floor(&c),    rf);
+assert_eq!(credit_curve(&c),    &g);
+assert_eq!(descent_curve(&c),   &h);
+assert_eq!(price_function(&c),  &pf);
+```
+
+**[new] Explicit round-trip rows — pin each field individually:**
+
+| # | Field varied | Input value | Expected getter output | Note |
+|---|---|---|---|---|
+| R1 | `min_rent_price` | `u64::MAX` | `u64::MAX` | saturated scalar |
+| R2 | `tenure_ceiling` | `86_400_000` | `86_400_000` | typical ms value |
+| R3 | `handover_floor` | `0` | `0` | zero is a distinguished value (§3 rationale) |
+| R4 | `descent_ceiling` | `1` | `1` | minimum valid |
+| R5 | `retire_floor` | `u64::MAX` | `u64::MAX` | P4 boundary; confirms no implicit clamp |
+| R6 | `credit_curve` | `new_power_law(2, 4)` (raw) | `&PowerLaw { 1, 2 }` (stored) | **gcd normalization** occurs in `curve_shape::new_power_law`, not here — the getter returns the already-reduced value. See §7.3 note below. |
+| R7 | `descent_curve` | `new_logistic()` | `&Logistic` | no-field variant round-trip |
+| R8 | `price_function` | `new_compound_delta(500, 100)` | `&CompoundDelta { 500, 100 }` | nested struct fields preserved |
+
+Each row holds all other fields to the V2 canonical values (§7.0) so the
+varied field is the only independent variable.
+
+**Note on `CurveShape` gcd normalization:** `new_power_law` normalizes by
+gcd before storing. Round-trip holds against the reduced value:
 
     g = new_power_law(2, 4)          // stored as PowerLaw { alpha_num: 1, alpha_den: 2 }
     credit_curve(&c) == &g           // &PowerLaw { 1, 2 } — correct
     credit_curve(&c) == &PowerLaw { alpha_num: 2, alpha_den: 4 }  // WRONG
+
+This is not a `config` contract — `config::new_config` stores the value
+as received. The normalization upstream is transparent at this layer.
+
+
+### 7.4 `emit_registration` — event emission
+
+Tests run in `sui::test_scenario` because `event::emit` is observable only
+through transaction effects. Convention: tx1 calls
+`emit_registration_for_testing(&cfg, escrow_id)`; tx2 inspects effects.
+
+| # | Setup | Assertion |
+|---|---|---|
+| **[new] E1** | Build V2 config; pick `escrow_id = @0xE5C1.to_inner()` (literal ID via `#[test_only]` helper) | `num_user_events(&effects) == 1` AND `capture_registered(&effects)[0].escrow_id == escrow_id` AND `...[0].config == cfg` (struct equality — all eight fields match by value). |
+| **[new] E2** | Build V10 config (PowerLaw gcd-normalized curves); emit | Event payload's `config.credit_curve == &PowerLaw { 1, 2 }` (reduced form — what was stored, not what was passed to `new_power_law`). Cross-check with the star-schema invariant: the event is self-describing, no indexer-side re-normalization needed. |
+| **[new] E3** | Build V2 config; call `emit_registration_for_testing` twice on the same `(cfg, escrow_id)` pair in the same tx | `num_user_events == 2`; both payloads identical. Documents that `emit_registration` is not idempotent at the event-count level — the single-emit contract is a *caller* contract (`rental_escrow::integrate` calls it once), not a module-side guard. |
+
+**[new] [property] P-SE — star-schema envelope invariants.** For every
+row above:
+1. `escrow_id` is present and non-zero (row E1 asserts the exact
+   pre-built value; rows E2/E3 use the same fixture).
+2. No child PK field exists on the payload — `IntegrationConfigRegistered`
+   is a 1:1 satellite (§4).
+3. The full `IntegrationConfig` is carried by value; the assertion
+   `payload.config == cfg` holds structurally (all scalar fields equal,
+   nested `CurveShape`/`PriceFunction` variant fields equal).
+
+
+### 7.5 Open questions
+
+- **Event-capture helper signature.** `capture_registered` is declared
+  above as `(effects: &TransactionEffects) -> vector<IntegrationConfigRegistered>`.
+  Sui framework 1.29+ provides `event::events_by_type<T>()` as a
+  `test_only` entry, but the exact return shape (by-value vector vs
+  reference) depends on the framework version pinned at implementation.
+  Confirm at first use and adjust §7.0 helper roster.
+- **Literal `ID` construction in tests.** Row E1 references
+  `@0xE5C1.to_inner()` as shorthand for a fixture-owned `ID`. The
+  canonical Move 2024 idiom is `object::id_from_address(@0xE5C1)` or
+  `object::id_from_bytes(...)`; confirm at implementation time and fix
+  the helper exposed by `config::test_helpers`.
+- **Multi-violation abort ordering.** §7.2 note documents the stance
+  that multi-violation inputs are out of scope. If operational needs
+  later want to pin the order (e.g. SDK wants to report the "first"
+  violation), promote the §3 validation order to a committed property
+  and add one row per ordered pair.
+- **Cross-module re-validation.** `new_config` does not re-validate
+  `CurveShape` / `PriceFunction` internals (§0, §3). A test that passes
+  an *unvalidated* `CurveShape` is impossible to construct — the enum
+  fields are private, constructors are the only path. Document that
+  `§7.1` rows exercise only already-validated curves; there is no
+  "invalid curve bypasses `new_config`" row because the type system
+  prevents it.
 
 
 8. MODULE BOUNDARY

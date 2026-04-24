@@ -590,6 +590,70 @@ of N messages produces N events in the same transaction. See §3.
 6. TEST CASES
 -------------
 
+### 6.0 Test strategy
+
+Tests live in module `fee_message_tests`, driven by `sui::test_scenario`.
+Canonical actors: `DEPLOYER = @0xD1`, `ALICE = @0xA1` (tenant), `BOB = @0xB0`
+(second tenant), `ADMIN = @0xAD` (drainer / `collector`), `ZERO = @0x0`.
+
+**Scaffolding.**
+- `ProtocolFeeInbox` is minted via `protocol_fee_inbox::init_for_testing` and
+  handed to `ADMIN` so drain transactions run under `ADMIN`'s sender — pinning
+  the `collector` scalar to a known value.
+- Generic `C` is exercised with at least two distinct coin witnesses. We use
+  `sui::sui::SUI` as one and declare a second `#[test_only]` witness in this
+  module for multi-type rows (D4, S4):
+  ```move
+  #[test_only] public struct FAKE_USDC has drop {}
+  ```
+  `FeeMessage<C>` uses `phantom` on its `CoinType` parameter, so the witness
+  does not need to be a real `Coin` integration — any `drop` struct suffices
+  to inhabit the phantom slot in tests that only touch `Balance<C>` via
+  `balance::create_for_testing<C>(amount)`.
+- `balance::create_for_testing<C>(amount)` is the sole source of `Balance<C>`
+  in these tests — avoids standing up a full coin supply for unit rows.
+- `escrow_id` and `fee_inbox_id` are synthesized as `ID`s. Real `ID`s come
+  from `object::id(&inbox)`; synthetic ones come from `object::id_from_address(addr)`
+  where a mismatch is deliberately the subject under test (row D5).
+
+**Dispatch to private helpers.** `receive_message` and `consume_message` are
+private. Since `fee_message_tests` is a test-only submodule of `fee_message`
+(file `fee_message_tests.move` with `#[test_only] module
+liquid_renting::fee_message_tests`), **a `friend`-style bridge is not
+available**. The spec therefore exposes two thin `#[test_only] public`
+shims that forward unchanged:
+
+```move
+#[test_only] public fun receive_message_for_testing<C>(
+    inbox: &mut ProtocolFeeInbox,
+    ticket: Receiving<FeeMessage<C>>,
+): FeeMessage<C> { receive_message(inbox, ticket) }
+
+#[test_only] public fun consume_message_for_testing<C>(
+    msg: FeeMessage<C>,
+    fee_inbox_id: ID,
+    collector: address,
+): Balance<C> { consume_message(msg, fee_inbox_id, collector) }
+```
+
+These shims are the only test-only surface this module exports — they exist
+because the C1/R1 rows must drive the private helpers with *declarative*
+scalar inputs, which is the actual contract being tested (see P8).
+
+**Event inspection.** `test_scenario::next_tx` returns a
+`TransactionEffects`; `event::events_by_type<FeeMessageSent<C>>()` (Sui Move
+test helper) yields the typed subset. All rows that assert "one event" do so
+by computing `events_by_type<T>().length()` at end of tx.
+
+**Axes:**
+- S — `post` (success)
+- R — `receive_message`
+- C — `consume_message`
+- D — `collect_fee_messages`
+- I — Balance invariant
+- E — Events
+- P — Property mapping
+
 ### 6.1 `post`
 
 | # | Description | Expected |
@@ -599,6 +663,10 @@ of N messages produces N events in the same transaction. See §3.
 | S3 | `post` called twice with the same `fee_inbox_id`, possibly distinct `tenant`s | Two distinct `FeeMessage<C>` objects exist as children of `fee_inbox_id`. Two `FeeMessageSent<C>` events with distinct `fee_message_id` and their respective `tenant` values. |
 | S4 | `post` in `<SUI>` and `<USDC>` with the same `fee_inbox_id` | Two objects of distinct types exist as children. No conflict. |
 | S5 | `tenant` argument distinct from `tx_context::sender(ctx)` | Event `tenant` equals the argument — asserts the field is declarative, not a runtime echo of sender. Matches the `do_handover` case where the tx sender is permissionless, not the fee-funding tenant. |
+| S6 | `tenant == @0x0` | `post` does not check; `FeeMessageSent<C>.tenant == @0x0` in the event. Documents negative-space permissiveness — the module does not enforce a non-zero tenant. |
+| S7 | `escrow_id` synthesized from `object::id_from_address(@0xDEAD)` (no live escrow behind it) | `post` does not check; event's `escrow_id` equals the argument. Confirms `escrow_id` is declarative — invariant is upstream in `rental_escrow`. |
+| S8 | After `post`, the `FeeMessage<C>` child has no `fee_inbox_id` struct field | Structural: the spec's `FeeMessage<C>` definition has exactly `{ id, escrow_id, balance }`. Asserts P7 at the type level — no test-only getter is added to probe a nonexistent field. |
+| S9 | `post` with `balance == u64::MAX` (via `balance::create_for_testing<C>(u64::MAX)`) | No abort; event's `amount == u64::MAX`; object wraps the full balance. Upper-bound exercise for the `u64` amount field. |
 
 ### 6.2 `receive_message` and `consume_message`
 
@@ -607,7 +675,10 @@ Private functions — tested directly from `#[test]` functions within the module
 | # | Description | Expected |
 |---|---|---|
 | R1 | `receive_message` on a valid ticket | Returns `FeeMessage<C>` with correct `balance`. Object no longer owned by inbox. |
+| R2 | `receive_message` on a ticket minted from a separate `ProtocolFeeInbox` A, presented with `&mut ProtocolFeeInbox` B | Aborts inside `transfer::receive` (Sui runtime). Anchors P7 at the helper level; distinct from D5 which exercises the same abort through `collect_fee_messages`. |
 | C1 | `consume_message(msg, fee_inbox_id, collector)` on a received `FeeMessage` | Returns `Balance<C>` equal to original fee. Object's `UID` deleted. `FeeMessageCollected<C>` event emitted with the `fee_inbox_id` and `collector` arguments on their respective event fields — asserts both are declarative scalars, not re-derived inside the function. |
+| C2 | `consume_message` with `fee_inbox_id` set to an arbitrary `ID` unrelated to any real inbox, and `collector = @0xDEAD` | Succeeds; event carries the exact arguments. Hard evidence that the scalars are pure declarative metadata inside `consume_message` — any runtime correlation happens *outside*, in `collect_fee_messages` via the `object::id(inbox)` hoist. |
+| C3 | `consume_message` on a `FeeMessage<C>` with `balance == 0` | Returns zero `Balance<C>`; event emitted with `amount == 0`; object deleted. Mirrors S2 on the drain side. |
 
 ### 6.3 `collect_fee_messages`
 
@@ -618,6 +689,9 @@ Private functions — tested directly from `#[test]` functions within the module
 | D3 | N tickets with balances `B1..BN` | Returns `Coin<C>` with value `B1+..+BN`. All N objects deleted. |
 | D4 | `<SUI>` and `<USDC>` in same PTB (two calls) | Each call returns `Coin` of its type. All objects deleted. One `&mut ProtocolFeeInbox` shared across both calls. |
 | D5 | Ticket targets a `FeeMessage<C>` not owned by the presented `inbox` (e.g. two `ProtocolFeeInbox` instances in a test scenario) | `transfer::receive` aborts inside `receive_message` — Sui runtime, not a Move `assert!`. Exercises P7: parent-relation check is runtime-enforced and no stored `fee_inbox_id` is needed for it. |
+| D6 | N messages posted from distinct `(escrow_id, tenant)` pairs, then all drained in one call | Returned `Coin<C>` equals sum of balances. All N `FeeMessageCollected<C>` events share one `fee_inbox_id` and one `collector` but carry distinct `escrow_id`s matching the originating posts. Exercises P8 — drain-scope scalars hoisted once. |
+| D7 | Drain tx run by `ADMIN`, then `ProtocolFeeInbox` transferred to `ALICE` and a subsequent drain run by `ALICE` | Second drain's `FeeMessageCollected<C>` events carry `collector == ALICE`. Confirms `collector` follows custody of the inbox via `tx_context::sender`. |
+| D8 | Large N (e.g., 64 messages) | All drained; single returned `Coin<C>`; all objects deleted; N events emitted. Regression guard for the `vector::do!` iteration shape. |
 
 ### 6.4 Balance invariant
 
@@ -636,6 +710,45 @@ Private functions — tested directly from `#[test]` functions within the module
 | E5 | `collect_fee_messages<C>` over an empty vector | No `FeeMessageCollected<C>` events emitted. |
 | E6 | Sent↔Collected JOIN on `fee_message_id` | For any `FeeMessage<C>` whose `FeeMessageSent<C>` was observed at post time, its `FeeMessageCollected<C>` at drain shares identical `fee_message_id`, `fee_inbox_id`, `escrow_id`, and `amount`. The `fee_inbox_id` match is structural: post-time it is the routing argument to `post`, drain-time it is `object::id(inbox)` for the same inbox. Address fields do not overlap: `tenant` on Sent, `collector` on Collected — joining by `fee_message_id` recovers both without duplication. |
 | E7 | Emit-last ordering | In a single tx where `post` produces a `FeeMessageSent<C>`, the event's `fee_message_id` matches an object that is owned by `fee_inbox_id` at end-of-tx. In a single tx where `consume_message` produces a `FeeMessageCollected<C>`, the referenced object no longer exists at end-of-tx. |
+| E8 | Address-field non-duplication | `FeeMessageSent<C>` has no `collector` field; `FeeMessageCollected<C>` has no `tenant` field. Structural assertion on the event type definitions (compile-time guarantee) — recorded as a row so it cannot regress silently under a future event schema edit. |
+
+### 6.6 Property mapping
+
+| Prop | Mapped rows |
+|------|---|
+| P1 Balance-agnostic wrapper | S2, C3, E5 |
+| P2 Receive restricted to this module | Compile-time (structural); exercised at R1/D2 |
+| P2b Single public sink, no orphan construction | S8 (no spare field) + compile-time (no constructor symbol exported) |
+| P3 Objects deleted at drain | D2, D3, D8, C1, E7 |
+| P4 Lifecycle events with PK-JOIN on `fee_message_id` | E1, E3, E6, E8 |
+| P5 Coin accumulation (single coin out) | D2, D3, D6, D8 |
+| P6 No contention at boundary events | Structural (transfer-to-object); not runtime-testable within this module |
+| P7 Inbox-message correspondence runtime-enforced | R2, D5, S8 |
+| P8 Drain-scope scalars hoisted once | C2, D6, D7, E4 |
+
+### 6.7 Open questions
+
+- **`FAKE_USDC` witness reuse.** The test-only witness is declared inside
+  `fee_message_tests`, not exported. If a future spec audit of a sibling
+  module (e.g., `rental_escrow`) needs a second phantom coin for its own
+  rows, it should declare its own witness rather than import this one —
+  avoids cross-module coupling of test-only symbols.
+- **`phantom C` and `balance::create_for_testing`.** The rows rely on
+  `balance::create_for_testing<C>` producing a `Balance<C>` without a real
+  coin supply. That function is a Sui framework test helper; if it is ever
+  renamed or restricted, the D-series rows will need a different source of
+  `Balance<C>` (e.g., `coin::mint_for_testing` + `coin::into_balance`).
+- **D8 size.** N=64 is a pragmatic regression guard, not a limit claim —
+  the `vector::do!` iteration has no spec-level N ceiling, and gas-limit
+  testing belongs to an integration / on-chain test rather than a unit row.
+- **P6 runtime-untestable.** "No contention at boundary events" is a
+  property of Sui's transfer-to-object semantics, not of this module's
+  code. No row asserts it; recorded here as a known gap.
+- **`receive_message_for_testing` / `consume_message_for_testing` exposure.**
+  These are the minimal shims that let test-only rows drive the private
+  helpers with declarative scalars. They are the only test-only public
+  symbols this module exports — flagged so later cleanup passes do not
+  delete them as unused.
 
 
 7. MODULE BOUNDARY

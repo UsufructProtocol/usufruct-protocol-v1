@@ -206,34 +206,110 @@ so no `fee_ref_` prefix is needed. This mirrors the peer getters in
 5. TEST CASES
 -------------
 
-### 5.1 Initialization
+### 5.0 Test strategy
 
-| # | Description | Expected |
+Tests live in module `protocol_fee_inbox_tests`, driven by `sui::test_scenario`.
+Canonical actors: `DEPLOYER = @0xD1`, `ALICE = @0xA1`, `BOB = @0xB0`.
+
+Because `init` is a private package initializer, the module exposes a single
+`#[test_only]` shim so tests can drive it deterministically:
+
+```move
+#[test_only] public fun init_for_testing(ctx: &mut TxContext) { init(ctx) }
+```
+
+No other test-only helpers are needed:
+- `ProtocolFeeInbox` is retrieved from the sender's inventory via
+  `test_scenario::take_from_sender<ProtocolFeeInbox>`.
+- `ProtocolFeeRef` is retrieved as an immutable global via
+  `test_scenario::take_immutable<ProtocolFeeRef>` — this also asserts that it
+  was frozen (frozen objects are the only ones available through `take_immutable`).
+- `inbox_id` is a public getter, used directly.
+- `uid_mut` is `public(package)`, so within this crate tests can call it
+  directly to assert it returns the expected mutable reference without needing
+  to route through `fee_message`.
+
+**Axes:**
+- I — Initialization (post-`init` shape of the world)
+- B — ProtocolFeeRef frozenness / immutability
+- T — Inbox transferability
+- U — `uid_mut` contract
+- P — Properties (P1–P5)
+
+#### 5.1 Initialization (I)
+
+Scenario: `DEPLOYER` calls `init_for_testing`.
+
+| # | Assertion on next tx (as `DEPLOYER`) | Rationale |
 |---|---|---|
-| T1 | Publish package — `init` runs | One `ProtocolFeeInbox` owned by deployer. One `ProtocolFeeRef` frozen on-chain. |
-| T2 | `inbox_id` on `ProtocolFeeRef` | Returns ID equal to `object::id(&fee_inbox)`. |
-| T3 | Transfer `ProtocolFeeInbox` to a new address | New holder can present `&mut ProtocolFeeInbox` to drain-gated functions. |
+| I1 | `take_from_sender<ProtocolFeeInbox>` succeeds exactly once | P1 singleton + deployer-owned — `init` transfers inbox to `ctx.sender()` |
+| I2 | A second `take_from_sender<ProtocolFeeInbox>` in the same tx aborts | P1 singleton — no second inbox created |
+| I3 | `take_immutable<ProtocolFeeRef>` succeeds exactly once | P4 frozen + singleton |
+| I4 | `inbox_id(&fee_ref) == object::id(&inbox)` | §3 `init` wires `inbox_id` from the still-live `inbox` local |
+| I5 | `inbox_id(&fee_ref)` returns the same value across repeated calls | Getter purity; `fee_ref` is frozen so the field cannot drift |
+| I6 | `object::id(&inbox) != object::id(&fee_ref)` | Two distinct freshly-minted UIDs |
+| I7 | No events emitted during `init` | §3 "No events emitted"; asserts `num_user_events == 0` at end of the tx following init |
 
-### 5.2 Authorization gate
+#### 5.2 ProtocolFeeRef immutability (B)
 
-The inbox itself has no logic to test beyond creation and transfer.
-Authorization is enforced by the type system — `collect_fee_messages` requires
-`&mut ProtocolFeeInbox` as a parameter, so a call without the object does not
-compile. There is no runtime abort to test; the guarantee is structural.
-
-Correct behavior is verified where the gate is exercised:
-
-| # | Module | What is verified |
+| # | Scenario | Expected |
 |---|---|---|
-| T4 | `fee_message_tests` | `collect_fee_messages` successfully drains when `&mut ProtocolFeeInbox` is presented — confirming the structural gate works end-to-end |
+| B1 | After init, any later tx calls `take_immutable<ProtocolFeeRef>` from an arbitrary sender (e.g., `ALICE`) | Succeeds — frozen objects are globally readable without ownership |
+| B2 | Attempt `take_from_sender<ProtocolFeeRef>` by `DEPLOYER` | Aborts — `ProtocolFeeRef` is frozen, not owned |
+| B3 | Attempt `take_shared<ProtocolFeeRef>` | Aborts — not shared |
 
-### 5.3 uid_mut
+B2 and B3 are sanity checks on the frozen classification; together with B1 they
+pin the ability set `key`-only + frozen declared in §2.
 
-Tested indirectly via `fee_message::collect_fee_messages`.
+#### 5.3 Inbox transferability (T)
 
-| # | Module | Gate |
+| # | Scenario | Expected |
 |---|---|---|
-| T5 | `fee_message_tests` | `collect_fee_messages` can receive child objects via `uid_mut` |
+| T1 | `DEPLOYER` calls `transfer::public_transfer(inbox, ALICE)` | Next tx: `ALICE` can `take_from_sender<ProtocolFeeInbox>` |
+| T2 | After T1, `DEPLOYER` cannot `take_from_sender<ProtocolFeeInbox>` | Confirms transfer moved custody, not cloned it |
+| T3 | After T1, `ALICE` transfers to `BOB`; `BOB` then calls `uid_mut(&mut inbox)` | Returns a `&mut UID` without abort — drain authority follows custody (P2) |
+| T4 | Transfer `ProtocolFeeInbox` to `@0x0` | Succeeds structurally (no runtime check), but the object becomes unrecoverable — documents the permissiveness of `public_transfer` |
+
+T4 is a negative-space row: the type system does not prevent it, and the module
+does no defensive check. Documented here so that the production rule "do not
+send the inbox to `@0x0`" lives outside the code (in ops docs), not as a
+runtime abort.
+
+#### 5.4 uid_mut contract (U)
+
+| # | Scenario | Expected |
+|---|---|---|
+| U1 | Call `uid_mut(&mut inbox)` and compare against `object::id(&inbox)` | Returned `&mut UID` corresponds to the same object (cast via `object::uid_to_inner`) |
+| U2 | Call `uid_mut` twice in sequence | Both calls succeed; no internal state mutated by the call itself |
+| U3 | Integration: `fee_message_tests::collect_fee_messages` drains a child `FeeMessage<C>` transferred to `ProtocolFeeInbox` | End-to-end proof that `uid_mut` correctly enables `transfer::receive` in the sibling module (cross-ref to `fee_message.spec.md` §TESTS) |
+
+`public(package)` scoping is a compile-time guarantee (external modules cannot
+name the symbol), so no runtime row is needed. U1/U2 verify the contract's
+shape; U3 anchors it to the single real caller.
+
+#### 5.5 Properties
+
+| Prop | Mapped to |
+|------|---|
+| P1 Singleton | I1 + I2 + I3 |
+| P2 Transferable (custody = drain authority) | T1 + T3 |
+| P3 Fee inbox role (transfer-to-object + drain gate) | U3 (cross-module) |
+| P4 `ProtocolFeeRef` immutable | B1 + B2 + B3 + I5 |
+| P5 `uid_mut` package-scoped | Compile-time; not runtime-testable |
+
+#### 5.6 Open questions
+
+- **`init_for_testing` exposure.** The shim is the minimum surface that makes
+  `init` exercisable from tests. It is the only test-only symbol this module
+  exports — documented here so later cleanups do not delete it as "unused".
+- **`@0x0` transfer (T4).** Recorded as a negative-space test, not an abort.
+  Revisit if a protocol-level invariant ever mandates rejecting `@0x0`
+  recipients structurally (would require a runtime check inside a wrapper,
+  since `public_transfer` itself cannot be overridden).
+- **`P5` is untestable at runtime.** Package-scoped visibility is enforced by
+  the Move compiler. A would-be test of "external module cannot call
+  `uid_mut`" is a compile-error test, which `test_scenario` does not support.
+  Recorded as a known gap.
 
 
 6. MODULE BOUNDARY

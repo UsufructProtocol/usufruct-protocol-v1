@@ -365,43 +365,154 @@ define what "wrong escrow" and "stale" mean for its own operations.
 6. TEST CASES
 -------------
 
+### 6.0 Test strategy
+
+**Test module.** `#[test_only] module liquid_renting::tenant_cap_tests`.
+Function names describe the asserted behaviour (e.g.
+`mint_to_transfers_to_declared_tenant_not_sender`,
+`burn_emits_without_tenant_field`).
+
+**Idioms.**
+
+- `tenant_cap` creates real Sui objects (UIDs), transfers them, and
+  emits events. Every test runs in `sui::test_scenario`. No
+  `tx_context::dummy()` path — `mint_to` calls `transfer::transfer`
+  which requires a real `TxContext` threaded through a scenario.
+- Each row translates to one `#[test]` function. `tenant_cap` has **no
+  abort sites** (§1), so no `#[expected_failure]` rows. `burn`'s
+  by-value consumption is compile-time.
+
+**Fixtures.** Canonical actor addresses:
+
+```
+const ALICE:   address = @0xA11CE;   // typical sender / first tenant
+const BOB:     address = @0xB0B;     // handover recipient / second tenant
+const ZERO:    address = @0x0;       // zero-address boundary
+```
+
+Escrow IDs: literal `object::id_from_address(@0xE5C1)` and `@0xE5C2`.
+Sufficient for this module — `tenant_cap` never dereferences the escrow.
+
+**Test-only helpers.**
+
+```
+#[test_only] public fun capture_minted(
+    effects: &TransactionEffects): vector<TenantCapMinted>
+#[test_only] public fun capture_burned(
+    effects: &TransactionEffects): vector<TenantCapBurned>
+```
+
+Both wrap `event::events_by_type<T>()`. No wrappers over `mint_to` /
+`burn` are needed: `mint_to` is `public(package)` (test module is in the
+same package); `burn` is `public`.
+
+**Retrieval convention.** After a `mint_to(..., tenant, ...)` call in
+tx_k, the subsequent tx does:
+
+```
+test_scenario::next_tx(&mut scenario, tenant);
+let cap = test_scenario::take_from_address<TenantCap>(&scenario, tenant);
+```
+
+Rows that assert "delivered to tenant, not sender" additionally call
+`assert!(!test_scenario::has_most_recent_for_address<TenantCap>(sender))`.
+
+**Star-schema assertion shape.** Per the project-wide convention (memory
+`feedback_events_self_describing`), every `TenantCapMinted` row asserts
+`(tenant_cap_id, escrow_id, tenant)` exactly; every `TenantCapBurned`
+row asserts `(tenant_cap_id, escrow_id)` only. The deliberate absence
+of `tenant` on Burned is itself a test obligation — see row B4. These
+checks bundle into predicates `assert_star_schema_minted(...)` and
+`assert_star_schema_burned(...)`.
+
+
 ### 6.1 `mint_to`
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `mint_to(escrow_id, tenant, ctx)` | Returns `ID`. After the call, `test_scenario::take_from_address<TenantCap>(scenario, tenant)` yields a cap with `cap.escrow_id == escrow_id` and `object::id(&cap) == returned_id`. One `TenantCapMinted { tenant_cap_id: returned_id, escrow_id, tenant }` event emitted. |
-| N2 | Two calls with same `escrow_id`, same `tenant`, same tx | Two distinct `TenantCap` objects (distinct UIDs) end up in `tenant`'s account, both bound to the same escrow_id. Two `TenantCapMinted` events with distinct `tenant_cap_id` and identical `(escrow_id, tenant)`. Two distinct `ID`s returned. |
-| N3 | Two calls with distinct `escrow_id`s and distinct `tenant`s | Each cap lands in its respective `tenant` account. Two `TenantCapMinted` events with matching triples. |
-| N4 | `mint_to` passing a `tenant` different from `tx_context::sender(ctx)` (the `do_handover` case, where `tenant == pending_tenant_address`) | The cap is retrievable via `take_from_address(scenario, tenant)`, **not** from the sender's account. Event `tenant` equals the argument, not the tx sender. Asserts delivery routes through the argument, not through the transaction sender. |
+| N1 | Sender ALICE calls `mint_to(escrow_id = @0xE5C1, tenant = ALICE, ctx)` (the `rent()`-from-Idle case) | Returns an `ID`. Next tx as ALICE: `take_from_address<TenantCap>(scenario, ALICE)` yields a cap with `cap.escrow_id == @0xE5C1` and `object::id(&cap) == returned_id`. `num_user_events == 1`. Event `TenantCapMinted { tenant_cap_id: returned_id, escrow_id: @0xE5C1, tenant: ALICE }`. Star-schema predicate passes. |
+| N2 | Two `mint_to` calls in one tx with same `escrow_id = @0xE5C1` and same `tenant = ALICE` | Two distinct `TenantCap` objects (distinct UIDs) land in ALICE's account. `num_user_events == 2`. Two Minted events with distinct `tenant_cap_id` and identical `(escrow_id, tenant)`. Two distinct `ID`s returned. Asserts **P1** is structural (§5): this module permits duplicate mints; the "one cap per tenant transition" guarantee lives at `rental_escrow` call sites. |
+| N3 | Two `mint_to` calls with distinct `escrow_id`s (`@0xE5C1`, `@0xE5C2`) and distinct `tenant`s (ALICE, BOB) | cap0 lands in ALICE's account, cap1 in BOB's. Two Minted events with matching triples in call order. |
+| N4 | Sender ALICE calls `mint_to(escrow_id = @0xE5C1, tenant = BOB, ctx)` (the `do_handover` case where `tenant == pending_tenant_address`) | Cap retrievable via `take_from_address(scenario, BOB)`, **not** `ALICE`. Assert `has_most_recent_for_address<TenantCap>(ALICE) == false`. Event `tenant == BOB`. Asserts delivery routes through the argument, not through `tx_context::sender(ctx)`. |
+| **[new] N5** | `mint_to(escrow_id = @0xE5C1, tenant = ZERO, ctx)` | `transfer::transfer(cap, @0x0)` executes — Sui permits transfer to the zero address at the framework layer. The cap becomes permanently inaccessible (`take_from_address(scenario, @0x0)` succeeds technically but no account can sign for `@0x0`). Event `tenant == @0x0`. Documents that `tenant_cap` does not filter zero addresses — policy lives in `rental_escrow::rent` / `do_handover`. Flag in Open questions. |
+| **[new] N6** | `mint_to(escrow_id = @0x0, tenant = ALICE, ctx)` | Cap stored in ALICE's account with `cap.escrow_id == @0x0`. Event `escrow_id == @0x0`. Asserts `tenant_cap` imposes no non-zero-ID constraint — integration-time guarantees live at `rental_escrow`. |
+| **[new] N7** | Emit-last ordering: `mint_to` → immediately inside same tx inspect effects | The `TenantCapMinted` event is present in tx effects (emit happens before tx commit). Asserts the spec's step 4 (emit after transfer) did not accidentally move emit to before transfer. Encoded by capturing effects and asserting both `num_user_events == 1` and `has_most_recent_for_address<TenantCap>(tenant) == true` in the same post-tx snapshot. |
 
 ### 6.2 `burn`
 
 | # | Description | Expected |
 |---|---|---|
-| B1 | `burn(cap)` on a current cap | UID deleted. No abort. No escrow state change. One `TenantCapBurned { tenant_cap_id, escrow_id }` event with the pair the cap carried at mint. |
-| B2 | `burn(cap)` on a stale cap | UID deleted. No abort. Identical behavior — module is unaware of staleness. `TenantCapBurned` emitted identically. |
-| B3 | `burn` consumes by value | Compiler enforces — no double-burn. |
-| B4 | JOIN recoverability | For any `burn(cap)`, the tuple `(TenantCapMinted.tenant WHERE tenant_cap_id = X)` is the same address that signed the burn tx. Asserts omitting `tenant` from Burned is lossless under the JOIN-by-PK schema. |
+| B1 | `burn(cap)` on a current cap (minted in a prior tx by the same scenario) | UID deleted (`has_most_recent_for_address<TenantCap>(holder) == false` after). No abort. No escrow state change (not checkable here — no escrow in scope; **P4** deferred to lifecycle row L4 in `rental_escrow`-side tests). `num_user_events == 1`. One `TenantCapBurned { tenant_cap_id, escrow_id }` with the pair the cap carried at mint. **No `tenant` field on the event** — asserted structurally via the capture helper's return type. |
+| B2 | `burn(cap)` on a stale cap (a cap superseded by a later `mint_to` on the same escrow_id in scenario setup) | Identical behaviour to B1. `TenantCapBurned` emitted with the stale cap's `(tenant_cap_id, escrow_id)`. Documents **P3** from this module's perspective: staleness is inert; `burn` does not inspect current-cap state. |
+| B3 | `burn` consumes by value | Compile-time enforcement — a second `burn(cap)` would fail to compile. Not a runtime row; verified by the successful build of L1. Listed for completeness. |
+| B4 | **JOIN recoverability of holder.** Scenario: `mint_to(@0xE5C1, ALICE, ctx)` in tx1, then in tx2 ALICE calls `burn(cap)`. | `TenantCapBurned { tenant_cap_id = X, escrow_id = @0xE5C1 }` in tx2; no `tenant` field. Asserts: looking up `TenantCapMinted` by `tenant_cap_id == X` returns a single row with `tenant == ALICE`. Composed test: `capture_minted(&tx1_effects)` + `capture_burned(&tx2_effects)` joined in the test body. Documents the star-schema invariant that omitting `tenant` from Burned is lossless under non-transferability (**P2**). |
+| **[new] B5** | `burn(cap)` by the **mint recipient** — sender of the burn tx equals `tenant` from Minted | Asserted implicitly by `key`-only: only the holder can sign a tx that owns the cap. `test_scenario::next_tx(&mut scenario, ALICE)` is the legal sender; any other sender cannot take the cap. Encodes **P2** enforcement at the Move type level by constructing a scenario where tx2 is signed by `BOB` but the cap is in ALICE's account — `take_from_address<TenantCap>(&scenario, ALICE)` succeeds, but `burn(cap)` in that tx is legal for anyone who can obtain the cap by ref (they cannot; cap is in ALICE's account). Net assertion: no non-ALICE tx can reach `burn` without compile-time type violation; documented here, not executed. |
+| **[new] B6** | `burn(cap)` on a cap whose `escrow_id == @0x0` (via N6 setup) | Event `escrow_id == @0x0`. Symmetric with N6 — burn path makes no stronger claim than mint path. |
 
 ### 6.3 `escrow_id`
 
 | # | Description | Expected |
 |---|---|---|
-| G1 | `escrow_id(&cap)` on a cap retrieved from `tenant`'s account after `mint_to(id, tenant, ctx)` | Returns `id`. |
+| G1 | `escrow_id(&cap)` on a cap retrieved from `ALICE`'s account after `mint_to(@0xE5C1, ALICE, ctx)` | Returns `@0xE5C1`. |
+| **[new] G2** | Call `escrow_id(&cap)` five times in a row on the same cap | All five calls return the same `ID`. Asserts the getter is pure (no mutation, no event emission). Encoded as a loop predicate inside one `#[test]`. |
+| **[new] G3** | `escrow_id(&cap)` where `cap.escrow_id == @0x0` (via N6) | Returns `@0x0`. The getter does not filter zero IDs. |
 
 ### 6.4 Lifecycle
 
 | # | Description | Expected |
 |---|---|---|
-| L1 | `mint_to` → take cap from recipient → `escrow_id` check → `burn` | Full lifecycle. No abort. One `TenantCapMinted { tenant_cap_id, escrow_id, tenant }` at `mint_to`, one `TenantCapBurned { tenant_cap_id, escrow_id }` at `burn`, sharing the `(tenant_cap_id, escrow_id)` pair. `tenant` present on Minted only. |
-| L2 | `mint_to` (cap A, tenant T1) → `mint_to` (cap B, same escrow, tenant T2) → both returned `ID`s distinct | Staleness mechanic relies on distinct IDs — confirmed at mint. Two `TenantCapMinted` events with distinct `tenant_cap_id`, identical `escrow_id`, distinct `tenant`. |
-| L3 | Stale cap: `burn` available after displacement | Holder can clean up regardless of escrow state. `TenantCapBurned` emitted with the stale cap's `(tenant_cap_id, escrow_id)`. |
+| L1 | `mint_to(@0xE5C1, ALICE)` (tx1) → take from ALICE → `escrow_id(&cap) == @0xE5C1` → `burn(cap)` (tx2 by ALICE) | Full lifecycle. `tx1.num_user_events == 1` (Minted), `tx2.num_user_events == 1` (Burned). Both events share `(tenant_cap_id, escrow_id)`. `tenant` present on Minted only. |
+| L2 | `mint_to` (cap A, ALICE) → `mint_to` (cap B, same escrow, BOB) → both returned `ID`s distinct | Staleness mechanic relies on distinct IDs. Two Minted events with distinct `tenant_cap_id`, identical `escrow_id`, distinct `tenant`. cap A is stale from the indexer's perspective the moment cap B is minted (though neither cap knows it — staleness is a rental_escrow-side state read). |
+| L3 | Stale cap: after L2 setup, ALICE calls `burn(cap_A)` | Holder cleans up regardless of any escrow state. `TenantCapBurned { tenant_cap_id = id_A, escrow_id = @0xE5C1 }` emitted. cap B remains in BOB's wallet untouched. |
+| **[new] L4** | Multi-stale cleanup: L2 setup extended so three caps are minted for the same escrow to (ALICE, BOB, ALICE) across three txs, then ALICE burns both of her caps in a fourth tx | Four txs total: three Minted events with matching `escrow_id` and distinct `tenant_cap_id`; the burn tx emits two `TenantCapBurned` events in burn order, each carrying its cap's `(tenant_cap_id, escrow_id)`. Asserts lifecycle independence of multiple stale caps held by the same address. |
+| **[new] L5** | Mint two caps for **different** escrows (`@0xE5C1` to ALICE, `@0xE5C2` to ALICE) in one tx; burn them both in the next tx in reverse order | tx1: two Minted events in mint order. tx2: two Burned events in burn order. The PK-JOIN path `TenantCapMinted.tenant_cap_id = TenantCapBurned.tenant_cap_id` recovers the mint/burn pair for each cap independently — the two lifecycles do not cross. |
 
-Escrow-mismatch and staleness abort paths are tested in
-`rental_escrow` at `borrow_asset` (B3, B4, B9, B10) — the
-predicates are inline asserts at the call site and the abort
-constants are rental-side; `tenant_cap` itself has no abort to
-test.
+**[new] [property] P-SE — star-schema envelope invariants.** For every
+row above that asserts an event:
+1. `tenant_cap_id` field is present and equal to `object::id(&cap)` —
+   child PK that lets an indexer PK-JOIN Minted and Burned rows.
+2. `escrow_id` field is present and equal to the value recorded at
+   mint.
+3. On Minted: `tenant` is present as a first-observed address. On
+   Burned: `tenant` is **absent by design** — attempting to read it
+   at the Move level is a compile error; the indexer recovers it via
+   JOIN (B4).
+4. No Sui envelope metadata (tx_digest, tx sender, transfer events)
+   is relied on for identity. The pair `(tenant_cap_id, escrow_id)`
+   alone is sufficient to locate the cap across its lifecycle.
+
+Escrow-mismatch and staleness abort paths are tested in `rental_escrow`
+at `borrow_asset` — the predicates are inline asserts at the call site
+and the abort constants are rental-side; `tenant_cap` itself has no
+abort to test.
+
+
+### 6.5 Open questions
+
+- **Zero-address / zero-ID tolerance (N5, N6, B6, G3).** This module
+  accepts `tenant == @0x0` and `escrow_id == @0x0` without validation.
+  Rows document current behaviour; if policy later requires rejection,
+  decide whether it lives here (costs §1's "no aborts" posture) or
+  stays at `rental_escrow::rent` / `do_handover` / `integrate`.
+  Current stance: keep the cap permissive.
+- **Transfer to `@0x0` (N5).** `transfer::transfer(cap, @0x0)` executes
+  at the Sui framework layer; the cap becomes irretrievable. `tenant_cap`
+  does not guard against this. If any rental_escrow call site could
+  route a zero address into `mint_to`, it would create an uncollectable
+  cap and a zombie `current_tenant_cap_id`. Verify during `rental_escrow`
+  audit that both call sites (`rent`, `do_handover`) guarantee
+  non-zero `tenant`.
+- **Emit-last assertion granularity (N7).** Rows above assert the event
+  is present in tx effects but do not assert the *intra-tx ordering*
+  of `transfer::transfer` vs `event::emit`. Sui's tx effects do not
+  expose fine-grained intra-tx ordering through `test_scenario`; the
+  §4 mint_to step order is a source-level invariant verified by code
+  review, not by runtime tests.
+- **Double-mint structural note (N2).** This module allows two `mint_to`
+  calls for the same `(escrow_id, tenant)` pair. Verify during
+  `rental_escrow` audit that no path invokes `mint_to` twice for the
+  same logical transition; if one does, this module needs a runtime
+  guard and §1 gains an error constant.
 
 
 7. MODULE BOUNDARY

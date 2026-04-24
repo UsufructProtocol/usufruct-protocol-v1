@@ -342,27 +342,138 @@ stale, no fund moves. The object simply ceases to exist.
 6. TEST CASES
 -------------
 
+### 6.0 Test strategy
+
+**Test module.** `#[test_only] module liquid_renting::payment_receipt_tests`.
+Function names describe the asserted behaviour (e.g.
+`mint_to_derives_canonical_type_strings`,
+`mint_to_emits_no_events`, `burn_leaves_no_trace`).
+
+**Idioms.**
+
+- `payment_receipt` creates real Sui objects (UIDs), transfers them,
+  and operates over generic parameters. Every test runs in
+  `sui::test_scenario` — `mint_to` calls `transfer::transfer`, and
+  generic instantiation requires monomorphized test entry points.
+- Each row translates to one `#[test]` function. `payment_receipt`
+  has **no abort sites** (§1), so no `#[expected_failure]` rows.
+  `burn`'s by-value consumption is compile-time.
+- Every row additionally asserts
+  `test_scenario::num_user_events(&effects) == 0` — absence of events
+  is a protocol contract (§3), not an accidental omission.
+
+**Fixtures.** Canonical addresses and test-only generic witnesses:
+
+```
+const ALICE: address = @0xA11CE;   // typical sender / recipient
+const BOB:   address = @0xB0B;     // custody / distinct-recipient test
+const ZERO:  address = @0x0;       // zero-address boundary
+
+#[test_only] public struct TestAssetA has store {}
+#[test_only] public struct TestAssetB has store {}
+#[test_only] public struct TestCoinA has store {}
+#[test_only] public struct TestCoinB has store {}
+```
+
+The test-only structs are the generic witnesses passed to
+`mint_to<Asset, CoinType>` — they exist solely so `type_name::get<T>`
+has concrete types to resolve. Their fully-qualified strings are fixed
+at compile time and used as expected values. Escrow IDs use
+`object::id_from_address(@0xE5C1)` / `@0xE5C2` literals.
+
+**Test-only helpers.**
+
+```
+#[test_only] public fun receipt_fields_for_testing(
+    receipt: &PaymentReceipt): (ID, u64, String, String)
+```
+
+Exposes the private struct fields (escrow_id, amount, coin_type,
+asset_type) so rows can assert each individually. `mint_to` is
+`public(package)`; `burn` is `public`; no wrappers needed for them.
+
+**Expected type-string form.** `type_name::get<T>().into_string()`
+yields `"<pkg_address>::<module>::<type_name>"` with full hex-padded
+package address (64 hex chars). Rows express expected values as the
+literal string for the test module's package. The helper
+`expected_type_string<T>()` wraps the Sui framework call so tests do
+not duplicate the exact literal — `assert_eq!(receipt.coin_type,
+expected_type_string<TestCoinA>())`.
+
+
 ### 6.1 `mint_to`
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `mint_to<Asset, CoinType>(escrow_id, amount, recipient, ctx)` | After the call, `test_scenario::take_from_address<PaymentReceipt>(scenario, recipient)` yields a receipt with `escrow_id` / `amount` copied verbatim from arguments, `coin_type` / `asset_type` equal to `type_name::get<CoinType>().into_string()` / `type_name::get<Asset>().into_string()`, and a fresh UID. **No event emitted.** |
-| N2 | Two calls with same inputs and same generics in the same tx | Two distinct `PaymentReceipt` objects in `recipient`'s account (distinct UIDs), identical content in all other fields. |
-| N3 | Two calls with distinct amounts and distinct generics (e.g. `mint_to<AssetA, CoinA>` and `mint_to<AssetB, CoinB>`) | Two receipts with matching fields per call. Asserts that `coin_type` / `asset_type` are **derived inside `mint_to` from the generic parameters**, not supplied by the caller as strings — the module owns the capture format. |
-| N4 | `mint_to<Asset, CoinType>` passing a `recipient` different from `tx_context::sender(ctx)` | The receipt lands in `recipient`'s account, **not** in the sender's. Asserts delivery routes through the argument. (Not a path exercised by `rental_escrow::rent`, which always passes the sender — included for completeness of the fused-delivery contract.) |
+| N1 | Sender ALICE calls `mint_to<TestAssetA, TestCoinA>(escrow_id = @0xE5C1, amount = 1_000, recipient = ALICE, ctx)` | Next tx as ALICE: `take_from_address<PaymentReceipt>` yields a receipt. `receipt_fields_for_testing(&receipt) == (@0xE5C1, 1_000, expected_type_string<TestCoinA>(), expected_type_string<TestAssetA>())`. Fresh UID (non-zero). `num_user_events == 0`. |
+| N2 | Two `mint_to<TestAssetA, TestCoinA>` calls with identical inputs in one tx | Two distinct receipts in ALICE's account with distinct UIDs. All non-UID fields identical between the two. `num_user_events == 0`. |
+| N3 | `mint_to<TestAssetA, TestCoinA>(@0xE5C1, 100, ALICE, ctx)` and `mint_to<TestAssetB, TestCoinB>(@0xE5C2, 200, ALICE, ctx)` in one tx | Two receipts. receipt0: `(escrow_id=@0xE5C1, amount=100, coin_type=type_str<TestCoinA>, asset_type=type_str<TestAssetA>)`. receipt1: `(@0xE5C2, 200, type_str<TestCoinB>, type_str<TestAssetB>)`. Asserts type strings are **derived inside `mint_to` from the generic parameters**, not supplied by the caller — the module owns the capture format. |
+| N4 | Sender ALICE calls `mint_to<TestAssetA, TestCoinA>(escrow_id, amount, recipient = BOB, ctx)` | Receipt retrievable via `take_from_address(scenario, BOB)`, **not** ALICE. Assert `has_most_recent_for_address<PaymentReceipt>(ALICE) == false`. Delivery routes through the `recipient` argument, not through `tx_context::sender(ctx)`. |
+| **[new] N5** | `mint_to<TestAssetA, TestCoinA>(escrow_id, amount = 0, recipient = ALICE, ctx)` | Receipt stored with `amount == 0`. No abort. Documents that `payment_receipt` does not filter zero amounts — the `E_INSUFFICIENT_PAYMENT` check lives in `rental_escrow::rent` upstream. Under the current rental_escrow contract this path is unreachable in production (the gate ensures `amount > 0` before the call), but the module's own contract is permissive. |
+| **[new] N6** | `mint_to<TestAssetA, TestCoinA>(escrow_id, amount = u64::MAX, recipient = ALICE, ctx)` | Receipt stored with `amount == u64::MAX`. No overflow — the field is a plain u64 assignment. Asserts the boundary at u64 max. |
+| **[new] N7** | `mint_to<TestAssetA, TestCoinA>(escrow_id = @0x0, amount = 1, recipient = ALICE, ctx)` | Receipt stored with `escrow_id == @0x0`. No abort. Symmetric with `tenant_cap` N6 — receipts carry whatever ID the caller passes; rental_escrow is the source of non-zero live IDs. |
+| **[new] N8** | `mint_to<TestAssetA, TestCoinA>(escrow_id, amount = 1, recipient = ZERO, ctx)` | Receipt transferred to `@0x0` — technically executes at the Sui framework layer, becomes permanently inaccessible. `num_user_events == 0`. Documents the same policy as `tenant_cap` N5: module is permissive; rental_escrow must guarantee non-zero `recipient` in production. |
+| **[new] N9** | **Type-string derivation fidelity.** `mint_to<TestAssetA, TestCoinA>` then `mint_to<TestCoinA, TestAssetA>` (generics swapped) | Both receipts minted. receipt0.asset_type = type_str<TestAssetA>, receipt0.coin_type = type_str<TestCoinA>. receipt1.asset_type = type_str<TestCoinA>, receipt1.coin_type = type_str<TestAssetA>. Asserts the two generic slots are wired to the correct fields — not swapped in the constructor body. |
+| **[new] N10** | **P1 co-emission pattern check.** `mint_to` emits nothing; the test body verifies `num_user_events == 0` directly after the call. | Distinguishes payment_receipt from cap modules: §3's "outside the star schema" is a testable invariant, not just a design note. The co-emission with `BidPlaced` / `BidSuperseded` happens at the `rental_escrow` call site, verified in rental_escrow tests. |
 
 ### 6.2 `burn`
 
 | # | Description | Expected |
 |---|---|---|
-| B1 | `burn(receipt)` on any receipt | UID deleted. No abort. No event emitted. No escrow or cap state change anywhere. |
-| B2 | `burn` consumes by value | Compiler enforces — no double-burn. |
+| B1 | `burn(receipt)` on a receipt from scenario setup | UID deleted (`has_most_recent_for_address<PaymentReceipt>(holder) == false` after). No abort. `num_user_events == 0` in the burn tx. No escrow or cap state change anywhere (not checkable at this module level — no escrow in scope; **P6** is structural). |
+| B2 | `burn` consumes by value | Compile-time enforcement — a second `burn(receipt)` would fail to compile. Not a runtime row; verified by the successful build of L1. Listed for completeness. |
+| **[new] B3** | `burn` on a receipt minted with distinct generics (`<TestAssetB, TestCoinB>`) | Identical behaviour to B1. Asserts burn is generic-agnostic — the struct is non-generic and burn takes no type parameters. `num_user_events == 0`. |
+| **[new] B4** | `burn` on a receipt with `amount == 0` (via N5 setup) | Identical behaviour. Burn does not inspect field values. |
+| **[new] B5** | `burn` on a receipt with `escrow_id == @0x0` (via N7 setup) | Identical behaviour. Symmetric with N7. |
 
 ### 6.3 Lifecycle
 
 | # | Description | Expected |
 |---|---|---|
-| L1 | `mint_to` → take from `recipient` → `burn` | Full lifecycle. No abort. No events emitted in either step. |
+| L1 | `mint_to` (tx1 by ALICE) → take from ALICE (tx2) → `burn` (tx2) | Full lifecycle. `tx1.num_user_events == 0`, `tx2.num_user_events == 0`. Receipt gone after tx2. |
+| **[new] L2** | Mint three receipts for ALICE in tx1 with varying generics (`<AssetA,CoinA>`, `<AssetA,CoinB>`, `<AssetB,CoinA>`); burn all three in tx2 | tx1: three distinct receipts in ALICE's account. tx2: three `burn` calls succeed; all receipts gone. `num_user_events == 0` across both txs. Asserts lifecycle independence across generic instantiations — each receipt tracks its own `(asset_type, coin_type)` pair and burns independently. |
+| **[new] L3** | Mint receipt; in next tx, call `receipt_fields_for_testing(&receipt)` five times; then `burn` | All five getter calls return the same tuple. `burn` succeeds. Asserts the receipt is inspectable without mutation (no field is consumed by reading) — the wallet/explorer Display rendering pattern. |
+
+**[new] [property] P-NE — no-event invariant.** Every row above
+asserts `num_user_events == 0` on every tx that calls `mint_to` or
+`burn`. The test suite aggregates this into a standalone property
+test: for an arbitrary mix of mints and burns in a single tx, total
+user-event count is zero. Guards §3's deliberate exclusion from the
+star schema against regressions.
+
+**[new] [property] P-ND — non-generic dispatch.** Mint two receipts
+with opposing generic orders (`<A,B>` and `<B,A>`) and assert their
+`coin_type` / `asset_type` fields are swapped exactly. Encoded in N9
+above; lifted here as a property so a test writer sees it as a
+cross-cutting obligation distinct from the individual row.
+
+
+### 6.4 Open questions
+
+- **Zero-amount / zero-ID / zero-recipient tolerance (N5, N7, N8).**
+  Module is permissive. If policy later requires rejection, decide
+  whether guards live here (costs §1's "no aborts" posture, breaks
+  §3's "no events" via abort codes) or stay at `rental_escrow::rent`.
+  Current stance: keep the receipt permissive; upstream guarantees
+  non-zero values.
+- **Type-string literal form (N1, N9).** The exact string returned by
+  `type_name::get<T>().into_string()` depends on the Sui framework
+  version's formatting (leading `0x`, hex padding, generic parameter
+  encoding). Rows reference `expected_type_string<T>()` helper to
+  avoid pinning to a literal that could drift. Confirm the helper's
+  semantics match framework behaviour at implementation time.
+- **Transfer to `@0x0` (N8).** `transfer::transfer(receipt, @0x0)`
+  creates an inaccessible object. payment_receipt does not guard
+  against this; flag during `rental_escrow` audit that `rent`'s
+  `tx_context::sender(ctx)` is always non-zero on Sui (signer address
+  is validated at the VM level), so this path is unreachable in
+  production.
+- **Fidelity of `receipt_fields_for_testing`.** This `#[test_only]`
+  helper exposes private fields. Its signature must stay in sync with
+  the struct definition — if a future field is added to
+  `PaymentReceipt`, update the helper return type and every row that
+  destructures its output. Flag as a maintenance obligation on the
+  Display-adding PR, not a current gap.
 
 
 7. MODULE BOUNDARY

@@ -562,9 +562,10 @@ Error constants are `public` so the SDK can map abort codes to human-readable me
 10. TEST CASES
 --------------
 
-Tests follow the same convention as `math.spec.md`: exact values are given where
-derivable from the algorithm by hand; algorithm-derived golden vectors are marked
-and must be established by running the implementation once and fixing the output.
+Tests follow the same convention as `math.spec.md` §5: exact values are given
+where derivable from the algorithm by hand; algorithm-derived golden vectors
+are marked `TBD (algorithm-derived)` and must be established by running the
+implementation once and pasting the output back into this spec.
 
 Three categories per function:
 - **Edge cases** — boundary inputs with known exact output
@@ -572,16 +573,133 @@ Three categories per function:
 - **Properties** — invariants that must hold for all valid inputs in the stated domain
 
 
+### 10.0 Test strategy
+
+**Test module.** `#[test_only] module liquid_renting::curve_shape_tests`.
+Function names describe the asserted behaviour (e.g.
+`eval_linear_floor_third`, `new_power_law_rejects_alpha_num_zero`).
+
+**Idioms.**
+
+- Constructor success rows and `eval_*` golden-vector rows translate as
+  **one parametric loop** per function over a `vector<Case>`.
+- Constructor abort rows translate as **one
+  `#[test, expected_failure(abort_code = curve_shape::E_<NAME>)]` function
+  each** — never mixed with success rows in one loop.
+- Dispatcher `evaluate_curve` edge rows in §10.1 run **once per variant**
+  (Linear, Smoothstep, Logistic, plus one PowerLaw and one Exponential
+  seed). The short-circuit (`t == 0`, `t >= t_max`) fires before reaching
+  `eval_*`, so the variant identity does not change the result — the loop
+  asserts this explicitly.
+
+**Fixtures.** None beyond `tx_context::dummy()` where constructors take no
+ctx (they don't — all `new_*` are pure). Assertions use
+`use std::unit_test::assert_eq;` under `#[test_only]`.
+
+**Private-symbol access.** The `#[test_only]` wrappers declared alongside
+the private helpers expose:
+
+```
+#[test_only] public fun eval_linear_for_testing(t: u64, t_max: u64): u64
+#[test_only] public fun eval_smoothstep_for_testing(t: u64, t_max: u64): u64
+#[test_only] public fun eval_power_law_for_testing(
+    t: u64, t_max: u64, alpha_num: u8, alpha_den: u8): u64
+#[test_only] public fun eval_exponential_for_testing(
+    t: u64, t_max: u64, alpha_abs: u8, alpha_neg: bool): u64
+#[test_only] public fun eval_logistic_for_testing(t: u64, t_max: u64): u64
+#[test_only] public fun exp_a_norm_for_testing(alpha_abs: u8, alpha_neg: bool): u128
+#[test_only] public fun logistic_sigma_floor_for_testing(): u128
+#[test_only] public fun logistic_denom_for_testing(): u64
+```
+
+These route through the same private functions `evaluate_curve` dispatches
+to, so a test against `eval_power_law_for_testing(t, t_max, 2, 1)` and a
+test against `evaluate_curve(&new_power_law(2, 1), t, t_max)` with
+`t ∈ (0, t_max)` must produce the same value (asserted by property P-D1
+below).
+
+**Golden-vector convention.** Rows marked `TBD (algorithm-derived)` hold
+values produced by running the spec algorithm once at K=32 with floor
+rounding, then committing the literal. Same methodology as `math.spec.md`
+§4. Constructor tests for `new_exponential` do not include the cached
+value (`exp_a_norm` lives at module scope, not in the variant field) — see
+§10.5 for the `exp_a_norm_for_testing` lookup tests.
+
+**Constructor-destructure convention.** For `new_power_law` success rows,
+tests read the stored `(alpha_num, alpha_den)` via a `#[test_only]`
+destructure helper `power_law_fields_for_testing(shape: &CurveShape):
+(u8, u8)` that matches on `CurveShape::PowerLaw` (aborts on other
+variants). The helper is the only way to verify gcd normalization
+post-construction without leaking enum fields publicly.
+
+
+### 10.0.1 Constructor success
+
+| `new_*` call | stored variant | note |
+|---|---|---|
+| **[new]** `new_linear()` | `Linear` | no fields |
+| **[new]** `new_smoothstep()` | `Smoothstep` | no fields |
+| **[new]** `new_logistic()` | `Logistic` | no fields |
+| **[new]** `new_power_law(2, 1)` | `PowerLaw { 2, 1 }` | already coprime; no reduction |
+| **[new]** `new_power_law(1, 2)` | `PowerLaw { 1, 2 }` | already coprime |
+| **[new]** `new_power_law(6, 4)` | `PowerLaw { 3, 2 }` | gcd=2 reduction |
+| **[new]** `new_power_law(6, 3)` | `PowerLaw { 2, 1 }` | gcd=3 reduction to d=1 |
+| **[new]** `new_power_law(8, 4)` | `PowerLaw { 2, 1 }` | gcd=4 reduction; boundary `alpha_num=8` |
+| **[new]** `new_power_law(1, 3)` | `PowerLaw { 1, 3 }` | smallest d=3 variant |
+| **[new]** `new_power_law(1, 4)` | `PowerLaw { 1, 4 }` | smallest d=4 variant; boundary `alpha_den=4` |
+| **[new]** `new_exponential(1, false)` | `Exponential { 1, false }` | lower bound `alpha_abs=1`, convex |
+| **[new]** `new_exponential(8, true)` | `Exponential { 8, true }` | upper bound `alpha_abs=8`, concave |
+
+**Property [new] [property] — coprimality:** for every success row of
+`new_power_law`, `gcd(stored.alpha_num, stored.alpha_den) == 1`. Encoded
+as a predicate over the parametric loop using a Euclid-gcd test helper.
+
+
+### 10.0.2 Constructor abort
+
+Each row below translates to one dedicated
+`#[test, expected_failure(abort_code = curve_shape::E_<NAME>)]` function.
+
+| Call | Abort code | Reason |
+|---|---|---|
+| **[new]** `new_power_law(0, 2)` | `E_ALPHA_NUM_RANGE` | `alpha_num = 0` below `[1, 8]` |
+| **[new]** `new_power_law(9, 2)` | `E_ALPHA_NUM_RANGE` | `alpha_num = 9` above `[1, 8]` |
+| **[new]** `new_power_law(3, 0)` | `E_ALPHA_DEN_RANGE` | `alpha_den = 0` below `{1..4}` |
+| **[new]** `new_power_law(3, 5)` | `E_ALPHA_DEN_RANGE` | `alpha_den = 5` above `{1..4}` |
+| **[new]** `new_power_law(2, 2)` | `E_DEGENERATE_LINEAR` | `alpha_num == alpha_den` at raw input |
+| **[new]** `new_power_law(4, 4)` | `E_DEGENERATE_LINEAR` | `alpha_num == alpha_den` at raw input (pre-gcd check fires) |
+| **[new]** `new_exponential(0, false)` | `E_ALPHA_ABS_RANGE` | `alpha_abs = 0` below `[1, 8]` |
+| **[new]** `new_exponential(9, true)` | `E_ALPHA_ABS_RANGE` | `alpha_abs = 9` above `[1, 8]` |
+
+**Abort-check order note:** `new_power_law(0, 0)` aborts with
+`E_ALPHA_NUM_RANGE` because the `alpha_num` assert runs first; this is
+only interesting if the implementation reorders the asserts. Flag in Open
+questions, not a test row.
+
+
 ### 10.1 `evaluate_curve` — dispatcher edge cases
 
-These apply regardless of the variant passed. Tested once per variant to confirm
-the dispatcher short-circuits before reaching `eval_*`.
+These apply regardless of the variant passed. The parametric loop runs the
+full cross-product of (variant seed × edge row), i.e. **each row below is
+executed once per variant seed**. Variant seeds: `Linear`, `Smoothstep`,
+`Logistic`, `PowerLaw(2, 1)`, `Exponential(2, false)`.
 
-| `shape` | `t` | `t_max` | result |
-|---------|-----|---------|--------|
-| any | `0` | any `> 0` | `0` |
-| any | `t_max` | `t_max` | `SCALE` |
-| any | `t_max + 1` | `t_max` | `SCALE` |
+| `shape` | `t` | `t_max` | result | note |
+|---------|-----|---------|--------|------|
+| any seed | `0` | `1_000_000_000` | `0` | short-circuit on `t == 0` before `eval_*` |
+| any seed | `0` | `1` | `0` | **[new]** `t_max = 1` boundary — smallest non-zero denominator |
+| any seed | `1` | `1` | `SCALE` | **[new]** `t == t_max` at smallest denominator |
+| any seed | `t_max` | `t_max` | `SCALE` | short-circuit on `t >= t_max` before `eval_*` |
+| any seed | `t_max + 1` | `t_max` | `SCALE` | short-circuit on `t >= t_max` — clamped |
+| any seed | `u64::MAX` | `1_000_000_000` | `SCALE` | **[new]** saturated `t` — confirms clamp to `SCALE` on extreme overshoots |
+
+**[new] [property] P-D1 — dispatch equivalence.** For every variant seed
+above and every interior `t ∈ (0, t_max)` in the seed set
+`[(1, 4), (1, 3), (3, 4), (1_000_000_000, 4_000_000_000)]`, assert
+`evaluate_curve(&shape, t, t_max)` equals the corresponding
+`eval_<variant>_for_testing(t, t_max [, fields…])`. Guards against
+dispatcher drift (wrong arm, wrong field forwarding) that would not
+surface in any single-variant row.
 
 
 ### 10.2 `eval_linear`
@@ -626,17 +744,31 @@ the dispatcher short-circuits before reaching `eval_*`.
 
 ### 10.4 `eval_power_law`
 
-#### Golden vectors
+#### Golden vectors — exact (hand-derivable)
 
-Algorithm-derived — establish during initial implementation (same approach as
-`exp_scaled` golden vectors in `math.spec.md`).
+`d = 1` rows skip Step 2 (the root step). Exact, no algorithm-derived
+placeholder required.
 
-Representative inputs to cover:
-- `alpha = 1/2` (d=2, concave): `t=1, t_max=4`
-- `alpha = 2`   (d=1, convex):  `t=1, t_max=4`
-- `alpha = 3/2` (d=2, convex):  `t=1, t_max=4`
-- `alpha = 1/3` (d=3, concave): `t=1, t_max=8`
-- `alpha = 1/4` (d=4, concave): `t=1, t_max=16`
+| `t` | `t_max` | `alpha_num` | `alpha_den` | result | note |
+|-----|---------|-------------|-------------|--------|------|
+| **[new]** `1_000_000_000` | `2_000_000_000` | `2` | `1` | `250_000_000` | g(0.5) = 0.25 exact — d=1 arm, no `nth_root` |
+| **[new]** `1_000_000_000` | `2_000_000_000` | `3` | `1` | `125_000_000` | g(0.5) = 0.125 exact — d=1 arm |
+| **[new]** `2` | `4` | `2` | `1` | `250_000_000` | small-t path; same result, different scaling |
+| **[new]** `3` | `4` | `2` | `1` | `562_500_000` | g(0.75) = 0.5625 exact |
+| **[new]** `4_000_000_000` | `4_000_000_000` | `8` | `1` | `SCALE` | `t == t_max` short-circuit, confirms dispatcher clamp applies for `d=1` too |
+
+#### Golden vectors — algorithm-derived (root step involved)
+
+Roots introduce `math::nth_root_u128` floor rounding; values are
+algorithm-derived. Establish during initial implementation.
+
+| `t` | `t_max` | `alpha_num` | `alpha_den` | result | note |
+|-----|---------|-------------|-------------|--------|------|
+| **[new]** `1` | `4` | `1` | `2` | TBD (algorithm-derived) | α = 1/2 concave; reference: √0.25 · SCALE = 5·10⁸ |
+| **[new]** `1` | `4` | `3` | `2` | TBD (algorithm-derived) | α = 3/2 convex; reference: 0.25^1.5 · SCALE ≈ 1.25·10⁸ |
+| **[new]** `1` | `8` | `1` | `3` | TBD (algorithm-derived) | α = 1/3 concave; d=3 path |
+| **[new]** `1` | `16` | `1` | `4` | TBD (algorithm-derived) | α = 1/4 concave; d=4 path; exercises `SCALE_CB` scale_pow branch |
+| **[new]** `3` | `4` | `1` | `2` | TBD (algorithm-derived) | α = 1/2 at `t = 0.75·t_max` — interior non-midpoint |
 
 #### Properties
 
@@ -653,24 +785,52 @@ Representative inputs to cover:
 
 ### 10.5 `eval_exponential`
 
-#### Precomputed `EXP_A_NORM_*` constants
+#### Precomputed `EXP_A_NORM_*` constants — lookup dispatcher
 
 The 16 module-level `EXP_A_NORM_{1..8}_{POS,NEG}` constants (§7) are
 algorithm-derived — establish all 16 during initial implementation using the
-procedure documented in §7. They are not a separate test surface: correct
-`EXP_A_NORM_*` values are a precondition for the golden vectors below to
-reproduce.
+procedure documented in §7. Correct `EXP_A_NORM_*` values are a precondition
+for the golden vectors below to reproduce.
+
+`exp_a_norm(alpha_abs, alpha_neg)` is a pure dispatcher over these 16
+constants (§7). The test surface has three layers:
+
+| `alpha_abs` | `alpha_neg` | result | note |
+|---|---|---|---|
+| **[new]** 1..8 (eight rows) | `false` | `EXP_A_NORM_{abs}_POS` | **[property]** per-pair: `exp_a_norm_for_testing(a, false)` equals the POS constant by direct reference |
+| **[new]** 1..8 (eight rows) | `true`  | `EXP_A_NORM_{abs}_NEG` | **[property]** per-pair: `exp_a_norm_for_testing(a, true)` equals the NEG constant |
+
+The parametric loop above asserts the dispatcher wiring is correct (no
+swapped arms, no missing coverage of a pair). It does not verify the
+numerical value of the constants themselves — those are validated by the
+golden-vector rows below (which depend on the constants for correctness)
+and by the two monotonicity rows:
+
+- **[new] [property] POS strictly increasing in α:** for all pairs
+  `(a, a+1)` with `a ∈ {1..7}`, `EXP_A_NORM_{a}_POS < EXP_A_NORM_{a+1}_POS`
+  (since `e^a − 1` is strictly increasing for `a > 0`).
+- **[new] [property] NEG strictly increasing in α:** for all pairs
+  `(a, a+1)` with `a ∈ {1..7}`, `EXP_A_NORM_{a}_NEG < EXP_A_NORM_{a+1}_NEG`
+  (since `1 − e^{−a}` is strictly increasing for `a > 0`).
+
+These two rows catch copy-paste mistakes at pinning time (e.g. swapped
+`EXP_A_NORM_3_POS` and `EXP_A_NORM_4_POS`) that would not surface in a
+single-α golden vector.
 
 #### Golden vectors
 
 Algorithm-derived — establish during initial implementation.
 
-Representative inputs to cover:
-- `alpha_abs=2, alpha_neg=false` (convex):  `t=1, t_max=4`
-- `alpha_abs=2, alpha_neg=true`  (concave): `t=1, t_max=4`
-- `alpha_abs=4, alpha_neg=false`:            `t=1, t_max=4`
-- `alpha_abs=8, alpha_neg=false`:            `t=1, t_max=4` (upper bound)
-- `alpha_abs=1, alpha_neg=true`:             `t=1, t_max=4` (minimum concave)
+| `t` | `t_max` | `alpha_abs` | `alpha_neg` | result | note |
+|-----|---------|-------------|-------------|--------|------|
+| **[new]** `1` | `4` | `2` | `false` | TBD (algorithm-derived) | α=+2 convex |
+| **[new]** `1` | `4` | `2` | `true`  | TBD (algorithm-derived) | α=−2 concave; complementary to row above |
+| **[new]** `1` | `4` | `4` | `false` | TBD (algorithm-derived) | mid-range α |
+| **[new]** `1` | `4` | `8` | `false` | TBD (algorithm-derived) | **upper bound** α=+8 — guards §4 math overflow analysis at boundary |
+| **[new]** `1` | `4` | `8` | `true`  | TBD (algorithm-derived) | **upper bound** α=−8 — reciprocal path at depth |
+| **[new]** `1` | `4` | `1` | `true`  | TBD (algorithm-derived) | minimum concave |
+| **[new]** `2` | `4` | `2` | `false` | TBD (algorithm-derived) | midpoint `t = t_max/2` — used in complementarity property pair |
+| **[new]** `2` | `4` | `2` | `true`  | TBD (algorithm-derived) | midpoint concave — complementary to row above |
 
 #### Properties
 
@@ -684,26 +844,77 @@ Representative inputs to cover:
   `eval_exponential(t, t_max, a, false) + eval_exponential(t_max-t, t_max, a, true) ≈ SCALE`
   Proof: `f_α(x) + f_{-α}(1-x) = 1` for all x (see §7). Maximum deviation: a few ULP.
 
+  **[new] [property] Complementarity — seed set C.** Seeds:
+  `(t, t_max, alpha_abs) ∈ {(1, 4, 2), (2, 4, 2), (3, 4, 2), (1, 4, 8), (3, 8, 4)}`.
+  For each seed, assert
+  `|eval_exponential_for_testing(t, t_max, a, false) +
+    eval_exponential_for_testing(t_max − t, t_max, a, true) − SCALE| ≤ 4`
+  (4 ULP tolerance; tighten at implementation time if empirical deviation
+  is smaller). Midpoint seed `(2, 4, 2)` exercises the `t == t_max − t`
+  self-complementary case where the sum must be exactly `2 · eval_mid`.
+
 
 ### 10.6 `eval_logistic`
 
 #### Golden vectors
 
-Algorithm-derived — establish during initial implementation.
+| `t` | `t_max` | result | note |
+|-----|---------|--------|------|
+| **[new]** `2_000_000_000` | `4_000_000_000` | `500_000_000` | exact midpoint `SCALE/2` — by construction (σ is symmetric around y=0; at x=0.5 the numerator equals half the denominator). No algorithm placeholder. |
+| **[new]** `1_000_000_000` | `4_000_000_000` | TBD (algorithm-derived) | `t = t_max/4` — below linear |
+| **[new]** `3_000_000_000` | `4_000_000_000` | TBD (algorithm-derived) | `t = 3·t_max/4` — above linear; complementary to row above |
+| **[new]** `1` | `4` | TBD (algorithm-derived) | small-integer inputs — exercises integer-rounding path absent the SCALE-aligned denominators |
 
-Representative inputs to cover:
-- `t = t_max/4`: below linear
-- `t = t_max/2`: exact midpoint = `SCALE/2`
-- `t = 3*t_max/4`: above linear
+#### Constant derivation tests — `LOGISTIC_DENOM`, `LOGISTIC_SIGMA_FLOOR`
+
+These guard the relationship declared in §8 between the two constants
+and prevent a pinned literal for one from drifting out of sync with the
+other.
+
+| Assertion | Note |
+|---|---|
+| **[new] [property]** `2 · logistic_sigma_floor_for_testing() + (logistic_denom_for_testing() as u128) == SCALE_U128` | Algebraic identity from the definition `SIGMA_FLOOR = (SCALE − DENOM) / 2`. Fails if either literal is pinned against a different `exp_scaled` output than the other. |
+| **[new]** `(logistic_denom_for_testing() as i128 − 995_054_750).abs() <= 100` | Reference check: `(σ(6) − σ(−6)) · SCALE ≈ 995_054_750` (§8). 100-ULP tolerance covers floor rounding in `exp_scaled`; tighten at implementation if actual delta is known. Fails if `LOGISTIC_DENOM` is pinned against a wrong exponent (e.g. `k=6` vs `k=12`). |
 
 #### Properties
 
 - **Range:** result `∈ [0, SCALE]`
 - **Monotonicity:** `t1 < t2 → eval_logistic(t1) ≤ eval_logistic(t2)`
-- **Exact midpoint:** `eval_logistic(t_max/2, t_max) = SCALE/2`
-- **Approximate symmetry:** `eval_logistic(t, t_max) + eval_logistic(t_max-t, t_max) ≈ SCALE`
-  (deviation ≤ 2 ULP from accumulated rounding in `exp_scaled`)
+- **Exact midpoint:** `eval_logistic(t_max/2, t_max) = SCALE/2` — covered
+  by the golden-vector row above.
+- **Approximate symmetry [property]:** for seed set
+  `S_L = [(1, 4), (1, 8), (3, 8), (1_000_000_000, 4_000_000_000)]`,
+  `|eval_logistic_for_testing(t, t_max) +
+    eval_logistic_for_testing(t_max − t, t_max) − SCALE| ≤ 2`.
 - **Below linear:** `eval_logistic(t) < eval_linear(t)` for `t ∈ (0, t_max/2)`
 - **Above linear:** `eval_logistic(t) > eval_linear(t)` for `t ∈ (t_max/2, t_max)`
+
+
+### 10.7 Open questions
+
+- **`math::exp_scaled` exposure for `LOGISTIC_DENOM`/`EXP_A_NORM_*`
+  derivation.** The initial-implementation procedure in §7 and §8 runs
+  `math::exp_scaled` once per constant, pastes the literal back into the
+  spec, and commits. If future refactors change `exp_scaled`'s Taylor
+  parameters (K, rounding), every pinned literal in this module must be
+  re-derived. No in-VM test detects the drift — the only guard is the
+  reference-value tolerance check on `LOGISTIC_DENOM`. Flag as a
+  cross-module invariant at review time.
+- **Destructure helper visibility.** `power_law_fields_for_testing` needs
+  to match on `CurveShape::PowerLaw { .. }`, which requires either
+  `#[test_only]` public access to the enum fields or a helper inside
+  `curve_shape.move` that exposes them. The strategy above assumes the
+  latter. Confirm implementation convention at first use.
+- **Abort-ordering assumption.** The table in §10.0.2 assumes the
+  `new_power_law` asserts fire in the order `alpha_num → alpha_den →
+  degenerate`. If the implementation chooses a different order, the
+  `(0, 0)` / `(0, 5)` style rows would surface a different error code
+  than listed. Keep a single assert per precondition and document the
+  order in §2.3; adjust rows if order changes.
+- **Complementarity tolerance bound.** Rows use 4 ULP for Exponential
+  and 2 ULP for Logistic as working tolerances. Empirical deviation from
+  the initial-implementation trace should let us tighten these. Record
+  the observed max deviation in a comment when pasting the golden
+  vectors back, and reduce the tolerance to that value + 1 ULP.
 
 

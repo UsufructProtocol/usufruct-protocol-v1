@@ -37,7 +37,8 @@ points, and the fund distribution logic for every boundary event.
 - Package-visible price helpers: `compute_price_descent`,
   `compute_next_rent_price` (backing `compute_floor_price` and `rent()`).
 - Private settlement helpers: `do_handover`, `do_tenure_expiry`,
-  `do_auction_expiry`, `split_fee`, `settle_stake_earnings`.
+  `do_auction_expiry`, `split_fee`, `settle_stake_earnings`,
+  `register_pending_bid`.
 - Protocol state-machine events: `AssetIntegrated`, `RentStarted`,
   `BidPlaced`, `BidSuperseded`, `HandoverCompleted`, `TenureExpired`,
   `AuctionExpired`, `RetireFlagSet`, `AssetClaimed`, `EarningsWithdrawn`.
@@ -880,33 +881,18 @@ reach the same numbers through that unified entry point.
 - Let `floor = compute_next_rent_price(escrow)` (delegates to
   `price_function::evaluate_price_fn`).
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
-- **Pre-bind event locals** (symmetric with the HandoverConfirmed
-  branch; capture before the state rotations consume the source data so
-  emit-last runs against post-state):
-  - `let pending_tenant = tx_context::sender(ctx);`
-  - `let bid_amount     = coin::value(&payment);` — captured before
-    `balance::join` consumes the coin; reused for the receipt mint, the
-    `last_rent_price` write, and the `BidPlaced` event.
+- Let `pending_tenant = tx_context::sender(ctx);`
 - Let `remaining = (escrow.phase_start_ms + escrow.config.tenure_ceiling) -
   clock.timestamp_ms()`.
 - Let `countdown = min(escrow.config.handover_floor, remaining)`.
 - `escrow.handover_countdown_expiry = some(clock.timestamp_ms() + countdown);`
 - `escrow.pending_tenant_address = some(pending_tenant);`
-- `escrow.last_rent_price = bid_amount;`
-- `balance::join(&mut escrow.pending_bid, coin::into_balance(payment));`
 - `escrow.state = Rented { phase: HandoverConfirmed };`
-- **Mint and push `PaymentReceipt`** (delivery symmetry with the Idle /
-  AtDutchAuction branches, which deliver `TenantCap` in-tx via
-  `install_new_tenant`). The receipt has no protocol power — see
-  `payment_receipt.spec.md`:
-  - `payment_receipt::mint_to<Asset, CoinType>(object::id(escrow),
-    bid_amount, pending_tenant, ctx);` — fused mint-and-transfer
-    inside `payment_receipt`. The two generics forward from `rent`'s
-    own parameters; `coin_type` / `asset_type` are derived from them
-    inside `mint_to` via `type_name::get<T>().into_string()` and stored
-    as fields on the receipt. The transfer must live inside
-    `payment_receipt`: `transfer::transfer<PaymentReceipt>` only
-    compiles in the owning module.
+- **Register pending bid** — §7.7 is the single source of truth for
+  "absorb payment into `pending_bid`, write `last_rent_price`, mint + push
+  `PaymentReceipt` to the bidder". Consumes `payment`; returns the bid
+  amount for the event:
+  - `let bid_amount = register_pending_bid(escrow, payment, pending_tenant, ctx);`
 - Emit `BidPlaced { escrow_id, pending_tenant, bid_amount,
   handover_countdown_expiry }` — emit-last: all state mutations and the
   receipt delivery complete, so the escrow's post-state and the sender's
@@ -925,31 +911,22 @@ exits afterward.
 - Let `floor = compute_next_rent_price(escrow)` — `last_rent_price` holds
   the previous bidder's payment, so the floor escalates with each supersede.
 - Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
-- **Pre-bind event locals** (emit-last: capture values before the
-  state rotations consume the source data; emit runs after all
-  mutations so the escrow's post-state matches the event semantics):
+- **Pre-bind event locals** for the refund push (captured before
+  `pending_bid` and `pending_tenant_address` are overwritten):
   - `let displaced_bidder = *option::borrow(&escrow.pending_tenant_address);`
-  - `let new_bidder      = tx_context::sender(ctx);`
-  - `let new_bid_amount  = coin::value(&payment);`
+  - `let new_bidder       = tx_context::sender(ctx);`
 - **Refund previous pending bid** (push before rotate):
   - Take the previous balance: `let prev = balance::withdraw_all(&mut escrow.pending_bid);`
   - `let refunded_amount = balance::value(&prev);`
   - `transfer::public_transfer(coin::from_balance(prev, ctx), displaced_bidder);`
-- **Rotate to new bid:**
-  - `escrow.last_rent_price = new_bid_amount;`
-  - `balance::join(&mut escrow.pending_bid, coin::into_balance(payment));`
-  - `escrow.pending_tenant_address = some(new_bidder);`
+- `escrow.pending_tenant_address = some(new_bidder);`
+- **Register the new pending bid** — §7.7, same helper as the HandoverOpen
+  branch. The displaced bidder keeps the receipt minted on their own prior
+  bid; the protocol does not and cannot revoke it.
+  - `let new_bid_amount = register_pending_bid(escrow, payment, new_bidder, ctx);`
 - `handover_countdown_expiry` is **not** updated — subsequent bids do not
   reset the countdown (design-compact §4).
 - `state` remains `Rented { HandoverConfirmed }`.
-- **Mint and push `PaymentReceipt` for the new bidder** (same delivery
-  symmetry as the HandoverOpen branch; the displaced bidder keeps the
-  receipt minted on their own prior bid — the protocol does not and
-  cannot revoke it). See `payment_receipt.spec.md`:
-  - `payment_receipt::mint_to<Asset, CoinType>(object::id(escrow),
-    new_bid_amount, new_bidder, ctx);` — fused mint-and-transfer
-    inside `payment_receipt`; generics forward from `rent` and the
-    canonical type strings are derived inside `mint_to`.
 - Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
   new_bidder, new_bid_amount }` — emit-last: all state rotations, the
   refund push, and the receipt delivery complete, so the escrow's
@@ -1651,6 +1628,66 @@ the next-state decision) rather than with a partial stake settlement.
 | `do_tenure_expiry` (§7.2 step 3) | `stake_total` | `tenant` | equals `stake_total` — no pre-split |
 
 
+### 7.7 `register_pending_bid`
+
+    fun register_pending_bid<Asset: key + store, CoinType>(
+        escrow:     &mut RentalEscrow<Asset, CoinType>,
+        payment:    Coin<CoinType>,
+        new_bidder: address,
+        ctx:        &mut TxContext,
+    ): u64
+
+**Purpose:** shared pending-bid installation tail for the two `Rented` arms
+of `rent()` (§5.1). Absorbs `payment` into `escrow.pending_bid`, writes
+`last_rent_price`, and mints + pushes a `PaymentReceipt` to `new_bidder`.
+Returns the bid amount so the caller can emit `BidPlaced` / `BidSuperseded`
+with the correct amount field.
+
+**Preconditions:**
+- Caller has already verified `coin::value(&payment) >= floor` (arm-specific
+  floor from `compute_next_rent_price`).
+- For the supersede path (`HandoverConfirmed` caller), the previous
+  `pending_bid` has already been refunded and drained, and
+  `pending_tenant_address` has been rotated to `new_bidder` (push-before-rotate
+  invariant, §9 P3 — owned by the caller).
+
+**Algorithm:**
+
+    let bid_amount = coin::value(&payment);
+    escrow.last_rent_price = bid_amount;
+    balance::join(&mut escrow.pending_bid, coin::into_balance(payment));
+    payment_receipt::mint_to<Asset, CoinType>(
+        object::id(escrow), bid_amount, new_bidder, ctx,
+    );
+    bid_amount
+
+**Postconditions:**
+- `escrow.last_rent_price == bid_amount`.
+- `escrow.pending_bid` grew by `bid_amount`.
+- A `PaymentReceipt` carrying `escrow_id`, `bid_amount`, and the canonical
+  `Asset` / `CoinType` strings has been transferred to `new_bidder`.
+
+**Why the helper does not emit `BidPlaced` / `BidSuperseded`:** the two
+events differ structurally — `BidPlaced` carries `pending_tenant` and
+`handover_countdown_expiry`; `BidSuperseded` carries `displaced_bidder`,
+`refunded_amount`, `new_bidder`, `new_bid_amount`. Their arm-specific
+pre-tail setup (countdown computation + state transition for HandoverOpen;
+refund + address rotation for HandoverConfirmed) also differs. Emit-last at
+each caller keeps the event semantic aligned with the full bid-placement
+transition, not with the shared tail alone. See non-starter §9 in
+rental_escrow.note for why a fuller merge would reintroduce branching.
+
+**Two call sites:**
+
+| Caller | Pre-tail work | Emitted event |
+|---|---|---|
+| `rent()` Case `Rented { HandoverOpen }` (§5.1) | retire-flag check, floor check, countdown write, `pending_tenant_address = some(sender)`, state → `HandoverConfirmed` | `BidPlaced` |
+| `rent()` Case `Rented { HandoverConfirmed }` (§5.1) | floor check, refund previous `pending_bid` to `displaced_bidder`, rotate `pending_tenant_address` to `new_bidder` | `BidSuperseded` |
+
+Both arms share the same post-state for `pending_bid` / `last_rent_price` /
+receipt delivery; the helper is the single source of truth for that tail.
+
+
 8. READ-ONLY QUERIES
 ---------------------
 
@@ -2286,6 +2323,7 @@ or by an APT-driven transition.
 | `split_fee(...)` | private | §7.4 |
 | `install_new_tenant(...)` | private | §7.5 — shared install path for `rent()` Idle / AtDutchAuction arms. |
 | `settle_stake_earnings(...)` | private | §7.6 — shared stake-settlement tail for `do_handover` and `do_tenure_expiry`. |
+| `register_pending_bid(...)` | private | §7.7 — shared pending-bid installation tail for `rent()` Rented arms. |
 
 **Depends on:**
 - `math` — `mul_div` via `split_fee`, `compute_used_credit`, and `compute_price_descent`.

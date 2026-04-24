@@ -614,6 +614,7 @@ when a transition logically occurred and when it was executed.
 | `split_fee` | Pure: splits an amount into (amount×0.90, amount×0.10) tuple. |
 | `install_new_tenant` | Shared acquisition path for `rent()` Idle / AtDutchAuction arms: absorb payment into `tenant_stake`, anchor `phase_start_ms = clock.now()`, mint + push `TenantCap`, register addresses, transition to `Rented { HandoverOpen }`. Returns the new `TenantCap` ID so the caller emits `RentStarted` with its arm-specific `from_state`. |
 | `settle_stake_earnings` | Shared stake-settlement tail for `do_handover` and `do_tenure_expiry`: given `principal == balance::value(&escrow.tenant_stake)` and the `payer` address, splits 90/10, routes the fee iff > 0 via `fee_message::post`, drains the remainder into `owner_earnings`. Returns `(owner_share, protocol_fee)` for the caller's event emit. |
+| `register_pending_bid` | Shared pending-bid installation tail for `rent()` Rented arms (HandoverOpen first-bid and HandoverConfirmed supersede): absorbs `payment` into `pending_bid`, writes `last_rent_price`, mints + pushes `PaymentReceipt` to the bidder. Returns `bid_amount` for the caller's `BidPlaced` / `BidSuperseded` event emit. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
 `payment_receipt`, `protocol_fee_inbox`, `fee_message`.

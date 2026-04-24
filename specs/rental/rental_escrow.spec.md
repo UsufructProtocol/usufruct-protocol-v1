@@ -2095,6 +2095,139 @@ via the owner-share branch alone.
 10. TEST CASES
 --------------
 
+### 10.0 Test strategy
+
+Tests live in module `rental_escrow_tests`, driven by `sui::test_scenario` plus
+explicit `sui::clock::Clock` manipulation. `rental_escrow` is the integration
+point of every other module in the package; the test surface is correspondingly
+broad and must balance **full-state-machine rows** (drive the public API end-
+to-end) with **unit rows** (isolate pure helpers with declarative inputs).
+
+#### Canonical actors
+
+| Alias | Address | Role |
+|---|---|---|
+| `OWNER` | `@0x0A` | Integrator / `OwnerCap` holder |
+| `OWNER2` | `@0x0B` | Second owner address for cap-transfer rows (W2a) |
+| `TENANT_A` | `@0xA1` | First tenant (T1) |
+| `TENANT_B` | `@0xA2` | Second tenant (T2), pending bidder, displaced tenant |
+| `BIDDER` | `@0xA3` | Third bidder for supersede rows |
+| `KEEPER` | `@0x5E` | Permissionless `apply_pending_transitions` caller |
+| `ADMIN` | `@0xAD` | `ProtocolFeeInbox` holder / fee collector |
+| `ZERO` | `@0x0` | Negative-space rows |
+
+The distinction between `TENANT_A`/`TENANT_B`/`BIDDER` and `KEEPER` is
+load-bearing for several rows — e.g., `TenantCapMinted.tenant` inside
+`do_handover` must equal `pending_tenant_address` (not `tx_context::sender`);
+exercising that assertion requires `KEEPER` to call
+`apply_pending_transitions` (§7.1 step 6).
+
+#### Test fixtures
+
+- **Asset witness.** A canonical `#[test_only]` type is declared in the test
+  module so generics can be instantiated without dragging a real third-party
+  asset crate:
+  ```move
+  #[test_only] public struct DemoAsset has key, store { id: UID }
+  ```
+  Rows that cover level-2 integration (T2, L3) use `rental_escrow::OwnerCap`
+  directly as the `Asset` type parameter — no new witness needed.
+- **CoinType witness.** `sui::sui::SUI` is the default; `balance::create_for_testing<SUI>(amount)`
+  and `coin::mint_for_testing<SUI>(amount, ctx)` are the sole sources of funds.
+  A second witness `#[test_only] public struct FAKE_USDC has drop {}` covers
+  multi-coin rows in §10.11.
+- **`ProtocolFeeInbox`.** Instantiated via `protocol_fee_inbox::init_for_testing`
+  under `ADMIN`; the `ProtocolFeeRef` is retrieved with `take_immutable`.
+- **`IntegrationConfig`.** Built through the public `config::new_config`
+  constructor with a shared helper:
+  ```move
+  #[test_only] fun demo_config(
+      tenure_ceiling_ms:  u64,
+      descent_ceiling_ms: u64,
+      handover_floor_ms:  u64,
+      retire_floor_ms:    u64,
+      min_rent_price:     u64,
+  ): IntegrationConfig { ... }
+  ```
+  Curve shapes and price function default to a linear credit curve, linear
+  descent, and `price_function::new_fixed_delta(1)` — unless a row
+  specifically exercises curve behavior (those rows override via the helper
+  variant).
+- **Clock.** `sui::clock::create_for_testing(ctx)` plus
+  `clock::set_for_testing(&mut clock, ms)` to advance deterministically.
+  Scenario epoch helpers are **avoided** — `scenario.later_epoch(...)` does
+  not map to `clock.timestamp_ms()` with guaranteed millisecond granularity,
+  and every boundary in the spec is expressed in ms.
+
+#### Test-only shims on private helpers
+
+The private helpers (§7) are exercised indirectly through the state machine
+for most rows. Three need direct unit coverage because their behavior is only
+reachable through integration paths that mask their edge cases:
+
+```move
+#[test_only] public fun split_fee_for_testing(amount: u64): (u64, u64)
+    { split_fee(amount) }
+#[test_only] public fun tenure_expiry_ms_for_testing<A: key + store, C>(
+    escrow: &RentalEscrow<A, C>,
+): u64 { tenure_expiry_ms(escrow) }
+#[test_only] public fun descent_expiry_ms_for_testing<A: key + store, C>(
+    escrow: &RentalEscrow<A, C>,
+): u64 { descent_expiry_ms(escrow) }
+```
+
+`do_handover`, `do_tenure_expiry`, `do_auction_expiry`, `install_new_tenant`,
+`settle_stake_earnings`, `register_pending_bid` are **not** shimmed: they
+have preconditions on `escrow.state` and balance fields that only the state
+machine can establish cleanly, and exposing them would invite tests that
+contradict real call-site invariants. They are covered through the public
+API (rent, retire, apply_pending_transitions).
+
+#### Event inspection
+
+All rows that assert "N events emitted" use `test_scenario::next_tx`'s
+`TransactionEffects` plus `event::events_by_type<T>()` — one call per event
+type yields the typed vector, and row asserts check `length` + field
+contents. The star-schema JOIN rows (B2, W2a) assert identity triples
+across event pairs (`tenant_cap_id` across AssetBorrowed↔AssetReturned,
+`owner_cap_id` across EarningsWithdrawn repetitions) rather than relying on
+tx-envelope data.
+
+#### Abort-row split-tx pattern
+
+Already documented in §10.13. Lifted to this section so rows in §10.8
+(C10–C13), §10.9 (W4–W5), §10.7 (B9–B10) can reference it by name: an
+abort row that also needs to assert APT's work splits into two
+transactions — tx1 calls `apply_pending_transitions` standalone (asserts
+settled state + events + balances before the abort), tx2 calls the
+aborting function. This applies anywhere an `#[expected_failure]` row
+needs observable APT effects, not just in §10.13.
+
+A secondary invariant for this pattern: **tx1 must fully succeed.** If
+tx1 itself aborts (e.g., a bug makes APT read a `None` field), the
+framework's abort catcher at tx2 sees no tx, and `expected_failure` still
+matches by abort_code — masking the tx1 regression. Every tx1 in a
+split-tx abort row therefore asserts at least one concrete postcondition
+(an event count or a balance delta) before the `next_tx` boundary.
+
+#### Axes (row prefixes already in §10.1–10.13 — retained)
+
+- T — Integration
+- R — rent() per-state paths
+- A — apply_pending_transitions
+- B — borrow_asset / return_asset
+- C — retire / claim_asset
+- W — withdraw_earnings
+- Q — read-only queries
+- F — fee routing
+- L — full lifecycle
+- M — APT + rent() composite matrix
+
+New prefixes introduced in this audit:
+
+- U — unit rows on pure helpers (§10.14)
+- P — property mapping (§10.15)
+
 ### 10.1 Integration
 
 | # | Description | Expected |
@@ -2170,7 +2303,9 @@ via the owner-share branch alone.
 
 | # | Description | Expected |
 |---|---|---|
+| C0 | `retire(escrowA, capB)` where `capB` is a legitimate `OwnerCap` for a different escrow B | Aborts `E_WRONG_ESCROW_OWNER_CAP` at §4.2 step 1 — the escrow-match gate. Same PTB-pairing defense as `claim_asset` (C8) and `withdraw_earnings` (W3). Asserts the gate is present on all three `&OwnerCap`-taking functions, not just the two that consume the cap. |
 | C1 | `retire` before `retire_floor` elapsed | Aborts `E_RETIRE_FLOOR_NOT_ELAPSED`. |
+| C1a | `retire` at exactly `integrated_at_ms + retire_floor` | Succeeds — boundary is inclusive per §4.2 step 4 (`>=`). Complements C1 (strict-less) to pin the comparator. |
 | C2 | `retire` from Idle (after `retire_floor`) | `retire_flag = true`. `state → Retired`. Events in order: `RetireFlagSet(owner, state_at_set: Idle)` with `owner == tx_context::sender(ctx)`, `AssetRetired(from_state: Idle)`. |
 | C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. Events in order: `RetireFlagSet(owner, state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)`. No `AuctionExpired` — the auction was interrupted, not expired. |
 | C4 | `retire` from Rented(HandoverOpen) | `retire_flag = true`. `state` unchanged. Subsequent `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
@@ -2319,6 +2454,121 @@ inside the rent body.
 
 Together these exercise every branch where `retire_flag` is read by `rent()`
 or by an APT-driven transition.
+
+### 10.14 Unit rows on pure helpers
+
+Direct tests via the `#[test_only]` shims in §10.0. These isolate behavior
+that is semantically important — flooring rounding, boundary arithmetic —
+but whose specific numeric cases are hard to reach through the state
+machine without fragile multi-step scenarios.
+
+#### 10.14.1 `split_fee`
+
+`split_fee` is pure (§7.4). Parametric `#[test]` over a `vector<Case>`:
+
+| # | `amount` | Expected `(owner, fee)` | Property anchored |
+|---|---|---|---|
+| U1 | `0` | `(0, 0)` | P12 zero-path identity |
+| U2 | `1` | `(1, 0)` | Fee flooring — `mul_div(1, 1000, 10000) = 0` |
+| U3 | `9` | `(9, 0)` | Still below threshold |
+| U4 | `10` | `(9, 1)` | Smallest non-zero fee (`mul_div(10, 1000, 10000) = 1`) |
+| U5 | `100` | `(90, 10)` | Round numbers — 90/10 exact |
+| U6 | `1_000` | `(900, 100)` | Canonical scale |
+| U7 | `999` | `(900, 99)` | Flooring favors owner by 1 base unit at the fractional boundary |
+| U8 | `u64::MAX / 10` | `((u64::MAX / 10) - fee, fee)` with `fee = mul_div(u64::MAX / 10, 1000, 10000)` | Upper bound — no overflow under `math::mul_div` (intermediate product uses u128) |
+| U9 | `u64::MAX` | `(u64::MAX - fee, fee)` | Overflow-free at the u64 ceiling; asserts the helper is total |
+
+Assertion: for every row, `owner + fee == amount` (P1 fund conservation).
+
+#### 10.14.2 `tenure_expiry_ms` / `descent_expiry_ms`
+
+Boundary-helper wrappers (§8.5). Each is a two-field addition — the rows
+verify that the addition targets the correct `IntegrationConfig` field
+(regression guard against a future edit that accidentally swaps
+`tenure_ceiling` and `descent_ceiling`):
+
+| # | Fixture | Expected |
+|---|---|---|
+| U10 | `phase_start_ms = 0`, `tenure_ceiling = 1_000`, `descent_ceiling = 500` | `tenure_expiry_ms == 1_000`; `descent_expiry_ms == 500` |
+| U11 | `phase_start_ms = 1_000_000`, same ceilings | `tenure_expiry_ms == 1_001_000`; `descent_expiry_ms == 1_000_500` |
+| U12 | Swap-check: build two escrows, one with `tenure_ceiling=A, descent_ceiling=B`, the other with `tenure_ceiling=B, descent_ceiling=A` (both `phase_start_ms = 0`) | Each helper returns the expected field — confirms the helpers do not read the wrong `config::*_ceiling` getter |
+
+#### 10.14.3 `compute_used_credit` boundary guards
+
+Rows extending §10.10 (which only covered dispatch on state). These pin
+the in-function clamps and underflow guards (§8.1 steps 2–3):
+
+| # | Scenario | Expected |
+|---|---|---|
+| Q11 | `Rented{HandoverConfirmed}`, `timestamp_ms > handover_countdown_expiry` | Returns the value at exactly `handover_countdown_expiry` — not `timestamp_ms`; the post-handover-boundary clamp is observable (step 2) |
+| Q12 | `Rented{HandoverConfirmed}`, `timestamp_ms == handover_countdown_expiry` | Same value as Q11 — clamp at equality is the fixed point |
+| Q13 | `Rented{HandoverOpen}`, `timestamp_ms < phase_start_ms` | Returns `0` — the pre-phase guard (step 3) fires before `evaluate_curve` is called |
+| Q14 | `Rented{HandoverOpen}`, `timestamp_ms == phase_start_ms` | Returns `0` — `elapsed == 0`, curve returns 0, scaled result is 0 |
+| Q15 | `Rented{HandoverOpen}`, `timestamp_ms == phase_start_ms + tenure_ceiling` | Saturates to `tenant_stake` — curve returns `SCALE`, `mul_div(stake, SCALE, SCALE) == stake` |
+| Q16 | `Rented{HandoverOpen}`, `timestamp_ms >> phase_start_ms + tenure_ceiling` (way past saturation) | Still saturates to `tenant_stake` — `evaluate_curve` clamps on its own |
+
+#### 10.14.4 `compute_price_descent` pre-phase guard
+
+Similar refinement for §8.2 step 1:
+
+| # | Scenario | Expected |
+|---|---|---|
+| Q17 | `AtDutchAuction`, `timestamp_ms < phase_start_ms` | Returns `last_rent_price` — the "auction has not started yet" guard (step 1), not `min_rent_price` |
+| Q18 | `AtDutchAuction`, `timestamp_ms == phase_start_ms` | `elapsed == 0`, `h == 0`, result `== last_rent_price` |
+| Q19 | `AtDutchAuction`, `timestamp_ms == phase_start_ms + descent_ceiling` | Curve saturates to `SCALE`, `consumed == spread`, result `== min_rent_price` — exact arithmetic even at the boundary |
+
+### 10.15 Property → row mapping
+
+| Prop | Anchored rows |
+|------|---|
+| P1 Fund conservation at every boundary | A7, A8, F1–F4, L1; U1–U9 (exact split invariant) |
+| P2 No trapped balances at terminal state | C9, C10, C11, L1 |
+| P3 Push-before-rotate | A2, A7, R13, W5 |
+| P4 At most three lazy transitions per call | A5, M11 |
+| P5 Check order is a safety invariant | A5, A6, M6, M10, M11 (C1 → C2 → C3 ordering observed) |
+| P6 Retire flag is monotonic | C4, C5, C6, C10, C11, L2, M7, M12, M13 |
+| P7 OwnerCap uniqueness | T1 (mint), C9 (burn); unmintability of a second cap is visibility-enforced and compile-time |
+| P8 TenantCap staleness is inert | B3, B9, B10 |
+| P9 Tenancy ↔ Rented state | R1 (set together), A3/A6 (cleared together in tenure expiry) |
+| P10 Pending bid ↔ HandoverConfirmed | R9, R13, A2 (cleared by do_handover) |
+| P11 Asset present while escrow exists | B1–B2, B7 (hot potato enforces), B8 (double-borrow abort) |
+| P12 Fee routing is idempotent at zero | F4, A7, U1–U3 |
+
+### 10.16 Open questions
+
+- **`demo_config` drift.** The test fixture is shared across dozens of rows.
+  A parameter addition to `IntegrationConfig` will break the helper
+  signature in one place, which is desirable; but a parameter *default*
+  change (e.g., changing the default curve) would silently shift many
+  success rows. Rule: numeric defaults inside `demo_config` are pinned in
+  the helper body as named constants — `DEMO_TENURE_MS = 1_000_000`,
+  etc. — so a default change is visible in the diff.
+- **Clock primitive choice.** `clock::set_for_testing` sets absolute ms;
+  `clock::increment_for_testing` moves it forward. Rows that test pre-
+  phase guards (Q13, Q17) need absolute-set semantics because the
+  "before" timestamp may be earlier than any value the test has ever
+  written; prefer the absolute setter uniformly.
+- **Level-2 integration rows (T2, L3).** `Asset = rental_escrow::OwnerCap`
+  is a structural test that exercises the generic bound but not the
+  state machine of the inner escrow in a single row. A full L3 run is
+  ~40 lines; marked as a single integration-style test (not parametric).
+- **Abort-row split-tx spurious pass.** Documented in §10.0; every tx1 in
+  a §10.13 abort row asserts at least one concrete postcondition before
+  `next_tx` so a silently-failing tx1 cannot mask the regression behind
+  the tx2 abort catcher.
+- **`KEEPER`-driven APT rows.** Several rows require `KEEPER ≠ TENANT_A`
+  to assert that `do_handover` reads `pending_tenant_address`, not
+  `tx_context::sender`. A subtle regression that replaced
+  `pending_tenant_address` with `tx_context::sender` in the `TenantCap`
+  mint path would pass a test where `KEEPER == TENANT_B`. Rule: KEEPER
+  is always disjoint from every tenant / bidder alias in setup.
+- **Private helpers without shims.** `do_handover`, `do_tenure_expiry`,
+  `do_auction_expiry`, `install_new_tenant`, `settle_stake_earnings`,
+  `register_pending_bid` are covered only via public API. A future audit
+  that wants to pin a specific helper invariant (e.g., `settle_stake_earnings`
+  postcondition `tenant_stake == 0`) may need to add a shim; doing so
+  is explicitly permitted but requires the helper's full precondition
+  list to be re-stated in the `_for_testing` doc comment.
 
 
 11. MODULE BOUNDARY

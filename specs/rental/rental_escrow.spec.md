@@ -101,16 +101,18 @@ all others and is consumed by none.
   check is performed anywhere.
 
 
-1. ERROR CONSTANTS
-------------------
+1. CONSTANTS
+------------
 
-All constants are `public` so the SDK can map abort codes to human-readable
-messages. All errors raised on the rental-flow paths — including the
-cap-gating checks at `retire` / `claim_asset` / `withdraw_earnings` /
-`borrow_asset` — live here. Cap modules (`owner_cap`, `tenant_cap`)
-expose only lifecycle and getters; they own no abort codes. The
-rationale: "wrong escrow", "stale tenant cap", etc. are
-interpretations the consumer places on an ID mismatch — that
+### 1.1 Error constants
+
+All error constants are `public` so the SDK can map abort codes to
+human-readable messages. All errors raised on the rental-flow paths —
+including the cap-gating checks at `retire` / `claim_asset` /
+`withdraw_earnings` / `borrow_asset` — live here. Cap modules
+(`owner_cap`, `tenant_cap`) expose only lifecycle and getters; they
+own no abort codes. The rationale: "wrong escrow", "stale tenant cap",
+etc. are interpretations the consumer places on an ID mismatch — that
 semantic belongs where the operation is being gated, not in the cap
 type itself.
 
@@ -128,6 +130,20 @@ type itself.
     public const E_WRONG_ESCROW_OWNER_CAP:      u64 = 11; // retire / claim_asset / withdraw_earnings: owner_cap::escrow_id(cap) != object::id(escrow)
     public const E_WRONG_ESCROW_TENANT_CAP:     u64 = 12; // borrow_asset: tenant_cap::escrow_id(cap) != object::id(escrow)
     public const E_STALE_TENANT_CAP:            u64 = 13; // borrow_asset: current_tenant_cap_id is none, or cap's ID != the one recorded
+
+### 1.2 Protocol constants
+
+Named protocol parameters used by `split_fee` (§7.4). Internal — the SDK
+reads the actual fee split via `HandoverCompleted.protocol_fee` /
+`TenureExpired.protocol_fee` event fields, not by reading the constant.
+
+    const PROTOCOL_FEE_BPS: u64 = 1_000;   // 10% of the stake-settlement base
+    const BPS_PER_UNIT:     u64 = 10_000;  // basis-point denominator (100% == 10_000 bps)
+
+`BPS_PER_UNIT` is spelled identically to `price_function::BPS_PER_UNIT`
+by convention — the basis-point denominator is a module-scoped name in
+each module that needs it; `math` is deliberately not burdened with a
+protocol-policy constant.
 
 
 2. TYPES
@@ -1361,7 +1377,7 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 - **`used_credit == tenant_stake`** (Dutch Auction bypass — curve saturated,
   `remain_credit == 0`): the `if remain_credit > 0` guard is skipped — no coin
   is pushed to the displaced tenant. `split_fee(tenant_stake)` produces the
-  normal 95/5 split, so the `if protocol_fee > 0` guard fires —
+  normal 90/10 split, so the `if protocol_fee > 0` guard fires —
   `fee_message::post` routes a non-zero `FeeMessage<C>` and
   `withdraw_all` moves the owner share into `owner_earnings`.
 
@@ -1412,10 +1428,10 @@ Two cases:
      // funded this fee — full saturation at tenure expiry).
      // Fused construction+transfer+emit inside `fee_message::post`.
    - Same pattern as §7.1: skip the split entirely when the fee rounds to
-     zero (reachable only at pathological `stake_total < 20`, since fee =
-     `mul_div(stake, 500, 10_000)`; protocols enforcing `min_rent_price ≥ 20`
-     will never see this branch, but the gate keeps the function structurally
-     total).
+     zero (reachable only at pathological `stake_total < BPS_PER_UNIT /
+     PROTOCOL_FEE_BPS == 10`, since fee = `mul_div(stake, PROTOCOL_FEE_BPS,
+     BPS_PER_UNIT)`; protocols enforcing `min_rent_price ≥ 10` will never see
+     this branch, but the gate keeps the function structurally total).
 5. Move remaining stake into earnings:
    `balance::join(&mut escrow.owner_earnings,
     balance::withdraw_all(&mut escrow.tenant_stake));`
@@ -1483,7 +1499,7 @@ fee_share) at 90/10.
 
 **Algorithm:**
 
-    let fee   = math::mul_div(amount, 1_000, 10_000);  // 10% = 1000 bps
+    let fee   = math::mul_div(amount, PROTOCOL_FEE_BPS, BPS_PER_UNIT);
     let owner = amount - fee;
     (owner, fee)
 
@@ -1591,7 +1607,7 @@ reflects the actual settled state, not a speculative computation.
 These two cover every externally observable read: "how much has my tenancy
 consumed" and "what would it cost to become tenant right now". Both can abort
 on precondition violation — a deliberate choice. Abort codes carry named
-semantic load (§1 is `public` for exactly this reason); an SDK receiving
+semantic load (§1.1 is `public` for exactly this reason); an SDK receiving
 `E_NOT_RENTED` or `E_RETIRED_NO_BID` maps it to a user-facing condition
 directly. A sentinel return (`Option<u64>`, magic `0`) would collapse that
 information and force the caller into a secondary state fetch.
@@ -1816,7 +1832,7 @@ at `timestamp_ms`". Dispatches by `escrow.state` to the arm-specific helper.
 
 **Why abort on `Retired` (not `Option<u64>` / sentinel):**
 
-The error constants in §1 are `public` so the SDK can map abort codes to
+The error constants in §1.1 are `public` so the SDK can map abort codes to
 human-readable messages — abort codes are the protocol's semantic signalling
 channel between contract and client. `E_RETIRED_NO_BID` names the exact
 condition ("asset retired, no acquisition possible"). Collapsing that to
@@ -1986,7 +2002,7 @@ via the owner-share branch alone.
 | A5 | Called after long inactivity: handover + tenure + auction all due | All three fire in order. Returns `Idle`. Three events emitted. |
 | A6 | Called with retire_flag, Rented(HandoverOpen), tenure expired | `do_tenure_expiry` fires with `next_state: Retired`. Returns `Retired`. |
 | A7 | `do_handover` with `used_credit == 0` (very convex PowerLaw curve, handover fires immediately after bid) | `remain_credit == tenant_stake`. Full stake pushed to displaced tenant as `Coin<C>`. `owner_earnings` unchanged. No `FeeMessage<C>` constructed (the `if protocol_fee > 0` guard skips `fee_message::post`). `HandoverCompleted` emitted with `used_credit: 0`, `owner_share: 0`, `protocol_fee: 0`. |
-| A8 | `do_handover` with `used_credit == tenant_stake` (Dutch Auction bypass — `remain_credit == 0`) | No coin pushed to displaced tenant. Full stake split 95/5 into `owner_earnings` and `FeeMessage`. `HandoverCompleted` emitted with `remain_credit: 0`. |
+| A8 | `do_handover` with `used_credit == tenant_stake` (Dutch Auction bypass — `remain_credit == 0`) | No coin pushed to displaced tenant. Full stake split 90/10 into `owner_earnings` and `FeeMessage`. `HandoverCompleted` emitted with `remain_credit: 0`. |
 
 ### 10.7 `borrow_asset` / `return_asset`
 

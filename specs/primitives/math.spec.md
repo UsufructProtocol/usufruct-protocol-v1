@@ -100,13 +100,18 @@ Exact (no approximation):
 | 5_000_000_000 | 5_000_000_000 | 5_000_000_000 | 5_000_000_000 | a·b = 25×10¹⁸ > u64::MAX but result fits — intermediate exceeds u64 range, final does not |
 | `u64::MAX` | 1 | 1 | `u64::MAX` | identity |
 | `u64::MAX` | `u64::MAX` | `u64::MAX` | `u64::MAX` | max exact |
+| `u64::MAX` | 1 | 2 | `u64::MAX / 2` | **[new]** floor of odd/2; exercises non-trivial divisor |
+| 2⁶³ | 2 | 2 | 2⁶³ | **[new]** intermediate = 2⁶⁴ > u64::MAX; final fits exactly (u64::MAX+1 would not) — guards the `res <= u64::MAX` check against off-by-one |
 
 Abort cases:
 
 | `a` | `b` | `c` | abort | reason |
 |-----|-----|-----|-------|--------|
 | 1 | 1 | 0 | arithmetic | c = 0 |
+| 0 | 0 | 0 | arithmetic | **[new]** c = 0 with zero multiplicands — assert that the `c = 0` check fires regardless of a/b |
 | `u64::MAX` | 2 | 1 | `E_MUL_DIV_OVERFLOW` | result = 2·u64::MAX overflows |
+| 2³² | 2³² | 1 | `E_MUL_DIV_OVERFLOW` | **[new]** result = 2⁶⁴ = u64::MAX + 1 — exact overflow boundary |
+| `u64::MAX` | `u64::MAX` | 1 | `E_MUL_DIV_OVERFLOW` | **[new]** max intermediate ≈ 2¹²⁸ − 2⁶⁵ + 1 (fits u128), final = intermediate overflows u64 |
 
 
 3. `nth_root_u128`
@@ -179,18 +184,24 @@ Exact (floor root by definition):
 |-----|-----|--------|------|
 | 0 | 2 | 0 | n = 0 special case |
 | 1 | 2 | 1 | n = 1 special case |
+| 2 | 2 | 1 | **[new]** smallest non-trivial n; floor √2 ≈ 1.414 — guards Newton-Raphson initial-guess path for tiny n |
+| 3 | 2 | 1 | **[new]** floor √3 ≈ 1.732 — adjacent to the (result+1)² = 4 boundary |
 | 4 | 2 | 2 | perfect square |
 | 9 | 2 | 3 | perfect square |
 | 10 | 2 | 3 | floor: √10 ≈ 3.162 |
 | 15 | 2 | 3 | floor: √15 ≈ 3.873 |
 | 16 | 2 | 4 | perfect square |
+| 2⁶⁴ | 2 | 2³² | **[new]** exact square at mid-u128 range — exercises d=2 Newton for n that does not hit the x0 upper bound |
+| 2⁶⁴ − 1 | 2 | 2³² − 1 | **[new]** floor just below exact square — (2³²)² = 2⁶⁴ > 2⁶⁴−1 ≥ (2³²−1)² |
 | 0 | 3 | 0 | n = 0 special case |
 | 1 | 3 | 1 | n = 1 special case |
+| 7 | 3 | 1 | **[new]** floor: ∛7 ≈ 1.913 — adjacent to (result+1)³ = 8 boundary |
 | 8 | 3 | 2 | perfect cube |
 | 26 | 3 | 2 | floor: ∛26 ≈ 2.962 |
 | 27 | 3 | 3 | perfect cube |
 | 0 | 4 | 0 | n = 0 special case |
 | 1 | 4 | 1 | n = 1 special case |
+| 15 | 4 | 1 | **[new]** floor: ⁴√15 ≈ 1.968 — adjacent to (result+1)⁴ = 16 boundary |
 | 16 | 4 | 2 | perfect 4th power |
 | 80 | 4 | 2 | floor: ⁴√80 ≈ 2.990 |
 | 81 | 4 | 3 | perfect 4th power |
@@ -198,8 +209,18 @@ Exact (floor root by definition):
 | 2⁹⁶ | 3 | 2³² | exact cube: (2³²)³ = 2⁹⁶ — tests d=3 convergence for large n |
 | 2⁹⁶ − 1 | 3 | 2³² − 1 | floor near boundary: (2³²)³ > 2⁹⁶−1 ≥ (2³²−1)³ |
 | 2⁹⁶ | 4 | 2²⁴ | exact 4th power: (2²⁴)⁴ = 2⁹⁶ — tests d=4 convergence for large n |
+| 2⁹⁶ − 1 | 4 | 2²⁴ − 1 | **[new]** floor near d=4 overflow bound — (2²⁴)⁴ = 2⁹⁶ > 2⁹⁶−1 ≥ (2²⁴−1)⁴ |
 
 Invariant (for all valid inputs): `result^d ≤ n < (result + 1)^d`.
+
+**[new] [property]** Parametric row — encode the invariant as a predicate
+over every `(n, d, result)` triple above: assert `result^d ≤ n` and
+`n < (result + 1)^d`, computed in u128 (use `math::mul_div` or raw u128
+multiplication since the `(result+1)^d` product is bounded by the same
+overflow analysis as §3). This row executes inside the same parametric
+loop as the table and guards against future algorithm changes that
+reproduce the listed outputs by coincidence but violate the floor
+contract on an unlisted input.
 
 
 4. `exp_scaled` / `exp_scaled_pos`
@@ -291,31 +312,67 @@ exactly.
 Expected values for K = 32 terms. For y = 1, these are algorithm-derived
 and must be verified during initial implementation:
 
-| `y_num` | `y_den` | `neg` | expected result |
-|---------|---------|-------|-----------------|
-| 1 | 1 | false | 2_718_281_828_459_045_226 |
-| 1 | 1 | true  | 367_879_441_171_442_322  |
+| `y_num` | `y_den` | `neg` | expected result | note |
+|---------|---------|-------|-----------------|------|
+| 1 | 1 | false | 2_718_281_828_459_045_226 | **[algorithm-derived]** reference true floor(e¹ · TS) = ..._235 (delta = 9 ULP, within < 10⁻⁹ budget) |
+| 1 | 1 | true  | 367_879_441_171_442_322  | **[algorithm-derived]** mathematical floor is 321; +1 ULP from reciprocal-identity rounding |
+| 1 | 2 | false | **TBD (algorithm-derived)** | **[new]** fractional y = 0.5; exercises `y_den > 1` path of the divisor |
+| 1 | 2 | true  | **TBD (algorithm-derived)** | **[new]** fractional y = 0.5 negative; exercises reciprocal on non-integer exponent |
+| 2 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 2 — e² ≈ 7.389 · TS |
+| 4 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 4 — e⁴ ≈ 54.598 · TS |
+| 8 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 8 — upper bound of §4 overflow analysis; guards the claimed `acc ≤ e⁸ · TS ≈ 3×10²¹` budget |
+| 8 | 1 | true  | **TBD (algorithm-derived)** | **[new]** y = 8 negative — deepest reciprocal division; guards `TAYLOR_SCALE_SQ / exp_scaled_pos(...)` precision at smallest positive result |
 
-Reference: true floor(e¹ · TS) = 2_718_281_828_459_045_235 (delta = 9 ULP —
-within the < 10⁻⁹ relative error budget). The `neg=true` result of 322 exceeds
-the mathematical floor (321) by 1 ULP — the expected upper-bound rounding from
-the reciprocal identity.
-
-For y ∈ {2, 4, 8} and fractional y, establish during initial implementation
-using the same trace method.
+The seven `TBD` cells above are established during initial implementation
+by running the K=32 Taylor algorithm once, pasting the resulting `u128`
+literal back into this table, and committing it as the golden vector for
+all future runs. See §5 "Golden-vector convention".
 
 #### Properties
 
-These hold for all valid inputs and can be tested without knowing exact values:
+These hold for all valid inputs and can be tested without knowing exact values.
+Each property below translates to one `#[test]` function that loops over the
+**seed set** listed — the seeds are small on purpose (each exp_scaled call is
+up to 32 Taylor iterations of u128 arithmetic, and Move tests run in-VM).
 
-1. **Monotone (pos):** for rational 0 < y₁ < y₂ ≤ 8,
-   `exp_scaled(y1_num, y1_den, false) < exp_scaled(y2_num, y2_den, false)`
+**Seed set S:** `[(1,2), (1,1), (2,1), (3,1), (4,1), (6,1), (8,1), (7,2), (15,2)]`
+— nine rationals spanning (0, 8], deliberately including both integer and
+fractional `y_den` values and the `y = 8` upper bound.
 
-2. **Reciprocal identity (within 1 ULP):** for any y > 0,
-   `exp_scaled(y, neg=false) × exp_scaled(y, neg=true)` ∈ `[TS² − TS, TS²]`
+1. **Monotone (pos) [property].** For every adjacent pair `(yᵢ, yᵢ₊₁)` in S
+   after sorting by `y_num / y_den` ascending, assert
+   `exp_scaled_pos_for_testing(yᵢ) < exp_scaled_pos_for_testing(yᵢ₊₁)`.
+   Targets the private Taylor kernel via the `#[test_only]` wrapper declared
+   in §5. Zero-argument branch (`y = 0`) is covered by the y=0 exact rows
+   above; this property does not include it.
 
-3. **Precision bound:** for all y = y_num/y_den with 0 < y ≤ 8,
-   `|result − floor(eʸ · TS)| ≤ floor(eʸ · TS) × 10⁻⁹`
+2. **Reciprocal identity (within 1 ULP) [property].** For every `y ∈ S`,
+   assert `pos × neg ∈ [TAYLOR_SCALE_SQ − TAYLOR_SCALE, TAYLOR_SCALE_SQ]`
+   where `pos = exp_scaled(y_num, y_den, false)` and
+   `neg = exp_scaled(y_num, y_den, true)`. Goes through the public
+   `exp_scaled` entry — exercises both sign paths together. The 1-ULP slack
+   matches the reciprocal-identity error budget stated in §4 "Sign handling".
+
+3. **Precision bound [property].** Not directly testable in Move without a
+   reference `floor(eʸ · TS)` oracle. Deferred to an off-chain check:
+   the initial-implementation trace (which also establishes the
+   `TBD (algorithm-derived)` cells) compares each produced value against a
+   high-precision reference and records the relative error. If any seed in S
+   exceeds `10⁻⁹` relative error, the Taylor-series parameter `K = 32` is
+   insufficient and §4 must be re-budgeted. Document the trace output in a
+   comment alongside the golden vectors when pasting them back.
+
+4. **[new] [property] Boundary at y = 8.** Assert
+   `exp_scaled_pos_for_testing(8, 1) > 0` and the raw product
+   `exp_scaled_pos_for_testing(8, 1) * 8` (both sides cast `u128`) does not
+   exceed `u128::MAX`. Guards the §4 overflow analysis claim `term · y_num ≤
+   4.2×10²⁰ · 12 · 10¹³ = 5.0×10³⁴ fits u128`.
+
+5. **[new] y = 0 sign-invariance.** Assert
+   `exp_scaled(0, 1, false) == exp_scaled(0, 1, true) == TAYLOR_SCALE` and
+   `exp_scaled(0, 7, false) == TAYLOR_SCALE`. Covered structurally by the
+   "Exact case (y = 0)" table above; listed here to make the property
+   explicit alongside the others.
 
 #### Input validity note
 
@@ -325,7 +382,87 @@ outside this range are the caller's responsibility (`curve` enforces them at
 integration time via `alpha_abs ∈ [1, 8]`).
 
 
-5. MODULE BOUNDARY
+5. TESTS — STRATEGY
+-------------------
+
+Per-function test vectors live inline in §2, §3, §4. This section
+declares the conventions the test writer applies when translating those
+rows into Move code. `math` is a pure-arithmetic module: no objects, no
+Sui framework dependencies, no events, no clock, no scenario.
+
+**Test module.** `#[test_only] module liquid_renting::math_tests`.
+Test functions named by what they assert (e.g. `mul_div_floor_two_thirds`,
+`mul_div_overflow_aborts`). No `test_` prefix.
+
+**Idioms.**
+
+- Success rows translate as **one parametric loop** per function over a
+  `vector<Case>`, where `Case` is a `#[test_only]` struct with the input
+  columns and the `expected` column from the table. Rows flagged
+  `[property]` expand into the same loop when they can be encoded as a
+  per-row predicate (e.g. `nth_root_u128` invariant `result^d ≤ n <
+  (result+1)^d`).
+- Abort rows translate as **one `#[test, expected_failure(abort_code =
+  math::E_MUL_DIV_OVERFLOW)]` function each** — parametric loops stop at
+  the first abort, so success and abort rows never share a loop. The
+  built-in arithmetic abort for `c = 0` is asserted via
+  `#[expected_failure(arithmetic_error, location = liquid_renting::math)]`.
+- Property rows that are not per-row predicates (Monotone pair,
+  Reciprocal identity, Precision bound) translate as dedicated
+  `#[test]` functions that loop over a small `vector<(y_num, y_den)>`
+  seed set documented in §4.
+
+**Fixtures.** None. Functions are pure u64/u128 → u128, no `TxContext`.
+Assertions use `use std::unit_test::assert_eq;` under `#[test_only]`.
+
+**Golden-vector convention.** Rows marked `[algorithm-derived]` hold
+values produced by running the spec algorithm once and fixing the
+output. These are not the mathematical floor of the target function —
+they are what the integer-arithmetic spec produces at `K = 32` terms
+with floor rounding. All future changes must reproduce them exactly.
+For `exp_scaled`, the initial implementation establishes the
+`[algorithm-derived]` cells marked `TBD` in §4 by running the K=32
+Taylor algorithm and pasting the resulting `u128` literal back into
+this spec before the first test run.
+
+**Private-symbol access.** The "Monotone (pos)" and "Precision bound"
+properties in §4 target `exp_scaled_pos` directly. The test module
+obtains visibility via a `#[test_only] public fun exp_scaled_pos_for_testing(
+y_num: u64, y_den: u64): u128` wrapper declared alongside the private
+function — not by exposing `exp_scaled_pos` itself. The "Reciprocal
+identity" property goes through the public `exp_scaled` entry.
+
+**Open-question markers.** Cells reading `TBD (algorithm-derived)` are
+intentional placeholders: they tell the test writer the row must exist
+but the value is established at first implementation and pasted back
+into this spec.
+
+
+### Open questions
+
+- **Precision bound oracle (property 3, §4).** Move has no high-precision
+  real-number type, so the `|result − floor(eʸ · TS)| ≤ floor(eʸ · TS) ×
+  10⁻⁹` check cannot execute in-VM. The audit has deferred it to an
+  off-chain trace at initial implementation. If a future change introduces
+  a cross-language harness (e.g. a `check_precision.py` that re-runs the
+  algorithm in Python `decimal` and compares), this row can be promoted to
+  a CI-level check. Until then it lives as documentation, not as `#[test]`
+  code.
+- **`exp_scaled_pos_for_testing` wrapper location.** The `#[test_only]`
+  wrapper that exposes the private `exp_scaled_pos` to the test module
+  lives inside `math.move` (same file), not in `math_tests.move` — Move's
+  visibility rules require the wrapper to be in the declaring module. The
+  test module then calls it directly. Flag if implementation convention
+  prefers a different shape (e.g. `#[test_only] public(package)` on the
+  private function itself), in which case update this spec.
+- **Abort-attribute shape for `c = 0`.** Move's `arithmetic_error` abort
+  has no user-defined code. The strategy above uses
+  `#[expected_failure(arithmetic_error, location = liquid_renting::math)]`
+  — verify this attribute form at implementation time against the target
+  Sui framework version. If the form differs, update §5 accordingly.
+
+
+6. MODULE BOUNDARY
 ------------------
 
 `math.move` exports:

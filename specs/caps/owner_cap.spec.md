@@ -288,38 +288,145 @@ for.
 6. TEST CASES
 -------------
 
+### 6.0 Test strategy
+
+**Test module.** `#[test_only] module liquid_renting::owner_cap_tests`.
+Function names describe the asserted behaviour (e.g.
+`new_emits_minted_with_declared_owner`,
+`burn_emits_burned_with_holder_address`).
+
+**Idioms.**
+
+- `owner_cap` creates real Sui objects (UIDs) and emits events, so every
+  test runs in `sui::test_scenario`. No `tx_context::dummy()` path.
+- Each row translates to one `#[test]` function. `owner_cap` has **no
+  abort sites** (§1), so no `#[expected_failure]` rows. `burn`'s
+  by-value consumption is verified at compile time by the successful
+  build of the lifecycle test — no runtime assertion exists.
+- Event-count assertions use `test_scenario::num_user_events(&effects)`;
+  payload assertions use a typed capture helper (below).
+
+**Fixtures.** Canonical actor addresses:
+
+```
+const ALICE: address = @0xA11CE;   // typical minter / sender
+const BOB:   address = @0xB0B;     // custody / burn-time holder
+const ZERO:  address = @0x0;       // zero-address boundary
+```
+
+Every row names the address it uses rather than relying on a default
+sender. Escrow IDs come from `object::id_from_address(@0xE5C1)` and
+`@0xE5C2` — literal placeholders that bind a cap to a non-zero but
+non-live ID (sufficient for this module, since `owner_cap` never
+dereferences the escrow).
+
+**Test-only helpers.** The test module declares the roster:
+
+```
+#[test_only] public fun capture_minted(
+    effects: &TransactionEffects): vector<OwnerCapMinted>
+#[test_only] public fun capture_burned(
+    effects: &TransactionEffects): vector<OwnerCapBurned>
+```
+
+Both wrap `event::events_by_type<T>()`. No `#[test_only]` wrappers over
+`new`/`burn` are needed: both are `public(package)`, and the test module
+lives in the same package.
+
+**Star-schema assertion shape.** Per the project-wide convention (memory
+`feedback_events_self_describing`), every event row additionally
+asserts:
+1. `escrow_id` is present and equals the value passed to `new` / the
+   value stored in the cap at `burn`.
+2. `owner_cap_id` equals `object::id(&cap)` — child PK.
+3. `owner` equals the argument passed (declarative field, not a runtime
+   derivation from sender).
+These three checks are bundled into a `#[test_only]` predicate
+`assert_star_schema_minted(&event, expected_cap_id, expected_escrow_id,
+expected_owner)` and mirrored for burned.
+
+
 ### 6.1 `new`
 
 | # | Description | Expected |
 |---|---|---|
-| N1 | `new(escrow_id, owner, ctx)` | Returns `OwnerCap` with `cap.escrow_id == escrow_id`. Object has a fresh UID. One `OwnerCapMinted { owner_cap_id, escrow_id, owner }` event emitted with `owner_cap_id == object::id(&cap)`, matching `escrow_id`, and `owner` equal to the argument. |
-| N2 | Two calls with distinct `escrow_id`s and distinct `owner`s | Two distinct `OwnerCap` objects, each bound to its own escrow_id. Two `OwnerCapMinted` events, one per call, each carrying the matching triple. |
-| N3 | `new` passing an `owner` different from `tx_context::sender(ctx)` (e.g. custody integration) | Event `owner` field equals the argument, not the tx sender. Asserts the field is declarative, not a runtime echo of sender. |
+| N1 | `new(escrow_id = @0xE5C1, owner = ALICE, ctx)` in tx by ALICE | Returns `OwnerCap` with `cap.escrow_id == @0xE5C1`. Object has a fresh UID. `num_user_events == 1`. One `OwnerCapMinted { owner_cap_id, escrow_id, owner }` event: `owner_cap_id == object::id(&cap)`, `escrow_id == @0xE5C1`, `owner == ALICE`. Star-schema predicate passes. |
+| N2 | Two calls within one tx with distinct `escrow_id`s (`@0xE5C1`, `@0xE5C2`) and distinct owners (ALICE, BOB) | Two distinct `OwnerCap` objects with distinct UIDs, each bound to its own `escrow_id`. `num_user_events == 2`. The two `OwnerCapMinted` events appear in call order; event[0] carries (`cap0.id`, `@0xE5C1`, ALICE), event[1] carries (`cap1.id`, `@0xE5C2`, BOB). |
+| N3 | `new` called by sender ALICE passing `owner = BOB` (custody integration) | Event `owner == BOB`, not ALICE. Asserts the field is declarative, not a runtime echo of `tx_context::sender(ctx)`. |
+| **[new] N4** | `new(escrow_id = @0xE5C1, owner = ZERO, ctx)` | Event `owner == @0x0`. `owner_cap` imposes no non-zero-address constraint — zero address is legal at this layer (policy lives upstream in `rental_escrow::integrate` if needed). Documents current behaviour; flag in Open questions if a future zero-address filter is desired. |
+| **[new] N5** | `new` called with `escrow_id == @0x0` (zero ID) | Event `escrow_id == @0x0`. Asserts **P5** violation is the caller's problem — `owner_cap::new` does not validate the ID is non-zero (per §0 "cap-holder-agnostic", the cap is a passive container). Document in Open questions; `rental_escrow::integrate` is the site that sources non-zero IDs from `object::uid_to_inner`. |
+| **[new] N6** | Three consecutive `new` calls in one tx with (`@0xE5C1`, ALICE), (`@0xE5C2`, ALICE), (`@0xE5C1`, BOB) — note the first and third share `escrow_id` | `num_user_events == 3`. Caps have three distinct UIDs. Asserts **P1** is a *structural* guarantee at the `rental_escrow::integrate` call site, not a runtime check here: this module accepts two `new` calls for the same `escrow_id` without aborting. Cross-references §5 P1 note. |
 
 ### 6.2 `burn`
 
 | # | Description | Expected |
 |---|---|---|
-| B1 | `burn(cap, owner)` | Cap's UID deleted. No abort. One `OwnerCapBurned { owner_cap_id, escrow_id, owner }` event emitted with `(owner_cap_id, escrow_id)` the cap carried and `owner` equal to the argument. |
-| B2 | `burn` consumes the cap (by value) | Compiler enforces — no double-burn possible. |
-| B3 | Cap originally minted with `owner = A`, burned with `owner = B` (legal because `OwnerCap` has `store` and can be moved between mint and burn) | Event's `owner` field equals B, not A. Asserts Burned captures the **burn-time** holder as declared by the caller, distinct from Minted's recipient. |
+| B1 | Mint cap with `owner = ALICE`; in next tx call `burn(cap, ALICE)` | Cap's UID deleted (`test_scenario::has_most_recent_for_address<OwnerCap>(ALICE) == false` after the burn tx). `num_user_events == 1` in the burn tx. One `OwnerCapBurned { owner_cap_id, escrow_id, owner }` with `(owner_cap_id, escrow_id)` the cap carried and `owner == ALICE`. |
+| B2 | `burn` consumes the cap (by value) | Compile-time enforcement — a double-`burn(cap, ALICE)` call would fail to compile. Not a runtime row; verified by the successful build of L1. Listed for completeness. |
+| B3 | Cap minted with `owner = ALICE`, transferred to BOB, burned with `burn(cap, BOB)` in BOB's tx | Event's `owner == BOB`, not ALICE. Asserts Burned captures the **burn-time** declared holder, distinct from Minted's recipient. Combined with N1 (mint event for the same cap earlier in the scenario), the indexer can reconstruct the (minter, burner) pair by joining on `owner_cap_id`. |
+| **[new] B4** | Burn called by sender ALICE passing `owner = BOB` (caller lies about the holder) | Event `owner == BOB`. Asserts the field is declarative — `owner_cap::burn` does not derive or check against `tx_context::sender(ctx)` (the signature no longer takes `ctx` at all, per refactor 1 in the .note). This is the legitimate mechanism that enables custody patterns; it is also the reason `owner` in Burned is "the holder as declared by the caller", not "the holder as proven on-chain". Document in Open questions. |
+| **[new] B5** | Burn a cap whose `escrow_id` is `@0x0` (constructed via N5 fixture) | Event `escrow_id == @0x0`. Symmetric with N5 — the burn path makes no stronger claim about `escrow_id` validity than the mint path. |
 
 ### 6.3 `escrow_id`
 
 | # | Description | Expected |
 |---|---|---|
-| G1 | `escrow_id(&cap)` after `new(id, ctx)` | Returns `id`. |
+| G1 | `escrow_id(&cap)` after `new(@0xE5C1, ALICE, ctx)` | Returns `@0xE5C1`. |
+| **[new] G2** | Call `escrow_id(&cap)` five times in a row on the same cap | All five calls return the same `ID`. Asserts the getter is pure (no mutation, no side effect, no event emission). Encoded as a loop predicate inside one `#[test]`. |
+| **[new] G3** | `escrow_id(&cap)` where `cap.escrow_id == @0x0` (via N5) | Returns `@0x0`. The getter does not filter zero IDs; P5 is a construction-side guarantee in `rental_escrow::integrate`, not a getter contract. |
 
 ### 6.4 Lifecycle
 
 | # | Description | Expected |
 |---|---|---|
-| L1 | `new` → `burn` | Full lifecycle completes. No abort. One `OwnerCapMinted` and one `OwnerCapBurned` event, both carrying the same `(owner_cap_id, escrow_id)` pair. `owner` fields reflect the declared mint recipient and the burn-time argument respectively. |
+| L1 | `new(@0xE5C1, ALICE, ctx)` (tx1) → `burn(cap, ALICE)` (tx2) | Full lifecycle completes. `tx1.num_user_events == 1`, `tx2.num_user_events == 1`. `OwnerCapMinted` in tx1 and `OwnerCapBurned` in tx2 both carry the same `(owner_cap_id, escrow_id)` pair. `owner` fields reflect the declared mint recipient (ALICE) and the burn-time argument (ALICE). |
+| **[new] L2** | `new(@0xE5C1, ALICE, ctx)` → transfer cap to BOB → `burn(cap, BOB)` in BOB's tx | Three txs. Events: one `OwnerCapMinted` with `owner == ALICE` and one `OwnerCapBurned` with `owner == BOB`. Both carry the same `(owner_cap_id, @0xE5C1)`. Asserts the full custody-handoff pattern end-to-end — the PK-JOIN path `OwnerCapMinted.owner_cap_id = OwnerCapBurned.owner_cap_id` recovers the mint/burn pair for an indexer. |
+| **[new] L3** | Mint two caps for different escrows in one tx; burn them both in the next tx in reversed order | tx1 emits two Minted events in mint order; tx2 emits two Burned events in burn order. The cap1-mint/cap1-burn and cap2-mint/cap2-burn pairs each share `owner_cap_id`, proving the cap lifecycle is independent per object even when batched. |
 
-Escrow-mismatch abort paths are tested in `rental_escrow` at each
-call site (`retire`, `claim_asset`, `withdraw_earnings`) — the
-predicate is a one-line inline assert and the abort constant is
-rental-side; `owner_cap` itself has no abort to test.
+**[new] [property] P-SE — star-schema envelope invariants.** For every
+row above that asserts an event:
+1. `escrow_id` field is present in the payload and equal to the value
+   recorded at mint (Minted) or stored in the cap at burn (Burned).
+2. `owner_cap_id` field is present and equal to `object::id(&cap)` —
+   the child PK that lets an indexer PK-JOIN Minted and Burned rows.
+3. No Sui envelope metadata is relied upon for identity (no use of
+   `tx_digest`, sender-of-tx, or transfer events to reconstruct the
+   cap lineage). The pair `(owner_cap_id, escrow_id)` alone is
+   sufficient to locate the cap across its lifecycle.
+
+Escrow-mismatch abort paths are tested in `rental_escrow` at each call
+site (`retire`, `claim_asset`, `withdraw_earnings`) — the predicate is
+a one-line inline assert and the abort constant is rental-side;
+`owner_cap` itself has no abort to test.
+
+
+### 6.5 Open questions
+
+- **Zero-address / zero-ID tolerance (N4, N5, B4, B5, G3).** This module
+  accepts `owner == @0x0` and `escrow_id == @0x0` without validation.
+  The test rows above document current behaviour; if the protocol
+  decides zero values should be rejected (either at the cap layer or
+  upstream in `rental_escrow::integrate`), revisit these rows and
+  consider whether the rejection belongs here (adds an error constant,
+  violating §1's "no aborts" posture) or stays at the integration call
+  site. Current stance: keep the cap permissive; integration upstream
+  only ever passes non-zero live IDs.
+- **Custody vs caller-truth in Burned (B4).** The caller-declared
+  `owner` field in `OwnerCapBurned` can diverge from the transaction
+  sender. This is intentional for custody patterns but means an
+  indexer cannot treat `owner` as a cryptographically proven
+  address — only as the holder as declared by a trusted call site.
+  `rental_escrow::claim_asset` hoists `tx_context::sender(ctx)`
+  before calling `burn`, so production rows see the true sender; test
+  row B4 exercises the escape hatch for documentation. Flag if the SDK
+  ever needs a second, sender-proven column.
+- **P1 runtime non-enforcement (N6).** `owner_cap::new` does not check
+  that an earlier cap with the same `escrow_id` does not already
+  exist. `rental_escrow::integrate` is the structural gate (called
+  once per escrow construction). Verify during `rental_escrow` audit
+  that no path exists to call `owner_cap::new` twice for the same
+  escrow; if one does, this module needs a runtime guard and §1 must
+  gain an error constant.
 
 
 7. MODULE BOUNDARY

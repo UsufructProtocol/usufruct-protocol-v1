@@ -343,8 +343,7 @@ public struct TenureExpired has copy, drop {
 
 public struct AuctionExpired has copy, drop {
     escrow_id:        ID,
-    next_state:       AssetState,  // always Idle
-    timestamp_ms:     u64,   // = phase_start_ms + descent_ceiling
+    timestamp_ms:     u64,   // = phase_start_ms + descent_ceiling, always
 }
 
 public struct RetireFlagSet has copy, drop {
@@ -679,16 +678,16 @@ asset. Does not mutate balances.
 6. Let `prior_state = escrow.state` — bind before any state mutation so the
    subsequent `AssetRetired` emit can report the pre-transition state.
 7. If `prior_state` is `Idle` or `AtDutchAuction` (no active tenant, no
-   pending bid), transition immediately:
-   - `AtDutchAuction` → set `state = Retired`, set `phase_start_ms =
-     clock.timestamp_ms()`. Emit `AuctionExpired { next_state: Retired, ... }`
-     with `timestamp_ms = clock.timestamp_ms()` (not the would-be auction expiry —
-     retire cuts it short).
-   - `Idle` → set `state = Retired`, set `phase_start_ms = clock.timestamp_ms()`.
-   Both branches update `phase_start_ms` as bookkeeping, following the
+   pending bid), transition immediately. Both branches set `state =
+   Retired` and `phase_start_ms = clock.timestamp_ms()`. Neither branch
+   emits `AuctionExpired`: the auction was *interrupted*, not *expired* —
+   `AuctionExpired` names the end-of-descent-ceiling boundary, which is
+   the only case where `do_auction_expiry` (§7.3) reaches it. The retire
+   transition is fully captured by `RetireFlagSet` (step 8) and
+   `AssetRetired` (step 9). The `phase_start_ms` update follows the
    convention that every transition site records the moment of transition
-   (see `do_tenure_expiry` §7.2 and `do_auction_expiry` §7.3). The field is
-   not read in `Retired`, but the uniform invariant simplifies auditing.
+   (see `do_tenure_expiry` §7.2 and `do_auction_expiry` §7.3). The field
+   is not read in `Retired`, but the uniform invariant simplifies auditing.
 8. Emit `RetireFlagSet { escrow_id, owner: tx_context::sender(ctx),
    state_at_set: prior_state }`. The `owner` field captures the cap
    holder at retire time — first-observed, PK-unrecoverable (cap is
@@ -1451,8 +1450,11 @@ recovery.
 1. No balances to move — no funds were placed at auction entry.
 2. `escrow.state = Idle`.
 3. `escrow.phase_start_ms = boundary_ms;`
-4. Emit `AuctionExpired { escrow_id, next_state: escrow.state,
-   timestamp_ms: boundary_ms }`.
+4. Emit `AuctionExpired { escrow_id, timestamp_ms: boundary_ms }`. The
+   transition is always `AtDutchAuction → Idle`; `do_auction_expiry` is
+   the sole emission site (retire from AtDutchAuction takes a different
+   path — §4.2 step 7). Unambiguous by construction, no `next_state`
+   field.
 
 **Note on `last_rent_price`:** not modified here. After auction expiry,
 `last_rent_price` holds what the last tenant paid. The next `rent()` from Idle
@@ -2170,7 +2172,7 @@ via the owner-share branch alone.
 |---|---|---|
 | C1 | `retire` before `retire_floor` elapsed | Aborts `E_RETIRE_FLOOR_NOT_ELAPSED`. |
 | C2 | `retire` from Idle (after `retire_floor`) | `retire_flag = true`. `state → Retired`. Events in order: `RetireFlagSet(owner, state_at_set: Idle)` with `owner == tx_context::sender(ctx)`, `AssetRetired(from_state: Idle)`. |
-| C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. Events in order: `AuctionExpired(next_state: Retired)`, `RetireFlagSet(owner, state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)`. |
+| C3 | `retire` from AtDutchAuction | `retire_flag = true`. `state → Retired`. Events in order: `RetireFlagSet(owner, state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)`. No `AuctionExpired` — the auction was interrupted, not expired. |
 | C4 | `retire` from Rented(HandoverOpen) | `retire_flag = true`. `state` unchanged. Subsequent `rent()` aborts `E_RETIRE_FLAG_BLOCKS_BID`. |
 | C5 | `retire` from Rented(HandoverConfirmed) | `retire_flag = true`. `state` unchanged. Handover completes normally; new tenant enters HandoverOpen with flag set. |
 | C6 | Second `retire` call | Aborts `E_ALREADY_RETIRED`. |
@@ -2179,7 +2181,7 @@ via the owner-share branch alone.
 | C9 | `claim_asset` on Retired with accumulated earnings | Returns `(asset, coin == owner_earnings)`. OwnerCap burned. Escrow deleted. `AssetClaimed` event. |
 | C10 | Full retire-then-claim flow from Rented | `retire` (tx1) emits `RetireFlagSet(state_at_set: Rented(HandoverOpen))` only — no `AssetRetired` yet (deferred). Tenure expiry resolved in tx2 by `apply_pending_transitions`: state → `Retired`, events in order `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`. `claim_asset` (tx3) succeeds. |
 | C11 | `claim_asset` with `retire_flag` already set, pre-APT state `Rented(HandoverConfirmed)`, both handover and T(n+1)'s tenure expired — APT chains C1 → C2(→Retired) before claim's own logic | APT fires `do_handover`: T(n+1) installed, `owner_earnings += used_credit × 0.90`, `remain_credit` pushed to T(n), new `TenantCap` pushed to T(n+1), `retire_flag` preserved. APT then fires `do_tenure_expiry` with the flag set: `owner_earnings += T(n+1)_stake × 0.90`, state → `Retired`. Claim body asserts `state == Retired` ✓ and returns `(asset, Coin == accumulated owner_earnings)`. Events in order: `HandoverCompleted`, `TenureExpired(next_state: Retired)`, `AssetRetired(from_state: Rented)`, `AssetClaimed`. Pairs with C10 (which covers the chain starting from HandoverOpen). |
-| C12 | `retire` called when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no prior retire_flag) — APT fires C2 moving state to `AtDutchAuction` before retire's own logic | APT fires `do_tenure_expiry` with flag unset: `owner_earnings += tenant_stake × 0.90`, state → `AtDutchAuction`, `TenureExpired` emitted with `timestamp_ms = boundary`. Retire body then asserts `!retire_flag` ✓ and sets it; §4.2 step 6 matches the AtDutchAuction branch: `state → Retired`, `phase_start_ms = clock.now()`, emits `AuctionExpired(next_state: Retired, timestamp_ms = clock.now())`, `RetireFlagSet(state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)` in order. Asserts retire's dispatch branch is driven by the post-APT state, not the pre-call state (C4 covers the static Rented pre-state where APT is a no-op). |
+| C12 | `retire` called when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no prior retire_flag) — APT fires C2 moving state to `AtDutchAuction` before retire's own logic | APT fires `do_tenure_expiry` with flag unset: `owner_earnings += tenant_stake × 0.90`, state → `AtDutchAuction`, `TenureExpired` emitted with `timestamp_ms = boundary`. Retire body then asserts `!retire_flag` ✓ and sets it; §4.2 step 7 matches the AtDutchAuction branch: `state → Retired`, `phase_start_ms = clock.now()`. Events in order: `TenureExpired`, `RetireFlagSet(state_at_set: AtDutchAuction)`, `AssetRetired(from_state: AtDutchAuction)`. No `AuctionExpired` — the auction was interrupted by retire, not expired. Asserts retire's dispatch branch is driven by the post-APT state, not the pre-call state (C4 covers the static Rented pre-state where APT is a no-op). |
 | C13 | `retire` called when pre-APT state is `Rented(HandoverConfirmed)` and handover has expired (no prior retire_flag) — APT fires C1 moving state to `Rented(HandoverOpen)` with T(n+1) installed before retire's own logic | APT fires `do_handover`: T(n+1) installed, owner earnings credited, `HandoverCompleted` emitted. Retire body then sets `retire_flag = true`; state is `Rented(HandoverOpen)` so §4.2 step 6 is a no-op (no immediate transition). Emits `RetireFlagSet(state_at_set: Rented(HandoverOpen))`. Flag now applies to T(n+1)'s tenure — any subsequent `rent()` from another bidder aborts `E_RETIRE_FLAG_BLOCKS_BID`. Distinct from C5, where retire runs on `Rented(HandoverConfirmed)` directly (APT no-op) and the flag is inherited by T(n+1) via the later handover. |
 
 ### 10.9 `withdraw_earnings`
@@ -2272,7 +2274,7 @@ mask a regression in the canonical paths.
 |---|---|---|---|---|---|---|
 | M1 | Idle | — | none | Idle | Idle | Cross-ref R1–R3. APT no-op, `install_new_tenant` writes on empty escrow. |
 | M2 | AtDutchAuction | `now < phase_start + descent_ceiling` | none | AtDutchAuction | AtDutchAuction | Cross-ref R5–R7. APT no-op, `compute_price_descent(now)` against preserved `phase_start_ms`. |
-| M3 | AtDutchAuction | `now ≥ phase_start + descent_ceiling` | C3 | Idle | Idle | `AuctionExpired(Idle)` then `RentStarted(from_state: Idle)`. `last_rent_price` is overwritten by payment inside `install_new_tenant` (do_auction_expiry preserves the stale value per §7.3). |
+| M3 | AtDutchAuction | `now ≥ phase_start + descent_ceiling` | C3 | Idle | Idle | `AuctionExpired` then `RentStarted(from_state: Idle)`. `last_rent_price` is overwritten by payment inside `install_new_tenant` (do_auction_expiry preserves the stale value per §7.3). |
 | M4 | Rented(HandoverOpen), no retire_flag | tenure not expired | none | HandoverOpen | HandoverOpen | Cross-ref R9, R10, R12 (success paths). The subtraction `phase_start + tenure_ceiling - now` is u64-safe exactly because C2 did not fire. |
 | M5 | Rented(HandoverOpen) | tenure expired, no retire_flag | C2 | AtDutchAuction | AtDutchAuction | `TenureExpired(AtDutchAuction)` then `RentStarted(from_state: AtDutchAuction)`. `owner_earnings += stake × 0.90`; one `FeeMessage<C>` created and transferred to `fee_inbox_id`. |
 | M6 | Rented(HandoverOpen) | tenure + descent expired, no retire_flag | C2 → C3 | Idle | Idle | `TenureExpired` + `AuctionExpired` + `RentStarted(from_state: Idle)`. |

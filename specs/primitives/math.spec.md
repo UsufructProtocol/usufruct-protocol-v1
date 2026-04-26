@@ -48,7 +48,8 @@ Rounding: floor throughout (truncation), unless stated otherwise.
 1.1 ERROR CONSTANTS
 -------------------
 
-    const EMulDivOverflow: u64 = 0;  // mul_div: result exceeds u64 range
+    const EMulDivOverflow:   u64 = 0;  // mul_div: result exceeds u64 range
+    const ENthRootBadDegree: u64 = 1;  // nth_root_u128: d ∉ {2, 3, 4}
 
 Division by zero in `mul_div` (c = 0) triggers Move's built-in arithmetic
 abort — no user-defined constant is needed for that path.
@@ -59,7 +60,7 @@ abort — no user-defined constant is needed for that path.
 
 ### Signature
 
-    public fun mul_div(a: u64, b: u64, c: u64): u64
+    public(package) fun mul_div(a: u64, b: u64, c: u64): u64
 
 ### Semantics
 
@@ -99,6 +100,15 @@ Exact (no approximation):
 | `u64::MAX` | 1 | 2 | `u64::MAX / 2` | **[new]** floor of odd/2; exercises non-trivial divisor |
 | 2⁶³ | 2 | 2 | 2⁶³ | **[new]** intermediate = 2⁶⁴ > u64::MAX; final fits exactly (u64::MAX+1 would not) — guards the `res <= u64::MAX` check against off-by-one |
 
+**[property]** Parametric row — encode the floor invariant as a predicate
+over every `(a, b, c, result)` tuple above: assert
+`result*c ≤ a*b < (result+1)*c`, computed in u128. For u64 inputs,
+`(result+1)*c ≤ 2⁶⁴ · (2⁶⁴ − 1) < u128::MAX` — no overflow guard needed.
+Encoded inline in the same parametric loop as the table; guards against
+algorithm changes that reproduce the listed outputs by coincidence but
+violate the floor contract on an unlisted input. Same role as the
+`nth_root_u128` `[property]` row in §3.
+
 Abort cases:
 
 | `a` | `b` | `c` | abort | reason |
@@ -115,7 +125,7 @@ Abort cases:
 
 ### Signature
 
-    public fun nth_root_u128(n: u128, d: u32): u128
+    public(package) fun nth_root_u128(n: u128, d: u32): u128
 
 ### Semantics
 
@@ -123,9 +133,15 @@ Abort cases:
 
 ### Valid inputs
 
-`d ∈ {2, 3, 4}` — the only degrees used by `curve_shape` (PowerLaw variant).
-Behaviour outside this range is undefined. Validation is the caller's
-responsibility (`curve_shape`'s `power_law` constructor).
+`d ∈ {2, 3, 4}` — required by the overflow analysis below (x_pow ≤ 2⁹⁶ at
+d=4). Enforced at function entry:
+
+    assert!(d >= 2 && d <= 4, ENthRootBadDegree)
+
+The constraint is intrinsic to this algorithm, not inherited from
+`curve_shape`. Without the assert, d ≥ 5 silently returns
+`floor(n^(1/4))` because the d-dispatch in the loop body falls through
+to the d=4 arm — a worse failure mode than abort.
 
 ### Algorithm
 
@@ -134,8 +150,10 @@ Newton-Raphson integer root:
     if n == 0: return 0
     if n == 1: return 1
 
-    // Initial guess: bit-shift based on bit-length of n
-    let bits = 128u32 - n.leading_zeros();
+    // Initial guess: bit-shift based on bit-length of n.
+    // Sui Move u128 has no `leading_zeros()`; bit_length is a private helper
+    // (see §3.1) returning floor(log2(n)) + 1 for n >= 1.
+    let bits = bit_length(n);
     let shift = (bits + d - 1) / d;        // ceil(bits / d)
     let mut x: u128 = 1 << shift;          // guaranteed x0 >= n^(1/d)
 
@@ -170,6 +188,16 @@ x converges toward n^(1/d). At worst x0 = 1 << ceil(128/d).
 ### Usage
 
 Called by `curve_shape` for the PowerLaw variant (d ∈ {2, 3, 4}).
+
+
+### 3.1 `bit_length` helper
+
+    fun bit_length(x: u128): u32   // private
+
+Returns `floor(log2(x)) + 1` for x ≥ 1. Implemented via a binary cascade
+of right-shifts (O(log₂ 128) = 7 conditionals). Only called from
+`nth_root_u128` after the `n == 0` and `n == 1` early returns, so the
+x = 0 input is never exercised.
 
 
 ### Test cases
@@ -213,10 +241,39 @@ Invariant (for all valid inputs): `result^d ≤ n < (result + 1)^d`.
 over every `(n, d, result)` triple above: assert `result^d ≤ n` and
 `n < (result + 1)^d`, computed in u128 (use `math::mul_div` or raw u128
 multiplication since the `(result+1)^d` product is bounded by the same
-overflow analysis as §3). This row executes inside the same parametric
-loop as the table and guards against future algorithm changes that
-reproduce the listed outputs by coincidence but violate the floor
-contract on an unlisted input.
+overflow analysis as §3). For the d=2, n=2¹²⁸−1, result=2⁶⁴−1 row, the
+upper bound `(result+1)² = 2¹²⁸` overflows u128 and is treated as
+trivially satisfied (test-only saturating check). This row executes
+inside the same parametric loop as the table and guards against future
+algorithm changes that reproduce the listed outputs by coincidence but
+violate the floor contract on an unlisted input.
+
+Largest perfect d-th powers fitting u128 (boundary cases not covered by
+the table, which uses 2^k bases for d=3,4 and a non-power for d=2):
+
+| `n`                       | `d` | result          | note |
+|---------------------------|-----|-----------------|------|
+| `(2⁶⁴ − 1)²`              | 2   | `2⁶⁴ − 1`       | **[new]** largest representable square; Newton must hit u64::MAX without `(k+1)²` fitting u128 |
+| `(2⁶⁴ − 1)² − 1`          | 2   | `2⁶⁴ − 2`       | **[new]** floor neighbour below |
+| `(2⁶⁴ − 1)² + 1`          | 2   | `2⁶⁴ − 1`       | **[new]** floor neighbour above (still ≤ u128::MAX) |
+| `(2⁴²)³ = 2¹²⁶`           | 3   | `2⁴²`           | **[new]** largest d=3 cube near u128 ceiling |
+| `(2⁴²)³ − 1`              | 3   | `2⁴² − 1`       | **[new]** floor neighbour below |
+| `(2³¹)⁴ = 2¹²⁴`           | 4   | `2³¹`           | **[new]** largest d=4 4-th power tested |
+| `(2³¹)⁴ − 1`              | 4   | `2³¹ − 1`       | **[new]** floor neighbour below |
+
+**[new]** Non-power-of-2 roundtrip — for every `(k, d)` in the cross
+product `k ∈ {7, 13, 100, 1000} × d ∈ {2, 3, 4}`, assert
+`nth_root_u128(k^d, d) == k` and `nth_root_u128(k^d − 1, d) == k − 1`.
+All `k^d` fit u128. Guards against Newton convergence bugs masked by
+the 2^k alignment of the boundary rows above.
+
+Abort cases:
+
+| `n` | `d` | abort | reason |
+|-----|-----|-------|--------|
+| any | 0   | `ENthRootBadDegree` | d below {2, 3, 4} |
+| any | 1   | `ENthRootBadDegree` | d below {2, 3, 4} |
+| any | 5   | `ENthRootBadDegree` | d above {2, 3, 4} (silent-wrong path before the assert) |
 
 
 4. TESTS — STRATEGY
@@ -240,9 +297,10 @@ Test functions named by what they assert (e.g. `mul_div_floor_two_thirds`,
   per-row predicate (e.g. `nth_root_u128` invariant `result^d ≤ n <
   (result+1)^d`).
 - Abort rows translate as **one `#[test, expected_failure(abort_code =
-  math::EMulDivOverflow)]` function each** — parametric loops stop at
-  the first abort, so success and abort rows never share a loop. The
-  built-in arithmetic abort for `c = 0` is asserted via
+  math::E<NAME>)]` function each** (`EMulDivOverflow` for §2,
+  `ENthRootBadDegree` for §3) — parametric loops stop at the first
+  abort, so success and abort rows never share a loop. The built-in
+  arithmetic abort for `c = 0` is asserted via
   `#[expected_failure(arithmetic_error, location = usufruct::math)]`.
 
 **Fixtures.** None. Functions are pure u64/u128 → u64/u128, no `TxContext`.
@@ -251,11 +309,7 @@ Assertions use `use std::unit_test::assert_eq;` under `#[test_only]`.
 
 ### Open questions
 
-- **Abort-attribute shape for `c = 0`.** Move's `arithmetic_error` abort
-  has no user-defined code. The strategy above uses
-  `#[expected_failure(arithmetic_error, location = usufruct::math)]`
-  — verify this attribute form at implementation time against the target
-  Sui framework version. If the form differs, update §4 accordingly.
+(none currently)
 
 
 5. MODULE BOUNDARY
@@ -265,8 +319,21 @@ Assertions use `use std::unit_test::assert_eq;` under `#[test_only]`.
 
 | Symbol | Visibility | Notes |
 |--------|-----------|-------|
-| `EMulDivOverflow: u64 = 0` | `public` | Abort code for mul_div result overflow. |
-| `mul_div(a, b, c): u64` | `public` | Used by `curve_shape` and internally. |
-| `nth_root_u128(n, d): u128` | `public` | Used by `curve_shape` (PowerLaw). |
+| `EMulDivOverflow:   u64 = 0` | module-private const¹ | Abort code for `mul_div` result overflow. |
+| `ENthRootBadDegree: u64 = 1` | module-private const¹ | Abort code for `nth_root_u128` invalid degree. |
+| `mul_div(a, b, c): u64` | `public(package)` | Used by `curve_shape` and internally. |
+| `nth_root_u128(n, d): u128` | `public(package)` | Used by `curve_shape` (PowerLaw). |
+| `bit_length(n): u32` | private | §3.1 — initial-guess helper for `nth_root_u128`. |
+
+¹ Move `const` has no public visibility modifier. Constants are
+module-internal but referenceable from `#[expected_failure(abort_code =
+math::E<NAME>)]` test attributes (Move compiler convenience for tests).
+
+**Functions are `public(package)`, not `public`.** `math` is an internal
+utility for the `usufruct` package, not a standalone arithmetic library.
+External callers have no business reaching past `curve_shape` /
+`rental_escrow` to invoke these primitives. This matches the package-wide
+policy of using `public(package)` whenever a spec marks a function
+`public` in a pure-utility module with no external consumers.
 
 **Depends on:** nothing.

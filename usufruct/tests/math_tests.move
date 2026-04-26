@@ -4,6 +4,8 @@
 #[test_only]
 module usufruct::math_tests;
 
+use std::u64;
+use std::u128;
 use std::unit_test::assert_eq;
 use usufruct::math;
 
@@ -19,7 +21,7 @@ public struct MulDivCase has drop {
 
 #[test]
 fun mul_div_table() {
-    let u64_max: u64 = 18446744073709551615;
+    let u64_max = u64::max_value!();
     let cases = vector[
         MulDivCase { a: 0,              b: 5,              c: 3,              expected: 0           },
         MulDivCase { a: 5,              b: 0,              c: 3,              expected: 0           },
@@ -61,7 +63,7 @@ fun mul_div_all_zero_aborts() {
 #[test]
 #[expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun mul_div_overflow_max_times_2() {
-    math::mul_div(18446744073709551615, 2, 1);
+    math::mul_div(u64::max_value!(), 2, 1);
 }
 
 #[test]
@@ -74,7 +76,7 @@ fun mul_div_overflow_exact_u64_boundary() {
 #[test]
 #[expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun mul_div_overflow_max_times_max() {
-    math::mul_div(18446744073709551615, 18446744073709551615, 1);
+    math::mul_div(u64::max_value!(), u64::max_value!(), 1);
 }
 
 // ─── nth_root_u128 ─────────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ fun nth_root_u128_table() {
         NthRootCase { n: 15,                                       d: 2, expected: 3           },
         NthRootCase { n: 16,                                       d: 2, expected: 4           },
         NthRootCase { n: 18446744073709551616,                     d: 2, expected: 4294967296  }, // 2^64, sqrt=2^32
-        NthRootCase { n: 18446744073709551615,                     d: 2, expected: 4294967295  }, // 2^64-1, floor=2^32-1
+        NthRootCase { n: (u64::max_value!() as u128),              d: 2, expected: 4294967295  }, // 2^64-1, floor=2^32-1
         // d = 3
         NthRootCase { n: 0,                                        d: 3, expected: 0           },
         NthRootCase { n: 1,                                        d: 3, expected: 1           },
@@ -116,7 +118,7 @@ fun nth_root_u128_table() {
         NthRootCase { n: 80,                                       d: 4, expected: 2           },
         NthRootCase { n: 81,                                       d: 4, expected: 3           },
         // large values
-        NthRootCase { n: 340282366920938463463374607431768211455, d: 2, expected: 18446744073709551615 }, // u128::MAX
+        NthRootCase { n: u128::max_value!(),                       d: 2, expected: (u64::max_value!() as u128) }, // u128::MAX, floor=2^64-1
         NthRootCase { n: 79228162514264337593543950336,           d: 3, expected: 4294967296  }, // 2^96, cbrt=2^32
         NthRootCase { n: 79228162514264337593543950335,           d: 3, expected: 4294967295  }, // 2^96-1
         NthRootCase { n: 79228162514264337593543950336,           d: 4, expected: 16777216    }, // 2^96, 4rt=2^24
@@ -148,7 +150,7 @@ fun pow_u128(base: u128, d: u32): u128 {
 fun upper_bound_holds(n: u128, result: u128, d: u32): bool {
     let r1 = result + 1;
     if (d == 2) {
-        let u128_max: u128 = 340282366920938463463374607431768211455;
+        let u128_max = u128::max_value!();
         if (r1 > u128_max / r1) true
         else n < r1 * r1
     } else if (d == 3) {

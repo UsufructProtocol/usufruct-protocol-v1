@@ -35,7 +35,7 @@ points, and the fund distribution logic for every boundary event.
   `apply_pending_transitions`.
 - Public read-only queries: `compute_used_credit`, `compute_floor_price`.
 - Package-visible price helpers: `compute_price_descent`,
-  `compute_next_rent_price` (backing `compute_floor_price` and `rent()`).
+  `compute_next_rent_price` (backing `compute_floor_price`).
 - Private settlement helpers: `do_handover`, `do_tenure_expiry`,
   `do_auction_expiry`, `split_fee`, `settle_stake_earnings`,
   `register_pending_bid`.
@@ -171,7 +171,7 @@ public enum AssetState has copy, drop, store {
 | `Idle` | No tenant. Asset available at `min_rent_price`. Entry: `rent()`. |
 | `Rented { HandoverOpen }` | Current tenant holds exclusive access. No pending bid. |
 | `Rented { HandoverConfirmed }` | Current tenant holds access until `handover_countdown_expiry`. A pending tenant has paid `>= next_rent_price`. |
-| `AtDutchAuction` | Price descends from `last_rent_price` toward `min_rent_price`. See `compute_price_descent` (§8.2). |
+| `AtDutchAuction` | Price descends from `last_acquisition_price` toward `min_rent_price`. See `compute_price_descent` (§8.2). |
 | `Retired` | Terminal. `retire_flag` is set and the state machine has reached a point where the asset is extractable via `claim_asset`. |
 
 The `state` field is not directly writable from outside the module. All
@@ -204,7 +204,7 @@ public struct RentalEscrow<phantom Asset: key + store, phantom CoinType> has key
     fee_inbox_id:               ID,
     integrated_at_ms:           u64,
     state:                      AssetState,
-    last_rent_price:            u64,
+    last_acquisition_price:     u64,
     phase_start_ms:             u64,
     current_tenant_cap_id:      Option<ID>,
     current_tenant_address:     Option<address>,
@@ -243,7 +243,7 @@ This is the canonical Move borrow pattern, used internally by
 | `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Passed to `fee_message::post` at each boundary event so the resulting `FeeMessage<C>` carries its routing target. |
 | `integrated_at_ms` | Timestamp at integration. Used to enforce `retire_floor`: `retire()` aborts if `clock.timestamp_ms() < integrated_at_ms + config.retire_floor`. |
 | `state` | Current `AssetState`. |
-| `last_rent_price` | Price paid by the most recent tenant. Entry barrier for takeover and starting price of the Dutch Auction descent. Initialized to `min_rent_price` at `integrate` as a sentinel — the first Idle acquisition overwrites it with its own `coin::value(&payment)`. Updated at every acquisition to `coin::value(&payment)` — always ≥ the arm-specific floor (`min_rent_price` from Idle, `compute_price_descent(now)` from AtDutchAuction, `compute_next_rent_price(escrow)` from Rented). Overpayment is absorbed verbatim; there is no refund path. |
+| `last_acquisition_price` | Price paid at the most recent acquisition. Written once per cycle by `install_new_tenant` (direct acquisition from `Idle` or `AtDutchAuction`) and by `do_handover` step 5 (handover acquisition). Initialized to `min_rent_price` at `integrate` as a sentinel. Inert in `Rented` states — floor computation reads `tenant_stake` and `pending_bid` directly. Used in `AtDutchAuction` as the descent ceiling: `price_descent(t) = last_acquisition_price − (last_acquisition_price − min_rent_price) · h(t)`. |
 | `phase_start_ms` | Timestamp at which the current phase began. See §5 for exact assignment per transition. |
 | `current_tenant_cap_id` | `Some(id)` while `state` is `Rented`; `None` otherwise. The live `TenantCap` for the current tenant. Staleness enforced structurally — any other `TenantCap` with the same `escrow_id` fails `object::id(cap) == current_tenant_cap_id`. |
 | `current_tenant_address` | `Some(addr)` while `state` is `Rented`; `None` otherwise. Target of `remain_credit` push at handover. |
@@ -327,7 +327,7 @@ public struct HandoverCompleted has copy, drop {
     owner_share:       u64,   // used_credit × 0.90
     protocol_fee:      u64,   // used_credit × 0.10
     remain_credit:     u64,   // refunded to displaced tenant
-    new_rent_price:    u64,   // winning bid amount, now written to escrow.last_rent_price
+    new_rent_price:    u64,   // winning bid amount — written to escrow.last_acquisition_price at do_handover step 5
     timestamp_ms:      u64,   // = handover_countdown_expiry
 }
 
@@ -336,7 +336,7 @@ public struct TenureExpired has copy, drop {
     tenant:           address,
     owner_share:      u64,   // tenant_stake × 0.90
     protocol_fee:     u64,   // tenant_stake × 0.10
-    last_rent_price:  u64,   // frozen at expiry — anchor of Dutch descent if next_state=AtDutchAuction
+    last_acquisition_price:  u64,   // frozen at expiry — anchor of Dutch descent if next_state=AtDutchAuction
     next_state:       AssetState,  // AtDutchAuction or Retired
     timestamp_ms:     u64,   // = phase_start_ms + tenure_ceiling
 }
@@ -448,24 +448,21 @@ depending on `from_state`; recovery by JOIN is cheaper and structurally
 unambiguous.
 
 **Price-anchor fields — `new_rent_price` on `HandoverCompleted`,
-`last_rent_price` on `TenureExpired`.** The state field
-`escrow.last_rent_price` is the anchor for two downstream computations
-— `f_next_rent_price(last_rent_price)` (takeover floor, §8.1) and
-`compute_price_descent` (Dutch descent, §8.2). Both events carry it
-explicitly because it is **not** PK-JOIN-recoverable: its value at any
-given transition is written across a chain of `BidPlaced` /
-`BidSuperseded` events of variable length inside the preceding handover
-window, or by an earlier `RentStarted`. Reconstructing it off-chain
-requires either stateful replay or a multi-hop `ORDER BY ts DESC LIMIT
-1` walk — qualitatively distinct from a single JOIN on a child PK, and
-fragile under partial ingestion. Emitting the value at every transition
-that writes or freezes it makes each fact row self-describing for
-price-floor and Dutch-price analytics. This is consistent with
-invariant (c): the rule constrains redundant **addresses** recoverable
-by PK-JOIN, not amounts recoverable only by chain-walk. `AuctionExpired`
-does not need its own field — its anchor is the directly preceding
-`TenureExpired`, PK-JOIN-recoverable 1:1 by `escrow_id` and temporal
-order.
+`last_acquisition_price` on `TenureExpired`.** The state field
+`escrow.last_acquisition_price` anchors two downstream computations
+— the takeover/supersede floor (`compute_next_rent_price` in `Rented`
+arms) and `compute_price_descent` (Dutch descent, §8.2). Both events
+carry it explicitly because it is **not** PK-JOIN-recoverable via a
+single JOIN: recovering the value off-chain requires locating the most
+recent `HandoverCompleted.new_rent_price` or `RentStarted.price_paid`
+for the escrow — an `ORDER BY ts DESC LIMIT 1` walk, not a keyed JOIN
+— and is fragile under partial ingestion. Emitting it at each
+transition that freezes it makes each fact row self-describing for
+price-floor and Dutch-price analytics. Consistent with invariant (c):
+the rule constrains redundant **addresses** recoverable by PK-JOIN, not
+amounts recoverable only by chain-walk. `AuctionExpired` does not need
+its own field — its anchor is the directly preceding `TenureExpired`,
+PK-JOIN-recoverable 1:1 by `escrow_id` and temporal order.
 
 ### Star schema — the protocol's event emission strategy
 
@@ -541,7 +538,7 @@ immutable, so there is no update or burn event).
 | **`AssetIntegrated.asset_id` enables level-2 linkage and asset-instance tracing.** | The object ID of the wrapped asset at integrate time. Level-2 escrows (`Asset = rental_escrow::OwnerCap`) pair to their underlying level-1 escrow via `asset_id = level-1 OwnerCap ID` → JOIN on `owner_cap_id` to `OwnerCapMinted.escrow_id`. The same-asset-across-integrations thread (integrate → retire → re-integrate) becomes queryable with `GROUP BY asset_id`. Without this field the mapping is only reachable through Sui's object-state-changes layer, not through the protocol's event surface. |
 | **Owner address on `&OwnerCap`-gated ops.** | `RetireFlagSet.owner` and `EarningsWithdrawn.owner` record the cap holder at call time. These ops take the cap by reference — no `OwnerCap*` lifecycle event is co-emitted — so the address is first-observed and PK-unrecoverable. `AssetClaimed` does not carry `owner` because it consumes the cap by value; `OwnerCapBurned.owner` co-emits the same address and is reachable by JOIN on `owner_cap_id` (invariant c). Enables per-human queries (withdraw frequency per owner, multi-cap operators). |
 | **Intent vs settlement on retirement.** | `RetireFlagSet` records the owner's intent (when `retire()` was called, from which settled state). `AssetRetired` records the actual transition to `Retired` — immediate for `from_state ∈ {Idle, AtDutchAuction}`, deferred to the next tenure expiry for `from_state = Rented`. Co-emission matrix: `TenureExpired.next_state = Retired` ⇔ `AssetRetired` with `from_state = Rented` is co-emitted. Both events are needed — `TenureExpired` carries the stake-settlement facts (`owner_share`, `protocol_fee`, tenant), `AssetRetired` carries the pure state-transition fact. |
-| **Price-anchor fields on block-boundary events.** | `HandoverCompleted.new_rent_price` carries the winning bid amount just written to `escrow.last_rent_price`; `TenureExpired.last_rent_price` carries the same state field frozen at tenure expiry. These fields are **not** PK-JOIN-recoverable — they live across a variable-length chain of `BidPlaced` / `BidSuperseded` events inside the preceding handover window, or in an earlier `RentStarted`. Emitting them in-row makes (a) the takeover-floor query `floor = f_next_rent_price(last_rent_price)` answerable from `HandoverCompleted` alone, and (b) the Dutch current price `price(t) = last_rent_price − h(t)·(last_rent_price − min_rent_price)` answerable from `TenureExpired` + `IntegrationConfigRegistered` alone — no stateful replay in the indexer. Consistent with invariant (c): the rule targets redundant **addresses** recoverable by single PK-JOIN, not amounts recoverable only by chain-walk. |
+| **Price-anchor fields on block-boundary events.** | `HandoverCompleted.new_rent_price` carries the winning bid amount written to `escrow.last_acquisition_price` at handover; `TenureExpired.last_acquisition_price` carries the same field frozen at tenure expiry. Neither is PK-JOIN-recoverable via a single JOIN — recovering the value requires locating the most recent `HandoverCompleted.new_rent_price` or `RentStarted.price_paid` for the escrow (`ORDER BY ts DESC LIMIT 1`). Emitting them in-row makes (a) the takeover-floor query `floor = f_next_rent_price(last_acquisition_price)` answerable from `HandoverCompleted` alone, and (b) the Dutch current price `price(t) = last_acquisition_price − h(t)·(last_acquisition_price − min_rent_price)` answerable from `TenureExpired` + `IntegrationConfigRegistered` alone — no stateful replay in the indexer. Consistent with invariant (c). |
 | **No envelope dependence.** | Events never require the indexer to join against `SuiEvent.timestampMs` or `SuiEvent.sender` to reconstruct meaning — except for pure wall-clock ordering of immediate events (which the envelope provides for free). |
 | **Cross-module events are self-contained.** | An indexer ingesting only `fee_message` events can answer every fee-message-level question; likewise for each cap module. Cross-module JOINs are always on `escrow_id`, never on implicit co-emission. |
 
@@ -601,7 +598,7 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    construct the escrow with:
    - `asset = option::some(asset)`
    - `state = AssetState::Idle`
-   - `last_rent_price = config::min_rent_price(&config)`
+   - `last_acquisition_price = config::min_rent_price(&config)`
    - `phase_start_ms = 0`
    - `integrated_at_ms = clock.timestamp_ms()`
    - All remaining `Option` fields `None`, all `Balance` fields `balance::zero()`
@@ -750,7 +747,7 @@ deletes the escrow, returns the asset and earnings.
 
         let RentalEscrow {
             id, asset: asset_opt, config: _, fee_inbox_id: _,
-            integrated_at_ms: _, state: _, last_rent_price: _, phase_start_ms: _,
+            integrated_at_ms: _, state: _, last_acquisition_price: _, phase_start_ms: _,
             current_tenant_cap_id: _, current_tenant_address: _,
             pending_tenant_address: _, handover_countdown_expiry: _,
             tenant_stake, pending_bid, owner_earnings,
@@ -840,19 +837,16 @@ locked balances.
 
 1. `apply_pending_transitions(escrow, clock, ctx)` — settle first, act on
    post-settlement `escrow.state`.
-2. Dispatch on `escrow.state`:
-
-The per-arm floor queries invoked below (`compute_price_descent`,
-`compute_next_rent_price`) are `public(package)` helpers (§8.2, §8.3). `rent()`
-dispatches by state before calling them, so the functions carry no state guard
-— calling them here does not incur a second, defensive validation. The same
-helpers also back the public `compute_floor_price` (§8.4); external callers
-reach the same numbers through that unified entry point.
+2. Let `floor = compute_floor_price(escrow, clock.timestamp_ms())` — unified
+   floor for all acquisition paths. Aborts `E_RETIRED_NO_BID` if state is
+   `Retired`, so no `Retired` arm is needed below. `compute_floor_price` is
+   also the public query SDK/frontend callers use — internal and external floor
+   computation share a single source of truth with no divergence possible.
+3. Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
+4. Dispatch on `escrow.state`:
 
 #### Case: `Idle`
 
-- Assert `coin::value(&payment) >= escrow.config.min_rent_price`, abort
-  `E_INSUFFICIENT_PAYMENT`.
 - Let `price_paid = coin::value(&payment);`
 - Let `tenant_cap_id = install_new_tenant(escrow, payment, clock, ctx);` — §7.5
   is the single source of truth for "install tenant from payment into an
@@ -866,8 +860,6 @@ reach the same numbers through that unified entry point.
 
 #### Case: `AtDutchAuction`
 
-- Let `price = compute_price_descent(escrow, clock.timestamp_ms())`.
-- Assert `coin::value(&payment) >= price`, abort `E_INSUFFICIENT_PAYMENT`.
 - Let `price_paid = coin::value(&payment);`
 - Let `tenant_cap_id = install_new_tenant(escrow, payment, clock, ctx);` — §7.5.
 - Emit `RentStarted { escrow_id, tenant_cap_id, price_paid,
@@ -877,9 +869,6 @@ reach the same numbers through that unified entry point.
 #### Case: `Rented { HandoverOpen }`
 
 - Assert `!escrow.retire_flag`, abort `E_RETIRE_FLAG_BLOCKS_BID`.
-- Let `floor = compute_next_rent_price(escrow)` (delegates to
-  `price_function::evaluate_price_fn`).
-- Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - Let `pending_tenant = tx_context::sender(ctx);`
 - Let `remaining = tenure_expiry_ms(escrow) - clock.timestamp_ms()` — §8.5.
 - Let `countdown = min(escrow.config.handover_floor, remaining)`.
@@ -887,8 +876,8 @@ reach the same numbers through that unified entry point.
 - `escrow.pending_tenant_address = some(pending_tenant);`
 - `escrow.state = Rented { phase: HandoverConfirmed };`
 - **Register pending bid** — §7.7 is the single source of truth for
-  "absorb payment into `pending_bid`, write `last_rent_price`, mint + push
-  `PaymentReceipt` to the bidder". Consumes `payment`; returns the bid
+  "absorb payment into `pending_bid`, mint + push `PaymentReceipt` to the
+  bidder". Consumes `payment`; returns the bid
   amount for the event:
   - `let bid_amount = register_pending_bid(escrow, payment, pending_tenant, ctx);`
 - Emit `BidPlaced { escrow_id, pending_tenant, bid_amount,
@@ -906,9 +895,6 @@ exits afterward.
   accepted before `retire` could have fired; the committed bid is
   honored, handover completes normally, and T(n+1) then enters
   `HandoverOpen` with the flag still set (no further bids accepted).
-- Let `floor = compute_next_rent_price(escrow)` — `last_rent_price` holds
-  the previous bidder's payment, so the floor escalates with each supersede.
-- Assert `coin::value(&payment) >= floor`, abort `E_INSUFFICIENT_PAYMENT`.
 - **Pre-bind event locals** for the refund push (captured before
   `pending_bid` and `pending_tenant_address` are overwritten):
   - `let displaced_bidder = *option::borrow(&escrow.pending_tenant_address);`
@@ -930,12 +916,6 @@ exits afterward.
   refund push, and the receipt delivery complete, so the escrow's
   post-state (new bidder installed, old refunded, new receipt in new
   bidder's wallet) matches the event's semantics.
-
-#### Case: `Retired`
-
-- Abort `E_RETIRED_NO_BID`. No refund path needed — payment is consumed by
-  the abort (the coin in the PTB is returned to sender by Sui's abort
-  semantics).
 
 ---
 
@@ -1276,8 +1256,7 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    `apply_pending_transitions` already confirmed
    `state == Rented { HandoverConfirmed }`, and
    `boundary_ms == handover_countdown_expiry` makes the clamp a no-op. The
-   principal used is `balance::value(&escrow.tenant_stake)` (see §8.1 for
-   why `tenant_stake` and not `last_rent_price`).
+   principal used is `balance::value(&escrow.tenant_stake)` (see §8.1).
 2. Let `remain_credit = balance::value(&escrow.tenant_stake) - used_credit`.
    (Invariant `used_credit + remain_credit == tenant_stake` from curve
    bijectivity.)
@@ -1300,10 +1279,13 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
      — `displaced_tenant` is the stake funder; `FeeMessageSent<C>.tenant`
      records it verbatim. The returned `(owner_share, protocol_fee)` is
      consumed by the `HandoverCompleted` emit at step 9.
-5. **Rotate `pending_bid` → `tenant_stake`** (new tenant's stake):
+5. **Rotate `pending_bid` → `tenant_stake`** and record acquisition price:
    - `balance::join(&mut escrow.tenant_stake,
      balance::withdraw_all(&mut escrow.pending_bid));`
-   — `last_rent_price` already holds the pending bid amount (set at bid time).
+   - `escrow.last_acquisition_price = balance::value(&escrow.tenant_stake);`
+   — Written here because handover is an acquisition: the new tenant takes
+   possession at `boundary_ms`. `last_acquisition_price` is the descent
+   ceiling if this tenant's block later expires into `AtDutchAuction`.
 6. **Mint + push new TenantCap** (fused inside `tenant_cap::mint_to`;
    required because `transfer::transfer<TenantCap>` only compiles in
    the owning module):
@@ -1325,11 +1307,10 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    - `escrow.state = Rented { phase: HandoverOpen };`
 9. Emit `HandoverCompleted { escrow_id, displaced_tenant,
    new_tenant_cap_id, used_credit, owner_share, protocol_fee, remain_credit,
-   new_rent_price: escrow.last_rent_price, timestamp_ms: boundary_ms }`.
-   `new_rent_price` is the winning bid amount — `escrow.last_rent_price`
-   was already written to this value at bid time (`BidPlaced` /
-   `BidSuperseded`, §6 / §5) and is unchanged by `do_handover`; reading
-   it here is the canonical snapshot of the new block's price. The new
+   new_rent_price: escrow.last_acquisition_price, timestamp_ms: boundary_ms }`.
+   `new_rent_price` is the winning bid amount — `escrow.last_acquisition_price`
+   was written at step 5 of this function (`pending_bid → tenant_stake`
+   rotation); reading it here is the canonical snapshot of the new block's price. The new
    tenant's address is not carried — it is already on the co-emitted
    `TenantCapMinted.tenant` row and recoverable by JOIN on
    `new_tenant_cap_id`. `displaced_tenant` *is* carried: no PK path
@@ -1391,8 +1372,7 @@ Two cases:
 
 **Algorithm:**
 
-1. Let `stake_total = balance::value(&escrow.tenant_stake)` — equal to
-   `escrow.last_rent_price` (used_credit saturated to full).
+1. Let `stake_total = balance::value(&escrow.tenant_stake)` — used_credit saturated to full.
 2. Let `tenant = *option::borrow(&escrow.current_tenant_address);`
 3. **Settle the full stake** — §7.6 is the single source of truth for
    "split 90/10, route fee iff > 0, drain remainder into owner_earnings".
@@ -1413,11 +1393,11 @@ Two cases:
      `escrow.phase_start_ms = boundary_ms;` (bookkeeping).
    - Else: `escrow.state = AtDutchAuction;
      escrow.phase_start_ms = boundary_ms;`.
-     `last_rent_price` is preserved — it is the starting price of the descent.
+     `last_acquisition_price` is preserved — it is the starting price of the descent.
 6. Emit `TenureExpired { escrow_id, tenant, owner_share, protocol_fee,
-   last_rent_price: escrow.last_rent_price, next_state: escrow.state,
-   timestamp_ms: boundary_ms }`. `last_rent_price` is preserved by step
-   5 (see AtDutchAuction branch) and frozen into this row: it is the
+   last_acquisition_price: escrow.last_acquisition_price, next_state: escrow.state,
+   timestamp_ms: boundary_ms }`. `last_acquisition_price` is preserved by
+   step 5 (see AtDutchAuction branch) and frozen into this row: it is the
    anchor of the subsequent Dutch descent (if `next_state =
    AtDutchAuction`) and makes the Dutch current-price computation a
    single-event query.
@@ -1456,10 +1436,9 @@ recovery.
    path — §4.2 step 7). Unambiguous by construction, no `next_state`
    field.
 
-**Note on `last_rent_price`:** not modified here. After auction expiry,
-`last_rent_price` holds what the last tenant paid. The next `rent()` from Idle
-overwrites it with the actual payment (`>= min_rent_price`) as part of its
-normal acquisition logic.
+**Note on `last_acquisition_price`:** not modified here. After auction expiry,
+`last_acquisition_price` holds what the last tenant paid. The next `rent()` from
+Idle overwrites it via `install_new_tenant` as part of its normal acquisition logic.
 
 ---
 
@@ -1499,9 +1478,8 @@ fee_share) at 90/10.
     ): ID
 
 **Preconditions:** `escrow.state` is one of `{ Idle, AtDutchAuction }`. The
-caller has already validated `payment` against the applicable floor
-(`config.min_rent_price` for Idle, `compute_price_descent(..., now)` for
-AtDutchAuction).
+caller has already validated `payment` against `compute_floor_price`
+(unified floor check in `rent()` §5.1 step 2).
 
 **Purpose:** shared installation sequence for the two acquisition arms of
 `rent()` that land on an empty escrow — mint `TenantCap`, absorb payment,
@@ -1512,7 +1490,7 @@ owns.
 
 **Algorithm:**
 
-1. `escrow.last_rent_price = coin::value(&payment);`
+1. `escrow.last_acquisition_price = coin::value(&payment);`
 2. `balance::join(&mut escrow.tenant_stake, coin::into_balance(payment));`
 3. `escrow.phase_start_ms = clock.timestamp_ms();`
 4. `let tenant_addr = tx_context::sender(ctx);`
@@ -1540,8 +1518,8 @@ instead of threading an extra `from_state` argument through the helper.
 
 | Caller | Floor source | Event `from_state` |
 |---|---|---|
-| `rent()` Case `Idle` (§5.1) | `config.min_rent_price` | `AssetState::Idle` |
-| `rent()` Case `AtDutchAuction` (§5.1) | `compute_price_descent(escrow, clock.timestamp_ms())` | `AssetState::AtDutchAuction` |
+| `rent()` Case `Idle` (§5.1) | `compute_floor_price` (step 2) | `AssetState::Idle` |
+| `rent()` Case `AtDutchAuction` (§5.1) | `compute_floor_price` (step 2) | `AssetState::AtDutchAuction` |
 
 Both arms share the same post-state; the helper is the single source of
 truth for "install a new tenant from payment into an empty escrow".
@@ -1616,7 +1594,7 @@ is a structural filter; see §9 P12.
 **Why the helper does not emit `HandoverCompleted` / `TenureExpired`:** the
 two events carry arm-specific fields (`HandoverCompleted.displaced_tenant`
 + `new_tenant_cap_id` + `used_credit` + `remain_credit` + `new_rent_price`;
-`TenureExpired.tenant` + `last_rent_price` + `next_state`) beyond the
+`TenureExpired.tenant` + `last_acquisition_price` + `next_state`) beyond the
 shared `(owner_share, protocol_fee)`. Emit-last at the caller keeps each
 event's semantic timestamp aligned with the full boundary transition
 (`do_handover` through the TenantCap rotation; `do_tenure_expiry` through
@@ -1640,14 +1618,13 @@ the next-state decision) rather than with a partial stake settlement.
     ): u64
 
 **Purpose:** shared pending-bid installation tail for the two `Rented` arms
-of `rent()` (§5.1). Absorbs `payment` into `escrow.pending_bid`, writes
-`last_rent_price`, and mints + pushes a `PaymentReceipt` to `new_bidder`.
-Returns the bid amount so the caller can emit `BidPlaced` / `BidSuperseded`
-with the correct amount field.
+of `rent()` (§5.1). Absorbs `payment` into `escrow.pending_bid` and mints +
+pushes a `PaymentReceipt` to `new_bidder`. Returns the bid amount so the
+caller can emit `BidPlaced` / `BidSuperseded` with the correct amount field.
 
 **Preconditions:**
-- Caller has already verified `coin::value(&payment) >= floor` (arm-specific
-  floor from `compute_next_rent_price`).
+- Caller has already verified `coin::value(&payment) >= floor` (from
+  `compute_floor_price`, step 2 of `rent()`).
 - For the supersede path (`HandoverConfirmed` caller), the previous
   `pending_bid` has already been refunded and drained, and
   `pending_tenant_address` has been rotated to `new_bidder` (push-before-rotate
@@ -1656,7 +1633,6 @@ with the correct amount field.
 **Algorithm:**
 
     let bid_amount = coin::value(&payment);
-    escrow.last_rent_price = bid_amount;
     balance::join(&mut escrow.pending_bid, coin::into_balance(payment));
     payment_receipt::mint_to<Asset, CoinType>(
         object::id(escrow), bid_amount, new_bidder, ctx,
@@ -1664,7 +1640,6 @@ with the correct amount field.
     bid_amount
 
 **Postconditions:**
-- `escrow.last_rent_price == bid_amount`.
 - `escrow.pending_bid` grew by `bid_amount`.
 - A `PaymentReceipt` carrying `escrow_id`, `bid_amount`, and the canonical
   `Asset` / `CoinType` strings has been transferred to `new_bidder`.
@@ -1686,8 +1661,8 @@ rental_escrow.note for why a fuller merge would reintroduce branching.
 | `rent()` Case `Rented { HandoverOpen }` (§5.1) | retire-flag check, floor check, countdown write, `pending_tenant_address = some(sender)`, state → `HandoverConfirmed` | `BidPlaced` |
 | `rent()` Case `Rented { HandoverConfirmed }` (§5.1) | floor check, refund previous `pending_bid` to `displaced_bidder`, rotate `pending_tenant_address` to `new_bidder` | `BidSuperseded` |
 
-Both arms share the same post-state for `pending_bid` / `last_rent_price` /
-receipt delivery; the helper is the single source of truth for that tail.
+Both arms share the same post-state for `pending_bid` / receipt delivery;
+the helper is the single source of truth for that tail.
 
 
 8. READ-ONLY QUERIES
@@ -1728,13 +1703,15 @@ helpers, visible only inside the package:
 | Helper | Visibility | Arms served |
 |---|---|---|
 | `compute_price_descent(escrow, timestamp_ms)` (§8.2) | `public(package)` | `AtDutchAuction` |
-| `compute_next_rent_price(escrow)` (§8.3) | `public(package)` | `Rented{HandoverOpen}`, `Rented{HandoverConfirmed}` |
+| `compute_next_rent_price(escrow, price)` (§8.3) | `public(package)` | `Rented{HandoverOpen}`, `Rented{HandoverConfirmed}` |
 
-Both are called from exactly two sites: `compute_floor_price` (which dispatches
-by state before calling) and `rent()` Cases (§5.1, which dispatches by state
-before calling). Neither helper carries a state guard — it would be structurally
-unreachable, defensive against nothing. Keeping them `public(package)` makes
-that guarantee a visibility-level fact rather than a prose claim.
+Both are called from exactly one site: `compute_floor_price` (§8.4), which
+dispatches by state before calling. `rent()` (§5.1) reaches both through
+`compute_floor_price` — keeping internal and external floor computations in
+lockstep with no divergence possible. Neither helper carries a state guard —
+it would be structurally unreachable, defensive against nothing. Keeping them
+`public(package)` makes that guarantee a visibility-level fact rather than a
+prose claim.
 
 **Naming convention — `compute_*`:**
 
@@ -1750,8 +1727,8 @@ whether a timestamp is passed:
   External callers typically pass `clock.timestamp_ms()` for "live" reads,
   but internal callers (e.g. `do_handover` passing `boundary_ms`) evaluate
   at past or boundary timestamps.
-- `compute_next_rent_price(escrow)` (§8.3) depends only on escrow state,
-  so it needs no timestamp.
+- `compute_next_rent_price(escrow, price)` (§8.3) depends only on the
+  competitive price passed by the caller, so it needs no timestamp.
 
 The `current_*` prefix is deliberately not used: it implies "now", and
 a function accepting an arbitrary timestamp — or that any external caller
@@ -1796,9 +1773,8 @@ the same thing semantically: produce a value from escrow state.
     );
 
     // 5. Scale by the current tenant's principal.
-    //    Principal is tenant_stake, not last_rent_price: in HandoverConfirmed
-    //    last_rent_price already holds the pending bid amount, making
-    //    tenant_stake the only accurate source for the current tenant's payment.
+    //    Principal is balance::value(&escrow.tenant_stake): the current
+    //    tenant's payment. last_acquisition_price is inert in Rented states.
     //    evaluate_curve returns SCALE when elapsed >= tenure_ceiling, so the
     //    scaled result saturates at tenant_stake.
     math::mul_div(balance::value(&escrow.tenant_stake), g, SCALE)
@@ -1833,8 +1809,8 @@ saturates.
 
     // 1. Elapsed time since the auction started.
     //    phase_start_ms is set to the tenure-expiry boundary when AtDutchAuction begins.
-    //    If timestamp_ms < phase_start_ms, return last_rent_price — auction has not started yet.
-    if timestamp_ms < escrow.phase_start_ms { return escrow.last_rent_price };
+    //    If timestamp_ms < phase_start_ms, return last_acquisition_price — auction has not started yet.
+    if timestamp_ms < escrow.phase_start_ms { return escrow.last_acquisition_price };
     let elapsed_ms = timestamp_ms - escrow.phase_start_ms;
 
     // 2. Evaluate the normalized descent curve.
@@ -1844,28 +1820,27 @@ saturates.
         config::descent_ceiling(&escrow.config),
     );
 
-    // 3. Scale by the spread, then descend from last_rent_price.
+    // 3. Scale by the spread, then descend from last_acquisition_price.
     //    evaluate_curve returns SCALE when elapsed >= descent_ceiling, so
     //    consumed == spread and the result saturates at min_rent_price.
-    //    Precondition last_rent_price >= min_rent_price is guaranteed by the
-    //    protocol — every acquisition asserts payment >= arm-specific floor,
+    //    Precondition last_acquisition_price >= min_rent_price is guaranteed by the
+    //    protocol — every acquisition asserts payment >= compute_floor_price,
     //    and all floors (min_rent_price, compute_price_descent, compute_next_rent_price)
-    //    are themselves >= min_rent_price. Note last_rent_price does NOT
+    //    are themselves >= min_rent_price. Note last_acquisition_price does NOT
     //    monotonically increase: a rent from AtDutchAuction can write a value
-    //    below the previous last_rent_price (but still >= min_rent_price).
-    let spread = escrow.last_rent_price - config::min_rent_price(&escrow.config);
+    //    below the previous last_acquisition_price (but still >= min_rent_price).
+    let spread = escrow.last_acquisition_price - config::min_rent_price(&escrow.config);
     let consumed = math::mul_div(spread, h, SCALE);
-    escrow.last_rent_price - consumed
+    escrow.last_acquisition_price - consumed
 
-`last_rent_price` is the starting price of the descent — it was set by the
+`last_acquisition_price` is the starting price of the descent — set by the
 last tenant's payment and preserved through tenure expiry and auction entry.
 
-**Two call sites (both dispatch by state before calling, so precondition holds):**
+**One call site (dispatches by state before calling, so precondition holds):**
 
 | Caller | Purpose |
 |---|---|
-| `rent()` Case `AtDutchAuction` (§5.1) | acquisition floor at `clock.timestamp_ms()` |
-| `compute_floor_price` (§8.4), `AtDutchAuction` arm | public query — SDK/frontend reads live or hypothetical descent price |
+| `compute_floor_price` (§8.4), `AtDutchAuction` arm | floor at `timestamp_ms` — used by both `rent()` and SDK/frontend via the public entry point |
 
 **Why no state guard:** with `public(package)` visibility, every caller is
 inside this package and has already dispatched on `escrow.state`. A guard
@@ -1878,31 +1853,26 @@ preamble, "Per-arm price helpers".
 
     public(package) fun compute_next_rent_price<Asset: key + store, CoinType>(
         escrow: &RentalEscrow<Asset, CoinType>,
+        price:  u64,
     ): u64
 
 **Precondition:** `escrow.state` matches `Rented { .. }`. Structurally
 guaranteed by all call sites — no runtime guard. No `timestamp_ms`
-parameter — `f_next_rent_price` depends only on `last_rent_price`, not
-on elapsed time.
+parameter — `f_next_rent_price` depends only on the current competitive
+price, not on elapsed time. The caller passes the correct price based on state.
 
 **Algorithm:**
 
     price_function::evaluate_price_fn(
         config::price_function(&escrow.config),
-        escrow.last_rent_price,
+        price,
     )
 
-In `HandoverConfirmed`, `last_rent_price` already holds the pending bidder's
-payment — so `compute_next_rent_price` returns the price to supersede the
-pending bidder, not the current tenant.
-
-**Three call sites (all dispatch by state before calling):**
+**One call site (dispatches by state before calling):**
 
 | Caller | Purpose |
 |---|---|
-| `rent()` Case `Rented{HandoverOpen}` (§5.1) | takeover floor for a new bid |
-| `rent()` Case `Rented{HandoverConfirmed}` (§5.1) | supersede floor — escalates with each bid since `last_rent_price` already holds the pending bidder's payment |
-| `compute_floor_price` (§8.4), `Rented{_}` arm | public query — SDK/frontend reads the current takeover/supersede floor |
+| `compute_floor_price` (§8.4), `Rented{_}` arm | floor computation — passes `balance::value(&escrow.tenant_stake)` for `HandoverOpen` and `balance::value(&escrow.pending_bid)` for `HandoverConfirmed` |
 
 **Why no state guard:** see §8.2 and §8 preamble. Same structural argument
 — `public(package)` + pre-dispatched callers = guard unreachable.
@@ -1923,7 +1893,8 @@ at `timestamp_ms`". Dispatches by `escrow.state` to the arm-specific helper.
 
     match (escrow.state) {
         AssetState::Idle                         => config::min_rent_price(&escrow.config),
-        AssetState::Rented { .. }                => compute_next_rent_price(escrow),
+        AssetState::Rented { HandoverOpen }      => compute_next_rent_price(escrow, balance::value(&escrow.tenant_stake)),
+        AssetState::Rented { HandoverConfirmed } => compute_next_rent_price(escrow, balance::value(&escrow.pending_bid)),
         AssetState::AtDutchAuction               => compute_price_descent(escrow, timestamp_ms),
         AssetState::Retired                      => abort E_RETIRED_NO_BID,
     }
@@ -1933,8 +1904,8 @@ at `timestamp_ms`". Dispatches by `escrow.state` to the arm-specific helper.
 | State | Returns | Rationale |
 |---|---|---|
 | `Idle` | `config.min_rent_price` | floor is the configured minimum; time-invariant — `timestamp_ms` unused |
-| `Rented { HandoverOpen }` | `compute_next_rent_price(escrow)` | takeover floor, driven by `last_rent_price`; time-invariant — `timestamp_ms` unused |
-| `Rented { HandoverConfirmed }` | `compute_next_rent_price(escrow)` | supersede floor, driven by the pending bidder's payment (already written to `last_rent_price`); time-invariant — `timestamp_ms` unused |
+| `Rented { HandoverOpen }` | `compute_next_rent_price(escrow, balance::value(&escrow.tenant_stake))` | takeover floor — current tenant's stake is the competitive bar; time-invariant — `timestamp_ms` unused |
+| `Rented { HandoverConfirmed }` | `compute_next_rent_price(escrow, balance::value(&escrow.pending_bid))` | supersede floor — pending bid escalates with each supersede; time-invariant — `timestamp_ms` unused |
 | `AtDutchAuction` | `compute_price_descent(escrow, timestamp_ms)` | current Dutch price at `timestamp_ms`; time-varying |
 | `Retired` | aborts `E_RETIRED_NO_BID` | asset is not rentable — same abort code that `rent()` raises on the same state |
 
@@ -2232,24 +2203,24 @@ New prefixes introduced in this audit:
 
 | # | Description | Expected |
 |---|---|---|
-| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_rent_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated<SomeAsset, C>` events emitted (config first, then asset). Event type tag of `AssetIntegrated` carries both phantom type params — asserts the indexer can recover Asset and CoinType without reading the on-chain object. `AssetIntegrated.asset_id == object::id(&input_asset)` — asserts the wrapped instance is identifiable. |
+| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_acquisition_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated<SomeAsset, C>` events emitted (config first, then asset). Event type tag of `AssetIntegrated` carries both phantom type params — asserts the indexer can recover Asset and CoinType without reading the on-chain object. `AssetIntegrated.asset_id == object::id(&input_asset)` — asserts the wrapped instance is identifiable. |
 | T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. `AssetIntegrated.asset_id == object::id(&input_owner_cap)` — this is the level-1 `OwnerCap`'s ID; JOINing on `owner_cap_id` in `OwnerCapMinted` recovers the level-1 escrow, closing the level-2 → level-1 linkage from events alone. No depth check. |
 
 ### 10.2 `rent` — Idle path
 
 | # | Description | Expected |
 |---|---|---|
-| R1 | Pay exactly `min_rent_price` | State → `Rented(HandoverOpen)`. `last_rent_price == min_rent_price`. `TenantCap` pushed to sender. `RentStarted` event. |
+| R1 | Pay exactly `min_rent_price` | State → `Rented(HandoverOpen)`. `last_acquisition_price == min_rent_price`. `TenantCap` pushed to sender. `RentStarted` event. |
 | R2 | Pay less than `min_rent_price` | Aborts `E_INSUFFICIENT_PAYMENT`. |
-| R3 | Overpay from Idle | Accepted. `last_rent_price == full payment`. State → `Rented(HandoverOpen)`. |
+| R3 | Overpay from Idle | Accepted. `last_acquisition_price == full payment`. State → `Rented(HandoverOpen)`. |
 | R4 | Rent when `retire_flag` set and state was Idle | State was moved to `Retired` by the prior `retire()` call (§4.2 step 6, Idle branch); `apply_pending_transitions` is a no-op here. Dispatch hits the `Retired` arm → aborts `E_RETIRED_NO_BID`. |
 
 ### 10.3 `rent` — AtDutchAuction path
 
 | # | Description | Expected |
 |---|---|---|
-| R5 | Pay exactly `compute_price_descent(now)` | State → `Rented(HandoverOpen)`. `last_rent_price == payment`. `RentStarted{ from_state: AtDutchAuction }`. |
-| R6 | Overpay (e.g. PTB latency) | Accepted. `last_rent_price == full payment`. No refund. |
+| R5 | Pay exactly `compute_price_descent(now)` | State → `Rented(HandoverOpen)`. `last_acquisition_price == payment`. `RentStarted{ from_state: AtDutchAuction }`. |
+| R6 | Overpay (e.g. PTB latency) | Accepted. `last_acquisition_price == full payment`. No refund. |
 | R7 | Underpay | Aborts `E_INSUFFICIENT_PAYMENT`. |
 | R8 | Descent fully elapsed, pay `min_rent_price` | State → `Rented(HandoverOpen)`. |
 
@@ -2338,8 +2309,8 @@ New prefixes introduced in this audit:
 | Q2 | `compute_used_credit` called when state is `AtDutchAuction` | Aborts `E_NOT_RENTED`. |
 | Q3 | `compute_used_credit` called when state is `Retired` | Aborts `E_NOT_RENTED`. |
 | Q4 | `compute_floor_price` called when state is `Idle` | Returns `config.min_rent_price`. |
-| Q5 | `compute_floor_price` called when state is `Rented{HandoverOpen}` | Returns `compute_next_rent_price(escrow)` — equivalent to `price_function::evaluate_price_fn(config.price_function, escrow.last_rent_price)`. |
-| Q6 | `compute_floor_price` called when state is `Rented{HandoverConfirmed}` | Returns `compute_next_rent_price(escrow)`. Since `last_rent_price` already holds the pending bidder's payment, this is the supersede floor, not the takeover floor. |
+| Q5 | `compute_floor_price` called when state is `Rented{HandoverOpen}` | Returns `compute_next_rent_price(escrow, balance::value(&escrow.tenant_stake))`. |
+| Q6 | `compute_floor_price` called when state is `Rented{HandoverConfirmed}` | Returns `compute_next_rent_price(escrow, balance::value(&escrow.pending_bid))` — the supersede floor, driven by the pending bid. |
 | Q7 | `compute_floor_price` called when state is `AtDutchAuction` and `timestamp_ms` within descent window | Returns `compute_price_descent(escrow, timestamp_ms)` — non-abortive, time-dependent. |
 | Q8 | `compute_floor_price` called when state is `AtDutchAuction` after `descent_ceiling` elapsed | Returns `config.min_rent_price` (saturation point of the Dutch descent). |
 | Q9 | `compute_floor_price` called when state is `Retired` | Aborts `E_RETIRED_NO_BID`. Same abort code that `rent()` raises on the same state — one named condition, one constant. |
@@ -2357,7 +2328,7 @@ for `compute_next_rent_price`).
 | # | Description | Expected |
 |---|---|---|
 | F1 | `do_handover` with non-zero `used_credit` | `owner_earnings += 0.90 × used_credit`. One `FeeMessage<C>` posted via `fee_message::post<CoinType>(fee_balance, object::id(escrow), displaced_tenant, escrow.fee_inbox_id, ctx)`, with balance `0.10 × used_credit` and `escrow_id == object::id(escrow)`. `HandoverCompleted` event includes both shares. |
-| F2 | `do_handover` at Dutch Auction bypass (used_credit = last_rent_price) | `remain_credit == 0`, zero push to displaced tenant. Fee and owner share computed on full `last_rent_price`. Fee path as in F1. |
+| F2 | `do_handover` at Dutch Auction bypass (used_credit = last_acquisition_price) | `remain_credit == 0`, zero push to displaced tenant. Fee and owner share computed on full `last_acquisition_price`. Fee path as in F1. |
 | F3 | `do_tenure_expiry` | `owner_earnings += 0.90 × stake`. One `FeeMessage<C>` of `0.10 × stake` constructed + sent as in F1. |
 | F4 | Fee on tiny `used_credit` (`split_fee` floors fee to zero) | `if protocol_fee > 0` guard short-circuits: no split, no `fee_message::post` call, no `FeeMessage<C>` constructed. `owner_share == used_credit`. |
 
@@ -2409,7 +2380,7 @@ mask a regression in the canonical paths.
 |---|---|---|---|---|---|---|
 | M1 | Idle | — | none | Idle | Idle | Cross-ref R1–R3. APT no-op, `install_new_tenant` writes on empty escrow. |
 | M2 | AtDutchAuction | `now < phase_start + descent_ceiling` | none | AtDutchAuction | AtDutchAuction | Cross-ref R5–R7. APT no-op, `compute_price_descent(now)` against preserved `phase_start_ms`. |
-| M3 | AtDutchAuction | `now ≥ phase_start + descent_ceiling` | C3 | Idle | Idle | `AuctionExpired` then `RentStarted(from_state: Idle)`. `last_rent_price` is overwritten by payment inside `install_new_tenant` (do_auction_expiry preserves the stale value per §7.3). |
+| M3 | AtDutchAuction | `now ≥ phase_start + descent_ceiling` | C3 | Idle | Idle | `AuctionExpired` then `RentStarted(from_state: Idle)`. `last_acquisition_price` is overwritten by payment inside `install_new_tenant` (do_auction_expiry preserves the stale value per §7.3). |
 | M4 | Rented(HandoverOpen), no retire_flag | tenure not expired | none | HandoverOpen | HandoverOpen | Cross-ref R9, R10, R12 (success paths). The subtraction `phase_start + tenure_ceiling - now` is u64-safe exactly because C2 did not fire. |
 | M5 | Rented(HandoverOpen) | tenure expired, no retire_flag | C2 | AtDutchAuction | AtDutchAuction | `TenureExpired(AtDutchAuction)` then `RentStarted(from_state: AtDutchAuction)`. `owner_earnings += stake × 0.90`; one `FeeMessage<C>` created and transferred to `fee_inbox_id`. |
 | M6 | Rented(HandoverOpen) | tenure + descent expired, no retire_flag | C2 → C3 | Idle | Idle | `TenureExpired` + `AuctionExpired` + `RentStarted(from_state: Idle)`. |
@@ -2513,8 +2484,8 @@ Similar refinement for §8.2 step 1:
 
 | # | Scenario | Expected |
 |---|---|---|
-| Q17 | `AtDutchAuction`, `timestamp_ms < phase_start_ms` | Returns `last_rent_price` — the "auction has not started yet" guard (step 1), not `min_rent_price` |
-| Q18 | `AtDutchAuction`, `timestamp_ms == phase_start_ms` | `elapsed == 0`, `h == 0`, result `== last_rent_price` |
+| Q17 | `AtDutchAuction`, `timestamp_ms < phase_start_ms` | Returns `last_acquisition_price` — the "auction has not started yet" guard (step 1), not `min_rent_price` |
+| Q18 | `AtDutchAuction`, `timestamp_ms == phase_start_ms` | `elapsed == 0`, `h == 0`, result `== last_acquisition_price` |
 | Q19 | `AtDutchAuction`, `timestamp_ms == phase_start_ms + descent_ceiling` | Curve saturates to `SCALE`, `consumed == spread`, result `== min_rent_price` — exact arithmetic even at the boundary |
 
 ### 10.15 Property → row mapping

@@ -73,15 +73,18 @@ fun mul_div_exact() { assert!(math::mul_div(6, 7, 3) == 14); }
 full transactions with objects, ownership, and events. Slower but required for
 any module that touches Sui objects.
 
-## Exception: `exp_scaled` golden vectors
+## Exception: algorithm-derived golden vectors
 
-`math::exp_scaled` has TBD golden vectors that cannot be known before running
-the algorithm. For this function only:
+`curve_shape` has constants that cannot be known before running the algorithm
+once. For these only:
 
 1. Implement the algorithm first (spec → code)
-2. Run it once to extract the 7 u128 literals
-3. Fix those values as constants in the test
-4. All future changes must reproduce them exactly
+2. Run it once to extract the literals
+3. Fix those values in the spec and test — all future changes must reproduce them exactly
+
+The single bootstrap run that establishes the 7 `exp_scaled` golden vectors
+concurrently pins all 16 `EXP_A_NORM_{1..8}_{POS,NEG}` module-level constants
+and `LOGISTIC_DENOM`. See `curve_shape.spec.md` §11.5, §8, §9.
 
 Every other function follows strict TDD.
 

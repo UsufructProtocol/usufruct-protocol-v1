@@ -20,14 +20,19 @@ concepts, no state, no scaling by principals.
 - `evaluate_curve` — `public(package)` dispatcher. Single entry point for
   evaluating any `CurveShape` at a given (t, t_max) pair. Returns a value in
   [0, SCALE].
+- `TAYLOR_SCALE: u128 = 10^18` and `TAYLOR_SCALE_SQ: u128 = 10^36` — precision
+  constants for the Taylor series kernel. Defined here because `exp_scaled` and
+  `exp_scaled_pos` have no caller outside this module.
+- `exp_scaled` / `exp_scaled_pos` — scaled exponential via Taylor series (K=32).
+  Private helpers used by `eval_exponential` (§8) and `eval_logistic` (§9).
 - `LOGISTIC_K: u64 = 12` and `LOGISTIC_DENOM: u64` — module-level constants.
   Both are hardcoded literals. Move `const` does not support function calls, so
   `LOGISTIC_DENOM` cannot be derived from `exp_scaled` at compile time — its value
   is established by running the algorithm once during initial implementation (same
-  approach as the golden vectors in `math.spec.md`), then fixed as a literal.
+  approach as the `EXP_A_NORM_*` constants below), then fixed as a literal.
 - `EXP_A_NORM_{1..8}_{POS,NEG}` — 16 module-level `const` declarations of
-  algorithm-derived u128 values for the Exponential variant (§7). Same pinning
-  pattern as `LOGISTIC_DENOM`: each depends on `math::exp_scaled`, which Move
+  algorithm-derived u128 values for the Exponential variant (§8). Same pinning
+  pattern as `LOGISTIC_DENOM`: each depends on `exp_scaled_pos` (§7), which Move
   `const` cannot invoke, so the values are produced once during initial
   implementation and fixed as named module-level literals. The private
   `exp_a_norm(alpha_abs, alpha_neg)` function is a pure dispatcher over these
@@ -45,8 +50,7 @@ concepts, no state, no scaling by principals.
   `tenant_stake`, or a spread) — lives in `rental_escrow`. The protocol layer
   validates inputs (state, clamps, `elapsed_ms`) and applies the single
   `mul_div` that scales `evaluate_curve`'s output to a price or credit.
-- Raw arithmetic primitives (`mul_div`, `nth_root_u128`, `exp_scaled`) — those
-  live in `math`.
+- Raw arithmetic primitives (`mul_div`, `nth_root_u128`) — those live in `math`.
 
 **Dependency direction:** `curve_shape` calls `math`. `config` and `rental_escrow`
 call `curve_shape`. `curve_shape` calls nothing outside `math`.
@@ -57,17 +61,24 @@ call `curve_shape`. `curve_shape` calls nothing outside `math`.
 
 All curve evaluations operate on a fixed-point representation with:
 
+    TAYLOR_SCALE:    u128 = 1_000_000_000_000_000_000  (10^18)
+    TAYLOR_SCALE_SQ: u128 = TAYLOR_SCALE * TAYLOR_SCALE   (10^36, fits u128 ✓)
+
     SCALE:      u64  = 1_000_000_000                (10^9)
     SCALE_U128: u128 = SCALE as u128                 (10^9)
     SCALE_SQ:   u128 = SCALE_U128 * SCALE_U128       (10^18, fits u128 ✓)
     SCALE_CB:   u128 = SCALE_SQ   * SCALE_U128       (10^27, fits u128 ✓)
 
+`TAYLOR_SCALE` and `TAYLOR_SCALE_SQ` are internal to the Taylor series kernel
+(§7) and used by `eval_exponential` (§8) and `eval_logistic` (§9) to interpret
+results.
+
 A curve output value `v` in [0, SCALE] represents the rational g(x) = v / SCALE.
 
 The u128 variants are precomputed at module scope to avoid re-materializing
 the cast / multiplication on every `eval_*` call. Used by `eval_smoothstep`
-(§5), `eval_power_law` Step 2 (§6), `eval_exponential` (§7), and
-`eval_logistic` (§8).
+(§5), `eval_power_law` Step 2 (§6), `eval_exponential` (§8), and
+`eval_logistic` (§9).
 
 Intermediates use u128 to avoid overflow. Final results are cast back to u64.
 
@@ -191,7 +202,7 @@ timing, or principals — it only evaluates the curve.
         }
     }
 
-Each `eval_*` function is private to `curve_shape.move` and defined in §4-§8 below.
+Each `eval_*` function is private to `curve_shape.move` and defined in §4-§9 below.
 
 
 4. LINEAR VARIANT
@@ -325,7 +336,76 @@ Maximum u128 ≈ 3.4×10^38 — all cases within bounds. ✓
 This is why alpha_den is restricted to {1, 2, 3, 4}.
 
 
-7. EXPONENTIAL VARIANT
+7. TAYLOR SERIES KERNEL
+-----------------------
+
+`exp_scaled` and `exp_scaled_pos` implement the scaled exponential via Taylor
+series. They live in `curve_shape` because `TAYLOR_SCALE` / `TAYLOR_SCALE_SQ`
+are defined here and they have no caller outside this module. Both functions
+are private — `eval_exponential` (§8) and `eval_logistic` (§9) are the only
+consumers.
+
+### Signatures
+
+    fun exp_scaled(y_num: u64, y_den: u64, neg: bool): u128      // private
+    fun exp_scaled_pos(y_num: u64, y_den: u64): u128             // private
+
+### Semantics
+
+    exp_scaled:     returns floor(e^(y_num/y_den) * TAYLOR_SCALE)  with sign via neg
+    exp_scaled_pos: returns floor(e^(y_num/y_den) * TAYLOR_SCALE)  for y > 0 only
+
+### Sign handling
+
+    exp_scaled:
+        if !neg { exp_scaled_pos(y_num, y_den) }
+        else    { TAYLOR_SCALE_SQ / exp_scaled_pos(y_num, y_den) }
+
+Reciprocal identity: e^(-y) = 1/e^y, so:
+    floor(e^(-y) · TS) = floor(TS² / floor(e^y · TS))
+
+This avoids alternating-sign Taylor series entirely (which would underflow u128).
+Error introduced by the integer division is at most 1 ULP — within the 10^-9 budget.
+
+### Taylor series algorithm for exp_scaled_pos
+
+    K = 32 terms — for |y| ≤ 8, yields relative error < 10^-9.
+    Early exit fires well before k=32 for small y — gas cost increase
+    is only realized near the upper bound (|y| → 8).
+
+    // Hoist loop-invariant casts out of the body.
+    let y_num_128: u128 = y_num as u128
+    let y_den_128: u128 = y_den as u128
+
+    acc: u128 = TAYLOR_SCALE   // term_0 = 1 * TS
+    term: u128 = TAYLOR_SCALE  // running term
+
+    for k in 1..=K:
+        term = term * y_num_128 / (k as u128 * y_den_128)
+        if term == 0: break    // early exit — once term is 0, all subsequent terms are 0
+        acc = acc + term
+
+    return acc
+
+Note: divisor `k * y_den_128` computed in u128 to avoid u64 overflow for large y_den.
+
+### Overflow analysis
+
+    acc     ≤ e^8 · TS ≈ 2981 · 10^18 ≈ 3×10^21          fits u128 ✓
+    term    ≤ peak ≈ e^8 · TS / √(2π·8) ≈ 4.2×10^20      fits u128 ✓
+    term · y_num:
+      Exponential: y_num = alpha_abs · t ≤ 8 · tenure_ceiling
+      Logistic:    y_num = k · |2t − t_max| ≤ 12 · tenure_ceiling
+      For tenure_ceiling ≤ 10^13 ms (~317 years):
+        term · y_num ≤ 4.2×10^20 · 12 · 10^13 = 5.0×10^34  fits u128 ✓
+      u128 max ≈ 3.4×10^38 — safe margin of ~3 orders of magnitude.
+
+### Usage
+
+Called by `eval_exponential` (§8) and `eval_logistic` (§9) within this module.
+
+
+8. EXPONENTIAL VARIANT
 ----------------------
 
     g(x) = (e^(α·x) - 1) / (e^α - 1)
@@ -350,7 +430,7 @@ and therefore the curve shape:
     let a = alpha_abs as u64;   // ∈ [1, 8]
 
     // e^(α·x) · TS — varies per call (depends on t, t_max).
-    let exp_ax = math::exp_scaled(a * t, t_max, alpha_neg);
+    let exp_ax = exp_scaled(a * t, t_max, alpha_neg);
 
     // |e^(α·x) · TS − TS| — magnitude of numerator.
     let num = if alpha_neg {
@@ -364,14 +444,14 @@ and therefore the curve shape:
 
     (num * SCALE_U128 / den) as u64
 
-`TAYLOR_SCALE` is defined in `math` — see math.spec.md §1.
+`TAYLOR_SCALE` is defined in this module (§1).
 
 ### Module-level constants
 
 `|e^α · TS − TS|` depends only on `(alpha_abs, alpha_neg)` — both are fixed
 at construction. The domain is finite: `alpha_abs ∈ [1, 8]`, `alpha_neg ∈
 {true, false}` → 16 pairs total. Following the `LOGISTIC_DENOM` precedent
-(§8), algorithm-derived values that Move `const` cannot compute are pinned
+(§9), algorithm-derived values that Move `const` cannot compute are pinned
 as named `const` declarations at module scope instead of recomputed per call.
 
 Naming convention: `EXP_A_NORM_{alpha_abs}_{POS|NEG}`, where `POS` corresponds
@@ -397,13 +477,13 @@ to `alpha_neg = false` (α > 0) and `NEG` to `alpha_neg = true` (α < 0).
     const EXP_A_NORM_7_NEG: u128 = /* algorithm-derived */;
     const EXP_A_NORM_8_NEG: u128 = /* algorithm-derived */;
 
-Move `const` cannot invoke `math::exp_scaled`, so each literal is produced by
+Move `const` cannot invoke `exp_scaled_pos`, so each literal is produced by
 running the following derivation once per `(alpha_abs, alpha_neg)` pair and
-recording the output (same methodology as `LOGISTIC_DENOM` in §8 and the
-golden vectors in `math.spec.md` §4):
+recording the output (same methodology as `LOGISTIC_DENOM` in §9 and the
+golden vectors in §11.5):
 
     let a = alpha_abs as u64;
-    let exp_a = math::exp_scaled(a, 1, alpha_neg);
+    let exp_a = exp_scaled(a, 1, alpha_neg);
     let norm  = if alpha_neg { TAYLOR_SCALE - exp_a } else { exp_a - TAYLOR_SCALE };
     // record `norm` as the literal for EXP_A_NORM_{alpha_abs}_{POS|NEG}
 
@@ -442,7 +522,7 @@ variant posture that fields carry only definition inputs — derived values
 live alongside `LOGISTIC_DENOM` and `LOGISTIC_SIGMA_FLOOR`.
 
 **Eliminating the per-call Taylor series:** the original formulation called
-`math::exp_scaled(a, 1, neg)` on every evaluation — up to 32 u128
+`exp_scaled(a, 1, neg)` on every evaluation — up to 32 u128
 multiplications and divisions per call. With the table, `eval_exponential`
 runs exactly one Taylor series per call (`exp_ax`), halving the curve's
 evaluation cost on the hot path walked by every lazy-price read.
@@ -456,7 +536,7 @@ alpha_abs = 0 is rejected because e^0 - 1 = 0 makes the denominator zero
 (the limit at α → 0 is linear — use Linear variant instead).
 
 
-8. LOGISTIC VARIANT
+9. LOGISTIC VARIANT
 --------------------
 
     g(x) = (σ(12·(x − 0.5)) − σ(−6)) / LOGISTIC_DENOM
@@ -482,7 +562,7 @@ allowed. `LOGISTIC_DENOM` must be hardcoded as a literal whose value is produced
 running the following derivation once and recording the output (K=32, floor rounding):
 
     let TS: u128  = TAYLOR_SCALE;
-    let ek6: u128 = math::exp_scaled(6, 1, false);   // e^6 · TS  (K=32)
+    let ek6: u128 = exp_scaled_pos(6, 1);   // e^6 · TS  (K=32)
     // (σ(6) − σ(−6)) · SCALE  =  (ek6 − TS) · SCALE / (ek6 + TS)
     LOGISTIC_DENOM = ((ek6 - TS) * SCALE_U128 / (ek6 + TS)) as u64;
 
@@ -507,8 +587,8 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
     };
     let y_den: u64 = 2 * t_max;
 
-    let ey: u128 = math::exp_scaled(y_num_abs, y_den, y_neg);        // e^y · TS
-    let sigma_y: u128 = ey * SCALE_U128 / (ey + TS);                  // σ(y) · SCALE
+    let ey: u128 = exp_scaled(y_num_abs, y_den, y_neg);        // e^y · TS
+    let sigma_y: u128 = ey * SCALE_U128 / (ey + TS);           // σ(y) · SCALE
 
     ((sigma_y - LOGISTIC_SIGMA_FLOOR) * SCALE_U128 / LOGISTIC_DENOM as u128) as u64
 
@@ -524,7 +604,7 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
 `Logistic` has no fields — nothing to validate at construction time.
 
 
-9. MODULE BOUNDARY
+10. MODULE BOUNDARY
 -------------------
 
 `curve_shape.move` exports:
@@ -544,9 +624,11 @@ algorithm-derived value may differ by a few ULP due to floor rounding in
 | `eval_linear(...)` | private | §4 |
 | `eval_smoothstep(...)` | private | §5 |
 | `eval_power_law(...)` | private | §6 |
-| `eval_exponential(...)` | private | §7 |
-| `exp_a_norm(alpha_abs, alpha_neg)` | private | §7 — dispatcher over the 16 `EXP_A_NORM_*` module constants |
-| `eval_logistic(...)` | private | §8 |
+| `exp_scaled(y_num, y_den, neg)` | private | §7 — Taylor kernel with sign dispatch |
+| `exp_scaled_pos(y_num, y_den)` | private | §7 — Taylor series for positive exponent |
+| `eval_exponential(...)` | private | §8 |
+| `exp_a_norm(alpha_abs, alpha_neg)` | private | §8 — dispatcher over the 16 `EXP_A_NORM_*` module constants |
+| `eval_logistic(...)` | private | §9 |
 
 `CurveShape` is defined in this module and embedded in `IntegrationConfig`
 (via `config.move`).
@@ -556,16 +638,16 @@ An integrator builds `CurveShape` values by calling these constructors, then
 passes them to `config::new`, then to `rental_escrow::integrate`.
 Error constants are `public` so the SDK can map abort codes to human-readable messages.
 
-**Depends on:** `math` (for `mul_div`, `nth_root_u128`, `exp_scaled`).
+**Depends on:** `math` (for `mul_div`, `nth_root_u128`).
 
 
-10. TEST CASES
+11. TEST CASES
 --------------
 
-Tests follow the same convention as `math.spec.md` §5: exact values are given
-where derivable from the algorithm by hand; algorithm-derived golden vectors
-are marked `TBD (algorithm-derived)` and must be established by running the
-implementation once and pasting the output back into this spec.
+Tests follow the convention in §11.0: exact values are given where derivable
+from the algorithm by hand; algorithm-derived golden vectors are marked
+`TBD (algorithm-derived)` and must be established by running the implementation
+once and pasting the output back into this spec.
 
 Three categories per function:
 - **Edge cases** — boundary inputs with known exact output
@@ -573,9 +655,9 @@ Three categories per function:
 - **Properties** — invariants that must hold for all valid inputs in the stated domain
 
 
-### 10.0 Test strategy
+### 11.0 Test strategy
 
-**Test module.** `#[test_only] module liquid_renting::curve_shape_tests`.
+**Test module.** `#[test_only] module usufruct::curve_shape_tests`.
 Function names describe the asserted behaviour (e.g.
 `eval_linear_floor_third`, `new_power_law_rejects_alpha_num_zero`).
 
@@ -586,7 +668,7 @@ Function names describe the asserted behaviour (e.g.
 - Constructor abort rows translate as **one
   `#[test, expected_failure(abort_code = curve_shape::E_<NAME>)]` function
   each** — never mixed with success rows in one loop.
-- Dispatcher `evaluate_curve` edge rows in §10.1 run **once per variant**
+- Dispatcher `evaluate_curve` edge rows in §11.1 run **once per variant**
   (Linear, Smoothstep, Logistic, plus one PowerLaw and one Exponential
   seed). The short-circuit (`t == 0`, `t >= t_max`) fires before reaching
   `eval_*`, so the variant identity does not change the result — the loop
@@ -604,6 +686,10 @@ the private helpers expose:
 #[test_only] public fun eval_smoothstep_for_testing(t: u64, t_max: u64): u64
 #[test_only] public fun eval_power_law_for_testing(
     t: u64, t_max: u64, alpha_num: u8, alpha_den: u8): u64
+#[test_only] public fun exp_scaled_for_testing(y_num: u64, y_den: u64, neg: bool): u128
+#[test_only] public fun exp_scaled_pos_for_testing(y_num: u64, y_den: u64): u128
+#[test_only] public fun taylor_scale_for_testing(): u128
+#[test_only] public fun taylor_scale_sq_for_testing(): u128
 #[test_only] public fun eval_exponential_for_testing(
     t: u64, t_max: u64, alpha_abs: u8, alpha_neg: bool): u64
 #[test_only] public fun eval_logistic_for_testing(t: u64, t_max: u64): u64
@@ -620,10 +706,9 @@ below).
 
 **Golden-vector convention.** Rows marked `TBD (algorithm-derived)` hold
 values produced by running the spec algorithm once at K=32 with floor
-rounding, then committing the literal. Same methodology as `math.spec.md`
-§4. Constructor tests for `new_exponential` do not include the cached
-value (`exp_a_norm` lives at module scope, not in the variant field) — see
-§10.5 for the `exp_a_norm_for_testing` lookup tests.
+rounding, then committing the literal. Constructor tests for `new_exponential`
+do not include the cached value (`exp_a_norm` lives at module scope, not in
+the variant field) — see §11.6 for the `exp_a_norm_for_testing` lookup tests.
 
 **Constructor-destructure convention.** For `new_power_law` success rows,
 tests read the stored `(alpha_num, alpha_den)` via a `#[test_only]`
@@ -633,7 +718,7 @@ variants). The helper is the only way to verify gcd normalization
 post-construction without leaking enum fields publicly.
 
 
-### 10.0.1 Constructor success
+### 11.0.1 Constructor success
 
 | `new_*` call | stored variant | note |
 |---|---|---|
@@ -655,7 +740,7 @@ post-construction without leaking enum fields publicly.
 as a predicate over the parametric loop using a Euclid-gcd test helper.
 
 
-### 10.0.2 Constructor abort
+### 11.0.2 Constructor abort
 
 Each row below translates to one dedicated
 `#[test, expected_failure(abort_code = curve_shape::E_<NAME>)]` function.
@@ -677,7 +762,7 @@ only interesting if the implementation reorders the asserts. Flag in Open
 questions, not a test row.
 
 
-### 10.1 `evaluate_curve` — dispatcher edge cases
+### 11.1 `evaluate_curve` — dispatcher edge cases
 
 These apply regardless of the variant passed. The parametric loop runs the
 full cross-product of (variant seed × edge row), i.e. **each row below is
@@ -702,7 +787,7 @@ dispatcher drift (wrong arm, wrong field forwarding) that would not
 surface in any single-variant row.
 
 
-### 10.2 `eval_linear`
+### 11.2 `eval_linear`
 
 #### Golden vectors
 
@@ -722,7 +807,7 @@ surface in any single-variant row.
 - **Midpoint:** `eval_linear(t_max/2, t_max) = SCALE/2` when `t_max` is even
 
 
-### 10.3 `eval_smoothstep`
+### 11.3 `eval_smoothstep`
 
 #### Golden vectors
 
@@ -742,7 +827,7 @@ surface in any single-variant row.
 - **Above linear:** `eval_smoothstep(t) > eval_linear(t)` for `t ∈ (t_max/2, t_max)`
 
 
-### 10.4 `eval_power_law`
+### 11.4 `eval_power_law`
 
 #### Golden vectors — exact (hand-derivable)
 
@@ -783,17 +868,110 @@ algorithm-derived. Establish during initial implementation.
   (constructor reduces 2/4 → 1/2 via gcd)
 
 
-### 10.5 `eval_exponential`
+### 11.5 `exp_scaled` / `exp_scaled_pos`
+
+Tests for the Taylor series kernel (§7). These exercise `exp_scaled` and the
+private `exp_scaled_pos` directly, outside the context of any curve evaluation.
+
+**Test wrappers.** `exp_scaled` and `exp_scaled_pos` are private. Access via
+`exp_scaled_for_testing` and `exp_scaled_pos_for_testing` declared in
+`curve_shape.move` (see §11.0 Private-symbol access). `TAYLOR_SCALE` is
+accessed via `taylor_scale_for_testing()` or the literal
+`1_000_000_000_000_000_000`.
+
+#### Exact case (y = 0)
+
+The Taylor series exits after k=1 (term becomes 0). Result is exact
+regardless of `neg`.
+
+| `y_num` | `y_den` | `neg` | result |
+|---------|---------|-------|--------|
+| 0 | 1 | false | `TAYLOR_SCALE` |
+| 0 | 1 | true | `TAYLOR_SCALE` |
+| 0 | 7 | false | `TAYLOR_SCALE` |
+
+#### Algorithm-derived golden vectors
+
+These values are produced by the §7 algorithm (K = 32 terms, floor rounding
+at every step). They are not the mathematical floor of eʸ · TS — they are
+what the specific integer-arithmetic algorithm produces.
+
+**How to establish:** run the algorithm once; record the output; fix those
+values as constants in the test file. All future changes must reproduce them
+exactly. Concurrently, use the same run to pin `EXP_A_NORM_*` (§8) and
+`LOGISTIC_DENOM` (§9).
+
+| `y_num` | `y_den` | `neg` | expected result | note |
+|---------|---------|-------|-----------------|------|
+| 1 | 1 | false | 2_718_281_828_459_045_226 | **[algorithm-derived]** reference true floor(e¹ · TS) = ..._235 (delta = 9 ULP, within < 10⁻⁹ budget) |
+| 1 | 1 | true  | 367_879_441_171_442_322  | **[algorithm-derived]** mathematical floor is 321; +1 ULP from reciprocal-identity rounding |
+| 1 | 2 | false | **TBD (algorithm-derived)** | **[new]** fractional y = 0.5; exercises `y_den > 1` path of the divisor |
+| 1 | 2 | true  | **TBD (algorithm-derived)** | **[new]** fractional y = 0.5 negative; exercises reciprocal on non-integer exponent |
+| 2 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 2 — e² ≈ 7.389 · TS |
+| 4 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 4 — e⁴ ≈ 54.598 · TS |
+| 8 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 8 — upper bound of §7 overflow analysis; guards the claimed `acc ≤ e⁸ · TS ≈ 3×10²¹` budget |
+| 8 | 1 | true  | **TBD (algorithm-derived)** | **[new]** y = 8 negative — deepest reciprocal division; guards `TAYLOR_SCALE_SQ / exp_scaled_pos(...)` precision at smallest positive result |
+
+The seven `TBD` cells above are established during initial implementation
+by running the K=32 Taylor algorithm once, pasting the resulting `u128`
+literal back into this spec, and committing.
+
+#### Properties
+
+**Seed set S:** `[(1,2), (1,1), (2,1), (3,1), (4,1), (6,1), (8,1), (7,2), (15,2)]`
+— nine rationals spanning (0, 8], deliberately including both integer and
+fractional `y_den` values and the `y = 8` upper bound.
+
+1. **Monotone (pos) [property].** For every adjacent pair `(yᵢ, yᵢ₊₁)` in S
+   after sorting by `y_num / y_den` ascending, assert
+   `exp_scaled_pos_for_testing(yᵢ) < exp_scaled_pos_for_testing(yᵢ₊₁)`.
+   Zero-argument branch (`y = 0`) is covered by the y=0 exact rows above;
+   this property does not include it.
+
+2. **Reciprocal identity (within 1 ULP) [property].** For every `y ∈ S`,
+   assert `pos × neg ∈ [TAYLOR_SCALE_SQ − TAYLOR_SCALE, TAYLOR_SCALE_SQ]`
+   where `pos = exp_scaled_for_testing(y_num, y_den, false)` and
+   `neg = exp_scaled_for_testing(y_num, y_den, true)`. The 1-ULP slack
+   matches the reciprocal-identity error budget stated in §7 "Sign handling".
+
+3. **Precision bound [property].** Not directly testable in Move without a
+   reference `floor(eʸ · TS)` oracle. Deferred to an off-chain check:
+   the initial-implementation trace compares each produced value against a
+   high-precision reference and records the relative error. If any seed in S
+   exceeds `10⁻⁹` relative error, the Taylor-series parameter `K = 32` is
+   insufficient and §7 must be re-budgeted.
+
+4. **[new] [property] Boundary at y = 8.** Assert
+   `exp_scaled_pos_for_testing(8, 1) > 0` and the raw product
+   `exp_scaled_pos_for_testing(8, 1) * 8` (both sides cast `u128`) does not
+   exceed `u128::MAX`. Guards the §7 overflow analysis claim `term · y_num ≤
+   4.2×10²⁰ · 12 · 10¹³ = 5.0×10³⁴ fits u128`.
+
+5. **[new] y = 0 sign-invariance.** Assert
+   `exp_scaled_for_testing(0, 1, false) == exp_scaled_for_testing(0, 1, true) == TAYLOR_SCALE`
+   and `exp_scaled_for_testing(0, 7, false) == TAYLOR_SCALE`. Covered
+   structurally by the "Exact case (y = 0)" table above; listed here to make
+   the property explicit.
+
+#### Input validity note
+
+No abort is defined for out-of-range y. The overflow analysis (§7) guarantees
+correctness only for `y_num/y_den ≤ 8` with `tenure_ceiling ≤ 10¹³ ms`. Inputs
+outside this range are the caller's responsibility (`eval_exponential` and
+`eval_logistic` enforce them via `alpha_abs ∈ [1, 8]` at construction time).
+
+
+### 11.6 `eval_exponential`
 
 #### Precomputed `EXP_A_NORM_*` constants — lookup dispatcher
 
-The 16 module-level `EXP_A_NORM_{1..8}_{POS,NEG}` constants (§7) are
+The 16 module-level `EXP_A_NORM_{1..8}_{POS,NEG}` constants (§8) are
 algorithm-derived — establish all 16 during initial implementation using the
-procedure documented in §7. Correct `EXP_A_NORM_*` values are a precondition
+procedure documented in §8. Correct `EXP_A_NORM_*` values are a precondition
 for the golden vectors below to reproduce.
 
 `exp_a_norm(alpha_abs, alpha_neg)` is a pure dispatcher over these 16
-constants (§7). The test surface has three layers:
+constants (§8). The test surface has three layers:
 
 | `alpha_abs` | `alpha_neg` | result | note |
 |---|---|---|---|
@@ -826,7 +1004,7 @@ Algorithm-derived — establish during initial implementation.
 | **[new]** `1` | `4` | `2` | `false` | TBD (algorithm-derived) | α=+2 convex |
 | **[new]** `1` | `4` | `2` | `true`  | TBD (algorithm-derived) | α=−2 concave; complementary to row above |
 | **[new]** `1` | `4` | `4` | `false` | TBD (algorithm-derived) | mid-range α |
-| **[new]** `1` | `4` | `8` | `false` | TBD (algorithm-derived) | **upper bound** α=+8 — guards §4 math overflow analysis at boundary |
+| **[new]** `1` | `4` | `8` | `false` | TBD (algorithm-derived) | **upper bound** α=+8 — guards §8 math overflow analysis at boundary |
 | **[new]** `1` | `4` | `8` | `true`  | TBD (algorithm-derived) | **upper bound** α=−8 — reciprocal path at depth |
 | **[new]** `1` | `4` | `1` | `true`  | TBD (algorithm-derived) | minimum concave |
 | **[new]** `2` | `4` | `2` | `false` | TBD (algorithm-derived) | midpoint `t = t_max/2` — used in complementarity property pair |
@@ -842,7 +1020,7 @@ Algorithm-derived — establish during initial implementation.
   `eval_exponential(t, t_max, a, true) > eval_linear(t, t_max)` for `t ∈ (0, t_max)`
 - **Complementarity** (mathematically exact, small rounding deviation from integer arithmetic):
   `eval_exponential(t, t_max, a, false) + eval_exponential(t_max-t, t_max, a, true) ≈ SCALE`
-  Proof: `f_α(x) + f_{-α}(1-x) = 1` for all x (see §7). Maximum deviation: a few ULP.
+  Proof: `f_α(x) + f_{-α}(1-x) = 1` for all x (see §8). Maximum deviation: a few ULP.
 
   **[new] [property] Complementarity — seed set C.** Seeds:
   `(t, t_max, alpha_abs) ∈ {(1, 4, 2), (2, 4, 2), (3, 4, 2), (1, 4, 8), (3, 8, 4)}`.
@@ -854,7 +1032,7 @@ Algorithm-derived — establish during initial implementation.
   self-complementary case where the sum must be exactly `2 · eval_mid`.
 
 
-### 10.6 `eval_logistic`
+### 11.7 `eval_logistic`
 
 #### Golden vectors
 
@@ -867,14 +1045,14 @@ Algorithm-derived — establish during initial implementation.
 
 #### Constant derivation tests — `LOGISTIC_DENOM`, `LOGISTIC_SIGMA_FLOOR`
 
-These guard the relationship declared in §8 between the two constants
+These guard the relationship declared in §9 between the two constants
 and prevent a pinned literal for one from drifting out of sync with the
 other.
 
 | Assertion | Note |
 |---|---|
 | **[new] [property]** `2 · logistic_sigma_floor_for_testing() + (logistic_denom_for_testing() as u128) == SCALE_U128` | Algebraic identity from the definition `SIGMA_FLOOR = (SCALE − DENOM) / 2`. Fails if either literal is pinned against a different `exp_scaled` output than the other. |
-| **[new]** `(logistic_denom_for_testing() as i128 − 995_054_750).abs() <= 100` | Reference check: `(σ(6) − σ(−6)) · SCALE ≈ 995_054_750` (§8). 100-ULP tolerance covers floor rounding in `exp_scaled`; tighten at implementation if actual delta is known. Fails if `LOGISTIC_DENOM` is pinned against a wrong exponent (e.g. `k=6` vs `k=12`). |
+| **[new]** `(logistic_denom_for_testing() as i128 − 995_054_750).abs() <= 100` | Reference check: `(σ(6) − σ(−6)) · SCALE ≈ 995_054_750` (§9). 100-ULP tolerance covers floor rounding in `exp_scaled`; tighten at implementation if actual delta is known. Fails if `LOGISTIC_DENOM` is pinned against a wrong exponent (e.g. `k=6` vs `k=12`). |
 
 #### Properties
 
@@ -890,22 +1068,19 @@ other.
 - **Above linear:** `eval_logistic(t) > eval_linear(t)` for `t ∈ (t_max/2, t_max)`
 
 
-### 10.7 Open questions
+### 11.8 Open questions
 
-- **`math::exp_scaled` exposure for `LOGISTIC_DENOM`/`EXP_A_NORM_*`
-  derivation.** The initial-implementation procedure in §7 and §8 runs
-  `math::exp_scaled` once per constant, pastes the literal back into the
-  spec, and commits. If future refactors change `exp_scaled`'s Taylor
-  parameters (K, rounding), every pinned literal in this module must be
-  re-derived. No in-VM test detects the drift — the only guard is the
-  reference-value tolerance check on `LOGISTIC_DENOM`. Flag as a
-  cross-module invariant at review time.
+- **`exp_scaled` parameter drift risk.** If the Taylor series parameters (K,
+  rounding) in §7 are changed, every pinned constant in this module
+  (`EXP_A_NORM_*`, `LOGISTIC_DENOM`) must be re-derived. No in-VM test detects
+  the drift — the only guard is the reference-value tolerance check on
+  `LOGISTIC_DENOM`. Flag as a module-level invariant when changing §7.
 - **Destructure helper visibility.** `power_law_fields_for_testing` needs
   to match on `CurveShape::PowerLaw { .. }`, which requires either
   `#[test_only]` public access to the enum fields or a helper inside
   `curve_shape.move` that exposes them. The strategy above assumes the
   latter. Confirm implementation convention at first use.
-- **Abort-ordering assumption.** The table in §10.0.2 assumes the
+- **Abort-ordering assumption.** The table in §11.0.2 assumes the
   `new_power_law` asserts fire in the order `alpha_num → alpha_den →
   degenerate`. If the implementation chooses a different order, the
   `(0, 0)` / `(0, 5)` style rows would surface a different error code
@@ -916,5 +1091,6 @@ other.
   the initial-implementation trace should let us tighten these. Record
   the observed max deviation in a comment when pasting the golden
   vectors back, and reduce the tolerance to that value + 1 ULP.
-
-
+- **Abort-attribute shape for arithmetic errors.** Move's `arithmetic_error`
+  attribute form — verify against the target Sui framework version at
+  implementation time if any `eval_*` function triggers arithmetic aborts.

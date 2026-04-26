@@ -10,6 +10,7 @@ use std::u64;
 // === Errors ===
 
 const EMulDivOverflow: u64 = 0;
+const ENthRootBadDegree: u64 = 1;
 
 // === Constants ===
 
@@ -35,6 +36,8 @@ public(package) fun mul_div(a: u64, b: u64, c: u64): u64 {
 }
 
 public(package) fun nth_root_u128(n: u128, d: u32): u128 {
+    // Overflow analysis covers d ∈ {2,3,4} only; d ≥ 5 silently returns floor(n^(1/4)).
+    assert!(d >= 2 && d <= 4, ENthRootBadDegree);
     if (n == 0) return 0;
     if (n == 1) return 1;
 

@@ -146,6 +146,18 @@ fun nth_root_u128_table() {
 }
 
 #[test]
+#[expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
+fun nth_root_u128_rejects_degree_above_4() {
+    math::nth_root_u128(100, 5);
+}
+
+#[test]
+#[expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
+fun nth_root_u128_rejects_degree_below_2() {
+    math::nth_root_u128(100, 1);
+}
+
+#[test]
 fun nth_root_u128_largest_perfect_powers() {
     // For each d, exercise the largest perfect d-th power representable in u128
     // and its floor neighbor. The table only goes up to 2^96 for d∈{3,4} and

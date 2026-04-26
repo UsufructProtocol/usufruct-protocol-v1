@@ -69,15 +69,27 @@ public enum CurveShape has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_linear(): CurveShape { abort 0 }
+public fun new_linear(): CurveShape { CurveShape::Linear }
 
-public fun new_smoothstep(): CurveShape { abort 0 }
+public fun new_smoothstep(): CurveShape { CurveShape::Smoothstep }
 
-public fun new_logistic(): CurveShape { abort 0 }
+public fun new_logistic(): CurveShape { CurveShape::Logistic }
 
-public fun new_power_law(_alpha_num: u8, _alpha_den: u8): CurveShape { abort 0 }
+public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShape {
+    assert!(alpha_num >= 1 && alpha_num <= 8, EAlphaNumRange);
+    assert!(alpha_den >= 1 && alpha_den <= 4, EAlphaDenRange);
+    assert!(alpha_num != alpha_den,           EDegenerateLinear);
+    let g = gcd_u8(alpha_num, alpha_den);
+    CurveShape::PowerLaw {
+        alpha_num: alpha_num / g,
+        alpha_den: alpha_den / g,
+    }
+}
 
-public fun new_exponential(_alpha_abs: u8, _alpha_neg: bool): CurveShape { abort 0 }
+public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShape {
+    assert!(alpha_abs >= 1 && alpha_abs <= 8, EAlphaAbsRange);
+    CurveShape::Exponential { alpha_abs, alpha_neg }
+}
 
 // === View Functions ===
 
@@ -104,6 +116,18 @@ fun exp_scaled(_y_num: u64, _y_den: u64, _neg: bool): u128 { abort 0 }
 fun exp_scaled_pos(_y_num: u64, _y_den: u64): u128 { abort 0 }
 
 fun exp_a_norm(_alpha_abs: u8, _alpha_neg: bool): u128 { abort 0 }
+
+// Iterative Euclidean gcd. Move has no recursion.
+fun gcd_u8(a: u8, b: u8): u8 {
+    let mut x = a;
+    let mut y = b;
+    while (y != 0) {
+        let t = y;
+        y = x % y;
+        x = t;
+    };
+    x
+}
 
 // === Test Functions ===
 

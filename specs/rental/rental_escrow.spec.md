@@ -301,6 +301,7 @@ public struct RentStarted has copy, drop {
     escrow_id:        ID,
     tenant_cap_id:    ID,
     price_paid:       u64,     // stake amount transferred to escrow
+    floor_price:      u64,     // minimum required at acquisition time
     from_state:       AssetState,  // Idle or AtDutchAuction
 }
 
@@ -308,6 +309,7 @@ public struct BidPlaced has copy, drop {
     escrow_id:                 ID,
     pending_tenant:            address,
     bid_amount:                u64,
+    floor_price:               u64,   // f_next_rent_price(value(tenant_stake)) at bid time
     handover_countdown_expiry: u64,
 }
 
@@ -317,6 +319,7 @@ public struct BidSuperseded has copy, drop {
     refunded_amount:   u64,
     new_bidder:        address,
     new_bid_amount:    u64,
+    floor_price:       u64,   // f_next_rent_price(value(pending_bid)) at bid time — escalates with each supersede
 }
 
 public struct HandoverCompleted has copy, drop {
@@ -539,6 +542,7 @@ immutable, so there is no update or burn event).
 | **Owner address on `&OwnerCap`-gated ops.** | `RetireFlagSet.owner` and `EarningsWithdrawn.owner` record the cap holder at call time. These ops take the cap by reference — no `OwnerCap*` lifecycle event is co-emitted — so the address is first-observed and PK-unrecoverable. `AssetClaimed` does not carry `owner` because it consumes the cap by value; `OwnerCapBurned.owner` co-emits the same address and is reachable by JOIN on `owner_cap_id` (invariant c). Enables per-human queries (withdraw frequency per owner, multi-cap operators). |
 | **Intent vs settlement on retirement.** | `RetireFlagSet` records the owner's intent (when `retire()` was called, from which settled state). `AssetRetired` records the actual transition to `Retired` — immediate for `from_state ∈ {Idle, AtDutchAuction}`, deferred to the next tenure expiry for `from_state = Rented`. Co-emission matrix: `TenureExpired.next_state = Retired` ⇔ `AssetRetired` with `from_state = Rented` is co-emitted. Both events are needed — `TenureExpired` carries the stake-settlement facts (`owner_share`, `protocol_fee`, tenant), `AssetRetired` carries the pure state-transition fact. |
 | **Price-anchor fields on block-boundary events.** | `HandoverCompleted.new_rent_price` carries the winning bid amount written to `escrow.last_acquisition_price` at handover; `TenureExpired.last_acquisition_price` carries the same field frozen at tenure expiry. Neither is PK-JOIN-recoverable via a single JOIN — recovering the value requires locating the most recent `HandoverCompleted.new_rent_price` or `RentStarted.price_paid` for the escrow (`ORDER BY ts DESC LIMIT 1`). Emitting them in-row makes (a) the takeover-floor query `floor = f_next_rent_price(last_acquisition_price)` answerable from `HandoverCompleted` alone, and (b) the Dutch current price `price(t) = last_acquisition_price − h(t)·(last_acquisition_price − min_rent_price)` answerable from `TenureExpired` + `IntegrationConfigRegistered` alone — no stateful replay in the indexer. Consistent with invariant (c). |
+| **`floor_price` on acquisition and bid events.** | `RentStarted.floor_price`, `BidPlaced.floor_price`, `BidSuperseded.floor_price` carry the minimum required payment at call time. The voluntary premium `price_paid − floor_price` (or `bid_amount − floor_price`) is the core demand signal — invisible without this field. For `RentStarted{AtDutchAuction}` the floor is `compute_price_descent(now)`, which requires a timestamp and curve application to reconstruct off-chain. For `BidPlaced` it requires locating the most recent acquisition price and applying `f_next_rent_price`. For `BidSuperseded` it is `f_next_rent_price(refunded_amount)` — computable from the same row but only with function application. Emitting it directly makes the premium a single-column subtraction on any query engine. |
 | **No envelope dependence.** | Events never require the indexer to join against `SuiEvent.timestampMs` or `SuiEvent.sender` to reconstruct meaning — except for pure wall-clock ordering of immediate events (which the envelope provides for free). |
 | **Cross-module events are self-contained.** | An indexer ingesting only `fee_message` events can answer every fee-message-level question; likewise for each cap module. Cross-module JOINs are always on `escrow_id`, never on implicit co-emission. |
 
@@ -853,7 +857,7 @@ locked balances.
   empty escrow". It handles balance absorption, phase anchor, cap mint and
   push, address registration, and state transition to
   `Rented { HandoverOpen }`.
-- Emit `RentStarted { escrow_id, tenant_cap_id, price_paid,
+- Emit `RentStarted { escrow_id, tenant_cap_id, price_paid, floor_price: floor,
   from_state: AssetState::Idle }`. The tenant address is not carried
   here — it is already recorded on the co-emitted `TenantCapMinted.tenant`
   row and recoverable by JOIN on `tenant_cap_id` (star-schema invariant c).
@@ -862,7 +866,7 @@ locked balances.
 
 - Let `price_paid = coin::value(&payment);`
 - Let `tenant_cap_id = install_new_tenant(escrow, payment, clock, ctx);` — §7.5.
-- Emit `RentStarted { escrow_id, tenant_cap_id, price_paid,
+- Emit `RentStarted { escrow_id, tenant_cap_id, price_paid, floor_price: floor,
   from_state: AssetState::AtDutchAuction }`. Tenant address recoverable
   via JOIN on `tenant_cap_id` into `TenantCapMinted`.
 
@@ -880,7 +884,7 @@ locked balances.
   bidder". Consumes `payment`; returns the bid
   amount for the event:
   - `let bid_amount = register_pending_bid(escrow, payment, pending_tenant, ctx);`
-- Emit `BidPlaced { escrow_id, pending_tenant, bid_amount,
+- Emit `BidPlaced { escrow_id, pending_tenant, bid_amount, floor_price: floor,
   handover_countdown_expiry }` — emit-last: all state mutations and the
   receipt delivery complete, so the escrow's post-state and the sender's
   wallet match the event's semantics.
@@ -912,9 +916,9 @@ exits afterward.
   reset the countdown (design-compact §4).
 - `state` remains `Rented { HandoverConfirmed }`.
 - Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
-  new_bidder, new_bid_amount }` — emit-last: all state rotations, the
-  refund push, and the receipt delivery complete, so the escrow's
-  post-state (new bidder installed, old refunded, new receipt in new
+  new_bidder, new_bid_amount, floor_price: floor }` — emit-last: all state
+  rotations, the refund push, and the receipt delivery complete, so the
+  escrow's post-state (new bidder installed, old refunded, new receipt in new
   bidder's wallet) matches the event's semantics.
 
 ---
@@ -1647,7 +1651,9 @@ caller can emit `BidPlaced` / `BidSuperseded` with the correct amount field.
 **Why the helper does not emit `BidPlaced` / `BidSuperseded`:** the two
 events differ structurally — `BidPlaced` carries `pending_tenant` and
 `handover_countdown_expiry`; `BidSuperseded` carries `displaced_bidder`,
-`refunded_amount`, `new_bidder`, `new_bid_amount`. Their arm-specific
+`refunded_amount`, `new_bidder`, `new_bid_amount`. Both carry `floor_price`,
+which is the `floor` local from `rent()` step 2 — available at the caller,
+not inside the helper. Their arm-specific
 pre-tail setup (countdown computation + state transition for HandoverOpen;
 refund + address rotation for HandoverConfirmed) also differs. Emit-last at
 each caller keeps the event semantic aligned with the full bid-placement
@@ -1935,11 +1941,11 @@ callers that want a live read pass `clock.timestamp_ms()`; frontends
 painting the descent curve pass hypothetical future timestamps; both are
 first-class uses.
 
-**No internal callers.** `rent()` dispatches its own state and calls
-`compute_price_descent` / `compute_next_rent_price` directly as
-`public(package)` — skipping the second dispatch that `compute_floor_price`
-would perform. `compute_floor_price` exists exclusively for external
-callers (SDK, frontend, `devInspectTransactionBlock`).
+**`rent()` is also an internal caller.** `rent()` calls `compute_floor_price`
+at step 2 before the state dispatch — the same function external callers use.
+This guarantees that the floor enforced on-chain and the floor the SDK queries
+are always identical. `compute_floor_price` is therefore both the internal
+enforcement gate and the external read-only query.
 
 **UX note — lifecycle price chart:** a frontend graphing "price to acquire"
 across the full escrow lifecycle calls `compute_floor_price(escrow,
@@ -2576,8 +2582,8 @@ Similar refinement for §8.2 step 1:
 | `apply_pending_transitions(...)` via `devInspectTransactionBlock` | — | Free settled-state read. No consensus, no commit. |
 | `compute_used_credit(...)` | `public` | Read-only. Aborts `E_NOT_RENTED` if state != Rented. |
 | `compute_floor_price(...)` | `public` | Read-only. Dispatches by state — returns min_rent_price (Idle), compute_next_rent_price (Rented), compute_price_descent (AtDutchAuction). Aborts `E_RETIRED_NO_BID` on Retired. |
-| `compute_price_descent(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (AtDutchAuction arm) and `rent()` Case AtDutchAuction. No state guard — structurally guaranteed by callers. |
-| `compute_next_rent_price(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (Rented arms) and `rent()` Cases Rented(HandoverOpen|HandoverConfirmed). No state guard — structurally guaranteed by callers. |
+| `compute_price_descent(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (AtDutchAuction arm). No state guard — structurally guaranteed by caller. |
+| `compute_next_rent_price(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (Rented arms). Takes explicit `price: u64`. No state guard — structurally guaranteed by caller. |
 | `tenure_expiry_ms(...)` | `public(package)` | §8.5 — `phase_start_ms + tenure_ceiling`. Used by `rent()` HandoverOpen and `apply_pending_transitions` Check 2. |
 | `descent_expiry_ms(...)` | `public(package)` | §8.5 — `phase_start_ms + descent_ceiling`. Used by `apply_pending_transitions` Check 3. |
 | `do_handover(...)` | private | §7.1 |

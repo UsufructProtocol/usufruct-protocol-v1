@@ -43,7 +43,15 @@ fun mul_div_table() {
     let len = cases.length();
     while (i < len) {
         let case = &cases[i];
-        assert_eq!(math::mul_div(case.a, case.b, case.c), case.expected);
+        let result = math::mul_div(case.a, case.b, case.c);
+        assert_eq!(result, case.expected);
+        // Invariant: result*c ≤ a*b < (result+1)*c
+        // For u64 inputs, (result+1)*c ≤ 2^64 * (2^64-1) < u128::MAX — no overflow.
+        let ab = (case.a as u128) * (case.b as u128);
+        let r = result as u128;
+        let c = case.c as u128;
+        assert!(r * c <= ab, 0);
+        assert!(ab < (r + 1) * c, 1);
         i = i + 1;
     };
 }
@@ -134,6 +142,29 @@ fun nth_root_u128_table() {
         assert!(pow_u128(result, case.d) <= case.n, 0);
         assert!(upper_bound_holds(case.n, result, case.d), 1);
         i = i + 1;
+    };
+}
+
+#[test]
+fun nth_root_u128_non_power_of_2_roundtrip() {
+    // All large boundary cases in the table use 2^k bases; this guards against
+    // Newton convergence bugs that hide behind power-of-2 alignment.
+    let bases: vector<u128> = vector[7, 13, 100, 1000];
+    let ds: vector<u32> = vector[2, 3, 4];
+    let mut bi = 0;
+    let blen = bases.length();
+    while (bi < blen) {
+        let k = bases[bi];
+        let mut di = 0;
+        let dlen = ds.length();
+        while (di < dlen) {
+            let d = ds[di];
+            let kd = pow_u128(k, d);
+            assert_eq!(math::nth_root_u128(kd, d), k);
+            assert_eq!(math::nth_root_u128(kd - 1, d), k - 1);
+            di = di + 1;
+        };
+        bi = bi + 1;
     };
 }
 

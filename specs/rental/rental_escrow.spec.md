@@ -243,7 +243,7 @@ This is the canonical Move borrow pattern, used internally by
 | `fee_inbox_id` | ID of `ProtocolFeeInbox`. Stored at integrate from `&ProtocolFeeRef`. Passed to `fee_message::post` at each boundary event so the resulting `FeeMessage<C>` carries its routing target. |
 | `integrated_at_ms` | Timestamp at integration. Used to enforce `retire_floor`: `retire()` aborts if `clock.timestamp_ms() < integrated_at_ms + config.retire_floor`. |
 | `state` | Current `AssetState`. |
-| `last_acquisition_price` | Price paid at the most recent acquisition. Written once per cycle by `install_new_tenant` (direct acquisition from `Idle` or `AtDutchAuction`) and by `do_handover` step 5 (handover acquisition). Initialized to `min_rent_price` at `integrate` as a sentinel. Inert in `Rented` states — floor computation reads `tenant_stake` and `pending_bid` directly. Used in `AtDutchAuction` as the descent ceiling: `price_descent(t) = last_acquisition_price − (last_acquisition_price − min_rent_price) · h(t)`. |
+| `last_acquisition_price` | Price paid at the most recent acquisition. Written once per cycle by `install_new_tenant` (direct acquisition from `Idle` or `AtDutchAuction`) and by `do_handover` step 5 (handover acquisition). Initialized to `0` at `integrate` — coherent, since no acquisition has occurred. Never read before the first acquisition. Inert in `Rented` states — floor computation reads `tenant_stake` and `pending_bid` directly. Used in `AtDutchAuction` as the descent ceiling: `price_descent(t) = last_acquisition_price − (last_acquisition_price − min_rent_price) · h(t)`. |
 | `phase_start_ms` | Timestamp at which the current phase began. See §5 for exact assignment per transition. |
 | `current_tenant_cap_id` | `Some(id)` while `state` is `Rented`; `None` otherwise. The live `TenantCap` for the current tenant. Staleness enforced structurally — any other `TenantCap` with the same `escrow_id` fails `object::id(cap) == current_tenant_cap_id`. |
 | `current_tenant_address` | `Some(addr)` while `state` is `Rented`; `None` otherwise. Target of `remain_credit` push at handover. |
@@ -598,7 +598,7 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    construct the escrow with:
    - `asset = option::some(asset)`
    - `state = AssetState::Idle`
-   - `last_acquisition_price = config::min_rent_price(&config)`
+   - `last_acquisition_price = 0`
    - `phase_start_ms = 0`
    - `integrated_at_ms = clock.timestamp_ms()`
    - All remaining `Option` fields `None`, all `Balance` fields `balance::zero()`
@@ -2203,7 +2203,7 @@ New prefixes introduced in this audit:
 
 | # | Description | Expected |
 |---|---|---|
-| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_acquisition_price == config.min_rent_price`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated<SomeAsset, C>` events emitted (config first, then asset). Event type tag of `AssetIntegrated` carries both phantom type params — asserts the indexer can recover Asset and CoinType without reading the on-chain object. `AssetIntegrated.asset_id == object::id(&input_asset)` — asserts the wrapped instance is identifiable. |
+| T1 | `integrate<SomeAsset, C>` with a valid config and fee_ref | Returns `OwnerCap`. `RentalEscrow` shared. `state == Idle`. `last_acquisition_price == 0`. `phase_start_ms == 0`. `integrated_at_ms == clock.timestamp_ms()`. `fee_inbox_id == object::id(&protocol_fee_inbox)`. `IntegrationConfigRegistered` and `AssetIntegrated<SomeAsset, C>` events emitted (config first, then asset). Event type tag of `AssetIntegrated` carries both phantom type params — asserts the indexer can recover Asset and CoinType without reading the on-chain object. `AssetIntegrated.asset_id == object::id(&input_asset)` — asserts the wrapped instance is identifiable. |
 | T2 | `integrate<OwnerCap, C>` (deposit an existing escrow's cap) | Succeeds. Returns a second `OwnerCap` for the wrapping escrow. The wrapped cap becomes the wrapping escrow's `asset`. `AssetIntegrated.asset_id == object::id(&input_owner_cap)` — this is the level-1 `OwnerCap`'s ID; JOINing on `owner_cap_id` in `OwnerCapMinted` recovers the level-1 escrow, closing the level-2 → level-1 linkage from events alone. No depth check. |
 
 ### 10.2 `rent` — Idle path

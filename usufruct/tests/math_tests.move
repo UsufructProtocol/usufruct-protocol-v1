@@ -146,6 +146,34 @@ fun nth_root_u128_table() {
 }
 
 #[test]
+fun nth_root_u128_largest_perfect_powers() {
+    // For each d, exercise the largest perfect d-th power representable in u128
+    // and its floor neighbor. The table only goes up to 2^96 for d∈{3,4} and
+    // covers u128::MAX (a non-power) for d=2; this fills the perfect-power
+    // ceiling for all three degrees.
+
+    // d = 2: (u64::MAX)^2 = 2^128 - 2^65 + 1, just under u128::MAX.
+    // (k+1)^2 mathematically exceeds u128, so floor remains k for k_sq + 1.
+    let k: u128 = u64::max_value!() as u128;
+    let k_sq = k * k;
+    assert_eq!(math::nth_root_u128(k_sq, 2), k);
+    assert_eq!(math::nth_root_u128(k_sq - 1, 2), k - 1);
+    assert_eq!(math::nth_root_u128(k_sq + 1, 2), k);
+
+    // d = 3: (2^42)^3 = 2^126.
+    let cube_base: u128 = 1u128 << 42;
+    let cube_n = pow_u128(cube_base, 3);
+    assert_eq!(math::nth_root_u128(cube_n, 3), cube_base);
+    assert_eq!(math::nth_root_u128(cube_n - 1, 3), cube_base - 1);
+
+    // d = 4: (2^31)^4 = 2^124.
+    let q_base: u128 = 1u128 << 31;
+    let q_n = pow_u128(q_base, 4);
+    assert_eq!(math::nth_root_u128(q_n, 4), q_base);
+    assert_eq!(math::nth_root_u128(q_n - 1, 4), q_base - 1);
+}
+
+#[test]
 fun nth_root_u128_non_power_of_2_roundtrip() {
     // All large boundary cases in the table use 2^k bases; this guards against
     // Newton convergence bugs that hide behind power-of-2 alignment.

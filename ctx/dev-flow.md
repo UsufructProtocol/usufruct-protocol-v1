@@ -31,16 +31,25 @@ Bottom-up order is **required by the compiler**: a test that imports a
 non-existent module is a build error. Implement dependencies before
 their dependents.
 
-Module order:
+Modules with no shared dependency can be implemented in parallel.
+The dependency graph produces five waves:
 
-    math → curve_shape → price_function
-                       → config
-                       → owner_cap
-                       → tenant_cap
-                       → payment_receipt
-                       → protocol_fee_inbox → fee_message
-                       → rental_escrow
-                       → usufruct (root)
+    Wave 1 — no dependencies (fully parallel):
+        math · owner_cap · tenant_cap · payment_receipt · protocol_fee_inbox
+
+    Wave 2 — unblocked after their respective Wave 1 deps:
+        curve_shape    (needs math)
+        price_function (needs math)
+        fee_message    (needs protocol_fee_inbox)
+
+    Wave 3 — after curve_shape + price_function:
+        config
+
+    Wave 4 — after all above:
+        rental_escrow
+
+    Wave 5 — final:
+        usufruct
 
 ## Move constants are module-internal
 

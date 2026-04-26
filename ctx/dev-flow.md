@@ -15,11 +15,11 @@ to the extent the specs and tests cover it.
 The correct TDD cycle for Move is **stubs before tests**:
 
 1. Write function stubs in `<module>.move` (`abort 0`, params prefixed `_`)
-2. `sui move build` → compiles clean
+2. `sui move build` → compiles clean → **commit**
 3. Write tests in `<module>_tests.move`
-4. `sui move test` → focused errors, all in the test code
+4. `sui move build` → compiles clean; `sui move test` → failures only from stub `abort 0`, no syntax errors → **commit**
 5. Implement function by function
-6. `sui move test` → green
+6. `sui move test` → green → **commit**
 
 **Why stubs first, not tests first:**
 Writing tests before stubs produces errors mixing "unbound module member"

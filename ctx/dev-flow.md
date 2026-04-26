@@ -10,14 +10,26 @@ sui move test    # suite is the second
 No REPL, no hot-reload. If it compiles and tests pass, the module is correct
 to the extent the specs and tests cover it.
 
-## Strategy: TDD, bottom-up
+## Strategy: stubs-first TDD, bottom-up
 
-Write tests first, implement second. The specs already enumerate test cases as
-tables — TDD here is mechanical translation, not design.
+The correct TDD cycle for Move is **stubs before tests**:
+
+1. Write function stubs in `<module>.move` (`abort 0`, params prefixed `_`)
+2. `sui move build` → compiles clean
+3. Write tests in `<module>_tests.move`
+4. `sui move test` → focused errors, all in the test code
+5. Implement function by function
+6. `sui move test` → green
+
+**Why stubs first, not tests first:**
+Writing tests before stubs produces errors mixing "unbound module member"
+noise with actual test problems — impossible to act on. With stubs in place
+the compiler only reports real test issues, and design problems surface as
+single clear errors.
 
 Bottom-up order is **required by the compiler**: a test that imports a
-non-existent module is a build error, not a red test. Implement dependencies
-before their dependents.
+non-existent module is a build error. Implement dependencies before
+their dependents.
 
 Module order:
 
@@ -30,15 +42,23 @@ Module order:
                        → rental_escrow
                        → usufruct (root)
 
-## Move-specific TDD nuance
+## Move constants are module-internal
 
-"Red" has two phases in Move:
+`const` in Move has no visibility modifier — constants cannot be accessed
+from outside the declaring module. `public const` does not exist and does
+not compile.
 
-1. Test references a non-existent function → **build error** (expected)
-2. Write a stub signature → compiles → test **fails at runtime** (true red)
-3. Implement → test passes
+Specs that mark constants as `public` mean "externally visible" —
+implement as getter functions in `=== View Functions ===`.
 
-Phase 1 is normal. Don't be surprised by it.
+**Exception — test attributes:** constants from another module can be
+referenced in `#[expected_failure(abort_code = ...)]` attributes. This is
+a compiler convenience for tests only, not general cross-module access.
+
+```move
+#[expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
+fun my_test() { ... }
+```
 
 ## Two kinds of tests
 

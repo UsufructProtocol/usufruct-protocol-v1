@@ -3,7 +3,7 @@ PROTOCOL FEE INBOX MODULE — SPECIFICATION
 
 Module: `protocol_fee_inbox`
 Design reference: design-compact.md §3 (fund flows — protocol fee)
-Module map reference: module-map.spec.md §9
+Module map reference: module-map.spec.md §8
 Depends on: nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`)
 
 

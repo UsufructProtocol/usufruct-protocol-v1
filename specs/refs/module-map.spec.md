@@ -420,7 +420,7 @@ dependency graph above. Protocol state-machine events are specified in
 
 ---
 
-### 9. `protocol_fee_inbox.move` — Protocol fee inbox
+### 8. `protocol_fee_inbox.move` — Protocol fee inbox
 
 **Responsibility:** `ProtocolFeeInbox` singleton and `ProtocolFeeRef` frozen pointer.
 `ProtocolFeeInbox` is the transfer-to-object target for all `FeeMessage<C>` objects
@@ -455,7 +455,7 @@ inbox's ID — passed to `integrate` by any integrator without consensus overhea
 
 ---
 
-### 10. `fee_message.move` — Protocol fee message and drain
+### 9. `fee_message.move` — Protocol fee message and drain
 
 **Responsibility:** `FeeMessage<C>` per-boundary-event fee object, and all
 fund-routing logic: `send_fee` creates and routes to the inbox at each boundary;
@@ -494,7 +494,7 @@ both lifecycle events.
 
 ---
 
-### 11. `rental_escrow.move` — Core escrow and public API
+### 10. `rental_escrow.move` — Core escrow and public API
 
 **Responsibility:** The central shared object, state machine, lazy evaluation,
 all public entry points, and fund distribution logic.
@@ -537,7 +537,7 @@ functions.
 | Function | Visibility | Summary |
 |---|---|---|
 | `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `inbox_id(fee_ref)` and stores it as `fee_inbox_id`. Accepts `&Clock` — reads `clock.timestamp_ms()` and stores it as `integrated_at_ms` (used by `retire_floor` enforcement). Returns `OwnerCap`. |
-| `rent` | `public` | Single entry point to become tenant or place a bid. Returns `(Option<TenantCap>, Option<PaymentTicket>)` — exactly one slot is `Some` per non-`Retired` state. Calls `apply_pending_transitions()` first, then dispatches by state: **Idle** — pays `min_rent_price`, builds and **returns** `TenantCap` by value in the first slot. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Returns `TenantCap` in the first slot. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`, builds and **returns** a symbolic `PaymentTicket` in the second slot (no protocol authority). Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push to the placer's address-of-record), overwrites `pending_tenant_address`, builds and returns a fresh `PaymentTicket` in the second slot (no protocol authority; the displaced bidder keeps the ticket from their own prior `rent()` call). `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
+| `rent` | `public` | Single entry point to become tenant or place a bid. Returns the bidder's `TenantCap` by value in **every** non-`Retired` state — under eager minting the cap is built at bid time, even if the bid will be promoted to tenancy lazily by a later `do_handover`. Calls `apply_pending_transitions()` first, then dispatches by state: **Idle** — pays `min_rent_price`, mints `TenantCap`, registers it in `current_tenant_cap_id`, returns it. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Same registration / return as Idle. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`, mints `TenantCap` and registers it in `pending_tenant_cap_id` (cap inert under `E_PENDING_TENANT_CAP` until rotation), returns it. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push to the placer's address-of-record), captures the displaced cap ID for the event, overwrites `pending_tenant_address` and `pending_tenant_cap_id` with the new bidder (the displaced cap becomes structurally stale). `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. Returns the post-call `AssetState` so the caller can branch in the same PTB on whether the transition fired immediately (`Retired`) or is deferred (`Rented{*}` for the Rented pre-call states). |
@@ -575,7 +575,7 @@ when a transition logically occurred and when it was executed.
 | `split_fee` | Pure: splits an amount into (amount×0.90, amount×0.10) tuple. |
 | `install_new_tenant` | Shared acquisition path for `rent()` Idle / AtDutchAuction arms: absorb payment into `tenant_stake`, anchor `phase_start_ms = clock.now()`, mint + push `TenantCap`, register addresses, transition to `Rented { HandoverOpen }`. Returns the new `TenantCap` ID so the caller emits `RentStarted` with its arm-specific `from_state`. |
 | `settle_stake_earnings` | Shared stake-settlement tail for `do_handover` and `do_tenure_expiry`: given `principal == balance::value(&escrow.tenant_stake)` and the `payer` address, splits 90/10, routes the fee iff > 0 via `fee_message::post`, drains the remainder into `owner_earnings`. Returns `(owner_share, protocol_fee)` for the caller's event emit. |
-| `register_pending_bid` | Shared pending-bid installation tail for `rent()` Rented arms (HandoverOpen first-bid and HandoverConfirmed supersede): absorbs `payment` into `pending_bid`, writes `last_rent_price`, builds a `PaymentTicket` via `payment_ticket::new`. Returns `(ticket, bid_amount)` — `rent()` surfaces the ticket through its `Option<PaymentTicket>` return slot and uses `bid_amount` for the `BidPlaced` / `BidSuperseded` event emit. |
+| `register_pending_bid` | Shared pending-bid installation tail for `rent()` Rented arms (HandoverOpen first-bid and HandoverConfirmed supersede): absorbs `payment` into `pending_bid`, builds the bidder's `TenantCap` via `tenant_cap::new`, registers its ID in `pending_tenant_cap_id` (overwriting any previous, which becomes stale by exclusion). Returns `(cap, tenant_cap_id, bid_amount)` — `rent()` surfaces the cap through its return to the PTB caller and uses `tenant_cap_id` and `bid_amount` for the `BidPlaced` / `BidSuperseded` event emit. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
 `protocol_fee_inbox`, `fee_message`.

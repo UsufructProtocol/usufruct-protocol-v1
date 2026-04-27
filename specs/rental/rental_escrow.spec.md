@@ -660,12 +660,17 @@ Integrators who want to limit exposure must do so outside the protocol.
         owner_cap: &OwnerCap,
         clock:     &Clock,
         ctx:       &mut TxContext,
-    )
+    ): AssetState
 
 **Visibility:** `public` — callable by the `OwnerCap` holder.
 
 **Purpose:** initiate retirement. Sets `retire_flag`. Does not return the
-asset. Does not mutate balances.
+asset. Does not mutate balances. Returns the post-call `escrow.state` so
+the caller can branch on the outcome inside the same PTB without a
+separate read — `Retired` if the transition fired immediately
+(pre-call state was `Idle` or `AtDutchAuction`), or the original
+`Rented { phase }` if the transition is deferred to the next tenure
+expiry (pre-call state was `Rented`).
 
 **Behavior:**
 1. `assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), E_WRONG_ESCROW_OWNER_CAP);`
@@ -701,10 +706,12 @@ asset. Does not mutate balances.
    state machine has already reached `Retired` (step 7). For the `Rented`
    branch there is no `AssetRetired` here — the transition is deferred to
    `do_tenure_expiry` (§7.2) and emitted there alongside `TenureExpired`.
+10. Return `escrow.state`. Equals the rightmost column of the table
+    below.
 
 **State after `retire` completes:**
 
-| State at call | `retire_flag` | `state` after |
+| State at call | `retire_flag` | `state` after = return value |
 |---|---|---|
 | Idle | true | Retired (immediate) |
 | Rented(HandoverOpen) | true | Rented(HandoverOpen) — tenant runs to tenure_ceiling, then Retired via `do_tenure_expiry` |

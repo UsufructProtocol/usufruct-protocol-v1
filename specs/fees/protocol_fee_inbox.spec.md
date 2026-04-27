@@ -29,7 +29,7 @@ Depends on: nothing (only `sui::object`, `sui::transfer`, `sui::tx_context`)
   Used by `rental_escrow::integrate` to extract and store the fee inbox ID.
   Named after the field it returns — the `&ProtocolFeeRef` parameter
   disambiguates at the call site, matching the peer convention in
-  `owner_cap::escrow_id`, `tenant_cap::escrow_id`, `payment_ticket::escrow_id`.
+  `owner_cap::escrow_id` and `tenant_cap::escrow_id`.
 
 **Does not own:**
 - Any balance or fund logic.
@@ -173,8 +173,7 @@ No external module can obtain `&mut UID` of `ProtocolFeeInbox`.
 **Naming:** the function is named after the field it returns. At every
 call site the `&ProtocolFeeRef` parameter type disambiguates the receiver,
 so no `fee_ref_` prefix is needed. This mirrors the peer getters in
-`owner_cap::escrow_id`, `tenant_cap::escrow_id`, and
-`payment_ticket::escrow_id`.
+`owner_cap::escrow_id` and `tenant_cap::escrow_id`.
 
 
 4. PROPERTIES

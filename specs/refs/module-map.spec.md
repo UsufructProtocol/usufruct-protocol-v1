@@ -174,12 +174,12 @@ liquid_renting = "0x0"
             \    /
              \  /
               \/
-           config   owner_cap   tenant_cap   payment_ticket   protocol_fee_inbox
-               ^         ^           ^             ^                  ^
-                \        |           |             |                  |
-                 \       |           |             |       fee_message
-                  \      |           |             |                  ^
-                   \     |           |             |                 /
+           config   owner_cap   tenant_cap   protocol_fee_inbox
+               ^         ^           ^                  ^
+                \        |           |                  |
+                 \       |           |       fee_message
+                  \      |           |                  ^
+                   \     |           |                 /
                                         rental_escrow
 ```
 
@@ -187,8 +187,6 @@ Arrows point from dependency to dependent.
 `rental_escrow` is the integration point; every other module is independent of it.
 `rental_escrow` also imports `protocol_fee_inbox` directly (for `ProtocolFeeRef` in
 `integrate`) in addition to `fee_message`.
-`payment_ticket` is a leaf like the cap modules — depends only on `sui::object`,
-`sui::transfer`, `std::ascii::String`, `std::type_name`.
 
 **Events:** there is no standalone `events` module. Each module owns its own
 observability — event structs are defined in the module that emits them.
@@ -413,50 +411,12 @@ interpretations of ID mismatches, not cap-intrinsic properties.
 
 ---
 
-### 7. `payment_ticket.move` — Symbolic bid-payment ticket
-
-**Responsibility:** `PaymentTicket` object. Returned by value to the bidder
-at every successful `rent()` call in a `Rented` sub-branch (via `rent`'s
-`Option<PaymentTicket>` return slot), closing the UX asymmetry with the
-`Idle` / `AtDutchAuction` branches (which return a `TenantCap` in the
-other slot). Carries no protocol authority — purely wallet-side.
-
-**Types:**
-
-| Type | Abilities | Notes |
-|---|---|---|
-| `PaymentTicket` | `key + store` | Symmetric with `TenantCap` and `OwnerCap`. Non-generic. |
-
-**`PaymentTicket` fields:**
-- `id: UID`
-- `escrow_id: ID`
-- `amount: u64`
-- `coin_type: std::ascii::String` — canonical type string of `CoinType`, derived at mint.
-- `asset_type: std::ascii::String` — canonical type string of `Asset`, derived at mint.
-
-**Exports:**
-
-| Function | Visibility | Purpose |
-|---|---|---|
-| `new<Asset, CoinType>(escrow_id, amount, ctx): PaymentTicket` | `public(package)` | Pure constructor. Derives `coin_type` / `asset_type` from the generics via `type_name::get<T>().into_string()` and returns the ticket by value. No transfer, no event, no state mutation. Called by `rental_escrow::rent<Asset, CoinType>` in both `Rented { HandoverOpen }` and `Rented { HandoverConfirmed }` sub-branches, after `E_INSUFFICIENT_PAYMENT`. The ticket is surfaced to the bidder through `rent`'s `Option<PaymentTicket>` return slot. |
-| `burn(ticket)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
-
-No error constants. No events (see `payment_ticket.spec.md` §3 for the
-deliberate exclusion from the star schema).
-
-**Status:** [ ] `PaymentTicket` · [ ] `new` · [ ] `burn`
-
-**Depends on:** nothing (only `sui::object`, `std::ascii::String`, `std::type_name`).
-
----
-
-### 8. ~~`events.move`~~ — No standalone events module
+### 7. ~~`events.move`~~ — No standalone events module
 
 Event structs live in the module that emits them. See **Events** note in the
 dependency graph above. Protocol state-machine events are specified in
 `rental_escrow.spec.md`. Cap lifecycle events in `owner_cap.spec.md` and
 `tenant_cap.spec.md`. Fee events in `fee_message.spec.md`.
-`payment_ticket` emits no events by design.
 
 ---
 
@@ -618,7 +578,7 @@ when a transition logically occurred and when it was executed.
 | `register_pending_bid` | Shared pending-bid installation tail for `rent()` Rented arms (HandoverOpen first-bid and HandoverConfirmed supersede): absorbs `payment` into `pending_bid`, writes `last_rent_price`, builds a `PaymentTicket` via `payment_ticket::new`. Returns `(ticket, bid_amount)` — `rent()` surfaces the ticket through its `Option<PaymentTicket>` return slot and uses `bid_amount` for the `BidPlaced` / `BidSuperseded` event emit. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
-`payment_ticket`, `protocol_fee_inbox`, `fee_message`.
+`protocol_fee_inbox`, `fee_message`.
 
 ---
 
@@ -778,16 +738,14 @@ sources/
     config.move                   §4   — IntegrationConfig struct + validation
     owner_cap.move                §5   — OwnerCap object (includes cap lifecycle events)
     tenant_cap.move               §6   — TenantCap object (includes cap lifecycle events)
-    payment_ticket.move          §7   — PaymentTicket symbolic object (no events)
-    protocol_fee_inbox.move       §9   — ProtocolFeeInbox + ProtocolFeeRef
-    fee_message.move              §10  — FeeMessage + send_fee + drain
-    rental_escrow.move            §11  — RentalEscrow shared object + full public API
+    protocol_fee_inbox.move       §8   — ProtocolFeeInbox + ProtocolFeeRef
+    fee_message.move              §9   — FeeMessage + send_fee + drain
+    rental_escrow.move            §10  — RentalEscrow shared object + full public API
 tests/
     math_tests.move
     curve_shape_tests.move
     price_function_tests.move
     config_tests.move
-    payment_ticket_tests.move
     fee_message_tests.move
     rental_escrow_tests.move
 Move.toml
@@ -945,12 +903,11 @@ Build bottom-up following the dependency graph:
 4.  config                    (depends on curve_shape, price_function)
 5.  owner_cap                 (leaf)
 6.  tenant_cap                (leaf)
-7.  payment_ticket           (leaf)
-8.  protocol_fee_inbox        (leaf)
-9.  fee_message               (depends on protocol_fee_inbox)
-10. rental_escrow             (depends on all above)
+7.  protocol_fee_inbox        (leaf)
+8.  fee_message               (depends on protocol_fee_inbox)
+9.  rental_escrow             (depends on all above)
 ```
 
 Steps 2–3 are independent of each other (both depend only on math) and can be built in parallel.
-Steps 5–8 are independent leaves — build in parallel.
-Step 4 (config) waits on steps 2–3. Step 9 waits on step 8. Step 10 waits on all.
+Steps 5–7 are independent leaves — build in parallel.
+Step 4 (config) waits on steps 2–3. Step 8 waits on step 7. Step 9 waits on all.

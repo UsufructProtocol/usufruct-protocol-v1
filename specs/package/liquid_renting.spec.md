@@ -43,10 +43,10 @@ It owns no domain state and defines no business logic.
   `Publisher::from_package<T>()` checks the package ID. A `Publisher`
   claimed from the `LIQUID_RENTING` OTW therefore authorizes operations
   on every type defined in the package — `OwnerCap`, `TenantCap`,
-  `ProtocolFeeInbox`, `PaymentTicket`, and any future type that needs
-  Publisher proof (e.g., `TransferPolicy<T>`, Kiosk rules). A single
-  OTW at the package root is sufficient; per-module OTWs would be
-  redundant and would fragment authority.
+  `ProtocolFeeInbox`, and any future type that needs Publisher proof
+  (e.g., `TransferPolicy<T>`, Kiosk rules). A single OTW at the package
+  root is sufficient; per-module OTWs would be redundant and would
+  fragment authority.
 
 - **Coexists with `protocol_fee_inbox::init`.** A Sui package may declare
   multiple `init` functions — one per module — and all run in the publish
@@ -193,7 +193,7 @@ inspect the resulting state.
 | # | Description | Expected |
 |---|---|---|
 | I1 | `test_scenario::begin(sender)` → `init_for_testing(ctx)` → `next_tx(sender)` | `test_scenario::take_from_address<Publisher>(scenario, sender)` yields exactly one `Publisher` object. |
-| I2 | On the taken `Publisher`, assert `sui::package::from_package<T>(&publisher)` for every protocol type | Returns `true` for `OwnerCap`, `TenantCap`, `ProtocolFeeInbox`, `ProtocolFeeRef`, `PaymentTicket`, and `RentalEscrow<A, C>` (any instantiation). Asserts single-Publisher authority covers the full package surface. |
+| I2 | On the taken `Publisher`, assert `sui::package::from_package<T>(&publisher)` for every protocol type | Returns `true` for `OwnerCap`, `TenantCap`, `ProtocolFeeInbox`, `ProtocolFeeRef`, and `RentalEscrow<A, C>` (any instantiation). Asserts single-Publisher authority covers the full package surface. |
 | I3 | Invoke `init_for_testing` twice in the same scenario | Second call produces a second `Publisher`. This is the expected test-helper behavior and does not reflect production: in production, the OTW contract caps claims at one. Property P1 is a structural property of the OTW, not a runtime assertion — documented here to prevent misreading. |
 
 ### 6.2 Publisher usage
@@ -201,7 +201,7 @@ inspect the resulting state.
 | # | Description | Expected |
 |---|---|---|
 | P1 | Use the claimed `Publisher` to call `display_registry::new_with_publisher<OwnerCap>(&mut registry, &mut publisher, ctx)` | Returns `(Display<OwnerCap>, DisplayCap<OwnerCap>)`. Asserts end-to-end Publisher ↔ Display v2 plumbing works. |
-| P2 | Repeat P1 for each of the other three types (`TenantCap`, `ProtocolFeeInbox`, `PaymentTicket`) | All four registrations succeed with the same `Publisher`. Confirms P2 (package-scoped authority) empirically. |
+| P2 | Repeat P1 for each of the other two types (`TenantCap`, `ProtocolFeeInbox`) | All three registrations succeed with the same `Publisher`. Confirms P2 (package-scoped authority) empirically. |
 
 
 7. MODULE BOUNDARY
@@ -241,9 +241,8 @@ by the deployer. It is documented here because the `Publisher` minted in
 | `OwnerCap` | `caps/owner_cap.spec.md` §8 | static |
 | `TenantCap` | `caps/tenant_cap.spec.md` §8 | static |
 | `ProtocolFeeInbox` | `fees/protocol_fee_inbox.spec.md` §8 | static |
-| `PaymentTicket` | `tickets/payment_ticket.spec.md` §8 | template (`{amount}`, `{coin_type}`, `{asset_type}`) |
 
-Each registration returns a `DisplayCap<T>`. All four are transferred to
+Each registration returns a `DisplayCap<T>`. All three are transferred to
 the deployer, preserving the ability to edit the corresponding
 `Display<T>` fields post-deployment (e.g., updating `image_url` when the
 media hosting base URL changes).

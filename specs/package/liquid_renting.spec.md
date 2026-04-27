@@ -241,7 +241,7 @@ by the deployer. It is documented here because the `Publisher` minted in
 | `OwnerCap` | `caps/owner_cap.spec.md` §8 | static |
 | `TenantCap` | `caps/tenant_cap.spec.md` §8 | static |
 | `ProtocolFeeInbox` | `fees/protocol_fee_inbox.spec.md` §8 | static |
-| `PaymentReceipt` | `receipts/payment_receipt.spec.md` §8 | template (`{amount}`, `{coin_type}`, `{asset_type}`) |
+| `PaymentTicket` | `tickets/payment_ticket.spec.md` §8 | template (`{amount}`, `{coin_type}`, `{asset_type}`) |
 
 Each registration returns a `DisplayCap<T>`. All four are transferred to
 the deployer, preserving the ability to edit the corresponding

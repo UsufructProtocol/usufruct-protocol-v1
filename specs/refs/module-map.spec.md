@@ -174,7 +174,7 @@ liquid_renting = "0x0"
             \    /
              \  /
               \/
-           config   owner_cap   tenant_cap   payment_receipt   protocol_fee_inbox
+           config   owner_cap   tenant_cap   payment_ticket   protocol_fee_inbox
                ^         ^           ^             ^                  ^
                 \        |           |             |                  |
                  \       |           |             |       fee_message
@@ -187,7 +187,7 @@ Arrows point from dependency to dependent.
 `rental_escrow` is the integration point; every other module is independent of it.
 `rental_escrow` also imports `protocol_fee_inbox` directly (for `ProtocolFeeRef` in
 `integrate`) in addition to `fee_message`.
-`payment_receipt` is a leaf like the cap modules — depends only on `sui::object`,
+`payment_ticket` is a leaf like the cap modules — depends only on `sui::object`,
 `sui::transfer`, `std::ascii::String`, `std::type_name`.
 
 **Events:** there is no standalone `events` module. Each module owns its own
@@ -387,7 +387,7 @@ Stale caps from displaced tenants are inert.
 
 | Type | Abilities | Notes |
 |---|---|---|
-| `TenantCap` | `key` | Non-transferable (no `store`). |
+| `TenantCap` | `key + store` | Symmetric with `OwnerCap`. Holders may custody / multisig / transfer; the protocol does not police ownership. |
 
 **`TenantCap` fields:**
 - `id: UID`
@@ -397,8 +397,8 @@ Stale caps from displaced tenants are inert.
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `mint_to(escrow_id, tenant, ctx): ID` | `public(package)` | Fused mint + delivery. Constructs the cap, transfers to `tenant`, emits `TenantCapMinted`, returns the cap's `ID`. Called by `rental_escrow::install_new_tenant` (shared body of `rent()` Idle / AtDutchAuction) and `rental_escrow::do_handover` (handover completion). Transfer lives in this module — `transfer::transfer<TenantCap>` only compiles here. |
-| `burn(cap)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned`. |
+| `new(escrow_id, tenant, ctx): (TenantCap, ID)` | `public(package)` | Pure constructor + emitter. Builds the cap, emits `TenantCapMinted { tenant_cap_id, escrow_id, tenant }`, returns `(cap, cap_id)` by value. No transfer. Called by `rental_escrow::install_new_tenant` (return-by-value out of `rent`) and `rental_escrow::do_handover` (which then pushes via `transfer::public_transfer(cap, pending_tenant_address)` — legal under `store`). |
+| `burn(cap, ctx)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant: tx_context::sender(ctx) }` — the burner address is genuinely new information under `store`. |
 | `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow::borrow_asset` to compare against the target escrow's ID inline (abort constants `E_WRONG_ESCROW_TENANT_CAP` and `E_STALE_TENANT_CAP` live in rental_escrow). |
 
 **Error constants:** none. The two gating checks that used to live
@@ -407,26 +407,27 @@ here as `assert_escrow` and `assert_current` have moved to
 constants — "wrong escrow" and "stale" are the consumer's semantic
 interpretations of ID mismatches, not cap-intrinsic properties.
 
-**Status:** [ ] `TenantCap` · [ ] `mint_to` · [ ] `burn` · [ ] `escrow_id`
+**Status:** [ ] `TenantCap` · [ ] `new` · [ ] `burn` · [ ] `escrow_id`
 
 **Depends on:** nothing (only `sui::object`).
 
 ---
 
-### 7. `payment_receipt.move` — Symbolic bid-payment receipt
+### 7. `payment_ticket.move` — Symbolic bid-payment ticket
 
-**Responsibility:** `PaymentReceipt` object. Minted and pushed to the bidder
-at every successful `rent()` call in a `Rented` sub-branch, closing the UX
-asymmetry with the `Idle` / `AtDutchAuction` branches (which already deliver
-`TenantCap` in-tx). Carries no protocol authority — purely wallet-side.
+**Responsibility:** `PaymentTicket` object. Returned by value to the bidder
+at every successful `rent()` call in a `Rented` sub-branch (via `rent`'s
+`Option<PaymentTicket>` return slot), closing the UX asymmetry with the
+`Idle` / `AtDutchAuction` branches (which return a `TenantCap` in the
+other slot). Carries no protocol authority — purely wallet-side.
 
 **Types:**
 
 | Type | Abilities | Notes |
 |---|---|---|
-| `PaymentReceipt` | `key` | Non-transferable (no `store`). Non-generic. |
+| `PaymentTicket` | `key + store` | Symmetric with `TenantCap` and `OwnerCap`. Non-generic. |
 
-**`PaymentReceipt` fields:**
+**`PaymentTicket` fields:**
 - `id: UID`
 - `escrow_id: ID`
 - `amount: u64`
@@ -437,15 +438,15 @@ asymmetry with the `Idle` / `AtDutchAuction` branches (which already deliver
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `mint_to<Asset, CoinType>(escrow_id, amount, recipient, ctx)` | `public(package)` | Fused mint + delivery. Derives `coin_type` / `asset_type` from the generics via `type_name::get<T>().into_string()` and transfers the receipt to `recipient`. No return value. Called by `rental_escrow::rent<Asset, CoinType>` in both `Rented { HandoverOpen }` and `Rented { HandoverConfirmed }` sub-branches, after `E_INSUFFICIENT_PAYMENT`, with `recipient == tx_context::sender(ctx)`. |
-| `burn(receipt)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
+| `new<Asset, CoinType>(escrow_id, amount, ctx): PaymentTicket` | `public(package)` | Pure constructor. Derives `coin_type` / `asset_type` from the generics via `type_name::get<T>().into_string()` and returns the ticket by value. No transfer, no event, no state mutation. Called by `rental_escrow::rent<Asset, CoinType>` in both `Rented { HandoverOpen }` and `Rented { HandoverConfirmed }` sub-branches, after `E_INSUFFICIENT_PAYMENT`. The ticket is surfaced to the bidder through `rent`'s `Option<PaymentTicket>` return slot. |
+| `burn(ticket)` | `public` | Voluntary destroy for gas recovery. No state mutation. |
 
-No error constants. No events (see `payment_receipt.spec.md` §3 for the
+No error constants. No events (see `payment_ticket.spec.md` §3 for the
 deliberate exclusion from the star schema).
 
-**Status:** [ ] `PaymentReceipt` · [ ] `mint_to` · [ ] `burn`
+**Status:** [ ] `PaymentTicket` · [ ] `new` · [ ] `burn`
 
-**Depends on:** nothing (only `sui::object`, `sui::transfer`, `std::ascii::String`, `std::type_name`).
+**Depends on:** nothing (only `sui::object`, `std::ascii::String`, `std::type_name`).
 
 ---
 
@@ -455,7 +456,7 @@ Event structs live in the module that emits them. See **Events** note in the
 dependency graph above. Protocol state-machine events are specified in
 `rental_escrow.spec.md`. Cap lifecycle events in `owner_cap.spec.md` and
 `tenant_cap.spec.md`. Fee events in `fee_message.spec.md`.
-`payment_receipt` emits no events by design.
+`payment_ticket` emits no events by design.
 
 ---
 
@@ -576,7 +577,7 @@ functions.
 | Function | Visibility | Summary |
 |---|---|---|
 | `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `inbox_id(fee_ref)` and stores it as `fee_inbox_id`. Accepts `&Clock` — reads `clock.timestamp_ms()` and stores it as `integrated_at_ms` (used by `retire_floor` enforcement). Returns `OwnerCap`. |
-| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`, mints + pushes a symbolic `PaymentReceipt` to the bidder (no protocol authority). Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`, mints + pushes a symbolic `PaymentReceipt` to the new bidder (no protocol authority; displaced bidder keeps the receipt they minted on their prior bid). `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
+| `rent` | `public` | Single entry point to become tenant. Calls `apply_pending_transitions()` first, then applies sub-logic by state: **Idle** — pays `min_rent_price`, mints + pushes `TenantCap`. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Mints + pushes `TenantCap`. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`, mints + pushes a symbolic `PaymentTicket` to the bidder (no protocol authority). Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push), overwrites `pending_tenant_address`, mints + pushes a symbolic `PaymentTicket` to the new bidder (no protocol authority; displaced bidder keeps the receipt they minted on their prior bid). `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
 | `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
 | `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
 | `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. |
@@ -614,10 +615,10 @@ when a transition logically occurred and when it was executed.
 | `split_fee` | Pure: splits an amount into (amount×0.90, amount×0.10) tuple. |
 | `install_new_tenant` | Shared acquisition path for `rent()` Idle / AtDutchAuction arms: absorb payment into `tenant_stake`, anchor `phase_start_ms = clock.now()`, mint + push `TenantCap`, register addresses, transition to `Rented { HandoverOpen }`. Returns the new `TenantCap` ID so the caller emits `RentStarted` with its arm-specific `from_state`. |
 | `settle_stake_earnings` | Shared stake-settlement tail for `do_handover` and `do_tenure_expiry`: given `principal == balance::value(&escrow.tenant_stake)` and the `payer` address, splits 90/10, routes the fee iff > 0 via `fee_message::post`, drains the remainder into `owner_earnings`. Returns `(owner_share, protocol_fee)` for the caller's event emit. |
-| `register_pending_bid` | Shared pending-bid installation tail for `rent()` Rented arms (HandoverOpen first-bid and HandoverConfirmed supersede): absorbs `payment` into `pending_bid`, writes `last_rent_price`, mints + pushes `PaymentReceipt` to the bidder. Returns `bid_amount` for the caller's `BidPlaced` / `BidSuperseded` event emit. |
+| `register_pending_bid` | Shared pending-bid installation tail for `rent()` Rented arms (HandoverOpen first-bid and HandoverConfirmed supersede): absorbs `payment` into `pending_bid`, writes `last_rent_price`, mints + pushes `PaymentTicket` to the bidder. Returns `bid_amount` for the caller's `BidPlaced` / `BidSuperseded` event emit. |
 
 **Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
-`payment_receipt`, `protocol_fee_inbox`, `fee_message`.
+`payment_ticket`, `protocol_fee_inbox`, `fee_message`.
 
 ---
 
@@ -777,7 +778,7 @@ sources/
     config.move                   §4   — IntegrationConfig struct + validation
     owner_cap.move                §5   — OwnerCap object (includes cap lifecycle events)
     tenant_cap.move               §6   — TenantCap object (includes cap lifecycle events)
-    payment_receipt.move          §7   — PaymentReceipt symbolic object (no events)
+    payment_ticket.move          §7   — PaymentTicket symbolic object (no events)
     protocol_fee_inbox.move       §9   — ProtocolFeeInbox + ProtocolFeeRef
     fee_message.move              §10  — FeeMessage + send_fee + drain
     rental_escrow.move            §11  — RentalEscrow shared object + full public API
@@ -786,7 +787,7 @@ tests/
     curve_shape_tests.move
     price_function_tests.move
     config_tests.move
-    payment_receipt_tests.move
+    payment_ticket_tests.move
     fee_message_tests.move
     rental_escrow_tests.move
 Move.toml
@@ -944,7 +945,7 @@ Build bottom-up following the dependency graph:
 4.  config                    (depends on curve_shape, price_function)
 5.  owner_cap                 (leaf)
 6.  tenant_cap                (leaf)
-7.  payment_receipt           (leaf)
+7.  payment_ticket           (leaf)
 8.  protocol_fee_inbox        (leaf)
 9.  fee_message               (depends on protocol_fee_inbox)
 10. rental_escrow             (depends on all above)

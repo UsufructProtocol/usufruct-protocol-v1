@@ -44,10 +44,11 @@ Liquid Renting Protocol challenges both assumptions. This protocol redefines the
 12. [Protocol Value Capture](#12-protocol-value-capture)
 13. [Attack Vectors and Protocol Resilience](#13-attack-vectors-and-protocol-resilience)
 14. [Integration Design Space](#14-integration-design-space)
-15. [The Native Token Demand Circuit](#15-the-native-token-demand-circuit)
-16. [Scalability Strategy](#16-scalability-strategy)
-17. [The Protocol in Practice](#17-the-protocol-in-practice)
-18. [Glossary](#18-glossary)
+15. [Configuration as Personality](#15-configuration-as-personality)
+16. [The Native Token Demand Circuit](#16-the-native-token-demand-circuit)
+17. [Scalability Strategy](#17-scalability-strategy)
+18. [The Protocol in Practice](#18-the-protocol-in-practice)
+19. [Glossary](#19-glossary)
 
 ---
 
@@ -1184,7 +1185,95 @@ No external authorization from asset systems or currency systems is required. Th
 
 ---
 
-## 15. The Native Token Demand Circuit
+## 15. Configuration as Personality
+
+The protocol is a single, invariant state machine. Idle, Rented, AtDutchAuction, Retired and the transitions between them are fixed; the lazy-settlement algorithm, the 90/10 fee split, the escrow as custodian, and the pull-from-the-bidder mechanism do not change across integrations. What changes — radically — is the **economic product** that emerges. The same engine, dialed differently, behaves like an instant-access pay-per-API surface or like a multi-day fixed-term lease. Configuration is not parametrization at the margins; it is the *personality* of the integration.
+
+### The engine and its dials
+
+The state machine is the engine. The integrator's `IntegrationConfig` exposes the dials. Two parameters dominate temporal personality:
+
+- **`tenure_ceiling`** — the absolute time scale. Milliseconds for code, minutes-to-days for humans. Sets the natural cadence at which Rented blocks turn over.
+- **`handover_floor`** — clamped to `0 ≤ handover_floor ≤ tenure_ceiling`. The protected window during which the current tenant cannot be displaced. The *ratio* `handover_floor / tenure_ceiling ∈ [0, 1]` is the personality dial proper:
+  - `0` collapses the protection: a bid takes over immediately, and combined with PTB clock-fixity the new tenant can `borrow_asset` in the **same transaction** as the bid.
+  - `1` (= `tenure_ceiling`) fully protects the current tenant: every block runs to completion before any handover; bidders queue.
+  - Intermediate values produce a competitive bidding window inside an otherwise-protected tenancy.
+
+Two further dials shape the *economic* personality without altering the temporal one. They are not the focus of this section but always travel with the temporal choice:
+
+- **`credit_curve` and `descent_curve` (CurveShape)** — true curves, functions of elapsed time. `credit_curve` shapes how the current tenant's `tenant_stake` accrues into `used_credit` during their block; `descent_curve` shapes how the Dutch price descends from `last_acquisition_price` to `min_rent_price` during AtDutchAuction.
+- **`price_function` (PriceFunction)** — *not* a curve. A function of the previous price (not of time): `f(price) → next_price`. It defines how `next_rent_price` escalates from the current competitive bar (`tenant_stake` or `pending_bid`) at each takeover or supersede.
+
+The interplay is durable: `price_function` escalates the price during continuous activity (handovers and supersedes); `descent_curve` decays it during dormancy (AtDutchAuction). The two together describe the integration's full pricing dynamics across the demand cycle.
+
+### Two ortogonal axes
+
+The personality of an integration is best understood as the position on a 2-axis plane:
+
+- **Axis 1 — Protection ratio** (`handover_floor / tenure_ceiling`). Defines the *mode*: no protection (machine), partial protection (protected renting), full protection (fixed-time renting).
+- **Axis 2 — Time scale** (`tenure_ceiling` magnitude). Defines the *audience*: milliseconds (code, agents, bots) vs. minutes-to-days (humans).
+
+Not every cell on the plane is sensible. A `tenure_ceiling` of 100 ms with `handover_floor > 0` carves out a protection window no human can act within and no machine needs — it is a coordinate without a use. The three personalities below are the canonical, useful combinations of the two axes.
+
+### Personality A — Machine-oriented (pay-per-API)
+
+```
+tenure_ceiling   = 100 ms .. a few seconds
+handover_floor   = 0
+descent_ceiling  = short, with an aggressive descent_curve
+price_function   = aggressive escalation per takeover
+retire_floor     = 0
+```
+
+Every `rent` call mints a `TenantCap` and the `apply_pending_transitions` invocation at the start of `borrow_asset` rotates that cap to current within the same PTB. The flow `rent → borrow_asset → use → return_asset → burn` resolves atomically, in a single transaction. The integrator effectively exposes a paid API: each PTB pays the current `next_rent_price`, uses the asset once, and exits. Demand is rate-limited monetarily — the price escalates while requests come in and decays via Dutch when they pause. Suits oracle-data access, single-use admin caps, gameplay action slots, transient governance proxy capabilities, and any other "atomic operation behind a meter" use case.
+
+### Personality B — User-oriented protected renting
+
+```
+tenure_ceiling   = minutes .. days
+0 < handover_floor < tenure_ceiling     (typically 5%-25% of tenure_ceiling)
+descent_ceiling  = comparable to handover_floor
+price_function   = moderate escalation
+retire_floor     = meaningful (commitment to tenants)
+```
+
+The current tenant holds the asset for a humanly meaningful block. A bid mid-block opens a competitive `handover_floor` window during which the current tenant retains access, supersedes are possible, and `remain_credit` is refunded fairly at handover. Access is necessarily a separate transaction from the bid (`tx2`) — clock advancement is required for `apply_pending_transitions` to settle. This is the canonical use case the protocol was designed around: an NFT rented for a session, a yield-bearing position rented for a week, a virtual-real-estate parcel rented for a day. Tenants are humans; transitions are infrequent; the protocol's full mechanics — credit ascent, fair displacement, Dutch fallback — are exercised in their natural rhythm.
+
+### Personality C — User-oriented fixed-time renting
+
+```
+tenure_ceiling   = minutes .. days
+handover_floor   = tenure_ceiling
+descent_ceiling  = comparable to tenure_ceiling
+price_function   = moderate escalation
+retire_floor     = significant
+```
+
+The clamp `handover_floor = tenure_ceiling` makes any bid wait the full block before it can take over. The current tenant runs uncontested; bidders queue behind. `remain_credit` is structurally zero at handover (the credit curve always saturates before the clamped countdown elapses). This replicates the traditional fixed-term lease while keeping every other liquid-renting mechanic alive — price escalation across blocks, Dutch fallback when activity stops, fee distribution, on-chain settlement. A tenant cannot be displaced once installed, but the next tenant is being priced and queued in real time. Suits assets where mid-term displacement is undesirable: regulated rights, exclusive-use licenses, items whose value depends on uninterrupted possession.
+
+In the limit `tenure_ceiling = u64::MAX` (or any practically-unreachable value), the model degenerates into a *scarce-asset* configuration: the tenant retains effectively forever and the only exits are voluntary (the tenant releases via supersede only if someone else triggers it, or never) or owner-initiated retire. Useful for assets where the integrator wants to model perpetual stewardship under a price-discovery mechanism.
+
+### Variants worth noting
+
+- **Continuous-auction variant** (machine-oriented sub-mode). Set `tenure_ceiling` very short and `descent_ceiling` very long with an aggressive `descent_curve`. The escrow lives mostly in AtDutchAuction; each tenancy is a brief flash before the next descent begins. The market becomes a continuous Dutch auction over the asset, with `price_function` only spiking the ceiling during contested moments. Useful for true price-discovery markets where every transaction's price is set by the descent at acquisition time.
+
+- **Burst-tolerant hybrid**. Intermediate `tenure_ceiling` (seconds to a minute) with `handover_floor` proportional. Both humans and bots can compete; the protocol's behavior does not have to commit to either audience exclusively.
+
+### The same machine, three products
+
+Across all personalities the invariants hold: the four-state machine, the lazy settlement order (handover → tenure → auction), the 90/10 stake split, the bid refund on supersede, the escrow-as-custodian custody model, the staleness check on `TenantCap`. None of these change. The integrator does not pick a *protocol*; the integrator picks a *config*, and the protocol's behavior reshapes itself around it.
+
+| Personality | `tenure_ceiling` | `handover_floor` | Access in | Audience |
+|---|---|---|---|---|
+| Machine-oriented (pay-per-API) | ms..seconds | `0` | same tx | code / agents |
+| User-oriented protected | minutes..days | `(0, tenure_ceiling)` | next tx | humans |
+| User-oriented fixed-time | minutes..days | `= tenure_ceiling` | next tx (queued) | humans |
+
+The SDK roadmap includes integration-config templates for these canonical personalities — `Config::pay_per_api()`, `Config::protected_renting()`, `Config::fixed_time_renting()` — so an integrator can opt into a known-good combination with a single call and tune from there. The protocol surface remains unchanged; templates are only a developer-experience layer over `config::new_config(...)`.
+
+---
+
+## 16. The Native Token Demand Circuit
 
 The Liquid Renting Protocol accepts any `Coin<T>` as the `payment_token` for a given integration. This design decision — motivated by generality — produces an emergent economic property when an integrating protocol uses its own native token as `payment_token`.
 
@@ -1234,7 +1323,7 @@ The protocol's success and the integrating protocol's token economy are not inde
 
 ---
 
-## 16. Scalability Strategy
+## 17. Scalability Strategy
 
 The Liquid Renting Protocol is designed to scale horizontally. Each integrated asset lives in its own independent `RentalEscrow<Asset, CoinType>` shared object, and operations on different escrows execute in parallel without contention. There is no global shared state in the steady-state critical path — no central treasury, no global registry, no protocol-wide counter. Scalability is a structural property of the object model, not a runtime optimization.
 
@@ -1305,7 +1394,7 @@ Scalability in the Liquid Renting Protocol is not a property bolted on top of th
 
 ---
 
-## 17. The Protocol in Practice
+## 18. The Protocol in Practice
 
 The following instantiations illustrate which protocol mechanic does the work, and what problem it solves that a static rental model could not.
 
@@ -1349,7 +1438,7 @@ The protocol applies because yield optimization is a competitive service: multip
 
 ---
 
-## 18. Glossary
+## 19. Glossary
 
 ### Actors
 

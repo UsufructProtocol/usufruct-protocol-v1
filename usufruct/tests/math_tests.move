@@ -208,6 +208,47 @@ fun nth_root_u128_non_power_of_2_roundtrip() {
     };
 }
 
+#[test]
+fun nth_root_u128_scaled_irrationals() {
+    // Verifies floor(k^(1/d) × SCALE) for non-trivial bases at the protocol's
+    // fixed-point scale. Expected values computed externally with arbitrary-
+    // precision arithmetic; SCALE = 10^9 matches curve_shape::SCALE and is the
+    // largest common scale that fits u128 for d ∈ {2,3,4}.
+    let s2: u128 = 1_000_000_000_000_000_000;                            // 10^18
+    let s3: u128 = 1_000_000_000_000_000_000_000_000_000;                // 10^27
+    let s4: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;    // 10^36
+    let cases = vector[
+        // d = 2: floor(√k × 10^9)
+        NthRootCase { n:  2 * s2, d: 2, expected: 1414213562 },
+        NthRootCase { n:  3 * s2, d: 2, expected: 1732050807 },
+        NthRootCase { n:  5 * s2, d: 2, expected: 2236067977 },
+        NthRootCase { n:  7 * s2, d: 2, expected: 2645751311 },
+        NthRootCase { n: 10 * s2, d: 2, expected: 3162277660 },
+        // d = 3: floor(∛k × 10^9)
+        NthRootCase { n:  2 * s3, d: 3, expected: 1259921049 },
+        NthRootCase { n:  3 * s3, d: 3, expected: 1442249570 },
+        NthRootCase { n:  5 * s3, d: 3, expected: 1709975946 },
+        NthRootCase { n:  7 * s3, d: 3, expected: 1912931182 },
+        NthRootCase { n: 10 * s3, d: 3, expected: 2154434690 },
+        // d = 4: floor(⁴√k × 10^9)
+        NthRootCase { n:  2 * s4, d: 4, expected: 1189207115 },
+        NthRootCase { n:  3 * s4, d: 4, expected: 1316074012 },
+        NthRootCase { n:  5 * s4, d: 4, expected: 1495348781 },
+        NthRootCase { n:  7 * s4, d: 4, expected: 1626576561 },
+        NthRootCase { n: 10 * s4, d: 4, expected: 1778279410 },
+    ];
+    let mut i = 0;
+    let len = cases.length();
+    while (i < len) {
+        let case = &cases[i];
+        let result = math::nth_root_u128(case.n, case.d);
+        assert_eq!(result, case.expected);
+        assert!(pow_u128(result, case.d) <= case.n, 0);
+        assert!(upper_bound_holds(case.n, result, case.d), 1);
+        i = i + 1;
+    };
+}
+
 // result^d, valid for d in {2,3,4} and result in range safe per spec §3
 fun pow_u128(base: u128, d: u32): u128 {
     if (d == 2) base * base

@@ -19,17 +19,14 @@ Depends on: nothing (`sui::object` only)
   displacement — inert, failing the ID check in `rental_escrow`.
 - `new(escrow_id, tenant, ctx): (TenantCap, ID)` — `public(package)`.
   Pure constructor. Builds the cap, emits `TenantCapMinted`, returns
-  `(cap, cap_id)` by value. The caller decides delivery:
-  `rental_escrow::rent` (from Idle, AtDutchAuction) threads the cap
-  out of `rent`'s return tuple (`Option<TenantCap>`) into the PTB —
-  return-by-value composition, the incoming tenant is the present
-  caller; `rental_escrow::do_handover` calls
-  `transfer::public_transfer(cap, pending_tenant_address)` inline —
-  legal because `TenantCap` has `store` and the recipient is absent
-  from the settlement transaction. The `tenant` argument is recorded
-  on `TenantCapMinted.tenant` as a first-observed address — under
-  `store` the cap may change hands later, so this address is the
-  mint-time placer, not necessarily the current holder.
+  `(cap, cap_id)` by value. Called by `rental_escrow::rent` in every
+  state branch (Idle, AtDutchAuction, Rented{HandoverOpen},
+  Rented{HandoverConfirmed}); `rent` always threads the returned cap
+  out to the PTB caller. `do_handover` does **not** call `new` — under
+  the eager-mint model it only rotates IDs in the escrow. The `tenant`
+  argument is recorded on `TenantCapMinted.tenant` as a first-observed
+  address — under `store` the cap may change hands later, so this
+  address is the mint-time placer, not necessarily the current holder.
 - `burn(cap, ctx)` — `public`. Voluntary destroy by current holder for
   gas recovery. No state mutation. The protocol never forces this.
   Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant }` where
@@ -40,19 +37,21 @@ Depends on: nothing (`sui::object` only)
   `OwnerCapBurned.owner`.
 - `escrow_id(cap): ID` — `public`. Getter. Read by
   `rental_escrow::borrow_asset` to compare inline against the target
-  escrow's ID (escrow-match gating). The abort on mismatch
-  (`E_WRONG_ESCROW_TENANT_CAP`) and the staleness abort
-  (`E_STALE_TENANT_CAP`) both live in `rental_escrow` — "wrong
-  escrow" and "stale" are the consumer's semantic interpretations
-  of ID mismatches, not cap-intrinsic properties.
+  escrow's ID (escrow-match gating). The three rental-side abort
+  codes — `E_WRONG_ESCROW_TENANT_CAP`, `E_PENDING_TENANT_CAP`, and
+  `E_STALE_TENANT_CAP` — all live in `rental_escrow`: "wrong
+  escrow", "pending", and "stale" are the consumer's semantic
+  interpretations of ID matches against the escrow's slots, not
+  cap-intrinsic properties.
 - Lifecycle events: `TenantCapMinted`, `TenantCapBurned`. Emitted from
   inside this module (Sui Verifier requires the emitted type to be
   internal to the emitting module).
 
 **Does not own:**
-- Staleness enforcement — a stale cap is inert because its ID no longer
-  matches `escrow.current_tenant_cap_id`. That check lives in
-  `rental_escrow::borrow_asset`, not here.
+- Staleness / pending-state enforcement — a cap's status (current /
+  pending / stale) is determined by comparing its ID against
+  `escrow.current_tenant_cap_id` and `escrow.pending_tenant_cap_id`.
+  Those checks live in `rental_escrow::borrow_asset`, not here.
 - Asset access or fund flows — those live in `rental_escrow`.
 - `AssetReceipt` — hot potato defined inline in `rental_escrow`.
 
@@ -77,59 +76,85 @@ Depends on: nothing (`sui::object` only)
      paternalistic, would break composability and custody for
      legitimate holders, and would defend against fraud the protocol
      has no role in adjudicating.
-- **Lazy minting:** a bid during a Rented state does not mint a cap.
-  `rental_escrow` stores `pending_tenant_address` and mints the cap
-  only when the bidder actually becomes the current tenant — either at
-  `rent()` (Idle, AtDutchAuction) or at handover completion inside
-  `do_handover()`.
-  This avoids creating an object for every bid: in a competitive
-  handover window multiple bidders may supersede each other in rapid
-  succession. Minting a cap per bid would produce many short-lived
-  objects, each paying creation gas and leaving an orphaned stale cap
-  in a wallet that never held actual tenancy. Lazy minting ensures that
-  in practice only identities that were current tenant ever hold a cap
-  — one object, one tenure, no pollution.
-- **Staleness:** at handover, the displaced tenant's cap becomes stale
-  — its object ID no longer matches `escrow.current_tenant_cap_id`.
-  Stale caps are inert: `borrow_asset` rejects them via the ID check.
-  `burn` is the sole exit path, available at the holder's discretion.
-- **Two delivery channels — return-by-value (default) and push (only
-  when the recipient is absent).** `new` always returns `(TenantCap,
-  ID)` by value. Two consumers route the cap differently:
-  - `rental_escrow::rent` (Idle, AtDutchAuction) — the caller is the
-    incoming tenant, present in the same transaction. The cap is
-    threaded out of `rent`'s return tuple (`Option<TenantCap>`) into
-    the PTB. The PTB caller decides where it lands (own wallet,
-    multisig, immediate burn after a one-shot
-    borrow→use→return→burn, further composition).
-  - `rental_escrow::do_handover` — the incoming tenant is the
-    `pending_tenant_address` registered at bid time. They are not in
-    the settlement transaction (any permissionless settler can fire
-    it). The settler must push:
-    `transfer::public_transfer(cap, pending_tenant_address)`. Legal
-    at any call site because `TenantCap : store`.
-  This module no longer carries any transfer logic — `new` is a pure
-  constructor + emitter. The verifier-driven argument that previously
-  forced a fused `mint_to` here ("`transfer::transfer<TenantCap>` only
-  compiles inside the owning module") no longer applies under `store`:
-  `transfer::public_transfer` works from any module for `key + store`
-  types.
-- **TenantCap as signal:** the cap appearing in the wallet is the
-  clearest notification of tenancy. No indexer query or event
-  subscription needed.
+- **Eager minting — one cap per `rent` call.** Every successful
+  `rent` call builds a fresh `TenantCap` and returns it by value to
+  the caller, regardless of pre-call state:
+  - `Idle` / `AtDutchAuction` → cap registered as
+    `escrow.current_tenant_cap_id` (the caller acquires tenancy
+    immediately).
+  - `Rented{HandoverOpen}` (first bid) → cap registered as
+    `escrow.pending_tenant_cap_id` (the caller is bidder-elect; cap is
+    inert until `do_handover` rotates it to current).
+  - `Rented{HandoverConfirmed}` (supersede) → new cap registered as
+    `escrow.pending_tenant_cap_id`, sobreescribiendo el ID del bidder
+    desplazado, cuyo cap pasa automáticamente a stale.
+  This eager model resolves a structural gap of the previous lazy
+  scheme: in `tenure_ceiling`-en-ms regimes, a bidder who depends on
+  `do_handover` to mint+push their cap could never react in time —
+  the cap was born stale or stale-on-arrival. Under eager minting
+  the bidder holds the cap from `rent` onward and can poll
+  `borrow_asset` until the handover settles. The trade-off is that
+  bids that never materialize into tenancy still produce a cap (the
+  bidder pays its creation gas, can `burn` voluntarily). Stale-cap
+  pollution in wallets becomes the responsibility of the holder, not
+  the protocol.
+- **Three states relative to the escrow:** at any moment, a given
+  `TenantCap` is in exactly one of:
+  - **`current`** — `cap.id == escrow.current_tenant_cap_id`.
+    Authorizes `borrow_asset`. Lifecycle: arrived here either from
+    `rent` directly (Idle / AtDutchAuction) or via promotion from
+    `pending` at `do_handover`.
+  - **`pending`** — `cap.id == escrow.pending_tenant_cap_id`.
+    Inert: `borrow_asset` aborts `E_PENDING_TENANT_CAP`. The bidder
+    holds the cap and waits — every PTB attempt aborts cheaply
+    until the handover settles. Polling-friendly. Pending is a
+    transient state: the cap will either be promoted to current
+    (`do_handover`) or fall to stale (supersede by another bidder).
+  - **`stale`** — neither current nor pending. `borrow_asset`
+    aborts `E_STALE_TENANT_CAP`. Reached by: tenure expiry on a
+    formerly-current cap, or supersede on a formerly-pending cap.
+    Permanent — staleness cannot be undone. Holder may `burn` for
+    gas recovery.
+  Trajectories are `pending → current → stale` (winner) or
+  `pending → stale` (loser). A cap never returns to `pending` once
+  promoted or displaced.
+- **Two delivery channels — return-by-value only.** Under eager
+  minting, every cap is constructed in `rent`, which is invoked by
+  the bidder/acquirer themselves. There is no absent recipient: the
+  caller is always the incoming holder. `new` returns `(TenantCap,
+  ID)` by value; `rental_escrow::rent` threads the cap out to the
+  PTB caller, who routes it to its destination (wallet, multisig,
+  immediate burn after a one-shot borrow→use→return→burn, further
+  composition). `do_handover` no longer mints or pushes — it only
+  rotates IDs in the escrow. The verifier-driven argument that once
+  forced a fused `mint_to` ("`transfer::transfer<TenantCap>` only
+  compiles inside the owning module") was already obsolete under
+  `store`, and is now structurally absent: no transfer happens
+  anywhere outside the PTB caller's own routing.
+- **TenantCap as signal — now trinary.** The cap appearing in a
+  wallet is the bidder's first observable feedback — but its
+  meaning depends on which slot of the escrow currently references
+  its ID. A wallet that wishes to show tenancy state to a human
+  must read the escrow and compare; an indexer that tracks "live
+  tenancies" pivots through `RentStarted` and `HandoverCompleted`
+  rather than through `TenantCapMinted` (no longer 1:1 with
+  tenancy). Display V2 cross-load can render the comparison
+  context inline; see §8.
 
 
 1. ERROR CONSTANTS
 ------------------
 
 None. `tenant_cap` has no abort sites: `new` and `burn` are
-unconditional, `escrow_id` is a pure getter. The two gating checks
-that used to abort here (`assert_escrow`, `assert_current`) lived
-only to serve `rental_escrow::borrow_asset`; both have moved to the
-call site as inline asserts with rental-local constants
-(`E_WRONG_ESCROW_TENANT_CAP`, `E_STALE_TENANT_CAP`). The rationale:
-"wrong escrow" and "stale" are the consumer's interpretations of ID
-mismatches, not cap-intrinsic properties.
+unconditional, `escrow_id` is a pure getter. The three gating
+checks that the rental layer performs against caps
+(`E_WRONG_ESCROW_TENANT_CAP`, `E_PENDING_TENANT_CAP`,
+`E_STALE_TENANT_CAP`) all live as inline asserts in
+`rental_escrow::borrow_asset` with rental-local constants. The
+rationale: "wrong escrow", "pending", and "stale" are the
+consumer's interpretations of how a cap's ID compares against the
+escrow's `current_tenant_cap_id` / `pending_tenant_cap_id` slots —
+not cap-intrinsic properties.
 
 
 2. TYPE
@@ -209,10 +234,10 @@ is internal to this module. `event::emit` requires these abilities.
 - `escrow_id` — the `ID` of the `RentalEscrow` this cap was minted
   for. A cap has no meaning independent of its escrow; every
   cap-level consumer needs the pair.
-- `tenant` on `TenantCapMinted` — passed by `rental_escrow::rent`
-  (= `tx_context::sender(ctx)`) or by `do_handover` (= the
-  `pending_tenant_address` registered at bid time). Mint-time
-  first-observed address.
+- `tenant` on `TenantCapMinted` — passed by `rental_escrow::rent` in
+  every state branch (`= tx_context::sender(ctx)`, the bidder /
+  acquirer themselves). `do_handover` does **not** mint caps under
+  the eager-mint model. Mint-time first-observed address.
 - `tenant` on `TenantCapBurned` — `tx_context::sender(ctx)` at burn
   time. Under `key + store` the cap may have been transferred between
   mint and burn (custody handoff, multisig delegation), so the burning
@@ -231,13 +256,24 @@ records genuinely new information. (Contrast with the previous
 `key`-only design, where non-transferability collapsed the two
 addresses into one and `tenant` appeared on Minted only.)
 
-**No `timestamp_ms` field.** The module has no authoritative time to
-report: `new` may be called from a lazy-settlement path whose logical
-moment is in the past (`do_handover` fires at the stored boundary,
-not at `clock.now()`), so wall-clock time would diverge from logical
-event time. Consumers order by checkpoint timestamp + tx position
-(attached by Sui to the envelope for free). The module emits identity
-and address fields only.
+**`TenantCapMinted` is no longer 1:1 with effective tenancy.** Under
+eager minting, every `rent` call produces a `TenantCapMinted` row,
+including bids that never materialize into tenancy (superseded
+before handover). Indexers that count *tenancies* must pivot
+through `RentStarted` (Idle / AtDutchAuction acquisitions) and
+`HandoverCompleted.new_tenant_cap_id` (Rented promotions), not
+through `TenantCapMinted`. The `TenantCapMinted` stream now answers
+"how many bids were placed" — useful in its own right, but a
+distinct metric. The pair `TenantCapMinted ↔ TenantCapBurned` still
+joins by `tenant_cap_id` for cap-object lifecycle questions
+(creation → destruction); both bid-only caps and tenancy caps share
+the same lifecycle shape.
+
+**No `timestamp_ms` field.** The module has no authoritative time
+to report at mint or burn: `new` is called inline from `rent` and
+`burn` from voluntary holder action, both of which the Sui envelope
+already timestamps via checkpoint + tx position. Consumers order by
+those for free; duplicating into the event body would add nothing.
 
 
 4. FUNCTIONS
@@ -271,38 +307,33 @@ the `TenantCap` struct: under `key + store` the holder may change at
 any time, so a stored mint-recipient field would be misleading and
 redundant with `TenantCapMinted.tenant`.
 
-**Why no transfer here:** under `key + store`, both delivery channels
-needed by the protocol are physically expressible without an
-in-module transfer:
+**Why no transfer here:** under eager minting, every cap is built
+inside `rent`, which is invoked by the bidder/acquirer themselves.
+The caller is always present. `new` returns `(cap, ID)` by value;
+`rent` threads the cap out through its return to the PTB caller,
+who routes it (wallet, multisig, immediate burn, further
+composition). No push channel exists — `do_handover` does not mint
+or transfer caps, only rotates IDs in the escrow. The constructor
+stays single-purpose and delivery is the caller's concern.
 
-- **Return-by-value** (Idle, AtDutchAuction acquisition paths) — the
-  caller is the incoming tenant, present in the same transaction. The
-  cap is threaded out of `rent`'s return tuple
-  (`Option<TenantCap>`) into the PTB. The PTB caller decides the
-  destination — wallet, multisig, immediate burn, further composition.
-- **Push from the call site** (`do_handover` settlement) — the
-  recipient is absent. The settler calls
-  `transfer::public_transfer(cap, pending_tenant_address)` directly
-  from `rental_escrow`. Legal under `store` — the verifier's
-  same-module restriction on `transfer::transfer<T>` does not apply
-  to `transfer::public_transfer` for `key + store` types.
+The previous `mint_to` design fused construction and a push that
+was required because `key`-only forced every transfer through this
+module and lazy-mint placed the recipient outside the settlement
+transaction. With `store` and eager mint, neither constraint
+applies.
 
-The previous `mint_to` design fused these two channels because
-`key`-only forced every transfer through this module. With `store`
-that constraint is lifted; the constructor stays single-purpose and
-delivery is the caller's concern.
+**Call sites:** `rental_escrow::rent` only, in every state branch:
 
-**Call sites:**
-- `rental_escrow::rent` (from Idle, AtDutchAuction) — passes
-  `tx_context::sender(ctx)` as `tenant` (the incoming tenant is the
-  PTB caller). Stores the returned `ID` in
-  `escrow.current_tenant_cap_id`; surfaces the cap in the
-  `Option<TenantCap>` slot of `rent`'s return.
-- `rental_escrow::do_handover` — passes `pending_tenant_address` as
-  `tenant` (the incoming tenant is the bid placer, absent from the
-  settlement tx). Stores the returned `ID` in
-  `escrow.current_tenant_cap_id`; pushes the cap with
-  `transfer::public_transfer(cap, pending_tenant_address)`.
+| Pre-call state | `tenant` argument | Caller stores returned ID in |
+|---|---|---|
+| `Idle` | `tx_context::sender(ctx)` | `escrow.current_tenant_cap_id` |
+| `AtDutchAuction` | `tx_context::sender(ctx)` | `escrow.current_tenant_cap_id` |
+| `Rented{HandoverOpen}` | `tx_context::sender(ctx)` | `escrow.pending_tenant_cap_id` |
+| `Rented{HandoverConfirmed}` | `tx_context::sender(ctx)` | `escrow.pending_tenant_cap_id` (overwriting; previous cap auto-stale) |
+
+In every branch the caller is the bidder/acquirer themselves, so
+`tenant` is always `tx_context::sender(ctx)`. The cap is surfaced
+through `rent`'s return to the PTB caller — no push.
 
 ---
 
@@ -354,59 +385,76 @@ minted for.
 
 **Behavior:** returns `cap.escrow_id`.
 
-**Note:** `rental_escrow::borrow_asset` performs two gating checks
+**Note:** `rental_escrow::borrow_asset` performs three gating checks
 inline at the call site:
 ```
-assert!(tenant_cap::escrow_id(cap) == object::id(escrow), E_WRONG_ESCROW_TENANT_CAP);
+assert!(tenant_cap::escrow_id(cap) == object::id(escrow),
+        E_WRONG_ESCROW_TENANT_CAP);
+// pending check (specific case before stale)
+if escrow.pending_tenant_cap_id.is_some()
+   && *escrow.pending_tenant_cap_id.borrow() == object::id(cap):
+    abort E_PENDING_TENANT_CAP;
+// stale (default by exclusion)
 assert!(escrow.current_tenant_cap_id.is_some(), E_STALE_TENANT_CAP);
-assert!(object::id(cap) == *escrow.current_tenant_cap_id.borrow(), E_STALE_TENANT_CAP);
+assert!(object::id(cap) == *escrow.current_tenant_cap_id.borrow(),
+        E_STALE_TENANT_CAP);
 ```
-Both abort constants live in `rental_escrow` — the cap module
+All three abort constants live in `rental_escrow` — the cap module
 exposes only the binding (via `escrow_id`) and lets the consumer
-define what "wrong escrow" and "stale" mean for its own operations.
+define what "wrong escrow", "pending", and "stale" mean for its own
+operations.
 
 
 5. PROPERTIES
 -------------
 
-**P1 — Minted only at tenant transition:**
-    `new` is `public(package)` and called only at `rent()` (Idle,
-    AtDutchAuction) and `do_handover()`. Bids during Rented states do
-    not mint a cap. No orphaned caps from superseded bidders.
+**P1 — Minted on every successful `rent` call:**
+    `new` is `public(package)` and called once per `rent` call in
+    every state branch (Idle, AtDutchAuction, Rented{HandoverOpen},
+    Rented{HandoverConfirmed}). A bid that is later superseded still
+    produced a cap — the bidder retains it (in stale state) until
+    they `burn` voluntarily. `do_handover` does not mint; it only
+    rotates IDs.
 
 **P2 — Transferable by holder, no protocol-side restriction:**
     `key + store`. Holders may custody, multisig, or transfer the cap
     at will. The protocol does not police ownership. The only
     protocol-side exit is `burn`. Symmetric with `OwnerCap`.
 
-**P3 — Staleness is inert, not destructive:**
-    A displaced tenant's cap remains in their wallet but fails the ID
-    check in `borrow_asset`. The protocol never forcibly burns it.
-    `burn` is the holder's opt-in exit for gas recovery. Staleness
-    cannot be revoked or undone — it is a property of `escrow.current_tenant_cap_id`,
-    not of the cap itself.
+**P3 — Three states, one trajectory:**
+    A cap is at any moment in exactly one of `current` / `pending` /
+    `stale`, determined by comparing its ID against
+    `escrow.current_tenant_cap_id` and `escrow.pending_tenant_cap_id`:
+    - `pending → current` on `do_handover` (winner of the handover).
+    - `pending → stale` on supersede (`rent` in HandoverConfirmed
+      overwrites `pending_tenant_cap_id`; the previous cap is now
+      neither current nor pending).
+    - `current → stale` on tenure expiry (`do_tenure_expiry` clears
+      `current_tenant_cap_id`).
+    - Direct `→ current` from Idle / AtDutchAuction acquisitions
+      (the cap never passes through `pending`).
+    Stale is permanent: a cap never re-enters `current` or
+    `pending` once stale. `borrow_asset` aborts
+    `E_PENDING_TENANT_CAP` for pending and `E_STALE_TENANT_CAP` for
+    stale; current authorizes the call.
 
 **P4 — `burn` has no escrow side-effects:**
     Burning a cap does not update any escrow field. The escrow is
     unaware. The only consequence is that the object ceases to exist —
     it can no longer be presented to `borrow_asset`.
 
-**P5 — Two delivery channels, neither inside this module:**
+**P5 — Single delivery channel: return-by-value:**
     `new` is a pure constructor returning `(TenantCap, ID)` by value.
-    Delivery happens at the call site in `rental_escrow`:
-    - **Return-by-value** — `rent()` from Idle/AtDutchAuction threads
-      the cap out of its `Option<TenantCap>` return slot to the PTB
-      caller. The caller is the incoming tenant, present in the same
-      transaction. The PTB decides where the cap lands.
-    - **Push** — `do_handover()` calls
-      `transfer::public_transfer(cap, pending_tenant_address)` inline.
-      The recipient is absent (any permissionless settler may fire
-      `apply_pending_transitions`); push is the only physical option.
-      Legal because `TenantCap : store`.
-    No `transfer::transfer<TenantCap>` exists anywhere in the
-    protocol; under `store` the verifier permits `public_transfer`
-    from any module, so the previous "fused mint+push" pattern is no
-    longer required.
+    Every call site is `rental_escrow::rent`, which surfaces the cap
+    through its return to the PTB caller. The caller is the bidder /
+    acquirer themselves and decides routing — wallet, multisig,
+    immediate `burn` after a one-shot borrow→use→return→burn,
+    further composition. Under eager minting there is no path that
+    requires a push to an absent recipient: every cap is constructed
+    inside the bidder's own transaction. The previous "fused
+    mint+push" pattern, the verifier-driven argument that justified
+    it, and the second push channel through `do_handover` all
+    disappear under this model.
 
 
 6. TEST CASES
@@ -480,11 +528,11 @@ must be present. These checks bundle into predicates
 | N1 | `let (cap, id) = new(escrow_id = @0xE5C1, tenant = ALICE, ctx)`; inspect locally without transferring | `cap.escrow_id == @0xE5C1`, `object::id(&cap) == id`. `num_user_events == 1`. Event `TenantCapMinted { tenant_cap_id: id, escrow_id: @0xE5C1, tenant: ALICE }`. Star-schema predicate passes. The cap is consumed by an in-test `burn(cap, ctx)` to satisfy the `key`-without-`drop` consume requirement. |
 | N2 | Two `new` calls in one tx with same `(escrow_id = @0xE5C1, tenant = ALICE)` | Two distinct `TenantCap` locals with distinct UIDs and distinct returned IDs. `num_user_events == 2`. Two Minted events with distinct `tenant_cap_id` and identical `(escrow_id, tenant)`. Asserts **P1** is structural (§5): this module permits duplicate mints; the "one cap per tenant transition" guarantee lives at `rental_escrow` call sites. |
 | N3 | Two `new` calls with distinct escrow_ids (`@0xE5C1`, `@0xE5C2`) and distinct tenants (ALICE, BOB) | Two locals with the corresponding fields. Two Minted events with matching triples in call order. |
-| N4 | `let (cap, id) = new(@0xE5C1, BOB, ctx)` while sender is ALICE (the `do_handover` case where `tenant != tx_context::sender`) | Event `tenant == BOB` regardless of `tx_context::sender(ctx) == ALICE`. Asserts the `tenant` field is the function argument, not the sender. The cap is then `transfer::public_transfer(cap, BOB)` from the test body to mirror the real `do_handover` flow; next tx retrieves it from BOB's account. |
+| N4 | `let (cap, id) = new(@0xE5C1, BOB, ctx)` while sender is ALICE — the `tenant` argument decoupled from `tx_context::sender` | Event `tenant == BOB` regardless of `tx_context::sender(ctx) == ALICE`. Asserts the `tenant` field is the function argument, not the sender. Under the eager-mint model `rent` always passes `tx_context::sender(ctx)` (so in production tenant == sender always), but the constructor itself does not assume this — defensive against future call sites. The cap is consumed locally via in-test `burn`. |
 | N5 | `new(escrow_id = @0xE5C1, tenant = ZERO, ctx)` (no transfer) | Event `tenant == @0x0`. Cap is a local — never delivered. Documents that `new` does not filter zero addresses; policy lives at `rental_escrow::rent` / `do_handover`. Flag in Open questions. |
 | N6 | `new(escrow_id = @0x0, tenant = ALICE, ctx)` (no transfer) | Local cap with `cap.escrow_id == @0x0`. Event `escrow_id == @0x0`. Asserts `new` imposes no non-zero-ID constraint — integration-time guarantees live at `rental_escrow`. |
 | N7 | Emit-last ordering: `new` → inspect effects in same test | `TenantCapMinted` present in tx effects (emit precedes tx commit). Asserts the spec's step 3 (emit after construction) is honored. Encoded by capturing effects and asserting `num_user_events == 1` immediately after the `new` call. |
-| **[new] N8** | `let (cap, id) = new(@0xE5C1, ALICE, ctx); transfer::public_transfer(cap, BOB)` from the test body — exercises the push channel directly | Asserts the cap is `store`-transferable from outside this module. Next tx retrieves the cap from BOB's account; `cap.escrow_id == @0xE5C1`. Documents **P5** push channel: `do_handover` does this exact pattern in production. |
+| N8 | `let (cap, id) = new(@0xE5C1, ALICE, ctx); transfer::public_transfer(cap, BOB)` from the test body | Asserts the cap is `store`-transferable from any module. Next tx retrieves the cap from BOB's account; `cap.escrow_id == @0xE5C1`. Production does not exercise this path inside the protocol (no module pushes caps), but PTB callers do exactly this when routing the cap returned by `rent` to a destination other than their own wallet (multisig, custody object, etc.). |
 
 ### 6.2 `burn`
 
@@ -547,13 +595,14 @@ abort to test.
   decide whether it lives here (costs §1's "no aborts" posture) or
   stays at `rental_escrow::rent` / `do_handover` / `integrate`.
   Current stance: keep the cap permissive.
-- **Transfer to `@0x0`.** `transfer::public_transfer(cap, @0x0)` executes
-  at the Sui framework layer; the cap becomes irretrievable.
-  `tenant_cap` does not guard against this. If any rental_escrow call
-  site could route a zero address into the push channel, it would
-  create an uncollectable cap and a zombie `current_tenant_cap_id`.
-  Verify during `rental_escrow` audit that `do_handover` guarantees
-  non-zero `pending_tenant_address`.
+- **Transfer to `@0x0`.** `transfer::public_transfer(cap, @0x0)`
+  executes at the Sui framework layer; the cap becomes irretrievable.
+  `tenant_cap` does not guard against this. Under eager minting the
+  cap is always returned by value to the PTB caller; the only push
+  paths are at the caller's discretion (multisig, custody, burn).
+  No protocol-side push exists, so the protocol cannot route a zero
+  address into a delivery — but a PTB author can. This is squarely a
+  caller concern.
 - **Emit-last assertion granularity (N7).** Rows above assert the event
   is present in tx effects but do not assert the *intra-tx ordering*
   of `event::emit` vs the surrounding return-by-value or downstream
@@ -574,22 +623,21 @@ abort to test.
 
 | Symbol | Visibility | Notes |
 |---|---|---|
-| `TenantCap` (type) | `public` | `key + store`. Symmetric with `OwnerCap`. One per tenant transition event. Two delivery channels (return-by-value from `rent`, push from `do_handover`); neither inside this module. |
-| `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. Carries `(tenant_cap_id, escrow_id, tenant)` — `tenant` is the mint-time first-observed address. |
+| `TenantCap` (type) | `public` | `key + store`. Symmetric with `OwnerCap`. One minted per `rent` call (in any state branch), not one per tenancy. Single delivery channel: return-by-value from `rent` to the PTB caller. |
+| `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. Carries `(tenant_cap_id, escrow_id, tenant)` — `tenant` is the mint-time first-observed address. Not 1:1 with effective tenancy under eager minting; indexers count tenancies via `RentStarted` / `HandoverCompleted`. |
 | `TenantCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. Carries `(tenant_cap_id, escrow_id, tenant)` — `tenant` is the burn-time `tx_context::sender(ctx)`. Under `key + store` it may differ from `TenantCapMinted.tenant`. |
-| `new(escrow_id, tenant, ctx): (TenantCap, ID)` | `public(package)` | Pure constructor + emitter. Builds the cap, emits `TenantCapMinted`, returns `(cap, cap_id)` by value. No transfer. Called by `rental_escrow::rent` (return-by-value path) and `rental_escrow::do_handover` (which then pushes via `transfer::public_transfer`). |
+| `new(escrow_id, tenant, ctx): (TenantCap, ID)` | `public(package)` | Pure constructor + emitter. Builds the cap, emits `TenantCapMinted`, returns `(cap, cap_id)` by value. No transfer. Called by `rental_escrow::rent` in every state branch (Idle, AtDutchAuction, Rented{HandoverOpen}, Rented{HandoverConfirmed}). |
 | `burn(cap, ctx)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant: tx_context::sender(ctx) }`. The burning address is genuinely new information under `key + store` and is not PK-recoverable from `TenantCapMinted`. |
-| `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow` at `borrow_asset` to compare against the target escrow's ID inline (abort constants `E_WRONG_ESCROW_TENANT_CAP` and `E_STALE_TENANT_CAP` live in rental_escrow). |
+| `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow` at `borrow_asset` to compare against the target escrow's ID inline (abort constants `E_WRONG_ESCROW_TENANT_CAP`, `E_PENDING_TENANT_CAP`, and `E_STALE_TENANT_CAP` live in rental_escrow). |
 
-**No abort codes exported.** The two gating checks that used to
-live here as `assert_escrow` / `assert_current` have moved to
-`rental_escrow::borrow_asset` as inline asserts with rental-side
-constants — "wrong escrow" and "stale" are the consumer's
-semantics, not the cap's.
+**No abort codes exported.** The three gating checks against caps
+live as inline asserts in `rental_escrow::borrow_asset` with
+rental-side constants — "wrong escrow", "pending", and "stale" are
+the consumer's semantics, not the cap's.
 
 **Depends on:** `sui::object`, `sui::event`. (No `sui::transfer`
-dependency — `new` does not transfer; pushes happen at the call site
-in `rental_escrow` via `transfer::public_transfer`.)
+dependency — `new` does not transfer; the PTB caller routes the cap
+returned by `rent`.)
 
 
 8. OBJECT DISPLAY

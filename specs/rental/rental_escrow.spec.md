@@ -5,9 +5,9 @@ Module: `rental_escrow`
 Design reference: design-compact.md §1 (state machine), §2 (access model),
   §3 (fund flows), §4 (handover countdown), §6 (integration parameters / retire),
   §9 (lazy evaluation)
-Module map reference: module-map.spec.md §11
+Module map reference: module-map.spec.md §10
 Depends on: `math`, `curve_shape`, `price_function`, `config`, `owner_cap`,
-  `tenant_cap`, `payment_ticket`, `protocol_fee_inbox`, `fee_message`
+  `tenant_cap`, `protocol_fee_inbox`, `fee_message`
 
 
 0. MODULE RESPONSIBILITY
@@ -51,14 +51,6 @@ points, and the fund distribution logic for every boundary event.
 - `OwnerCap` / `TenantCap` struct definitions or mint/burn internals —
   live in `owner_cap` / `tenant_cap`. This module calls their constructors and
   destructors.
-- `PaymentTicket` struct and lifecycle — lives in `payment_ticket`. This
-  module calls `payment_ticket::new` in the two `Rented` sub-branches
-  of `rent()` to obtain the ticket by value; `rent` then surfaces it to
-  the PTB caller through its `Option<PaymentTicket>` return slot. No
-  push happens inside `payment_ticket` — `PaymentTicket : key + store`,
-  so return-by-value composition crosses the module boundary directly.
-  The ticket has no protocol power and is invisible to every other call
-  site.
 - `FeeMessage<C>` type or the drain path — lives in `fee_message`. This module
   only calls `fee_message::post` at boundary events where a non-zero
   protocol fee exists; construction, transfer-to-inbox and event emission
@@ -132,7 +124,8 @@ type itself.
     public const E_ASSET_ALREADY_BORROWED:      u64 = 10; // borrow_asset called while asset is already out of escrow
     public const E_WRONG_ESCROW_OWNER_CAP:      u64 = 11; // retire / claim_asset / withdraw_earnings: owner_cap::escrow_id(cap) != object::id(escrow)
     public const E_WRONG_ESCROW_TENANT_CAP:     u64 = 12; // borrow_asset: tenant_cap::escrow_id(cap) != object::id(escrow)
-    public const E_STALE_TENANT_CAP:            u64 = 13; // borrow_asset: current_tenant_cap_id is none, or cap's ID != the one recorded
+    public const E_PENDING_TENANT_CAP:          u64 = 13; // borrow_asset: cap's ID matches escrow.pending_tenant_cap_id (handover not yet settled — caller should retry)
+    public const E_STALE_TENANT_CAP:            u64 = 14; // borrow_asset: cap's ID matches neither current nor pending (displaced or expired — caller should burn)
 
 ### 1.2 Protocol constants
 
@@ -192,9 +185,13 @@ public enum RentPhase has copy, drop, store {
 **Abilities:** `copy + drop + store`. Always carried inside `AssetState::Rented`.
 
 - `HandoverOpen` — no pending tenant. `handover_countdown_expiry` is `None`.
-  `pending_tenant_address` is `None`. `pending_bid` holds zero balance.
+  `pending_tenant_address` is `None`. `pending_tenant_cap_id` is `None`.
+  `pending_bid` holds zero balance.
 - `HandoverConfirmed` — a pending tenant exists. `handover_countdown_expiry`
-  is `Some`. `pending_tenant_address` is `Some`. `pending_bid` is non-zero.
+  is `Some`. `pending_tenant_address` is `Some`. `pending_tenant_cap_id`
+  is `Some` (cap minted at bid time, returned by value to the bidder; held
+  by them until promoted to current at `do_handover` or invalidated by
+  supersede). `pending_bid` is non-zero.
 
 ### 2.3 RentalEscrow — shared struct
 
@@ -209,6 +206,7 @@ public struct RentalEscrow<phantom Asset: key + store, phantom CoinType> has key
     last_acquisition_price:     u64,
     phase_start_ms:             u64,
     current_tenant_cap_id:      Option<ID>,
+    pending_tenant_cap_id:      Option<ID>,
     current_tenant_address:     Option<address>,
     pending_tenant_address:     Option<address>,
     handover_countdown_expiry:  Option<u64>,
@@ -247,9 +245,10 @@ This is the canonical Move borrow pattern, used internally by
 | `state` | Current `AssetState`. |
 | `last_acquisition_price` | Price paid at the most recent acquisition. Written once per cycle by `install_new_tenant` (direct acquisition from `Idle` or `AtDutchAuction`) and by `do_handover` step 5 (handover acquisition). Initialized to `0` at `integrate` — coherent, since no acquisition has occurred. Never read before the first acquisition. Inert in `Rented` states — floor computation reads `tenant_stake` and `pending_bid` directly. Used in `AtDutchAuction` as the descent ceiling: `price_descent(t) = last_acquisition_price − (last_acquisition_price − min_rent_price) · h(t)`. |
 | `phase_start_ms` | Timestamp at which the current phase began. See §5 for exact assignment per transition. |
-| `current_tenant_cap_id` | `Some(id)` while `state` is `Rented`; `None` otherwise. The live `TenantCap` for the current tenant. Staleness enforced structurally — any other `TenantCap` with the same `escrow_id` fails `object::id(cap) == current_tenant_cap_id`. |
-| `current_tenant_address` | `Some(addr)` while `state` is `Rented`; `None` otherwise. Target of `remain_credit` push at handover. |
-| `pending_tenant_address` | `Some(addr)` only while `state` is `Rented(HandoverConfirmed)`. Target of `TenantCap` push at handover completion. |
+| `current_tenant_cap_id` | `Some(id)` while `state` is `Rented`; `None` otherwise. ID of the `TenantCap` whose holder is the active tenant — `borrow_asset` succeeds only when the presented cap's `object::id` matches. |
+| `pending_tenant_cap_id` | `Some(id)` only while `state` is `Rented(HandoverConfirmed)`. ID of the `TenantCap` minted at the most recent (still-pending) bid — held by the bidder, inert until `do_handover` rotates it to `current_tenant_cap_id`. Under eager minting the bidder receives this cap by value at `rent` time and may poll `borrow_asset`, which aborts `E_PENDING_TENANT_CAP` until the rotation. On supersede, this slot is overwritten with the new bidder's cap ID and the previous one becomes stale. |
+| `current_tenant_address` | `Some(addr)` while `state` is `Rented`; `None` otherwise. Target of `remain_credit` push at handover. The placer's address-of-record at acquisition time — under `key + store` the cap may have changed hands since, but the protocol commits pushes to this address. |
+| `pending_tenant_address` | `Some(addr)` only while `state` is `Rented(HandoverConfirmed)`. Target of refund push on supersede. Same address-of-record semantics as `current_tenant_address`. |
 | `handover_countdown_expiry` | `Some(ts)` only while `state` is `Rented(HandoverConfirmed)`. Deterministic from the first bid — subsequent bids do not alter it. |
 | `tenant_stake` | Balance paid by the current tenant. Non-zero only while `state` is `Rented`. At handover: `used_credit` splits into `owner_earnings` (90%) + fee (10%); `remain_credit` pushed to displaced tenant; `pending_bid` becomes the new `tenant_stake`. At tenure expiry: full balance splits into `owner_earnings` (90%) + fee (10%). |
 | `pending_bid` | Balance paid by the pending tenant. Non-zero only while `state` is `Rented(HandoverConfirmed)`. Refunded on supersede; becomes new `tenant_stake` at handover. |
@@ -309,6 +308,7 @@ public struct RentStarted has copy, drop {
 
 public struct BidPlaced has copy, drop {
     escrow_id:                 ID,
+    tenant_cap_id:             ID,    // cap minted for this bid (lives in pending_tenant_cap_id)
     pending_tenant:            address,
     bid_amount:                u64,
     floor_price:               u64,   // f_next_rent_price(value(tenant_stake)) at bid time
@@ -316,12 +316,14 @@ public struct BidPlaced has copy, drop {
 }
 
 public struct BidSuperseded has copy, drop {
-    escrow_id:         ID,
-    displaced_bidder:  address,
-    refunded_amount:   u64,
-    new_bidder:        address,
-    new_bid_amount:    u64,
-    floor_price:       u64,   // f_next_rent_price(value(pending_bid)) at bid time — escalates with each supersede
+    escrow_id:                ID,
+    displaced_tenant_cap_id:  ID,    // cap of the displaced bidder, now stale
+    new_tenant_cap_id:        ID,    // cap of the new bidder, now in pending_tenant_cap_id
+    displaced_bidder:         address,
+    refunded_amount:          u64,
+    new_bidder:               address,
+    new_bid_amount:           u64,
+    floor_price:              u64,   // f_next_rent_price(value(pending_bid)) at bid time — escalates with each supersede
 }
 
 public struct HandoverCompleted has copy, drop {
@@ -537,7 +539,7 @@ immutable, so there is no update or burn event).
 | **Child PK pairs lifecycle.** | `owner_cap_id`, `tenant_cap_id`, `fee_message_id` each join their Minted↔Burned / Sent↔Collected pair. Full object history = one JOIN. |
 | **1:1 config satellite.** | `IntegrationConfigRegistered` is emitted exactly once per escrow, at integration, from the `config` module. It has no child UID — the only key is `escrow_id`, the root FK itself. This lets analytical queries group escrows by any integration parameter (tenure, curve shapes, price function) with a single JOIN on `escrow_id`, without having to read the on-chain object. |
 | **Addresses are first-observed, never duplicated.** | Redundancy recoverable by PK-JOIN is dropped; addresses that may diverge between paired events are kept on both. `TenantCapBurned` keeps `tenant` — `key + store` transferability means the burn-sender may differ from the mint-recipient and is genuinely new information (symmetric with `OwnerCapBurned.owner`). `FeeMessageCollected` has no `tenant` (JOIN on `fee_message_id` recovers it — `FeeMessage` is `key`-only and the tenant address from `FeeMessageSent` is unambiguous). `OwnerCapBurned` keeps `owner` — same reasoning as `TenantCapBurned`. Fact-table events comply: `AssetIntegrated` omits `integrator` (JOIN on `owner_cap_id` to `OwnerCapMinted`), `RentStarted` omits `tenant` (JOIN on `tenant_cap_id` to `TenantCapMinted`), `HandoverCompleted` omits `new_tenant` (JOIN on `new_tenant_cap_id`). `HandoverCompleted.displaced_tenant` is kept — no PK reaches the outgoing cap from this row. |
-| **Fact-table rows carry child PK-FKs to dimensions they co-emit with.** | `AssetIntegrated.owner_cap_id`, `RentStarted.tenant_cap_id`, `HandoverCompleted.new_tenant_cap_id`, `AssetBorrowed.tenant_cap_id`, `AssetReturned.tenant_cap_id`, `AssetClaimed.owner_cap_id`, `EarningsWithdrawn.owner_cap_id` — every fact row whose semantics touch a child object exposes that child's PK so the indexer can JOIN into the dimension without envelope-timing. |
+| **Fact-table rows carry child PK-FKs to dimensions they co-emit with.** | `AssetIntegrated.owner_cap_id`, `RentStarted.tenant_cap_id`, `BidPlaced.tenant_cap_id`, `BidSuperseded.{displaced_tenant_cap_id,new_tenant_cap_id}`, `HandoverCompleted.new_tenant_cap_id`, `AssetBorrowed.tenant_cap_id`, `AssetReturned.tenant_cap_id`, `AssetClaimed.owner_cap_id`, `EarningsWithdrawn.owner_cap_id` — every fact row whose semantics touch a child object exposes that child's PK so the indexer can JOIN into the dimension without envelope-timing. Under eager minting, every bid produces a cap and `BidPlaced` / `BidSuperseded` carry that cap's PK directly — the indexer has full lineage from "bid placed" to "cap created" in a single row. |
 | **Borrow/return measure actual usage.** | `AssetBorrowed` / `AssetReturned` pair JOIN on `tenant_cap_id` within a single tenancy (multiple pairs possible — a tenant may borrow and return N times during their block). Provides the off-chain indexer a measurable signal of "did the tenant actually use the capability?" — the core liquid-renting demand metric, previously invisible (borrow was PTB-internal only). |
 | **`AssetIntegrated` is the Asset/CoinType dictionary.** | `AssetIntegrated<Asset, CoinType>` is the only event phantom-generic on the escrow's type params. Any query that needs to group or filter by `Asset` or `CoinType` JOINs on `escrow_id` back to `asset_integrated` and reads the type tag — including queries over `IntegrationConfigRegistered` (min_rent_price, tenure_ceiling, curves) that want to bucket by coin. The `config` module stays coin-agnostic. |
 | **`AssetIntegrated.asset_id` enables level-2 linkage and asset-instance tracing.** | The object ID of the wrapped asset at integrate time. Level-2 escrows (`Asset = rental_escrow::OwnerCap`) pair to their underlying level-1 escrow via `asset_id = level-1 OwnerCap ID` → JOIN on `owner_cap_id` to `OwnerCapMinted.escrow_id`. The same-asset-across-integrations thread (integrate → retire → re-integrate) becomes queryable with `GROUP BY asset_id`. Without this field the mapping is only reachable through Sui's object-state-changes layer, not through the protocol's event surface. |
@@ -547,6 +549,7 @@ immutable, so there is no update or burn event).
 | **`floor_price` on acquisition and bid events.** | `RentStarted.floor_price`, `BidPlaced.floor_price`, `BidSuperseded.floor_price` carry the minimum required payment at call time. The voluntary premium `price_paid − floor_price` (or `bid_amount − floor_price`) is the core demand signal — invisible without this field. For `RentStarted{AtDutchAuction}` the floor is `compute_price_descent(now)`, which requires a timestamp and curve application to reconstruct off-chain. For `BidPlaced` it requires locating the most recent acquisition price and applying `f_next_rent_price`. For `BidSuperseded` it is `f_next_rent_price(refunded_amount)` — computable from the same row but only with function application. Emitting it directly makes the premium a single-column subtraction on any query engine. |
 | **No envelope dependence.** | Events never require the indexer to join against `SuiEvent.timestampMs` or `SuiEvent.sender` to reconstruct meaning — except for pure wall-clock ordering of immediate events (which the envelope provides for free). |
 | **Cross-module events are self-contained.** | An indexer ingesting only `fee_message` events can answer every fee-message-level question; likewise for each cap module. Cross-module JOINs are always on `escrow_id`, never on implicit co-emission. |
+| **`tenant_cap` satellite is "cap creation lifecycle", not "tenancy lifecycle".** | Under eager minting, `TenantCapMinted` fires at every `rent` call (Idle, AtDutchAuction, both Rented sub-branches), which means bids that get superseded still produce a Minted row. To count effective tenancies, indexers pivot through the fact-table events that record actual acquisition or promotion: `RentStarted` (Idle / AtDutchAuction direct acquisition) and `HandoverCompleted.new_tenant_cap_id` (handover promotion). The `TenantCapMinted ↔ TenantCapBurned` pair on `tenant_cap_id` still describes object lifecycle (creation → destruction); both bid-only caps and tenancy caps share that lifecycle shape uniformly. |
 
 **Strategy statement.** This star schema is the protocol's uniform
 event-emission strategy. Every future event added to the package
@@ -556,21 +559,6 @@ and (c) carry address fields only where first-observed or divergent.
 Deviations — co-emission dependencies, envelope-metadata reliance,
 redundant addresses across a PK-joinable pair — degrade the schema
 and are disallowed.
-
-**Deliberate exclusion — `PaymentTicket`.** The `payment_ticket`
-module (built and returned by value to the bidder via `rent`'s
-`Option<PaymentTicket>` slot in the two `Rented` sub-branches of
-`rent()`) emits **no** events and is therefore **not** a satellite of
-this star schema. Each ticket mint corresponds 1:1 to exactly one
-`BidPlaced` or `BidSuperseded` row, which already carries `escrow_id`
-and the bidder's address in the same transaction; an indexer that
-wishes to track tickets per wallet can do so by filtering Sui's
-object-creation envelope on the `PaymentTicket` type tag. The ticket
-carries no protocol authority — its purpose is the bidder's wallet
-UX, symmetric with the `TenantCap` returned (also by value) from
-`rent` in the `Idle` / `AtDutchAuction` branches. Full rationale:
-`payment_ticket.spec.md` §3.
-
 
 4. LIFECYCLE FUNCTIONS
 -----------------------
@@ -843,31 +831,30 @@ locked balances.
         payment: Coin<CoinType>,
         clock:   &Clock,
         ctx:     &mut TxContext,
-    ): (Option<TenantCap>, Option<PaymentTicket>)
+    ): TenantCap
 
-**Visibility:** `public`. Single entry point to become or displace a tenant.
+**Visibility:** `public`. Single entry point to become a tenant or to
+place a bid that will be promoted to tenancy at the next handover.
 
-**Return shape — exclusive disjunction.** Exactly one of the two
-`Option` slots is `Some` in every non-`Retired` state; the other is
-`None`. The state machine guarantees this at runtime; the type does
-not. Callers (typically PTB authors) know which branch they are
-exercising and consume the corresponding slot.
+**Return shape — uniform `TenantCap`.** Under eager minting, every
+non-`Retired` branch builds a fresh `TenantCap` and returns it by
+value. The cap may land in `current_tenant_cap_id` (immediate
+acquisition) or in `pending_tenant_cap_id` (bid awaiting handover);
+the difference is recorded in the escrow's slots, not in the return
+type. The caller is the bidder/acquirer themselves and routes the
+returned cap (own wallet, multisig, immediate `borrow_asset`, burn
+for a one-shot PTB, etc.). `borrow_asset` aborts
+`E_PENDING_TENANT_CAP` while the cap is in pending state, so a bidder
+in tenure-short regimes can poll `borrow_asset` until the handover
+settles.
 
-| Pre-rent state (post-settle) | Returned tuple |
-|---|---|
-| `Idle` | `(some(TenantCap), none)` |
-| `AtDutchAuction` | `(some(TenantCap), none)` |
-| `Rented { HandoverOpen }` | `(none, some(PaymentTicket))` |
-| `Rented { HandoverConfirmed }` | `(none, some(PaymentTicket))` |
-| `Retired` | aborts `E_RETIRED_NO_BID` (never returns) |
-
-The choice of `(Option, Option)` over a sum type — e.g. `enum
-RentOutcome { Tenant(TenantCap), Bid(PaymentTicket) }` — is driven by
-PTB ergonomics: PTBs cannot pattern-match enums (match is a Move-level
-construct, unavailable at the PTB layer), so an enum return would
-force every caller through a custom `unwrap_*` MoveCall per variant.
-`std::option::destroy_some` / `destroy_none` are universal and
-already wired into every PTB toolchain.
+| Pre-rent state (post-settle) | Returned cap lands in escrow slot | `borrow_asset` succeeds when |
+|---|---|---|
+| `Idle` | `current_tenant_cap_id` | immediately |
+| `AtDutchAuction` | `current_tenant_cap_id` | immediately |
+| `Rented { HandoverOpen }` | `pending_tenant_cap_id` (state → HandoverConfirmed) | after `do_handover` rotates the cap to current |
+| `Rented { HandoverConfirmed }` | `pending_tenant_cap_id` (overwriting; previous cap goes stale) | after `do_handover` rotates the cap to current |
+| `Retired` | (aborts `E_RETIRED_NO_BID`) | (n/a) |
 
 **Behavior:**
 
@@ -894,7 +881,7 @@ already wired into every PTB toolchain.
   from_state: AssetState::Idle }`. The tenant address is not carried
   here — it is already recorded on the co-emitted `TenantCapMinted.tenant`
   row and recoverable by JOIN on `tenant_cap_id` (star-schema invariant c).
-- Return `(option::some(cap), option::none())`.
+- Return `cap`.
 
 #### Case: `AtDutchAuction`
 
@@ -903,7 +890,7 @@ already wired into every PTB toolchain.
 - Emit `RentStarted { escrow_id, tenant_cap_id, price_paid, floor_price: floor,
   from_state: AssetState::AtDutchAuction }`. Tenant address recoverable
   via JOIN on `tenant_cap_id` into `TenantCapMinted`.
-- Return `(option::some(cap), option::none())`.
+- Return `cap`.
 
 #### Case: `Rented { HandoverOpen }`
 
@@ -915,15 +902,15 @@ already wired into every PTB toolchain.
 - `escrow.pending_tenant_address = some(pending_tenant);`
 - `escrow.state = Rented { phase: HandoverConfirmed };`
 - **Register pending bid** — §7.7 is the single source of truth for
-  "absorb payment into `pending_bid`, build a `PaymentTicket` for the
-  bidder via `payment_ticket::new`". Consumes `payment`; returns
-  `(ticket, bid_amount)`:
-  - `let (ticket, bid_amount) = register_pending_bid(escrow, payment, ctx);`
-- Emit `BidPlaced { escrow_id, pending_tenant, bid_amount, floor_price: floor,
-  handover_countdown_expiry }` — emit-last: all state mutations complete
-  and the ticket has been built, so the escrow's post-state and the
-  caller's about-to-be-returned ticket match the event's semantics.
-- Return `(option::none(), option::some(ticket))`.
+  "absorb payment into `pending_bid`, build the bidder's `TenantCap` via
+  `tenant_cap::new`, store its ID in `pending_tenant_cap_id`". Consumes
+  `payment`; returns `(cap, tenant_cap_id, bid_amount)`:
+  - `let (cap, tenant_cap_id, bid_amount) = register_pending_bid(escrow, payment, ctx);`
+- Emit `BidPlaced { escrow_id, tenant_cap_id, pending_tenant, bid_amount,
+  floor_price: floor, handover_countdown_expiry }` — emit-last: all state
+  mutations complete and the cap has been built and registered as
+  pending, so the event's PK fields all reference live data.
+- Return `cap`.
 
 **Retire flag rationale:** blocking new bids is what "retire during Rented"
 means — the current tenant completes their block uncontested and the asset
@@ -935,34 +922,38 @@ exits afterward.
   accepted before `retire` could have fired; the committed bid is
   honored, handover completes normally, and T(n+1) then enters
   `HandoverOpen` with the flag still set (no further bids accepted).
-- **Pre-bind event locals** for the refund push (captured before
-  `pending_bid` and `pending_tenant_address` are overwritten):
-  - `let displaced_bidder = *option::borrow(&escrow.pending_tenant_address);`
-  - `let new_bidder       = tx_context::sender(ctx);`
+- **Pre-bind event locals** for the refund push and event emission
+  (captured before `pending_bid`, `pending_tenant_address`, and
+  `pending_tenant_cap_id` are overwritten):
+  - `let displaced_bidder        = *option::borrow(&escrow.pending_tenant_address);`
+  - `let displaced_tenant_cap_id = *option::borrow(&escrow.pending_tenant_cap_id);`
+  - `let new_bidder              = tx_context::sender(ctx);`
 - **Refund previous pending bid** (push before rotate). The push targets
   the address registered on `pending_tenant_address` at the time of the
-  prior bid. Under `key + store` the prior bidder's `PaymentTicket` may
-  have changed hands since, but that is off-protocol — the protocol's
-  commitment is to the placer's address, recorded publicly on-chain at
-  bid time. (Symmetric with all other pushes to addresses-of-record.)
+  prior bid. Under `key + store` the prior bidder's cap may have changed
+  hands since, but that is off-protocol — the protocol's commitment is
+  to the placer's address, recorded publicly on-chain at bid time.
+  (Symmetric with all other pushes to addresses-of-record.)
   - Take the previous balance: `let prev = balance::withdraw_all(&mut escrow.pending_bid);`
   - `let refunded_amount = balance::value(&prev);`
   - `transfer::public_transfer(coin::from_balance(prev, ctx), displaced_bidder);`
 - `escrow.pending_tenant_address = some(new_bidder);`
 - **Register the new pending bid** — §7.7, same helper as the HandoverOpen
-  branch. The displaced bidder keeps the ticket they received from their
-  own prior `rent()` call; the protocol does not and cannot revoke it.
-  - `let (ticket, new_bid_amount) = register_pending_bid(escrow, payment, ctx);`
+  branch. Internally overwrites `pending_tenant_cap_id` with the new
+  bidder's cap ID; the displaced cap whose ID was just bound to
+  `displaced_tenant_cap_id` is now neither current nor pending and is
+  thus stale (no protocol action needed; the displaced bidder may
+  `burn` voluntarily).
+  - `let (cap, new_tenant_cap_id, new_bid_amount) = register_pending_bid(escrow, payment, ctx);`
 - `handover_countdown_expiry` is **not** updated — subsequent bids do not
   reset the countdown (design-compact §4).
 - `state` remains `Rented { HandoverConfirmed }`.
-- Emit `BidSuperseded { escrow_id, displaced_bidder, refunded_amount,
-  new_bidder, new_bid_amount, floor_price: floor }` — emit-last: all state
-  rotations, the refund push, and the new ticket construction complete,
-  so the escrow's post-state (new bidder installed, old refunded, new
-  ticket about to be returned to the caller) matches the event's
-  semantics.
-- Return `(option::none(), option::some(ticket))`.
+- Emit `BidSuperseded { escrow_id, displaced_tenant_cap_id,
+  new_tenant_cap_id, displaced_bidder, refunded_amount, new_bidder,
+  new_bid_amount, floor_price: floor }` — emit-last: all state rotations,
+  the refund push, and the new cap construction complete; both cap PKs
+  refer to live (or just-staled) data.
+- Return `cap`.
 
 ---
 
@@ -1053,10 +1044,11 @@ integrating ecosystem.
 
 **Behavior:**
 1. `apply_pending_transitions(escrow, clock, ctx)` — settle first. A
-   handover that completes here will rotate `current_tenant_cap_id` before
-   the staleness check — the displaced tenant correctly fails.
+   handover that completes here will rotate `pending_tenant_cap_id` →
+   `current_tenant_cap_id` before the gates below — a winner who polls
+   right at the boundary is admitted; a displaced bidder correctly fails.
 2. `let escrow_id = object::id(escrow);` — bound once and reused by the
-   escrow-match assert (step 3) and the receipt construction (step 6).
+   escrow-match assert (step 3) and the receipt construction (step 7).
 3. `assert!(tenant_cap::escrow_id(tenant_cap) == escrow_id, E_WRONG_ESCROW_TENANT_CAP);`
    — **security-critical** escrow-match gate. Same threat model as
    `claim_asset` step 2: PTBs can pair any `&TenantCap` with any
@@ -1064,49 +1056,66 @@ integrating ecosystem.
    constrain that pairing. Without this assert, a tenant holding a
    legitimate cap for `EscrowA` could pair it with `EscrowB` (for
    which they are not the tenant) and extract `EscrowB`'s asset.
-4. **Security-critical** staleness check. Defends against a
-   different attack than step 3: *displaced-tenant retention*.
-   After `do_handover`, the evicted tenant (or any later holder of
-   their cap, since `TenantCap : key + store` is transferable) still
-   has the old cap — `burn` is voluntary, so the holder is not
-   forced to destroy it. Step 3 alone accepts that cap because
-   `cap.escrow_id` still matches; only the current-id comparison
-   exposes the displacement.
+4. **Pending check** — under eager minting, the cap may be the
+   bidder's just-minted pending cap awaiting the handover. This
+   abort is the protocol's signal "your bid was accepted but the
+   handover hasn't settled yet — retry shortly":
+
+   ```
+   if escrow.pending_tenant_cap_id.is_some()
+      && *escrow.pending_tenant_cap_id.borrow() == object::id(tenant_cap):
+       abort E_PENDING_TENANT_CAP;
+   ```
+
+   Distinguishes from staleness: the caller should **retry** (the
+   cap will become valid), not **burn** (the cap will never become
+   valid). The two abort codes carry opposite remediation guidance,
+   so the SDK maps them to distinct user-facing messages.
+5. **Security-critical** staleness check. Defends against
+   *displaced-tenant retention*: after `do_handover` rotates the
+   slot to a new winner or `do_tenure_expiry` clears it, the
+   evicted tenant (or any later holder of their cap, since `TenantCap
+   : key + store` is transferable) still has the old cap — `burn` is
+   voluntary, so the holder is not forced to destroy it. Step 3
+   alone accepts that cap because `cap.escrow_id` still matches;
+   only the current-id comparison exposes the displacement.
 
    ```
    assert!(escrow.current_tenant_cap_id.is_some(), E_STALE_TENANT_CAP);
-   assert!(object::id(tenant_cap) == *escrow.current_tenant_cap_id.borrow(), E_STALE_TENANT_CAP);
+   assert!(object::id(tenant_cap) == *escrow.current_tenant_cap_id.borrow(),
+           E_STALE_TENANT_CAP);
    ```
 
-   Rejects:
-   - Displaced caps (`Some(other_id)` path — a later `do_handover`
-     rotated the slot; aborts at the identity compare).
-   - Caps presented after `do_tenure_expiry` cleared the slot
-     (`None` path; aborts at the `is_some` guard).
+   Rejects (under `E_STALE_TENANT_CAP`):
+   - Displaced caps (`Some(other_id)` path — `do_handover` rotated
+     to a different cap, or supersede overwrote `pending` and the
+     caller's cap fell out of both slots).
+   - Caps presented after `do_tenure_expiry` cleared the current slot
+     (`None` path).
 
    Both surface as `E_STALE_TENANT_CAP` — one uniform abort code
    for both staleness paths, because `None ⇒ every cap is stale`
    and `Some(other) ⇒ this cap is stale` are the same semantic to
-   the consumer.
-5. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
+   the consumer (cap will not become valid; burn it).
+6. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
    This is the only protocol state in which the internal `Option<Asset>` field
    can be `None` — when a previous `borrow_asset` call in the same PTB has
    already extracted the asset. Prevents a double-borrow from producing an
    opaque framework abort via `option::extract`.
    `let asset = option::extract(&mut escrow.asset);`
-6. Construct `receipt = AssetReceipt { escrow_id, asset_id: object::id(&asset) }`.
-7. Emit `AssetBorrowed { escrow_id: receipt.escrow_id,
+7. Construct `receipt = AssetReceipt { escrow_id, asset_id: object::id(&asset) }`.
+8. Emit `AssetBorrowed { escrow_id: receipt.escrow_id,
    tenant_cap_id: object::id(tenant_cap) }`. Emit-last: the extraction
-   (step 5) has already succeeded and the receipt (step 6) witnesses the
+   (step 6) has already succeeded and the receipt (step 7) witnesses the
    asset has left the escrow. The tenant's identity is recoverable by
    JOIN on `tenant_cap_id` to `TenantCapMinted` — not duplicated here.
-8. Return `(asset, receipt)`.
+9. Return `(asset, receipt)`.
 
 **Why `return_asset` requires no cap re-verification:** `return_asset` can
 only be called by a PTB that holds an `AssetReceipt`. An `AssetReceipt` can
 only exist if `borrow_asset` was called and succeeded in the same PTB — the
 hot-potato type makes it impossible to store, transfer, or fabricate. And
-`borrow_asset` only succeeds for the current tenant (steps 3–4). The receipt
+`borrow_asset` only succeeds for the current tenant (steps 3–5). The receipt
 is therefore irrefutable proof that cap authorization was already verified.
 No re-check is needed.
 
@@ -1326,7 +1335,7 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    - `let (owner_share, protocol_fee) = settle_stake_earnings(escrow, used_credit, displaced_tenant, ctx);`
      — `displaced_tenant` is the stake funder; `FeeMessageSent<C>.tenant`
      records it verbatim. The returned `(owner_share, protocol_fee)` is
-     consumed by the `HandoverCompleted` emit at step 9.
+     consumed by the `HandoverCompleted` emit at step 8.
 5. **Rotate `pending_bid` → `tenant_stake`** and record acquisition price:
    - `balance::join(&mut escrow.tenant_stake,
      balance::withdraw_all(&mut escrow.pending_bid));`
@@ -1334,37 +1343,36 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
    — Written here because handover is an acquisition: the new tenant takes
    possession at `boundary_ms`. `last_acquisition_price` is the descent
    ceiling if this tenant's block later expires into `AtDutchAuction`.
-6. **Mint new TenantCap and push to the absent recipient** (split:
-   `tenant_cap::new` returns the cap by value, then this module pushes
-   it via `transfer::public_transfer` — legal under `TenantCap : key +
-   store`):
+6. **Promote pending cap to current — pure ID rotation, no mint, no
+   transfer.** Under eager minting the bidder's `TenantCap` was
+   constructed and returned at `rent` time and currently lives at
+   `escrow.pending_tenant_cap_id`. `do_handover` only rotates the
+   slots:
    - `let pending_addr = *option::borrow(&escrow.pending_tenant_address);`
-   - `let (new_cap, new_cap_id) = tenant_cap::new(object::id(escrow), pending_addr, ctx);`
-     — `TenantCapMinted.tenant` records `pending_addr`, the new tenant
-     installed by this handover. The address is not `tx_context::sender`
-     (the caller of `apply_pending_transitions` may be a keeper or any
-     permissionless settler, not the incoming tenant).
-   - `transfer::public_transfer(new_cap, pending_addr);` — push to the
-     absent recipient (the bid placer is not in this transaction). The
-     `new_cap_id` is consumed at step 7 to update
-     `current_tenant_cap_id`.
-7. **Rotate address fields:**
+   - `let new_cap_id   = *option::borrow(&escrow.pending_tenant_cap_id);`
+   - `escrow.current_tenant_cap_id  = some(new_cap_id);`
+   - `escrow.pending_tenant_cap_id  = none();`
    - `escrow.current_tenant_address = some(pending_addr);`
-   - `escrow.current_tenant_cap_id = some(new_cap_id);`
    - `escrow.pending_tenant_address = none();`
-8. **Reset phase anchors for the new tenant:**
+   No `tenant_cap::new`, no `transfer::public_transfer`. The bidder's
+   cap (already in their wallet) was inert under
+   `E_PENDING_TENANT_CAP` until this rotation; from this point
+   `borrow_asset` succeeds for them. `new_cap_id` is consumed by the
+   `HandoverCompleted` emit at step 8.
+7. **Reset phase anchors for the new tenant:**
    - `escrow.phase_start_ms = boundary_ms;`
    - `escrow.handover_countdown_expiry = none();`
    - `escrow.state = Rented { phase: HandoverOpen };`
-9. Emit `HandoverCompleted { escrow_id, displaced_tenant,
+8. Emit `HandoverCompleted { escrow_id, displaced_tenant,
    new_tenant_cap_id, used_credit, owner_share, protocol_fee, remain_credit,
    new_rent_price: escrow.last_acquisition_price, timestamp_ms: boundary_ms }`.
    `new_rent_price` is the winning bid amount — `escrow.last_acquisition_price`
    was written at step 5 of this function (`pending_bid → tenant_stake`
    rotation); reading it here is the canonical snapshot of the new block's price. The new
    tenant's address is not carried — it is already on the co-emitted
-   `TenantCapMinted.tenant` row and recoverable by JOIN on
-   `new_tenant_cap_id`. `displaced_tenant` *is* carried: no PK path
+   `TenantCapMinted.tenant` row (emitted at bid time, not here — under
+   eager minting `do_handover` does not mint) and recoverable by JOIN
+   on `new_tenant_cap_id`. `displaced_tenant` *is* carried: no PK path
    reaches the outgoing cap from this row, so recovering it via JOIN
    would force envelope-timing reconstruction (violating invariant d).
 
@@ -1420,6 +1428,17 @@ Two cases:
   `phase_start_ms` to `boundary_ms`. Check 2 evaluates against the new
   `phase_start_ms + tenure_ceiling` — in the future — and does not fire.
   T(n+1) receives a full tenure.
+
+**Invariant on entry:** `escrow.pending_tenant_cap_id == None`. The
+state precondition (`HandoverOpen`) implies "no pending tenant" by
+construction of the state machine. Either the slot was never set
+(direct acquisition path: Idle / AtDutchAuction → Rented{HandoverOpen}
+without a pending phase), or it was cleared by the most recent
+`do_handover` (which rotates pending → current and sets pending to
+None). No code path can leave `pending_tenant_cap_id` populated while
+state is `HandoverOpen`. `do_tenure_expiry` therefore performs no
+action on this slot — the test suite verifies the invariant
+structurally.
 
 **Algorithm:**
 
@@ -1669,14 +1688,17 @@ the next-state decision) rather than with a partial stake settlement.
         escrow:  &mut RentalEscrow<Asset, CoinType>,
         payment: Coin<CoinType>,
         ctx:     &mut TxContext,
-    ): (PaymentTicket, u64)
+    ): (TenantCap, ID, u64)
 
 **Purpose:** shared pending-bid installation tail for the two `Rented` arms
-of `rent()` (§5.1). Absorbs `payment` into `escrow.pending_bid` and builds
-a `PaymentTicket` via `payment_ticket::new`. Returns `(ticket, bid_amount)`
-— the ticket travels back through `rent`'s `Option<PaymentTicket>` return
-slot to the bidder (the PTB caller); the caller uses `bid_amount` to emit
-`BidPlaced` / `BidSuperseded` with the correct amount field.
+of `rent()` (§5.1). Absorbs `payment` into `escrow.pending_bid`, builds the
+bidder's `TenantCap` via `tenant_cap::new`, and registers its ID in
+`escrow.pending_tenant_cap_id` (overwriting any previous pending ID — the
+displaced cap automatically becomes stale by exclusion from both
+`current_tenant_cap_id` and `pending_tenant_cap_id`). Returns
+`(cap, tenant_cap_id, bid_amount)` — the cap travels back through `rent`
+to the PTB caller; the caller uses `tenant_cap_id` for the `BidPlaced` /
+`BidSuperseded` event emit and `bid_amount` for the amount field.
 
 **Preconditions:**
 - Caller has already verified `coin::value(&payment) >= floor` (from
@@ -1684,52 +1706,61 @@ slot to the bidder (the PTB caller); the caller uses `bid_amount` to emit
 - For the supersede path (`HandoverConfirmed` caller), the previous
   `pending_bid` has already been refunded and drained, and
   `pending_tenant_address` has been rotated to the new bidder
-  (push-before-rotate invariant, §9 P3 — owned by the caller).
+  (push-before-rotate invariant, §9 P3 — owned by the caller). The
+  caller has also pre-bound `displaced_tenant_cap_id` from the soon-
+  to-be-overwritten `pending_tenant_cap_id` for the `BidSuperseded`
+  event row.
 
 **Algorithm:**
 
     let bid_amount = coin::value(&payment);
     balance::join(&mut escrow.pending_bid, coin::into_balance(payment));
-    let ticket = payment_ticket::new<Asset, CoinType>(
-        object::id(escrow), bid_amount, ctx,
-    );
-    (ticket, bid_amount)
+    let bidder = tx_context::sender(ctx);
+    let (cap, tenant_cap_id) = tenant_cap::new(object::id(escrow), bidder, ctx);
+    escrow.pending_tenant_cap_id = some(tenant_cap_id);   // overwrites prior pending if any
+    (cap, tenant_cap_id, bid_amount)
 
 **Postconditions:**
 - `escrow.pending_bid` grew by `bid_amount`.
-- A `PaymentTicket` carrying `escrow_id`, `bid_amount`, and the canonical
-  `Asset` / `CoinType` strings has been built (no transfer); ownership
-  travels back to `rent`'s caller through the return tuple.
+- A new `TenantCap` exists with `escrow_id == object::id(escrow)`,
+  registered in `escrow.pending_tenant_cap_id`. `TenantCapMinted` has
+  been emitted by `tenant_cap::new`.
+- Any cap whose ID was previously in `pending_tenant_cap_id` is now in
+  neither slot — it is structurally stale.
+- The cap travels back through `rent`'s return to the PTB caller.
 
 **Why no `recipient` parameter:** the bidder is, by construction, the PTB
-caller of `rent` — the same actor across both `Rented` sub-branches.
-Under `key + store` the ticket can be returned by value; the helper does
-not need to know the recipient address because it never performs a
-transfer. The recipient address is recorded separately on
-`escrow.pending_tenant_address` (which the caller sets) and on the
-emitted `BidPlaced` / `BidSuperseded` event row.
+caller of `rent` — `tx_context::sender(ctx)` — across both `Rented`
+sub-branches. The cap is returned by value; the helper does not perform a
+transfer and does not need to know the recipient address. The mint-time
+address is recorded on `TenantCapMinted.tenant` (= `bidder`) for indexer
+purposes; the address-of-record for refund pushes is `pending_tenant_address`
+(which the caller sets separately).
 
 **Why the helper does not emit `BidPlaced` / `BidSuperseded`:** the two
-events differ structurally — `BidPlaced` carries `pending_tenant` and
-`handover_countdown_expiry`; `BidSuperseded` carries `displaced_bidder`,
-`refunded_amount`, `new_bidder`, `new_bid_amount`. Both carry `floor_price`,
-which is the `floor` local from `rent()` step 2 — available at the caller,
-not inside the helper. Their arm-specific
-pre-tail setup (countdown computation + state transition for HandoverOpen;
-refund + address rotation for HandoverConfirmed) also differs. Emit-last at
-each caller keeps the event semantic aligned with the full bid-placement
-transition, not with the shared tail alone. See non-starter §9 in
-rental_escrow.note for why a fuller merge would reintroduce branching.
+events differ structurally — `BidPlaced` carries `tenant_cap_id`,
+`pending_tenant`, and `handover_countdown_expiry`; `BidSuperseded`
+carries `displaced_tenant_cap_id`, `new_tenant_cap_id`,
+`displaced_bidder`, `refunded_amount`, `new_bidder`, `new_bid_amount`.
+Both carry `floor_price`, which is the `floor` local from `rent()`
+step 2 — available at the caller, not inside the helper. Their
+arm-specific pre-tail setup (countdown computation + state transition
+for HandoverOpen; refund + address rotation + displaced-cap-id capture
+for HandoverConfirmed) also differs. Emit-last at each caller keeps the
+event semantic aligned with the full bid-placement transition, not
+with the shared tail alone. See non-starter §9 in rental_escrow.note
+for why a fuller merge would reintroduce branching.
 
 **Two call sites:**
 
 | Caller | Pre-tail work | Emitted event |
 |---|---|---|
 | `rent()` Case `Rented { HandoverOpen }` (§5.1) | retire-flag check, floor check, countdown write, `pending_tenant_address = some(sender)`, state → `HandoverConfirmed` | `BidPlaced` |
-| `rent()` Case `Rented { HandoverConfirmed }` (§5.1) | floor check, refund previous `pending_bid` to `displaced_bidder`, rotate `pending_tenant_address` to new bidder | `BidSuperseded` |
+| `rent()` Case `Rented { HandoverConfirmed }` (§5.1) | floor check, refund previous `pending_bid` to `displaced_bidder`, capture `displaced_tenant_cap_id` from `pending_tenant_cap_id`, rotate `pending_tenant_address` to new bidder | `BidSuperseded` |
 
-Both arms share the same post-state for `pending_bid` / ticket
-construction; the helper is the single source of truth for that tail.
+Both arms share the same post-state for `pending_bid` /
+`pending_tenant_cap_id` / cap construction; the helper is the single
+source of truth for that tail.
 
 
 8. READ-ONLY QUERIES
@@ -2662,7 +2693,6 @@ Similar refinement for §8.2 step 1:
 - `config` — `IntegrationConfig` and `public(package)` getters.
 - `owner_cap` — `OwnerCap`, `new`, `burn`, `escrow_id`.
 - `tenant_cap` — `TenantCap`, `new`, `escrow_id`.
-- `payment_ticket` — `PaymentTicket`, `new`.
 - `protocol_fee_inbox` — `ProtocolFeeRef`, `inbox_id`.
 - `fee_message` — `post`.
 

@@ -249,6 +249,38 @@ fun nth_root_u128_scaled_irrationals() {
     };
 }
 
+#[test]
+fun nth_root_u128_convergence_stress() {
+    // The initial guess x0 = 1 << ⌈bits/d⌉ overshoots the true root by exactly
+    // 2× when bits = d·k + 1. Picking n = (2^k + 1)^d hits that worst case for
+    // all d AND makes the result (2^k + 1) a non-power-of-2, so Newton must
+    // iterate through non-trivial intermediate values — `n / x_pow` is no
+    // longer a clean shift, and the termination check `x_new >= x` fires
+    // after ~6 iters at bit_length 61 / ~7 iters near u128 ceiling.
+    // Existing 2^64/d=2 and 2^96/d∈{3,4} rows hit the same overshoot but
+    // converge to powers of 2; these cases probe the full dynamics.
+    let cases = vector[
+        // bit_length ≈ 61 — protocol fixed-point range
+        NthRootCase { n: 1_152_921_506_754_330_625,                            d: 2, expected: 1_073_741_825 },         // (2^30+1)^2
+        NthRootCase { n: 1_152_924_803_144_876_033,                            d: 3, expected: 1_048_577 },             // (2^20+1)^3
+        NthRootCase { n: 1_153_062_248_537_784_321,                            d: 4, expected: 32_769 },                // (2^15+1)^4
+        // bit_length 121–125 — near u128 ceiling
+        NthRootCase { n: 21_267_647_932_558_653_975_684_285_001_340_289_025,   d: 2, expected: 4_611_686_018_427_387_905 }, // (2^62+1)^2
+        NthRootCase { n:  1_329_227_995_788_542_650_362_654_246_339_346_433,   d: 3, expected: 1_099_511_627_777 },         // (2^40+1)^3
+        NthRootCase { n:  1_329_228_000_736_676_036_962_857_191_812_890_625,   d: 4, expected: 1_073_741_825 },             // (2^30+1)^4
+    ];
+    let mut i = 0;
+    let len = cases.length();
+    while (i < len) {
+        let case = &cases[i];
+        let result = math::nth_root_u128(case.n, case.d);
+        assert_eq!(result, case.expected);
+        assert!(pow_u128(result, case.d) <= case.n, 0);
+        assert!(upper_bound_holds(case.n, result, case.d), 1);
+        i = i + 1;
+    };
+}
+
 // result^d, valid for d in {2,3,4} and result in range safe per spec §3
 fun pow_u128(base: u128, d: u32): u128 {
     if (d == 2) base * base

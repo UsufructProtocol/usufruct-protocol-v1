@@ -879,7 +879,7 @@ The following parameters must be provided by any protocol integrating Liquid Ren
 | `min_rent_price` | Amount | The price floor. The lowest valid rental price and the lower bound of `f_price_descent`. | `min_rent_price > 0` |
 | `tenure_ceiling` | Duration | Maximum duration of a single rental block. | `tenure_ceiling > 0` ; `handover_floor ≤ tenure_ceiling` |
 | `handover_floor` | Duration | Fixed duration of the competitive bidding window after a takeover is initiated. The current tenant retains access for exactly this duration (bounded by `remaining_rent_time`). | `0 < handover_floor ≤ tenure_ceiling` |
-| `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. | `descent_ceiling > 0` |
+| `descent_ceiling` | Duration | Maximum duration of a Dutch Auction before the price reaches `min_rent_price` and the asset returns to Idle. Conceptually, the **price memory** of the integration: how long the techo escalado por `f_next_rent_price` se preserva tras el último handover antes de decaer al floor. | `descent_ceiling ≥ 0`. A value of `0` collapses AtDutchAuction to a transient phase that always settles to Idle in the same call as the preceding tenure expiry — the "no price memory" variant (§15). |
 | `f_credit_ascent` | Normalized shape function `g` | Defines how credit is consumed. The integrator provides `g : [0,1] → [0,1]`; the protocol computes `used_credit(t) = last_rent_price · g(t / tenure_ceiling)`. | `g(0) = 0` ; `g(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ g(x) ≤ 1` ; strictly monotonically increasing |
 | `f_price_descent` | Normalized shape function `h` | Defines how the auction discount deepens. The integrator provides `h : [0,1] → [0,1]`; the protocol computes `price_descent(t) = last_rent_price - (last_rent_price - min_rent_price) · h(t / descent_ceiling)`. | `h(0) = 0` ; `h(1) = 1` ; `∀ x ∈ [0,1] : 0 ≤ h(x) ≤ 1` ; strictly monotonically increasing |
 | `f_next_rent_price` | Function | Defines the exact price required to displace the current tenant. | `f(last_rent_price) > last_rent_price` |
@@ -1206,6 +1206,8 @@ Two further dials shape the *economic* personality without altering the temporal
 
 The interplay is durable: `price_function` escalates the price during continuous activity (handovers and supersedes); `descent_curve` decays it during dormancy (AtDutchAuction). The two together describe the integration's full pricing dynamics across the demand cycle.
 
+A useful framing: **`descent_ceiling` is the price memory of the integration**. It controls how long the techo built up by `f_next_rent_price` during continuous activity persists after activity stops, before decaying back to `min_rent_price`. Long `descent_ceiling` = long memory (the integration "remembers" peak demand for a while). Short `descent_ceiling` = short memory. `descent_ceiling = 0` = **no memory** at all: the price resets to `min_rent_price` the moment activity stops. AtDutchAuction is then structurally optional — present in the state machine but transient under this configuration; see the "Pure machine — no price memory" variant below.
+
 ### Two ortogonal axes
 
 The personality of an integration is best understood as the position on a 2-axis plane:
@@ -1256,6 +1258,8 @@ In the limit `tenure_ceiling = u64::MAX` (or any practically-unreachable value),
 ### Variants worth noting
 
 - **Continuous-auction variant** (machine-oriented sub-mode). Set `tenure_ceiling` very short and `descent_ceiling` very long with an aggressive `descent_curve`. The escrow lives mostly in AtDutchAuction; each tenancy is a brief flash before the next descent begins. The market becomes a continuous Dutch auction over the asset, with `price_function` only spiking the ceiling during contested moments. Useful for true price-discovery markets where every transaction's price is set by the descent at acquisition time.
+
+- **Pure machine — no price memory** (machine-oriented sub-mode, opposite extreme of continuous-auction). Set `descent_ceiling = 0`. AtDutchAuction collapses to a transient phase: the moment a tenure expires with no pending bidder, the same `apply_pending_transitions` call settles all the way through to Idle (Check 3 fires immediately because `phase_start_ms + 0 ≤ clock.now()`). The escrow is observationally never in AtDutchAuction; an indexer sees `TenureExpired` and `AuctionExpired` co-emitted at the same `timestamp_ms`. The economic effect is that the price ceiling escalated by `price_function` during activity is **discarded** the instant activity stops — the next acquisition pays `min_rent_price` flat. Useful for pay-per-API integrations where `next_rent_price` may have escalated to inviable levels under contention and a clean reset between bursts is preferable to a graded decay. The state machine handles this without any special-casing: `evaluate_curve` returns SCALE for `t ≥ t_max = 0` via its standard saturation guard, so no division by zero ever occurs.
 
 - **Burst-tolerant hybrid**. Intermediate `tenure_ceiling` (seconds to a minute) with `handover_floor` proportional. Both humans and bots can compete; the protocol's behavior does not have to commit to either audience exclusively.
 

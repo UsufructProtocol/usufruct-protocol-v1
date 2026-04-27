@@ -50,7 +50,6 @@ can map abort codes to human-readable messages (same convention as `curve`).
     public const E_MIN_RENT_PRICE_ZERO:           u64 = 0;  // min_rent_price == 0
     public const E_TENURE_CEILING_ZERO:           u64 = 1;  // tenure_ceiling == 0
     public const E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 2;  // handover_floor > tenure_ceiling
-    public const E_DESCENT_CEILING_ZERO:          u64 = 3;  // descent_ceiling == 0
 
 
 2. TYPE
@@ -124,7 +123,14 @@ values via `curve` constructors (also `public`), then pass them to `new_config`.
     assert!(min_rent_price > 0,              E_MIN_RENT_PRICE_ZERO)
     assert!(tenure_ceiling > 0,              E_TENURE_CEILING_ZERO)
     assert!(handover_floor <= tenure_ceiling, E_HANDOVER_FLOOR_EXCEEDS_TENURE)
-    assert!(descent_ceiling > 0,             E_DESCENT_CEILING_ZERO)
+    // descent_ceiling >= 0 is trivially satisfied for u64 — no error constant needed.
+    // descent_ceiling = 0 is a legitimate "no price-memory" configuration:
+    // AtDutchAuction collapses to a transient phase that always settles to Idle
+    // in the same apply_pending_transitions call (Check 3 fires immediately
+    // because clock.now() >= phase_start_ms + 0). evaluate_curve handles t_max=0
+    // structurally (the `t >= t_max` guard returns SCALE before any eval_*
+    // function runs), so no division-by-zero risk. See design-compact.md §15
+    // "Pure machine — no price memory" variant.
     // retire_floor >= 0 is trivially satisfied for u64 — no error constant needed.
 
 No validation is performed on `credit_curve`, `descent_curve`, or
@@ -331,10 +337,13 @@ re-checking.
 **P1 — Price floor positive:**
     cfg.min_rent_price > 0
 
-**P2 — Time parameters positive (except handover_floor):**
-    cfg.tenure_ceiling > 0
-    cfg.handover_floor >= 0   (0 = no bidding window — handover fires immediately)
-    cfg.descent_ceiling > 0
+**P2 — Time parameters non-negative (only `tenure_ceiling` strictly positive):**
+    cfg.tenure_ceiling  > 0
+    cfg.handover_floor  >= 0   (0 = no bidding window — handover fires immediately)
+    cfg.descent_ceiling >= 0   (0 = no price memory — Dutch phase is transient,
+                                always settles to Idle in the same call as the
+                                preceding tenure expiry; price resets to
+                                min_rent_price for the next acquisition)
 
 **P3 — Handover contained within tenure:**
     cfg.handover_floor <= cfg.tenure_ceiling
@@ -429,6 +438,7 @@ variant category (Lin curves + FD price function).
 | **[new] V9** | 1 | u64::MAX | u64::MAX | 1 | 0 | Lin | Lin | FD(1) | P3 boundary at u64 extreme — guards that the `handover_floor <= tenure_ceiling` assert uses `<=` not `<`, and that both values saturated together are accepted. |
 | **[new] V10** | 1 | 1_000 | 0 | 1 | 0 | Pow(2,4) | Pow(6,3) | FD(1) | PowerLaw inputs requiring gcd normalization — exercises the §7.3 "stored != raw" clause with both `credit_curve` (stored `PowerLaw{1,2}`) and `descent_curve` (stored `PowerLaw{2,1}`). |
 | **[new] V11** | 1 | 1_000 | 500 | 1 | 0 | Exp(1,false) | Exp(8,true) | CD(1,1) | Extreme α values (min convex, max concave) + minimum `CompoundDelta` — exercises storage/round-trip of nested `Exponential` fields both signs. |
+| **[new] V12** | 1 | 1_000 | 0 | 0 | 0 | Lin | Lin | FD(1) | `descent_ceiling = 0` — the "no price memory" variant. AtDutchAuction is structurally a transient phase under this config: Check 3 of `apply_pending_transitions` fires in the same call as Check 2 (because `phase_start_ms + 0 == phase_start_ms ≤ clock.now()`), so the escrow goes Rented → Idle in a single settlement, with `TenureExpired` and `AuctionExpired` co-emitted at the same `timestamp_ms`. `evaluate_curve` handles `t_max = 0` structurally via its `t >= t_max` guard returning SCALE — no division by zero. See `liquid-renting-protocol-design.md` §15 "Pure machine — no price memory" variant. |
 
 **Note — unconstrained free variables:** `tenure_ceiling`, `descent_ceiling`,
 and `retire_floor` have no upper bound. Absurd values (e.g. `u64::MAX`) are
@@ -444,17 +454,24 @@ validation noise for inputs that never occur in practice.
 | I1 | min_rent_price = 0 | `E_MIN_RENT_PRICE_ZERO` |
 | I2 | tenure_ceiling = 0 (all other fields valid) | `E_TENURE_CEILING_ZERO` |
 | I3 | handover_floor > tenure_ceiling (floor=100, ceiling=50) | `E_HANDOVER_FLOOR_EXCEEDS_TENURE` |
-| I4 | descent_ceiling = 0 | `E_DESCENT_CEILING_ZERO` |
-| **[new] I5** | handover_floor = tenure_ceiling + 1 (floor=1_001, ceiling=1_000) | `E_HANDOVER_FLOOR_EXCEEDS_TENURE` — smallest strictly-greater case, guards off-by-one on the `<=` check |
-| **[new] I6** | handover_floor = u64::MAX, tenure_ceiling = u64::MAX − 1 | `E_HANDOVER_FLOOR_EXCEEDS_TENURE` — u64-saturated boundary, confirms the check is a plain unsigned compare (no arithmetic that could overflow) |
+| I4 | handover_floor = tenure_ceiling + 1 (floor=1_001, ceiling=1_000) | `E_HANDOVER_FLOOR_EXCEEDS_TENURE` — smallest strictly-greater case, guards off-by-one on the `<=` check |
+| I5 | handover_floor = u64::MAX, tenure_ceiling = u64::MAX − 1 | `E_HANDOVER_FLOOR_EXCEEDS_TENURE` — u64-saturated boundary, confirms the check is a plain unsigned compare (no arithmetic that could overflow) |
+
+**Note — `descent_ceiling = 0` is valid, not an abort case.** Earlier
+revisions of this spec rejected `descent_ceiling = 0` with a dedicated
+abort code; that constraint was relaxed because the property emerges
+correctly from the state machine (AtDutchAuction collapses to a
+transient phase) and `evaluate_curve` handles `t_max = 0` structurally.
+See V12 in §7.1 and the "Pure machine — no price memory" variant in
+the design doc §15.
 
 **Abort-ordering note.** The validation sequence in §3 is: `min_rent_price`
-→ `tenure_ceiling` → `handover_floor <= tenure_ceiling` →
-`descent_ceiling`. Rows I1–I6 each set exactly one field to an invalid
-value so the expected abort code is unambiguous. Multi-violation inputs
-(e.g. `min_rent_price = 0` AND `tenure_ceiling = 0`) are omitted — they
-would couple the test to the order above. If the implementation reorders
-the asserts, rows I1–I6 still pass; a multi-violation row would not.
+→ `tenure_ceiling` → `handover_floor <= tenure_ceiling`. Rows I1–I5 each
+set exactly one field to an invalid value so the expected abort code is
+unambiguous. Multi-violation inputs (e.g. `min_rent_price = 0` AND
+`tenure_ceiling = 0`) are omitted — they would couple the test to the
+order above. If the implementation reorders the asserts, rows I1–I5
+still pass; a multi-violation row would not.
 
 
 ### 7.3 Getter round-trip (must hold for all valid configs)
@@ -563,7 +580,6 @@ row above:
 | `E_MIN_RENT_PRICE_ZERO: u64 = 0` | `public` | SDK error handling. |
 | `E_TENURE_CEILING_ZERO: u64 = 1` | `public` | SDK error handling. |
 | `E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 2` | `public` | SDK error handling. |
-| `E_DESCENT_CEILING_ZERO: u64 = 3` | `public` | SDK error handling. |
 | `IntegrationConfig` (type) | `public` | `copy + drop + store`. Embedded in `RentalEscrow`. |
 | `IntegrationConfigRegistered` (type) | `public` | Event. `copy + drop`. Emitted once at integration time. |
 | `new_config(...)` | `public` | Validated constructor. |

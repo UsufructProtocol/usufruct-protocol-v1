@@ -645,26 +645,86 @@ returned by `rent`.)
 
 ![TenantCap](../../media/object-display/tenant-cap.png)
 
-`Display<TenantCap>` gives every cap a visual identity in wallets and explorers.
-Created once post-deployment via a PTB presenting `&mut Publisher` for the
-package and `&mut DisplayRegistry` (Sui framework shared object at `0xd`).
+`Display<TenantCap>` gives every cap a visual identity in wallets and
+explorers. Under the eager-mint model a cap can be in one of three
+states relative to its escrow (`current` / `pending` / `stale`), and
+the human holder needs enough information to know which. Sui's Display
+template engine offers no conditional rendering — there is no `if`,
+no comparison operator, no branching — so the protocol cannot select a
+status badge or image based on the cap's actual state on-chain. The
+chosen approach is to **surface the comparable IDs in the description
+via Display V2 cross-load**: the holder reads the cap's own `id`
+alongside the escrow's `current_tenant_cap_id` and
+`pending_tenant_cap_id` and deduces the state by visual match. This
+is the maximum a Display alone can do; sophisticated wallets and the
+protocol's own dApp (SDK) layer compute and render the state directly
+by reading the escrow.
+
+Created once post-deployment via a PTB presenting `&mut Publisher` for
+the package and `&mut DisplayRegistry` (Sui framework shared object at
+`0xd`).
 
 ### Fields
 
 | Key | Value | Notes |
 |---|---|---|
 | `name` | `Tenant Cap` | Static. |
-| `description` | `Grants temporary access to a rented asset in the Liquid Renting Protocol. Becomes stale when displaced by a new tenant.` | Static. |
-| `image_url` | `{IMAGE_BASE_URL}/tenant-cap.png` | Hosted URL. Source: `media/object-display/tenant-cap.png`. |
+| `description` | (multi-line; see below) | Display V2 — uses cross-load to read fields from the referenced `RentalEscrow`. |
+| `image_url` | `{IMAGE_BASE_URL}/tenant-cap.png` | Hosted URL. Source: `media/object-display/tenant-cap.png`. Static — Display cannot vary the image by state. |
 | `project_url` | `https://liquidrenting.com` | Static. |
 | `creator` | `Liquid Renting Protocol` | Static. |
 
-`{IMAGE_BASE_URL}` is set at deployment time to the protocol's media hosting base URL.
+`{IMAGE_BASE_URL}` is set at deployment time to the protocol's media
+hosting base URL.
+
+### `description` template (Display V2 cross-load)
+
+```
+Liquid Renting tenancy capability.
+
+  This cap ID  : {id}
+  Escrow ID    : {escrow_id}
+
+State on the escrow (compare "This cap ID" to the rows below):
+
+  Active tenant cap   : {escrow_id.current_tenant_cap_id} | <none>
+  Pending tenant cap  : {escrow_id.pending_tenant_cap_id} | <none>
+
+If "Active" matches "This cap", you can borrow the asset now.
+If "Pending" matches "This cap", wait — the handover hasn't settled yet.
+Otherwise this cap is stale; you may burn it for gas.
+```
+
+`{escrow_id.current_tenant_cap_id}` and
+`{escrow_id.pending_tenant_cap_id}` are Display V2 cross-load
+references: the template engine resolves the `escrow_id` field on the
+`TenantCap`, loads the `RentalEscrow` object at that ID, and reads the
+named field from it. The `| <none>` fallback handles the slots'
+`Option<ID>` representation when the slot is `None`.
+
+**Caveat — exact V2 syntax to confirm at implementation.** The
+template engine currently in mainnet supports cross-load and default
+values, but the precise spelling for "load object at field-typed-as-ID
+and access its field" varies by framework version (some sources show
+`{escrow_id.current_tenant_cap_id}`, others use a `{ref:...}` form).
+The implementation PR validates the template against the current
+framework version and corrects the syntax if needed without changing
+the semantics.
+
+**Why this strategy is enough on-chain.** The protocol's job is to
+expose the data needed for any consumer to compute the state; the
+description does exactly that. Wallets that want to render
+`Active / Pending / Stale` badges, color-code, or change the image
+must read the escrow themselves and apply the comparison off-chain —
+that work belongs to the wallet/SDK/indexer layer, not to the
+protocol. (See §0 "TenantCap as signal — now trinary".)
 
 ### Creation
 
 ```move
 use sui::display_registry;
+
+let description = b"Liquid Renting tenancy capability.\n\n  This cap ID  : {id}\n  Escrow ID    : {escrow_id}\n\nState on the escrow (compare \"This cap ID\" to the rows below):\n\n  Active tenant cap   : {escrow_id.current_tenant_cap_id} | <none>\n  Pending tenant cap  : {escrow_id.pending_tenant_cap_id} | <none>\n\nIf \"Active\" matches \"This cap\", you can borrow the asset now.\nIf \"Pending\" matches \"This cap\", wait — the handover hasn't settled yet.\nOtherwise this cap is stale; you may burn it for gas.";
 
 let (mut display, cap) = display_registry::new_with_publisher<TenantCap>(
     registry,   // &mut DisplayRegistry (shared object 0xd)
@@ -672,7 +732,7 @@ let (mut display, cap) = display_registry::new_with_publisher<TenantCap>(
     ctx,
 );
 display_registry::set(&mut display, &cap, b"name".to_string(),        b"Tenant Cap".to_string());
-display_registry::set(&mut display, &cap, b"description".to_string(), b"Grants temporary access to a rented asset in the Liquid Renting Protocol. Becomes stale when displaced by a new tenant.".to_string());
+display_registry::set(&mut display, &cap, b"description".to_string(), description.to_string());
 display_registry::set(&mut display, &cap, b"image_url".to_string(),   b"{IMAGE_BASE_URL}/tenant-cap.png".to_string());
 display_registry::set(&mut display, &cap, b"project_url".to_string(), b"https://liquidrenting.com".to_string());
 display_registry::set(&mut display, &cap, b"creator".to_string(),     b"Liquid Renting Protocol".to_string());
@@ -684,6 +744,7 @@ One `Display<TenantCap>` per package deployment — enforced by `DisplayRegistry
 ID is deterministic from `DisplayRegistry` + type — no event scanning required.
 The returned `DisplayCap<TenantCap>` is required to call `set` / `unset` / `clear`
 later; keeping it with the deployer preserves the ability to edit the Display
-post-deployment.
+post-deployment — useful in particular if the Display V2 cross-load
+syntax needs adjustment after deployment.
 
 **Status:** [ ] `Display<TenantCap>` created and committed.

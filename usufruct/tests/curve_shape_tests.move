@@ -105,6 +105,156 @@ fun new_exponential_alpha_abs_above_8_aborts() {
     let _ = curve_shape::new_exponential(9, true);
 }
 
+// ─── evaluate_curve dispatcher ─────────────────────────────────────────────
+//
+// §11.1 edge rows × variant seeds, plus the P-D1 dispatch-equivalence
+// property. The edge rows fire BEFORE any eval_* call (short-circuits on
+// t == 0 and t >= t_max), so the result is identical across all variants.
+
+#[test_only]
+public struct DispatcherEdgeCase has drop {
+    t: u64,
+    t_max: u64,
+    expected: u64,
+}
+
+#[test]
+fun evaluate_curve_edge_cases_apply_to_every_variant() {
+    let scale = curve_shape::scale_for_testing();
+    let cases = vector[
+        DispatcherEdgeCase { t: 0,                          t_max: 1_000_000_000, expected: 0     }, // t == 0 short-circuit
+        DispatcherEdgeCase { t: 0,                          t_max: 1,             expected: 0     }, // t_max = 1 boundary
+        DispatcherEdgeCase { t: 1,                          t_max: 1,             expected: scale }, // t == t_max at smallest denominator
+        DispatcherEdgeCase { t: 1_000_000_000,              t_max: 1_000_000_000, expected: scale }, // t == t_max stand-in
+        DispatcherEdgeCase { t: 1_000_000_001,              t_max: 1_000_000_000, expected: scale }, // t_max + 1 — clamped
+        DispatcherEdgeCase { t: 18_446_744_073_709_551_615, t_max: 1_000_000_000, expected: scale }, // saturated u64::MAX
+    ];
+    let seeds: vector<curve_shape::CurveShape> = vector[
+        curve_shape::new_linear(),
+        curve_shape::new_smoothstep(),
+        curve_shape::new_logistic(),
+        curve_shape::new_power_law(2, 1),
+        curve_shape::new_exponential(2, false),
+    ];
+    let mut s = 0;
+    let slen = seeds.length();
+    while (s < slen) {
+        let shape = &seeds[s];
+        let mut i = 0;
+        let len = cases.length();
+        while (i < len) {
+            let case = &cases[i];
+            assert_eq!(
+                curve_shape::evaluate_curve(shape, case.t, case.t_max),
+                case.expected,
+            );
+            i = i + 1;
+        };
+        s = s + 1;
+    };
+}
+
+// P-D1 dispatch equivalence: for every variant seed and every interior
+// (t, t_max), evaluate_curve must route to the matching eval_* function and
+// forward fields verbatim. Catches dispatcher drift (wrong arm, swapped
+// fields) that no single-variant test row would surface.
+
+#[test_only]
+public struct InteriorPair has drop {
+    t: u64,
+    t_max: u64,
+}
+
+#[test_only]
+fun pd1_interior_pairs(): vector<InteriorPair> {
+    vector[
+        InteriorPair { t: 1,             t_max: 4             },
+        InteriorPair { t: 1,             t_max: 3             },
+        InteriorPair { t: 3,             t_max: 4             },
+        InteriorPair { t: 1_000_000_000, t_max: 4_000_000_000 },
+    ]
+}
+
+#[test]
+fun evaluate_curve_dispatch_equivalence_linear() {
+    let shape = curve_shape::new_linear();
+    let pairs = pd1_interior_pairs();
+    let mut i = 0;
+    let len = pairs.length();
+    while (i < len) {
+        let p = &pairs[i];
+        assert_eq!(
+            curve_shape::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape::eval_linear_for_testing(p.t, p.t_max),
+        );
+        i = i + 1;
+    };
+}
+
+#[test]
+fun evaluate_curve_dispatch_equivalence_smoothstep() {
+    let shape = curve_shape::new_smoothstep();
+    let pairs = pd1_interior_pairs();
+    let mut i = 0;
+    let len = pairs.length();
+    while (i < len) {
+        let p = &pairs[i];
+        assert_eq!(
+            curve_shape::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape::eval_smoothstep_for_testing(p.t, p.t_max),
+        );
+        i = i + 1;
+    };
+}
+
+#[test]
+fun evaluate_curve_dispatch_equivalence_logistic() {
+    let shape = curve_shape::new_logistic();
+    let pairs = pd1_interior_pairs();
+    let mut i = 0;
+    let len = pairs.length();
+    while (i < len) {
+        let p = &pairs[i];
+        assert_eq!(
+            curve_shape::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape::eval_logistic_for_testing(p.t, p.t_max),
+        );
+        i = i + 1;
+    };
+}
+
+#[test]
+fun evaluate_curve_dispatch_equivalence_power_law() {
+    let shape = curve_shape::new_power_law(2, 1);
+    let pairs = pd1_interior_pairs();
+    let mut i = 0;
+    let len = pairs.length();
+    while (i < len) {
+        let p = &pairs[i];
+        assert_eq!(
+            curve_shape::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape::eval_power_law_for_testing(p.t, p.t_max, 2, 1),
+        );
+        i = i + 1;
+    };
+}
+
+#[test]
+fun evaluate_curve_dispatch_equivalence_exponential() {
+    let shape = curve_shape::new_exponential(2, false);
+    let pairs = pd1_interior_pairs();
+    let mut i = 0;
+    let len = pairs.length();
+    while (i < len) {
+        let p = &pairs[i];
+        assert_eq!(
+            curve_shape::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape::eval_exponential_for_testing(p.t, p.t_max, 2, false),
+        );
+        i = i + 1;
+    };
+}
+
 // ─── eval_linear ───────────────────────────────────────────────────────────
 
 #[test_only]

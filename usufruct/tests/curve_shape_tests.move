@@ -254,6 +254,145 @@ fun eval_smoothstep_approximate_symmetry() {
     };
 }
 
+// ─── eval_power_law ────────────────────────────────────────────────────────
+
+#[test_only]
+public struct PowerLawEvalCase has drop {
+    t: u64,
+    t_max: u64,
+    n: u8,
+    d: u8,
+    expected: u64,
+}
+
+// d=1 path: integer exponent, no nth_root step. All values hand-derivable.
+#[test]
+fun eval_power_law_d1_golden_vectors() {
+    let cases = vector[
+        // 0.5^2 = 0.25
+        PowerLawEvalCase { t: 1_000_000_000, t_max: 2_000_000_000, n: 2, d: 1, expected:   250_000_000 },
+        // 0.5^3 = 0.125
+        PowerLawEvalCase { t: 1_000_000_000, t_max: 2_000_000_000, n: 3, d: 1, expected:   125_000_000 },
+        // 0.5^2 = 0.25, small-t scaling
+        PowerLawEvalCase { t: 2,             t_max: 4,             n: 2, d: 1, expected:   250_000_000 },
+        // 0.75^2 = 0.5625
+        PowerLawEvalCase { t: 3,             t_max: 4,             n: 2, d: 1, expected:   562_500_000 },
+        // 1^8 = 1
+        PowerLawEvalCase { t: 4_000_000_000, t_max: 4_000_000_000, n: 8, d: 1, expected: 1_000_000_000 },
+    ];
+    let mut i = 0;
+    let len = cases.length();
+    while (i < len) {
+        let case = &cases[i];
+        assert_eq!(
+            curve_shape::eval_power_law_for_testing(case.t, case.t_max, case.n, case.d),
+            case.expected,
+        );
+        i = i + 1;
+    };
+}
+
+// Monotonicity in t for both d=1 and d>1 paths.
+#[test]
+fun eval_power_law_monotone_in_t() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[
+        1u64,
+        100_000_000,
+        1_000_000_000,
+        2_500_000_000,
+        3_999_999_999,
+    ];
+    let ns = vector[2u8, 3, 8, 1, 3, 1, 1];
+    let ds = vector[1u8, 1, 1, 2, 2, 3, 4];
+    let mut p = 0;
+    let plen = ns.length();
+    while (p < plen) {
+        let n = ns[p];
+        let d = ds[p];
+        let mut i = 1;
+        let tlen = ts.length();
+        while (i < tlen) {
+            let lo = curve_shape::eval_power_law_for_testing(ts[i - 1], t_max, n, d);
+            let hi = curve_shape::eval_power_law_for_testing(ts[i],     t_max, n, d);
+            assert!(lo <= hi, 0);
+            i = i + 1;
+        };
+        p = p + 1;
+    };
+}
+
+#[test]
+fun eval_power_law_range() {
+    let scale = curve_shape::scale_for_testing();
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1u64, 1_000_000_000, 2_000_000_000, 3_000_000_000, 3_999_999_999];
+    let ns = vector[2u8, 3, 8, 3, 1, 1, 1, 3];
+    let ds = vector[1u8, 1, 1, 2, 2, 3, 4, 4];
+    let mut p = 0;
+    let plen = ns.length();
+    while (p < plen) {
+        let n = ns[p];
+        let d = ds[p];
+        let mut i = 0;
+        let tlen = ts.length();
+        while (i < tlen) {
+            let r = curve_shape::eval_power_law_for_testing(ts[i], t_max, n, d);
+            assert!(r <= scale, 0);
+            i = i + 1;
+        };
+        p = p + 1;
+    };
+}
+
+// alpha > 1 (n > d) ⇒ purely convex ⇒ result < linear for t ∈ (0, t_max).
+#[test]
+fun eval_power_law_below_linear_when_convex() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000];
+    let ns = vector[2u8, 3, 3, 5];
+    let ds = vector[1u8, 1, 2, 4];
+    let mut p = 0;
+    let plen = ns.length();
+    while (p < plen) {
+        let n = ns[p];
+        let d = ds[p];
+        let mut i = 0;
+        let tlen = ts.length();
+        while (i < tlen) {
+            let r   = curve_shape::eval_power_law_for_testing(ts[i], t_max, n, d);
+            let lin = curve_shape::eval_linear_for_testing(ts[i], t_max);
+            assert!(r < lin, 0);
+            i = i + 1;
+        };
+        p = p + 1;
+    };
+}
+
+// alpha < 1 (n < d) ⇒ purely concave ⇒ result > linear for t ∈ (0, t_max).
+#[test]
+fun eval_power_law_above_linear_when_concave() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000];
+    let ns = vector[1u8, 1, 1, 3];
+    let ds = vector[2u8, 3, 4, 4];
+    let mut p = 0;
+    let plen = ns.length();
+    while (p < plen) {
+        let n = ns[p];
+        let d = ds[p];
+        let mut i = 0;
+        let tlen = ts.length();
+        while (i < tlen) {
+            let r   = curve_shape::eval_power_law_for_testing(ts[i], t_max, n, d);
+            let lin = curve_shape::eval_linear_for_testing(ts[i], t_max);
+            assert!(r > lin, 0);
+            i = i + 1;
+        };
+        p = p + 1;
+    };
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 // Iterative Euclidean gcd (Move has no recursion).

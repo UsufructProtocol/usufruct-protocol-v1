@@ -153,7 +153,20 @@ fun eval_exponential(t: u64, t_max: u64, alpha_abs: u8, alpha_neg: bool): u64 {
     (num * SCALE_U128 / den) as u64
 }
 
-fun eval_logistic(_t: u64, _t_max: u64): u64 { abort 0 }
+fun eval_logistic(t: u64, t_max: u64): u64 {
+    let two_t = 2 * t;
+    let (y_num_abs, y_neg) = if (two_t >= t_max) {
+        (LOGISTIC_K * (two_t - t_max), false)
+    } else {
+        (LOGISTIC_K * (t_max - two_t), true)
+    };
+    let y_den: u64 = 2 * t_max;
+
+    let ey:      u128 = exp_scaled(y_num_abs, y_den, y_neg);
+    let sigma_y: u128 = ey * SCALE_U128 / (ey + TAYLOR_SCALE);
+
+    ((sigma_y - LOGISTIC_SIGMA_FLOOR) * SCALE_U128 / (LOGISTIC_DENOM as u128)) as u64
+}
 
 fun exp_scaled(y_num: u64, y_den: u64, neg: bool): u128 {
     let pos = exp_scaled_pos(y_num, y_den);

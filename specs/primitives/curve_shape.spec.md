@@ -928,11 +928,14 @@ fractional `y_den` values and the `y = 8` upper bound.
    Zero-argument branch (`y = 0`) is covered by the y=0 exact rows above;
    this property does not include it.
 
-2. **Reciprocal identity (within 1 ULP) [property].** For every `y ∈ S`,
-   assert `pos × neg ∈ [TAYLOR_SCALE_SQ − TAYLOR_SCALE, TAYLOR_SCALE_SQ]`
+2. **Reciprocal identity [property].** For every `y ∈ S`, assert
+   `pos × neg ∈ [TAYLOR_SCALE_SQ − pos, TAYLOR_SCALE_SQ]`
    where `pos = exp_scaled_for_testing(y_num, y_den, false)` and
-   `neg = exp_scaled_for_testing(y_num, y_den, true)`. The 1-ULP slack
-   matches the reciprocal-identity error budget stated in §7 "Sign handling".
+   `neg = exp_scaled_for_testing(y_num, y_den, true)`. Since
+   `neg = floor(TS² / pos)`, the integer-division floor introduces an error
+   of at most 1 in `neg`, which projects to an error of at most `pos` in the
+   product. For `y ∈ S`, `pos` is bounded by `e⁸ · TS ≈ 3·10²¹`. The earlier
+   "1 ULP = TAYLOR_SCALE" bound only holds for `y ≈ 0` where `pos ≈ TS`.
 
 3. **Precision bound [property].** Not directly testable in Move without a
    reference `floor(eʸ · TS)` oracle. Deferred to an off-chain check:

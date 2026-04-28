@@ -569,6 +569,13 @@ fun eval_power_law_root_golden_vectors() {
     assert_eq!(curve_shape::eval_power_law_for_testing(1, 16, 1, 4), 500_000_000);
     // α = 1/2 at t = 0.75·t_max: floor(√0.75 · SCALE); √0.75 ≈ 0.866025403784...
     assert_eq!(curve_shape::eval_power_law_for_testing(3, 4,  1, 2), 866_025_403);
+    // α = 1/2 at midpoint t = t_max/2: floor(√0.5 · SCALE); √0.5 ≈ 0.707106781...
+    // Reflection-on-diagonal pair with the convex midpoint
+    // (1_000_000_000, 2_000_000_000, 2, 1) → 250_000_000. See spec §11.4
+    // "Reflection on the diagonal" property: PowerLaw(α) and PowerLaw(1/α)
+    // are graph-reflections on y = x but NOT complementary
+    // (0.25 + 0.707 ≈ 0.957 ≠ 1) — distinct from Exp's complementarity.
+    assert_eq!(curve_shape::eval_power_law_for_testing(2_000_000_000, 4_000_000_000, 1, 2), 707_106_781);
 }
 
 // ─── exp_scaled / exp_scaled_pos ───────────────────────────────────────────

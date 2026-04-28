@@ -28,22 +28,33 @@ public struct ProtocolFeeRef has key {
 
 // === View Functions ===
 
-public fun inbox_id(_fee_ref: &ProtocolFeeRef): ID {
-    abort 0
+/// Returns the ID of the `ProtocolFeeInbox` this ref points to.
+public fun inbox_id(fee_ref: &ProtocolFeeRef): ID {
+    fee_ref.inbox_id
 }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun uid_mut(_inbox: &mut ProtocolFeeInbox): &mut UID {
-    abort 0
+/// Exposes `&mut UID` of `ProtocolFeeInbox` so `fee_message` can call
+/// `transfer::receive` against it.
+public(package) fun uid_mut(inbox: &mut ProtocolFeeInbox): &mut UID {
+    &mut inbox.id
 }
 
 // === Private Functions ===
 
-fun init(_ctx: &mut TxContext) {
-    abort 0
+fun init(ctx: &mut TxContext) {
+    let inbox = ProtocolFeeInbox {
+        id: object::new(ctx),
+    };
+    let fee_ref = ProtocolFeeRef {
+        id:       object::new(ctx),
+        inbox_id: object::id(&inbox),
+    };
+    transfer::public_transfer(inbox, ctx.sender());
+    transfer::freeze_object(fee_ref);
 }
 
 // === Test Functions ===

@@ -105,3 +105,27 @@ public fun consume_message_for_testing<C>(
 ): Balance<C> {
     consume_message(msg, fee_inbox_id, collector)
 }
+
+// FeeMessageSent field accessors (struct fields are module-private)
+#[test_only]
+public fun sent_fee_message_id<C>(e: &FeeMessageSent<C>): ID { e.fee_message_id }
+#[test_only]
+public fun sent_fee_inbox_id<C>(e: &FeeMessageSent<C>): ID { e.fee_inbox_id }
+#[test_only]
+public fun sent_escrow_id<C>(e: &FeeMessageSent<C>): ID { e.escrow_id }
+#[test_only]
+public fun sent_amount<C>(e: &FeeMessageSent<C>): u64 { e.amount }
+#[test_only]
+public fun sent_tenant<C>(e: &FeeMessageSent<C>): address { e.tenant }
+
+// FeeMessageCollected field accessors
+#[test_only]
+public fun collected_fee_message_id<C>(e: &FeeMessageCollected<C>): ID { e.fee_message_id }
+#[test_only]
+public fun collected_fee_inbox_id<C>(e: &FeeMessageCollected<C>): ID { e.fee_inbox_id }
+#[test_only]
+public fun collected_escrow_id<C>(e: &FeeMessageCollected<C>): ID { e.escrow_id }
+#[test_only]
+public fun collected_amount<C>(e: &FeeMessageCollected<C>): u64 { e.amount }
+#[test_only]
+public fun collected_collector<C>(e: &FeeMessageCollected<C>): address { e.collector }

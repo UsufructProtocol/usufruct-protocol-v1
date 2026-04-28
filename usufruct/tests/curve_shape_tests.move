@@ -1140,6 +1140,59 @@ fun exponential_concave_chain_increasing_in_alpha() {
     };
 }
 
+// (6) Midpoint convexity gate.
+//
+// At x = 0.5 (i.e. t = t_max/2 with t_max even), the universal convexity
+// invariant for normalized curves with g(0)=0, g(1)=1:
+//   - convex variants  →  g(0.5) <  0.5
+//   - concave variants →  g(0.5) >  0.5
+//   - the linear/sigmoidal (S-symmetric) family hits g(0.5) = 0.5 exactly.
+// A single test that sweeps every variant and asserts the side it must land on.
+#[test]
+fun midpoint_convexity_gate() {
+    let scale = curve_shape::scale_for_testing();
+    let half  = scale / 2;
+    let t_max: u64 = 4_000_000_000;
+    let t:     u64 = 2_000_000_000;
+
+    // S-symmetric trio — exact midpoint.
+    assert_eq!(curve_shape::eval_linear_for_testing(t, t_max),     half);
+    assert_eq!(curve_shape::eval_smoothstep_for_testing(t, t_max), half);
+    assert_eq!(curve_shape::eval_logistic_for_testing(t, t_max),   half);
+
+    // PowerLaw convex (n > d) — coprime, n ∈ [1, 8], d ∈ {1, 2, 3, 4}.
+    let convex_ns = vector[2u8, 3, 8, 3, 5, 7, 4, 5, 7];
+    let convex_ds = vector[1u8, 1, 1, 2, 2, 2, 3, 3, 4];
+    let mut i = 0;
+    let len = convex_ns.length();
+    while (i < len) {
+        let r = curve_shape::eval_power_law_for_testing(t, t_max, convex_ns[i], convex_ds[i]);
+        assert!(r < half, 0);
+        i = i + 1;
+    };
+
+    // PowerLaw concave (n < d).
+    let concave_ns = vector[1u8, 1, 2, 1, 3];
+    let concave_ds = vector[2u8, 3, 3, 4, 4];
+    let mut i = 0;
+    let len = concave_ns.length();
+    while (i < len) {
+        let r = curve_shape::eval_power_law_for_testing(t, t_max, concave_ns[i], concave_ds[i]);
+        assert!(r > half, 0);
+        i = i + 1;
+    };
+
+    // Exponential — sweep α ∈ [1, 8] for both signs.
+    let mut a: u8 = 1;
+    while (a <= 8) {
+        let convex  = curve_shape::eval_exponential_for_testing(t, t_max, a, false);
+        let concave = curve_shape::eval_exponential_for_testing(t, t_max, a, true);
+        assert!(convex  < half, 0);
+        assert!(concave > half, 0);
+        a = a + 1;
+    };
+}
+
 // ─── Algorithm-derived constants — regression check ────────────────────────
 //
 // Pinning procedure (run once during initial implementation, then this test

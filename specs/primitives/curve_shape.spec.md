@@ -1045,12 +1045,17 @@ regression check (same procedure as §11.5).
 
 #### Golden vectors
 
+Algorithm-derived rows established by emitting `eval_logistic_for_testing(...)`
+outputs via `std::debug::print` in a one-shot `#[test]`, then pinning the
+captured literals here and in the `eval_logistic_golden_vectors` regression
+check (same procedure as §11.5).
+
 | `t` | `t_max` | result | note |
 |-----|---------|--------|------|
 | **[new]** `2_000_000_000` | `4_000_000_000` | `500_000_000` | exact midpoint `SCALE/2` — by construction (σ is symmetric around y=0; at x=0.5 the numerator equals half the denominator). No algorithm placeholder. |
-| **[new]** `1_000_000_000` | `4_000_000_000` | TBD (algorithm-derived) | `t = t_max/4` — below linear |
-| **[new]** `3_000_000_000` | `4_000_000_000` | TBD (algorithm-derived) | `t = 3·t_max/4` — above linear; complementary to row above |
-| **[new]** `1` | `4` | TBD (algorithm-derived) | small-integer inputs — exercises integer-rounding path absent the SCALE-aligned denominators |
+| **[new]** `1_000_000_000` | `4_000_000_000` |  `45_176_659` | `t = t_max/4` — below linear |
+| **[new]** `3_000_000_000` | `4_000_000_000` | `954_823_340` | `t = 3·t_max/4` — above linear; sum with row above is 999_999_999 (1 ULP from SCALE) |
+| **[new]** `1` | `4` |  `45_176_659` | small-integer inputs — same `x = 0.25` ratio as the SCALE-aligned row above; integer rounding cancels at this granularity |
 
 #### Constant derivation tests — `LOGISTIC_DENOM`, `LOGISTIC_SIGMA_FLOOR`
 
@@ -1060,7 +1065,7 @@ other.
 
 | Assertion | Note |
 |---|---|
-| **[new] [property]** `2 · logistic_sigma_floor_for_testing() + (logistic_denom_for_testing() as u128) == SCALE_U128` | Algebraic identity from the definition `SIGMA_FLOOR = (SCALE − DENOM) / 2`. Fails if either literal is pinned against a different `exp_scaled` output than the other. |
+| **[new] [property]** `2 · logistic_sigma_floor_for_testing() + (logistic_denom_for_testing() as u128) ∈ [SCALE_U128 − 1, SCALE_U128]` | Algebraic identity from the definition `SIGMA_FLOOR = floor((SCALE − DENOM) / 2)`. The integer-floor allows a 1-ULP slack when `(SCALE − DENOM)` is odd; for the pinned `DENOM = 995_054_753` the difference is `4_945_247` (odd), so the value is `SCALE − 1`. Fails if either literal drifts against a different `exp_scaled` output than the other. |
 | **[new]** `(logistic_denom_for_testing() as i128 − 995_054_750).abs() <= 100` | Reference check: `(σ(6) − σ(−6)) · SCALE ≈ 995_054_750` (§9). 100-ULP tolerance covers floor rounding in `exp_scaled`; tighten at implementation if actual delta is known. Fails if `LOGISTIC_DENOM` is pinned against a wrong exponent (e.g. `k=6` vs `k=12`). |
 
 #### Properties

@@ -780,6 +780,27 @@ fun eval_logistic_denom_reference_within_100_ulp() {
     assert!(diff <= 100, 0);
 }
 
+// Algorithm-derived golden vectors for eval_logistic (§11.7).
+//
+// Pinning procedure (one-shot at initial implementation; this test guards
+// the values from then on):
+//
+//   1. Replace each `expected_*` literal with `0`.
+//   2. Replace `assert_eq!(actual, expected)` with `std::debug::print(&actual)`.
+//   3. `sui move test eval_logistic_golden_vectors` — captures the 3 outputs.
+//   4. Paste the printed literals into spec §11.7 and back into this test.
+//   5. Restore `assert_eq!`. Suite turns green.
+#[test]
+fun eval_logistic_golden_vectors() {
+    // x = 0.25 — below linear
+    assert_eq!(curve_shape::eval_logistic_for_testing(1_000_000_000, 4_000_000_000),  45_176_659);
+    // x = 0.75 — above linear; complementary to row above
+    assert_eq!(curve_shape::eval_logistic_for_testing(3_000_000_000, 4_000_000_000), 954_823_340);
+    // small-integer inputs — same x = 0.25 ratio, asserts the algorithm is
+    // scale-invariant in (t, t_max) at the integer-rounding granularity.
+    assert_eq!(curve_shape::eval_logistic_for_testing(1, 4),                          45_176_659);
+}
+
 // ─── Algorithm-derived constants — regression check ────────────────────────
 //
 // Pinning procedure (run once during initial implementation, then this test

@@ -667,6 +667,119 @@ fun eval_exponential_golden_vectors() {
     assert_eq!(curve_shape::eval_exponential_for_testing(2, 4, 2, true ), 731_058_578);
 }
 
+// ─── eval_logistic ─────────────────────────────────────────────────────────
+//
+// Algorithm-derived golden vectors (§11.7) are pinned in a separate
+// post-bootstrap commit. The tests here cover the exact midpoint, the
+// algorithm-independent properties, and the two cross-constant checks on
+// LOGISTIC_DENOM / LOGISTIC_SIGMA_FLOOR.
+
+// At x=0.5 the numerator equals half the denominator by symmetry of σ
+// around y=0 — exact regardless of K, even with the +1 ULP from the floor
+// in SIGMA_FLOOR's compile-time formula.
+#[test]
+fun eval_logistic_midpoint_exact_scale_half() {
+    let scale = curve_shape::scale_for_testing();
+    assert_eq!(curve_shape::eval_logistic_for_testing(2_000_000_000, 4_000_000_000), scale / 2);
+    assert_eq!(curve_shape::eval_logistic_for_testing(500, 1_000),                   scale / 2);
+    assert_eq!(curve_shape::eval_logistic_for_testing(2, 4),                         scale / 2);
+}
+
+#[test]
+fun eval_logistic_range() {
+    let scale = curve_shape::scale_for_testing();
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1u64, 1_000_000_000, 2_000_000_000, 3_000_000_000, 3_999_999_999];
+    let mut i = 0;
+    let len = ts.length();
+    while (i < len) {
+        let r = curve_shape::eval_logistic_for_testing(ts[i], t_max);
+        assert!(r <= scale, 0);
+        i = i + 1;
+    };
+}
+
+#[test]
+fun eval_logistic_monotone_in_t() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1u64, 100_000_000, 1_000_000_000, 2_500_000_000, 3_999_999_999];
+    let mut i = 1;
+    let len = ts.length();
+    while (i < len) {
+        let lo = curve_shape::eval_logistic_for_testing(ts[i - 1], t_max);
+        let hi = curve_shape::eval_logistic_for_testing(ts[i],     t_max);
+        assert!(lo <= hi, 0);
+        i = i + 1;
+    };
+}
+
+#[test]
+fun eval_logistic_below_linear_first_half_above_second_half() {
+    let t_max: u64 = 4_000_000_000;
+    // first half: logistic < linear
+    let lo_t: u64 = 1_000_000_000;
+    assert!(
+        curve_shape::eval_logistic_for_testing(lo_t, t_max)
+            < curve_shape::eval_linear_for_testing(lo_t, t_max),
+        0,
+    );
+    // second half: logistic > linear
+    let hi_t: u64 = 3_000_000_000;
+    assert!(
+        curve_shape::eval_logistic_for_testing(hi_t, t_max)
+            > curve_shape::eval_linear_for_testing(hi_t, t_max),
+        0,
+    );
+}
+
+// Approximate symmetry: g(x) + g(1-x) ≈ 1 within 2 ULP (§11.7 seed S_L).
+#[test]
+fun eval_logistic_approximate_symmetry_within_2_ulp() {
+    let scale = curve_shape::scale_for_testing();
+    let ts:    vector<u64> = vector[1, 1, 3, 1_000_000_000];
+    let tmaxs: vector<u64> = vector[4, 8, 8, 4_000_000_000];
+    let mut i = 0;
+    let len = ts.length();
+    while (i < len) {
+        let t     = ts[i];
+        let t_max = tmaxs[i];
+        let a = curve_shape::eval_logistic_for_testing(t,         t_max);
+        let b = curve_shape::eval_logistic_for_testing(t_max - t, t_max);
+        let sum = a + b;
+        assert!(sum + 2 >= scale, 0);
+        assert!(sum <= scale + 2, 0);
+        i = i + 1;
+    };
+}
+
+// Cross-constant check: SIGMA_FLOOR = floor((SCALE − DENOM) / 2) means
+// 2·SIGMA_FLOOR + DENOM ∈ {SCALE − 1, SCALE} depending on the parity of
+// (SCALE − DENOM). With pinned DENOM = 995_054_753, SCALE − DENOM = 4_945_247
+// is odd, so the value is SCALE − 1.
+//
+// (Spec §11.7 states a tighter "== SCALE" identity; that holds only when the
+// difference is even. The relaxed bound below is the correct invariant; spec
+// follows in a separate commit.)
+#[test]
+fun eval_logistic_sigma_floor_denom_algebraic_identity() {
+    let scale = curve_shape::scale_for_testing() as u128;
+    let denom = curve_shape::logistic_denom_for_testing() as u128;
+    let sf    = curve_shape::logistic_sigma_floor_for_testing();
+    let sum   = 2 * sf + denom;
+    assert!(sum + 1 >= scale, 0);
+    assert!(sum <= scale, 0);
+}
+
+// Reference sanity: pinned LOGISTIC_DENOM should be within 100 ULP of the
+// mathematical reference (σ(6) − σ(−6)) · SCALE ≈ 995_054_750.
+#[test]
+fun eval_logistic_denom_reference_within_100_ulp() {
+    let denom: u64 = curve_shape::logistic_denom_for_testing();
+    let ref_val: u64 = 995_054_750;
+    let diff = if (denom >= ref_val) { denom - ref_val } else { ref_val - denom };
+    assert!(diff <= 100, 0);
+}
+
 // ─── Algorithm-derived constants — regression check ────────────────────────
 //
 // Pinning procedure (run once during initial implementation, then this test

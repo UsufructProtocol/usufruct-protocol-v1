@@ -765,55 +765,44 @@ fun d5_cross_inbox_ticket_rejected() {
     scenario.end();
 }
 
-// TODO(P3): double-drain prevention — untestable in test_scenario.
-// After object::delete, receiving_ticket_by_id panics at the Rust level inside
-// the framework (unwrap on None) instead of producing a Move abort.
-// #[expected_failure] only catches Move aborts, so this test crashes the suite.
-// The property is guaranteed by Sui's runtime: a deleted UID is permanently gone
-// from the object store. Verified by the unconditional object::delete in
-// consume_message. Re-evaluate if test_scenario gains a "check object exists" API.
-//
-// #[test]
-// #[expected_failure]
-// fun p3_uid_deleted_prevents_double_drain() {
-//     let mut scenario = setup();
-//     let mut msg_id = object::id_from_address(@0x0);
-//     scenario.next_tx(ADMIN);
-//     {
-//         let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
-//         let fee_inbox_id = object::id(&inbox);
-//         fee_message::post<sui::sui::SUI>(
-//             balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
-//         );
-//         msg_id = fee_message::sent_fee_message_id(
-//             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
-//         );
-//         scenario.return_to_sender(inbox);
-//     };
-//     scenario.next_tx(ADMIN);
-//     {
-//         let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
-//         let ticket    = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
-//         let coin = fee_message::collect_fee_messages<sui::sui::SUI>(
-//             &mut inbox, vector[ticket], scenario.ctx()
-//         );
-//         transfer::public_transfer(coin, ADMIN);
-//         scenario.return_to_sender(inbox);
-//     };
-//     // Second drain — receiving_ticket_by_id panics here (Rust unwrap on None),
-//     // not a Move abort. Suite crashes instead of passing as expected_failure.
-//     scenario.next_tx(ADMIN);
-//     {
-//         let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
-//         let ticket    = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
-//         let coin = fee_message::collect_fee_messages<sui::sui::SUI>(
-//             &mut inbox, vector[ticket], scenario.ctx()
-//         );
-//         transfer::public_transfer(coin, ADMIN);
-//         scenario.return_to_sender(inbox);
-//     };
-//     scenario.end();
-// }
+// P3: FeeMessage UID is deleted in the drain transaction.
+// Asserts P3 directly via TransactionEffects.deleted() — the positive form:
+// the msg_id appears in the deleted set of the drain tx. Preferred over an
+// #[expected_failure] double-drain attempt, which panics at the Rust level
+// (receiving_ticket_by_id calls unwrap on None for a deleted object's version)
+// instead of producing a Move abort that expected_failure can catch.
+#[test]
+fun p3_uid_deleted_on_drain() {
+    let mut scenario = setup();
+    let mut msg_id = object::id_from_address(@0x0);
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let fee_inbox_id = object::id(&inbox);
+        fee_message::post<sui::sui::SUI>(
+            balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+        );
+        msg_id = fee_message::sent_fee_message_id(
+            &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
+        );
+        scenario.return_to_sender(inbox);
+    };
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+        let ticket    = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
+        let coin = fee_message::collect_fee_messages<sui::sui::SUI>(
+            &mut inbox, vector[ticket], scenario.ctx()
+        );
+        transfer::public_transfer(coin, ADMIN);
+        scenario.return_to_sender(inbox);
+    };
+    // end() finalizes the drain tx and returns its TransactionEffects.
+    // deleted() lists every UID deleted in that tx — msg_id must be there.
+    let effects = scenario.end();
+    let deleted = effects.deleted();
+    assert!(deleted.contains(&msg_id));
+}
 
 // D8: 64 messages drained in one call — regression guard for vector::do! iteration.
 // Tests that the accumulator and the loop shape are correct at N >> 4.

@@ -158,6 +158,102 @@ fun eval_linear_monotone_in_t() {
     };
 }
 
+// ─── eval_smoothstep ───────────────────────────────────────────────────────
+
+#[test_only]
+public struct SmoothstepCase has drop {
+    t: u64,
+    t_max: u64,
+    expected: u64,
+}
+
+#[test]
+fun eval_smoothstep_golden_vectors() {
+    let cases = vector[
+        SmoothstepCase { t: 1_000_000_000, t_max: 4_000_000_000, expected: 156_250_000 }, // g(0.25)=0.15625
+        SmoothstepCase { t: 2_000_000_000, t_max: 4_000_000_000, expected: 500_000_000 }, // g(0.5)=0.5 exact
+        SmoothstepCase { t: 3_000_000_000, t_max: 4_000_000_000, expected: 843_750_000 }, // g(0.75)=0.84375
+    ];
+    let mut i = 0;
+    let len = cases.length();
+    while (i < len) {
+        let case = &cases[i];
+        assert_eq!(
+            curve_shape::eval_smoothstep_for_testing(case.t, case.t_max),
+            case.expected,
+        );
+        i = i + 1;
+    };
+}
+
+#[test]
+fun eval_smoothstep_midpoint_exact() {
+    let scale = curve_shape::scale_for_testing();
+    assert_eq!(curve_shape::eval_smoothstep_for_testing(2, 4), scale / 2);
+    assert_eq!(
+        curve_shape::eval_smoothstep_for_testing(500_000_000, 1_000_000_000),
+        scale / 2,
+    );
+}
+
+#[test]
+fun eval_smoothstep_monotone_in_t() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[
+        1u64,
+        100_000_000,
+        1_000_000_000,
+        2_000_000_000,
+        3_000_000_000,
+        3_999_999_999,
+    ];
+    let mut i = 1;
+    let len = ts.length();
+    while (i < len) {
+        let lo = curve_shape::eval_smoothstep_for_testing(ts[i - 1], t_max);
+        let hi = curve_shape::eval_smoothstep_for_testing(ts[i],     t_max);
+        assert!(lo <= hi, 0);
+        i = i + 1;
+    };
+}
+
+#[test]
+fun eval_smoothstep_below_linear_first_half_above_second_half() {
+    let t_max: u64 = 4_000_000_000;
+    // first half: smoothstep < linear
+    let lo_t: u64 = 1_000_000_000; // x=0.25
+    assert!(
+        curve_shape::eval_smoothstep_for_testing(lo_t, t_max)
+            < curve_shape::eval_linear_for_testing(lo_t, t_max),
+        0,
+    );
+    // second half: smoothstep > linear
+    let hi_t: u64 = 3_000_000_000; // x=0.75
+    assert!(
+        curve_shape::eval_smoothstep_for_testing(hi_t, t_max)
+            > curve_shape::eval_linear_for_testing(hi_t, t_max),
+        0,
+    );
+}
+
+#[test]
+fun eval_smoothstep_approximate_symmetry() {
+    // g(x) + g(1-x) ≈ 1 (within 1–2 ULP from floor rounding)
+    let scale = curve_shape::scale_for_testing();
+    let t_max: u64 = 4_000_000_000;
+    let probes = vector[1u64, 500_000_000, 1_000_000_000, 1_700_000_000];
+    let mut i = 0;
+    let len = probes.length();
+    while (i < len) {
+        let t = probes[i];
+        let a = curve_shape::eval_smoothstep_for_testing(t,         t_max);
+        let b = curve_shape::eval_smoothstep_for_testing(t_max - t, t_max);
+        let sum = a + b;
+        assert!(sum + 2 >= scale && sum <= scale, 0);
+        i = i + 1;
+    };
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 // Iterative Euclidean gcd (Move has no recursion).

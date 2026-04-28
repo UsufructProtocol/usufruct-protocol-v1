@@ -898,3 +898,137 @@ fun d8b_accumulator_near_u64_max() {
     };
     scenario.end();
 }
+
+// ─── Additional coverage ────────────────────────────────────────────────────
+
+// Drain order independence: post [A, B], drain [B, A].
+// Verifies that transfer::receive retrieves messages by object ID, not by
+// insertion order. Each collected event must match its message's escrow_id
+// regardless of the ticket sequence.
+#[test]
+fun drain_order_independence() {
+    let mut scenario = setup();
+    let esc_a = object::id_from_address(@0xA1);
+    let esc_b = object::id_from_address(@0xB2);
+    let mut id_a: ID;
+    let mut id_b: ID;
+    scenario.next_tx(ADMIN);
+    {
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
+        let fee_inbox_id = object::id(&inbox);
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(300), esc_a, ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(700), esc_b, BOB,   fee_inbox_id, scenario.ctx());
+        let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
+        id_a = fee_message::sent_fee_message_id(&sent[0]);
+        id_b = fee_message::sent_fee_message_id(&sent[1]);
+        scenario.return_to_sender(inbox);
+    };
+    // Drain in reverse order: B first, then A.
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+        let tickets   = vector[
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id_b),
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id_a),
+        ];
+        let coin = fee_message::collect_fee_messages<sui::sui::SUI>(&mut inbox, tickets, scenario.ctx());
+        assert_eq!(coin::value(&coin), 1_000);
+        transfer::public_transfer(coin, ADMIN);
+
+        let coll = event::events_by_type<FeeMessageCollected<sui::sui::SUI>>();
+        assert_eq!(coll.length(), 2);
+        // First collected event corresponds to B (drained first)
+        assert_eq!(fee_message::collected_fee_message_id(&coll[0]), id_b);
+        assert_eq!(fee_message::collected_escrow_id(&coll[0]),      esc_b);
+        // Second collected event corresponds to A (drained second)
+        assert_eq!(fee_message::collected_fee_message_id(&coll[1]), id_a);
+        assert_eq!(fee_message::collected_escrow_id(&coll[1]),      esc_a);
+
+        scenario.return_to_sender(inbox);
+    };
+    scenario.end();
+}
+
+// u64::MAX end-to-end: post a single u64::MAX message and drain it through the
+// full collect_fee_messages pipeline. S9 only checks the Sent event; this closes
+// the loop by verifying the returned Coin carries u64::MAX.
+#[test]
+fun collect_single_max_u64_message() {
+    let mut scenario = setup();
+    let mut msg_id: ID;
+    scenario.next_tx(ADMIN);
+    {
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
+        let fee_inbox_id = object::id(&inbox);
+        fee_message::post<sui::sui::SUI>(
+            balance::create_for_testing(18_446_744_073_709_551_615),
+            fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx(),
+        );
+        msg_id = fee_message::sent_fee_message_id(
+            &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
+        );
+        scenario.return_to_sender(inbox);
+    };
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+        let ticket    = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
+        let coin      = fee_message::collect_fee_messages<sui::sui::SUI>(
+            &mut inbox, vector[ticket], scenario.ctx()
+        );
+        assert_eq!(coin::value(&coin), 18_446_744_073_709_551_615);
+        transfer::public_transfer(coin, ADMIN);
+        scenario.return_to_sender(inbox);
+    };
+    scenario.end();
+}
+
+// Mixed zero and non-zero in a single batch: the accumulator must sum only the
+// non-zero contributions. Zero-balance messages are valid and must not abort.
+#[test]
+fun collect_mixed_zero_nonzero_batch() {
+    let mut scenario = setup();
+    let mut id0: ID;
+    let mut id1: ID;
+    let mut id2: ID;
+    let mut id3: ID;
+    scenario.next_tx(ADMIN);
+    {
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
+        let fee_inbox_id = object::id(&inbox);
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(0),   fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(100), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(0),   fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(200), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
+        id0 = fee_message::sent_fee_message_id(&sent[0]);
+        id1 = fee_message::sent_fee_message_id(&sent[1]);
+        id2 = fee_message::sent_fee_message_id(&sent[2]);
+        id3 = fee_message::sent_fee_message_id(&sent[3]);
+        scenario.return_to_sender(inbox);
+    };
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+        let tickets   = vector[
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id0),
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id1),
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id2),
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id3),
+        ];
+        let coin = fee_message::collect_fee_messages<sui::sui::SUI>(&mut inbox, tickets, scenario.ctx());
+        assert_eq!(coin::value(&coin), 300);
+        transfer::public_transfer(coin, ADMIN);
+
+        // Four collected events emitted — zero-balance ones carry amount == 0
+        let coll = event::events_by_type<FeeMessageCollected<sui::sui::SUI>>();
+        assert_eq!(coll.length(), 4);
+        assert_eq!(fee_message::collected_amount(&coll[0]), 0);
+        assert_eq!(fee_message::collected_amount(&coll[1]), 100);
+        assert_eq!(fee_message::collected_amount(&coll[2]), 0);
+        assert_eq!(fee_message::collected_amount(&coll[3]), 200);
+
+        scenario.return_to_sender(inbox);
+    };
+    scenario.end();
+}

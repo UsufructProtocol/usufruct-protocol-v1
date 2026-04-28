@@ -69,13 +69,19 @@ public enum CurveShape has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_linear(): CurveShape { CurveShape::Linear }
+// === View Functions ===
 
-public fun new_smoothstep(): CurveShape { CurveShape::Smoothstep }
+// === Admin Functions ===
 
-public fun new_logistic(): CurveShape { CurveShape::Logistic }
+// === Package Functions ===
 
-public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShape {
+public(package) fun new_linear(): CurveShape { CurveShape::Linear }
+
+public(package) fun new_smoothstep(): CurveShape { CurveShape::Smoothstep }
+
+public(package) fun new_logistic(): CurveShape { CurveShape::Logistic }
+
+public(package) fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShape {
     assert!(alpha_num >= 1 && alpha_num <= 8, EAlphaNumRange);
     assert!(alpha_den >= 1 && alpha_den <= 4, EAlphaDenRange);
     assert!(alpha_num != alpha_den,           EDegenerateLinear);
@@ -86,16 +92,10 @@ public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShape {
     }
 }
 
-public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShape {
+public(package) fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShape {
     assert!(alpha_abs >= 1 && alpha_abs <= 8, EAlphaAbsRange);
     CurveShape::Exponential { alpha_abs, alpha_neg }
 }
-
-// === View Functions ===
-
-// === Admin Functions ===
-
-// === Package Functions ===
 
 public(package) fun evaluate_curve(_shape: &CurveShape, _t: u64, _t_max: u64): u64 { abort 0 }
 

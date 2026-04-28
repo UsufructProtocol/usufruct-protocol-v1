@@ -714,3 +714,196 @@ fun e6_sent_collected_join_on_fee_message_id() {
     };
     scenario.end();
 }
+
+// ─── D5, D8, D8b, P3 — Security and stress ─────────────────────────────────
+
+// D5: Ticket for a message posted to inbox A, presented to inbox B, aborts.
+// Verifies P7: parent-relation enforcement is done by transfer::receive at the
+// Sui runtime level — no Move-level assert needed or added.
+#[test]
+#[expected_failure]
+fun d5_cross_inbox_ticket_rejected() {
+    // Create inbox A → hand to ADMIN; inbox B → stays with DEPLOYER.
+    let mut scenario = test_scenario::begin(DEPLOYER);
+    {
+        protocol_fee_inbox::init_for_testing(scenario.ctx());
+    };
+    scenario.next_tx(DEPLOYER);
+    {
+        let inbox_a = scenario.take_from_sender<ProtocolFeeInbox>();
+        transfer::public_transfer(inbox_a, ADMIN);
+    };
+    scenario.next_tx(DEPLOYER);
+    {
+        protocol_fee_inbox::init_for_testing(scenario.ctx());
+    };
+    // Post to inbox A; save msg_id.
+    let mut msg_id = object::id_from_address(@0x0);
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox_a  = scenario.take_from_sender<ProtocolFeeInbox>();
+        let fee_inbox_id = object::id(&inbox_a);
+        fee_message::post<sui::sui::SUI>(
+            balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+        );
+        msg_id = fee_message::sent_fee_message_id(
+            &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
+        );
+        scenario.return_to_sender(inbox_a);
+    };
+    // Drain from inbox B with a ticket that belongs to inbox A → must abort.
+    scenario.next_tx(DEPLOYER);
+    {
+        let mut inbox_b = scenario.take_from_sender<ProtocolFeeInbox>();
+        let ticket = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
+        let coin = fee_message::collect_fee_messages<sui::sui::SUI>(
+            &mut inbox_b, vector[ticket], scenario.ctx()
+        );
+        transfer::public_transfer(coin, DEPLOYER);
+        scenario.return_to_sender(inbox_b);
+    };
+    scenario.end();
+}
+
+// TODO(P3): double-drain prevention — untestable in test_scenario.
+// After object::delete, receiving_ticket_by_id panics at the Rust level inside
+// the framework (unwrap on None) instead of producing a Move abort.
+// #[expected_failure] only catches Move aborts, so this test crashes the suite.
+// The property is guaranteed by Sui's runtime: a deleted UID is permanently gone
+// from the object store. Verified by the unconditional object::delete in
+// consume_message. Re-evaluate if test_scenario gains a "check object exists" API.
+//
+// #[test]
+// #[expected_failure]
+// fun p3_uid_deleted_prevents_double_drain() {
+//     let mut scenario = setup();
+//     let mut msg_id = object::id_from_address(@0x0);
+//     scenario.next_tx(ADMIN);
+//     {
+//         let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+//         let fee_inbox_id = object::id(&inbox);
+//         fee_message::post<sui::sui::SUI>(
+//             balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+//         );
+//         msg_id = fee_message::sent_fee_message_id(
+//             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
+//         );
+//         scenario.return_to_sender(inbox);
+//     };
+//     scenario.next_tx(ADMIN);
+//     {
+//         let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+//         let ticket    = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
+//         let coin = fee_message::collect_fee_messages<sui::sui::SUI>(
+//             &mut inbox, vector[ticket], scenario.ctx()
+//         );
+//         transfer::public_transfer(coin, ADMIN);
+//         scenario.return_to_sender(inbox);
+//     };
+//     // Second drain — receiving_ticket_by_id panics here (Rust unwrap on None),
+//     // not a Move abort. Suite crashes instead of passing as expected_failure.
+//     scenario.next_tx(ADMIN);
+//     {
+//         let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+//         let ticket    = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
+//         let coin = fee_message::collect_fee_messages<sui::sui::SUI>(
+//             &mut inbox, vector[ticket], scenario.ctx()
+//         );
+//         transfer::public_transfer(coin, ADMIN);
+//         scenario.return_to_sender(inbox);
+//     };
+//     scenario.end();
+// }
+
+// D8: 64 messages drained in one call — regression guard for vector::do! iteration.
+// Tests that the accumulator and the loop shape are correct at N >> 4.
+#[test]
+fun d8_large_n_iteration_regression() {
+    let mut scenario = setup();
+    let mut ids: vector<ID> = vector[];
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let fee_inbox_id = object::id(&inbox);
+        let mut k: u64 = 0;
+        while (k < 64) {
+            fee_message::post<sui::sui::SUI>(
+                balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            );
+            k = k + 1;
+        };
+        let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
+        assert_eq!(sent.length(), 64);
+        let mut j: u64 = 0;
+        while (j < 64) {
+            ids.push_back(fee_message::sent_fee_message_id(&sent[j]));
+            j = j + 1;
+        };
+        scenario.return_to_sender(inbox);
+    };
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox   = scenario.take_from_sender<ProtocolFeeInbox>();
+        let mut tickets: vector<transfer::Receiving<FeeMessage<sui::sui::SUI>>> = vector[];
+        let mut k: u64 = 0;
+        while (k < 64) {
+            tickets.push_back(
+                test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(ids[k])
+            );
+            k = k + 1;
+        };
+        let coin = fee_message::collect_fee_messages<sui::sui::SUI>(&mut inbox, tickets, scenario.ctx());
+        assert_eq!(coin::value(&coin), 64);
+        transfer::public_transfer(coin, ADMIN);
+
+        let coll = event::events_by_type<FeeMessageCollected<sui::sui::SUI>>();
+        assert_eq!(coll.length(), 64);
+
+        scenario.return_to_sender(inbox);
+    };
+    scenario.end();
+}
+
+// D8b: 4 messages each carrying u64::MAX / 4 — accumulator boundary test.
+// Verifies balance::join does not overflow when the total approaches u64::MAX.
+// quarter = 4_611_686_018_427_387_903; sum = 4 × quarter = u64::MAX - 3.
+#[test]
+fun d8b_accumulator_near_u64_max() {
+    let mut scenario = setup();
+    let quarter: u64 = 4_611_686_018_427_387_903;
+    let expected: u64 = 18_446_744_073_709_551_612; // 4 × quarter
+    let mut id0 = object::id_from_address(@0x0);
+    let mut id1 = object::id_from_address(@0x0);
+    let mut id2 = object::id_from_address(@0x0);
+    let mut id3 = object::id_from_address(@0x0);
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let fee_inbox_id = object::id(&inbox);
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
+        id0 = fee_message::sent_fee_message_id(&sent[0]);
+        id1 = fee_message::sent_fee_message_id(&sent[1]);
+        id2 = fee_message::sent_fee_message_id(&sent[2]);
+        id3 = fee_message::sent_fee_message_id(&sent[3]);
+        scenario.return_to_sender(inbox);
+    };
+    scenario.next_tx(ADMIN);
+    {
+        let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+        let tickets   = vector[
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id0),
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id1),
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id2),
+            test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id3),
+        ];
+        let coin = fee_message::collect_fee_messages<sui::sui::SUI>(&mut inbox, tickets, scenario.ctx());
+        assert_eq!(coin::value(&coin), expected);
+        transfer::public_transfer(coin, ADMIN);
+        scenario.return_to_sender(inbox);
+    };
+    scenario.end();
+}

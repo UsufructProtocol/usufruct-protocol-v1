@@ -192,6 +192,9 @@ fun s9_post_with_max_u64_balance() {
 #[test]
 fun r1_receive_message_returns_correct_balance() {
     let mut scenario = setup();
+    // events_by_type returns events of the current tx only; capture msg_id
+    // in an outer variable to make it available in the next tx block.
+    // receiving_ticket_by_id is a free function, not a method on Scenario.
     let mut msg_id = object::id_from_address(@0x0);
     scenario.next_tx(ADMIN);
     {

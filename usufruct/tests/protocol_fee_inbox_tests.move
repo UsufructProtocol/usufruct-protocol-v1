@@ -61,6 +61,7 @@ fun i3_protocol_fee_ref_is_frozen() {
     scenario.next_tx(DEPLOYER);
     {
         let fee_ref = scenario.take_immutable<ProtocolFeeRef>();
+        // return_immutable is a free function, not a method on Scenario
         test_scenario::return_immutable(fee_ref);
     };
     scenario.end();

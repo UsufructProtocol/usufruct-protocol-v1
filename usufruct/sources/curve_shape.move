@@ -141,7 +141,17 @@ fun eval_power_law(t: u64, t_max: u64, alpha_num: u8, alpha_den: u8): u64 {
     math::nth_root_u128(target, alpha_den as u32) as u64
 }
 
-fun eval_exponential(_t: u64, _t_max: u64, _alpha_abs: u8, _alpha_neg: bool): u64 { abort 0 }
+fun eval_exponential(t: u64, t_max: u64, alpha_abs: u8, alpha_neg: bool): u64 {
+    let a       = alpha_abs as u64;
+    let exp_ax  = exp_scaled(a * t, t_max, alpha_neg);
+    let num     = if (alpha_neg) {
+        TAYLOR_SCALE - exp_ax
+    } else {
+        exp_ax - TAYLOR_SCALE
+    };
+    let den = exp_a_norm(alpha_abs, alpha_neg);
+    (num * SCALE_U128 / den) as u64
+}
 
 fun eval_logistic(_t: u64, _t_max: u64): u64 { abort 0 }
 

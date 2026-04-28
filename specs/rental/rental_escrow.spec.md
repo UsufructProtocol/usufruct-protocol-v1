@@ -643,7 +643,8 @@ the escrow, mints one `OwnerCap`, and returns it to the PTB.
    - `last_acquisition_price = 0`
    - `phase_start_ms = 0`
    - `integrated_at_ms = clock.timestamp_ms()`
-   - All remaining `Option` fields `None`, all `Balance` fields `balance::zero()`
+   - `tenant_slot = TenantSlot::Vacant`
+   - All `Balance` fields `balance::zero()`
    - `retire_flag = false`
 5. Call `config::emit_registration(&escrow.config, escrow_id)` to emit
    `IntegrationConfigRegistered` carrying the full parameter snapshot keyed
@@ -1157,25 +1158,25 @@ integrating ecosystem.
    transferable) still holds the old cap — `burn` is voluntary. Step 3
    alone accepts that cap because `cap.escrow_id` still matches; only
    the slot comparison exposes the displacement.
-6. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
+5. Assert `option::is_some(&escrow.asset)`, abort `E_ASSET_ALREADY_BORROWED`.
    This is the only protocol state in which the internal `Option<Asset>` field
    can be `None` — when a previous `borrow_asset` call in the same PTB has
    already extracted the asset. Prevents a double-borrow from producing an
    opaque framework abort via `option::extract`.
    `let asset = option::extract(&mut escrow.asset);`
-7. Construct `receipt = AssetReceipt { escrow_id, asset_id: object::id(&asset) }`.
-8. Emit `AssetBorrowed { escrow_id: receipt.escrow_id,
+6. Construct `receipt = AssetReceipt { escrow_id, asset_id: object::id(&asset) }`.
+7. Emit `AssetBorrowed { escrow_id: receipt.escrow_id,
    tenant_cap_id: object::id(tenant_cap) }`. Emit-last: the extraction
-   (step 6) has already succeeded and the receipt (step 7) witnesses the
+   (step 5) has already succeeded and the receipt (step 6) witnesses the
    asset has left the escrow. The tenant's identity is recoverable by
    JOIN on `tenant_cap_id` to `TenantCapMinted` — not duplicated here.
-9. Return `(asset, receipt)`.
+8. Return `(asset, receipt)`.
 
 **Why `return_asset` requires no cap re-verification:** `return_asset` can
 only be called by a PTB that holds an `AssetReceipt`. An `AssetReceipt` can
 only exist if `borrow_asset` was called and succeeded in the same PTB — the
 hot-potato type makes it impossible to store, transfer, or fabricate. And
-`borrow_asset` only succeeds for the current tenant (steps 3–5). The receipt
+`borrow_asset` only succeeds for the current tenant (steps 3–4). The receipt
 is therefore irrefutable proof that cap authorization was already verified.
 No re-check is needed.
 
@@ -1484,8 +1485,10 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 3. **Push `remain_credit` before any slot rotation** (push-before-rotate
    invariant): bring `tenant_stake` down to exactly `used_credit` so §7.6's
    precondition holds.
-   - `let HandoverPending { current_address: displaced_tenant, .. } = &escrow.tenant_slot`
+   - `let HandoverPending { current_address: displaced_tenant, .. } = escrow.tenant_slot`
      `    else { abort E_UNEXPECTED_STATE };` — unreachable by precondition.
+     (`TenantSlot` has `copy`; the slot is read by value here and again in step 6 — both
+     reads see the same value since no code between steps 3 and 6 modifies `tenant_slot`.)
    - `if remain_credit > 0`:
      - `let remain_balance = balance::split(&mut escrow.tenant_stake, remain_credit);`
      - `transfer::public_transfer(coin::from_balance(remain_balance, ctx), displaced_tenant);`
@@ -1606,8 +1609,9 @@ separately.
 **Algorithm:**
 
 1. Let `stake_total = balance::value(&escrow.tenant_stake)` — used_credit saturated to full.
-2. `let Occupied { address: tenant, .. } = &escrow.tenant_slot`
+2. `let Occupied { address: tenant, .. } = escrow.tenant_slot`
    `    else { abort E_UNEXPECTED_STATE };` — unreachable by precondition.
+   (`TenantSlot` has `copy`; `tenant_slot` is read by value before step 4 sets it to `Vacant`.)
 3. **Settle the full stake** — §7.6 is the single source of truth for
    "split 90/10, route fee iff > 0, drain remainder into owner_earnings".
    Precondition `balance::value(&escrow.tenant_stake) == stake_total` holds
@@ -1736,7 +1740,7 @@ owns. Returns the cap by value so `rent()` can surface it through its
    tuple instead of via a push.
 6. `escrow.tenant_slot = Occupied { cap_id: new_cap_id, address: tenant_addr };`
 7. `escrow.state = Rented { phase: HandoverOpen };`
-9. Return `(new_cap, new_cap_id)`.
+8. Return `(new_cap, new_cap_id)`.
 
 **Return value:** the new `TenantCap` (by value) and its `ID`. The
 caller (`rent()`) uses the `ID` to emit `RentStarted { ...,

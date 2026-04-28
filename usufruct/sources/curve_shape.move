@@ -138,9 +138,27 @@ fun eval_exponential(_t: u64, _t_max: u64, _alpha_abs: u8, _alpha_neg: bool): u6
 
 fun eval_logistic(_t: u64, _t_max: u64): u64 { abort 0 }
 
-fun exp_scaled(_y_num: u64, _y_den: u64, _neg: bool): u128 { abort 0 }
+fun exp_scaled(y_num: u64, y_den: u64, neg: bool): u128 {
+    let pos = exp_scaled_pos(y_num, y_den);
+    if (neg) { TAYLOR_SCALE_SQ / pos } else { pos }
+}
 
-fun exp_scaled_pos(_y_num: u64, _y_den: u64): u128 { abort 0 }
+// Taylor series for e^(y_num/y_den) · TAYLOR_SCALE, K=32 terms.
+// Caller guarantees y_den > 0; division by zero would otherwise abort.
+fun exp_scaled_pos(y_num: u64, y_den: u64): u128 {
+    let y_num_128: u128 = y_num as u128;
+    let y_den_128: u128 = y_den as u128;
+    let mut acc:   u128 = TAYLOR_SCALE;
+    let mut term:  u128 = TAYLOR_SCALE;
+    let mut k:     u128 = 1;
+    while (k <= 32) {
+        term = term * y_num_128 / (k * y_den_128);
+        if (term == 0) break;
+        acc = acc + term;
+        k = k + 1;
+    };
+    acc
+}
 
 fun exp_a_norm(_alpha_abs: u8, _alpha_neg: bool): u128 { abort 0 }
 

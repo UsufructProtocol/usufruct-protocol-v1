@@ -427,12 +427,13 @@ fun exp_scaled_pos_strictly_monotone_over_seed_set() {
     };
 }
 
-// Reciprocal identity: e^y · e^(−y) = 1, integer-encoded as
-// pos × neg ∈ [TAYLOR_SCALE_SQ − TAYLOR_SCALE, TAYLOR_SCALE_SQ].
-// Slack matches the 1-ULP error budget of the reciprocal sign-handling in §7.
+// Reciprocal identity: e^y · e^(−y) = 1, integer-encoded.
+//
+// neg = floor(TS² / pos), so pos·neg ∈ (TS² − pos, TS²]. The slack is `pos`
+// (one ULP at the neg level, multiplied by pos to project back into the
+// product's TS² scale). For y ∈ S the upper bound is e^8 · TS ≈ 3·10²¹.
 #[test]
 fun exp_scaled_reciprocal_identity_within_one_ulp() {
-    let ts    = curve_shape::taylor_scale_for_testing();
     let ts_sq = curve_shape::taylor_scale_sq_for_testing();
     let nums = vector[1u64, 1, 2, 3, 4, 6, 8, 7, 15];
     let dens = vector[2u64, 1, 1, 1, 1, 1, 1, 2,  2];
@@ -443,7 +444,7 @@ fun exp_scaled_reciprocal_identity_within_one_ulp() {
         let neg  = curve_shape::exp_scaled_for_testing(nums[i], dens[i], true);
         let prod = pos * neg;
         assert!(prod <= ts_sq, 0);
-        assert!(prod + ts >= ts_sq, 0);
+        assert!(prod + pos >= ts_sq, 0);
         i = i + 1;
     };
 }

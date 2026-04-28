@@ -104,7 +104,18 @@ public(package) fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShape 
     CurveShape::Exponential { alpha_abs, alpha_neg }
 }
 
-public(package) fun evaluate_curve(_shape: &CurveShape, _t: u64, _t_max: u64): u64 { abort 0 }
+public(package) fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64): u64 {
+    if (t == 0)     return 0;
+    if (t >= t_max) return SCALE;
+
+    match (shape) {
+        CurveShape::Linear                                => eval_linear(t, t_max),
+        CurveShape::Smoothstep                            => eval_smoothstep(t, t_max),
+        CurveShape::PowerLaw { alpha_num, alpha_den }     => eval_power_law(t, t_max, *alpha_num, *alpha_den),
+        CurveShape::Exponential { alpha_abs, alpha_neg }  => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
+        CurveShape::Logistic                              => eval_logistic(t, t_max),
+    }
+}
 
 // === Private Functions ===
 

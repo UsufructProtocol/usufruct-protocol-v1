@@ -393,6 +393,34 @@ fun eval_power_law_above_linear_when_concave() {
     };
 }
 
+// Algorithm-derived golden vectors for eval_power_law root-step (§11.4).
+//
+// Pinning procedure (one-shot at initial implementation; this test guards
+// the values from then on):
+//
+//   1. Replace each `expected_*` literal with `0`.
+//   2. Replace `assert_eq!(actual, expected)` with `std::debug::print(&actual)`.
+//   3. `sui move test eval_power_law_root_golden_vectors` — captures the 5 outputs.
+//   4. Paste the printed literals into spec §11.4 and back into this test.
+//   5. Restore `assert_eq!`. Suite turns green.
+//
+// Four of the five inputs land on perfect d-th powers (1/4, 1/8, 1/16) so
+// `nth_root_u128` returns an exact integer; the (3, 4, 1, 2) row exercises
+// floor rounding on the irrational √0.75.
+#[test]
+fun eval_power_law_root_golden_vectors() {
+    // α = 1/2 concave: √0.25 · SCALE = 5·10⁸ exactly (perfect square)
+    assert_eq!(curve_shape::eval_power_law_for_testing(1, 4,  1, 2), 500_000_000);
+    // α = 3/2 convex: 0.25^1.5 · SCALE = 1.25·10⁸ exactly
+    assert_eq!(curve_shape::eval_power_law_for_testing(1, 4,  3, 2), 125_000_000);
+    // α = 1/3 concave: ∛(1/8) · SCALE = 5·10⁸ exactly (perfect cube)
+    assert_eq!(curve_shape::eval_power_law_for_testing(1, 8,  1, 3), 500_000_000);
+    // α = 1/4 concave: (1/16)^(1/4) · SCALE = 5·10⁸ exactly (perfect 4th power; SCALE_CB branch)
+    assert_eq!(curve_shape::eval_power_law_for_testing(1, 16, 1, 4), 500_000_000);
+    // α = 1/2 at t = 0.75·t_max: floor(√0.75 · SCALE); √0.75 ≈ 0.866025403784...
+    assert_eq!(curve_shape::eval_power_law_for_testing(3, 4,  1, 2), 866_025_403);
+}
+
 // ─── exp_scaled / exp_scaled_pos ───────────────────────────────────────────
 //
 // Algorithm-derived golden vectors (§11.5) are pinned in a separate

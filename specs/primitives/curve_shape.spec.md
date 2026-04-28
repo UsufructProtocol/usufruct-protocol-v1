@@ -845,16 +845,24 @@ placeholder required.
 
 #### Golden vectors — algorithm-derived (root step involved)
 
-Roots introduce `math::nth_root_u128` floor rounding; values are
-algorithm-derived. Establish during initial implementation.
+Roots introduce `math::nth_root_u128` floor rounding; values established by
+emitting `eval_power_law_for_testing(...)` outputs via `std::debug::print` in
+a one-shot `#[test]`, then pinning the captured literals here and in the
+`eval_power_law_root_golden_vectors` regression check (same procedure as
+§11.5).
+
+Four of the five inputs land on perfect d-th powers, so `nth_root_u128`
+returns an exact integer and the algorithm output equals the mathematical
+reference; the (3, 4, 1, 2) row exercises floor rounding on the irrational
+`√0.75`.
 
 | `t` | `t_max` | `alpha_num` | `alpha_den` | result | note |
 |-----|---------|-------------|-------------|--------|------|
-| **[new]** `1` | `4` | `1` | `2` | TBD (algorithm-derived) | α = 1/2 concave; reference: √0.25 · SCALE = 5·10⁸ |
-| **[new]** `1` | `4` | `3` | `2` | TBD (algorithm-derived) | α = 3/2 convex; reference: 0.25^1.5 · SCALE ≈ 1.25·10⁸ |
-| **[new]** `1` | `8` | `1` | `3` | TBD (algorithm-derived) | α = 1/3 concave; d=3 path |
-| **[new]** `1` | `16` | `1` | `4` | TBD (algorithm-derived) | α = 1/4 concave; d=4 path; exercises `SCALE_CB` scale_pow branch |
-| **[new]** `3` | `4` | `1` | `2` | TBD (algorithm-derived) | α = 1/2 at `t = 0.75·t_max` — interior non-midpoint |
+| **[new]** `1`  | `4`  | `1` | `2` | `500_000_000` | α = 1/2 concave; √0.25 · SCALE = 5·10⁸ exactly |
+| **[new]** `1`  | `4`  | `3` | `2` | `125_000_000` | α = 3/2 convex; 0.25^1.5 · SCALE = 1.25·10⁸ exactly |
+| **[new]** `1`  | `8`  | `1` | `3` | `500_000_000` | α = 1/3 concave; d=3 path; ∛(1/8) · SCALE = 5·10⁸ exactly |
+| **[new]** `1`  | `16` | `1` | `4` | `500_000_000` | α = 1/4 concave; d=4 path (`SCALE_CB` branch); (1/16)^(1/4) · SCALE = 5·10⁸ exactly |
+| **[new]** `3`  | `4`  | `1` | `2` | `866_025_403` | α = 1/2 at `t = 0.75·t_max`; floor(√0.75 · SCALE), √0.75 ≈ 0.866025403784… |
 
 #### Properties
 

@@ -643,6 +643,30 @@ fun eval_exponential_complementarity_within_4_ulp() {
     };
 }
 
+// Algorithm-derived golden vectors for eval_exponential (§11.6).
+//
+// Pinning procedure (one-shot at initial implementation; this test guards
+// the values from then on):
+//
+//   1. Replace each `expected_*` literal with `0`.
+//   2. Replace `assert_eq!(actual, expected)` with `std::debug::print(&actual)`.
+//   3. `sui move test eval_exponential_golden_vectors` — captures the 8 outputs.
+//   4. Paste the printed literals into spec §11.6 and back into this test.
+//   5. Restore `assert_eq!`. Suite turns green; future §7 / §8 changes that
+//      perturb outputs surface here.
+#[test]
+fun eval_exponential_golden_vectors() {
+    // (t, t_max, alpha_abs, alpha_neg)
+    assert_eq!(curve_shape::eval_exponential_for_testing(1, 4, 2, false), 101_536_324);
+    assert_eq!(curve_shape::eval_exponential_for_testing(1, 4, 2, true ), 455_054_233);
+    assert_eq!(curve_shape::eval_exponential_for_testing(1, 4, 4, false),  32_058_603);
+    assert_eq!(curve_shape::eval_exponential_for_testing(1, 4, 8, false),   2_144_008);
+    assert_eq!(curve_shape::eval_exponential_for_testing(1, 4, 8, true ), 864_954_876);
+    assert_eq!(curve_shape::eval_exponential_for_testing(1, 4, 1, true ), 349_932_008);
+    assert_eq!(curve_shape::eval_exponential_for_testing(2, 4, 2, false), 268_941_421);
+    assert_eq!(curve_shape::eval_exponential_for_testing(2, 4, 2, true ), 731_058_578);
+}
+
 // ─── Algorithm-derived constants — regression check ────────────────────────
 //
 // Pinning procedure (run once during initial implementation, then this test

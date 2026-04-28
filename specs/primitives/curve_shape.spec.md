@@ -897,10 +897,12 @@ These values are produced by the §7 algorithm (K = 32 terms, floor rounding
 at every step). They are not the mathematical floor of eʸ · TS — they are
 what the specific integer-arithmetic algorithm produces.
 
-**How to establish:** run the algorithm once; record the output; fix those
-values as constants in the test file. All future changes must reproduce them
-exactly. Concurrently, use the same run to pin `EXP_A_NORM_*` (§8) and
-`LOGISTIC_DENOM` (§9).
+**How to establish:** emit each output via `std::debug::print(&actual)` from
+a one-shot `#[test]` function, capture the printed literals, paste them back
+as the `expected` column here and as `assert_eq!` constants in the test
+file. The same single run pins `EXP_A_NORM_*` (§8) and `LOGISTIC_DENOM`
+(§9). The regression check (`bootstrap_constants_match_pinned`) then guards
+the values forever — any future §7 change that perturbs outputs flags here.
 
 | `y_num` | `y_den` | `neg` | expected result | note |
 |---------|---------|-------|-----------------|------|
@@ -1001,18 +1003,21 @@ single-α golden vector.
 
 #### Golden vectors
 
-Algorithm-derived — establish during initial implementation.
+Algorithm-derived — established by emitting `eval_exponential_for_testing(...)`
+outputs via `std::debug::print` in a one-shot `#[test]`, then pinning the
+captured literals here and in the `eval_exponential_golden_vectors`
+regression check (same procedure as §11.5).
 
 | `t` | `t_max` | `alpha_abs` | `alpha_neg` | result | note |
 |-----|---------|-------------|-------------|--------|------|
-| **[new]** `1` | `4` | `2` | `false` | TBD (algorithm-derived) | α=+2 convex |
-| **[new]** `1` | `4` | `2` | `true`  | TBD (algorithm-derived) | α=−2 concave; complementary to row above |
-| **[new]** `1` | `4` | `4` | `false` | TBD (algorithm-derived) | mid-range α |
-| **[new]** `1` | `4` | `8` | `false` | TBD (algorithm-derived) | **upper bound** α=+8 — guards §8 math overflow analysis at boundary |
-| **[new]** `1` | `4` | `8` | `true`  | TBD (algorithm-derived) | **upper bound** α=−8 — reciprocal path at depth |
-| **[new]** `1` | `4` | `1` | `true`  | TBD (algorithm-derived) | minimum concave |
-| **[new]** `2` | `4` | `2` | `false` | TBD (algorithm-derived) | midpoint `t = t_max/2` — used in complementarity property pair |
-| **[new]** `2` | `4` | `2` | `true`  | TBD (algorithm-derived) | midpoint concave — complementary to row above |
+| **[new]** `1` | `4` | `2` | `false` | `101_536_324` | α=+2 convex |
+| **[new]** `1` | `4` | `2` | `true`  | `455_054_233` | α=−2 concave; complementary to row above |
+| **[new]** `1` | `4` | `4` | `false` |  `32_058_603` | mid-range α |
+| **[new]** `1` | `4` | `8` | `false` |   `2_144_008` | **upper bound** α=+8 — guards §8 math overflow analysis at boundary |
+| **[new]** `1` | `4` | `8` | `true`  | `864_954_876` | **upper bound** α=−8 — reciprocal path at depth |
+| **[new]** `1` | `4` | `1` | `true`  | `349_932_008` | minimum concave |
+| **[new]** `2` | `4` | `2` | `false` | `268_941_421` | midpoint `t = t_max/2` — used in complementarity property pair |
+| **[new]** `2` | `4` | `2` | `true`  | `731_058_578` | midpoint concave — sum with row above is 999_999_999 (1 ULP from SCALE) |
 
 #### Properties
 

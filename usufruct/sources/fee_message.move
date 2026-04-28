@@ -6,11 +6,12 @@ module usufruct::fee_message;
 // === Imports ===
 
 use sui::{
-    balance::Balance,
-    coin::Coin,
+    balance::{Self, Balance},
+    coin::{Self, Coin},
+    event,
     transfer::Receiving,
 };
-use usufruct::protocol_fee_inbox::ProtocolFeeInbox;
+use usufruct::protocol_fee_inbox::{Self, ProtocolFeeInbox};
 
 // === Errors ===
 
@@ -46,12 +47,21 @@ public struct FeeMessageCollected<phantom CoinType> has copy, drop {
 
 // === Public Functions ===
 
+/// Pipeline of receive + consume over all tickets for one CoinType. Returns a
+/// single `Coin<C>` accumulating all drained balances.
 public fun collect_fee_messages<C>(
-    _inbox:   &mut ProtocolFeeInbox,
-    _tickets: vector<Receiving<FeeMessage<C>>>,
-    _ctx:     &mut TxContext,
+    inbox:   &mut ProtocolFeeInbox,
+    tickets: vector<Receiving<FeeMessage<C>>>,
+    ctx:     &mut TxContext,
 ): Coin<C> {
-    abort 0
+    let fee_inbox_id = object::id(inbox);
+    let collector    = tx_context::sender(ctx);
+    let mut total    = balance::zero<C>();
+    tickets.do!(|ticket| {
+        let msg = receive_message(inbox, ticket);
+        balance::join(&mut total, consume_message(msg, fee_inbox_id, collector));
+    });
+    coin::from_balance(total, ctx)
 }
 
 // === View Functions ===
@@ -60,31 +70,48 @@ public fun collect_fee_messages<C>(
 
 // === Package Functions ===
 
+/// Sole public entry point for posting a protocol fee. Constructs a
+/// `FeeMessage<C>` inline, transfers it to `fee_inbox_id` via
+/// transfer-to-object, and emits `FeeMessageSent<C>`. Fused — no caller
+/// ever holds a `FeeMessage<C>` as a local.
 public(package) fun post<C>(
-    _balance:      Balance<C>,
-    _escrow_id:    ID,
-    _tenant:       address,
-    _fee_inbox_id: ID,
-    _ctx:          &mut TxContext,
+    balance:      Balance<C>,
+    escrow_id:    ID,
+    tenant:       address,
+    fee_inbox_id: ID,
+    ctx:          &mut TxContext,
 ) {
-    abort 0
+    let amount = balance::value(&balance);
+    let msg = FeeMessage<C> {
+        id: object::new(ctx),
+        escrow_id,
+        balance,
+    };
+    let fee_message_id = object::uid_to_inner(&msg.id);
+    transfer::transfer(msg, fee_inbox_id.to_address());
+    event::emit(FeeMessageSent<C> { fee_message_id, fee_inbox_id, escrow_id, amount, tenant });
 }
 
 // === Private Functions ===
 
 fun receive_message<C>(
-    _inbox:  &mut ProtocolFeeInbox,
-    _ticket: Receiving<FeeMessage<C>>,
+    inbox:  &mut ProtocolFeeInbox,
+    ticket: Receiving<FeeMessage<C>>,
 ): FeeMessage<C> {
-    abort 0
+    transfer::receive(protocol_fee_inbox::uid_mut(inbox), ticket)
 }
 
 fun consume_message<C>(
-    _msg:          FeeMessage<C>,
-    _fee_inbox_id: ID,
-    _collector:    address,
+    msg:          FeeMessage<C>,
+    fee_inbox_id: ID,
+    collector:    address,
 ): Balance<C> {
-    abort 0
+    let FeeMessage { id, escrow_id, balance } = msg;
+    let fee_message_id = object::uid_to_inner(&id);
+    let amount         = balance::value(&balance);
+    object::delete(id);
+    event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount, collector });
+    balance
 }
 
 // === Test Functions ===

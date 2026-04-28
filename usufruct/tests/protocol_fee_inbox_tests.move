@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
+// Cross-block deferred initialization requires `mut` even for single-assignment
+// variables — see fee_message_tests for the full explanation.
+#[allow(unused_let_mut)]
 #[test_only]
 module usufruct::protocol_fee_inbox_tests;
 
@@ -245,6 +248,50 @@ fun u2_uid_mut_can_be_called_twice() {
         let id2 = object::uid_to_inner(protocol_fee_inbox::uid_mut(&mut inbox));
         assert!(id1 == id2);
         scenario.return_to_sender(inbox);
+    };
+    scenario.end();
+}
+
+// ─── T4, B-cross-tx — Additional coverage ──────────────────────────────────
+
+// T4: Transferring ProtocolFeeInbox to @0x0 does not abort.
+// Documents the permissiveness of public_transfer — no runtime check prevents
+// sending the inbox to the zero address. The object becomes unrecoverable on a
+// real network; in test_scenario @0x0 is a valid address. Documented here so
+// the absence of a defensive check is explicit and intentional, not an oversight.
+#[test]
+fun t4_transfer_to_zero_address_does_not_abort() {
+    let mut scenario = setup();
+    scenario.next_tx(DEPLOYER);
+    {
+        let inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+        transfer::public_transfer(inbox, @0x0);
+    };
+    scenario.end();
+}
+
+// inbox_id stability across transactions and callers: frozen objects are
+// immutable by construction, so this is trivially guaranteed by the freeze
+// mechanism — recorded here because tests are documentation.
+// Combines B1 (any caller can read the frozen ref) with I5 (getter purity)
+// across a transaction boundary.
+#[test]
+fun inbox_id_stable_across_transactions_and_callers() {
+    let mut scenario = setup();
+    // Read inbox_id as DEPLOYER in tx 1
+    let mut id_from_deployer: ID;
+    scenario.next_tx(DEPLOYER);
+    {
+        let fee_ref = scenario.take_immutable<ProtocolFeeRef>();
+        id_from_deployer = protocol_fee_inbox::inbox_id(&fee_ref);
+        test_scenario::return_immutable(fee_ref);
+    };
+    // Read inbox_id as ALICE in tx 2 — must be identical
+    scenario.next_tx(ALICE);
+    {
+        let fee_ref = scenario.take_immutable<ProtocolFeeRef>();
+        assert!(protocol_fee_inbox::inbox_id(&fee_ref) == id_from_deployer);
+        test_scenario::return_immutable(fee_ref);
     };
     scenario.end();
 }

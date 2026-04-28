@@ -457,6 +457,86 @@ fun exp_scaled_pos_y_eq_8_positive_and_within_overflow_budget() {
     assert!(v > 0, 0);
 }
 
+// ─── Algorithm-derived constants — regression check ────────────────────────
+//
+// Pinning procedure (run once during initial implementation, then this test
+// guards the values forever):
+//
+//   1. Replace every `expected_*` literal below with `0`.
+//   2. Replace each `assert_eq!(...)` with `std::debug::print(&actual)`.
+//   3. `sui move test bootstrap_constants_match_pinned` — captures the 25
+//      algorithm outputs (8 exp_scaled vectors + 16 EXP_A_NORM_* + LOGISTIC_DENOM).
+//   4. Paste the printed literals into:
+//        — `sources/curve_shape.move`: 16 EXP_A_NORM_* and LOGISTIC_DENOM
+//        — `specs/primitives/curve_shape.spec.md`: §8, §9, §11.5
+//        — this test (the `expected_*` literals).
+//   5. Restore the `assert_eq!` form. Suite turns green.
+//
+// From this point on, any change to §7 (Taylor K, rounding) that perturbs
+// outputs flags here.
+
+#[test]
+fun bootstrap_constants_match_pinned() {
+    let ts    = curve_shape::taylor_scale_for_testing();
+    let scale = curve_shape::scale_for_testing() as u128;
+
+    // exp_scaled golden vectors (§11.5)
+    assert_eq!(curve_shape::exp_scaled_for_testing(1, 1, false), 2_718_281_828_459_045_226);
+    assert_eq!(curve_shape::exp_scaled_for_testing(1, 1, true ),   367_879_441_171_442_322);
+    assert_eq!(curve_shape::exp_scaled_for_testing(1, 2, false), 1_648_721_270_700_128_139);
+    assert_eq!(curve_shape::exp_scaled_for_testing(1, 2, true ),   606_530_659_712_633_426);
+    assert_eq!(curve_shape::exp_scaled_for_testing(2, 1, false), 7_389_056_098_930_650_216);
+    assert_eq!(curve_shape::exp_scaled_for_testing(4, 1, false), 54_598_150_033_144_239_050);
+    assert_eq!(curve_shape::exp_scaled_for_testing(8, 1, false), 2_980_957_986_946_523_322_343);
+    assert_eq!(curve_shape::exp_scaled_for_testing(8, 1, true ),   335_462_627_913_225);
+
+    // EXP_A_NORM_{1..8}_POS (§8): exp_scaled(a, 1, false) − TS
+    let pos_norms: vector<u128> = vector[
+            1_718_281_828_459_045_226,
+            6_389_056_098_930_650_216,
+           19_085_536_923_187_667_729,
+           53_598_150_033_144_239_050,
+          147_413_159_102_576_587_697,
+          402_428_793_492_728_453_424,
+        1_095_633_158_427_339_529_377,
+        2_979_957_986_946_523_322_343,
+    ];
+    let mut a: u64 = 1;
+    while (a <= 8) {
+        let pos_v    = curve_shape::exp_scaled_for_testing(a, 1, false);
+        let computed = pos_v - ts;
+        assert_eq!(computed, pos_norms[(a - 1) as u64]);
+        assert_eq!(curve_shape::exp_a_norm_for_testing(a as u8, false), computed);
+        a = a + 1;
+    };
+
+    // EXP_A_NORM_{1..8}_NEG (§8): TS − exp_scaled(a, 1, true)
+    let neg_norms: vector<u128> = vector[
+        632_120_558_828_557_678,
+        864_664_716_763_387_308,
+        950_212_931_632_136_057,
+        981_684_361_111_265_820,
+        993_262_053_000_914_533,
+        997_521_247_823_333_601,
+        999_088_118_034_444_554,
+        999_664_537_372_086_775,
+    ];
+    let mut a: u64 = 1;
+    while (a <= 8) {
+        let neg_v    = curve_shape::exp_scaled_for_testing(a, 1, true);
+        let computed = ts - neg_v;
+        assert_eq!(computed, neg_norms[(a - 1) as u64]);
+        assert_eq!(curve_shape::exp_a_norm_for_testing(a as u8, true), computed);
+        a = a + 1;
+    };
+
+    // LOGISTIC_DENOM (§9): ((e⁶·TS − TS) · SCALE) / (e⁶·TS + TS)
+    let ek6      = curve_shape::exp_scaled_pos_for_testing(6, 1);
+    let computed = (((ek6 - ts) * scale) / (ek6 + ts)) as u64;
+    assert_eq!(computed, 995_054_753);
+    assert_eq!(curve_shape::logistic_denom_for_testing(), computed);
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 // Iterative Euclidean gcd (Move has no recursion).

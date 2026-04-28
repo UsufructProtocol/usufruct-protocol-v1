@@ -25,27 +25,34 @@ const SCALE_SQ:   u128 = 1_000_000_000_000_000_000;
 const SCALE_CB:   u128 = 1_000_000_000_000_000_000_000_000_000;
 
 const LOGISTIC_K: u64 = 12;
-// PLACEHOLDER — algorithm-derived during impl phase (see spec §9). Pinned during bootstrap.
-const LOGISTIC_DENOM: u64 = 0;
+// Algorithm-derived (§9). Pinned via the bootstrap procedure documented in the
+// `bootstrap_constants_match_pinned` regression test in `curve_shape_tests`:
+// run `exp_scaled_pos` over the inputs the spec specifies, fix the outputs as
+// these literals. Re-derive whenever §7 (Taylor K, rounding) changes.
+const LOGISTIC_DENOM: u64 = 995_054_753;
 const LOGISTIC_SIGMA_FLOOR: u128 = (SCALE_U128 - (LOGISTIC_DENOM as u128)) / 2;
 
-// PLACEHOLDERS — algorithm-derived during impl phase (see spec §8). Pinned during bootstrap.
-const EXP_A_NORM_1_POS: u128 = 0;
-const EXP_A_NORM_2_POS: u128 = 0;
-const EXP_A_NORM_3_POS: u128 = 0;
-const EXP_A_NORM_4_POS: u128 = 0;
-const EXP_A_NORM_5_POS: u128 = 0;
-const EXP_A_NORM_6_POS: u128 = 0;
-const EXP_A_NORM_7_POS: u128 = 0;
-const EXP_A_NORM_8_POS: u128 = 0;
-const EXP_A_NORM_1_NEG: u128 = 0;
-const EXP_A_NORM_2_NEG: u128 = 0;
-const EXP_A_NORM_3_NEG: u128 = 0;
-const EXP_A_NORM_4_NEG: u128 = 0;
-const EXP_A_NORM_5_NEG: u128 = 0;
-const EXP_A_NORM_6_NEG: u128 = 0;
-const EXP_A_NORM_7_NEG: u128 = 0;
-const EXP_A_NORM_8_NEG: u128 = 0;
+// Algorithm-derived (§8). Pinned via the same bootstrap as LOGISTIC_DENOM:
+// EXP_A_NORM_{a}_POS = exp_scaled(a, 1, false) − TAYLOR_SCALE
+// EXP_A_NORM_{a}_NEG = TAYLOR_SCALE − exp_scaled(a, 1, true)
+// Re-derive whenever §7 changes; the regression test in curve_shape_tests
+// guards against silent drift.
+const EXP_A_NORM_1_POS: u128 =     1_718_281_828_459_045_226;
+const EXP_A_NORM_2_POS: u128 =     6_389_056_098_930_650_216;
+const EXP_A_NORM_3_POS: u128 =    19_085_536_923_187_667_729;
+const EXP_A_NORM_4_POS: u128 =    53_598_150_033_144_239_050;
+const EXP_A_NORM_5_POS: u128 =   147_413_159_102_576_587_697;
+const EXP_A_NORM_6_POS: u128 =   402_428_793_492_728_453_424;
+const EXP_A_NORM_7_POS: u128 = 1_095_633_158_427_339_529_377;
+const EXP_A_NORM_8_POS: u128 = 2_979_957_986_946_523_322_343;
+const EXP_A_NORM_1_NEG: u128 = 632_120_558_828_557_678;
+const EXP_A_NORM_2_NEG: u128 = 864_664_716_763_387_308;
+const EXP_A_NORM_3_NEG: u128 = 950_212_931_632_136_057;
+const EXP_A_NORM_4_NEG: u128 = 981_684_361_111_265_820;
+const EXP_A_NORM_5_NEG: u128 = 993_262_053_000_914_533;
+const EXP_A_NORM_6_NEG: u128 = 997_521_247_823_333_601;
+const EXP_A_NORM_7_NEG: u128 = 999_088_118_034_444_554;
+const EXP_A_NORM_8_NEG: u128 = 999_664_537_372_086_775;
 
 // === Structs ===
 
@@ -160,7 +167,28 @@ fun exp_scaled_pos(y_num: u64, y_den: u64): u128 {
     acc
 }
 
-fun exp_a_norm(_alpha_abs: u8, _alpha_neg: bool): u128 { abort 0 }
+// Pure dispatcher over the 16 EXP_A_NORM_{1..8}_{POS,NEG} module constants.
+fun exp_a_norm(alpha_abs: u8, alpha_neg: bool): u128 {
+    if (!alpha_neg) {
+        if      (alpha_abs == 1) { EXP_A_NORM_1_POS }
+        else if (alpha_abs == 2) { EXP_A_NORM_2_POS }
+        else if (alpha_abs == 3) { EXP_A_NORM_3_POS }
+        else if (alpha_abs == 4) { EXP_A_NORM_4_POS }
+        else if (alpha_abs == 5) { EXP_A_NORM_5_POS }
+        else if (alpha_abs == 6) { EXP_A_NORM_6_POS }
+        else if (alpha_abs == 7) { EXP_A_NORM_7_POS }
+        else                     { EXP_A_NORM_8_POS }
+    } else {
+        if      (alpha_abs == 1) { EXP_A_NORM_1_NEG }
+        else if (alpha_abs == 2) { EXP_A_NORM_2_NEG }
+        else if (alpha_abs == 3) { EXP_A_NORM_3_NEG }
+        else if (alpha_abs == 4) { EXP_A_NORM_4_NEG }
+        else if (alpha_abs == 5) { EXP_A_NORM_5_NEG }
+        else if (alpha_abs == 6) { EXP_A_NORM_6_NEG }
+        else if (alpha_abs == 7) { EXP_A_NORM_7_NEG }
+        else                     { EXP_A_NORM_8_NEG }
+    }
+}
 
 // Iterative Euclidean gcd. Move has no recursion.
 fun gcd_u8(a: u8, b: u8): u8 {

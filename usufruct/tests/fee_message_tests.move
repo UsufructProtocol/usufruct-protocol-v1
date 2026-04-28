@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
+// Cross-block deferred initialization requires `mut` even for single-assignment
+// variables. Move's compiler warns W09012 (unused mut) in these cases — suppressed
+// here because the mut is syntactically required, not stylistically optional.
+#[allow(unused_let_mut)]
 #[test_only]
 module usufruct::fee_message_tests;
 
@@ -9,9 +13,7 @@ use sui::{
     balance,
     coin,
     event,
-    object,
     test_scenario::{Self, Scenario},
-    transfer,
 };
 use usufruct::{
     fee_message::{Self, FeeMessage, FeeMessageSent, FeeMessageCollected},
@@ -195,10 +197,10 @@ fun r1_receive_message_returns_correct_balance() {
     // events_by_type returns events of the current tx only; capture msg_id
     // in an outer variable to make it available in the next tx block.
     // receiving_ticket_by_id is a free function, not a method on Scenario.
-    let mut msg_id = object::id_from_address(@0x0);
+    let mut msg_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(777), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
@@ -228,10 +230,10 @@ fun r1_receive_message_returns_correct_balance() {
 #[test]
 fun c1_consume_message_returns_balance_and_emits_collected_event() {
     let mut scenario = setup();
-    let mut msg_id = object::id_from_address(@0x0);
+    let mut msg_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(500), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
@@ -268,10 +270,10 @@ fun c1_consume_message_returns_balance_and_emits_collected_event() {
 #[test]
 fun c2_consume_message_with_arbitrary_scalar_metadata() {
     let mut scenario = setup();
-    let mut msg_id = object::id_from_address(@0x0);
+    let mut msg_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
@@ -303,10 +305,10 @@ fun c2_consume_message_with_arbitrary_scalar_metadata() {
 #[test]
 fun c3_consume_zero_balance_message() {
     let mut scenario = setup();
-    let mut msg_id = object::id_from_address(@0x0);
+    let mut msg_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(0), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
@@ -357,10 +359,10 @@ fun d1_collect_empty_vector_returns_zero_coin() {
 #[test]
 fun d2_collect_one_ticket() {
     let mut scenario = setup();
-    let mut msg_id = object::id_from_address(@0x0);
+    let mut msg_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(999), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
@@ -388,12 +390,12 @@ fun d2_collect_one_ticket() {
 #[test]
 fun d3_collect_n_tickets_sums_balances() {
     let mut scenario = setup();
-    let mut id1 = object::id_from_address(@0x0);
-    let mut id2 = object::id_from_address(@0x0);
-    let mut id3 = object::id_from_address(@0x0);
+    let mut id1: ID;
+    let mut id2: ID;
+    let mut id3: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(100), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(200), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
@@ -424,11 +426,11 @@ fun d3_collect_n_tickets_sums_balances() {
 #[test]
 fun d4_collect_sui_and_fake_usdc_same_inbox() {
     let mut scenario = setup();
-    let mut sui_id  = object::id_from_address(@0x0);
-    let mut usdc_id = object::id_from_address(@0x0);
+    let mut sui_id:  ID;
+    let mut usdc_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(111), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
         fee_message::post<FAKE_USDC>(balance::create_for_testing(222),     fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
@@ -438,13 +440,13 @@ fun d4_collect_sui_and_fake_usdc_same_inbox() {
     };
     scenario.next_tx(ADMIN);
     {
-        let mut inbox   = scenario.take_from_sender<ProtocolFeeInbox>();
-        let sui_coin    = fee_message::collect_fee_messages<sui::sui::SUI>(
+        let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
+        let sui_coin  = fee_message::collect_fee_messages<sui::sui::SUI>(
             &mut inbox,
             vector[test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(sui_id)],
             scenario.ctx(),
         );
-        let usdc_coin   = fee_message::collect_fee_messages<FAKE_USDC>(
+        let usdc_coin = fee_message::collect_fee_messages<FAKE_USDC>(
             &mut inbox,
             vector[test_scenario::receiving_ticket_by_id<FeeMessage<FAKE_USDC>>(usdc_id)],
             scenario.ctx(),
@@ -464,11 +466,11 @@ fun d6_distinct_escrow_ids_preserved_per_collected_event() {
     let mut scenario = setup();
     let esc1 = object::id_from_address(@0xEC1);
     let esc2 = object::id_from_address(@0xEC2);
-    let mut id1 = object::id_from_address(@0x0);
-    let mut id2 = object::id_from_address(@0x0);
+    let mut id1: ID;
+    let mut id2: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(10), esc1, ALICE, fee_inbox_id, scenario.ctx());
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(20), esc2, BOB,   fee_inbox_id, scenario.ctx());
@@ -506,10 +508,10 @@ fun d6_distinct_escrow_ids_preserved_per_collected_event() {
 #[test]
 fun d7_collector_follows_inbox_custody() {
     let mut scenario = setup();
-    let mut msg_id = object::id_from_address(@0x0);
+    let mut msg_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(50), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
@@ -543,13 +545,13 @@ fun d7_collector_follows_inbox_custody() {
 #[test]
 fun i1_total_drained_equals_total_sent() {
     let mut scenario = setup();
-    let mut id0 = object::id_from_address(@0x0);
-    let mut id1 = object::id_from_address(@0x0);
-    let mut id2 = object::id_from_address(@0x0);
-    let mut id3 = object::id_from_address(@0x0);
+    let mut id0: ID;
+    let mut id1: ID;
+    let mut id2: ID;
+    let mut id3: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(100), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(250), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
@@ -607,12 +609,12 @@ fun e1_fee_message_sent_fields_match_post_args() {
 #[test]
 fun e4_collect_n_messages_emits_n_collected_events() {
     let mut scenario = setup();
-    let mut id1 = object::id_from_address(@0x0);
-    let mut id2 = object::id_from_address(@0x0);
-    let mut id3 = object::id_from_address(@0x0);
+    let mut id1: ID;
+    let mut id2: ID;
+    let mut id3: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(10), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(20), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
@@ -675,17 +677,17 @@ fun e5_collect_empty_vector_no_collected_events() {
 fun e6_sent_collected_join_on_fee_message_id() {
     let mut scenario = setup();
     let escrow_id = fake_escrow_id();
-    let mut msg_id     = object::id_from_address(@0x0);
-    let mut sent_tenant_val: address = @0x0;
+    let mut msg_id: ID;
+    let mut sent_tenant_val: address;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(77), escrow_id, ALICE, fee_inbox_id, scenario.ctx()
         );
-        let sent    = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
-        msg_id      = fee_message::sent_fee_message_id(&sent[0]);
+        let sent        = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
+        msg_id          = fee_message::sent_fee_message_id(&sent[0]);
         sent_tenant_val = fee_message::sent_tenant(&sent[0]);
         scenario.return_to_sender(inbox);
     };
@@ -738,10 +740,10 @@ fun d5_cross_inbox_ticket_rejected() {
         protocol_fee_inbox::init_for_testing(scenario.ctx());
     };
     // Post to inbox A; save msg_id.
-    let mut msg_id = object::id_from_address(@0x0);
+    let mut msg_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox_a  = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox_a      = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox_a);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
@@ -774,10 +776,10 @@ fun d5_cross_inbox_ticket_rejected() {
 #[test]
 fun p3_uid_deleted_on_drain() {
     let mut scenario = setup();
-    let mut msg_id = object::id_from_address(@0x0);
+    let mut msg_id: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
             balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
@@ -812,7 +814,7 @@ fun d8_large_n_iteration_regression() {
     let mut ids: vector<ID> = vector[];
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         let mut k: u64 = 0;
         while (k < 64) {
@@ -861,13 +863,13 @@ fun d8b_accumulator_near_u64_max() {
     let mut scenario = setup();
     let quarter: u64 = 4_611_686_018_427_387_903;
     let expected: u64 = 18_446_744_073_709_551_612; // 4 × quarter
-    let mut id0 = object::id_from_address(@0x0);
-    let mut id1 = object::id_from_address(@0x0);
-    let mut id2 = object::id_from_address(@0x0);
-    let mut id3 = object::id_from_address(@0x0);
+    let mut id0: ID;
+    let mut id1: ID;
+    let mut id2: ID;
+    let mut id3: ID;
     scenario.next_tx(ADMIN);
     {
-        let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
+        let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
         fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());

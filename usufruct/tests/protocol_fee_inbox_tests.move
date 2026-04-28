@@ -4,11 +4,7 @@
 #[test_only]
 module usufruct::protocol_fee_inbox_tests;
 
-use sui::{
-    object,
-    test_scenario::{Self, Scenario},
-    transfer,
-};
+use sui::test_scenario::{Self, Scenario};
 use usufruct::protocol_fee_inbox::{Self, ProtocolFeeInbox, ProtocolFeeRef};
 
 // ─── Actors ────────────────────────────────────────────────────────────────

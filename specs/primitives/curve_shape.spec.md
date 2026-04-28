@@ -858,11 +858,12 @@ reference; the (3, 4, 1, 2) row exercises floor rounding on the irrational
 
 | `t` | `t_max` | `alpha_num` | `alpha_den` | result | note |
 |-----|---------|-------------|-------------|--------|------|
-| **[new]** `1`  | `4`  | `1` | `2` | `500_000_000` | α = 1/2 concave; √0.25 · SCALE = 5·10⁸ exactly |
-| **[new]** `1`  | `4`  | `3` | `2` | `125_000_000` | α = 3/2 convex; 0.25^1.5 · SCALE = 1.25·10⁸ exactly |
-| **[new]** `1`  | `8`  | `1` | `3` | `500_000_000` | α = 1/3 concave; d=3 path; ∛(1/8) · SCALE = 5·10⁸ exactly |
-| **[new]** `1`  | `16` | `1` | `4` | `500_000_000` | α = 1/4 concave; d=4 path (`SCALE_CB` branch); (1/16)^(1/4) · SCALE = 5·10⁸ exactly |
-| **[new]** `3`  | `4`  | `1` | `2` | `866_025_403` | α = 1/2 at `t = 0.75·t_max`; floor(√0.75 · SCALE), √0.75 ≈ 0.866025403784… |
+| **[new]** `1`             | `4`             | `1` | `2` | `500_000_000` | α = 1/2 concave; √0.25 · SCALE = 5·10⁸ exactly |
+| **[new]** `1`             | `4`             | `3` | `2` | `125_000_000` | α = 3/2 convex; 0.25^1.5 · SCALE = 1.25·10⁸ exactly |
+| **[new]** `1`             | `8`             | `1` | `3` | `500_000_000` | α = 1/3 concave; d=3 path; ∛(1/8) · SCALE = 5·10⁸ exactly |
+| **[new]** `1`             | `16`            | `1` | `4` | `500_000_000` | α = 1/4 concave; d=4 path (`SCALE_CB` branch); (1/16)^(1/4) · SCALE = 5·10⁸ exactly |
+| **[new]** `3`             | `4`             | `1` | `2` | `866_025_403` | α = 1/2 at `t = 0.75·t_max`; floor(√0.75 · SCALE), √0.75 ≈ 0.866025403784… |
+| **[new]** `2_000_000_000` | `4_000_000_000` | `1` | `2` | TBD (algorithm-derived) | α = 1/2 at midpoint `t = t_max/2`; reference: √0.5 · SCALE ≈ 7.07·10⁸. Reflection-on-diagonal pair with the integer-exact row `(t=1·10⁹, t_max=2·10⁹, 2, 1) → 250_000_000`: row 840 gives the convex midpoint `(0.5, 0.25)`; this row gives the concave midpoint `(0.5, ≈0.707)`. The two are NOT complementary (`0.25 + 0.707 ≠ 1`) — PowerLaw lacks Exp's complementarity. They satisfy reflection on `y = x`: the point `(0.5, 0.25)` reflects to `(0.25, 0.5)` which lies on this curve since `0.25^0.5 = 0.5`. See "Reflection on diagonal" property below. |
 
 #### Properties
 
@@ -875,6 +876,19 @@ reference; the (3, 4, 1, 2) row exercises floor rounding on the irrational
 - **Special case d=1:** no root step — result equals `acc` directly (Step 2 skipped)
 - **Normalization:** `eval_power_law(t, t_max, 2, 4)` = `eval_power_law(t, t_max, 1, 2)`
   (constructor reduces 2/4 → 1/2 via gcd)
+- **Reflection on the diagonal (α ↔ 1/α):** the curves `PowerLaw(α)` and
+  `PowerLaw(1/α)` are reflections of each other on the line `y = x`.
+  Formally: a point `(x, y)` lies on `g_α` iff `(y, x)` lies on
+  `g_{1/α}`, equivalently `g_α(g_{1/α}(x)) = x` for all `x ∈ [0, 1]`.
+  Distinct from Exp's complementarity (§11.6): PowerLaw does **not**
+  satisfy `g_α(x) + g_{1/α}(1−x) = 1`. In particular, at `x = 0.5`:
+  `g_2(0.5) + g_{1/2}(0.5) = 0.25 + 0.707 ≈ 0.957 ≠ 1`.
+  The reflection pair shows up directly in the golden vectors:
+  `(t=1·10⁹, t_max=2·10⁹, 2, 1) → 250_000_000` — point `(0.5, 0.25)`.
+  `(t=2·10⁹, t_max=4·10⁹, 1, 2) → ≈707·10⁶` — point `(0.5, ≈0.707)`.
+  The reflection of `(0.5, 0.25)` is `(0.25, 0.5)`, which sits on
+  `g_{1/2}` because `0.25^0.5 = 0.5` — recoverable from the curve at
+  `t = SCALE/4`, not at the midpoint.
 
 
 ### 11.5 `exp_scaled` / `exp_scaled_pos`

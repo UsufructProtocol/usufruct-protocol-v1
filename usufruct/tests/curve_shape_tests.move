@@ -979,6 +979,167 @@ fun eval_logistic_golden_vectors() {
     assert_eq!(curve_shape::eval_logistic_for_testing(1, 4),                          45_176_659);
 }
 
+// ─── Cross-curve comparative properties ───────────────────────────────────
+//
+// Catch errors that pass per-curve property tests but get the relative
+// ordering between curves wrong (e.g. a Logistic with the wrong k that
+// satisfies its own midpoint and symmetry but does not actually cross
+// Smoothstep at x = 0.5).
+
+// (1) Logistic vs Smoothstep — both sigmoidal, both pinned to SCALE/2 at
+// the midpoint. With LOGISTIC_K = 12, Logistic is steeper than Smoothstep
+// at the inflection, so:
+//   t < t_max/2 → Logistic < Smoothstep
+//   t = t_max/2 → Logistic = Smoothstep = SCALE/2
+//   t > t_max/2 → Logistic > Smoothstep
+#[test]
+fun logistic_vs_smoothstep_crossing_at_midpoint() {
+    let scale = curve_shape::scale_for_testing();
+    let t_max: u64 = 8_000_000_000;
+
+    // Midpoint: both equal SCALE/2.
+    assert_eq!(
+        curve_shape::eval_logistic_for_testing(4_000_000_000, t_max),
+        curve_shape::eval_smoothstep_for_testing(4_000_000_000, t_max),
+    );
+    assert_eq!(curve_shape::eval_logistic_for_testing(4_000_000_000, t_max), scale / 2);
+
+    // First half (Logistic steeper ⇒ closer to 0): Logistic < Smoothstep.
+    let first_half = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000];
+    let mut i = 0;
+    let len = first_half.length();
+    while (i < len) {
+        let t   = first_half[i];
+        let log = curve_shape::eval_logistic_for_testing(t, t_max);
+        let ss  = curve_shape::eval_smoothstep_for_testing(t, t_max);
+        assert!(log < ss, 0);
+        i = i + 1;
+    };
+
+    // Second half (Logistic steeper ⇒ closer to SCALE): Logistic > Smoothstep.
+    let second_half = vector[5_000_000_000u64, 6_000_000_000, 7_000_000_000];
+    let mut i = 0;
+    let len = second_half.length();
+    while (i < len) {
+        let t   = second_half[i];
+        let log = curve_shape::eval_logistic_for_testing(t, t_max);
+        let ss  = curve_shape::eval_smoothstep_for_testing(t, t_max);
+        assert!(log > ss, 0);
+        i = i + 1;
+    };
+}
+
+// (2) PowerLaw(2,1) ≤ Smoothstep on [0, t_max].
+// Proof: Smoothstep(x) − x² = 3x² − 2x³ − x² = 2x²(1 − x) ≥ 0 for x ∈ [0, 1].
+// Strict on the open interior; equal at the endpoints.
+#[test]
+fun power_law_2_1_below_or_equal_smoothstep_globally() {
+    let t_max: u64 = 10_000_000_000;
+    let ts = vector[
+        1u64,
+        100_000_000,
+        1_000_000_000,
+        2_500_000_000,
+        5_000_000_000,
+        7_500_000_000,
+        9_000_000_000,
+        9_999_999_999,
+    ];
+    let mut i = 0;
+    let len = ts.length();
+    while (i < len) {
+        let t  = ts[i];
+        let pl = curve_shape::eval_power_law_for_testing(t, t_max, 2, 1);
+        let ss = curve_shape::eval_smoothstep_for_testing(t, t_max);
+        assert!(pl <= ss, 0);
+        i = i + 1;
+    };
+}
+
+// (3) PowerLaw convex chain — more convex (higher α) ⇒ lower curve.
+// For x ∈ (0, 1), x^n strictly decreases in n. So
+//     PowerLaw(8,1) < PowerLaw(3,1) < PowerLaw(2,1) at every interior t.
+// Probe x ∈ {0.25, 0.5, 0.75, 0.95} — small enough x leads to nth-floor
+// underflow for large n (e.g. x=2.5e-10 gives x^8 · SCALE = 0), which is a
+// floor-rounding artifact, not a violation; this test stays in the
+// representable band.
+#[test]
+fun power_law_convex_chain_decreasing_in_alpha() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000, 3_800_000_000];
+    let mut i = 0;
+    let len = ts.length();
+    while (i < len) {
+        let t   = ts[i];
+        let pl2 = curve_shape::eval_power_law_for_testing(t, t_max, 2, 1);
+        let pl3 = curve_shape::eval_power_law_for_testing(t, t_max, 3, 1);
+        let pl8 = curve_shape::eval_power_law_for_testing(t, t_max, 8, 1);
+        assert!(pl3 < pl2, 0);
+        assert!(pl8 < pl3, 0);
+        i = i + 1;
+    };
+}
+
+// (4) PowerLaw concave chain — deeper root (higher d) ⇒ higher curve.
+// For x ∈ (0, 1), x^(1/d) strictly increases in d. So
+//     PowerLaw(1,2) < PowerLaw(1,3) < PowerLaw(1,4) at every interior t.
+#[test]
+fun power_law_concave_chain_increasing_in_root_degree() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000, 3_800_000_000];
+    let mut i = 0;
+    let len = ts.length();
+    while (i < len) {
+        let t     = ts[i];
+        let pl_12 = curve_shape::eval_power_law_for_testing(t, t_max, 1, 2);
+        let pl_13 = curve_shape::eval_power_law_for_testing(t, t_max, 1, 3);
+        let pl_14 = curve_shape::eval_power_law_for_testing(t, t_max, 1, 4);
+        assert!(pl_12 < pl_13, 0);
+        assert!(pl_13 < pl_14, 0);
+        i = i + 1;
+    };
+}
+
+// (5a) Exponential convex chain — higher α ⇒ more convex ⇒ lower curve.
+// f_α(x) = (e^(αx) − 1)/(e^α − 1) is decreasing in α for α > 0, x ∈ (0, 1).
+// Verified at x=0.25: f_2 ≈ 0.1015, f_4 ≈ 0.0321, f_8 ≈ 0.00214.
+#[test]
+fun exponential_convex_chain_decreasing_in_alpha() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000];
+    let mut i = 0;
+    let len = ts.length();
+    while (i < len) {
+        let t  = ts[i];
+        let e2 = curve_shape::eval_exponential_for_testing(t, t_max, 2, false);
+        let e4 = curve_shape::eval_exponential_for_testing(t, t_max, 4, false);
+        let e8 = curve_shape::eval_exponential_for_testing(t, t_max, 8, false);
+        assert!(e4 < e2, 0);
+        assert!(e8 < e4, 0);
+        i = i + 1;
+    };
+}
+
+// (5b) Exponential concave chain — higher |α| ⇒ more concave ⇒ higher curve.
+// f_{−α}(x) = (e^(−αx) − 1)/(e^(−α) − 1) is increasing in α for α > 0, x ∈ (0, 1).
+// Verified at x=0.25: f_{−2} ≈ 0.4551, f_{−4} ≈ 0.6438, f_{−8} ≈ 0.8650.
+#[test]
+fun exponential_concave_chain_increasing_in_alpha() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000];
+    let mut i = 0;
+    let len = ts.length();
+    while (i < len) {
+        let t  = ts[i];
+        let e2 = curve_shape::eval_exponential_for_testing(t, t_max, 2, true);
+        let e4 = curve_shape::eval_exponential_for_testing(t, t_max, 4, true);
+        let e8 = curve_shape::eval_exponential_for_testing(t, t_max, 8, true);
+        assert!(e4 > e2, 0);
+        assert!(e8 > e4, 0);
+        i = i + 1;
+    };
+}
+
 // ─── Algorithm-derived constants — regression check ────────────────────────
 //
 // Pinning procedure (run once during initial implementation, then this test

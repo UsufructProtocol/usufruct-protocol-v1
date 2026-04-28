@@ -457,6 +457,192 @@ fun exp_scaled_pos_y_eq_8_positive_and_within_overflow_budget() {
     assert!(v > 0, 0);
 }
 
+// ─── eval_exponential ──────────────────────────────────────────────────────
+//
+// Algorithm-derived golden vectors (§11.6) are pinned in a separate
+// post-bootstrap commit. The tests here cover (i) the exp_a_norm dispatcher
+// wiring required by §11.6, and (ii) the algorithm-independent properties
+// (range, monotonicity, below/above linear, complementarity).
+
+// Dispatcher wiring: every (alpha_abs, alpha_neg) maps to its EXP_A_NORM_*
+// constant. Already covered transitively by bootstrap_constants_match_pinned;
+// pinned here as the explicit §11.6 dispatcher property.
+#[test]
+fun exp_a_norm_dispatcher_per_pair() {
+    let pos_norms: vector<u128> = vector[
+            1_718_281_828_459_045_226,
+            6_389_056_098_930_650_216,
+           19_085_536_923_187_667_729,
+           53_598_150_033_144_239_050,
+          147_413_159_102_576_587_697,
+          402_428_793_492_728_453_424,
+        1_095_633_158_427_339_529_377,
+        2_979_957_986_946_523_322_343,
+    ];
+    let neg_norms: vector<u128> = vector[
+        632_120_558_828_557_678,
+        864_664_716_763_387_308,
+        950_212_931_632_136_057,
+        981_684_361_111_265_820,
+        993_262_053_000_914_533,
+        997_521_247_823_333_601,
+        999_088_118_034_444_554,
+        999_664_537_372_086_775,
+    ];
+    let mut a: u8 = 1;
+    while (a <= 8) {
+        assert_eq!(
+            curve_shape::exp_a_norm_for_testing(a, false),
+            pos_norms[(a - 1) as u64],
+        );
+        assert_eq!(
+            curve_shape::exp_a_norm_for_testing(a, true),
+            neg_norms[(a - 1) as u64],
+        );
+        a = a + 1;
+    };
+}
+
+// e^a − 1 strictly increasing for a > 0 ⇒ EXP_A_NORM_a_POS strictly
+// increasing in a. Catches copy-paste swaps at pinning time.
+#[test]
+fun exp_a_norm_pos_strictly_monotone_in_alpha() {
+    let mut a: u8 = 1;
+    while (a < 8) {
+        let lo = curve_shape::exp_a_norm_for_testing(a,     false);
+        let hi = curve_shape::exp_a_norm_for_testing(a + 1, false);
+        assert!(lo < hi, 0);
+        a = a + 1;
+    };
+}
+
+// 1 − e^{−a} strictly increasing for a > 0.
+#[test]
+fun exp_a_norm_neg_strictly_monotone_in_alpha() {
+    let mut a: u8 = 1;
+    while (a < 8) {
+        let lo = curve_shape::exp_a_norm_for_testing(a,     true);
+        let hi = curve_shape::exp_a_norm_for_testing(a + 1, true);
+        assert!(lo < hi, 0);
+        a = a + 1;
+    };
+}
+
+#[test]
+fun eval_exponential_range() {
+    let scale = curve_shape::scale_for_testing();
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1u64, 1_000_000_000, 2_000_000_000, 3_000_000_000, 3_999_999_999];
+    let alphas: vector<u8> = vector[1, 2, 4, 8];
+    let mut p = 0;
+    let plen = alphas.length();
+    while (p < plen) {
+        let a = alphas[p];
+        let mut i = 0;
+        let tlen = ts.length();
+        while (i < tlen) {
+            let r_pos = curve_shape::eval_exponential_for_testing(ts[i], t_max, a, false);
+            let r_neg = curve_shape::eval_exponential_for_testing(ts[i], t_max, a, true);
+            assert!(r_pos <= scale, 0);
+            assert!(r_neg <= scale, 0);
+            i = i + 1;
+        };
+        p = p + 1;
+    };
+}
+
+#[test]
+fun eval_exponential_monotone_in_t() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1u64, 100_000_000, 1_000_000_000, 2_500_000_000, 3_999_999_999];
+    let alphas: vector<u8> = vector[1, 2, 4, 8];
+    let mut p = 0;
+    let plen = alphas.length();
+    while (p < plen) {
+        let a = alphas[p];
+        let mut i = 1;
+        let tlen = ts.length();
+        while (i < tlen) {
+            let lo_pos = curve_shape::eval_exponential_for_testing(ts[i - 1], t_max, a, false);
+            let hi_pos = curve_shape::eval_exponential_for_testing(ts[i],     t_max, a, false);
+            assert!(lo_pos <= hi_pos, 0);
+            let lo_neg = curve_shape::eval_exponential_for_testing(ts[i - 1], t_max, a, true);
+            let hi_neg = curve_shape::eval_exponential_for_testing(ts[i],     t_max, a, true);
+            assert!(lo_neg <= hi_neg, 0);
+            i = i + 1;
+        };
+        p = p + 1;
+    };
+}
+
+// alpha_neg = false ⇒ convex ⇒ result < linear for t ∈ (0, t_max).
+#[test]
+fun eval_exponential_below_linear_when_convex() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000];
+    let alphas: vector<u8> = vector[1, 2, 4, 8];
+    let mut p = 0;
+    let plen = alphas.length();
+    while (p < plen) {
+        let a = alphas[p];
+        let mut i = 0;
+        let tlen = ts.length();
+        while (i < tlen) {
+            let r   = curve_shape::eval_exponential_for_testing(ts[i], t_max, a, false);
+            let lin = curve_shape::eval_linear_for_testing(ts[i], t_max);
+            assert!(r < lin, 0);
+            i = i + 1;
+        };
+        p = p + 1;
+    };
+}
+
+// alpha_neg = true ⇒ concave ⇒ result > linear for t ∈ (0, t_max).
+#[test]
+fun eval_exponential_above_linear_when_concave() {
+    let t_max: u64 = 4_000_000_000;
+    let ts = vector[1_000_000_000u64, 2_000_000_000, 3_000_000_000];
+    let alphas: vector<u8> = vector[1, 2, 4, 8];
+    let mut p = 0;
+    let plen = alphas.length();
+    while (p < plen) {
+        let a = alphas[p];
+        let mut i = 0;
+        let tlen = ts.length();
+        while (i < tlen) {
+            let r   = curve_shape::eval_exponential_for_testing(ts[i], t_max, a, true);
+            let lin = curve_shape::eval_linear_for_testing(ts[i], t_max);
+            assert!(r > lin, 0);
+            i = i + 1;
+        };
+        p = p + 1;
+    };
+}
+
+// f_α(x) + f_{−α}(1−x) = 1 mathematically (§8). Integer arithmetic introduces
+// a small drift; spec §11.6 seed set C asserts ≤ 4 ULP either way.
+// Seeds (t, t_max, alpha_abs): (1,4,2), (2,4,2), (3,4,2), (1,4,8), (3,8,4).
+#[test]
+fun eval_exponential_complementarity_within_4_ulp() {
+    let scale = curve_shape::scale_for_testing();
+    let ts:     vector<u64> = vector[1, 2, 3, 1, 3];
+    let tmaxs:  vector<u64> = vector[4, 4, 4, 4, 8];
+    let alphas: vector<u8>  = vector[2, 2, 2, 8, 4];
+    let mut i = 0;
+    let len = ts.length();
+    while (i < len) {
+        let t     = ts[i];
+        let t_max = tmaxs[i];
+        let a     = alphas[i];
+        let lhs = curve_shape::eval_exponential_for_testing(t,         t_max, a, false);
+        let rhs = curve_shape::eval_exponential_for_testing(t_max - t, t_max, a, true);
+        let sum = lhs + rhs;
+        assert!(sum + 4 >= scale, 0);
+        assert!(sum <= scale + 4, 0);
+        i = i + 1;
+    };
+}
+
 // ─── Algorithm-derived constants — regression check ────────────────────────
 //
 // Pinning procedure (run once during initial implementation, then this test

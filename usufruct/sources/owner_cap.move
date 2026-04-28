@@ -55,13 +55,22 @@ public(package) fun new(
     owner:     address,
     ctx:       &mut TxContext,
 ): OwnerCap {
-    abort 0
+    let cap = OwnerCap {
+        id: object::new(ctx),
+        escrow_id,
+    };
+    let owner_cap_id = object::uid_to_inner(&cap.id);
+    event::emit(OwnerCapMinted { owner_cap_id, escrow_id, owner });
+    cap
 }
 
 /// Destroys `cap` and emits `OwnerCapBurned`. `owner` is declarative —
 /// the caller binds `tx_context::sender(ctx)` at the call site.
 public(package) fun burn(cap: OwnerCap, owner: address) {
-    abort 0
+    let OwnerCap { id, escrow_id } = cap;
+    let owner_cap_id = object::uid_to_inner(&id);
+    object::delete(id);
+    event::emit(OwnerCapBurned { owner_cap_id, escrow_id, owner });
 }
 
 // === Private Functions ===

@@ -166,7 +166,7 @@ fun b1_burn_deletes_cap_and_emits_burned_event() {
         assert_eq!(owner_cap::burned_escrow_id(&events[0]),    escrow_id_1());
         assert_eq!(owner_cap::burned_owner(&events[0]),         ALICE);
     };
-    assert!(!scenario.has_most_recent_for_address<OwnerCap>(ALICE));
+    assert!(!test_scenario::has_most_recent_for_address<OwnerCap>(ALICE));
     scenario.end();
 }
 
@@ -247,7 +247,7 @@ fun g2_escrow_id_getter_is_pure() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
-        let mut k = 0;
+        let mut k: u64 = 0;
         while (k < 5) {
             assert_eq!(owner_cap::escrow_id(&cap), escrow_id_1());
             k = k + 1;

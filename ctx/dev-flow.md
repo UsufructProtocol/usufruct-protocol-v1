@@ -97,6 +97,38 @@ and `LOGISTIC_DENOM`. See `curve_shape.spec.md` §11.5, §8, §9.
 
 Every other function follows strict TDD.
 
+## test_scenario — patterns and gotchas
+
+**Free functions, not methods:** `test_scenario::return_immutable(x)` and
+`test_scenario::receiving_ticket_by_id<T>(id)` are free functions. Calling
+them as `scenario.return_immutable(x)` is a compile error.
+
+**Event scope is per-transaction:** `event::events_by_type<T>()` returns only
+events emitted in the *current* transaction block. To use an event field
+(e.g. a `fee_message_id`) in the *next* block, capture it in an outer `mut`
+variable before calling `next_tx`:
+
+```move
+let mut msg_id: ID;
+scenario.next_tx(ADMIN);
+{ post(...); msg_id = sent_fee_message_id(&events_by_type()[0]); };
+scenario.next_tx(ADMIN);
+{ receiving_ticket_by_id(msg_id); ... };
+```
+
+`mut` is required for cross-block assignment even if assigned only once.
+The compiler warns W09012 — suppress with `#[allow(unused_let_mut)]` at
+module level; the `mut` is syntactically necessary.
+
+**receiving_ticket_by_id on a deleted object panics at the Rust level** (not
+a Move abort), so `#[expected_failure]` cannot catch it. To assert that an
+object was deleted, use `TransactionEffects.deleted()` instead:
+
+```move
+let effects = scenario.end(); // end() returns effects of the last tx
+assert!(effects.deleted().contains(&msg_id));
+```
+
 ## Filter for speed
 
 ```bash

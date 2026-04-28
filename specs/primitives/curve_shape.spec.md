@@ -458,24 +458,24 @@ Naming convention: `EXP_A_NORM_{alpha_abs}_{POS|NEG}`, where `POS` corresponds
 to `alpha_neg = false` (α > 0) and `NEG` to `alpha_neg = true` (α < 0).
 
     // α > 0  (alpha_neg = false)  →  convex
-    const EXP_A_NORM_1_POS: u128 = /* algorithm-derived: e^1·TS − TS */;
-    const EXP_A_NORM_2_POS: u128 = /* algorithm-derived: e^2·TS − TS */;
-    const EXP_A_NORM_3_POS: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_4_POS: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_5_POS: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_6_POS: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_7_POS: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_8_POS: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_1_POS: u128 =     1_718_281_828_459_045_226;  // e¹·TS − TS
+    const EXP_A_NORM_2_POS: u128 =     6_389_056_098_930_650_216;  // e²·TS − TS
+    const EXP_A_NORM_3_POS: u128 =    19_085_536_923_187_667_729;
+    const EXP_A_NORM_4_POS: u128 =    53_598_150_033_144_239_050;
+    const EXP_A_NORM_5_POS: u128 =   147_413_159_102_576_587_697;
+    const EXP_A_NORM_6_POS: u128 =   402_428_793_492_728_453_424;
+    const EXP_A_NORM_7_POS: u128 = 1_095_633_158_427_339_529_377;
+    const EXP_A_NORM_8_POS: u128 = 2_979_957_986_946_523_322_343;
 
     // α < 0  (alpha_neg = true)   →  concave
-    const EXP_A_NORM_1_NEG: u128 = /* algorithm-derived: TS − e^−1·TS */;
-    const EXP_A_NORM_2_NEG: u128 = /* algorithm-derived: TS − e^−2·TS */;
-    const EXP_A_NORM_3_NEG: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_4_NEG: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_5_NEG: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_6_NEG: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_7_NEG: u128 = /* algorithm-derived */;
-    const EXP_A_NORM_8_NEG: u128 = /* algorithm-derived */;
+    const EXP_A_NORM_1_NEG: u128 = 632_120_558_828_557_678;  // TS − e⁻¹·TS
+    const EXP_A_NORM_2_NEG: u128 = 864_664_716_763_387_308;  // TS − e⁻²·TS
+    const EXP_A_NORM_3_NEG: u128 = 950_212_931_632_136_057;
+    const EXP_A_NORM_4_NEG: u128 = 981_684_361_111_265_820;
+    const EXP_A_NORM_5_NEG: u128 = 993_262_053_000_914_533;
+    const EXP_A_NORM_6_NEG: u128 = 997_521_247_823_333_601;
+    const EXP_A_NORM_7_NEG: u128 = 999_088_118_034_444_554;
+    const EXP_A_NORM_8_NEG: u128 = 999_664_537_372_086_775;
 
 Move `const` cannot invoke `exp_scaled_pos`, so each literal is produced by
 running the following derivation once per `(alpha_abs, alpha_neg)` pair and
@@ -554,7 +554,7 @@ distinguishable from `Smoothstep` without being extreme.
 ### Module-level constants
 
     const LOGISTIC_K:           u64  = 12;
-    const LOGISTIC_DENOM:       u64  = /* algorithm-derived — establish during initial implementation */;
+    const LOGISTIC_DENOM:       u64  = 995_054_753;
     const LOGISTIC_SIGMA_FLOOR: u128 = (SCALE_U128 - (LOGISTIC_DENOM as u128)) / 2;   // σ(−6) · SCALE
 
 Move `const` only admits literals and simple arithmetic — function calls are not
@@ -570,9 +570,10 @@ running the following derivation once and recording the output (K=32, floor roun
 (admitted by Move `const`), so it evaluates at compile time once
 `LOGISTIC_DENOM` has been pinned.
 
-Mathematical reference: (σ(6) − σ(−6)) · SCALE ≈ 995_054_750. The exact
-algorithm-derived value may differ by a few ULP due to floor rounding in
-`exp_scaled` — use the algorithm output, not this approximation.
+Mathematical reference: (σ(6) − σ(−6)) · SCALE ≈ 995_054_750. The pinned
+algorithm-derived value is `995_054_753` (+3 ULP from floor rounding in
+`exp_scaled`). Treat the literal above as authoritative; the reference is
+only for sanity checks.
 
 ### Runtime algorithm
 
@@ -903,18 +904,18 @@ exactly. Concurrently, use the same run to pin `EXP_A_NORM_*` (§8) and
 
 | `y_num` | `y_den` | `neg` | expected result | note |
 |---------|---------|-------|-----------------|------|
-| 1 | 1 | false | 2_718_281_828_459_045_226 | **[algorithm-derived]** reference true floor(e¹ · TS) = ..._235 (delta = 9 ULP, within < 10⁻⁹ budget) |
-| 1 | 1 | true  | 367_879_441_171_442_322  | **[algorithm-derived]** mathematical floor is 321; +1 ULP from reciprocal-identity rounding |
-| 1 | 2 | false | **TBD (algorithm-derived)** | **[new]** fractional y = 0.5; exercises `y_den > 1` path of the divisor |
-| 1 | 2 | true  | **TBD (algorithm-derived)** | **[new]** fractional y = 0.5 negative; exercises reciprocal on non-integer exponent |
-| 2 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 2 — e² ≈ 7.389 · TS |
-| 4 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 4 — e⁴ ≈ 54.598 · TS |
-| 8 | 1 | false | **TBD (algorithm-derived)** | **[new]** y = 8 — upper bound of §7 overflow analysis; guards the claimed `acc ≤ e⁸ · TS ≈ 3×10²¹` budget |
-| 8 | 1 | true  | **TBD (algorithm-derived)** | **[new]** y = 8 negative — deepest reciprocal division; guards `TAYLOR_SCALE_SQ / exp_scaled_pos(...)` precision at smallest positive result |
+| 1 | 1 | false | 2_718_281_828_459_045_226     | **[algorithm-derived]** reference true floor(e¹ · TS) = ..._235 (delta = 9 ULP, within < 10⁻⁹ budget) |
+| 1 | 1 | true  | 367_879_441_171_442_322       | **[algorithm-derived]** mathematical floor is 321; +1 ULP from reciprocal-identity rounding |
+| 1 | 2 | false | 1_648_721_270_700_128_139     | **[algorithm-derived]** fractional y = 0.5; reference e^0.5 · TS ≈ 1.6487 · 10¹⁸ |
+| 1 | 2 | true  | 606_530_659_712_633_426       | **[algorithm-derived]** fractional y = 0.5 negative; exercises reciprocal on non-integer exponent |
+| 2 | 1 | false | 7_389_056_098_930_650_216     | **[algorithm-derived]** y = 2; reference e² · TS ≈ 7.389 · 10¹⁸ |
+| 4 | 1 | false | 54_598_150_033_144_239_050    | **[algorithm-derived]** y = 4; reference e⁴ · TS ≈ 54.598 · 10¹⁸ |
+| 8 | 1 | false | 2_980_957_986_946_523_322_343 | **[algorithm-derived]** y = 8 — upper bound of §7 overflow analysis; guards the claimed `acc ≤ e⁸ · TS ≈ 3×10²¹` budget |
+| 8 | 1 | true  | 335_462_627_913_225           | **[algorithm-derived]** y = 8 negative — deepest reciprocal division; guards `TAYLOR_SCALE_SQ / exp_scaled_pos(...)` precision at smallest positive result |
 
-The seven `TBD` cells above are established during initial implementation
-by running the K=32 Taylor algorithm once, pasting the resulting `u128`
-literal back into this spec, and committing.
+All eight rows are pinned. Re-derive whenever §7 (Taylor K, rounding) changes;
+the `bootstrap_constants_match_pinned` regression test in `curve_shape_tests`
+flags any drift.
 
 #### Properties
 

@@ -27,8 +27,13 @@ Depends on: nothing (`sui::object` only)
   argument is recorded on `TenantCapMinted.tenant` as a first-observed
   address — under `store` the cap may change hands later, so this
   address is the mint-time placer, not necessarily the current holder.
-- `burn(cap, ctx)` — `public`. Voluntary destroy by current holder for
-  gas recovery. No state mutation. The protocol never forces this.
+- `burn(cap, ctx)` — `public(package)`. Destroys the cap by value.
+  Called only by `rental_escrow::burn_tenant_cap`, which gates the
+  destruction on the cap being structurally stale (neither current
+  nor pending on its escrow). This module performs no state check —
+  the staleness gate is the rental layer's semantic, not a cap
+  intrinsic. Symmetric with `owner_cap::burn`, which is also
+  `public(package)` and called only by `rental_escrow::claim_asset`.
   Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant }` where
   `tenant` is `tx_context::sender(ctx)` — under `key + store` the cap
   may have changed hands between mint and burn, so the burning address
@@ -339,16 +344,22 @@ through `rent`'s return to the PTB caller — no push.
 
 ### `burn`
 
-    public fun burn(cap: TenantCap, ctx: &TxContext)
+    public(package) fun burn(cap: TenantCap, ctx: &TxContext)
 
-**Visibility:** `public` — callable by any holder (current or displaced
-tenant).
+**Visibility:** `public(package)` — callable only from
+`rental_escrow::burn_tenant_cap`. The wrapper there gates destruction
+on the cap being structurally stale (cap.id matches neither
+`current_tenant_cap_id` nor `pending_tenant_cap_id` on its escrow).
+This module enforces no such gate; it is a destructive primitive
+trusted to its package-internal caller. Symmetric with
+`owner_cap::burn`, which is gated by `rental_escrow::claim_asset`.
 
-**Purpose:** voluntary destruction of a `TenantCap` for gas recovery.
-Serves current tenants (end of use, including the one-shot
-borrow→use→return→burn pattern in a single PTB), displaced tenants
-(stale cap cleanup), and any later holder under custody/multisig
-arrangements. Has no effect on escrow state.
+**Purpose:** destroys a `TenantCap` by value. The legitimate use
+case is gas recovery on a stale cap (after displacement by handover
+or supersede, or after tenure expiry cleared `current_tenant_cap_id`).
+Burning a live cap (current or pending) is rejected by the wrapper
+so a holder cannot accidentally destroy their own active access or
+their pending bid's promotion target.
 
 **Behavior:**
 1. Destructure: `let TenantCap { id, escrow_id } = cap;`.
@@ -366,10 +377,13 @@ new information that is not PK-recoverable from `TenantCapMinted`.
 (Compare with the previous `key`-only design, where non-transferability
 collapsed the two addresses and `ctx` was not needed.)
 
-**No state mutation:** burning a cap does not affect
-`escrow.current_tenant_cap_id`. The escrow is not notified. A burned
-current cap does not revoke access — but `borrow_asset` would then
-fail because the cap no longer exists to be presented.
+**No state mutation:** burning a cap does not touch the escrow. The
+escrow is not notified. The structural risk of an "orphaned slot"
+(the escrow holding `Some(id)` for a cap that no longer exists)
+is prevented upstream by the wrapper in `rental_escrow::burn_tenant_cap`,
+which aborts `E_TENANT_CAP_NOT_STALE` if the cap is still referenced
+by either `current_tenant_cap_id` or `pending_tenant_cap_id`. By
+contract this primitive only ever sees stale caps.
 
 ---
 
@@ -627,7 +641,7 @@ abort to test.
 | `TenantCapMinted` (event) | `public` | `copy + drop`. Emitted by `new`. Carries `(tenant_cap_id, escrow_id, tenant)` — `tenant` is the mint-time first-observed address. Not 1:1 with effective tenancy under eager minting; indexers count tenancies via `RentStarted` / `HandoverCompleted`. |
 | `TenantCapBurned` (event) | `public` | `copy + drop`. Emitted by `burn`. Carries `(tenant_cap_id, escrow_id, tenant)` — `tenant` is the burn-time `tx_context::sender(ctx)`. Under `key + store` it may differ from `TenantCapMinted.tenant`. |
 | `new(escrow_id, tenant, ctx): (TenantCap, ID)` | `public(package)` | Pure constructor + emitter. Builds the cap, emits `TenantCapMinted`, returns `(cap, cap_id)` by value. No transfer. Called by `rental_escrow::rent` in every state branch (Idle, AtDutchAuction, Rented{HandoverOpen}, Rented{HandoverConfirmed}). |
-| `burn(cap, ctx)` | `public` | Voluntary destroy for gas recovery. No state mutation. Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant: tx_context::sender(ctx) }`. The burning address is genuinely new information under `key + store` and is not PK-recoverable from `TenantCapMinted`. |
+| `burn(cap, ctx)` | `public(package)` | Destroys the cap by value. Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant: tx_context::sender(ctx) }`. Called only from `rental_escrow::burn_tenant_cap`, which gates the call on the cap being structurally stale. Symmetric with `owner_cap::burn` (gated by `claim_asset`). |
 | `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow` at `borrow_asset` to compare against the target escrow's ID inline (abort constants `E_WRONG_ESCROW_TENANT_CAP`, `E_PENDING_TENANT_CAP`, and `E_STALE_TENANT_CAP` live in rental_escrow). |
 
 **No abort codes exported.** The three gating checks against caps

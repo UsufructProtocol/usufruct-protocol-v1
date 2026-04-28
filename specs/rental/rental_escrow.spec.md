@@ -126,6 +126,7 @@ type itself.
     public const E_WRONG_ESCROW_TENANT_CAP:     u64 = 12; // borrow_asset: tenant_cap::escrow_id(cap) != object::id(escrow)
     public const E_PENDING_TENANT_CAP:          u64 = 13; // borrow_asset: cap's ID matches escrow.pending_tenant_cap_id (handover not yet settled — caller should retry)
     public const E_STALE_TENANT_CAP:            u64 = 14; // borrow_asset: cap's ID matches neither current nor pending (displaced or expired — caller should burn)
+    public const E_TENANT_CAP_NOT_STALE:        u64 = 15; // burn_tenant_cap: cap's ID matches current_tenant_cap_id or pending_tenant_cap_id (still live — burning would orphan an escrow slot)
 
 ### 1.2 Protocol constants
 
@@ -1289,6 +1290,103 @@ the indexer needs to measure actual capability usage. JOIN on
 borrow window.
 
 
+### 6.3 `burn_tenant_cap`
+
+    public fun burn_tenant_cap<Asset: key + store, CoinType>(
+        escrow: &mut RentalEscrow<Asset, CoinType>,
+        cap:    TenantCap,
+        clock:  &Clock,
+        ctx:    &mut TxContext,
+    )
+
+**Visibility:** `public`. Sole entry point for destroying a `TenantCap`.
+
+**Purpose:** wraps the `tenant_cap::burn` primitive with the escrow-side
+gates that prevent a holder from accidentally destroying their own
+active access (`current`) or their own pending bid's promotion target
+(`pending`). Burning a stale cap is the only legitimate path; this
+function aborts otherwise.
+
+**Why the wrapper exists.** Under the eager-mint model, a cap's
+relevance is determined entirely by whether its `ID` matches one of
+the escrow's two slots (`current_tenant_cap_id`,
+`pending_tenant_cap_id`). If a holder burned a cap that was still
+referenced by either slot, the slot would point at a non-existent
+object — an "orphaned slot" — and the asset would become inaccessible
+until the next state transition cleared the slot:
+
+- **Current cap burned:** `borrow_asset` aborts (cap doesn't exist to
+  present). The asset is unreachable until `do_tenure_expiry` clears
+  `current_tenant_cap_id`. The holder also forfeits the option to use
+  what they paid for; the `tenant_stake` settles to `owner_earnings`
+  at tenure expiry as normal.
+- **Pending cap burned:** when `do_handover` rotates pending → current,
+  `current_tenant_cap_id` ends up pointing at the destroyed cap. The
+  bidder's `pending_bid` rotates to `tenant_stake` and ultimately to
+  `owner_earnings` without anyone ever using the asset. A pure loss
+  for the bidder, no benefit elsewhere.
+
+Neither failure mode is recoverable. Both are cheap to prevent with a
+two-comparison check.
+
+**Behavior:**
+1. `apply_pending_transitions(escrow, clock, ctx)` — settle first. A
+   cap that was current-but-tenure-expired becomes stale here (the
+   slot is cleared by `do_tenure_expiry`); a cap that was pending-and-
+   ready-for-handover becomes current here (rotated by `do_handover`).
+   Without settle, the gate below would reject caps that the state
+   machine would otherwise consider stale.
+2. `assert!(tenant_cap::escrow_id(&cap) == object::id(escrow),
+          E_WRONG_ESCROW_TENANT_CAP);`
+   — escrow-match gate. Same threat model as `borrow_asset` step 3:
+   PTBs can pair any `&TenantCap` with any `&mut RentalEscrow`. Without
+   this assert, the wrapper would accept caps from another escrow,
+   which would burn objects whose true escrow's slots remain
+   unaffected — orphaned slot on a different escrow.
+3. Liveness gate (rejects current and pending):
+   ```
+   let cap_id = object::id(&cap);
+   if escrow.current_tenant_cap_id.is_some()
+      && *escrow.current_tenant_cap_id.borrow() == cap_id:
+       abort E_TENANT_CAP_NOT_STALE;
+   if escrow.pending_tenant_cap_id.is_some()
+      && *escrow.pending_tenant_cap_id.borrow() == cap_id:
+       abort E_TENANT_CAP_NOT_STALE;
+   ```
+   Both branches surface the same abort code — the caller's remediation
+   is identical ("don't burn yet; the cap is still live"). The SDK
+   distinguishes the two cases by reading the slots, but the abort
+   itself is uniform.
+4. `tenant_cap::burn(cap, ctx)` — delegates to the package-private
+   primitive, which destroys the cap and emits `TenantCapBurned`.
+
+**Why no `E_LIVE_TENANT_CAP` distinction between current and pending.**
+The wrapper's job is to prevent destruction of a live cap; from the
+caller's perspective, "live" is binary. Splitting current vs pending
+into two abort codes would force the SDK to map both to the same
+user-facing message. Read the slots if you need to know which.
+
+**Why call `apply_pending_transitions` first.** A cap whose owner's
+tenure has just expired is still in `current_tenant_cap_id` until
+`do_tenure_expiry` runs — but it should be burnable. Settling first
+makes the gate decision against the post-settle truth, not the
+pre-settle staleness. Symmetric with every other write entry point.
+
+**Why no need to check `option::is_some(&escrow.asset)` or any other
+state field.** Burning a stale cap has no escrow side-effects. The
+asset's presence in the escrow, the current state of the state
+machine, the balance fields — none are touched. The wrapper is a pure
+gating layer over the destroy primitive.
+
+**Caller composition.** The standard pattern for a former tenant or
+displaced bidder cleaning up:
+```
+rental_escrow::burn_tenant_cap(&mut escrow, cap, &clock, ctx);
+```
+Single MoveCall in a PTB. No coordination with the escrow holder or
+any settler required.
+
+
 7. PRIVATE HELPERS
 -------------------
 
@@ -2367,6 +2465,17 @@ New prefixes introduced in this audit:
 | B8 | `borrow_asset` called twice in the same PTB | Second call aborts `E_ASSET_ALREADY_BORROWED` — asset field is `None` after the first extraction. |
 | B9 | `borrow_asset` called by T(n) with T(n)'s cap when pre-APT state is `Rented(HandoverConfirmed)` and handover has expired — APT fires C1 rotating `current_tenant_cap_id` to T(n+1) before the staleness check | Split-tx per §10.13 abort-row strategy. **tx1** (standalone `apply_pending_transitions`): fires `do_handover` — T(n+1) installed, `current_tenant_cap_id` rotates to T(n+1)'s cap ID, `HandoverCompleted` emitted, `owner_earnings` credited, new `TenantCap` pushed to T(n+1), state → `Rented(HandoverOpen)`. **tx2** (`borrow_asset` with T(n)'s cap): §6.1 step 3 passes (cap belongs to this escrow), step 4 fails — `current_tenant_cap_id` now holds T(n+1)'s ID, not T(n)'s — aborts `E_STALE_TENANT_CAP` at the identity compare. Distinct from B3 (cap that was already stale pre-call): here the cap becomes stale **during** the call via APT's own work. Asserts §6.1 step 1 runs before step 4. |
 | B10 | `borrow_asset` called by T(n) with T(n)'s cap when pre-APT state is `Rented(HandoverOpen)` and tenure has expired (no handover pending) — APT fires C2 clearing `current_tenant_cap_id` before the staleness check | Split-tx per §10.13 abort-row strategy. **tx1** (standalone `apply_pending_transitions`): fires `do_tenure_expiry` — `tenant_stake × 0.90` → `owner_earnings`, `FeeMessage<C>` routed, `current_tenant_cap_id = none`, `current_tenant_address = none`, state → `AtDutchAuction`, `TenureExpired` emitted. **tx2** (`borrow_asset` with T(n)'s cap): step 4's `is_some` guard on `escrow.current_tenant_cap_id` fails — slot was cleared — aborts `E_STALE_TENANT_CAP` at the unwrap guard. Complements B9: same abort code, different APT transition (C2 clears ⇒ unwrap-guard path; C1 rotates ⇒ identity-compare path). |
+
+**`burn_tenant_cap` rows (§6.3):**
+
+| # | Description | Expected |
+|---|---|---|
+| BTC1 | Burn a stale cap (cap from a previous tenancy whose `current_tenant_cap_id` slot was cleared by `do_tenure_expiry`, or rotated to a different ID by `do_handover`) | Cap UID deleted. `TenantCapBurned { tenant_cap_id, escrow_id, tenant: tx_context::sender(ctx) }` emitted. No escrow state mutation (no slot was referencing this cap). |
+| BTC2 | Burn the current cap (cap is in `current_tenant_cap_id`) | Aborts `E_TENANT_CAP_NOT_STALE`. Cap not destroyed; escrow slot unchanged. Asserts the wrapper rejects accidental destruction of the holder's own active access. |
+| BTC3 | Burn the pending cap (cap is in `pending_tenant_cap_id` during `Rented(HandoverConfirmed)`) | Aborts `E_TENANT_CAP_NOT_STALE`. Cap not destroyed; escrow slot unchanged. Asserts the wrapper rejects destruction of a bidder's pending promotion target. |
+| BTC4 | Burn a cap for a different escrow (`tenant_cap::escrow_id(cap) != object::id(escrow)`) | Aborts `E_WRONG_ESCROW_TENANT_CAP`. Same threat model as `borrow_asset` row B4 — PTB-pairing defense. Asserts the escrow-match gate is on `burn_tenant_cap` too. |
+| BTC5 | Burn a cap that **becomes stale during the call** via the wrapper's internal `apply_pending_transitions`. Setup: cap is current, but tenure expired before this call. | `apply_pending_transitions` fires `do_tenure_expiry` (clears `current_tenant_cap_id`); the gate then sees the cap as stale and proceeds to burn. Cap destroyed; `TenureExpired` and `TenantCapBurned` co-emitted in the same tx. Asserts the wrapper's settle-first ordering — without it, a holder couldn't burn a cap whose escrow has just expired. |
+| BTC6 | Burn a cap that **becomes current during the call** via APT's `do_handover`. Setup: cap is pending, handover countdown has elapsed before this call. | `apply_pending_transitions` fires `do_handover` (rotates pending → current); the gate then sees the cap as current and aborts `E_TENANT_CAP_NOT_STALE`. The settle did happen (escrow state mutated, `HandoverCompleted` emitted) but the cap survives. Asserts the wrapper does not "swallow" a settle that produces an abort — the state machine's work persists, only the burn is rejected. |
 
 ### 10.8 `retire` / `claim_asset`
 

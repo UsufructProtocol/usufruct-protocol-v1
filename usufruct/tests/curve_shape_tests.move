@@ -105,6 +105,59 @@ fun new_exponential_alpha_abs_above_8_aborts() {
     let _ = curve_shape::new_exponential(9, true);
 }
 
+// ─── eval_linear ───────────────────────────────────────────────────────────
+
+#[test_only]
+public struct LinearCase has drop {
+    t: u64,
+    t_max: u64,
+    expected: u64,
+}
+
+#[test]
+fun eval_linear_golden_vectors() {
+    let cases = vector[
+        LinearCase { t: 1, t_max: 4,             expected: 250_000_000 }, // floor SCALE/4
+        LinearCase { t: 3, t_max: 4,             expected: 750_000_000 }, // floor 3·SCALE/4
+        LinearCase { t: 1, t_max: 3,             expected: 333_333_333 }, // floor 1/3
+        LinearCase { t: 2, t_max: 3,             expected: 666_666_666 }, // floor 2/3
+        LinearCase { t: 1, t_max: 1_000_000_000, expected: 1           }, // minimum nonzero output
+    ];
+    let mut i = 0;
+    let len = cases.length();
+    while (i < len) {
+        let case = &cases[i];
+        assert_eq!(curve_shape::eval_linear_for_testing(case.t, case.t_max), case.expected);
+        i = i + 1;
+    };
+}
+
+#[test]
+fun eval_linear_midpoint_exact() {
+    // g(0.5) = 0.5 exactly when t_max is even
+    let scale = curve_shape::scale_for_testing();
+    assert_eq!(curve_shape::eval_linear_for_testing(2, 4), scale / 2);
+    assert_eq!(
+        curve_shape::eval_linear_for_testing(500_000_000, 1_000_000_000),
+        scale / 2,
+    );
+}
+
+#[test]
+fun eval_linear_monotone_in_t() {
+    // For fixed t_max, t1 < t2 ⇒ result(t1) ≤ result(t2).
+    let t_max: u64 = 1_000_000;
+    let ts = vector[1u64, 2, 100, 12_345, 500_000, 999_999];
+    let mut i = 1;
+    let len = ts.length();
+    while (i < len) {
+        let lo = curve_shape::eval_linear_for_testing(ts[i - 1], t_max);
+        let hi = curve_shape::eval_linear_for_testing(ts[i],     t_max);
+        assert!(lo <= hi, 0);
+        i = i + 1;
+    };
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 // Iterative Euclidean gcd (Move has no recursion).

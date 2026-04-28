@@ -101,7 +101,9 @@ public(package) fun evaluate_curve(_shape: &CurveShape, _t: u64, _t_max: u64): u
 
 // === Private Functions ===
 
-fun eval_linear(_t: u64, _t_max: u64): u64 { abort 0 }
+fun eval_linear(t: u64, t_max: u64): u64 {
+    math::mul_div(t, SCALE, t_max)
+}
 
 fun eval_smoothstep(_t: u64, _t_max: u64): u64 { abort 0 }
 

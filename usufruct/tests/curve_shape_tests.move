@@ -393,6 +393,69 @@ fun eval_power_law_above_linear_when_concave() {
     };
 }
 
+// ─── exp_scaled / exp_scaled_pos ───────────────────────────────────────────
+//
+// Algorithm-derived golden vectors (§11.5) are pinned in a separate
+// post-bootstrap commit. The tests here cover the y=0 exact case and the
+// algorithm-independent properties (monotonicity, reciprocal identity, y=8
+// boundary).
+
+#[test]
+fun exp_scaled_y_zero_returns_taylor_scale_regardless_of_neg() {
+    let ts = curve_shape::taylor_scale_for_testing();
+    assert_eq!(curve_shape::exp_scaled_for_testing(0, 1, false), ts);
+    assert_eq!(curve_shape::exp_scaled_for_testing(0, 1, true),  ts);
+    assert_eq!(curve_shape::exp_scaled_for_testing(0, 7, false), ts);
+    assert_eq!(curve_shape::exp_scaled_pos_for_testing(0, 1),    ts);
+    assert_eq!(curve_shape::exp_scaled_pos_for_testing(0, 7),    ts);
+}
+
+// Seed S sorted by y_num/y_den ascending: (1,2)=0.5, (1,1)=1, (2,1)=2,
+// (3,1)=3, (7,2)=3.5, (4,1)=4, (6,1)=6, (15,2)=7.5, (8,1)=8. Adjacent
+// pairs must be strictly increasing under exp_scaled_pos.
+#[test]
+fun exp_scaled_pos_strictly_monotone_over_seed_set() {
+    let nums = vector[1u64, 1, 2, 3, 7, 4, 6, 15, 8];
+    let dens = vector[2u64, 1, 1, 1, 2, 1, 1,  2, 1];
+    let mut i = 1;
+    let len = nums.length();
+    while (i < len) {
+        let lo = curve_shape::exp_scaled_pos_for_testing(nums[i - 1], dens[i - 1]);
+        let hi = curve_shape::exp_scaled_pos_for_testing(nums[i],     dens[i]);
+        assert!(lo < hi, 0);
+        i = i + 1;
+    };
+}
+
+// Reciprocal identity: e^y · e^(−y) = 1, integer-encoded as
+// pos × neg ∈ [TAYLOR_SCALE_SQ − TAYLOR_SCALE, TAYLOR_SCALE_SQ].
+// Slack matches the 1-ULP error budget of the reciprocal sign-handling in §7.
+#[test]
+fun exp_scaled_reciprocal_identity_within_one_ulp() {
+    let ts    = curve_shape::taylor_scale_for_testing();
+    let ts_sq = curve_shape::taylor_scale_sq_for_testing();
+    let nums = vector[1u64, 1, 2, 3, 4, 6, 8, 7, 15];
+    let dens = vector[2u64, 1, 1, 1, 1, 1, 1, 2,  2];
+    let mut i = 0;
+    let len = nums.length();
+    while (i < len) {
+        let pos  = curve_shape::exp_scaled_for_testing(nums[i], dens[i], false);
+        let neg  = curve_shape::exp_scaled_for_testing(nums[i], dens[i], true);
+        let prod = pos * neg;
+        assert!(prod <= ts_sq, 0);
+        assert!(prod + ts >= ts_sq, 0);
+        i = i + 1;
+    };
+}
+
+// §7 overflow analysis upper bound. The value being computable at all
+// (no u128 overflow abort) confirms `acc ≤ e^8 · TS` fits u128.
+#[test]
+fun exp_scaled_pos_y_eq_8_positive_and_within_overflow_budget() {
+    let v = curve_shape::exp_scaled_pos_for_testing(8, 1);
+    assert!(v > 0, 0);
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 // Iterative Euclidean gcd (Move has no recursion).

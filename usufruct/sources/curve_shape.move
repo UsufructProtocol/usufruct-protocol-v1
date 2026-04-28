@@ -105,7 +105,12 @@ fun eval_linear(t: u64, t_max: u64): u64 {
     math::mul_div(t, SCALE, t_max)
 }
 
-fun eval_smoothstep(_t: u64, _t_max: u64): u64 { abort 0 }
+fun eval_smoothstep(t: u64, t_max: u64): u64 {
+    let x: u64     = math::mul_div(t, SCALE, t_max);
+    let x128: u128 = x as u128;
+    let num: u128  = x128 * x128 * (3 * SCALE_U128 - 2 * x128);
+    (num / SCALE_SQ) as u64
+}
 
 fun eval_power_law(_t: u64, _t_max: u64, _alpha_num: u8, _alpha_den: u8): u64 { abort 0 }
 

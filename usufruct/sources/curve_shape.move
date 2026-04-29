@@ -104,6 +104,11 @@ public(package) fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShape 
     CurveShape::Exponential { alpha_abs, alpha_neg }
 }
 
+/// Denominator that `evaluate_curve` is normalized to. The result of
+/// `evaluate_curve` is in `[0, SCALE]`; callers that scale a principal by
+/// the curve output (e.g., `compute_used_credit`) divide by this.
+public(package) fun scale(): u64 { SCALE }
+
 public(package) fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64): u64 {
     if (t == 0)     return 0;
     if (t >= t_max) return SCALE;

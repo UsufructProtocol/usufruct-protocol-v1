@@ -307,3 +307,86 @@ fun evaluate_price_fn_dispatch_equivalence_compound_delta() {
         i = i + 1;
     };
 }
+
+// ─── Cross-variant and within-variant comparative properties ───────────────
+//
+// Catch errors that pass per-variant tests but break the relative ordering
+// between FixedDelta and CompoundDelta, or monotonicity within CompoundDelta.
+
+// (A1) Below the pct floor threshold, CompoundDelta degenerates to FixedDelta:
+// both return exactly x + delta. The percentage component is swallowed by floor
+// rounding, so the two variants are semantically identical in this band.
+#[test]
+fun compound_equals_fixed_below_pct_floor_threshold() {
+    // Seed set C pairs (bps, threshold) from §2 table.
+    // At last_rent_price = threshold - 1 the pct still floors to 0.
+    let bpss:       vector<u64> = vector[1,      10,    50,  100, 500, 1_000];
+    let thresholds: vector<u64> = vector[10_000, 1_000, 200, 100, 20,  10   ];
+    let delta: u64 = 5;
+    let mut i = 0;
+    let len = bpss.length();
+    while (i < len) {
+        let x = thresholds[i] - 1;
+        let compound = price_function::eval_compound_delta_for_testing(x, bpss[i], delta);
+        let fixed    = price_function::eval_fixed_delta_for_testing(x, delta);
+        assert_eq!(compound, fixed); // pct = 0, both equal x + delta
+        i = i + 1;
+    };
+}
+
+// (A2) At and above the pct floor threshold, CompoundDelta strictly dominates
+// FixedDelta for the same delta: the percentage component adds a positive
+// premium on top of the flat increment.
+#[test]
+fun compound_dominates_fixed_above_pct_floor_threshold() {
+    // At last_rent_price = threshold the pct first contributes +1 (or more).
+    let bpss:       vector<u64> = vector[1,      10,    50,  100, 500, 1_000];
+    let thresholds: vector<u64> = vector[10_000, 1_000, 200, 100, 20,  10   ];
+    let delta: u64 = 5;
+    let mut i = 0;
+    let len = bpss.length();
+    while (i < len) {
+        let x = thresholds[i];
+        let compound = price_function::eval_compound_delta_for_testing(x, bpss[i], delta);
+        let fixed    = price_function::eval_fixed_delta_for_testing(x, delta);
+        assert!(compound > fixed, 0); // pct contributes >= 1, compound strictly wins
+        i = i + 1;
+    };
+}
+
+// (B) Higher bps ⟹ higher next price for the same last_rent_price and delta.
+// Uses x = 10^9 — well above every threshold in seed set C — so every bps
+// value in the chain contributes, making the chain strictly increasing.
+// Probe the full §2 bps range: 1 < 10 < 100 < 500 < 1_000 < 10_000.
+#[test]
+fun eval_compound_delta_monotone_in_bps() {
+    let x:     u64 = 1_000_000_000;
+    let delta: u64 = 1;
+    let bps_chain: vector<u64> = vector[1, 10, 100, 500, 1_000, 10_000];
+    let mut i = 1;
+    let len = bps_chain.length();
+    while (i < len) {
+        let lo = price_function::eval_compound_delta_for_testing(x, bps_chain[i - 1], delta);
+        let hi = price_function::eval_compound_delta_for_testing(x, bps_chain[i],     delta);
+        assert!(lo < hi, 0);
+        i = i + 1;
+    };
+}
+
+// (C) For fixed bps and delta, CompoundDelta is monotone non-decreasing in
+// last_rent_price. Uses bps = 500, delta = 1. Probe spans below and above
+// the threshold (= 20) to cover both the floor band and the contributing band.
+#[test]
+fun eval_compound_delta_monotone_in_price() {
+    let bps:   u64 = 500;
+    let delta: u64 = 1;
+    let prices: vector<u64> = vector[0, 1, 19, 20, 100, 10_000, 1_000_000_000];
+    let mut i = 1;
+    let len = prices.length();
+    while (i < len) {
+        let lo = price_function::eval_compound_delta_for_testing(prices[i - 1], bps, delta);
+        let hi = price_function::eval_compound_delta_for_testing(prices[i],     bps, delta);
+        assert!(lo <= hi, 0);
+        i = i + 1;
+    };
+}

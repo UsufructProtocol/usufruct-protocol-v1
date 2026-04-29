@@ -39,8 +39,8 @@ public struct TenantCapBurned has copy, drop {
 // === View Functions ===
 
 /// Returns the ID of the `RentalEscrow` this cap was minted for.
-public fun escrow_id(_cap: &TenantCap): ID {
-    abort 0
+public fun escrow_id(cap: &TenantCap): ID {
+    cap.escrow_id
 }
 
 // === Admin Functions ===
@@ -49,16 +49,23 @@ public fun escrow_id(_cap: &TenantCap): ID {
 
 /// Pure constructor. Builds the cap, emits `TenantCapMinted`, returns `(cap, cap_id)` by value.
 public(package) fun new(
-    _escrow_id: ID,
-    _tenant:    address,
-    _ctx:       &mut TxContext,
+    escrow_id: ID,
+    tenant:    address,
+    ctx:       &mut TxContext,
 ): (TenantCap, ID) {
-    abort 0
+    let cap = TenantCap { id: object::new(ctx), escrow_id };
+    let tenant_cap_id = object::uid_to_inner(&cap.id);
+    event::emit(TenantCapMinted { tenant_cap_id, escrow_id, tenant });
+    (cap, tenant_cap_id)
 }
 
 /// Destroys `cap` by value and emits `TenantCapBurned`.
-public(package) fun burn(_cap: TenantCap, _ctx: &TxContext) {
-    abort 0
+public(package) fun burn(cap: TenantCap, ctx: &TxContext) {
+    let TenantCap { id, escrow_id } = cap;
+    let tenant_cap_id = object::uid_to_inner(&id);
+    let tenant = tx_context::sender(ctx);
+    object::delete(id);
+    event::emit(TenantCapBurned { tenant_cap_id, escrow_id, tenant });
 }
 
 // === Private Functions ===

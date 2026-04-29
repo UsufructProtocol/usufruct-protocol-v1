@@ -93,7 +93,7 @@ fun new_compound_delta_bps_max_aborts() {
 
 #[test_only]
 public struct FixedDeltaCase has drop {
-    last_rent_price: u64,
+    price: u64,
     delta:           u64,
     result:          u64,
 }
@@ -103,20 +103,20 @@ public struct FixedDeltaCase has drop {
 #[test]
 fun eval_fixed_delta_golden_vectors_and_strict_increase() {
     let cases = vector[
-        FixedDeltaCase { last_rent_price: 100,                        delta: 50,            result: 150                        }, // F: (100,50)
-        FixedDeltaCase { last_rent_price: 1_000_000_000,              delta: 1,             result: 1_000_000_001              },
-        FixedDeltaCase { last_rent_price: 1_000_000_000,              delta: 1_000_000_000, result: 2_000_000_000              }, // F: (10^9, 10^9)
-        FixedDeltaCase { last_rent_price: 0,                          delta: 1,             result: 1                          }, // F: (0, 1) — valid at eval layer
-        FixedDeltaCase { last_rent_price: 18_446_744_073_709_551_614, delta: 1,             result: 18_446_744_073_709_551_615 }, // u64::MAX-1 boundary
-        FixedDeltaCase { last_rent_price: 18_446_744_073_709_551_613, delta: 1,             result: 18_446_744_073_709_551_614 }, // F: (u64::MAX-2, 1)
+        FixedDeltaCase { price: 100,                        delta: 50,            result: 150                        }, // F: (100,50)
+        FixedDeltaCase { price: 1_000_000_000,              delta: 1,             result: 1_000_000_001              },
+        FixedDeltaCase { price: 1_000_000_000,              delta: 1_000_000_000, result: 2_000_000_000              }, // F: (10^9, 10^9)
+        FixedDeltaCase { price: 0,                          delta: 1,             result: 1                          }, // F: (0, 1) — valid at eval layer
+        FixedDeltaCase { price: 18_446_744_073_709_551_614, delta: 1,             result: 18_446_744_073_709_551_615 }, // u64::MAX-1 boundary
+        FixedDeltaCase { price: 18_446_744_073_709_551_613, delta: 1,             result: 18_446_744_073_709_551_614 }, // F: (u64::MAX-2, 1)
     ];
     let mut i = 0;
     let len = cases.length();
     while (i < len) {
         let case = &cases[i];
-        let r = price_function::eval_fixed_delta_for_testing(case.last_rent_price, case.delta);
+        let r = price_function::eval_fixed_delta_for_testing(case.price, case.delta);
         assert_eq!(r, case.result);
-        assert!(r > case.last_rent_price, 0); // strict increase: delta > 0 by construction
+        assert!(r > case.price, 0); // strict increase: delta > 0 by construction
         i = i + 1;
     };
 }
@@ -138,7 +138,7 @@ fun eval_fixed_delta_overflow_half_each_aborts() {
 
 #[test_only]
 public struct CompoundDeltaCase has drop {
-    last_rent_price: u64,
+    price: u64,
     bps:             u64,
     delta:           u64,
     result:          u64,
@@ -147,23 +147,23 @@ public struct CompoundDeltaCase has drop {
 #[test]
 fun eval_compound_delta_golden_vectors() {
     let cases = vector[
-        CompoundDeltaCase { last_rent_price: 10_000,         bps: 500,    delta: 1,             result: 10_501         }, // 5% + delta
-        CompoundDeltaCase { last_rent_price: 1,              bps: 500,    delta: 1,             result: 2              }, // pct floors to 0
-        CompoundDeltaCase { last_rent_price: 200,            bps: 50,     delta: 1,             result: 202            }, // at threshold: pct +1, +delta
-        CompoundDeltaCase { last_rent_price: 199,            bps: 50,     delta: 1,             result: 200            }, // below threshold: pct floors to 0
-        CompoundDeltaCase { last_rent_price: 1_000_000_000,  bps: 10_000, delta: 1,             result: 2_000_000_001  }, // 100% + delta
-        CompoundDeltaCase { last_rent_price: 0,              bps: 500,    delta: 1,             result: 1              }, // zero price: mul_div(0,…)=0, only delta
-        CompoundDeltaCase { last_rent_price: 9_999,          bps: 1,      delta: 1,             result: 10_000         }, // just below bps=1 threshold
-        CompoundDeltaCase { last_rent_price: 10_000,         bps: 1,      delta: 1,             result: 10_002         }, // at bps=1 threshold: pct +1, +delta
-        CompoundDeltaCase { last_rent_price: 20_000,         bps: 1,      delta: 1,             result: 20_003         }, // above threshold: pct +2, +delta
-        CompoundDeltaCase { last_rent_price: 1_000_000_000,  bps: 1,      delta: 1,             result: 1_000_100_001  }, // full 0.01% contribution
+        CompoundDeltaCase { price: 10_000,         bps: 500,    delta: 1,             result: 10_501         }, // 5% + delta
+        CompoundDeltaCase { price: 1,              bps: 500,    delta: 1,             result: 2              }, // pct floors to 0
+        CompoundDeltaCase { price: 200,            bps: 50,     delta: 1,             result: 202            }, // at threshold: pct +1, +delta
+        CompoundDeltaCase { price: 199,            bps: 50,     delta: 1,             result: 200            }, // below threshold: pct floors to 0
+        CompoundDeltaCase { price: 1_000_000_000,  bps: 10_000, delta: 1,             result: 2_000_000_001  }, // 100% + delta
+        CompoundDeltaCase { price: 0,              bps: 500,    delta: 1,             result: 1              }, // zero price: mul_div(0,…)=0, only delta
+        CompoundDeltaCase { price: 9_999,          bps: 1,      delta: 1,             result: 10_000         }, // just below bps=1 threshold
+        CompoundDeltaCase { price: 10_000,         bps: 1,      delta: 1,             result: 10_002         }, // at bps=1 threshold: pct +1, +delta
+        CompoundDeltaCase { price: 20_000,         bps: 1,      delta: 1,             result: 20_003         }, // above threshold: pct +2, +delta
+        CompoundDeltaCase { price: 1_000_000_000,  bps: 1,      delta: 1,             result: 1_000_100_001  }, // full 0.01% contribution
     ];
     let mut i = 0;
     let len = cases.length();
     while (i < len) {
         let case = &cases[i];
         let r = price_function::eval_compound_delta_for_testing(
-            case.last_rent_price, case.bps, case.delta,
+            case.price, case.bps, case.delta,
         );
         assert_eq!(r, case.result);
         i = i + 1;
@@ -226,7 +226,7 @@ fun eval_compound_delta_pct_floor_threshold_seed_set_c() {
 // Property: strict increase — seed set C'.
 #[test_only]
 public struct CompoundStrictIncCase has drop {
-    last_rent_price: u64,
+    price: u64,
     bps:             u64,
     delta:           u64,
 }
@@ -234,20 +234,20 @@ public struct CompoundStrictIncCase has drop {
 #[test]
 fun eval_compound_delta_strict_increase_seed_set_c_prime() {
     let cases = vector[
-        CompoundStrictIncCase { last_rent_price: 1,           bps: 1,   delta: 1             },
-        CompoundStrictIncCase { last_rent_price: 200,         bps: 50,  delta: 1             },
-        CompoundStrictIncCase { last_rent_price: 1_000_000_000, bps: 500, delta: 1           },
-        CompoundStrictIncCase { last_rent_price: 1_000_000_000, bps: 1,  delta: 1_000_000_000 },
-        CompoundStrictIncCase { last_rent_price: 0,           bps: 500, delta: 1             },
+        CompoundStrictIncCase { price: 1,           bps: 1,   delta: 1             },
+        CompoundStrictIncCase { price: 200,         bps: 50,  delta: 1             },
+        CompoundStrictIncCase { price: 1_000_000_000, bps: 500, delta: 1           },
+        CompoundStrictIncCase { price: 1_000_000_000, bps: 1,  delta: 1_000_000_000 },
+        CompoundStrictIncCase { price: 0,           bps: 500, delta: 1             },
     ];
     let mut i = 0;
     let len = cases.length();
     while (i < len) {
         let case = &cases[i];
         let r = price_function::eval_compound_delta_for_testing(
-            case.last_rent_price, case.bps, case.delta,
+            case.price, case.bps, case.delta,
         );
-        assert!(r > case.last_rent_price, 0);
+        assert!(r > case.price, 0);
         i = i + 1;
     };
 }
@@ -281,10 +281,10 @@ fun evaluate_price_fn_dispatch_equivalence_fixed_delta() {
     let len = prices.length();
     while (i < len) {
         let pf  = price_function::new_fixed_delta(deltas[i]);
-        let lrp = prices[i];
+        let price = prices[i];
         assert_eq!(
-            price_function::evaluate_price_fn(&pf, lrp),
-            price_function::eval_fixed_delta_for_testing(lrp, deltas[i]),
+            price_function::evaluate_price_fn(&pf, price),
+            price_function::eval_fixed_delta_for_testing(price, deltas[i]),
         );
         i = i + 1;
     };
@@ -299,10 +299,10 @@ fun evaluate_price_fn_dispatch_equivalence_compound_delta() {
     let len = prices.length();
     while (i < len) {
         let pf  = price_function::new_compound_delta(bpss[i], deltas[i]);
-        let lrp = prices[i];
+        let price = prices[i];
         assert_eq!(
-            price_function::evaluate_price_fn(&pf, lrp),
-            price_function::eval_compound_delta_for_testing(lrp, bpss[i], deltas[i]),
+            price_function::evaluate_price_fn(&pf, price),
+            price_function::eval_compound_delta_for_testing(price, bpss[i], deltas[i]),
         );
         i = i + 1;
     };
@@ -376,7 +376,7 @@ fun eval_compound_delta_composition_10pct() {
 #[test]
 fun compound_equals_fixed_below_pct_floor_threshold() {
     // Seed set C pairs (bps, threshold) from §2 table.
-    // At last_rent_price = threshold - 1 the pct still floors to 0.
+    // At price = threshold - 1 the pct still floors to 0.
     let bpss:       vector<u64> = vector[1,      10,    50,  100, 500, 1_000];
     let thresholds: vector<u64> = vector[10_000, 1_000, 200, 100, 20,  10   ];
     let delta: u64 = 5;
@@ -396,7 +396,7 @@ fun compound_equals_fixed_below_pct_floor_threshold() {
 // premium on top of the flat increment.
 #[test]
 fun compound_dominates_fixed_above_pct_floor_threshold() {
-    // At last_rent_price = threshold the pct first contributes +1 (or more).
+    // At price = threshold the pct first contributes +1 (or more).
     let bpss:       vector<u64> = vector[1,      10,    50,  100, 500, 1_000];
     let thresholds: vector<u64> = vector[10_000, 1_000, 200, 100, 20,  10   ];
     let delta: u64 = 5;
@@ -411,7 +411,7 @@ fun compound_dominates_fixed_above_pct_floor_threshold() {
     };
 }
 
-// (B) Higher bps ⟹ higher next price for the same last_rent_price and delta.
+// (B) Higher bps ⟹ higher next price for the same price and delta.
 // Uses x = 10^9 — well above every threshold in seed set C — so every bps
 // value in the chain contributes, making the chain strictly increasing.
 // Probe the full §2 bps range: 1 < 10 < 100 < 500 < 1_000 < 10_000.
@@ -431,7 +431,7 @@ fun eval_compound_delta_monotone_in_bps() {
 }
 
 // (C) For fixed bps and delta, CompoundDelta is monotone non-decreasing in
-// last_rent_price. Uses bps = 500, delta = 1. Probe spans below and above
+// price. Uses bps = 500, delta = 1. Probe spans below and above
 // the threshold (= 20) to cover both the floor band and the contributing band.
 #[test]
 fun eval_compound_delta_monotone_in_price() {

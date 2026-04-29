@@ -54,34 +54,34 @@ public fun new_compound_delta(bps: u64, delta: u64): PriceFunction {
 
 public(package) fun evaluate_price_fn(
     price_fn:        &PriceFunction,
-    last_rent_price: u64,
+    price: u64,
 ): u64 {
     match (price_fn) {
-        PriceFunction::FixedDelta    { delta }      => eval_fixed_delta(last_rent_price, *delta),
-        PriceFunction::CompoundDelta { bps, delta } => eval_compound_delta(last_rent_price, *bps, *delta),
+        PriceFunction::FixedDelta    { delta }      => eval_fixed_delta(price, *delta),
+        PriceFunction::CompoundDelta { bps, delta } => eval_compound_delta(price, *bps, *delta),
     }
 }
 
 // === Private Functions ===
 
-fun eval_fixed_delta(last_rent_price: u64, delta: u64): u64 {
-    last_rent_price + delta
+fun eval_fixed_delta(price: u64, delta: u64): u64 {
+    price + delta
 }
 
-fun eval_compound_delta(last_rent_price: u64, bps: u64, delta: u64): u64 {
-    math::mul_div(last_rent_price, BPS_PER_UNIT + bps, BPS_PER_UNIT) + delta
+fun eval_compound_delta(price: u64, bps: u64, delta: u64): u64 {
+    math::mul_div(price, BPS_PER_UNIT + bps, BPS_PER_UNIT) + delta
 }
 
 // === Test Functions ===
 
 #[test_only]
-public fun eval_fixed_delta_for_testing(last_rent_price: u64, delta: u64): u64 {
-    eval_fixed_delta(last_rent_price, delta)
+public fun eval_fixed_delta_for_testing(price: u64, delta: u64): u64 {
+    eval_fixed_delta(price, delta)
 }
 
 #[test_only]
-public fun eval_compound_delta_for_testing(last_rent_price: u64, bps: u64, delta: u64): u64 {
-    eval_compound_delta(last_rent_price, bps, delta)
+public fun eval_compound_delta_for_testing(price: u64, bps: u64, delta: u64): u64 {
+    eval_compound_delta(price, bps, delta)
 }
 
 #[test_only]

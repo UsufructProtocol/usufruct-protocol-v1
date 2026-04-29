@@ -273,11 +273,11 @@ fun g3_escrow_id_getter_returns_zero_when_zero() {
 // ─── L — Lifecycle ─────────────────────────────────────────────────────────
 
 // L1: full mint → burn lifecycle. Both events carry the same (owner_cap_id, escrow_id).
+//     num_user_events == 1 verified via TransactionEffects for both the mint and burn txs.
 #[test]
 fun l1_full_lifecycle_mint_then_burn() {
     let mut scenario = test_scenario::begin(ALICE);
     let cap_id: ID;
-    scenario.next_tx(ALICE);
     {
         let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
         cap_id = object::id(&cap);
@@ -288,7 +288,8 @@ fun l1_full_lifecycle_mint_then_burn() {
         assert_eq!(owner_cap::minted_owner(&minted[0]),         ALICE);
         transfer::public_transfer(cap, ALICE);
     };
-    scenario.next_tx(ALICE);
+    let mint_effects = scenario.next_tx(ALICE);
+    assert_eq!(mint_effects.num_user_events(), 1);
     {
         let cap = scenario.take_from_sender<OwnerCap>();
         owner_cap::burn(cap, ALICE);
@@ -298,7 +299,8 @@ fun l1_full_lifecycle_mint_then_burn() {
         assert_eq!(owner_cap::burned_escrow_id(&burned[0]),    escrow_id_1());
         assert_eq!(owner_cap::burned_owner(&burned[0]),         ALICE);
     };
-    scenario.end();
+    let burn_effects = scenario.end();
+    assert_eq!(burn_effects.num_user_events(), 1);
 }
 
 // L2: mint → transfer to BOB → burn by BOB. Minted carries owner = ALICE,
@@ -367,4 +369,47 @@ fun l3_two_caps_batched_reversed_burn() {
         assert!(owner_cap::burned_escrow_id(&burned[0]) != owner_cap::burned_escrow_id(&burned[1]));
     };
     scenario.end();
+}
+
+// ─── P — Properties ────────────────────────────────────────────────────────
+
+// P2: OwnerCap UID appears in TransactionEffects.deleted() after burn.
+//     Authoritative chain-level proof that the object is gone — complements
+//     B1's has_most_recent_for_address check with an on-chain effects assertion.
+#[test]
+fun p2_uid_deleted_on_burn() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let cap_id: ID;
+    scenario.next_tx(ALICE);
+    {
+        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        cap_id = object::id(&cap);
+        transfer::public_transfer(cap, ALICE);
+    };
+    scenario.next_tx(ALICE);
+    {
+        let cap = scenario.take_from_sender<OwnerCap>();
+        owner_cap::burn(cap, ALICE);
+    };
+    let effects = scenario.end();
+    assert!(effects.deleted().contains(&cap_id));
+}
+
+// new+burn within a single transaction: the UID does NOT appear in
+// effects.deleted(). Sui optimizes away objects whose entire lifetime is
+// contained within one tx — this applies to both owned and shared ephemeral
+// objects. The runtime never writes them to storage, so no deletion record
+// exists in the effects. Contrast with p2_uid_deleted_on_burn where the object
+// was committed in a prior tx and thus has a deletion record.
+#[test]
+fun new_burn_same_tx_uid_not_in_deleted() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let cap_id: ID;
+    {
+        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        cap_id = object::id(&cap);
+        owner_cap::burn(cap, ALICE);
+    };
+    let effects = scenario.end();
+    assert!(!effects.deleted().contains(&cap_id));
 }

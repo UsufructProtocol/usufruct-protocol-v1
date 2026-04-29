@@ -15,6 +15,7 @@ const EBpsRange:  u64 = 1;
 // === Constants ===
 
 const BPS_PER_UNIT: u64 = 10_000;
+const BPS_UPPER:    u64 = 18_446_744_073_709_551_615 - BPS_PER_UNIT; // u64::MAX - BPS_PER_UNIT
 
 // === Structs ===
 
@@ -40,7 +41,7 @@ public fun new_fixed_delta(delta: u64): PriceFunction {
 }
 
 public fun new_compound_delta(bps: u64, delta: u64): PriceFunction {
-    assert!(bps >= 1 && bps <= 18_446_744_073_709_541_615, EBpsRange); // [1, u64::MAX - BPS_PER_UNIT]
+    assert!(bps >= 1 && bps <= BPS_UPPER, EBpsRange);
     assert!(delta > 0, EDeltaZero);
     PriceFunction::CompoundDelta { bps, delta }
 }

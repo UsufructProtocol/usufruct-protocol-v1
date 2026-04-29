@@ -308,6 +308,63 @@ fun evaluate_price_fn_dispatch_equivalence_compound_delta() {
     };
 }
 
+// ─── Composition golden vectors ────────────────────────────────────────────
+//
+// Apply the price function n times sequentially and pin the exact integer
+// result at each step. Verifies mul_div precision across accumulated rounding.
+//
+// Bootstrap procedure (run once; this test guards the values from then on):
+//   1. Replace assert_eq!(x, expected[i]) with std::debug::print(&x).
+//   2. sui move test eval_fixed_delta_composition / eval_compound_delta_composition_*
+//   3. Paste the printed values back as the expected vectors.
+//   4. Restore assert_eq!. Suite turns green.
+
+#[test]
+fun eval_fixed_delta_composition() {
+    let mut x: u64 = 1_000;
+    let delta: u64 = 500;
+    let expected: vector<u64> = vector[1_500, 2_000, 2_500, 3_000, 3_500];
+    let mut i = 0;
+    let len = expected.length();
+    while (i < len) {
+        x = price_function::eval_fixed_delta_for_testing(x, delta);
+        assert_eq!(x, expected[i]);
+        i = i + 1;
+    };
+}
+
+// bps=10_000 (100%), delta=1: f(x)=2x+1, no floor rounding. f^n(1)=2^(n+1)−1.
+#[test]
+fun eval_compound_delta_composition_100pct() {
+    let mut x: u64 = 1;
+    let bps:   u64 = 10_000;
+    let delta: u64 = 1;
+    let expected: vector<u64> = vector[3, 7, 15, 31, 63];
+    let mut i = 0;
+    let len = expected.length();
+    while (i < len) {
+        x = price_function::eval_compound_delta_for_testing(x, bps, delta);
+        assert_eq!(x, expected[i]);
+        i = i + 1;
+    };
+}
+
+// bps=1_000 (10%), delta=1: pins floor-rounding accumulated across 5 steps.
+#[test]
+fun eval_compound_delta_composition_10pct() {
+    let mut x: u64 = 10_000;
+    let bps:   u64 = 1_000;
+    let delta: u64 = 1;
+    let expected: vector<u64> = vector[11_001, 12_102, 13_313, 14_645, 16_110];
+    let mut i = 0;
+    let len = expected.length();
+    while (i < len) {
+        x = price_function::eval_compound_delta_for_testing(x, bps, delta);
+        assert_eq!(x, expected[i]);
+        i = i + 1;
+    };
+}
+
 // ─── Cross-variant and within-variant comparative properties ───────────────
 //
 // Catch errors that pass per-variant tests but break the relative ordering

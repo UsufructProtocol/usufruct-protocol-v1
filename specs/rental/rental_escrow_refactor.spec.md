@@ -45,6 +45,10 @@ distribution logic for every boundary event.
   cannot carry the linear payload.
 - `AssetReceipt` — hot potato struct with no abilities. Created by
   `borrow_asset`, consumed by `return_asset` in the same PTB.
+- `StateReceipt` — internal hot potato struct with no abilities.
+  Private to the module. Produced by `take_state`, consumed by
+  `put_state`. Enforces P13 (`Option<EscrowState>` is `Some` at every
+  transaction boundary) at the type level — see §2.6.
 - All public entry points: `integrate`, `rent`, `retire`, `claim_asset`,
   `withdraw_earnings`, `borrow_asset`, `return_asset`, `burn_tenant_cap`,
   `apply_pending_transitions`.
@@ -122,16 +126,23 @@ all others and is consumed by none.
   `tenant_slot` enum are both gone; the variant of `EscrowState` IS the
   tenant-presence discriminator.
 - **`Option<EscrowState>` at the struct level enables variant
-  transitions.** A field accessed via `&mut` cannot have its variant
-  changed in place — Move's borrow checker forbids it because variant
-  transitions imply destruction of the old fields, which requires
-  ownership. `Option<EscrowState>` provides the swap mechanism:
+  transitions, gated by a private hot-potato (`StateReceipt`).** A
+  field accessed via `&mut` cannot have its variant changed in place —
+  Move's borrow checker forbids it because variant transitions imply
+  destruction of the old fields, which requires ownership.
+  `Option<EscrowState>` provides the swap mechanism:
   `option::extract(&mut escrow.state)` takes ownership of the current
   variant, the function constructs the new variant, and
-  `option::fill(&mut escrow.state, new_state)` puts it back. The `None`
-  window exists only mid-function within a single Move call; no public
-  function exposes it. The pattern is identical to the asset-borrow
-  pattern (`Option<Asset>` inside Rented variants), just one level up.
+  `option::fill(&mut escrow.state, new_state)` puts it back. To
+  prevent accidentally forgetting the `fill` (which would brick the
+  escrow — see §2.6 / P13), every mutating site uses the private
+  `take_state` / `put_state` helpers (§2.6) instead of the raw
+  `option` API. `take_state` returns a `StateReceipt` hot potato that
+  must be consumed by `put_state` or by `abort`, enforced by Move's
+  linear type system. The `None` window exists only mid-function
+  within a single Move call; no public function exposes it. The
+  pattern is identical to the asset-borrow pattern (`Option<Asset>`
+  inside Rented variants), just one level up.
 - **Capability-based authorization.** `retire`, `claim_asset`, and
   `withdraw_earnings` take `&OwnerCap` and assert inline
   `owner_cap::escrow_id(cap) == object::id(escrow)` (aborts
@@ -416,9 +427,11 @@ neither.
 | `retire` (from HandoverConfirmed) | `HandoverConfirmed { ..., retiring: false }` | `HandoverConfirmed { ..., retiring: true }` |
 | `claim_asset` (consumes the variant) | `Retired { asset }` | (escrow deleted) |
 
-Every transition is implemented as `option::extract(&mut escrow.state)`,
-construct the new variant, `option::fill(&mut escrow.state, new)`. See
-§5–§7 for the per-function pseudocode.
+Every transition is implemented via the `take_state` / `put_state`
+hot-potato pair (§2.6): `let (old, receipt) = take_state(escrow);`,
+construct the new variant from `old`'s destructured fields,
+`put_state(escrow, new, receipt)`. See §5–§7 for the per-function
+pseudocode.
 
 **Why `EscrowState` is `public`.** External callers may want to
 pattern-match on the post-settlement state returned from
@@ -524,6 +537,111 @@ assets of the same type (from two different escrows) could borrow from
 escrow A and return a different asset to close the receipt. `escrow_id`
 alone does not prevent asset substitution. Capturing both makes return
 structurally unambiguous.
+
+### 2.6 StateReceipt — internal hot potato + take/put helpers
+
+```move
+struct StateReceipt {}
+
+fun take_state<Asset: key + store, CoinType>(
+    escrow: &mut RentalEscrow<Asset, CoinType>,
+): (EscrowState<Asset, CoinType>, StateReceipt) {
+    (option::extract(&mut escrow.state), StateReceipt {})
+}
+
+fun put_state<Asset: key + store, CoinType>(
+    escrow:  &mut RentalEscrow<Asset, CoinType>,
+    new:     EscrowState<Asset, CoinType>,
+    receipt: StateReceipt,
+) {
+    let StateReceipt {} = receipt;
+    option::fill(&mut escrow.state, new);
+}
+```
+
+**Visibility:** `StateReceipt` and both helpers are **private** to
+`rental_escrow`. The receipt is not exported; `take_state` /
+`put_state` are not callable from outside the module. External
+callers never observe the receipt — only the public functions
+(`rent`, `retire`, `borrow_asset`, `return_asset`,
+`burn_tenant_cap`, `apply_pending_transitions`,
+`withdraw_earnings`, `claim_asset`) appear in their PTBs.
+
+**Abilities of `StateReceipt`:** none — no `key`, `store`, `copy`,
+`drop`. The Move linear type system requires every code path to
+either consume the receipt (via `put_state` destructure) or `abort`
+(which discharges all in-scope linear values during transaction
+rollback). A function that calls `take_state` and then `return`s
+without calling `put_state` fails to compile.
+
+**Purpose — type-level enforcement of P13.** The `Option<EscrowState>`
+swap pattern (extract → reconstruct → fill) is the only way to
+mutate the variant of `escrow.state` through `&mut`. Without
+structural enforcement, a programmer could `option::extract` and
+forget the matching `option::fill`, leaving `escrow.state` as
+`None` after the transaction commits. The next transaction that
+extracts would abort on `None`, and the escrow would be permanently
+inaccessible — the asset and any accrued `owner_earnings` would be
+unreachable forever (`claim_asset` itself also extracts state via
+APT). The hot-potato receipt closes this failure mode at compile
+time: `take_state` is the sole producer of `StateReceipt`,
+`put_state` is the sole consumer, and the type system forbids any
+path between them that does not end in either `put_state` or
+`abort`.
+
+**Symmetric with `AssetReceipt`.** The two receipts are dual
+mechanisms at different scales:
+- `AssetReceipt` (public, §2.5): enforces that an `Asset` extracted
+  by `borrow_asset` is returned by `return_asset` in the same PTB.
+- `StateReceipt` (private, §2.6): enforces that an `EscrowState`
+  variant extracted by `take_state` is filled by `put_state` in the
+  same Move call.
+
+`AssetReceipt` is public because the contract is between the
+protocol and the integrating PTB (the tenant must pair extract /
+return across module boundaries). `StateReceipt` is private because
+the contract is internal to `rental_escrow` (the swap is always
+within a single function body — no cross-module flow). Visibility
+matches the scope of the linear-types contract.
+
+**Cleanup of abort paths.** Without the receipt, every dispatch
+arm that aborts after extracting state needs to first `option::fill`
+to restore the prior variant (a defensive measure: even though
+`abort` rolls back the transaction, leaving `state` as `None`
+mid-function is awkward). With the receipt, the `abort` discharges
+the receipt directly — no manual restoration needed:
+
+```move
+// Without receipt:
+let old = option::extract(&mut escrow.state);
+match old {
+    Idle | AtDutchAuction | Retired => {
+        option::fill(&mut escrow.state, old);   // restore before aborting
+        abort E_STALE_TENANT_CAP;
+    },
+    ...
+}
+
+// With receipt:
+let (old, receipt) = take_state(escrow);
+match old {
+    EscrowState::Idle { .. } | EscrowState::AtDutchAuction { .. } | EscrowState::Retired { .. } =>
+        abort E_STALE_TENANT_CAP,    // receipt discharged by abort; old's linear payload rolled back with the tx
+    ...
+}
+```
+
+Several call sites in §4–§7 simplify under this pattern; see those
+sections for the post-receipt pseudocode.
+
+**Aliases for read-only access.** `StateReceipt` is only required
+for *mutating* extraction. Read paths use `option::borrow(&escrow.
+state)` to inspect the variant by reference — no extraction, no
+receipt. `apply_pending_transitions` (Check 1 / 2 / 3 dispatch),
+`compute_floor_price`, `compute_used_credit`, `compute_price_descent`,
+`tenure_expiry_ms`, `descent_expiry_ms`, `state(escrow)`, and the
+liveness gate inside `burn_tenant_cap` all read via borrow — none
+of them invoke `take_state`.
 
 
 3. EVENTS
@@ -935,34 +1053,38 @@ expiry (pre-call state was Rented).
 3. Assert `clock::timestamp_ms(clock) >= escrow.integrated_at_ms +
    config::retire_floor(&escrow.config)`, abort
    `E_RETIRE_FLOOR_NOT_ELAPSED`.
-4. **Extract the current state by value** to inspect and rebuild it:
-   - `let old = option::extract(&mut escrow.state);`
+4. **Extract the current state via `take_state`** (§2.6) — produces
+   the owned variant + a `StateReceipt` that must be discharged by
+   `put_state` or `abort`:
+   - `let (old, receipt) = take_state(escrow);`
 5. Bind `prior_tag = state_tag(&old)` — read-only projection (§8.7) for
    the subsequent `RetireFlagSet.state_at_set` and the immediate
    `AssetRetired.from_state` emit. Captured before consuming `old`
    below.
-6. Dispatch on `old`:
+6. Dispatch on `old`. Each non-aborting arm constructs the new variant
+   and chains `put_state` to consume the receipt; the aborting arm
+   (`Retired`) lets `abort` discharge it:
 
    ```
    match old {
        EscrowState::Idle { asset } => {
            // Immediate transition. No tenant data to settle.
-           option::fill(&mut escrow.state, EscrowState::Retired { asset });
-           // continue to step 7 (RetireFlagSet) and step 8 (immediate AssetRetired)
+           put_state(escrow, EscrowState::Retired { asset }, receipt);
        },
        EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ } => {
            // Immediate transition. No `AuctionExpired` — the auction was
            // *interrupted*, not *expired*. Boundary-aligned `phase_start_ms`
            // and `last_acquisition_price` are dropped: Retired carries no
            // time-dependent data.
-           option::fill(&mut escrow.state, EscrowState::Retired { asset });
+           put_state(escrow, EscrowState::Retired { asset }, receipt);
        },
        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
            // Deferred transition. Flip the flag in place (variant unchanged).
            assert!(!retiring, E_ALREADY_RETIRED);
-           option::fill(
-               &mut escrow.state,
+           put_state(
+               escrow,
                EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring: true },
+               receipt,
            );
        },
        EscrowState::HandoverConfirmed {
@@ -972,19 +1094,17 @@ expiry (pre-call state was Rented).
            // promoted tenant at the next handover (carried into the new
            // HandoverOpen variant by `do_handover` step 6).
            assert!(!retiring, E_ALREADY_RETIRED);
-           option::fill(
-               &mut escrow.state,
+           put_state(
+               escrow,
                EscrowState::HandoverConfirmed {
                    asset, phase_start_ms, current, pending,
                    retiring: true, handover_countdown_expiry,
                },
+               receipt,
            );
        },
-       EscrowState::Retired { asset } => {
-           // Already retired — restore and abort.
-           option::fill(&mut escrow.state, EscrowState::Retired { asset });
-           abort E_ALREADY_RETIRED;
-       },
+       EscrowState::Retired { .. } => abort E_ALREADY_RETIRED,
+           // `receipt` discharged by abort; `old`'s linear payload rolled back with the tx.
    }
    ```
 
@@ -1198,11 +1318,13 @@ handover settles.
    source of truth with no divergence possible.
 3. Assert `coin::value(&payment) >= floor`, abort
    `E_INSUFFICIENT_PAYMENT`.
-4. **Extract state by value** to dispatch on the variant and produce a
-   new variant atomically:
+4. **Extract state via `take_state`** (§2.6) — produces the owned
+   variant + a `StateReceipt` discharged by `put_state` or `abort`:
    - `let escrow_id = object::id(escrow);`
-   - `let old = option::extract(&mut escrow.state);`
-5. Dispatch on `old`:
+   - `let (old, receipt) = take_state(escrow);`
+5. Dispatch on `old`. Each arm either calls `put_state(escrow,
+   new_state, receipt)` or aborts (the abort discharges the receipt
+   automatically; `old`'s linear payload is rolled back with the tx):
 
 #### Case: `EscrowState::Idle { asset }`
 
@@ -1213,7 +1335,7 @@ EscrowState::Idle { asset } => {
     // The helper consumes `asset` and `payment`, returns the new variant + cap + cap_id.
     let (new_state, cap, tenant_cap_id) =
         install_new_tenant(asset, payment, clock, ctx, escrow_id);
-    option::fill(&mut escrow.state, new_state);
+    put_state(escrow, new_state, receipt);
     event::emit(RentStarted {
         escrow_id, tenant_cap_id, price_paid,
         floor_price: floor, from_state: EscrowStateTag::Idle,
@@ -1231,7 +1353,7 @@ EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: 
     let price_paid = coin::value(&payment);
     let (new_state, cap, tenant_cap_id) =
         install_new_tenant(asset, payment, clock, ctx, escrow_id);
-    option::fill(&mut escrow.state, new_state);
+    put_state(escrow, new_state, receipt);
     event::emit(RentStarted {
         escrow_id, tenant_cap_id, price_paid,
         floor_price: floor, from_state: EscrowStateTag::AtDutchAuction,
@@ -1252,14 +1374,8 @@ tenant's stake snapshot recorded by `do_tenure_expiry`).
 ```
 EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
     // The retiring flag lives directly on the variant — no separate field read.
-    if retiring {
-        // Restore and abort.
-        option::fill(
-            &mut escrow.state,
-            EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring },
-        );
-        abort E_RETIRE_FLAG_BLOCKS_BID;
-    };
+    assert!(!retiring, E_RETIRE_FLAG_BLOCKS_BID);
+        // `receipt` discharged by abort; destructured fields rolled back with the tx.
     let pending_tenant = tx_context::sender(ctx);
     // Compute the handover countdown using the variant's phase_start_ms.
     let now      = clock::timestamp_ms(clock);
@@ -1272,8 +1388,8 @@ EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
     let (cap, pending_cap_id, bid_amount, pending) =
         register_pending_bid(escrow_id, payment, pending_tenant, ctx);
     // Reconstruct as HandoverConfirmed with all fields explicit.
-    option::fill(
-        &mut escrow.state,
+    put_state(
+        escrow,
         EscrowState::HandoverConfirmed {
             asset,                       // Option<Asset> from the prior variant
             phase_start_ms,              // preserved
@@ -1282,6 +1398,7 @@ EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
             retiring,                    // false here, but preserved verbatim
             handover_countdown_expiry,
         },
+        receipt,
     );
     event::emit(BidPlaced {
         escrow_id,
@@ -1295,8 +1412,11 @@ EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
 }
 ```
 
-The `retiring` check is the only path that aborts after `option::extract`
-without a destructive operation; restoration is explicit.
+The `retiring` check now collapses to a single `assert!` — no manual
+restoration needed. The `StateReceipt` is discharged by the `abort`
+path automatically; the variant fields destructured from `old`
+(including the linear `Option<Asset>`, the `Tenant` struct's
+`Balance`, etc.) are rolled back with the transaction.
 
 **Retire flag rationale:** blocking new bids is what "retire during
 HandoverOpen" means — the current tenant completes their block
@@ -1328,14 +1448,15 @@ EscrowState::HandoverConfirmed {
         register_pending_bid(escrow_id, payment, new_bidder, ctx);
     // Reconstruct HandoverConfirmed preserving current, retiring,
     // and handover_countdown_expiry (not reset on supersede — design-compact §4).
-    option::fill(
-        &mut escrow.state,
+    put_state(
+        escrow,
         EscrowState::HandoverConfirmed {
             asset, phase_start_ms, current,
             pending: new_pending,
             retiring,
             handover_countdown_expiry,
         },
+        receipt,
     );
     event::emit(BidSuperseded {
         escrow_id,
@@ -1369,10 +1490,12 @@ defensively via the wildcard:
 
 ```
 _ => abort E_UNEXPECTED_STATE,
+    // `receipt` discharged by abort
 ```
 
 This is the only structurally-unreachable arm in `rent()`. Including it
-keeps the match exhaustive without requiring a no-op restoration.
+keeps the match exhaustive; under the `StateReceipt` regime the abort
+discharges the receipt automatically — no fill is required.
 
 ---
 
@@ -1499,9 +1622,9 @@ the integrating ecosystem.
    legitimate cap for `EscrowA` could pair it with `EscrowB` (for
    which they are not the tenant) and extract `EscrowB`'s asset.
 4. `let cap_id = object::id(tenant_cap);`
-5. **Extract state by value** so the asset can be moved out of its
-   `Option<Asset>` slot inside the active variant:
-   - `let old = option::extract(&mut escrow.state);`
+5. **Extract state via `take_state`** (§2.6) so the asset can be moved
+   out of its `Option<Asset>` slot inside the active variant:
+   - `let (old, receipt) = take_state(escrow);`
 6. **Match on the variant** to perform pending / staleness checks and
    extract the asset. The match is exhaustive over all 5 variants;
    non-Rented variants abort `E_STALE_TENANT_CAP` (no live tenant to
@@ -1538,13 +1661,10 @@ the integrating ecosystem.
            (extracted, new)
        },
        // No live tenant — every cap for this escrow is stale by construction.
-       EscrowState::Idle { .. } | EscrowState::AtDutchAuction { .. } | EscrowState::Retired { .. } => {
-           // Restore before aborting so a debugger inspecting state at the abort
-           // sees the unchanged variant. (Not strictly required — the abort
-           // rolls back the tx — but keeps the function structurally total.)
-           option::fill(&mut escrow.state, old);
-           abort E_STALE_TENANT_CAP;
-       },
+       EscrowState::Idle { .. } | EscrowState::AtDutchAuction { .. } | EscrowState::Retired { .. } =>
+           abort E_STALE_TENANT_CAP,
+           // `receipt` discharged by abort; `old`'s variant payload (the asset)
+           // rolls back with the tx. No manual restoration of `escrow.state` needed.
    };
    ```
 
@@ -1574,7 +1694,8 @@ the integrating ecosystem.
    `cap.escrow_id` still matches; only the variant comparison exposes
    the displacement.
 
-7. `option::fill(&mut escrow.state, new_state);`
+7. `put_state(escrow, new_state, receipt);` — discharges the
+   receipt and refills `escrow.state`.
 8. Construct
    `receipt = AssetReceipt { escrow_id, asset_id: object::id(&asset) }`.
 9. Emit `AssetBorrowed { escrow_id: receipt.escrow_id,
@@ -1755,16 +1876,17 @@ The hot-potato itself only forces *that* a return happens in the
 same PTB; these two fields force *what* that return looks like.
 Both asserts are independent — neither alone is sufficient.
 
-4. **Extract state by value, restore the asset to its `Option<Asset>`
-   slot, fill state back.** The active variant is guaranteed to be
-   `HandoverOpen` or `HandoverConfirmed` — PTB clock-fixity (§6.1)
-   guarantees the variant is the same one whose `borrow_asset`
-   produced this receipt earlier in the same PTB. No transition could
-   have fired since.
+4. **Extract state via `take_state`** (§2.6), restore the asset to its
+   `Option<Asset>` slot, and put state back via `put_state`. The
+   active variant is guaranteed to be `HandoverOpen` or
+   `HandoverConfirmed` — PTB clock-fixity (§6.1) guarantees the
+   variant is the same one whose `borrow_asset` produced this
+   receipt earlier in the same PTB. No transition could have fired
+   since.
 
    ```
    let mut tenant_cap_id: ID;
-   let old = option::extract(&mut escrow.state);
+   let (old, receipt) = take_state(escrow);
    let new_state = match old {
        EscrowState::HandoverOpen { asset: asset_slot, phase_start_ms, current, retiring } => {
            tenant_cap_id = current.cap_id;
@@ -1783,9 +1905,9 @@ Both asserts are independent — neither alone is sufficient.
                handover_countdown_expiry,
            }
        },
-       _ => abort E_UNEXPECTED_STATE,  // unreachable by PTB clock-fixity
+       _ => abort E_UNEXPECTED_STATE,  // unreachable by PTB clock-fixity; receipt discharged by abort
    };
-   option::fill(&mut escrow.state, new_state);
+   put_state(escrow, new_state, receipt);
    ```
 
 5. Emit `AssetReturned { escrow_id, tenant_cap_id }`. Emit-last: the
@@ -1935,19 +2057,21 @@ equals the variant's `handover_countdown_expiry`.
 
 **Algorithm:**
 
-1. **Extract state by value** to destructure the `HandoverConfirmed`
-   variant and rotate its fields:
+1. **Extract state via `take_state`** (§2.6) to destructure the
+   `HandoverConfirmed` variant and rotate its fields:
 
    ```
-   let old = option::extract(&mut escrow.state);
+   let (old, receipt) = take_state(escrow);
    let EscrowState::HandoverConfirmed {
        asset, phase_start_ms: _, current, pending, retiring,
        handover_countdown_expiry: _,
    } = old else { abort E_UNEXPECTED_STATE };
+       // receipt discharged by abort if the unreachable arm fires
    ```
 
    `phase_start_ms` and `handover_countdown_expiry` are dropped — both
-   are replaced by the new tenant's anchors below.
+   are replaced by the new tenant's anchors below. `receipt` is held
+   open until step 7 fills the new variant.
 
 2. **Destructure the outgoing tenant** to access its stake and
    address-of-record:
@@ -2022,15 +2146,16 @@ equals the variant's `handover_countdown_expiry`.
    mint, no transfer.** Under eager minting the bidder's `TenantCap`
    was constructed and returned at `rent` time; its identity now lives
    inside `new_current.cap_id`. `do_handover` rotates the variant
-   atomically via `option::fill`:
-   - `option::fill(`
-     `    &mut escrow.state,`
+   atomically via `put_state` (consumes the receipt from step 1):
+   - `put_state(`
+     `    escrow,`
      `    EscrowState::HandoverOpen {`
      `        asset,                       // Option<Asset> — preserved verbatim`
      `        phase_start_ms: boundary_ms, // new tenancy's anchor`
      `        current: new_current,`
      `        retiring,                    // inherited from prior HandoverConfirmed`
      `    },`
+     `    receipt,`
      `);`
    No `tenant_cap::new`, no `transfer::public_transfer`. The bidder's
    cap (already in their wallet) was inert under `E_PENDING_TENANT_CAP`
@@ -2115,12 +2240,13 @@ type system enforces that no `pending` field exists to clear separately.
 
 **Algorithm:**
 
-1. **Extract state by value** and destructure the `HandoverOpen`
-   variant:
+1. **Extract state via `take_state`** (§2.6) and destructure the
+   `HandoverOpen` variant:
    ```
-   let old = option::extract(&mut escrow.state);
+   let (old, receipt) = take_state(escrow);
    let EscrowState::HandoverOpen { asset, phase_start_ms: _, current, retiring }
        = old else { abort E_UNEXPECTED_STATE };
+       // receipt discharged by abort if the unreachable arm fires
    ```
 
 2. **Destructure the outgoing tenant**:
@@ -2147,7 +2273,7 @@ type system enforces that no `pending` field exists to clear separately.
    to zero); protocols enforcing `min_rent_price ≥ 10` never see this
    branch, but the gate keeps the function structurally total.
 
-4. **Determine next variant and fill state:**
+4. **Determine next variant and discharge the receipt via `put_state`:**
    ```
    let next_state = if retiring {
        EscrowState::Retired { asset }
@@ -2159,7 +2285,7 @@ type system enforces that no `pending` field exists to clear separately.
        }
    };
    let next_tag = state_tag(&next_state);
-   option::fill(&mut escrow.state, next_state);
+   put_state(escrow, next_state, receipt);
    ```
    `last_acquisition_price` is the descent ceiling under the
    AtDutchAuction branch; under Retired it is dropped (the variant
@@ -2205,18 +2331,20 @@ recovery.
 
 **Algorithm:**
 
-1. **Extract state by value** and destructure the variant:
+1. **Extract state via `take_state`** (§2.6) and destructure the
+   variant:
    ```
-   let old = option::extract(&mut escrow.state);
+   let (old, receipt) = take_state(escrow);
    let EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ }
        = old else { abort E_UNEXPECTED_STATE };
+       // receipt discharged by abort if the unreachable arm fires
    ```
    `phase_start_ms` and `last_acquisition_price` are dropped — `Idle`
    carries no time-dependent fields.
 
-2. **Fill state with `Idle`:**
+2. **Discharge the receipt via `put_state` with `Idle`:**
    ```
-   option::fill(&mut escrow.state, EscrowState::Idle { asset });
+   put_state(escrow, EscrowState::Idle { asset }, receipt);
    ```
 
 3. Emit `AuctionExpired { escrow_id: object::id(escrow), timestamp_ms:
@@ -2305,10 +2433,11 @@ the emitted `RentStarted` event, which the caller owns.
 8. Return `(new_state, new_cap, new_cap_id)`.
 
 **Return value:** the constructed `HandoverOpen` variant (for the
-caller to `option::fill` into `escrow.state`), the new `TenantCap` (by
-value), and its `ID`. The caller (`rent()`) uses the `ID` to emit
-`RentStarted { ..., tenant_cap_id: new_cap_id, ... }` with its
-arm-specific `from_state`, and surfaces the cap itself in its return.
+caller to discharge the `StateReceipt` via `put_state`), the new
+`TenantCap` (by value), and its `ID`. The caller (`rent()`) uses
+the `ID` to emit `RentStarted { ..., tenant_cap_id: new_cap_id, ... }`
+with its arm-specific `from_state`, and surfaces the cap itself in
+its return.
 
 **Why the helper does not emit `RentStarted`:** the event's
 `from_state` field discriminates between `Idle` and `AtDutchAuction`
@@ -2317,12 +2446,12 @@ at the callsite instead of threading an extra `from_state` argument
 through the helper.
 
 **Why the helper does not write `escrow.state`:** the caller
-(`rent()`) extracts the state by value at §5.1 step 4, dispatches at
-step 5, and fills back the new variant inside the arm — all inside
-one match. The helper returning the new variant lets the caller chain
-`option::fill(&mut escrow.state, new_state)` directly without an
-intermediate borrow back into the escrow, which would force the
-helper to take `&mut escrow` and re-borrow inside.
+(`rent()`) takes the state via `take_state` at §5.1 step 4,
+dispatches at step 5, and discharges the receipt inside the arm via
+`put_state(escrow, new_state, receipt)` — all inside one match. The
+helper returning the new variant lets the caller chain `put_state`
+directly without an intermediate `&mut escrow` borrow inside the
+helper.
 
 **Two call sites:**
 
@@ -3079,19 +3208,32 @@ balances settle to their normal post-condition via the owner-share
 branch alone.
 
 **P13 — `Option<EscrowState>` is `Some` at every transaction
-boundary:**
+boundary (structural, type-enforced):**
 The `state` field is `None` only mid-function within a single Move
-call (between `option::extract` at the start of a mutating helper
-and `option::fill` at the end). No public function exposes the
-`None` window — every entry point (`integrate` initial fill;
-`rent`, `retire`, `borrow_asset`, `return_asset`,
-`burn_tenant_cap`, `apply_pending_transitions`,
-`withdraw_earnings`, `claim_asset` extract / fill flow) restores
-`Some` before returning or aborting. External callers (which only
-observe transaction boundaries) therefore observe `Some` always.
-This is what makes `option::destroy_some` in `claim_asset` (§4.3
-step 4) and `option::borrow` in every read path (§5.2, §6.3, §8.1,
-§8.2, §8.4, §8.5, §8.6) safe.
+call (between `take_state` at the start of a mutating helper and
+`put_state` at the end). The hot-potato `StateReceipt` (§2.6) makes
+this a compile-time invariant: `take_state` is the sole producer of
+`StateReceipt`, `put_state` is the sole consumer, and Move's linear
+type system requires every code path between them to either consume
+the receipt or `abort`. A function that calls `take_state` and
+returns without `put_state` fails to compile; a function that
+aborts has the receipt discharged automatically by transaction
+rollback (which restores `escrow.state` to the prior `Some` value).
+External callers (which only observe transaction boundaries)
+therefore observe `Some` always — a property the type system
+guarantees, not a discipline the implementer must follow. This is
+what makes `option::destroy_some` in `claim_asset` (§4.3 step 4)
+and `option::borrow` in every read path (§5.2, §6.3, §8.1, §8.2,
+§8.4, §8.5, §8.6) safe.
+
+The closed failure mode: without the receipt, a programmer could
+`option::extract` and forget the matching `option::fill`, leaving
+`escrow.state` as `None` after the transaction commits. The next
+transaction that extracts would abort on `None`, and the escrow
+(plus its asset and any accrued `owner_earnings`) would be
+permanently inaccessible — `claim_asset` itself extracts state via
+APT, so even the owner could not exit. The receipt closes this
+failure mode at compile time.
 
 
 10. TEST CASES
@@ -3653,6 +3795,9 @@ Rows extending §10.10:
 | `compute_next_rent_price(...)` | `public(package)` | Read-only helper backing `compute_floor_price` (Rented arms). Takes `&IntegrationConfig` + explicit `price: u64`. |
 | `tenure_expiry_ms(...)` | `public(package)` | §8.5 — boundary derived from `phase_start_ms` inside the active Rented variant. |
 | `descent_expiry_ms(...)` | `public(package)` | §8.5 — boundary derived from `phase_start_ms` inside the active `AtDutchAuction` variant. |
+| `StateReceipt` (type) | private | §2.6 — internal hot potato (no abilities). Produced by `take_state`, consumed by `put_state`. Enforces P13 at compile time. Not exported. |
+| `take_state(...)` | private | §2.6 — produces `(EscrowState, StateReceipt)`. Sole producer of `StateReceipt`. Used by every mutating site in §4–§7. |
+| `put_state(...)` | private | §2.6 — consumes `StateReceipt`, refills `escrow.state` with the new variant. Sole consumer of `StateReceipt`. |
 | `do_handover(...)` | private | §7.1 |
 | `do_tenure_expiry(...)` | private | §7.2 |
 | `do_auction_expiry(...)` | private | §7.3 |

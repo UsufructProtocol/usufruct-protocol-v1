@@ -153,6 +153,104 @@ all others and is consumed by none.
   the gating predicates and their abort codes live here, where the
   operation semantic lives. No address check is performed anywhere.
 
+**Design philosophy — runtime invariants migrated to compile-time
+invariants.** This module is governed by the principle commonly named
+*"make illegal states unrepresentable"*: every invariant that the
+type system can express is encoded structurally, so the compiler — not
+the test suite, not the implementer's discipline — guarantees it. The
+guiding rule is:
+
+> Each runtime invariant is a latent bug. Each compile-time invariant
+> is an impossible bug.
+
+The current shape of `EscrowState`, `Tenant`, `RentalEscrow`,
+`AssetReceipt`, and `StateReceipt` is the result of repeatedly
+applying that rule across the module's history. The design did not
+arrive in one step; it accreted through a sequence of refactors,
+each one identifying a runtime check (an `assert`, a "this is always
+true" comment, an inline invariant comment) and asking *can the type
+system express this?* When the answer was yes and the cost was
+acceptable, the check moved out of the runtime and into the type
+declaration.
+
+**Catalog of migrations encoded in the current design:**
+
+| Invariant | Before | After |
+|---|---|---|
+| Tenant `cap_id` and `address` always co-present | 2 separate `Option` fields with sync invariant | atomic fields inside `Tenant` struct (§2.2) |
+| `handover_countdown_expiry` exists iff pending bid exists | `Option<u64>` + sync convention | plain `u64` field inside `HandoverConfirmed` variant only (§2.3) |
+| No trapped balances in `Retired` (P2) | runtime `balance::destroy_zero` asserts on terminal sweep | `Retired { asset }` variant has no `stake` field — destruction unnecessary (§2.3, §4.3) |
+| Tenancy ↔ Rented variant (P9) | `tenant_slot != Vacant ⇔ state == Rented(_)` runtime invariant | tenant fields exist only inside `HandoverOpen` and `HandoverConfirmed` variants (§2.3) |
+| Pending bid ↔ HandoverConfirmed (P10) | `pending_bid > 0 ⇔ state == Rented(HandoverConfirmed)` runtime invariant | `pending: Tenant` exists only inside `HandoverConfirmed` variant (§2.3) |
+| Retire flag scope | `bool` field permanent + runtime "only meaningful while tenant active" | `retiring: bool` exists only inside Rented variants; `Retired` is the terminal expression (§2.3) |
+| `last_acquisition_price` only read in `AtDutchAuction` | permanent struct field + "inert in Rented" comment | field exists only inside `AtDutchAuction` variant (§2.3) |
+| `phase_start_ms` only meaningful in 3 variants | permanent struct field | field exists only in variants that consume it (§2.3) |
+| Asset always present except in PTB borrow window (P11) | `Option<Asset>` permanent + "None only inside PTB" prose | `Asset` directly in 3 variants; `Option<Asset>` only in the 2 variants where `borrow_asset` can extract (§2.3) |
+| Borrow → return paired in same PTB | (preexisting) `AssetReceipt` hot potato (§2.5) — linear type forces consumption |
+| `Option<EscrowState>` is `Some` at every tx boundary (P13) | convention enforced by inspection of every mutating function | `StateReceipt` hot potato + `take_state` / `put_state` helpers (§2.6) — linear type forces `put_state` or `abort` |
+
+**What stays runtime, and why.** Type-level enforcement is not always
+the right call; sometimes the cost of the encoding exceeds the cost
+of the runtime check. Three categories of remaining runtime checks:
+
+1. **Inherently runtime — depend on external input.**
+   Payment amounts (`coin::value(&payment) >= floor`), wall-clock
+   thresholds (`clock::timestamp_ms() >= integrated_at_ms +
+   retire_floor`), and capability/escrow pairing
+   (`owner_cap::escrow_id(cap) == object::id(escrow)`) cannot be
+   type-level: the values come from outside the contract at call time
+   and are first observable in the function body.
+
+2. **Pragmatically runtime — encoding cost exceeds benefit.**
+   `E_PENDING_TENANT_CAP` / `E_STALE_TENANT_CAP` (cap-id comparisons
+   against the active variant's tenant fields) could in principle be
+   type-level if `TenantCap` were phantom-typed by escrow-id, but
+   that refactor would propagate generics through every cap-handling
+   call site for marginal gain. `E_ASSET_ALREADY_BORROWED` (the
+   `is_some` check on the variant's asset slot) could be eliminated
+   with a session-typed borrow protocol, at the cost of a
+   substantially more complex API. `E_ALREADY_RETIRED` (boolean
+   check on `retiring`) could be a type-state, but escrow being a
+   shared object makes type-state encoding awkward in Sui.
+
+3. **Structurally unreachable but Move requires the abort
+   (`E_UNEXPECTED_STATE`).**
+   The `else { abort E_UNEXPECTED_STATE }` arms inside `do_handover`,
+   `do_tenure_expiry`, `do_auction_expiry`, and `return_asset` are
+   structurally unreachable along every public-API path — guaranteed
+   by `apply_pending_transitions`'s dispatch ordering and by PTB
+   clock-fixity. Move's exhaustiveness check still requires the arm.
+   Eliminating these would require a finer-grained dispatch type or
+   passing the destructured variant directly from caller to helper —
+   a possible future refactor, deferred for now.
+
+**Directional rule for future work.** Any future refactor of this
+module — and, by extension, any new code added to it — should default
+to the same direction:
+
+1. Identify a runtime invariant. Look for `assert!` calls in private
+   helpers, prose comments saying *"this is always X"* or *"X is
+   present iff Y"*, and properties listed in §9 that are enforced by
+   convention rather than by structure.
+2. Ask whether the type system can express the invariant: a variant
+   field, a struct grouping, a phantom type, a linear hot potato.
+3. Estimate the migration cost: lines of code, ripple through call
+   sites, generics propagation, API surface change.
+4. If `migration cost < runtime-bug risk × likelihood`, migrate.
+5. New mutating functions added to the module *must* use `take_state`
+   / `put_state` (never raw `option::extract` / `option::fill` on
+   `escrow.state`); new tenant-data flows *must* be expressed through
+   variant fields, never through parallel struct-level fields with a
+   sync invariant.
+
+The pattern is self-reinforcing: each migration eliminates an
+assertion, a comment, and a test branch — and exposes the next
+candidate invariant by simplifying the code around it. `StateReceipt`
+itself emerged this way: it became visible only after `EscrowState`
+moved into `Option<EscrowState>` at the struct level, which made the
+question *"who guarantees state is always Some?"* askable. Before the
+aglutinador refactor, the question had no precise referent.
+
 
 1. CONSTANTS
 ------------

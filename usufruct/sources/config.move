@@ -5,6 +5,7 @@ module usufruct::config;
 
 // === Imports ===
 
+use sui::event;
 use usufruct::{
     curve_shape::CurveShape,
     price_function::PriceFunction,
@@ -43,16 +44,28 @@ public struct IntegrationConfigRegistered has copy, drop {
 // === Public Functions ===
 
 public fun new_config(
-    _min_rent_price:  u64,
-    _tenure_ceiling:  u64,
-    _handover_floor:  u64,
-    _descent_ceiling: u64,
-    _retire_floor:    u64,
-    _credit_curve:    CurveShape,
-    _descent_curve:   CurveShape,
-    _price_function:  PriceFunction,
+    min_rent_price:  u64,
+    tenure_ceiling:  u64,
+    handover_floor:  u64,
+    descent_ceiling: u64,
+    retire_floor:    u64,
+    credit_curve:    CurveShape,
+    descent_curve:   CurveShape,
+    price_function:  PriceFunction,
 ): IntegrationConfig {
-    abort 0
+    assert!(min_rent_price > 0,              EMinRentPriceZero);
+    assert!(tenure_ceiling > 0,              ETenureCeilingZero);
+    assert!(handover_floor <= tenure_ceiling, EHandoverFloorExceedsTenure);
+    IntegrationConfig {
+        min_rent_price,
+        tenure_ceiling,
+        handover_floor,
+        descent_ceiling,
+        retire_floor,
+        credit_curve,
+        descent_curve,
+        price_function,
+    }
 }
 
 // === View Functions ===
@@ -61,18 +74,18 @@ public fun new_config(
 
 // === Package Functions ===
 
-public(package) fun emit_registration(_cfg: &IntegrationConfig, _escrow_id: ID) {
-    abort 0
+public(package) fun emit_registration(cfg: &IntegrationConfig, escrow_id: ID) {
+    event::emit(IntegrationConfigRegistered { escrow_id, config: *cfg });
 }
 
-public(package) fun min_rent_price(_cfg: &IntegrationConfig): u64 { abort 0 }
-public(package) fun tenure_ceiling(_cfg: &IntegrationConfig): u64 { abort 0 }
-public(package) fun handover_floor(_cfg: &IntegrationConfig): u64 { abort 0 }
-public(package) fun descent_ceiling(_cfg: &IntegrationConfig): u64 { abort 0 }
-public(package) fun retire_floor(_cfg: &IntegrationConfig): u64 { abort 0 }
-public(package) fun credit_curve(_cfg: &IntegrationConfig): &CurveShape { abort 0 }
-public(package) fun descent_curve(_cfg: &IntegrationConfig): &CurveShape { abort 0 }
-public(package) fun price_function(_cfg: &IntegrationConfig): &PriceFunction { abort 0 }
+public(package) fun min_rent_price(cfg: &IntegrationConfig): u64          { cfg.min_rent_price }
+public(package) fun tenure_ceiling(cfg: &IntegrationConfig): u64          { cfg.tenure_ceiling }
+public(package) fun handover_floor(cfg: &IntegrationConfig): u64          { cfg.handover_floor }
+public(package) fun descent_ceiling(cfg: &IntegrationConfig): u64         { cfg.descent_ceiling }
+public(package) fun retire_floor(cfg: &IntegrationConfig): u64            { cfg.retire_floor }
+public(package) fun credit_curve(cfg: &IntegrationConfig): &CurveShape    { &cfg.credit_curve }
+public(package) fun descent_curve(cfg: &IntegrationConfig): &CurveShape   { &cfg.descent_curve }
+public(package) fun price_function(cfg: &IntegrationConfig): &PriceFunction { &cfg.price_function }
 
 // === Private Functions ===
 

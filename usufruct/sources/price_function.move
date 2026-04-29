@@ -34,9 +34,16 @@ public enum PriceFunction has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_fixed_delta(_delta: u64): PriceFunction { abort 0 }
+public fun new_fixed_delta(delta: u64): PriceFunction {
+    assert!(delta > 0, EDeltaZero);
+    PriceFunction::FixedDelta { delta }
+}
 
-public fun new_compound_delta(_bps: u64, _delta: u64): PriceFunction { abort 0 }
+public fun new_compound_delta(bps: u64, delta: u64): PriceFunction {
+    assert!(bps >= 1 && bps <= 18_446_744_073_709_541_615, EBpsRange); // [1, u64::MAX - BPS_PER_UNIT]
+    assert!(delta > 0, EDeltaZero);
+    PriceFunction::CompoundDelta { bps, delta }
+}
 
 // === View Functions ===
 
@@ -45,15 +52,24 @@ public fun new_compound_delta(_bps: u64, _delta: u64): PriceFunction { abort 0 }
 // === Package Functions ===
 
 public(package) fun evaluate_price_fn(
-    _price_fn:        &PriceFunction,
-    _last_rent_price: u64,
-): u64 { abort 0 }
+    price_fn:        &PriceFunction,
+    last_rent_price: u64,
+): u64 {
+    match (price_fn) {
+        PriceFunction::FixedDelta    { delta }      => eval_fixed_delta(last_rent_price, *delta),
+        PriceFunction::CompoundDelta { bps, delta } => eval_compound_delta(last_rent_price, *bps, *delta),
+    }
+}
 
 // === Private Functions ===
 
-fun eval_fixed_delta(_last_rent_price: u64, _delta: u64): u64 { abort 0 }
+fun eval_fixed_delta(last_rent_price: u64, delta: u64): u64 {
+    last_rent_price + delta
+}
 
-fun eval_compound_delta(_last_rent_price: u64, _bps: u64, _delta: u64): u64 { abort 0 }
+fun eval_compound_delta(last_rent_price: u64, bps: u64, delta: u64): u64 {
+    math::mul_div(last_rent_price, BPS_PER_UNIT + bps, BPS_PER_UNIT) + delta
+}
 
 // === Test Functions ===
 

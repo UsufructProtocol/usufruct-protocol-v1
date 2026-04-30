@@ -284,9 +284,9 @@ public fun rent<Asset: key + store, CoinType>(
     match (read_state(escrow)) {
         EscrowState::Idle { .. }
         | EscrowState::AtDutchAuction { .. } =>
-            install_new_tenant(escrow, payment, floor, clock, ctx),
+            install_new_tenant(escrow, payment, floor, now, ctx),
         EscrowState::HandoverOpen { .. } =>
-            place_bid(escrow, payment, floor, clock, ctx),
+            place_bid(escrow, payment, floor, now, ctx),
         EscrowState::HandoverConfirmed { .. } =>
             supersede_bid(escrow, payment, floor, ctx),
         // Unreachable: compute_floor_price aborts ERetiredNoBid on Retired
@@ -834,12 +834,13 @@ fun split_fee(amount: u64): (u64, u64) {
 
 /// spec: §7.5 — Idle | AtDutchAuction → HandoverOpen with a fresh tenant.
 /// Performs take_state / put_state internally; emits RentStarted with the
-/// originating variant in `from_state`.
+/// originating variant in `from_state`. Receives `now` from the caller
+/// (rent) since the PTB clock is fixed — anchors phase_start_ms = now.
 fun install_new_tenant<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
     floor:   u64,
-    clock:   &Clock,
+    now:     u64,
     ctx:     &mut TxContext,
 ): TenantCap {
     let escrow_id  = object::id(escrow);
@@ -854,14 +855,13 @@ fun install_new_tenant<Asset: key + store, CoinType>(
         EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
         EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
     };
-    let stake          = coin::into_balance(payment);
-    let phase_start_ms = clock::timestamp_ms(clock);
-    let tenant_addr    = ctx.sender();
+    let stake       = coin::into_balance(payment);
+    let tenant_addr = ctx.sender();
     let (new_cap, new_cap_id) = tenant_cap::new(escrow_id, tenant_addr, ctx);
     let current = Tenant { cap_id: new_cap_id, address: tenant_addr, stake };
     put_state(escrow, EscrowState::HandoverOpen {
         asset:           option::some(asset),
-        phase_start_ms,
+        phase_start_ms:  now,
         current,
         retiring:        false,
     }, receipt);
@@ -876,16 +876,16 @@ fun install_new_tenant<Asset: key + store, CoinType>(
 }
 
 /// spec: §5.1 — HandoverOpen → HandoverConfirmed (initial pending bid).
-/// Performs take_state / put_state internally; emits BidPlaced.
+/// Performs take_state / put_state internally; emits BidPlaced. Receives
+/// `now` from the caller (rent) — anchors handover_countdown_expiry.
 fun place_bid<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
     floor:   u64,
-    clock:   &Clock,
+    now:     u64,
     ctx:     &mut TxContext,
 ): TenantCap {
     let escrow_id      = object::id(escrow);
-    let now            = clock::timestamp_ms(clock);
     let pending_tenant = ctx.sender();
     let (old, receipt) = take_state(escrow);
     let (asset, phase_start_ms, current, retiring) = match (old) {

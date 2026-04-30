@@ -406,7 +406,7 @@ public fun retire<Asset: key + store, CoinType>(
     if (immediate) {
         event::emit(AssetRetired { escrow_id, from_state: prior_tag });
     };
-    state_tag(option::borrow(&escrow.state))
+    state_tag(read_state(escrow))
 }
 
 /// spec: §4.3
@@ -561,7 +561,7 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     apply_pending_transitions(escrow, clock, ctx);
     assert!(tenant_cap::escrow_id(&cap) == object::id(escrow), EWrongEscrowTenantCap);
     let cap_id = object::id(&cap);
-    match (option::borrow(&escrow.state)) {
+    match (read_state(escrow)) {
         EscrowState::HandoverOpen { current, .. } => {
             assert!(current.cap_id != cap_id, ETenantCapNotStale);
         },
@@ -602,7 +602,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
         do_auction_expiry(escrow, *option::borrow(&a));
     };
 
-    state_tag(option::borrow(&escrow.state))
+    state_tag(read_state(escrow))
 }
 
 // === View Functions ===
@@ -612,7 +612,7 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow:       &RentalEscrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    let (phase_start_ms, principal, effective_ts) = match (option::borrow(&escrow.state)) {
+    let (phase_start_ms, principal, effective_ts) = match (read_state(escrow)) {
         EscrowState::HandoverOpen { phase_start_ms, current, .. } =>
             (*phase_start_ms, balance::value(&current.stake), timestamp_ms),
         EscrowState::HandoverConfirmed {
@@ -638,7 +638,7 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
     escrow:       &RentalEscrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    match (option::borrow(&escrow.state)) {
+    match (read_state(escrow)) {
         EscrowState::Idle { .. } => config::min_rent_price(&escrow.config),
         EscrowState::HandoverOpen { current, .. } =>
             compute_next_rent_price(&escrow.config, balance::value(&current.stake)),
@@ -648,13 +648,6 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
             compute_price_descent(escrow, timestamp_ms),
         EscrowState::Retired { .. } => abort ERetiredNoBid,
     }
-}
-
-/// spec: §8.6 — borrow the active variant for external pattern-matching.
-public fun state<Asset: key + store, CoinType>(
-    escrow: &RentalEscrow<Asset, CoinType>,
-): &EscrowState<Asset, CoinType> {
-    option::borrow(&escrow.state)
 }
 
 /// spec: §8.7 — discriminator projection.
@@ -679,7 +672,7 @@ public(package) fun compute_price_descent<Asset: key + store, CoinType>(
     escrow:       &RentalEscrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    let (phase_start_ms, last_acquisition_price) = match (option::borrow(&escrow.state)) {
+    let (phase_start_ms, last_acquisition_price) = match (read_state(escrow)) {
         EscrowState::AtDutchAuction { phase_start_ms, last_acquisition_price, .. } =>
             (*phase_start_ms, *last_acquisition_price),
         _ => abort EUnexpectedState,
@@ -706,7 +699,7 @@ public(package) fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64)
 public(package) fun tenure_expiry_ms<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
 ): u64 {
-    let phase_start_ms = match (option::borrow(&escrow.state)) {
+    let phase_start_ms = match (read_state(escrow)) {
         EscrowState::HandoverOpen      { phase_start_ms, .. } => *phase_start_ms,
         EscrowState::HandoverConfirmed { phase_start_ms, .. } => *phase_start_ms,
         _ => abort EUnexpectedState,
@@ -719,7 +712,7 @@ public(package) fun tenure_expiry_ms<Asset: key + store, CoinType>(
 public(package) fun descent_expiry_ms<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
 ): u64 {
-    let phase_start_ms = match (option::borrow(&escrow.state)) {
+    let phase_start_ms = match (read_state(escrow)) {
         EscrowState::AtDutchAuction { phase_start_ms, .. } => *phase_start_ms,
         _ => abort EUnexpectedState,
     };
@@ -743,6 +736,15 @@ fun put_state<Asset: key + store, CoinType>(
 ) {
     let StateReceipt {} = receipt;
     option::fill(&mut escrow.state, new);
+}
+
+/// spec: §2.6 — sole read accessor. Single site of `option::borrow` on
+/// `escrow.state`. Must never be called between `take_state` and `put_state`;
+/// see `// === Design Conventions ===` for enforcement discussion.
+fun read_state<Asset: key + store, CoinType>(
+    escrow: &RentalEscrow<Asset, CoinType>,
+): &EscrowState<Asset, CoinType> {
+    option::borrow(&escrow.state)
 }
 
 /// spec: §7.1 — pending handover. Pre: state is HandoverConfirmed and
@@ -966,7 +968,7 @@ fun handover_due_at<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
     now:    u64,
 ): Option<u64> {
-    match (option::borrow(&escrow.state)) {
+    match (read_state(escrow)) {
         EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
             let e = *handover_countdown_expiry;
             if (now >= e) option::some(e) else option::none()
@@ -980,7 +982,7 @@ fun tenure_due_at<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
     now:    u64,
 ): Option<u64> {
-    match (option::borrow(&escrow.state)) {
+    match (read_state(escrow)) {
         EscrowState::HandoverOpen { phase_start_ms, .. } => {
             let e = *phase_start_ms + config::tenure_ceiling(&escrow.config);
             if (now >= e) option::some(e) else option::none()
@@ -994,7 +996,7 @@ fun auction_due_at<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
     now:    u64,
 ): Option<u64> {
-    match (option::borrow(&escrow.state)) {
+    match (read_state(escrow)) {
         EscrowState::AtDutchAuction { phase_start_ms, .. } => {
             let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
             if (now >= e) option::some(e) else option::none()
@@ -1004,3 +1006,50 @@ fun auction_due_at<Asset: key + store, CoinType>(
 }
 
 // === Test Functions ===
+
+// === Design Conventions ===
+//
+// CONVENTION P_READ: `read_state` must never be called inside a take_state /
+// put_state window (i.e. while a `StateReceipt` is live in the same frame).
+//
+// Enforcement summary
+// ───────────────────
+// │ Guarantee                                         │ Level         │
+// │ put_state always follows take_state in same PTB   │ compile-time  │
+// │   (StateReceipt has no `drop` — hot potato)       │               │
+// │ read_state not called while state is None         │ convention    │
+// │   (Move type system cannot track Option contents) │               │
+// │ No external code touches escrow.state directly    │ compile-time  │
+// │   (field is private; take/put/read are private)   │               │
+//
+// Why violating P_READ is a runtime abort, not silent corruption
+// ──────────────────────────────────────────────────────────────
+// `option::borrow` on a `None` aborts with `EOPTION_NOT_SET` (262145).
+// The transaction rolls back entirely — no half-written state persists.
+// The risk is liveness (unexpected abort), not correctness (state corruption).
+//
+// Required expected_failure test
+// ────────────────────────────────
+// To document and pin the runtime behaviour, the test suite must include:
+//
+//   #[test, expected_failure(abort_code = std::option::EOPTION_NOT_SET)]
+//   fun test_read_state_aborts_inside_take_put_window() {
+//       // ... set up a minimal RentalEscrow in a test scenario ...
+//       let (state, receipt) = take_state(&mut escrow);
+//       // P_READ violated — read_state sees None here:
+//       let _ = read_state(&escrow);      // must abort with EOPTION_NOT_SET
+//       // put_state unreachable, but receipt would be consumed by abort.
+//       put_state(&mut escrow, state, receipt);
+//   }
+//
+// How to maintain the convention in future changes
+// ─────────────────────────────────────────────────
+// 1. read_state is private — only module-internal code can introduce a
+//    violation; no external caller can trigger it.
+// 2. Any new internal function that calls read_state must be audited to
+//    confirm it is never reachable from a call stack that holds a live
+//    StateReceipt.
+// 3. Functions that call take_state must call put_state before any branch
+//    that could reach read_state.  The compiler enforces that put_state is
+//    called before the end of the PTB; it does not enforce call ordering
+//    within the body — that ordering is the author's responsibility.

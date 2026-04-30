@@ -383,7 +383,13 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     let escrow_id = object::id(escrow);
     assert!(tenant_cap::escrow_id(tenant_cap) == escrow_id, EWrongEscrowTenantCap);
     let cap_id = object::id(tenant_cap);
-    let asset    = do_extract_asset(escrow, cap_id);
+    let asset = match (read_state(escrow)) {
+        EscrowState::HandoverOpen { .. }
+        | EscrowState::HandoverConfirmed { .. } => do_extract_asset(escrow, cap_id),
+        EscrowState::Idle { .. }
+        | EscrowState::AtDutchAuction { .. }
+        | EscrowState::Retired { .. } => abort EStaleTenantCap,
+    };
     let asset_id = object::id(&asset);
     event::emit(AssetBorrowed { escrow_id, tenant_cap_id: cap_id });
     (asset, AssetReceipt { escrow_id, asset_id })
@@ -398,7 +404,14 @@ public fun return_asset<Asset: key + store, CoinType>(
     let AssetReceipt { escrow_id, asset_id } = receipt_in;
     assert!(escrow_id == object::id(escrow), EReceiptEscrowMismatch);
     assert!(asset_id == object::id(&asset), EReceiptAssetMismatch);
-    let tenant_cap_id = do_fill_asset(escrow, asset);
+    let tenant_cap_id = match (read_state(escrow)) {
+        EscrowState::HandoverOpen { .. }
+        | EscrowState::HandoverConfirmed { .. } => do_fill_asset(escrow, asset),
+        // Unreachable by PTB clock-fixity (§6.1).
+        EscrowState::Idle { .. }
+        | EscrowState::AtDutchAuction { .. }
+        | EscrowState::Retired { .. } => abort EInvariantViolation,
+    };
     event::emit(AssetReturned { escrow_id, tenant_cap_id });
 }
 
@@ -945,11 +958,12 @@ fun do_set_retiring_flag<Asset: key + store, CoinType>(
     prior_tag
 }
 
-/// spec: §6.1 — extract the asset from the active rented variant
-/// (HandoverOpen | HandoverConfirmed). Validates the caller's TenantCap
+/// spec: §6.1 — extract the asset from the active rented variant.
+/// Pre: state is HandoverOpen or HandoverConfirmed (filtered by the
+/// public dispatch in `borrow_asset`). Validates the caller's TenantCap
 /// against `current.cap_id` (and rejects the `pending` cap on Confirmed).
-/// Aborts EStaleTenantCap on terminal variants — the cap is from a tenancy
-/// that has ended.
+/// Aborts EInvariantViolation on terminal variants — unreachable because
+/// `borrow_asset` aborts EStaleTenantCap before calling.
 fun do_extract_asset<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     cap_id: ID,
@@ -980,9 +994,9 @@ fun do_extract_asset<Asset: key + store, CoinType>(
             };
             (extracted, new)
         },
-        EscrowState::Idle           { asset: _a }     => abort EStaleTenantCap,
-        EscrowState::AtDutchAuction { asset: _a, .. } => abort EStaleTenantCap,
-        EscrowState::Retired        { asset: _a }     => abort EStaleTenantCap,
+        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
     };
     put_state(escrow, new_state, receipt);
     asset

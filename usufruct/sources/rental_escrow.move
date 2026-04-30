@@ -50,6 +50,14 @@ const EInvariantViolation:      u64 = 0xDEADC0DE; // = 3_735_929_054 — unreach
 const PROTOCOL_FEE_BPS: u64 = 1_000;
 const BPS_PER_UNIT:     u64 = 10_000;
 
+/// Canary upper bound on APT loop iterations. The state lattice
+/// (HandoverConfirmed → HandoverOpen → {Retired | AtDutchAuction → Idle})
+/// admits at most 3 transitions plus one terminal no-op iteration = 4.
+/// A higher count signals a `do_*` bug producing a non-progressive state;
+/// the loop aborts with `EInvariantViolation` instead of silently spinning
+/// to gas exhaustion.
+const MAX_APT_ITERATIONS: u64 = 4;
+
 // === Structs ===
 
 /// spec: §2.1 — payload-free discriminator. Returned by APT and `retire`,
@@ -588,11 +596,14 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     let now = clock::timestamp_ms(clock);
     // Each iteration matches on the current state. Chaining is structural:
     // the next iteration sees whatever state the previous `do_*` produced.
-    // Termination is guaranteed by the strictly progressive state lattice:
-    //   HandoverConfirmed → HandoverOpen → {Retired | AtDutchAuction → Idle}
-    // Terminal arms return false; no cycles exist.
+    // Termination is guaranteed by the strictly progressive state lattice;
+    // `MAX_APT_ITERATIONS` is a runtime canary against `do_*` bugs that
+    // could break that guarantee.
     let mut keep_going = true;
+    let mut iterations: u64 = 0;
     while (keep_going) {
+        assert!(iterations < MAX_APT_ITERATIONS, EInvariantViolation);
+        iterations = iterations + 1;
         keep_going = match (read_state(escrow)) {
             EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
                 let e = *handover_countdown_expiry;

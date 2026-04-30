@@ -1117,3 +1117,40 @@ fun register_pending_bid<CoinType>(
 //    that could reach read_state.  The compiler enforces that put_state is
 //    called before the end of the PTB; it does not enforce call ordering
 //    within the body — that ordering is the author's responsibility.
+//
+// CONVENTION P_DO: a private function carries the `do_*` prefix iff its body
+// owns a take_state / put_state window (i.e. produces and consumes a single
+// StateReceipt). The relation is bidirectional and exact: every do_* function
+// calls both take_state and put_state; no other function in the module calls
+// both.
+//
+// Enforcement summary
+// ───────────────────
+// │ Guarantee                                         │ Level         │
+// │ Every do_* function owns a take/put window        │ convention    │
+// │ No non-do_* function owns a take/put window       │ convention    │
+// │   (public fns dispatch to do_* helpers instead)   │               │
+// │ Every take_state pairs with a put_state in PTB    │ compile-time  │
+// │   (StateReceipt hot potato — see P_READ above)    │               │
+//
+// Why P_DO matters
+// ────────────────
+// The state-mutating helpers form a category with shared structural shape:
+// take_state → match → mutation → put_state → emit. Marking them with a
+// dedicated prefix makes the category scannable and the contract auditable:
+//
+//   grep '^fun do_'                             # all state-cell mutators
+//   grep -B5 'take_state(escrow)' | grep '^fun' # owners of take/put windows
+//
+// If those two sets diverge, P_DO is violated. The convention encodes a
+// structural property — public functions delegate to do_* helpers and never
+// own a take/put window themselves — making the call graph self-documenting.
+//
+// How to maintain the convention in future changes
+// ─────────────────────────────────────────────────
+// 1. A new helper that calls take_state and put_state must be named do_*.
+// 2. A new public function that needs to mutate state must delegate to a
+//    do_* helper rather than open its own take/put window.
+// 3. do_* helpers do not call each other today; if a chain is ever needed,
+//    each link must still own its own receipt and the bidirectional grep
+//    parity must continue to hold.

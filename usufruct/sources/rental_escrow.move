@@ -697,31 +697,6 @@ fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64): u64 {
     price_function::evaluate_price_fn(config::price_function(cfg), price)
 }
 
-/// spec: §8.5 — `phase_start_ms + tenure_ceiling` for the active Rented
-/// variant.
-fun tenure_expiry_ms<Asset: key + store, CoinType>(
-    escrow: &RentalEscrow<Asset, CoinType>,
-): u64 {
-    let phase_start_ms = match (read_state(escrow)) {
-        EscrowState::HandoverOpen      { phase_start_ms, .. } => *phase_start_ms,
-        EscrowState::HandoverConfirmed { phase_start_ms, .. } => *phase_start_ms,
-        _ => abort EInvariantViolation,
-    };
-    phase_start_ms + config::tenure_ceiling(&escrow.config)
-}
-
-/// spec: §8.5 — `phase_start_ms + descent_ceiling` for the active
-/// AtDutchAuction variant.
-fun descent_expiry_ms<Asset: key + store, CoinType>(
-    escrow: &RentalEscrow<Asset, CoinType>,
-): u64 {
-    let phase_start_ms = match (read_state(escrow)) {
-        EscrowState::AtDutchAuction { phase_start_ms, .. } => *phase_start_ms,
-        _ => abort EInvariantViolation,
-    };
-    phase_start_ms + config::descent_ceiling(&escrow.config)
-}
-
 /// spec: §2.6 — sole producer of `StateReceipt`. Asserts the state-cell
 /// invariant explicitly so a violation aborts with `EInvariantViolation`
 /// rather than the generic `option::EOPTION_NOT_SET`.

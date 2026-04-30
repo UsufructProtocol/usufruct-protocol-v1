@@ -295,7 +295,9 @@ public fun rent<Asset: key + store, CoinType>(
     }
 }
 
-/// spec: §4.2
+/// spec: §4.2 — dispatch over the current state to either immediate
+/// retirement (Idle / AtDutchAuction) or deferred retirement via the
+/// `retiring` flag (HandoverOpen / HandoverConfirmed).
 public fun retire<Asset: key + store, CoinType>(
     escrow:    &mut RentalEscrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -308,43 +310,13 @@ public fun retire<Asset: key + store, CoinType>(
         clock::timestamp_ms(clock) >= escrow.integrated_at_ms + config::retire_floor(&escrow.config),
         ERetireFloorNotElapsed,
     );
-    let escrow_id = object::id(escrow);
-    let (old, receipt) = take_state(escrow);
-    let prior_tag = state_tag(&old);
-    match (old) {
-        EscrowState::Idle { asset } => {
-            put_state(escrow, EscrowState::Retired { asset }, receipt);
-        },
-        EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ } => {
-            put_state(escrow, EscrowState::Retired { asset }, receipt);
-        },
-        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
-            assert!(!retiring, EAlreadyRetired);
-            put_state(escrow, EscrowState::HandoverOpen {
-                asset, phase_start_ms, current, retiring: true,
-            }, receipt);
-        },
-        EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
-        } => {
-            assert!(!retiring, EAlreadyRetired);
-            put_state(escrow, EscrowState::HandoverConfirmed {
-                asset, phase_start_ms, current, pending,
-                retiring: true,
-                handover_countdown_expiry,
-            }, receipt);
-        },
-        EscrowState::Retired { asset: _a } => abort EAlreadyRetired,
-    };
-    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
-    let immediate = match (prior_tag) {
-        EscrowStateTag::Idle | EscrowStateTag::AtDutchAuction => true,
-        _ => false,
-    };
-    if (immediate) {
-        event::emit(AssetRetired { escrow_id, from_state: prior_tag });
-    };
-    state_tag(read_state(escrow))
+    match (read_state(escrow)) {
+        EscrowState::Idle { .. }
+        | EscrowState::AtDutchAuction { .. } => retire_immediately(escrow, ctx),
+        EscrowState::HandoverOpen { .. }
+        | EscrowState::HandoverConfirmed { .. } => set_retiring_flag(escrow, ctx),
+        EscrowState::Retired { .. } => abort EAlreadyRetired,
+    }
 }
 
 /// spec: §4.3
@@ -968,6 +940,70 @@ fun supersede_bid<Asset: key + store, CoinType>(
         floor_price: floor,
     });
     cap
+}
+
+/// spec: §4.2 — Idle | AtDutchAuction → Retired (immediate retirement).
+/// Performs take_state / put_state internally; emits both RetireFlagSet
+/// and AssetRetired (terminal transition, no deferral). Returns the new
+/// state tag (always Retired).
+fun retire_immediately<Asset: key + store, CoinType>(
+    escrow: &mut RentalEscrow<Asset, CoinType>,
+    ctx:    &TxContext,
+): EscrowStateTag {
+    let escrow_id = object::id(escrow);
+    let (old, receipt) = take_state(escrow);
+    let (asset, prior_tag) = match (old) {
+        EscrowState::Idle { asset } =>
+            (asset, EscrowStateTag::Idle),
+        EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ } =>
+            (asset, EscrowStateTag::AtDutchAuction),
+        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }                           => abort EInvariantViolation,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
+    };
+    put_state(escrow, EscrowState::Retired { asset }, receipt);
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
+    event::emit(AssetRetired { escrow_id, from_state: prior_tag });
+    EscrowStateTag::Retired
+}
+
+/// spec: §4.2 — HandoverOpen | HandoverConfirmed → same variant with
+/// `retiring = true` (deferred retirement). Performs take_state / put_state
+/// internally; emits RetireFlagSet only — AssetRetired is emitted later
+/// by `do_tenure_expiry` when the flag is honored. Returns the (unchanged)
+/// state tag.
+fun set_retiring_flag<Asset: key + store, CoinType>(
+    escrow: &mut RentalEscrow<Asset, CoinType>,
+    ctx:    &TxContext,
+): EscrowStateTag {
+    let escrow_id = object::id(escrow);
+    let (old, receipt) = take_state(escrow);
+    let (new_state, prior_tag) = match (old) {
+        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
+            assert!(!retiring, EAlreadyRetired);
+            let new = EscrowState::HandoverOpen {
+                asset, phase_start_ms, current, retiring: true,
+            };
+            (new, EscrowStateTag::HandoverOpen)
+        },
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
+        } => {
+            assert!(!retiring, EAlreadyRetired);
+            let new = EscrowState::HandoverConfirmed {
+                asset, phase_start_ms, current, pending,
+                retiring: true,
+                handover_countdown_expiry,
+            };
+            (new, EscrowStateTag::HandoverConfirmed)
+        },
+        EscrowState::Idle           { asset: _a }                          => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. }                      => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }                          => abort EInvariantViolation,
+    };
+    put_state(escrow, new_state, receipt);
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
+    prior_tag
 }
 
 /// spec: §7.6 — split + (gated) fee post + drain into owner_earnings.

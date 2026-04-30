@@ -592,15 +592,27 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ): EscrowStateTag {
     let now = clock::timestamp_ms(clock);
-    // Each iteration re-reads the state, decides which transition (if any)
-    // is due, and dispatches it. Chaining is structural — not an assumption
-    // about call order — because the next iteration starts from the state
-    // produced by the previous `do_*`. The loop short-circuits when no
-    // transition fires; the bound caps the chain length defensively.
+    // Each iteration matches on the current state. Chaining is structural:
+    // the next iteration sees whatever state the previous `do_*` produced.
+    // Idle / Retired are no-ops (loop exits via `keep_going = false`).
     let mut iterations: u64 = 0;
-    while (iterations < MAX_TRANSITIONS_PER_APT
-        && try_one_transition(escrow, now, ctx)
-    ) {
+    let mut keep_going = true;
+    while (keep_going && iterations < MAX_TRANSITIONS_PER_APT) {
+        keep_going = match (read_state(escrow)) {
+            EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
+                let e = *handover_countdown_expiry;
+                if (now >= e) { do_handover(escrow, e, ctx); true } else false
+            },
+            EscrowState::HandoverOpen { phase_start_ms, .. } => {
+                let e = *phase_start_ms + config::tenure_ceiling(&escrow.config);
+                if (now >= e) { do_tenure_expiry(escrow, e, ctx); true } else false
+            },
+            EscrowState::AtDutchAuction { phase_start_ms, .. } => {
+                let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
+                if (now >= e) { do_auction_expiry(escrow, e); true } else false
+            },
+            _ => false,  // Idle / Retired: no transition possible
+        };
         iterations = iterations + 1;
     };
     state_tag(read_state(escrow))
@@ -942,63 +954,6 @@ fun register_pending_bid<CoinType>(
     let (cap, tenant_cap_id) = tenant_cap::new(escrow_id, bidder, ctx);
     let pending = Tenant { cap_id: tenant_cap_id, address: bidder, stake };
     (cap, tenant_cap_id, bid_amount, pending)
-}
-
-/// Dispatch decision for one APT iteration. Carries the chosen transition
-/// and its boundary timestamp from the read-only state inspection to the
-/// `do_*` dispatch — so the borrow on `escrow.state` ends before mutation.
-/// `None` means "no transition is due in the current state" (terminal:
-/// the loop will exit on the next condition check).
-///
-/// `public` is required by Move 2024 (no internal enums yet); no public
-/// signature in this module exposes the type.
-public enum Pending has copy, drop {
-    Handover       { boundary: u64 },
-    TenureExpiry   { boundary: u64 },
-    AuctionExpiry  { boundary: u64 },
-    None,
-}
-
-/// spec: §5.2 — performs at most one state transition. Returns `true` iff
-/// a transition fired (so APT knows to keep iterating).
-fun try_one_transition<Asset: key + store, CoinType>(
-    escrow: &mut RentalEscrow<Asset, CoinType>,
-    now:    u64,
-    ctx:    &mut TxContext,
-): bool {
-    // Decide which transition (if any) is due. The borrow on escrow.state
-    // ends with this match, before any do_* dispatch mutates it.
-    let pending = match (read_state(escrow)) {
-        EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
-            let e = *handover_countdown_expiry;
-            if (now >= e) Pending::Handover { boundary: e } else Pending::None
-        },
-        EscrowState::HandoverOpen { phase_start_ms, .. } => {
-            let e = *phase_start_ms + config::tenure_ceiling(&escrow.config);
-            if (now >= e) Pending::TenureExpiry { boundary: e } else Pending::None
-        },
-        EscrowState::AtDutchAuction { phase_start_ms, .. } => {
-            let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
-            if (now >= e) Pending::AuctionExpiry { boundary: e } else Pending::None
-        },
-        _ => Pending::None,
-    };
-
-    match (pending) {
-        Pending::Handover      { boundary } => {
-            do_handover(escrow, boundary, ctx);
-            true
-        },
-        Pending::TenureExpiry  { boundary } => {
-            do_tenure_expiry(escrow, boundary, ctx);
-            true
-        },
-        Pending::AuctionExpiry { boundary } => {
-            do_auction_expiry(escrow, boundary);
-            true
-        },
-        Pending::None => false,
-    }
 }
 
 // === Test Functions ===

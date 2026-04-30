@@ -42,7 +42,8 @@ const EWrongEscrowTenantCap:    u64 = 12;  // spec: E_WRONG_ESCROW_TENANT_CAP
 const EPendingTenantCap:        u64 = 13;  // spec: E_PENDING_TENANT_CAP
 const EStaleTenantCap:          u64 = 14;  // spec: E_STALE_TENANT_CAP
 const ETenantCapNotStale:       u64 = 15;  // spec: E_TENANT_CAP_NOT_STALE
-const EUnexpectedState:         u64 = 16;  // spec: E_UNEXPECTED_STATE
+const ENotAtDutchAuction:       u64 = 16;  // spec: E_NOT_AT_DUTCH_AUCTION
+const EInvariantViolation:      u64 = 0xDEADC0DE; // unreachable in correct operation — programmer error, not user error
 
 // === Constants ===
 // spec: §1.2
@@ -352,8 +353,9 @@ public fun rent<Asset: key + store, CoinType>(
             });
             cap
         },
-        // Unreachable: compute_floor_price aborts ERetiredNoBid on Retired.
-        EscrowState::Retired { asset: _a } => abort EUnexpectedState,
+        // Unreachable: compute_floor_price aborts ERetiredNoBid on Retired
+        // before this match runs. If reached, compute_floor_price has a bug.
+        EscrowState::Retired { asset: _a } => abort EInvariantViolation,
     }
 }
 
@@ -542,10 +544,12 @@ public fun return_asset<Asset: key + store, CoinType>(
             };
             (new, cap_id)
         },
-        // Unreachable by PTB clock-fixity (§6.1).
-        EscrowState::Idle           { asset: _a }     => abort EUnexpectedState,
-        EscrowState::AtDutchAuction { asset: _a, .. } => abort EUnexpectedState,
-        EscrowState::Retired        { asset: _a }     => abort EUnexpectedState,
+        // Unreachable by PTB clock-fixity (§6.1): AssetReceipt is only
+        // produced from HandoverOpen/HandoverConfirmed, and state cannot
+        // change between borrow and return inside one PTB.
+        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
     };
     put_state(escrow, new_state, receipt);
     event::emit(AssetReturned { escrow_id, tenant_cap_id });
@@ -569,7 +573,7 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
             assert!(current.cap_id != cap_id, ETenantCapNotStale);
             assert!(pending.cap_id != cap_id, ETenantCapNotStale);
         },
-        EscrowState::Idle { .. }
+        EscrowState::Idle { .. } //Change _ {..} ==> {} //Pasa la verificación
         | EscrowState::AtDutchAuction { .. }
         | EscrowState::Retired { .. } => {},
     };
@@ -651,7 +655,7 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
 }
 
 /// spec: §8.7 — discriminator projection.
-public fun state_tag<Asset: key + store, CoinType>(
+public fun state_tag<Asset: key + store, CoinType>( //CHANGE(NAME), escrow_state<>()
     s: &EscrowState<Asset, CoinType>,
 ): EscrowStateTag {
     match (s) {
@@ -675,7 +679,7 @@ public(package) fun compute_price_descent<Asset: key + store, CoinType>(
     let (phase_start_ms, last_acquisition_price) = match (read_state(escrow)) {
         EscrowState::AtDutchAuction { phase_start_ms, last_acquisition_price, .. } =>
             (*phase_start_ms, *last_acquisition_price),
-        _ => abort EUnexpectedState,
+        _ => abort ENotAtDutchAuction,
     };
     if (timestamp_ms < phase_start_ms) return last_acquisition_price;
     let elapsed_ms = timestamp_ms - phase_start_ms;
@@ -696,13 +700,13 @@ public(package) fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64)
 
 /// spec: §8.5 — `phase_start_ms + tenure_ceiling` for the active Rented
 /// variant.
-public(package) fun tenure_expiry_ms<Asset: key + store, CoinType>(
+public(package) fun tenure_expiry_ms<Asset: key + store, CoinType>( //DOUBT: tenure_expiry_ms solo puede ser llamada desde el estado HandoverOpen?
     escrow: &RentalEscrow<Asset, CoinType>,
 ): u64 {
     let phase_start_ms = match (read_state(escrow)) {
         EscrowState::HandoverOpen      { phase_start_ms, .. } => *phase_start_ms,
         EscrowState::HandoverConfirmed { phase_start_ms, .. } => *phase_start_ms,
-        _ => abort EUnexpectedState,
+        _ => abort ENotRented,
     };
     phase_start_ms + config::tenure_ceiling(&escrow.config)
 }
@@ -714,7 +718,7 @@ public(package) fun descent_expiry_ms<Asset: key + store, CoinType>(
 ): u64 {
     let phase_start_ms = match (read_state(escrow)) {
         EscrowState::AtDutchAuction { phase_start_ms, .. } => *phase_start_ms,
-        _ => abort EUnexpectedState,
+        _ => abort ENotAtDutchAuction,
     };
     phase_start_ms + config::descent_ceiling(&escrow.config)
 }
@@ -761,10 +765,10 @@ fun do_handover<Asset: key + store, CoinType>(
             asset, phase_start_ms, current, pending,
             retiring, handover_countdown_expiry: _,
         } => (asset, phase_start_ms, current, pending, retiring),
-        EscrowState::Idle              { asset: _a }                       => abort EUnexpectedState,
-        EscrowState::AtDutchAuction    { asset: _a, .. }                   => abort EUnexpectedState,
-        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }      => abort EUnexpectedState,
-        EscrowState::Retired           { asset: _a }                       => abort EUnexpectedState,
+        EscrowState::Idle              { asset: _a }                       => abort EInvariantViolation,
+        EscrowState::AtDutchAuction    { asset: _a, .. }                   => abort EInvariantViolation,
+        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }      => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                       => abort EInvariantViolation,
     };
 
     let Tenant { cap_id: _, address: displaced_tenant, stake: outgoing_stake } = current;
@@ -832,10 +836,10 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let (asset_opt, current, retiring) = match (old) {
         EscrowState::HandoverOpen { asset, phase_start_ms: _, current, retiring } =>
             (asset, current, retiring),
-        EscrowState::Idle              { asset: _a }                                            => abort EUnexpectedState,
-        EscrowState::AtDutchAuction    { asset: _a, .. }                                        => abort EUnexpectedState,
-        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EUnexpectedState,
-        EscrowState::Retired           { asset: _a }                                            => abort EUnexpectedState,
+        EscrowState::Idle              { asset: _a }                                            => abort EInvariantViolation,
+        EscrowState::AtDutchAuction    { asset: _a, .. }                                        => abort EInvariantViolation,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
     };
     // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can be open
     // when do_tenure_expiry fires; PTB clock-fixity §6.1).
@@ -888,10 +892,10 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
     let (old, receipt) = take_state(escrow);
     let asset = match (old) {
         EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ } => asset,
-        EscrowState::Idle              { asset: _a }                                            => abort EUnexpectedState,
-        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }                           => abort EUnexpectedState,
-        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EUnexpectedState,
-        EscrowState::Retired           { asset: _a }                                            => abort EUnexpectedState,
+        EscrowState::Idle              { asset: _a }                                            => abort EInvariantViolation,
+        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }                           => abort EInvariantViolation,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
     };
     put_state(escrow, EscrowState::Idle { asset }, receipt);
     event::emit(AuctionExpired { escrow_id, timestamp_ms: boundary_ms });

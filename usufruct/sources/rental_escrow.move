@@ -284,11 +284,11 @@ public fun rent<Asset: key + store, CoinType>(
     match (read_state(escrow)) {
         EscrowState::Idle { .. }
         | EscrowState::AtDutchAuction { .. } =>
-            install_new_tenant(escrow, payment, floor, now, ctx),
+            do_install_new_tenant(escrow, payment, floor, now, ctx),
         EscrowState::HandoverOpen { .. } =>
-            place_bid(escrow, payment, floor, now, ctx),
+            do_place_bid(escrow, payment, floor, now, ctx),
         EscrowState::HandoverConfirmed { .. } =>
-            supersede_bid(escrow, payment, floor, ctx),
+            do_supersede_bid(escrow, payment, floor, ctx),
         // Unreachable: compute_floor_price aborts ERetiredNoBid on Retired
         // before this match runs.
         EscrowState::Retired { .. } => abort EInvariantViolation,
@@ -312,9 +312,9 @@ public fun retire<Asset: key + store, CoinType>(
     );
     match (read_state(escrow)) {
         EscrowState::Idle { .. }
-        | EscrowState::AtDutchAuction { .. } => retire_immediately(escrow, ctx),
+        | EscrowState::AtDutchAuction { .. } => do_retire_immediately(escrow, ctx),
         EscrowState::HandoverOpen { .. }
-        | EscrowState::HandoverConfirmed { .. } => set_retiring_flag(escrow, ctx),
+        | EscrowState::HandoverConfirmed { .. } => do_set_retiring_flag(escrow, ctx),
         EscrowState::Retired { .. } => abort EAlreadyRetired,
     }
 }
@@ -383,7 +383,7 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     let escrow_id = object::id(escrow);
     assert!(tenant_cap::escrow_id(tenant_cap) == escrow_id, EWrongEscrowTenantCap);
     let cap_id = object::id(tenant_cap);
-    let asset    = extract_asset_from_active(escrow, cap_id);
+    let asset    = do_extract_asset(escrow, cap_id);
     let asset_id = object::id(&asset);
     event::emit(AssetBorrowed { escrow_id, tenant_cap_id: cap_id });
     (asset, AssetReceipt { escrow_id, asset_id })
@@ -398,7 +398,7 @@ public fun return_asset<Asset: key + store, CoinType>(
     let AssetReceipt { escrow_id, asset_id } = receipt_in;
     assert!(escrow_id == object::id(escrow), EReceiptEscrowMismatch);
     assert!(asset_id == object::id(&asset), EReceiptAssetMismatch);
-    let tenant_cap_id = fill_asset_into_active(escrow, asset);
+    let tenant_cap_id = do_fill_asset(escrow, asset);
     event::emit(AssetReturned { escrow_id, tenant_cap_id });
 }
 
@@ -747,7 +747,7 @@ fun split_fee(amount: u64): (u64, u64) {
 /// Performs take_state / put_state internally; emits RentStarted with the
 /// originating variant in `from_state`. Receives `now` from the caller
 /// (rent) since the PTB clock is fixed — anchors phase_start_ms = now.
-fun install_new_tenant<Asset: key + store, CoinType>(
+fun do_install_new_tenant<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
     floor:   u64,
@@ -789,7 +789,7 @@ fun install_new_tenant<Asset: key + store, CoinType>(
 /// spec: §5.1 — HandoverOpen → HandoverConfirmed (initial pending bid).
 /// Performs take_state / put_state internally; emits BidPlaced. Receives
 /// `now` from the caller (rent) — anchors handover_countdown_expiry.
-fun place_bid<Asset: key + store, CoinType>(
+fun do_place_bid<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
     floor:   u64,
@@ -834,7 +834,7 @@ fun place_bid<Asset: key + store, CoinType>(
 /// spec: §5.1 — HandoverConfirmed → HandoverConfirmed (replace pending bid).
 /// Refunds the displaced bidder, registers the new pending tenant.
 /// Performs take_state / put_state internally; emits BidSuperseded.
-fun supersede_bid<Asset: key + store, CoinType>(
+fun do_supersede_bid<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
     floor:   u64,
@@ -885,7 +885,7 @@ fun supersede_bid<Asset: key + store, CoinType>(
 /// Performs take_state / put_state internally; emits both RetireFlagSet
 /// and AssetRetired (terminal transition, no deferral). Returns the new
 /// state tag (always Retired).
-fun retire_immediately<Asset: key + store, CoinType>(
+fun do_retire_immediately<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     ctx:    &TxContext,
 ): EscrowStateTag {
@@ -911,7 +911,7 @@ fun retire_immediately<Asset: key + store, CoinType>(
 /// internally; emits RetireFlagSet only — AssetRetired is emitted later
 /// by `do_tenure_expiry` when the flag is honored. Returns the (unchanged)
 /// state tag.
-fun set_retiring_flag<Asset: key + store, CoinType>(
+fun do_set_retiring_flag<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     ctx:    &TxContext,
 ): EscrowStateTag {
@@ -950,7 +950,7 @@ fun set_retiring_flag<Asset: key + store, CoinType>(
 /// against `current.cap_id` (and rejects the `pending` cap on Confirmed).
 /// Aborts EStaleTenantCap on terminal variants — the cap is from a tenancy
 /// that has ended.
-fun extract_asset_from_active<Asset: key + store, CoinType>(
+fun do_extract_asset<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     cap_id: ID,
 ): Asset {
@@ -993,7 +993,7 @@ fun extract_asset_from_active<Asset: key + store, CoinType>(
 /// Aborts EInvariantViolation on terminal variants — unreachable by PTB
 /// clock-fixity (§6.1): AssetReceipt is only produced from active states,
 /// and state cannot change between borrow and return inside one PTB.
-fun fill_asset_into_active<Asset: key + store, CoinType>(
+fun do_fill_asset<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     asset:  Asset,
 ): ID {

@@ -332,6 +332,9 @@ public fun claim_asset<Asset: key + store, CoinType>(
         id, config: _, fee_inbox_id: _, integrated_at_ms: _,
         owner_earnings, state,
     } = escrow;
+    // Unwrap Option<EscrowState> — guaranteed Some by P13 (state-cell
+    // invariant: always Some at tx boundary; see Design Conventions).
+    assert!(option::is_some(&state), EInvariantViolation);
     let inner_state = option::destroy_some(state);
     let asset = match (inner_state) {
         EscrowState::Retired { asset } => asset,
@@ -691,6 +694,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     };
     // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can be open
     // when do_tenure_expiry fires; PTB clock-fixity §6.1).
+    assert!(option::is_some(&asset_opt), EInvariantViolation);
     let asset = option::destroy_some(asset_opt);
 
     let Tenant { cap_id: _, address: tenant, stake: outgoing_stake } = current;
@@ -964,6 +968,7 @@ fun do_set_retiring_flag<Asset: key + store, CoinType>(
 /// against `current.cap_id` (and rejects the `pending` cap on Confirmed).
 /// Aborts EInvariantViolation on terminal variants — unreachable because
 /// `borrow_asset` aborts EStaleTenantCap before calling.
+/// EAssetAlreadyBorrowed only fires from same-tenant double-borrow in one PTB.
 fun do_extract_asset<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     cap_id: ID,
@@ -1016,6 +1021,7 @@ fun do_fill_asset<Asset: key + store, CoinType>(
         EscrowState::HandoverOpen { asset: asset_slot, phase_start_ms, current, retiring } => {
             let cap_id = current.cap_id;
             let mut slot = asset_slot;
+            assert!(option::is_none(&slot), EInvariantViolation);
             option::fill(&mut slot, asset);
             let new = EscrowState::HandoverOpen {
                 asset: slot, phase_start_ms, current, retiring,
@@ -1027,6 +1033,7 @@ fun do_fill_asset<Asset: key + store, CoinType>(
         } => {
             let cap_id = current.cap_id;
             let mut slot = asset_slot;
+            assert!(option::is_none(&slot), EInvariantViolation);
             option::fill(&mut slot, asset);
             let new = EscrowState::HandoverConfirmed {
                 asset: slot, phase_start_ms, current, pending, retiring,

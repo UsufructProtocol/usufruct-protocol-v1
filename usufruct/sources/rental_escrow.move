@@ -50,6 +50,14 @@ const EInvariantViolation:      u64 = 0xDEADC0DE; // = 3_735_929_054 — unreach
 const PROTOCOL_FEE_BPS: u64 = 1_000;
 const BPS_PER_UNIT:     u64 = 10_000;
 
+/// Canary upper bound on APT loop iterations. The state lattice
+/// (HandoverConfirmed → HandoverOpen → {Retired | AtDutchAuction → Idle})
+/// admits at most 3 transitions plus one terminal no-op iteration = 4.
+/// A higher count signals a `do_*` bug producing a non-progressive state;
+/// the loop aborts with `EInvariantViolation` instead of silently spinning
+/// to gas exhaustion.
+const MAX_APT_ITERATIONS: u64 = 4;
+
 // === Structs ===
 
 /// spec: §2.1 — payload-free discriminator. Returned by APT and `retire`,
@@ -586,25 +594,32 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ): EscrowStateTag {
     let now = clock::timestamp_ms(clock);
-
-    // Check 1 — pending handover.
-    let h = handover_due_at(escrow, now);
-    if (option::is_some(&h)) {
-        do_handover(escrow, *option::borrow(&h), ctx);
+    // Each iteration matches on the current state. Chaining is structural:
+    // the next iteration sees whatever state the previous `do_*` produced.
+    // Termination is guaranteed by the strictly progressive state lattice;
+    // `MAX_APT_ITERATIONS` is a runtime canary against `do_*` bugs that
+    // could break that guarantee.
+    let mut keep_going = true;
+    let mut iterations: u64 = 0;
+    while (keep_going) {
+        assert!(iterations < MAX_APT_ITERATIONS, EInvariantViolation);
+        iterations = iterations + 1;
+        keep_going = match (read_state(escrow)) {
+            EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
+                let e = *handover_countdown_expiry;
+                if (now >= e) { do_handover(escrow, e, ctx); true } else false
+            },
+            EscrowState::HandoverOpen { phase_start_ms, .. } => {
+                let e = *phase_start_ms + config::tenure_ceiling(&escrow.config);
+                if (now >= e) { do_tenure_expiry(escrow, e, ctx); true } else false
+            },
+            EscrowState::AtDutchAuction { phase_start_ms, .. } => {
+                let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
+                if (now >= e) { do_auction_expiry(escrow, e); true } else false
+            },
+            EscrowState::Idle { .. } | EscrowState::Retired { .. } => false,
+        };
     };
-
-    // Check 2 — tenure expiry (variant possibly mutated by Check 1).
-    let t = tenure_due_at(escrow, now);
-    if (option::is_some(&t)) {
-        do_tenure_expiry(escrow, *option::borrow(&t), ctx);
-    };
-
-    // Check 3 — auction expiry (variant possibly mutated by Check 2).
-    let a = auction_due_at(escrow, now);
-    if (option::is_some(&a)) {
-        do_auction_expiry(escrow, *option::borrow(&a));
-    };
-
     state_tag(read_state(escrow))
 }
 
@@ -944,49 +959,6 @@ fun register_pending_bid<CoinType>(
     let (cap, tenant_cap_id) = tenant_cap::new(escrow_id, bidder, ctx);
     let pending = Tenant { cap_id: tenant_cap_id, address: bidder, stake };
     (cap, tenant_cap_id, bid_amount, pending)
-}
-
-/// Read-only helper for APT Check 1 (§5.2). Returns `Some(expiry)` iff
-/// state is HandoverConfirmed and the boundary has been reached.
-fun handover_due_at<Asset: key + store, CoinType>(
-    escrow: &RentalEscrow<Asset, CoinType>,
-    now:    u64,
-): Option<u64> { //Debería ser u64
-    match (read_state(escrow)) {
-        EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
-            let e = *handover_countdown_expiry;
-            if (now >= e) option::some(e) else option::none()
-        },
-        _ => option::none(), //abort EInvariantViolation //esta función no debería ser llamada fuera del estado HandoverConfirmed
-    }
-}
-
-/// Read-only helper for APT Check 2 (§5.2).
-fun tenure_due_at<Asset: key + store, CoinType>(
-    escrow: &RentalEscrow<Asset, CoinType>,
-    now:    u64,
-): Option<u64> { //idem 977
-    match (read_state(escrow)) {
-        EscrowState::HandoverOpen { phase_start_ms, .. } => {
-            let e = *phase_start_ms + config::tenure_ceiling(&escrow.config);
-            if (now >= e) option::some(e) else option::none()
-        },
-        _ => option::none(), //idem 983
-    }
-}
-
-/// Read-only helper for APT Check 3 (§5.2).
-fun auction_due_at<Asset: key + store, CoinType>(
-    escrow: &RentalEscrow<Asset, CoinType>,
-    now:    u64,
-): Option<u64> { //idem 977
-    match (read_state(escrow)) {
-        EscrowState::AtDutchAuction { phase_start_ms, .. } => {
-            let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
-            if (now >= e) option::some(e) else option::none()
-        },
-        _ => option::none(), //idem 983
-    }
 }
 
 // === Test Functions ===

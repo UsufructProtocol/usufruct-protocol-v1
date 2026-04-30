@@ -50,12 +50,6 @@ const EInvariantViolation:      u64 = 0xDEADC0DE; // = 3_735_929_054 — unreach
 const PROTOCOL_FEE_BPS: u64 = 1_000;
 const BPS_PER_UNIT:     u64 = 10_000;
 
-/// Maximum number of state transitions APT can chain in a single call.
-/// Bounded by the longest path in the transition graph:
-///   HandoverConfirmed → HandoverOpen → AtDutchAuction → Idle
-/// Three transitions: handover, tenure_expiry, auction_expiry.
-const MAX_TRANSITIONS_PER_APT: u64 = 3;
-
 // === Structs ===
 
 /// spec: §2.1 — payload-free discriminator. Returned by APT and `retire`,
@@ -594,9 +588,11 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     let now = clock::timestamp_ms(clock);
     // Each iteration matches on the current state. Chaining is structural:
     // the next iteration sees whatever state the previous `do_*` produced.
-    let mut iterations: u64 = 0;
+    // Termination is guaranteed by the strictly progressive state lattice:
+    //   HandoverConfirmed → HandoverOpen → {Retired | AtDutchAuction → Idle}
+    // Terminal arms return false; no cycles exist.
     let mut keep_going = true;
-    while (keep_going && iterations < MAX_TRANSITIONS_PER_APT) {
+    while (keep_going) {
         keep_going = match (read_state(escrow)) {
             EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
                 let e = *handover_countdown_expiry;
@@ -612,7 +608,6 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
             },
             EscrowState::Idle { .. } | EscrowState::Retired { .. } => false,
         };
-        iterations = iterations + 1;
     };
     state_tag(read_state(escrow))
 }

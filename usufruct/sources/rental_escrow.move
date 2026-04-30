@@ -594,7 +594,6 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     let now = clock::timestamp_ms(clock);
     // Each iteration matches on the current state. Chaining is structural:
     // the next iteration sees whatever state the previous `do_*` produced.
-    // Idle / Retired are no-ops (loop exits via `keep_going = false`).
     let mut iterations: u64 = 0;
     let mut keep_going = true;
     while (keep_going && iterations < MAX_TRANSITIONS_PER_APT) {
@@ -611,7 +610,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
                 let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
                 if (now >= e) { do_auction_expiry(escrow, e); true } else false
             },
-            _ => false,  // Idle / Retired: no transition possible
+            EscrowState::Idle { .. } | EscrowState::Retired { .. } => false,
         };
         iterations = iterations + 1;
     };

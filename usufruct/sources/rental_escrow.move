@@ -268,7 +268,9 @@ public fun integrate<Asset: key + store, CoinType>(
     cap
 }
 
-/// spec: §5.1
+/// spec: §5.1 — dispatch over the current state to the appropriate
+/// transition helper. Each helper handles its own take_state/put_state
+/// and event emission.
 public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -276,97 +278,26 @@ public fun rent<Asset: key + store, CoinType>(
     ctx:     &mut TxContext,
 ): TenantCap {
     apply_pending_transitions(escrow, clock, ctx);
-    let now       = clock::timestamp_ms(clock);
-    let floor     = compute_floor_price(escrow, now);
+    let now   = clock::timestamp_ms(clock);
+    let floor = compute_floor_price(escrow, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
-    let escrow_id = object::id(escrow);
-    let (old, receipt) = take_state(escrow);
-    match (old) {
-        EscrowState::Idle { asset } => {
-            let price_paid = coin::value(&payment);
-            let (new_state, cap, tenant_cap_id) =
-                install_new_tenant(asset, payment, clock, ctx, escrow_id);
-            put_state(escrow, new_state, receipt);
-            event::emit(RentStarted {
-                escrow_id, tenant_cap_id, price_paid,
-                floor_price: floor, from_state: EscrowStateTag::Idle,
-            });
-            cap
-        },
-        EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ } => {
-            let price_paid = coin::value(&payment);
-            let (new_state, cap, tenant_cap_id) =
-                install_new_tenant(asset, payment, clock, ctx, escrow_id);
-            put_state(escrow, new_state, receipt);
-            event::emit(RentStarted {
-                escrow_id, tenant_cap_id, price_paid,
-                floor_price: floor, from_state: EscrowStateTag::AtDutchAuction,
-            });
-            cap
-        },
-        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
-            assert!(!retiring, ERetireFlagBlocksBid);
-            let pending_tenant            = ctx.sender();
-            let tenure_e                  = phase_start_ms + config::tenure_ceiling(&escrow.config);
-            let remaining                 = tenure_e - now;
-            let countdown                 = u64::min(config::handover_floor(&escrow.config), remaining);
-            let handover_countdown_expiry = now + countdown;
-            let (cap, pending_cap_id, bid_amount, pending) =
-                register_pending_bid(escrow_id, payment, pending_tenant, ctx);
-            put_state(escrow, EscrowState::HandoverConfirmed {
-                asset, phase_start_ms, current, pending,
-                retiring,
-                handover_countdown_expiry,
-            }, receipt);
-            event::emit(BidPlaced {
-                escrow_id,
-                tenant_cap_id: pending_cap_id,
-                pending_tenant,
-                bid_amount,
-                floor_price: floor,
-                handover_countdown_expiry,
-            });
-            cap
-        },
-        EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending: displaced,
-            retiring, handover_countdown_expiry,
-        } => {
-            let new_bidder = ctx.sender();
-            let Tenant {
-                cap_id: displaced_cap_id,
-                address: displaced_bidder,
-                stake: refund_balance,
-            } = displaced;
-            let refunded_amount = balance::value(&refund_balance);
-            transfer::public_transfer(coin::from_balance(refund_balance, ctx), displaced_bidder);
-            let (cap, new_pending_cap_id, new_bid_amount, new_pending) =
-                register_pending_bid(escrow_id, payment, new_bidder, ctx);
-            put_state(escrow, EscrowState::HandoverConfirmed {
-                asset, phase_start_ms, current,
-                pending: new_pending,
-                retiring,
-                handover_countdown_expiry,
-            }, receipt);
-            event::emit(BidSuperseded {
-                escrow_id,
-                displaced_tenant_cap_id: displaced_cap_id,
-                new_tenant_cap_id: new_pending_cap_id,
-                displaced_bidder,
-                refunded_amount,
-                new_bidder,
-                new_bid_amount,
-                floor_price: floor,
-            });
-            cap
-        },
+    match (read_state(escrow)) {
+        EscrowState::Idle { .. }
+        | EscrowState::AtDutchAuction { .. } =>
+            do_install_new_tenant(escrow, payment, floor, now, ctx),
+        EscrowState::HandoverOpen { .. } =>
+            do_place_bid(escrow, payment, floor, now, ctx),
+        EscrowState::HandoverConfirmed { .. } =>
+            do_supersede_bid(escrow, payment, floor, ctx),
         // Unreachable: compute_floor_price aborts ERetiredNoBid on Retired
-        // before this match runs. If reached, compute_floor_price has a bug.
-        EscrowState::Retired { asset: _a } => abort EInvariantViolation,
+        // before this match runs.
+        EscrowState::Retired { .. } => abort EInvariantViolation,
     }
 }
 
-/// spec: §4.2
+/// spec: §4.2 — dispatch over the current state to either immediate
+/// retirement (Idle / AtDutchAuction) or deferred retirement via the
+/// `retiring` flag (HandoverOpen / HandoverConfirmed).
 public fun retire<Asset: key + store, CoinType>(
     escrow:    &mut RentalEscrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -379,43 +310,13 @@ public fun retire<Asset: key + store, CoinType>(
         clock::timestamp_ms(clock) >= escrow.integrated_at_ms + config::retire_floor(&escrow.config),
         ERetireFloorNotElapsed,
     );
-    let escrow_id = object::id(escrow);
-    let (old, receipt) = take_state(escrow);
-    let prior_tag = state_tag(&old);
-    match (old) {
-        EscrowState::Idle { asset } => {
-            put_state(escrow, EscrowState::Retired { asset }, receipt);
-        },
-        EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ } => {
-            put_state(escrow, EscrowState::Retired { asset }, receipt);
-        },
-        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
-            assert!(!retiring, EAlreadyRetired);
-            put_state(escrow, EscrowState::HandoverOpen {
-                asset, phase_start_ms, current, retiring: true,
-            }, receipt);
-        },
-        EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
-        } => {
-            assert!(!retiring, EAlreadyRetired);
-            put_state(escrow, EscrowState::HandoverConfirmed {
-                asset, phase_start_ms, current, pending,
-                retiring: true,
-                handover_countdown_expiry,
-            }, receipt);
-        },
-        EscrowState::Retired { asset: _a } => abort EAlreadyRetired,
-    };
-    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
-    let immediate = match (prior_tag) {
-        EscrowStateTag::Idle | EscrowStateTag::AtDutchAuction => true,
-        _ => false,
-    };
-    if (immediate) {
-        event::emit(AssetRetired { escrow_id, from_state: prior_tag });
-    };
-    state_tag(read_state(escrow))
+    match (read_state(escrow)) {
+        EscrowState::Idle { .. }
+        | EscrowState::AtDutchAuction { .. } => do_retire_immediately(escrow, ctx),
+        EscrowState::HandoverOpen { .. }
+        | EscrowState::HandoverConfirmed { .. } => do_set_retiring_flag(escrow, ctx),
+        EscrowState::Retired { .. } => abort EAlreadyRetired,
+    }
 }
 
 /// spec: §4.3
@@ -431,6 +332,9 @@ public fun claim_asset<Asset: key + store, CoinType>(
         id, config: _, fee_inbox_id: _, integrated_at_ms: _,
         owner_earnings, state,
     } = escrow;
+    // Unwrap Option<EscrowState> — guaranteed Some by P13 (state-cell
+    // invariant: always Some at tx boundary; see Design Conventions).
+    assert!(option::is_some(&state), EInvariantViolation);
     let inner_state = option::destroy_some(state);
     let asset = match (inner_state) {
         EscrowState::Retired { asset } => asset,
@@ -482,41 +386,16 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     let escrow_id = object::id(escrow);
     assert!(tenant_cap::escrow_id(tenant_cap) == escrow_id, EWrongEscrowTenantCap);
     let cap_id = object::id(tenant_cap);
-    let (old, receipt) = take_state(escrow);
-    let (asset, new_state) = match (old) {
-        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
-            assert!(cap_id == current.cap_id, EStaleTenantCap);
-            let mut asset_opt = asset;
-            assert!(option::is_some(&asset_opt), EAssetAlreadyBorrowed);
-            let extracted = option::extract(&mut asset_opt);
-            let new = EscrowState::HandoverOpen {
-                asset: asset_opt, phase_start_ms, current, retiring,
-            };
-            (extracted, new)
-        },
-        EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
-        } => {
-            assert!(cap_id != pending.cap_id, EPendingTenantCap);
-            assert!(cap_id == current.cap_id, EStaleTenantCap);
-            let mut asset_opt = asset;
-            assert!(option::is_some(&asset_opt), EAssetAlreadyBorrowed);
-            let extracted = option::extract(&mut asset_opt);
-            let new = EscrowState::HandoverConfirmed {
-                asset: asset_opt, phase_start_ms, current, pending, retiring,
-                handover_countdown_expiry,
-            };
-            (extracted, new)
-        },
-        EscrowState::Idle           { asset: _a }     => abort EStaleTenantCap,
-        EscrowState::AtDutchAuction { asset: _a, .. } => abort EStaleTenantCap,
-        EscrowState::Retired        { asset: _a }     => abort EStaleTenantCap,
+    let asset = match (read_state(escrow)) {
+        EscrowState::HandoverOpen { .. }
+        | EscrowState::HandoverConfirmed { .. } => do_extract_asset(escrow, cap_id),
+        EscrowState::Idle { .. }
+        | EscrowState::AtDutchAuction { .. }
+        | EscrowState::Retired { .. } => abort EStaleTenantCap,
     };
-    put_state(escrow, new_state, receipt);
     let asset_id = object::id(&asset);
-    let r = AssetReceipt { escrow_id, asset_id };
     event::emit(AssetBorrowed { escrow_id, tenant_cap_id: cap_id });
-    (asset, r)
+    (asset, AssetReceipt { escrow_id, asset_id })
 }
 
 /// spec: §6.2
@@ -528,37 +407,14 @@ public fun return_asset<Asset: key + store, CoinType>(
     let AssetReceipt { escrow_id, asset_id } = receipt_in;
     assert!(escrow_id == object::id(escrow), EReceiptEscrowMismatch);
     assert!(asset_id == object::id(&asset), EReceiptAssetMismatch);
-    let (old, receipt) = take_state(escrow);
-    let (new_state, tenant_cap_id) = match (old) {
-        EscrowState::HandoverOpen { asset: asset_slot, phase_start_ms, current, retiring } => {
-            let cap_id = current.cap_id;
-            let mut slot = asset_slot;
-            option::fill(&mut slot, asset);
-            let new = EscrowState::HandoverOpen {
-                asset: slot, phase_start_ms, current, retiring,
-            };
-            (new, cap_id)
-        },
-        EscrowState::HandoverConfirmed {
-            asset: asset_slot, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
-        } => {
-            let cap_id = current.cap_id;
-            let mut slot = asset_slot;
-            option::fill(&mut slot, asset);
-            let new = EscrowState::HandoverConfirmed {
-                asset: slot, phase_start_ms, current, pending, retiring,
-                handover_countdown_expiry,
-            };
-            (new, cap_id)
-        },
-        // Unreachable by PTB clock-fixity (§6.1): AssetReceipt is only
-        // produced from HandoverOpen/HandoverConfirmed, and state cannot
-        // change between borrow and return inside one PTB.
-        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
-        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
-        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
+    let tenant_cap_id = match (read_state(escrow)) {
+        EscrowState::HandoverOpen { .. }
+        | EscrowState::HandoverConfirmed { .. } => do_fill_asset(escrow, asset),
+        // Unreachable by PTB clock-fixity (§6.1).
+        EscrowState::Idle { .. }
+        | EscrowState::AtDutchAuction { .. }
+        | EscrowState::Retired { .. } => abort EInvariantViolation,
     };
-    put_state(escrow, new_state, receipt);
     event::emit(AssetReturned { escrow_id, tenant_cap_id });
 }
 
@@ -838,6 +694,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     };
     // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can be open
     // when do_tenure_expiry fires; PTB clock-fixity §6.1).
+    assert!(option::is_some(&asset_opt), EInvariantViolation);
     let asset = option::destroy_some(asset_opt);
 
     let Tenant { cap_id: _, address: tenant, stake: outgoing_stake } = current;
@@ -903,26 +760,293 @@ fun split_fee(amount: u64): (u64, u64) {
     (owner, fee)
 }
 
-/// spec: §7.5 — install fresh tenant from payment + asset on Idle / AtDutchAuction.
-fun install_new_tenant<Asset: key + store, CoinType>(
-    asset:     Asset,
-    payment:   Coin<CoinType>,
-    clock:     &Clock,
-    ctx:       &mut TxContext,
-    escrow_id: ID,
-): (EscrowState<Asset, CoinType>, TenantCap, ID) {
-    let stake = coin::into_balance(payment);
-    let phase_start_ms = clock::timestamp_ms(clock);
+/// spec: §7.5 — Idle | AtDutchAuction → HandoverOpen with a fresh tenant.
+/// Performs take_state / put_state internally; emits RentStarted with the
+/// originating variant in `from_state`. Receives `now` from the caller
+/// (rent) since the PTB clock is fixed — anchors phase_start_ms = now.
+fun do_install_new_tenant<Asset: key + store, CoinType>(
+    escrow:  &mut RentalEscrow<Asset, CoinType>,
+    payment: Coin<CoinType>,
+    floor:   u64,
+    now:     u64,
+    ctx:     &mut TxContext,
+): TenantCap {
+    let escrow_id  = object::id(escrow);
+    let price_paid = coin::value(&payment);
+    let (old, receipt) = take_state(escrow);
+    let (asset, from_state) = match (old) {
+        EscrowState::Idle { asset } =>
+            (asset, EscrowStateTag::Idle),
+        EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ } =>
+            (asset, EscrowStateTag::AtDutchAuction),
+        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }                           => abort EInvariantViolation,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
+    };
+    let stake       = coin::into_balance(payment);
     let tenant_addr = ctx.sender();
     let (new_cap, new_cap_id) = tenant_cap::new(escrow_id, tenant_addr, ctx);
     let current = Tenant { cap_id: new_cap_id, address: tenant_addr, stake };
-    let new_state = EscrowState::HandoverOpen {
+    put_state(escrow, EscrowState::HandoverOpen {
         asset:           option::some(asset),
-        phase_start_ms,
+        phase_start_ms:  now,
         current,
         retiring:        false,
+    }, receipt);
+    event::emit(RentStarted {
+        escrow_id,
+        tenant_cap_id: new_cap_id,
+        price_paid,
+        floor_price: floor,
+        from_state,
+    });
+    new_cap
+}
+
+/// spec: §5.1 — HandoverOpen → HandoverConfirmed (initial pending bid).
+/// Performs take_state / put_state internally; emits BidPlaced. Receives
+/// `now` from the caller (rent) — anchors handover_countdown_expiry.
+fun do_place_bid<Asset: key + store, CoinType>(
+    escrow:  &mut RentalEscrow<Asset, CoinType>,
+    payment: Coin<CoinType>,
+    floor:   u64,
+    now:     u64,
+    ctx:     &mut TxContext,
+): TenantCap {
+    let escrow_id      = object::id(escrow);
+    let pending_tenant = ctx.sender();
+    let (old, receipt) = take_state(escrow);
+    let (asset, phase_start_ms, current, retiring) = match (old) {
+        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
+            assert!(!retiring, ERetireFlagBlocksBid);
+            (asset, phase_start_ms, current, retiring)
+        },
+        EscrowState::Idle              { asset: _a }                                            => abort EInvariantViolation,
+        EscrowState::AtDutchAuction    { asset: _a, .. }                                        => abort EInvariantViolation,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
     };
-    (new_state, new_cap, new_cap_id)
+    let tenure_e                  = phase_start_ms + config::tenure_ceiling(&escrow.config);
+    let remaining                 = tenure_e - now;
+    let countdown                 = u64::min(config::handover_floor(&escrow.config), remaining);
+    let handover_countdown_expiry = now + countdown;
+    let (cap, pending_cap_id, bid_amount, pending) =
+        register_pending_bid(escrow_id, payment, pending_tenant, ctx);
+    put_state(escrow, EscrowState::HandoverConfirmed {
+        asset, phase_start_ms, current, pending,
+        retiring,
+        handover_countdown_expiry,
+    }, receipt);
+    event::emit(BidPlaced {
+        escrow_id,
+        tenant_cap_id: pending_cap_id,
+        pending_tenant,
+        bid_amount,
+        floor_price: floor,
+        handover_countdown_expiry,
+    });
+    cap
+}
+
+/// spec: §5.1 — HandoverConfirmed → HandoverConfirmed (replace pending bid).
+/// Refunds the displaced bidder, registers the new pending tenant.
+/// Performs take_state / put_state internally; emits BidSuperseded.
+fun do_supersede_bid<Asset: key + store, CoinType>(
+    escrow:  &mut RentalEscrow<Asset, CoinType>,
+    payment: Coin<CoinType>,
+    floor:   u64,
+    ctx:     &mut TxContext,
+): TenantCap {
+    let escrow_id  = object::id(escrow);
+    let new_bidder = ctx.sender();
+    let (old, receipt) = take_state(escrow);
+    let (asset, phase_start_ms, current, displaced, retiring, handover_countdown_expiry) = match (old) {
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms, current, pending: displaced,
+            retiring, handover_countdown_expiry,
+        } => (asset, phase_start_ms, current, displaced, retiring, handover_countdown_expiry),
+        EscrowState::Idle           { asset: _a }                          => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. }                      => abort EInvariantViolation,
+        EscrowState::HandoverOpen   { asset: _a, current: _c, .. }         => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }                          => abort EInvariantViolation,
+    };
+    let Tenant {
+        cap_id: displaced_cap_id,
+        address: displaced_bidder,
+        stake: refund_balance,
+    } = displaced;
+    let refunded_amount = balance::value(&refund_balance);
+    transfer::public_transfer(coin::from_balance(refund_balance, ctx), displaced_bidder);
+    let (cap, new_pending_cap_id, new_bid_amount, new_pending) =
+        register_pending_bid(escrow_id, payment, new_bidder, ctx);
+    put_state(escrow, EscrowState::HandoverConfirmed {
+        asset, phase_start_ms, current,
+        pending: new_pending,
+        retiring,
+        handover_countdown_expiry,
+    }, receipt);
+    event::emit(BidSuperseded {
+        escrow_id,
+        displaced_tenant_cap_id: displaced_cap_id,
+        new_tenant_cap_id: new_pending_cap_id,
+        displaced_bidder,
+        refunded_amount,
+        new_bidder,
+        new_bid_amount,
+        floor_price: floor,
+    });
+    cap
+}
+
+/// spec: §4.2 — Idle | AtDutchAuction → Retired (immediate retirement).
+/// Performs take_state / put_state internally; emits both RetireFlagSet
+/// and AssetRetired (terminal transition, no deferral). Returns the new
+/// state tag (always Retired).
+fun do_retire_immediately<Asset: key + store, CoinType>(
+    escrow: &mut RentalEscrow<Asset, CoinType>,
+    ctx:    &TxContext,
+): EscrowStateTag {
+    let escrow_id = object::id(escrow);
+    let (old, receipt) = take_state(escrow);
+    let (asset, prior_tag) = match (old) {
+        EscrowState::Idle { asset } =>
+            (asset, EscrowStateTag::Idle),
+        EscrowState::AtDutchAuction { asset, phase_start_ms: _, last_acquisition_price: _ } =>
+            (asset, EscrowStateTag::AtDutchAuction),
+        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }                           => abort EInvariantViolation,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
+    };
+    put_state(escrow, EscrowState::Retired { asset }, receipt);
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
+    event::emit(AssetRetired { escrow_id, from_state: prior_tag });
+    EscrowStateTag::Retired
+}
+
+/// spec: §4.2 — HandoverOpen | HandoverConfirmed → same variant with
+/// `retiring = true` (deferred retirement). Performs take_state / put_state
+/// internally; emits RetireFlagSet only — AssetRetired is emitted later
+/// by `do_tenure_expiry` when the flag is honored. Returns the (unchanged)
+/// state tag.
+fun do_set_retiring_flag<Asset: key + store, CoinType>(
+    escrow: &mut RentalEscrow<Asset, CoinType>,
+    ctx:    &TxContext,
+): EscrowStateTag {
+    let escrow_id = object::id(escrow);
+    let (old, receipt) = take_state(escrow);
+    let (new_state, prior_tag) = match (old) {
+        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
+            assert!(!retiring, EAlreadyRetired);
+            let new = EscrowState::HandoverOpen {
+                asset, phase_start_ms, current, retiring: true,
+            };
+            (new, EscrowStateTag::HandoverOpen)
+        },
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
+        } => {
+            assert!(!retiring, EAlreadyRetired);
+            let new = EscrowState::HandoverConfirmed {
+                asset, phase_start_ms, current, pending,
+                retiring: true,
+                handover_countdown_expiry,
+            };
+            (new, EscrowStateTag::HandoverConfirmed)
+        },
+        EscrowState::Idle           { asset: _a }                          => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. }                      => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }                          => abort EInvariantViolation,
+    };
+    put_state(escrow, new_state, receipt);
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
+    prior_tag
+}
+
+/// spec: §6.1 — extract the asset from the active rented variant.
+/// Pre: state is HandoverOpen or HandoverConfirmed (filtered by the
+/// public dispatch in `borrow_asset`). Validates the caller's TenantCap
+/// against `current.cap_id` (and rejects the `pending` cap on Confirmed).
+/// Aborts EInvariantViolation on terminal variants — unreachable because
+/// `borrow_asset` aborts EStaleTenantCap before calling.
+/// EAssetAlreadyBorrowed only fires from same-tenant double-borrow in one PTB.
+fun do_extract_asset<Asset: key + store, CoinType>(
+    escrow: &mut RentalEscrow<Asset, CoinType>,
+    cap_id: ID,
+): Asset {
+    let (old, receipt) = take_state(escrow);
+    let (asset, new_state) = match (old) {
+        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
+            assert!(cap_id == current.cap_id, EStaleTenantCap);
+            let mut asset_opt = asset;
+            assert!(option::is_some(&asset_opt), EAssetAlreadyBorrowed);
+            let extracted = option::extract(&mut asset_opt);
+            let new = EscrowState::HandoverOpen {
+                asset: asset_opt, phase_start_ms, current, retiring,
+            };
+            (extracted, new)
+        },
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
+        } => {
+            assert!(cap_id != pending.cap_id, EPendingTenantCap);
+            assert!(cap_id == current.cap_id, EStaleTenantCap);
+            let mut asset_opt = asset;
+            assert!(option::is_some(&asset_opt), EAssetAlreadyBorrowed);
+            let extracted = option::extract(&mut asset_opt);
+            let new = EscrowState::HandoverConfirmed {
+                asset: asset_opt, phase_start_ms, current, pending, retiring,
+                handover_countdown_expiry,
+            };
+            (extracted, new)
+        },
+        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
+    };
+    put_state(escrow, new_state, receipt);
+    asset
+}
+
+/// spec: §6.2 — fill the asset back into the active rented variant.
+/// Returns the current tenant's cap_id for the AssetReturned event.
+/// Aborts EInvariantViolation on terminal variants — unreachable by PTB
+/// clock-fixity (§6.1): AssetReceipt is only produced from active states,
+/// and state cannot change between borrow and return inside one PTB.
+fun do_fill_asset<Asset: key + store, CoinType>(
+    escrow: &mut RentalEscrow<Asset, CoinType>,
+    asset:  Asset,
+): ID {
+    let (old, receipt) = take_state(escrow);
+    let (new_state, tenant_cap_id) = match (old) {
+        EscrowState::HandoverOpen { asset: asset_slot, phase_start_ms, current, retiring } => {
+            let cap_id = current.cap_id;
+            let mut slot = asset_slot;
+            assert!(option::is_none(&slot), EInvariantViolation);
+            option::fill(&mut slot, asset);
+            let new = EscrowState::HandoverOpen {
+                asset: slot, phase_start_ms, current, retiring,
+            };
+            (new, cap_id)
+        },
+        EscrowState::HandoverConfirmed {
+            asset: asset_slot, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
+        } => {
+            let cap_id = current.cap_id;
+            let mut slot = asset_slot;
+            assert!(option::is_none(&slot), EInvariantViolation);
+            option::fill(&mut slot, asset);
+            let new = EscrowState::HandoverConfirmed {
+                asset: slot, phase_start_ms, current, pending, retiring,
+                handover_countdown_expiry,
+            };
+            (new, cap_id)
+        },
+        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
+    };
+    put_state(escrow, new_state, receipt);
+    tenant_cap_id
 }
 
 /// spec: §7.6 — split + (gated) fee post + drain into owner_earnings.
@@ -1014,3 +1138,40 @@ fun register_pending_bid<CoinType>(
 //    that could reach read_state.  The compiler enforces that put_state is
 //    called before the end of the PTB; it does not enforce call ordering
 //    within the body — that ordering is the author's responsibility.
+//
+// CONVENTION P_DO: a private function carries the `do_*` prefix iff its body
+// owns a take_state / put_state window (i.e. produces and consumes a single
+// StateReceipt). The relation is bidirectional and exact: every do_* function
+// calls both take_state and put_state; no other function in the module calls
+// both.
+//
+// Enforcement summary
+// ───────────────────
+// │ Guarantee                                         │ Level         │
+// │ Every do_* function owns a take/put window        │ convention    │
+// │ No non-do_* function owns a take/put window       │ convention    │
+// │   (public fns dispatch to do_* helpers instead)   │               │
+// │ Every take_state pairs with a put_state in PTB    │ compile-time  │
+// │   (StateReceipt hot potato — see P_READ above)    │               │
+//
+// Why P_DO matters
+// ────────────────
+// The state-mutating helpers form a category with shared structural shape:
+// take_state → match → mutation → put_state → emit. Marking them with a
+// dedicated prefix makes the category scannable and the contract auditable:
+//
+//   grep '^fun do_'                             # all state-cell mutators
+//   grep -B5 'take_state(escrow)' | grep '^fun' # owners of take/put windows
+//
+// If those two sets diverge, P_DO is violated. The convention encodes a
+// structural property — public functions delegate to do_* helpers and never
+// own a take/put window themselves — making the call graph self-documenting.
+//
+// How to maintain the convention in future changes
+// ─────────────────────────────────────────────────
+// 1. A new helper that calls take_state and put_state must be named do_*.
+// 2. A new public function that needs to mutate state must delegate to a
+//    do_* helper rather than open its own take/put window.
+// 3. do_* helpers do not call each other today; if a chain is ever needed,
+//    each link must still own its own receipt and the bidirectional grep
+//    parity must continue to hold.

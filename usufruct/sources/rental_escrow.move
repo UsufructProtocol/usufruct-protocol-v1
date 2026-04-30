@@ -42,8 +42,7 @@ const EWrongEscrowTenantCap:    u64 = 12;  // spec: E_WRONG_ESCROW_TENANT_CAP
 const EPendingTenantCap:        u64 = 13;  // spec: E_PENDING_TENANT_CAP
 const EStaleTenantCap:          u64 = 14;  // spec: E_STALE_TENANT_CAP
 const ETenantCapNotStale:       u64 = 15;  // spec: E_TENANT_CAP_NOT_STALE
-const ENotAtDutchAuction:       u64 = 16;  // spec: E_NOT_AT_DUTCH_AUCTION
-const EInvariantViolation:      u64 = 0xDEADC0DE; // unreachable in correct operation — programmer error, not user error
+const EInvariantViolation:      u64 = 0xDEADC0DE; // = 3_735_929_054 — unreachable in correct operation; programmer error, not user error
 
 // === Constants ===
 // spec: §1.2
@@ -573,9 +572,9 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
             assert!(current.cap_id != cap_id, ETenantCapNotStale);
             assert!(pending.cap_id != cap_id, ETenantCapNotStale);
         },
-        EscrowState::Idle { .. } //Change _ {..} ==> {} //Pasa la verificación
-        | EscrowState::AtDutchAuction { .. }
-        | EscrowState::Retired { .. } => {},
+        EscrowState::Idle { .. } //CHANGE: => EInvariantViolation
+        | EscrowState::AtDutchAuction { .. } //=> EInvariantViolation
+        | EscrowState::Retired { .. } => {}, // => EInvariantViolation
     };
     tenant_cap::burn(cap, ctx);
 }
@@ -669,17 +668,17 @@ public fun state_tag<Asset: key + store, CoinType>( //CHANGE(NAME), escrow_state
 
 // === Admin Functions ===
 
-// === Package Functions ===
+// === Private Functions ===
 
 /// spec: §8.2 — Dutch descent. Caller has dispatched on AtDutchAuction.
-public(package) fun compute_price_descent<Asset: key + store, CoinType>(
+fun compute_price_descent<Asset: key + store, CoinType>(
     escrow:       &RentalEscrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
     let (phase_start_ms, last_acquisition_price) = match (read_state(escrow)) {
         EscrowState::AtDutchAuction { phase_start_ms, last_acquisition_price, .. } =>
             (*phase_start_ms, *last_acquisition_price),
-        _ => abort ENotAtDutchAuction,
+        _ => abort EInvariantViolation,
     };
     if (timestamp_ms < phase_start_ms) return last_acquisition_price;
     let elapsed_ms = timestamp_ms - phase_start_ms;
@@ -694,60 +693,66 @@ public(package) fun compute_price_descent<Asset: key + store, CoinType>(
 }
 
 /// spec: §8.3 — takeover/supersede floor.
-public(package) fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64): u64 {
+fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64): u64 {
     price_function::evaluate_price_fn(config::price_function(cfg), price)
 }
 
 /// spec: §8.5 — `phase_start_ms + tenure_ceiling` for the active Rented
 /// variant.
-public(package) fun tenure_expiry_ms<Asset: key + store, CoinType>( //DOUBT: tenure_expiry_ms solo puede ser llamada desde el estado HandoverOpen?
+fun tenure_expiry_ms<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
 ): u64 {
     let phase_start_ms = match (read_state(escrow)) {
         EscrowState::HandoverOpen      { phase_start_ms, .. } => *phase_start_ms,
         EscrowState::HandoverConfirmed { phase_start_ms, .. } => *phase_start_ms,
-        _ => abort ENotRented,
+        _ => abort EInvariantViolation,
     };
     phase_start_ms + config::tenure_ceiling(&escrow.config)
 }
 
 /// spec: §8.5 — `phase_start_ms + descent_ceiling` for the active
 /// AtDutchAuction variant.
-public(package) fun descent_expiry_ms<Asset: key + store, CoinType>(
+fun descent_expiry_ms<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
 ): u64 {
     let phase_start_ms = match (read_state(escrow)) {
         EscrowState::AtDutchAuction { phase_start_ms, .. } => *phase_start_ms,
-        _ => abort ENotAtDutchAuction,
+        _ => abort EInvariantViolation,
     };
     phase_start_ms + config::descent_ceiling(&escrow.config)
 }
 
-// === Private Functions ===
-
-/// spec: §2.6 — sole producer of `StateReceipt`.
+/// spec: §2.6 — sole producer of `StateReceipt`. Asserts the state-cell
+/// invariant explicitly so a violation aborts with `EInvariantViolation`
+/// rather than the generic `option::EOPTION_NOT_SET`.
 fun take_state<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
 ): (EscrowState<Asset, CoinType>, StateReceipt) {
+    assert!(option::is_some(&escrow.state), EInvariantViolation);
     (option::extract(&mut escrow.state), StateReceipt {})
 }
 
-/// spec: §2.6 — sole consumer of `StateReceipt`.
+/// spec: §2.6 — sole consumer of `StateReceipt`. Asserts the state cell is
+/// `None` (i.e. between `take_state` and `put_state`) so a double-fill
+/// aborts with `EInvariantViolation` rather than `option::EOPTION_IS_SET`.
 fun put_state<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     new:     EscrowState<Asset, CoinType>,
     receipt: StateReceipt,
 ) {
     let StateReceipt {} = receipt;
+    assert!(option::is_none(&escrow.state), EInvariantViolation);
     option::fill(&mut escrow.state, new);
 }
 
 /// spec: §2.6 — sole read accessor. Single site of `option::borrow` on
 /// `escrow.state`. Must never be called between `take_state` and `put_state`;
-/// see `// === Design Conventions ===` for enforcement discussion.
+/// the assert turns a P_READ violation into an `EInvariantViolation` abort
+/// rather than `option::EOPTION_NOT_SET`. See Design Conventions section.
 fun read_state<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
 ): &EscrowState<Asset, CoinType> {
+    assert!(option::is_some(&escrow.state), EInvariantViolation);
     option::borrow(&escrow.state)
 }
 
@@ -971,13 +976,13 @@ fun register_pending_bid<CoinType>(
 fun handover_due_at<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
     now:    u64,
-): Option<u64> {
+): Option<u64> { //Debería ser u64
     match (read_state(escrow)) {
         EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
             let e = *handover_countdown_expiry;
             if (now >= e) option::some(e) else option::none()
         },
-        _ => option::none(),
+        _ => option::none(), //abort EInvariantViolation //esta función no debería ser llamada fuera del estado HandoverConfirmed
     }
 }
 
@@ -985,13 +990,13 @@ fun handover_due_at<Asset: key + store, CoinType>(
 fun tenure_due_at<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
     now:    u64,
-): Option<u64> {
+): Option<u64> { //idem 977
     match (read_state(escrow)) {
         EscrowState::HandoverOpen { phase_start_ms, .. } => {
             let e = *phase_start_ms + config::tenure_ceiling(&escrow.config);
             if (now >= e) option::some(e) else option::none()
         },
-        _ => option::none(),
+        _ => option::none(), //idem 983
     }
 }
 
@@ -999,13 +1004,13 @@ fun tenure_due_at<Asset: key + store, CoinType>(
 fun auction_due_at<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
     now:    u64,
-): Option<u64> {
+): Option<u64> { //idem 977
     match (read_state(escrow)) {
         EscrowState::AtDutchAuction { phase_start_ms, .. } => {
             let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
             if (now >= e) option::some(e) else option::none()
         },
-        _ => option::none(),
+        _ => option::none(), //idem 983
     }
 }
 
@@ -1028,7 +1033,12 @@ fun auction_due_at<Asset: key + store, CoinType>(
 //
 // Why violating P_READ is a runtime abort, not silent corruption
 // ──────────────────────────────────────────────────────────────
-// `option::borrow` on a `None` aborts with `EOPTION_NOT_SET` (262145).
+// `read_state` asserts `option::is_some(&escrow.state)` first, so a P_READ
+// violation aborts with `EInvariantViolation` (0xDEADC0DE) rather than the
+// generic `option::EOPTION_NOT_SET` (262145). Same for `take_state` /
+// `put_state` — every state-cell access is guarded by an explicit assert
+// against the same invariant code, making protocol bugs distinguishable
+// from user errors in logs and indexers.
 // The transaction rolls back entirely — no half-written state persists.
 // The risk is liveness (unexpected abort), not correctness (state corruption).
 //
@@ -1036,12 +1046,12 @@ fun auction_due_at<Asset: key + store, CoinType>(
 // ────────────────────────────────
 // To document and pin the runtime behaviour, the test suite must include:
 //
-//   #[test, expected_failure(abort_code = std::option::EOPTION_NOT_SET)]
+//   #[test, expected_failure(abort_code = usufruct::rental_escrow::EInvariantViolation)]
 //   fun test_read_state_aborts_inside_take_put_window() {
 //       // ... set up a minimal RentalEscrow in a test scenario ...
 //       let (state, receipt) = take_state(&mut escrow);
 //       // P_READ violated — read_state sees None here:
-//       let _ = read_state(&escrow);      // must abort with EOPTION_NOT_SET
+//       let _ = read_state(&escrow);      // must abort EInvariantViolation
 //       // put_state unreachable, but receipt would be consumed by abort.
 //       put_state(&mut escrow, state, receipt);
 //   }

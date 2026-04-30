@@ -580,9 +580,9 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
             assert!(current.cap_id != cap_id, ETenantCapNotStale);
             assert!(pending.cap_id != cap_id, ETenantCapNotStale);
         },
-        EscrowState::Idle { .. } //CHANGE: => EInvariantViolation
-        | EscrowState::AtDutchAuction { .. } //=> EInvariantViolation
-        | EscrowState::Retired { .. } => {}, // => EInvariantViolation
+        EscrowState::Idle { .. }
+        | EscrowState::AtDutchAuction { .. }
+        | EscrowState::Retired { .. } => {},
     };
     tenant_cap::burn(cap, ctx);
 }
@@ -669,7 +669,7 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
 }
 
 /// spec: §8.7 — discriminator projection.
-public fun state_tag<Asset: key + store, CoinType>( //CHANGE(NAME), escrow_state<>()
+public fun state_tag<Asset: key + store, CoinType>(
     s: &EscrowState<Asset, CoinType>,
 ): EscrowStateTag {
     match (s) {

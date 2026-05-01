@@ -269,7 +269,10 @@ public fun retire<Asset: key + store, CoinType>(
     assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     apply_pending_transitions(escrow, clock, ctx);
     assert!(
-        clock::timestamp_ms(clock) >= escrow.integrated_at_ms + config::retire_floor(&escrow.config),
+        clock::timestamp_ms(clock) >= config::retire_unlock(
+            config::retire(&escrow.config),
+            escrow.integrated_at_ms,
+        ),
         ERetireFloorNotElapsed,
     );
     match (read_state(escrow)) {
@@ -418,7 +421,10 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
                 if (now >= e) { do_tenure_expiry(escrow, e, ctx); true } else false
             },
             EscrowState::AtDutchAuction { phase_start_ms, .. } => {
-                let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
+                let e = config::descent_boundary(
+                    config::descent(&escrow.config),
+                    *phase_start_ms,
+                );
                 if (now >= e) { do_auction_expiry(escrow, e); true } else false
             },
             EscrowState::Idle { .. } | EscrowState::Retired { .. } => false,
@@ -500,7 +506,7 @@ fun compute_price_descent<Asset: key + store, CoinType>(
     let h = curve_shape::evaluate_curve(
         config::descent_curve(&escrow.config),
         elapsed_ms,
-        config::descent_ceiling(&escrow.config),
+        config::descent_window_ceiling(config::descent(&escrow.config)),
     );
     let spread   = last_acquisition_price - config::min_rent_price(&escrow.config);
     let consumed = math::mul_div(spread, h, curve_shape::scale());
@@ -673,10 +679,12 @@ fun do_place_bid<Asset: key + store, CoinType>(
         EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
         EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
     };
-    let tenure_e                  = phase_start_ms + config::tenure_ceiling(&escrow.config);
-    let remaining                 = tenure_e - now;
-    let countdown                 = u64::min(config::handover_floor(&escrow.config), remaining);
-    let handover_countdown_expiry = now + countdown;
+    let handover_countdown_expiry = config::handover_expiry(
+        config::handover(&escrow.config),
+        now,
+        phase_start_ms,
+        config::tenure_ceiling(&escrow.config),
+    );
     let (cap, pending) = register_pending_bid(escrow_id, payment, pending_tenant, ctx);
     let pending_cap_id = object::id(&cap);
     let bid_amount     = balance::value(&pending.stake);

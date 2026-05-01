@@ -24,28 +24,26 @@ use usufruct::{
 };
 
 // === Errors ===
-// spec: §1.1
 
-const ENotRented:               u64 = 0;   // spec: E_NOT_RENTED
-const EInsufficientPayment:     u64 = 1;   // spec: E_INSUFFICIENT_PAYMENT
-const ERetireFlagBlocksBid:     u64 = 2;   // spec: E_RETIRE_FLAG_BLOCKS_BID
-const ERetiredNoBid:            u64 = 3;   // spec: E_RETIRED_NO_BID
-const ERetireFloorNotElapsed:   u64 = 4;   // spec: E_RETIRE_FLOOR_NOT_ELAPSED
-const EAlreadyRetired:          u64 = 5;   // spec: E_ALREADY_RETIRED
-const ENotRetired:              u64 = 6;   // spec: E_NOT_RETIRED
-const EReceiptEscrowMismatch:   u64 = 7;   // spec: E_RECEIPT_ESCROW_MISMATCH
-const EReceiptAssetMismatch:    u64 = 8;   // spec: E_RECEIPT_ASSET_MISMATCH
-const ENoEarnings:              u64 = 9;   // spec: E_NO_EARNINGS
-const EAssetAlreadyBorrowed:    u64 = 10;  // spec: E_ASSET_ALREADY_BORROWED
-const EWrongEscrowOwnerCap:     u64 = 11;  // spec: E_WRONG_ESCROW_OWNER_CAP
-const EWrongEscrowTenantCap:    u64 = 12;  // spec: E_WRONG_ESCROW_TENANT_CAP
-const EPendingTenantCap:        u64 = 13;  // spec: E_PENDING_TENANT_CAP
-const EStaleTenantCap:          u64 = 14;  // spec: E_STALE_TENANT_CAP
-const ETenantCapNotStale:       u64 = 15;  // spec: E_TENANT_CAP_NOT_STALE
-const EInvariantViolation:      u64 = 0xDEADC0DE; // spec: E_INVARIANT_VIOLATION
+const ENotRented:               u64 = 0;
+const EInsufficientPayment:     u64 = 1;
+const ERetireFlagBlocksBid:     u64 = 2;
+const ERetiredNoBid:            u64 = 3;
+const ERetireFloorNotElapsed:   u64 = 4;
+const EAlreadyRetired:          u64 = 5;
+const ENotRetired:              u64 = 6;
+const EReceiptEscrowMismatch:   u64 = 7;
+const EReceiptAssetMismatch:    u64 = 8;
+const ENoEarnings:              u64 = 9;
+const EAssetAlreadyBorrowed:    u64 = 10;
+const EWrongEscrowOwnerCap:     u64 = 11;
+const EWrongEscrowTenantCap:    u64 = 12;
+const EPendingTenantCap:        u64 = 13;
+const EStaleTenantCap:          u64 = 14;
+const ETenantCapNotStale:       u64 = 15;
+const EInvariantViolation:      u64 = 0xDEADC0DE;
 
 // === Constants ===
-// spec: §1.2
 
 const PROTOCOL_FEE_BPS:   u64 = 1_000;
 const BPS_PER_UNIT:       u64 = 10_000;
@@ -53,7 +51,6 @@ const MAX_APT_ITERATIONS: u64 = 4;
 
 // === Structs ===
 
-/// spec: §2.1
 public enum EscrowStateTag has copy, drop, store {
     Idle,
     AtDutchAuction,
@@ -62,14 +59,12 @@ public enum EscrowStateTag has copy, drop, store {
     Retired,
 }
 
-/// spec: §2.2
 public struct Tenant<phantom CoinType> has store {
     cap_id:  ID,
     address: address,
     stake:   Balance<CoinType>,
 }
 
-/// spec: §2.3
 public enum EscrowState<Asset: key + store, phantom CoinType> has store {
     Idle {
         asset: Asset,
@@ -98,7 +93,6 @@ public enum EscrowState<Asset: key + store, phantom CoinType> has store {
     },
 }
 
-/// spec: §2.4
 public struct RentalEscrow<Asset: key + store, phantom CoinType> has key {
     id:                UID,
     config:            IntegrationConfig,
@@ -108,17 +102,14 @@ public struct RentalEscrow<Asset: key + store, phantom CoinType> has key {
     state:             Option<EscrowState<Asset, CoinType>>,
 }
 
-/// spec: §2.5
 public struct AssetReceipt {
     escrow_id: ID,
     asset_id:  ID,
 }
 
-/// spec: §2.6
 public struct StateReceipt {}
 
 // === Events ===
-// spec: §3
 
 public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
     escrow_id:    ID,
@@ -219,7 +210,6 @@ public struct EarningsWithdrawn has copy, drop {
 
 // === Public Functions ===
 
-/// spec: §4.1
 public fun integrate<Asset: key + store, CoinType>(
     asset:    Asset,
     cfg:      IntegrationConfig,
@@ -248,7 +238,6 @@ public fun integrate<Asset: key + store, CoinType>(
     cap
 }
 
-/// spec: §5.1
 public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -271,7 +260,6 @@ public fun rent<Asset: key + store, CoinType>(
     }
 }
 
-/// spec: §4.2
 public fun retire<Asset: key + store, CoinType>(
     escrow:    &mut RentalEscrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -293,7 +281,6 @@ public fun retire<Asset: key + store, CoinType>(
     }
 }
 
-/// spec: §4.3
 public fun claim_asset<Asset: key + store, CoinType>(
     mut escrow: RentalEscrow<Asset, CoinType>,
     owner_cap:  OwnerCap,
@@ -326,7 +313,6 @@ public fun claim_asset<Asset: key + store, CoinType>(
     (asset, earnings)
 }
 
-/// spec: §4.4
 public fun withdraw_earnings<Asset: key + store, CoinType>(
     escrow:    &mut RentalEscrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -347,7 +333,6 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     coin::from_balance(withdrawn, ctx)
 }
 
-/// spec: §6.1
 public fun borrow_asset<Asset: key + store, CoinType>(
     escrow:     &mut RentalEscrow<Asset, CoinType>,
     tenant_cap: &TenantCap,
@@ -370,7 +355,6 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     (asset, AssetReceipt { escrow_id, asset_id })
 }
 
-/// spec: §6.2
 public fun return_asset<Asset: key + store, CoinType>(
     escrow:     &mut RentalEscrow<Asset, CoinType>,
     asset:      Asset,
@@ -389,7 +373,6 @@ public fun return_asset<Asset: key + store, CoinType>(
     event::emit(AssetReturned { escrow_id, tenant_cap_id });
 }
 
-/// spec: §6.3
 public fun burn_tenant_cap<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     cap:    TenantCap,
@@ -414,7 +397,6 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     tenant_cap::burn(cap, ctx);
 }
 
-/// spec: §5.2
 public fun apply_pending_transitions<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     clock:  &Clock,
@@ -447,7 +429,6 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
 
 // === View Functions ===
 
-/// spec: §8.1
 public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow:       &RentalEscrow<Asset, CoinType>,
     timestamp_ms: u64,
@@ -473,7 +454,6 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
     math::mul_div(principal, g, curve_shape::scale())
 }
 
-/// spec: §8.4
 public fun compute_floor_price<Asset: key + store, CoinType>(
     escrow:       &RentalEscrow<Asset, CoinType>,
     timestamp_ms: u64,
@@ -490,7 +470,6 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
     }
 }
 
-/// spec: §8.7
 public fun state_tag<Asset: key + store, CoinType>(
     s: &EscrowState<Asset, CoinType>,
 ): EscrowStateTag {
@@ -507,7 +486,6 @@ public fun state_tag<Asset: key + store, CoinType>(
 
 // === Private Functions ===
 
-/// spec: §8.2
 fun compute_price_descent<Asset: key + store, CoinType>(
     escrow:       &RentalEscrow<Asset, CoinType>,
     timestamp_ms: u64,
@@ -529,12 +507,11 @@ fun compute_price_descent<Asset: key + store, CoinType>(
     last_acquisition_price - consumed
 }
 
-/// spec: §8.3
 fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64): u64 {
     price_function::evaluate_price_fn(config::price_function(cfg), price)
 }
 
-/// spec: §2.6 — take/put/read are the only sites that touch escrow.state.
+/// take/put/read are the only sites that touch escrow.state.
 fun take_state<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
 ): (EscrowState<Asset, CoinType>, StateReceipt) {
@@ -559,7 +536,6 @@ fun read_state<Asset: key + store, CoinType>(
     option::borrow(&escrow.state)
 }
 
-/// spec: §7.1
 fun do_handover<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
@@ -585,7 +561,6 @@ fun do_handover<Asset: key + store, CoinType>(
     });
 }
 
-/// spec: §7.2
 fun do_tenure_expiry<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
@@ -615,7 +590,6 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     };
 }
 
-/// spec: §7.3
 fun do_auction_expiry<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
@@ -633,14 +607,13 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
     event::emit(AuctionExpired { escrow_id, timestamp_ms: boundary_ms });
 }
 
-/// spec: §7.4 — pure 90/10 split. Floors fee to zero on `n < 10`.
+/// pure 90/10 split. Floors fee to zero on `n < 10`.
 fun split_fee(amount: u64): (u64, u64) {
     let fee   = math::mul_div(amount, PROTOCOL_FEE_BPS, BPS_PER_UNIT);
     let owner = amount - fee;
     (owner, fee)
 }
 
-/// spec: §7.5
 fun do_install_new_tenant<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -680,7 +653,6 @@ fun do_install_new_tenant<Asset: key + store, CoinType>(
     new_cap
 }
 
-/// spec: §7.10
 fun do_place_bid<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -724,7 +696,6 @@ fun do_place_bid<Asset: key + store, CoinType>(
     cap
 }
 
-/// spec: §7.11
 fun do_supersede_bid<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -773,7 +744,6 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     cap
 }
 
-/// spec: §7.8
 fun do_retire_immediately<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     ctx:    &TxContext,
@@ -795,7 +765,6 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
     EscrowStateTag::Retired
 }
 
-/// spec: §7.9
 fun do_set_retiring_flag<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     ctx:    &TxContext,
@@ -830,7 +799,6 @@ fun do_set_retiring_flag<Asset: key + store, CoinType>(
     prior_tag
 }
 
-/// spec: §7.12
 fun do_extract_asset<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     cap_id: ID,
@@ -869,7 +837,6 @@ fun do_extract_asset<Asset: key + store, CoinType>(
     asset
 }
 
-/// spec: §7.13
 fun do_fill_asset<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     asset:  Asset,
@@ -1031,7 +998,6 @@ fun do_terminate_tenure<Asset: key + store, CoinType>(
     tag
 }
 
-/// spec: §7.1
 fun pay_tenant_remain<CoinType>(
     mut balance:   Balance<CoinType>,
     remain_amount: u64,
@@ -1045,7 +1011,6 @@ fun pay_tenant_remain<CoinType>(
     balance
 }
 
-/// spec: §7.6
 fun pay_protocol_fee<CoinType>(
     mut balance:  Balance<CoinType>,
     fee_amount:   u64,
@@ -1061,7 +1026,6 @@ fun pay_protocol_fee<CoinType>(
     balance
 }
 
-/// spec: §7.7
 fun register_pending_bid<CoinType>(
     escrow_id: ID,
     payment:   Coin<CoinType>,

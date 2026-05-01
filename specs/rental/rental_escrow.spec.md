@@ -58,13 +58,19 @@ distribution logic for every boundary event.
   (§2.6 — enforce P13 / P_READ).
 - Private price helpers: `compute_price_descent`,
   `compute_next_rent_price` (backing `compute_floor_price`).
-- Private settlement / transition helpers (P_DO — every one owns a
-  single take/put window): `do_handover`, `do_tenure_expiry`,
-  `do_auction_expiry`, `do_install_new_tenant`, `do_place_bid`,
-  `do_supersede_bid`, `do_retire_immediately`, `do_set_retiring_flag`,
-  `do_extract_asset`, `do_fill_asset`.
+- Private transition helpers (P_DO flavor a — state-window owners,
+  each owning a single take/put cycle): `do_auction_expiry`,
+  `do_install_new_tenant`, `do_place_bid`, `do_supersede_bid`,
+  `do_retire_immediately`, `do_set_retiring_flag`, `do_extract_asset`,
+  `do_fill_asset`, `do_distribute_balance`, `do_rotate_for_handover`,
+  `do_terminate_tenure`.
+- Private transition orchestrators (P_DO flavor b — compose two
+  sub-step `do_*` helpers): `do_handover` (= `do_distribute_balance` +
+  `do_rotate_for_handover`), `do_tenure_expiry`
+  (= `do_distribute_balance` + `do_terminate_tenure`).
 - Private utility helpers (no take/put window): `split_fee`,
-  `settle_stake_earnings`, `register_pending_bid`.
+  `settle_tenant`, `pay_tenant_remain`, `pay_protocol_fee`,
+  `register_pending_bid`.
 - Protocol state-machine events: `AssetIntegrated`, `RentStarted`,
   `BidPlaced`, `BidSuperseded`, `HandoverCompleted`, `TenureExpired`,
   `AuctionExpired`, `RetireFlagSet`, `AssetRetired`, `AssetBorrowed`,
@@ -330,44 +336,69 @@ fun test_read_state_aborts_inside_take_put_window() {
    enforce call ordering within the body — that ordering is the
    author's responsibility.
 
-**P_DO — `do_*` prefix iff a function owns a take/put window.**
+**P_DO — `do_*` prefix iff a function performs a state-machine
+transition (single-step or composed).**
 
 A private function in this module carries the `do_*` prefix iff its
-body owns a `take_state` / `put_state` window — i.e. produces and
-consumes exactly one `StateReceipt`. The relation is bidirectional
-and exact: every `do_*` function calls both `take_state` and
-`put_state`; no other function in the module calls both.
+body either (a) owns a `take_state` / `put_state` window directly,
+or (b) orchestrates two or more `do_*` sub-steps in sequence. Every
+state mutation is funneled through a `do_*`; no non-`do_*` function
+owns a take/put window.
 
-| Guarantee                                         | Level         |
+**Two flavors of `do_*`:**
+
+| Flavor | Body shape | Examples |
+|---|---|---|
+| **(a) state-window owner** | contains `take_state` and `put_state` directly | `do_install_new_tenant`, `do_place_bid`, `do_supersede_bid`, `do_retire_immediately`, `do_set_retiring_flag`, `do_extract_asset`, `do_fill_asset`, `do_auction_expiry`, `do_distribute_balance`, `do_rotate_for_handover`, `do_terminate_tenure` |
+| **(b) orchestrator** | no direct `take_state`; composes flavor-(a) `do_*` helpers back-to-back | `do_handover` (composes `do_distribute_balance` + `do_rotate_for_handover`), `do_tenure_expiry` (composes `do_distribute_balance` + `do_terminate_tenure`) |
+
+| Guarantee                                                  | Level         |
 |---|---|
-| Every `do_*` function owns a take/put window     | convention    |
+| Every `do_*` function either owns a take/put window OR composes `do_*` sub-steps | convention |
 | No non-`do_*` function owns a take/put window (public fns dispatch to `do_*` helpers instead) | convention |
 | Every `take_state` pairs with a `put_state` in PTB (`StateReceipt` hot potato — see P_READ above) | compile-time |
 
 **Why P_DO matters.** The state-mutating helpers form a category
 with shared structural shape: `take_state` → match → mutation →
-`put_state` → emit. Marking them with a dedicated prefix makes the
-category scannable and the contract auditable:
+`put_state`. Marking them with a dedicated prefix makes the category
+scannable and the contract auditable:
 
 ```
-grep '^fun do_'                             # all state-cell mutators
-grep -B5 'take_state(escrow)' | grep '^fun' # owners of take/put windows
+grep '^fun do_'                             # all state mutators (both flavors)
+grep -B5 'take_state(escrow)' | grep '^fun' # state-window owners only (flavor a)
 ```
 
-If those two sets diverge, P_DO is violated. The convention encodes
-a structural property — public functions delegate to `do_*` helpers
-and never own a take/put window themselves — making the call graph
-self-documenting.
+Window owners ⊆ `do_*` always. Orchestrators are `do_*` but not
+window owners; they call window-owner `do_*` helpers instead.
+Non-`do_*` functions never own a window. The convention encodes a
+structural property — every state mutation is funneled through a
+`do_*` — making the call graph self-documenting.
+
+**Why orchestrators exist.** A transition may conceptually mutate
+state more than once (e.g., handover redistributes the outgoing
+tenant's balance, then rotates pending → current). Decomposing into
+two `do_*` sub-steps, each with its own take/put, separates concerns
+at the cost of one extra take/put cycle per transition. An
+intermediate state value (e.g., `current.stake = balance::zero()`)
+lives between the two sub-steps — transient and only observable
+inside the orchestrator body, never at a transaction boundary
+(P13).
 
 **Maintenance rules:**
 
 1. A new helper that calls `take_state` and `put_state` must be
-   named `do_*`.
+   named `do_*` (flavor a).
 2. A new public function that needs to mutate state must delegate to
    a `do_*` helper rather than open its own take/put window.
-3. `do_*` helpers do not call each other today; if a chain is ever
-   needed, each link must still own its own receipt and the
-   bidirectional grep parity must continue to hold.
+3. An orchestrator (flavor b) `do_*` that composes sub-step `do_*`
+   helpers stays in the `do_*` family even though its body has no
+   direct `take_state` call.
+4. Sub-step `do_*` helpers may call each other only via the
+   orchestrator; each link's receipt is consumed locally before the
+   next sub-step takes state again. The intermediate state between
+   sub-steps is structurally valid (a regular `EscrowState` variant)
+   even if some inner field is in a transient sentinel state (e.g.,
+   `current.stake = balance::zero()`).
 
 
 1. CONSTANTS
@@ -2154,165 +2185,65 @@ All helpers are private (`fun`) — visible only within `rental_escrow`.
 `Some(EscrowState::HandoverConfirmed { .. })` and `boundary_ms`
 equals the variant's `handover_countdown_expiry`.
 
+**Convention:** P_DO flavor (b) — orchestrator. The body has no
+direct `take_state` call; it composes two state-window owner
+sub-steps in sequence, each owning its own take/put cycle.
+
 **Algorithm:**
 
-1. **Extract state via `take_state`** (§2.6) and dispatch on the
-   variant. Move 2024 requires explicit per-variant binding for
-   non-`drop` fields, so each unreachable arm names its linear payload
-   with `: _a`, `: _c`, `: _p` placeholders and aborts
-   `E_INVARIANT_VIOLATION`:
+1. **Distribute the outgoing tenant's balance** by calling
+   `do_distribute_balance` (§7.14). Sub-step 1 takes its own state
+   window, settles the outgoing tenant 3-way (tenant remain →
+   protocol fee → owner earnings), and leaves the state cell on the
+   SAME variant (`HandoverConfirmed`) with `current.stake =
+   balance::zero()`. The transient zero-stake `Tenant` lives only
+   between sub-steps inside this orchestrator body, never at a tx
+   boundary (P13). Returns `(displaced_tenant, owner_share,
+   protocol_fee, remain_credit)` — the address-of-record and the
+   three settlement amounts for the event emit at step 3.
 
-   ```move
-   let (old, receipt) = take_state(escrow);
-   let (asset, phase_start_outgoing, current, pending, retiring) = match (old) {
-       EscrowState::HandoverConfirmed {
-           asset, phase_start_ms, current, pending,
-           retiring, handover_countdown_expiry: _,
-       } => (asset, phase_start_ms, current, pending, retiring),
-       EscrowState::Idle              { asset: _a }                       => abort E_INVARIANT_VIOLATION,
-       EscrowState::AtDutchAuction    { asset: _a, .. }                   => abort E_INVARIANT_VIOLATION,
-       EscrowState::HandoverOpen      { asset: _a, current: _c, .. }      => abort E_INVARIANT_VIOLATION,
-       EscrowState::Retired           { asset: _a }                       => abort E_INVARIANT_VIOLATION,
-   };
-   ```
+2. **Rotate `pending` → new `current`** by calling
+   `do_rotate_for_handover` (§7.15). Sub-step 2 takes its own state
+   window, destroys the zero-stake outgoing `current` (with the
+   `assert!(balance::value(&zero_stake) == 0, E_INVARIANT_VIOLATION)`
+   guard before `balance::destroy_zero` — a P_DO-coherent invariant
+   that an in-flight orchestrator cannot bypass), promotes
+   `pending` to `current`, and transitions the variant to
+   `HandoverOpen` with `phase_start_ms = boundary_ms`. Returns
+   `(new_tenant_cap_id, new_rent_price)` for the event emit.
 
-   `phase_start_ms` is bound as `phase_start_outgoing` for use in
-   step 3; `handover_countdown_expiry` is dropped (the boundary is
-   passed in as `boundary_ms`). `receipt` is held open until step 7
-   fills the new variant. The unreachable arms are guaranteed by APT's
-   variant-driven dispatch — only `HandoverConfirmed` reaches this
-   helper.
+3. Emit `HandoverCompleted { escrow_id: object::id(escrow),
+   displaced_tenant, new_tenant_cap_id, used_credit (= owner_share +
+   protocol_fee), owner_share, protocol_fee, remain_credit,
+   new_rent_price, timestamp_ms: boundary_ms }`. The new tenant's
+   address is not carried — already on the co-emitted
+   `TenantCapMinted.tenant` row (emitted at bid time; under eager
+   minting `do_handover` does not mint) and recoverable by JOIN on
+   `new_tenant_cap_id`. `displaced_tenant` *is* carried: no PK path
+   reaches the outgoing cap from this row, so recovering it via JOIN
+   would force envelope-timing reconstruction (violating star-schema
+   invariant d).
 
-2. **Destructure the outgoing tenant** to access its stake and
-   address-of-record:
-   ```
-   let Tenant {
-       cap_id: _, address: displaced_tenant, stake: outgoing_stake,
-   } = current;
-   ```
+**Why orchestrator + sub-steps (and not one fused helper).** Handover
+conceptually mutates state twice — first redistributing the outgoing
+tenant's balance (no variant change), then changing variant
+HandoverConfirmed → HandoverOpen with the rotated tenant. Splitting
+into two `do_*` sub-steps separates concerns:
 
-3. **Compute `used_credit` for the outgoing stake** at the boundary
-   timestamp. Reused logic from §8.1, adapted for an owned `Balance`
-   instead of a borrowed escrow read:
-   - `let principal    = balance::value(&outgoing_stake);`
-   - `let elapsed      = boundary_ms - phase_start_ms_of_outgoing;`
-     where `phase_start_ms_of_outgoing` was bound at step 1 (the
-     dropped `phase_start_ms` of `HandoverConfirmed`). For pseudocode
-     clarity, keep the field bound under that name in step 1's
-     destructure: `phase_start_ms: phase_start_ms_outgoing`.
-   - `let g            = curve_shape::evaluate_curve(
-                            config::credit_curve(&escrow.config),
-                            elapsed,
-                            config::tenure_ceiling(&escrow.config),
-                        );`
-   - `let used_credit  = math::mul_div(principal, g, SCALE);`
-   - `let remain_credit = principal - used_credit;`
-     (Invariant `used_credit + remain_credit == principal` from curve
-     bijectivity.)
+- `do_distribute_balance` is reusable: `do_tenure_expiry` (§7.2)
+  composes the same sub-step before its own variant change.
+- Each sub-step is auditable in isolation: its take/put window has
+  one focused purpose, its match arm has one concrete shape.
+- The intermediate zero-stake `Tenant` is transient, only observable
+  inside the orchestrator body (§0 P_DO). Two take/put cycles are
+  field-level operations on the same shared object — negligible cost.
 
-4. **Push `remain_credit` before any rotation** (push-before-rotate
-   invariant): split the outgoing stake into `(used_part, remain_part)`
-   via the standard `Balance` API. The helper operates on owned
-   balances now (no `&mut escrow.tenant_stake` access — the stake is
-   already owned at the local level after destructure).
-   - `let mut outgoing_balance = outgoing_stake;`
-   - `if remain_credit > 0 {`
-     `    let remain_balance = balance::split(&mut outgoing_balance, remain_credit);`
-     `    transfer::public_transfer(coin::from_balance(remain_balance, ctx), displaced_tenant);`
-     `};`
-     // When countdown == remaining_rent_time the curve saturates:
-     // `used_credit == principal` and `remain_credit == 0`. Skipping the
-     // split avoids creating a zero `Balance` that Move requires to be
-     // consumed. Consequence of `countdown = min(handover_floor, remaining)`.
-
-5. **Settle `used_credit`** — §7.6 is the single source of truth for
-   "split 90/10, route fee iff > 0, drain remainder into
-   `owner_earnings`". Now operates on the owned remainder of
-   `outgoing_balance` (which equals `used_credit` after step 4):
-   - `let (owner_share, protocol_fee) = settle_stake_earnings(
-        &mut escrow.owner_earnings, outgoing_balance, used_credit,
-        object::id(escrow), escrow.fee_inbox_id, displaced_tenant, ctx,
-     );`
-     — `displaced_tenant` is the stake funder; `FeeMessageSent<C>.tenant`
-     records it verbatim. The returned `(owner_share, protocol_fee)`
-     is consumed by the `HandoverCompleted` emit at step 8.
-
-6. **Rotate `pending` → new `current`** and capture the new acquisition
-   price. The pending Tenant's stake becomes the new tenancy's stake;
-   no further mutation needed.
-   - `let Tenant {`
-     `    cap_id: new_cap_id, address: new_address, stake: new_stake,`
-     `} = pending;`
-   - `let new_rent_price = balance::value(&new_stake);`
-     // Captured for the HandoverCompleted emit. The new tenancy's
-     // stake equals the bid amount — the acquisition price for this
-     // block. There is no separate `last_acquisition_price` field
-     // anymore; if the next tenure expires into AtDutchAuction,
-     // `do_tenure_expiry` (§7.2) captures the snapshot of `current.stake`
-     // at that moment.
-   - `let new_current = Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake };`
-
-7. **Promote pending cap to current — pure variant transition, no
-   mint, no transfer.** Under eager minting the bidder's `TenantCap`
-   was constructed and returned at `rent` time; its identity now lives
-   inside `new_current.cap_id`. `do_handover` rotates the variant
-   atomically via `put_state` (consumes the receipt from step 1):
-   - `put_state(`
-     `    escrow,`
-     `    EscrowState::HandoverOpen {`
-     `        asset,                       // Option<Asset> — preserved verbatim`
-     `        phase_start_ms: boundary_ms, // new tenancy's anchor`
-     `        current: new_current,`
-     `        retiring,                    // inherited from prior HandoverConfirmed`
-     `    },`
-     `    receipt,`
-     `);`
-   No `tenant_cap::new`, no `transfer::public_transfer`. The bidder's
-   cap (already in their wallet) was inert under `E_PENDING_TENANT_CAP`
-   until this transition; from this point `borrow_asset` succeeds for
-   them.
-
-8. Emit `HandoverCompleted { escrow_id: object::id(escrow),
-   displaced_tenant, new_tenant_cap_id: new_cap_id (from step 6),
-   used_credit, owner_share, protocol_fee, remain_credit, new_rent_price,
-   timestamp_ms: boundary_ms }`. `new_rent_price` was captured at
-   step 6 from the rotated stake. The new tenant's address is not
-   carried — already on the co-emitted `TenantCapMinted.tenant` row
-   (emitted at bid time; under eager minting `do_handover` does not
-   mint) and recoverable by JOIN on `new_tenant_cap_id`.
-   `displaced_tenant` *is* carried: no PK path reaches the outgoing
-   cap from this row, so recovering it via JOIN would force
-   envelope-timing reconstruction (violating invariant d).
-
-**Edge cases — both extremes fall out of the `if remain_credit > 0`
-guard (step 4) and the `if protocol_fee > 0` gate inside
-`settle_stake_earnings` (§7.6):**
-
-- **`used_credit == 0`** (very convex curve, handover fires very
-  early): `remain_credit == principal > 0`. The `if remain_credit > 0`
-  guard fires — the full outgoing stake is pushed to the displaced
-  tenant as `Coin<C>`. Step 5 then calls
-  `settle_stake_earnings(..., outgoing_balance == zero, 0, ...)`:
-  `split_fee(0)` returns `(0, 0)`, the in-helper `if protocol_fee > 0`
-  gate is skipped — no fee split and no `FeeMessage<C>` construction —
-  and the helper joins `outgoing_balance` (now zero) into
-  `owner_earnings` as a no-op.
-
-- **`used_credit == principal`** (Dutch Auction bypass — curve
-  saturated, `remain_credit == 0`): the `if remain_credit > 0` guard
-  is skipped — no coin is pushed to the displaced tenant. Step 5 then
-  calls `settle_stake_earnings(..., outgoing_balance, principal, ...)`:
-  `split_fee` produces the normal 90 / 10 split, the in-helper
-  `if protocol_fee > 0` gate fires — `fee_message::post` routes a
-  non-zero `FeeMessage<C>` — and the helper joins the owner share
-  into `owner_earnings`.
-
-In the `used_credit == 0` branch, after the full-stake push to the
-displaced tenant the local `outgoing_balance` is empty when the helper
-runs. `balance::join(_, Balance(0))` is a no-op — valid against the
-framework source. No zero-valued `Balance<CoinType>` is ever handed to
-`fee_message::post`: the in-helper `if protocol_fee > 0` gate filters
-those out.
+**Edge cases.** All curve-driven edge cases (`used_credit == 0`,
+`used_credit == principal`) are absorbed by the sub-step pipeline
+(§7.14). Both extremes fall out of the `if remain_amount > 0` guard
+in `pay_tenant_remain` (§7.6) and the `if fee_amount > 0` gate in
+`pay_protocol_fee` (§7.6); see §7.14's edge-case table for the
+matrix.
 
 ---
 
@@ -2351,81 +2282,52 @@ the prior loop iteration; therefore the variant at this point is
 `HandoverOpen`. The
 type system enforces that no `pending` field exists to clear separately.
 
+**Convention:** P_DO flavor (b) — orchestrator. The body has no
+direct `take_state` call; it composes two state-window owner
+sub-steps in sequence.
+
 **Algorithm:**
 
-1. **Extract state via `take_state`** (§2.6) and dispatch on the
-   variant; the `HandoverOpen` arm is the precondition, every other
-   arm aborts `E_INVARIANT_VIOLATION`:
+1. **Distribute the outgoing tenant's balance** by calling
+   `do_distribute_balance` (§7.14). Sub-step 1 takes its own state
+   window, settles the outgoing tenant. At tenure expiry the
+   curve-driven `used_credit` saturates to `principal` (curve at
+   `elapsed = tenure_ceiling` returns `SCALE`; see §8.1). The 3-way
+   split therefore degenerates: `remain_credit = 0` (tenant gets
+   nothing back), the protocol-fee + owner-earnings legs absorb the
+   full stake. The sub-step's HandoverOpen-arm asserts
+   `remain_credit == 0` against `E_INVARIANT_VIOLATION` — a
+   structural witness of the curve property; if the curve ever
+   stopped saturating at the boundary, this assert catches it
+   before any non-zero remain mis-routes to a fully-elapsed tenant.
+   The state cell is left on the SAME variant (`HandoverOpen`)
+   with `current.stake = balance::zero()`. Returns `(tenant,
+   owner_share, protocol_fee, _remain == 0)`.
 
-   ```move
-   let (old, receipt) = take_state(escrow);
-   let (asset_opt, current, retiring) = match (old) {
-       EscrowState::HandoverOpen { asset, phase_start_ms: _, current, retiring } =>
-           (asset, current, retiring),
-       EscrowState::Idle              { asset: _a }                                            => abort E_INVARIANT_VIOLATION,
-       EscrowState::AtDutchAuction    { asset: _a, .. }                                        => abort E_INVARIANT_VIOLATION,
-       EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort E_INVARIANT_VIOLATION,
-       EscrowState::Retired           { asset: _a }                                            => abort E_INVARIANT_VIOLATION,
-   };
-   // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can be open
-   // when do_tenure_expiry fires; PTB clock-fixity §6.1).
-   assert!(option::is_some(&asset_opt), E_INVARIANT_VIOLATION);
-   let asset = option::destroy_some(asset_opt);
-   ```
+2. **`last_acquisition_price = owner_share + protocol_fee`** —
+   recovered from the returned amounts. By the curve invariant
+   (`remain_credit == 0`, asserted at step 1), `owner_share +
+   protocol_fee = used_credit = principal`, so this equals the
+   outgoing tenant's stake at tenure entry. Becomes the descent
+   ceiling under the AtDutchAuction next-variant branch.
 
-   The asset's `Option` slot is asserted `Some` first so a P11
-   violation aborts `E_INVARIANT_VIOLATION` rather than the generic
-   `option::EOPTION_NOT_SET`. APT only reaches this helper after the
-   PTB-borrow window has closed (PTB clock-fixity §6.1), so the
-   assert is a structural invariant — never reached in correct
-   operation.
+3. **Determine the next variant** by calling `do_terminate_tenure`
+   (§7.16) with `boundary_ms` and `last_acquisition_price`.
+   Sub-step 2 takes its own state window, destroys the zero-stake
+   outgoing `current` (with the
+   `assert!(balance::value(&zero_stake) == 0, E_INVARIANT_VIOLATION)`
+   guard before `balance::destroy_zero`), unwraps the asset
+   (`assert!(option::is_some(&asset_opt), E_INVARIANT_VIOLATION)`,
+   guaranteed Some by P11), and branches on `retiring`:
+     - if `retiring`: variant becomes `EscrowState::Retired { asset }`.
+     - else: variant becomes `EscrowState::AtDutchAuction { asset,
+       phase_start_ms: boundary_ms, last_acquisition_price }`.
+   Returns the next-state tag for the event emit. `phase_start_ms`
+   follows the convention that every transition site records the
+   moment of transition — for AtDutchAuction it anchors descent;
+   under Retired it is omitted (no field).
 
-2. **Destructure the outgoing tenant**:
-   ```
-   let Tenant { cap_id: _, address: tenant, stake: outgoing_stake } = current;
-   let stake_total            = balance::value(&outgoing_stake);
-   let last_acquisition_price = stake_total;
-       // Captured pre-settlement — equals the prior tenant's payment.
-       // Becomes the descent ceiling if next variant is AtDutchAuction.
-   ```
-
-3. **Settle the full stake** — §7.6 is the single source of truth.
-   Tenant tenure expires saturated to full credit, so
-   `used_credit == stake_total` and there is no pre-split.
-   ```
-   let (owner_share, protocol_fee) = settle_stake_earnings(
-       &mut escrow.owner_earnings, outgoing_stake, stake_total,
-       object::id(escrow), escrow.fee_inbox_id, tenant, ctx,
-   );
-   ```
-   The in-helper `if protocol_fee > 0` gate short-circuits on
-   pathological `stake_total < BPS_PER_UNIT / PROTOCOL_FEE_BPS == 10`
-   (since fee = `mul_div(stake, PROTOCOL_FEE_BPS, BPS_PER_UNIT)` floors
-   to zero); protocols enforcing `min_rent_price ≥ 10` never see this
-   branch, but the gate keeps the function structurally total.
-
-4. **Determine next variant and discharge the receipt via `put_state`:**
-   ```
-   let next_state = if retiring {
-       EscrowState::Retired { asset }
-   } else {
-       EscrowState::AtDutchAuction {
-           asset,
-           phase_start_ms: boundary_ms,
-           last_acquisition_price,    // captured at step 2
-       }
-   };
-   let next_tag = state_tag(&next_state);
-   put_state(escrow, next_state, receipt);
-   ```
-   `last_acquisition_price` is the descent ceiling under the
-   AtDutchAuction branch; under Retired it is dropped (the variant
-   has no time-dependent semantics). `phase_start_ms` follows the
-   convention that every transition site records the moment of
-   transition — for AtDutchAuction it anchors descent; for Retired
-   it is omitted (no field).
-
-5. Emit `TenureExpired { escrow_id: object::id(escrow), tenant,
+4. Emit `TenureExpired { escrow_id: object::id(escrow), tenant,
    owner_share, protocol_fee, last_acquisition_price (from step 2),
    next_state: next_tag, timestamp_ms: boundary_ms }`.
    `last_acquisition_price` is frozen into this row: it is the
@@ -2433,8 +2335,8 @@ type system enforces that no `pending` field exists to clear separately.
    AtDutchAuction`) and makes the Dutch current-price computation a
    single-event query.
 
-6. If `next_tag == EscrowStateTag::Retired` (the `retiring` branch of
-   step 4), emit `AssetRetired { escrow_id, from_state:
+5. If `next_tag == EscrowStateTag::Retired` (the `retiring` branch of
+   step 3), emit `AssetRetired { escrow_id, from_state:
    EscrowStateTag::HandoverOpen }` immediately after `TenureExpired`.
    Structural co-emission: the indexer recovers the authoritative
    transition timestamp by JOIN on `escrow_id` to the co-emitted
@@ -2442,10 +2344,20 @@ type system enforces that no `pending` field exists to clear separately.
    (stake settlement), `AssetRetired` second (state-machine
    transition); both belong to the same semantic moment.
 
+**Why orchestrator + sub-steps share `do_distribute_balance`.** The
+balance-distribution responsibility is identical between handover
+and tenure expiry: split the outgoing tenant's stake 3-way, dispatch
+to consumers (tenant remain / protocol fee / owner earnings),
+return the amounts. Only the second-step "what variant comes next"
+differs (handover rotates pending → current; tenure expiry
+transitions to AtDutchAuction or Retired). Decomposing into a shared
+sub-step + transition-specific terminator keeps each concern in
+one place.
+
 **Note:** the displaced tenant's `TenantCap` is not burned here. It
 becomes stale (the new variant — `AtDutchAuction` or `Retired` —
-carries no tenant data, so the cap's ID matches no live field) and is
-inert. The holder may call `burn_tenant_cap` voluntarily for gas
+carries no tenant data, so the cap's ID matches no live field) and
+is inert. The holder may call `burn_tenant_cap` voluntarily for gas
 recovery.
 
 ---
@@ -2610,89 +2522,119 @@ two would force context-dependent branching inside the helper and
 obscure the distinct semantics of each rotation site.
 
 
-### 7.6 `settle_stake_earnings`
+### 7.6 Settlement primitives — `settle_tenant`, `pay_tenant_remain`, `pay_protocol_fee`
 
-    fun settle_stake_earnings<CoinType>(
-        owner_earnings: &mut Balance<CoinType>,
-        mut stake:      Balance<CoinType>,
-        principal:      u64,
-        escrow_id:      ID,
-        fee_inbox_id:   ID,
-        payer:          address,
-        ctx:            &mut TxContext,
-    ): (u64, u64)
+This section covers the three pipeline-style helpers used inside
+`do_distribute_balance` (§7.14). Each step in the 3-way distribution
+is its own helper consuming a balance and returning the leftover; the
+settlement pipeline is materialized at the call site rather than
+hidden inside a single fused helper.
 
-**Purpose:** shared stake-settlement tail for `do_handover` (§7.1
-step 5) and `do_tenure_expiry` (§7.2 step 3). Splits `principal`
-90 / 10, routes the fee via `fee_message::post` (gated on `> 0`),
-joins the remainder into `owner_earnings`. Returns
-`(owner_share, protocol_fee)` for the caller's event emission.
+**Pipeline shape inside `do_distribute_balance`:**
 
-**Signature change vs. the previous design.** The helper now operates
-on owned values: it consumes `stake: Balance<CoinType>` by value (the
-caller has destructured it out of the `EscrowState` variant) and
-takes `&mut owner_earnings` from the struct level (§2.4). The
-previous design took `&mut RentalEscrow` and reached into
-`escrow.tenant_stake`; that field no longer exists at the struct
-level. `escrow_id` and `fee_inbox_id` are passed explicitly so the
-helper does not need to re-borrow the escrow.
+```move
+let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
+let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+balance::join(&mut escrow.owner_earnings, leftover);
+```
 
-**Preconditions:**
-- `balance::value(&stake) == principal` — the caller has already
-  drained any non-settlement portion before invoking the helper
-  (`remain_credit` in the handover path; nothing in the tenure path).
-  The helper is an unconditional settlement of whatever is in
-  `stake`; the amount is passed explicitly so `split_fee` and the
-  returned shares agree with the caller's event.
-- `payer` is the address whose stake funded `principal` — recorded on
-  `FeeMessageSent<C>.tenant`: `displaced_tenant` in `do_handover`
-  (outgoing current tenant whose stake is being settled at handover);
-  `tenant` in `do_tenure_expiry` (outgoing current tenant whose stake
-  saturated to full at tenure expiry).
+Three lines, three actors: tenant (line 1), protocol (line 2), owner
+(line 3 — `balance::join` is the third "consumer" but stays inline,
+since it is one idiomatic Move call).
+
+#### 7.6.a `settle_tenant`
+
+    fun settle_tenant<CoinType>(
+        tenant:      Tenant<CoinType>,
+        used_credit: u64,
+        ctx:         &mut TxContext,
+    ): (Tenant<CoinType>, address, Balance<CoinType>, u64)
+
+**Purpose:** consume the outgoing `Tenant<C>`, pay the tenant their
+`remain_credit` (= `principal − used_credit`), return the leftover
+`Balance<C>` (size = `used_credit`) for the caller to continue the
+pipeline. Also returns a zero-stake `Tenant<C>` for state
+reconstruction by the orchestrator, the payer address, and the
+`remain_credit` u64 for events.
 
 **Algorithm:**
 
-    let (owner_share, protocol_fee) = split_fee(principal);
+    let Tenant { cap_id, address: payer, stake } = tenant;
+    let principal     = balance::value(&stake);
+    let remain_credit = principal - used_credit;
+    let leftover      = pay_tenant_remain(stake, remain_credit, payer, ctx);
+    let zero_tenant   = Tenant { cap_id, address: payer, stake: balance::zero() };
+    (zero_tenant, payer, leftover, remain_credit)
 
-    if protocol_fee > 0 {
-        let fee_balance = balance::split(&mut stake, protocol_fee);
-        fee_message::post<CoinType>(
-            fee_balance, escrow_id, payer, fee_inbox_id, ctx,
-        );
+**Why no `&mut RentalEscrow`:** the helper does not touch any escrow
+field. The pre-split work (compute `principal`, derive `remain_credit`)
+and the cap_id-preserving zero-`Tenant` construction are pure
+operations on the consumed `Tenant<C>` value.
+
+#### 7.6.b `pay_tenant_remain`
+
+    fun pay_tenant_remain<CoinType>(
+        mut balance:   Balance<CoinType>,
+        remain_amount: u64,
+        tenant:        address,
+        ctx:           &mut TxContext,
+    ): Balance<CoinType>
+
+**Purpose:** split `remain_amount` off `balance` and refund it to
+`tenant`; return the residual. Push-before-rotate (P3) primitive.
+
+**Algorithm:**
+
+    if remain_amount > 0 {
+        let part = balance::split(&mut balance, remain_amount);
+        transfer::public_transfer(coin::from_balance(part, ctx), tenant);
     };
-    balance::join(owner_earnings, stake);
-    (owner_share, protocol_fee)
+    balance
 
-**Postconditions:**
-- The owned `stake` parameter is fully consumed (joined into
-  `owner_earnings`, possibly minus the fee split).
-- `owner_earnings` grew by `owner_share`.
-- A `FeeMessage<C>` carrying `protocol_fee` was routed to
-  `fee_inbox_id` iff `protocol_fee > 0`.
+**Why the `> 0` gate:** when `remain_amount == 0` the function
+returns the full `balance` untouched without constructing a
+zero-valued `Coin<C>` or invoking `transfer::public_transfer` —
+saves a no-op transfer and avoids a useless coin object on chain.
 
-**Why the gate on `protocol_fee > 0`:** §7.4 `split_fee` floors the
-fee to zero when `principal < BPS_PER_UNIT / PROTOCOL_FEE_BPS == 10`.
-Constructing and consuming a zero-valued `Balance<CoinType>` — or a
-zero-valued `FeeMessage<C>` — would be valid Move but semantically
-noisy and would emit a `FeeMessageSent<C>` row the indexer cannot
-usefully aggregate. The gate is a structural filter; see §9 P12.
+#### 7.6.c `pay_protocol_fee`
 
-**Why the helper does not emit `HandoverCompleted` / `TenureExpired`:**
-the two events carry arm-specific fields (`HandoverCompleted.
-displaced_tenant + new_tenant_cap_id + used_credit + remain_credit +
-new_rent_price`; `TenureExpired.tenant + last_acquisition_price +
-next_state`) beyond the shared `(owner_share, protocol_fee)`. Emit-last
-at the caller keeps each event's semantic timestamp aligned with the
-full boundary transition (`do_handover` through the cap rotation;
-`do_tenure_expiry` through the next-variant decision) rather than with
-a partial stake settlement.
+    fun pay_protocol_fee<CoinType>(
+        mut balance:  Balance<CoinType>,
+        fee_amount:   u64,
+        escrow_id:    ID,
+        payer:        address,
+        fee_inbox_id: ID,
+        ctx:          &mut TxContext,
+    ): Balance<CoinType>
 
-**Two call sites:**
+**Purpose:** split `fee_amount` off `balance` and post it to the
+protocol fee inbox via `fee_message::post`; return the residual
+(= `owner_share` after settlement).
 
-| Caller | `principal` | `payer` | Stake source |
-|---|---|---|---|
-| `do_handover` (§7.1 step 5) | `used_credit` | `displaced_tenant` | outgoing `current.stake` after `remain_credit` was split out |
-| `do_tenure_expiry` (§7.2 step 3) | `stake_total` | `tenant` | outgoing `current.stake` in full (no pre-split) |
+**Algorithm:**
+
+    if fee_amount > 0 {
+        let part = balance::split(&mut balance, fee_amount);
+        fee_message::post<CoinType>(part, escrow_id, payer, fee_inbox_id, ctx);
+    };
+    balance
+
+**Why the `> 0` gate:** §7.4 `split_fee` floors the protocol fee to
+zero when `principal < BPS_PER_UNIT / PROTOCOL_FEE_BPS == 10`. The
+gate prevents a zero-valued `FeeMessage<C>` child object from being
+created — semantically noisy, indexer-aggregation-hostile, see §9
+P12.
+
+**Pipeline reuse.** The 3-way distribution composes the three
+helpers in `do_distribute_balance` (§7.14). The pipeline runs
+identically for both `HandoverConfirmed` (handover) and
+`HandoverOpen` (tenure expiry) variants — only the variant
+reconstruction differs. At tenure expiry the curve property
+(used_credit == principal at elapsed = tenure_ceiling) makes the
+tenant payment a no-op; the `assert!(remain_credit == 0,
+E_INVARIANT_VIOLATION)` in `do_distribute_balance`'s HandoverOpen
+arm makes that property a verifiable invariant rather than an
+unstated assumption.
 
 
 ### 7.7 `register_pending_bid`
@@ -2702,25 +2644,43 @@ a partial stake settlement.
         payment:   Coin<CoinType>,
         bidder:    address,
         ctx:       &mut TxContext,
-    ): (TenantCap, ID, u64, Tenant<CoinType>)
+    ): (TenantCap, Tenant<CoinType>)
 
 **Purpose:** shared pending-bid construction tail for the two Rented
 arms of `rent()` (§5.1). Absorbs `payment` into a fresh
 `Tenant<CoinType>` value with `bidder` as the address and builds the
-bidder's `TenantCap` via `tenant_cap::new`. Returns
-`(cap, tenant_cap_id, bid_amount, pending)` — the cap travels back
-through `rent` to the PTB caller; the caller uses `tenant_cap_id` for
-the `BidPlaced` / `BidSuperseded` event emit, `bid_amount` for the
-amount field, and `pending` to populate the new
-`HandoverConfirmed.pending` slot.
+bidder's `TenantCap` via `tenant_cap::new`. Returns `(cap, pending)` —
+the cap travels back through `rent` to the PTB caller; the caller
+embeds `pending` into the new `HandoverConfirmed.pending` slot and
+derives the event fields from the returned values: `tenant_cap_id =
+object::id(&cap)` and `bid_amount = balance::value(&pending.stake)`.
 
-**Signature change vs. the previous design.** The helper no longer
-takes `&mut RentalEscrow` — it does not touch any escrow field.
-`pending_bid` is gone as a struct-level field; the new design
-constructs a `Tenant` value with the stake balance inside and returns
-it for the caller to embed into the `HandoverConfirmed.pending` slot
-directly. `escrow_id` and `bidder` are passed explicitly so the
-helper is purely constructive.
+**Why the minimal return.** The two derivable values (`tenant_cap_id`
+and `bid_amount`) are explicit projections at the call site rather
+than helper return values, mirroring the same redundancy-elimination
+applied to `do_install_new_tenant`. The function returns only the
+linear values it constructs; the caller's `object::id` /
+`balance::value` calls make the projection explicit and obvious.
+
+**Algorithm:**
+
+    let stake = coin::into_balance(payment);
+    let (cap, tenant_cap_id) = tenant_cap::new(escrow_id, bidder, ctx);
+    let pending = Tenant { cap_id: tenant_cap_id, address: bidder, stake };
+    (cap, pending)
+
+**Caller pattern:**
+
+```move
+let (cap, pending) = register_pending_bid(escrow_id, payment, bidder, ctx);
+let pending_cap_id = object::id(&cap);
+let bid_amount     = balance::value(&pending.stake);   // before put_state moves pending
+// ... put_state with HandoverConfirmed { ..., pending, ... } ...
+// ... event::emit { ..., tenant_cap_id: pending_cap_id, bid_amount, ... } ...
+```
+
+The `bid_amount` read must precede the `put_state` that moves
+`pending` into the variant.
 
 **Preconditions:**
 - Caller has already verified `coin::value(&payment) >= floor` (from
@@ -2729,14 +2689,6 @@ helper is purely constructive.
   pending tenant has already been refunded and the prior `pending`
   Tenant value destructured (push-before-rotate invariant, §9 P3 —
   owned by the caller).
-
-**Algorithm:**
-
-    let bid_amount = coin::value(&payment);
-    let stake      = coin::into_balance(payment);
-    let (cap, tenant_cap_id) = tenant_cap::new(escrow_id, bidder, ctx);
-    let pending = Tenant { cap_id: tenant_cap_id, address: bidder, stake };
-    (cap, tenant_cap_id, bid_amount, pending)
 
 **Postconditions:**
 - A new `TenantCap` exists with `escrow_id == escrow_id`.
@@ -2774,8 +2726,8 @@ with the shared payment tail alone.
 
 | Caller | Pre-tail work | Emitted event |
 |---|---|---|
-| `do_place_bid` (§7.10) | retire-flag check, variant destructure, countdown computation, call helper, fill new HandoverConfirmed variant | `BidPlaced` |
-| `do_supersede_bid` (§7.11) | variant destructure (captures `current`, `displaced`, `retiring`, `handover_countdown_expiry`), refund displaced.stake to displaced.address, call helper, fill new HandoverConfirmed variant with preserved `current`, `retiring`, `handover_countdown_expiry` | `BidSuperseded` |
+| `do_place_bid` (§7.10) | retire-flag check, variant destructure, countdown computation, call helper, derive cap_id/bid_amount, fill new HandoverConfirmed variant | `BidPlaced` |
+| `do_supersede_bid` (§7.11) | variant destructure (captures `current`, `displaced`, `retiring`, `handover_countdown_expiry`), refund displaced.stake to displaced.address, call helper, derive cap_id/bid_amount, fill new HandoverConfirmed variant with preserved `current`, `retiring`, `handover_countdown_expiry` | `BidSuperseded` |
 
 Both arms share the same payment + cap-minting tail; the helper is
 the single source of truth for that tail.
@@ -3169,6 +3121,254 @@ guaranteed `None` here. The assert turns a P11 violation
 (programmer-induced double-fill) into `E_INVARIANT_VIOLATION` rather
 than `option::EOPTION_IS_SET`. Symmetric with the `is_some` assert
 in `do_extract_asset`.
+
+
+### 7.14 `do_distribute_balance`
+
+    fun do_distribute_balance<Asset: key + store, CoinType>(
+        escrow:      &mut RentalEscrow<Asset, CoinType>,
+        boundary_ms: u64,
+        ctx:         &mut TxContext,
+    ): (address, u64, u64, u64)   // (payer, owner_share, protocol_fee, remain_credit)
+
+**Convention:** P_DO flavor (a) — state-window owner. Sub-step 1 of
+both `do_handover` (§7.1) and `do_tenure_expiry` (§7.2).
+
+**Preconditions:** `escrow.state` is `Some(EscrowState::HandoverConfirmed
+{ .. })` or `Some(EscrowState::HandoverOpen { .. })` — i.e. an active
+tenancy with an outgoing tenant whose stake must be settled.
+
+**Algorithm:**
+
+1. **Compute curve-driven `used_credit` BEFORE `take_state`** (the
+   public view §8.1 reads `escrow.state`, so it must be called while
+   the cell is still `Some`):
+   ```move
+   let used_credit                 = compute_used_credit(escrow, boundary_ms);
+   let (owner_share, protocol_fee) = split_fee(used_credit);
+   let escrow_id                   = object::id(escrow);
+   let fee_inbox_id                = escrow.fee_inbox_id;
+   ```
+
+2. **Take state and dispatch on the variant**:
+   ```move
+   let (old, receipt) = take_state(escrow);
+   let (next, payer, remain_credit) = match (old) {
+       EscrowState::HandoverConfirmed {
+           asset, phase_start_ms, current, pending,
+           retiring, handover_countdown_expiry,
+       } => {
+           let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
+           let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+           balance::join(&mut escrow.owner_earnings, leftover);
+           let next = EscrowState::HandoverConfirmed {
+               asset, phase_start_ms, current: zero_current, pending,
+               retiring, handover_countdown_expiry,
+           };
+           (next, payer, remain_credit)
+       },
+       EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
+           let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
+           assert!(remain_credit == 0, E_INVARIANT_VIOLATION);
+           let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+           balance::join(&mut escrow.owner_earnings, leftover);
+           let next = EscrowState::HandoverOpen {
+               asset, phase_start_ms, current: zero_current, retiring,
+           };
+           (next, payer, remain_credit)
+       },
+       EscrowState::Idle           { asset: _a }     => abort E_INVARIANT_VIOLATION,
+       EscrowState::AtDutchAuction { asset: _a, .. } => abort E_INVARIANT_VIOLATION,
+       EscrowState::Retired        { asset: _a }     => abort E_INVARIANT_VIOLATION,
+   };
+   put_state(escrow, next, receipt);
+   (payer, owner_share, protocol_fee, remain_credit)
+   ```
+
+   Both arms run the same 3-step pipeline (settle_tenant →
+   pay_protocol_fee → balance::join, see §7.6). Each arm reconstructs
+   its variant with `current.stake = balance::zero()` — a transient
+   sentinel consumed by the orchestrator's sub-step 2
+   (`do_rotate_for_handover` §7.15 or `do_terminate_tenure` §7.16).
+
+**Why `compute_used_credit` is called before `take_state`.** The
+public view reads the state cell; calling it after `take_state`
+would see `None` and abort `E_INVARIANT_VIOLATION` (P_READ §0).
+The u64 result is computed eagerly while the cell is `Some`, then
+threaded through `settle_tenant` after the cell becomes `None`.
+Move 2024 NLL releases the immutable borrow at last-use, allowing
+the subsequent `take_state(&mut escrow)` to succeed.
+
+**Why the HandoverOpen-arm `assert!(remain_credit == 0)`.** At
+tenure expiry, `boundary_ms == phase_start_ms + tenure_ceiling`,
+so `elapsed = tenure_ceiling`. Per §8.1 the curve at
+`elapsed >= tenure_ceiling` returns `SCALE` exactly, hence
+`used_credit = mul_div(principal, SCALE, SCALE) = principal` and
+`remain_credit = 0`. The assert is a runtime witness of this curve
+property: if the curve ever stopped saturating at the boundary
+(e.g. a curve_shape regression), this assert catches it before any
+non-zero remain mis-routes to a fully-elapsed tenant.
+
+**Why the same pipeline serves both transitions.** Handover and
+tenure expiry both settle the outgoing tenant's stake the same way
+— 3-way split, same recipients, same percentages. Only the variant
+that comes back differs: handover preserves `HandoverConfirmed` for
+sub-step 2 to rotate; tenure expiry preserves `HandoverOpen` for
+sub-step 2 to terminate. Sharing `do_distribute_balance` keeps the
+settlement logic in one place.
+
+**Postconditions:**
+- A `FeeMessage<C>` carrying `protocol_fee` was routed to
+  `fee_inbox_id` iff `protocol_fee > 0`.
+- A `Coin<C>` carrying `remain_credit` was transferred to `payer`
+  iff `remain_credit > 0` (HandoverConfirmed only; HandoverOpen
+  always has `remain_credit == 0`).
+- `escrow.owner_earnings` grew by `owner_share`.
+- `escrow.state` is `Some` of the same variant as on entry, with
+  `current.stake = balance::zero()`.
+
+
+### 7.15 `do_rotate_for_handover`
+
+    fun do_rotate_for_handover<Asset: key + store, CoinType>(
+        escrow:      &mut RentalEscrow<Asset, CoinType>,
+        boundary_ms: u64,
+    ): (ID, u64)   // (new_tenant_cap_id, new_rent_price)
+
+**Convention:** P_DO flavor (a) — state-window owner. Sub-step 2 of
+`do_handover` (§7.1).
+
+**Preconditions:** `escrow.state` is `Some(EscrowState::HandoverConfirmed
+{ .. })` with `current.stake = balance::zero()` (the post-distribute
+intermediate state produced by §7.14). Reachable only via
+`do_handover` orchestrating §7.14 then §7.15 in sequence.
+
+**Algorithm:**
+
+    let (old, receipt) = take_state(escrow);
+    let (next, new_cap_id, new_rent_price) = match (old) {
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms: _, current, pending,
+            retiring, handover_countdown_expiry: _,
+        } => {
+            // Destroy zero-stake outgoing current.
+            let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
+            assert!(balance::value(&zero_stake) == 0, E_INVARIANT_VIOLATION);
+            balance::destroy_zero(zero_stake);
+
+            // Rotate pending → new current.
+            let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
+            let new_rent_price = balance::value(&new_stake);
+            let new_current = Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake };
+
+            let next = EscrowState::HandoverOpen {
+                asset, phase_start_ms: boundary_ms, current: new_current, retiring,
+            };
+            (next, new_cap_id, new_rent_price)
+        },
+        EscrowState::Idle           { asset: _a }                  => abort E_INVARIANT_VIOLATION,
+        EscrowState::AtDutchAuction { asset: _a, .. }              => abort E_INVARIANT_VIOLATION,
+        EscrowState::HandoverOpen   { asset: _a, current: _c, .. } => abort E_INVARIANT_VIOLATION,
+        EscrowState::Retired        { asset: _a }                  => abort E_INVARIANT_VIOLATION,
+    };
+    put_state(escrow, next, receipt);
+    (new_cap_id, new_rent_price)
+
+**Why the `is_zero` assert before `destroy_zero`.** The orchestrator
+contract is that sub-step 1 leaves `current.stake = balance::zero()`.
+The assert turns a contract violation into `E_INVARIANT_VIOLATION`
+rather than the generic `balance::ENonZero`. Same convention as the
+`option::is_some` / `is_none` asserts before `destroy_some` /
+`destroy_none` calls (§0 P_READ rationale).
+
+**Why no `tenant_cap::new`, no `transfer::public_transfer`.** Under
+eager minting, the bidder's `TenantCap` was constructed at `rent`
+time (§5.1) and now lives inside `pending.cap_id`. Rotation is a
+pure variant transition: the cap (already in the bidder's wallet)
+becomes live (`E_PENDING_TENANT_CAP` no longer triggers) the moment
+this `put_state` lands.
+
+**Postconditions:**
+- The zero-stake outgoing `Tenant` is destructured and its empty
+  `Balance` destroyed via `destroy_zero`.
+- `escrow.state` is `Some(EscrowState::HandoverOpen { .. })` with
+  `phase_start_ms = boundary_ms`, `current` populated from the
+  rotated `pending`, and `retiring` inherited from the prior
+  `HandoverConfirmed`.
+
+
+### 7.16 `do_terminate_tenure`
+
+    fun do_terminate_tenure<Asset: key + store, CoinType>(
+        escrow:                 &mut RentalEscrow<Asset, CoinType>,
+        boundary_ms:            u64,
+        last_acquisition_price: u64,
+    ): EscrowStateTag
+
+**Convention:** P_DO flavor (a) — state-window owner. Sub-step 2 of
+`do_tenure_expiry` (§7.2).
+
+**Preconditions:** `escrow.state` is `Some(EscrowState::HandoverOpen
+{ .. })` with `current.stake = balance::zero()` (the post-distribute
+intermediate state produced by §7.14). Reachable only via
+`do_tenure_expiry` orchestrating §7.14 then §7.16 in sequence.
+
+**Algorithm:**
+
+    let (old, receipt) = take_state(escrow);
+    let (next, tag) = match (old) {
+        EscrowState::HandoverOpen { asset: asset_opt, phase_start_ms: _, current, retiring } => {
+            // Destroy zero-stake outgoing current.
+            let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
+            assert!(balance::value(&zero_stake) == 0, E_INVARIANT_VIOLATION);
+            balance::destroy_zero(zero_stake);
+
+            // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow
+            // can be open at tenure expiry; PTB clock-fixity §6.1).
+            assert!(option::is_some(&asset_opt), E_INVARIANT_VIOLATION);
+            let asset = option::destroy_some(asset_opt);
+
+            let next: EscrowState<Asset, CoinType> = if retiring {
+                EscrowState::Retired { asset }
+            } else {
+                EscrowState::AtDutchAuction {
+                    asset, phase_start_ms: boundary_ms, last_acquisition_price,
+                }
+            };
+            let tag = state_tag(&next);
+            (next, tag)
+        },
+        EscrowState::Idle              { asset: _a }                                 => abort E_INVARIANT_VIOLATION,
+        EscrowState::AtDutchAuction    { asset: _a, .. }                             => abort E_INVARIANT_VIOLATION,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }   => abort E_INVARIANT_VIOLATION,
+        EscrowState::Retired           { asset: _a }                                 => abort E_INVARIANT_VIOLATION,
+    };
+    put_state(escrow, next, receipt);
+    tag
+
+**Why two asserts before consuming linear values.** Symmetric with
+§7.15: `is_zero` on the zero-stake `Balance` before `destroy_zero`,
+and `is_some` on the `Option<Asset>` before `destroy_some`. Both
+turn structural-invariant violations into `E_INVARIANT_VIOLATION`
+rather than std-library generic codes.
+
+**Why `last_acquisition_price` is a parameter, not recomputed.** The
+orchestrator (`do_tenure_expiry` §7.2) recovered it from the
+amounts returned by §7.14 (`owner_share + protocol_fee`, by the
+curve invariant `used_credit == principal`). Passing it explicitly
+keeps `do_terminate_tenure` independent of the curve property and
+of which exact upstream sub-step computed the principal — its only
+job is the variant transition.
+
+**Postconditions:**
+- The zero-stake outgoing `Tenant` is destructured and its empty
+  `Balance` destroyed via `destroy_zero`.
+- The `Option<Asset>` is unwrapped to a bare `Asset`.
+- `escrow.state` is `Some(EscrowState::Retired { asset })` if
+  `retiring` was true, else `Some(EscrowState::AtDutchAuction { asset,
+  phase_start_ms: boundary_ms, last_acquisition_price })`.
+- The returned `EscrowStateTag` mirrors which branch was taken,
+  consumed by the orchestrator's `TenureExpired` event emit.
 
 
 8. READ-ONLY QUERIES

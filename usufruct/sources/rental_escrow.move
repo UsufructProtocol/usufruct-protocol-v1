@@ -417,7 +417,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
                 if (now >= e) { do_handover(escrow, e, ctx); true } else false
             },
             EscrowState::HandoverOpen { phase_start_ms, .. } => {
-                let e = *phase_start_ms + config::tenure_ceiling(&escrow.config);
+                let e = config::tenure_boundary(&escrow.config, *phase_start_ms);
                 if (now >= e) { do_tenure_expiry(escrow, e, ctx); true } else false
             },
             EscrowState::AtDutchAuction { phase_start_ms, .. } => {

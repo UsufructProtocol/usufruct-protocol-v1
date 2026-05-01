@@ -153,7 +153,18 @@ public(package) fun credit_curve(cfg: &IntegrationConfig): &CurveShape    { &cfg
 public(package) fun descent_curve(cfg: &IntegrationConfig): &CurveShape   { &cfg.descent_curve }
 public(package) fun price_function(cfg: &IntegrationConfig): &PriceFunction { &cfg.price_function }
 
-// --- HandoverPolicy dispatch ---
+// --- Tenure phase dispatch ---
+
+/// Boundary timestamp at which `do_tenure_expiry` fires for an escrow
+/// in `HandoverOpen` whose phase started at `phase_start_ms`. No policy
+/// to dispatch over — the helper exists for symmetry with the other
+/// phase-boundary helpers (`descent_boundary`, `handover_expiry`) so
+/// that `apply_pending_transitions` reads uniformly through `config::*`
+/// for every phase, regardless of whether the parameterization is a
+/// scalar or a policy enum.
+public(package) fun tenure_boundary(cfg: &IntegrationConfig, phase_start_ms: u64): u64 {
+    phase_start_ms + cfg.tenure_ceiling
+}
 
 /// Timestamp at which the handover countdown expires. Encapsulates the
 /// saturation rule (spec §5.1): `Countdown` clamps to the tenure

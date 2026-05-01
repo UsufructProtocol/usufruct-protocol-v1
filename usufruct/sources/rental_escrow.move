@@ -464,10 +464,10 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
         _ => abort ENotRented,
     };
     if (effective_ts < phase_start_ms) return 0;
-    let elapsed_ms = effective_ts - phase_start_ms;
+    let elapsed = effective_ts - phase_start_ms;
     let g = curve_shape::evaluate_curve(
         config::credit_curve(&escrow.config),
-        elapsed_ms,
+        elapsed,
         config::tenure_ceiling(&escrow.config),
     );
     math::mul_div(principal, g, curve_shape::scale())
@@ -566,58 +566,17 @@ fun do_handover<Asset: key + store, CoinType>(
     ctx:         &mut TxContext,
 ) {
     let escrow_id = object::id(escrow);
-    let (old, receipt) = take_state(escrow);
-    let (asset, phase_start_outgoing, current, pending, retiring) = match (old) {
-        EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending,
-            retiring, handover_countdown_expiry: _,
-        } => (asset, phase_start_ms, current, pending, retiring),
-        EscrowState::Idle              { asset: _a }                       => abort EInvariantViolation,
-        EscrowState::AtDutchAuction    { asset: _a, .. }                   => abort EInvariantViolation,
-        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }      => abort EInvariantViolation,
-        EscrowState::Retired           { asset: _a }                       => abort EInvariantViolation,
-    };
 
-    let Tenant { cap_id: _, address: displaced_tenant, stake: outgoing_stake } = current;
-    let principal = balance::value(&outgoing_stake);
-
-    let elapsed = boundary_ms - phase_start_outgoing;
-    let g = curve_shape::evaluate_curve(
-        config::credit_curve(&escrow.config),
-        elapsed,
-        config::tenure_ceiling(&escrow.config),
-    );
-    let used_credit   = math::mul_div(principal, g, curve_shape::scale());
-    let remain_credit = principal - used_credit;
-
-    let mut outgoing_balance = outgoing_stake;
-    if (remain_credit > 0) {
-        let remain_part = balance::split(&mut outgoing_balance, remain_credit);
-        transfer::public_transfer(coin::from_balance(remain_part, ctx), displaced_tenant);
-    };
-
-    let fee_inbox_id = escrow.fee_inbox_id;
-    let (owner_share, protocol_fee) = settle_stake_earnings(
-        &mut escrow.owner_earnings, outgoing_balance, used_credit,
-        escrow_id, fee_inbox_id, displaced_tenant, ctx,
-    );
-
-    let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
-    let new_rent_price = balance::value(&new_stake);
-    let new_current = Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake };
-
-    put_state(escrow, EscrowState::HandoverOpen {
-        asset,
-        phase_start_ms: boundary_ms,
-        current:        new_current,
-        retiring,
-    }, receipt);
+    let (displaced_tenant, owner_share, protocol_fee, remain_credit) =
+        do_distribute_balance(escrow, boundary_ms, ctx);
+    let (new_tenant_cap_id, new_rent_price) =
+        do_rotate_for_handover(escrow, boundary_ms);
 
     event::emit(HandoverCompleted {
         escrow_id,
         displaced_tenant,
-        new_tenant_cap_id: new_cap_id,
-        used_credit,
+        new_tenant_cap_id,
+        used_credit: owner_share + protocol_fee,
         owner_share,
         protocol_fee,
         remain_credit,
@@ -633,39 +592,12 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     ctx:         &mut TxContext,
 ) {
     let escrow_id = object::id(escrow);
-    let (old, receipt) = take_state(escrow);
-    let (asset_opt, current, retiring) = match (old) {
-        EscrowState::HandoverOpen { asset, phase_start_ms: _, current, retiring } =>
-            (asset, current, retiring),
-        EscrowState::Idle              { asset: _a }                                            => abort EInvariantViolation,
-        EscrowState::AtDutchAuction    { asset: _a, .. }                                        => abort EInvariantViolation,
-        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
-        EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
-    };
-    assert!(option::is_some(&asset_opt), EInvariantViolation);
-    let asset = option::destroy_some(asset_opt);
 
-    let Tenant { cap_id: _, address: tenant, stake: outgoing_stake } = current;
-    let stake_total            = balance::value(&outgoing_stake);
-    let last_acquisition_price = stake_total;
-
-    let fee_inbox_id = escrow.fee_inbox_id;
-    let (owner_share, protocol_fee) = settle_stake_earnings(
-        &mut escrow.owner_earnings, outgoing_stake, stake_total,
-        escrow_id, fee_inbox_id, tenant, ctx,
-    );
-
-    let next_state: EscrowState<Asset, CoinType> = if (retiring) {
-        EscrowState::Retired { asset }
-    } else {
-        EscrowState::AtDutchAuction {
-            asset,
-            phase_start_ms: boundary_ms,
-            last_acquisition_price,
-        }
-    };
-    let next_tag = state_tag(&next_state);
-    put_state(escrow, next_state, receipt);
+    let (tenant, owner_share, protocol_fee, _remain) =
+        do_distribute_balance(escrow, boundary_ms, ctx);
+    let last_acquisition_price = owner_share + protocol_fee;
+    let next_tag =
+        do_terminate_tenure(escrow, boundary_ms, last_acquisition_price);
 
     event::emit(TenureExpired {
         escrow_id, tenant, owner_share, protocol_fee,
@@ -773,8 +705,9 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let remaining                 = tenure_e - now;
     let countdown                 = u64::min(config::handover_floor(&escrow.config), remaining);
     let handover_countdown_expiry = now + countdown;
-    let (cap, pending_cap_id, bid_amount, pending) =
-        register_pending_bid(escrow_id, payment, pending_tenant, ctx);
+    let (cap, pending) = register_pending_bid(escrow_id, payment, pending_tenant, ctx);
+    let pending_cap_id = object::id(&cap);
+    let bid_amount     = balance::value(&pending.stake);
     put_state(escrow, EscrowState::HandoverConfirmed {
         asset, phase_start_ms, current, pending,
         retiring,
@@ -818,8 +751,9 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     } = displaced;
     let refunded_amount = balance::value(&refund_balance);
     transfer::public_transfer(coin::from_balance(refund_balance, ctx), displaced_bidder);
-    let (cap, new_pending_cap_id, new_bid_amount, new_pending) =
-        register_pending_bid(escrow_id, payment, new_bidder, ctx);
+    let (cap, new_pending) = register_pending_bid(escrow_id, payment, new_bidder, ctx);
+    let new_pending_cap_id = object::id(&cap);
+    let new_bid_amount     = balance::value(&new_pending.stake);
     put_state(escrow, EscrowState::HandoverConfirmed {
         asset, phase_start_ms, current,
         pending: new_pending,
@@ -973,23 +907,158 @@ fun do_fill_asset<Asset: key + store, CoinType>(
     tenant_cap_id
 }
 
-/// spec: §7.6
-fun settle_stake_earnings<CoinType>(
-    owner_earnings: &mut Balance<CoinType>,
-    mut stake:      Balance<CoinType>,
-    principal:      u64,
-    escrow_id:      ID,
-    fee_inbox_id:   ID,
-    payer:          address,
-    ctx:            &mut TxContext,
-): (u64, u64) {
-    let (owner_share, protocol_fee) = split_fee(principal);
-    if (protocol_fee > 0) {
-        let fee_balance = balance::split(&mut stake, protocol_fee);
-        fee_message::post<CoinType>(fee_balance, escrow_id, payer, fee_inbox_id, ctx);
+fun settle_tenant<CoinType>(
+    tenant:      Tenant<CoinType>,
+    used_credit: u64,
+    ctx:         &mut TxContext,
+): (Tenant<CoinType>, address, Balance<CoinType>, u64) {
+    let Tenant { cap_id, address: payer, stake } = tenant;
+    let principal     = balance::value(&stake);
+    let remain_credit = principal - used_credit;
+    let leftover      = pay_tenant_remain(stake, remain_credit, payer, ctx);
+    let zero_tenant   = Tenant { cap_id, address: payer, stake: balance::zero() };
+    (zero_tenant, payer, leftover, remain_credit)
+}
+
+fun do_distribute_balance<Asset: key + store, CoinType>(
+    escrow:      &mut RentalEscrow<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+): (address, u64, u64, u64) {
+    let used_credit                 = compute_used_credit(escrow, boundary_ms);
+    let (owner_share, protocol_fee) = split_fee(used_credit);
+    let escrow_id                   = object::id(escrow);
+    let fee_inbox_id                = escrow.fee_inbox_id;
+
+    let (old, receipt) = take_state(escrow);
+    let (next, payer, remain_credit) = match (old) {
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms, current, pending,
+            retiring, handover_countdown_expiry,
+        } => {
+            let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
+            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+            balance::join(&mut escrow.owner_earnings, leftover);
+
+            let next = EscrowState::HandoverConfirmed {
+                asset, phase_start_ms, current: zero_current, pending,
+                retiring, handover_countdown_expiry,
+            };
+            (next, payer, remain_credit)
+        },
+        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
+            let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
+            assert!(remain_credit == 0, EInvariantViolation);
+            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+            balance::join(&mut escrow.owner_earnings, leftover);
+
+            let next = EscrowState::HandoverOpen {
+                asset, phase_start_ms, current: zero_current, retiring,
+            };
+            (next, payer, remain_credit)
+        },
+        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
     };
-    balance::join(owner_earnings, stake);
-    (owner_share, protocol_fee)
+    put_state(escrow, next, receipt);
+    (payer, owner_share, protocol_fee, remain_credit)
+}
+
+fun do_rotate_for_handover<Asset: key + store, CoinType>(
+    escrow:      &mut RentalEscrow<Asset, CoinType>,
+    boundary_ms: u64,
+): (ID, u64) {
+    let (old, receipt) = take_state(escrow);
+    let (next, new_cap_id, new_rent_price) = match (old) {
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms: _, current, pending,
+            retiring, handover_countdown_expiry: _,
+        } => {
+            let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
+            assert!(balance::value(&zero_stake) == 0, EInvariantViolation);
+            balance::destroy_zero(zero_stake);
+
+            let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
+            let new_rent_price = balance::value(&new_stake);
+            let new_current = Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake };
+
+            let next = EscrowState::HandoverOpen {
+                asset, phase_start_ms: boundary_ms, current: new_current, retiring,
+            };
+            (next, new_cap_id, new_rent_price)
+        },
+        EscrowState::Idle           { asset: _a }                            => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. }                        => abort EInvariantViolation,
+        EscrowState::HandoverOpen   { asset: _a, current: _c, .. }           => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }                            => abort EInvariantViolation,
+    };
+    put_state(escrow, next, receipt);
+    (new_cap_id, new_rent_price)
+}
+
+fun do_terminate_tenure<Asset: key + store, CoinType>(
+    escrow:                 &mut RentalEscrow<Asset, CoinType>,
+    boundary_ms:            u64,
+    last_acquisition_price: u64,
+): EscrowStateTag {
+    let (old, receipt) = take_state(escrow);
+    let (next, tag) = match (old) {
+        EscrowState::HandoverOpen { asset: asset_opt, phase_start_ms: _, current, retiring } => {
+            let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
+            assert!(balance::value(&zero_stake) == 0, EInvariantViolation);
+            balance::destroy_zero(zero_stake);
+
+            assert!(option::is_some(&asset_opt), EInvariantViolation);
+            let asset = option::destroy_some(asset_opt);
+
+            let next: EscrowState<Asset, CoinType> = if (retiring) {
+                EscrowState::Retired { asset }
+            } else {
+                EscrowState::AtDutchAuction {
+                    asset, phase_start_ms: boundary_ms, last_acquisition_price,
+                }
+            };
+            let tag = state_tag(&next);
+            (next, tag)
+        },
+        EscrowState::Idle              { asset: _a }                                        => abort EInvariantViolation,
+        EscrowState::AtDutchAuction    { asset: _a, .. }                                    => abort EInvariantViolation,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }          => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                                        => abort EInvariantViolation,
+    };
+    put_state(escrow, next, receipt);
+    tag
+}
+
+/// spec: §7.1
+fun pay_tenant_remain<CoinType>(
+    mut balance:   Balance<CoinType>,
+    remain_amount: u64,
+    tenant:        address,
+    ctx:           &mut TxContext,
+): Balance<CoinType> {
+    if (remain_amount > 0) {
+        let part = balance::split(&mut balance, remain_amount);
+        transfer::public_transfer(coin::from_balance(part, ctx), tenant);
+    };
+    balance
+}
+
+/// spec: §7.6
+fun pay_protocol_fee<CoinType>(
+    mut balance:  Balance<CoinType>,
+    fee_amount:   u64,
+    escrow_id:    ID,
+    payer:        address,
+    fee_inbox_id: ID,
+    ctx:          &mut TxContext,
+): Balance<CoinType> {
+    if (fee_amount > 0) {
+        let part = balance::split(&mut balance, fee_amount);
+        fee_message::post<CoinType>(part, escrow_id, payer, fee_inbox_id, ctx);
+    };
+    balance
 }
 
 /// spec: §7.7
@@ -998,12 +1067,11 @@ fun register_pending_bid<CoinType>(
     payment:   Coin<CoinType>,
     bidder:    address,
     ctx:       &mut TxContext,
-): (TenantCap, ID, u64, Tenant<CoinType>) {
-    let bid_amount = coin::value(&payment);
-    let stake      = coin::into_balance(payment);
+): (TenantCap, Tenant<CoinType>) {
+    let stake = coin::into_balance(payment);
     let (cap, tenant_cap_id) = tenant_cap::new(escrow_id, bidder, ctx);
     let pending = Tenant { cap_id: tenant_cap_id, address: bidder, stake };
-    (cap, tenant_cap_id, bid_amount, pending)
+    (cap, pending)
 }
 
 // === Test Functions ===

@@ -42,27 +42,18 @@ const EWrongEscrowTenantCap:    u64 = 12;  // spec: E_WRONG_ESCROW_TENANT_CAP
 const EPendingTenantCap:        u64 = 13;  // spec: E_PENDING_TENANT_CAP
 const EStaleTenantCap:          u64 = 14;  // spec: E_STALE_TENANT_CAP
 const ETenantCapNotStale:       u64 = 15;  // spec: E_TENANT_CAP_NOT_STALE
-const EInvariantViolation:      u64 = 0xDEADC0DE; // = 3_735_929_054 — unreachable in correct operation; programmer error, not user error
+const EInvariantViolation:      u64 = 0xDEADC0DE; // spec: E_INVARIANT_VIOLATION
 
 // === Constants ===
 // spec: §1.2
 
-const PROTOCOL_FEE_BPS: u64 = 1_000;
-const BPS_PER_UNIT:     u64 = 10_000;
-
-/// Canary upper bound on APT loop iterations. The state lattice
-/// (HandoverConfirmed → HandoverOpen → {Retired | AtDutchAuction → Idle})
-/// admits at most 3 transitions plus one terminal no-op iteration = 4.
-/// A higher count signals a `do_*` bug producing a non-progressive state;
-/// the loop aborts with `EInvariantViolation` instead of silently spinning
-/// to gas exhaustion.
+const PROTOCOL_FEE_BPS:   u64 = 1_000;
+const BPS_PER_UNIT:       u64 = 10_000;
 const MAX_APT_ITERATIONS: u64 = 4;
 
 // === Structs ===
 
-/// spec: §2.1 — payload-free discriminator. Returned by APT and `retire`,
-/// used as event field type for `from_state` / `next_state` /
-/// `state_at_set`. Mirrors `EscrowState`'s five variants.
+/// spec: §2.1
 public enum EscrowStateTag has copy, drop, store {
     Idle,
     AtDutchAuction,
@@ -71,19 +62,14 @@ public enum EscrowStateTag has copy, drop, store {
     Retired,
 }
 
-/// spec: §2.2 — atomic grouping of (cap_id, address, stake) for a tenant
-/// slot. Embedded inside `EscrowState::HandoverOpen.current` and inside
-/// both `current` and `pending` of `HandoverConfirmed`.
+/// spec: §2.2
 public struct Tenant<phantom CoinType> has store {
     cap_id:  ID,
     address: address,
     stake:   Balance<CoinType>,
 }
 
-/// spec: §2.3 — single public state type. Variants embed all
-/// state-dependent payload (asset, tenant data, phase timestamps,
-/// retiring flag, last_acquisition_price, handover_countdown_expiry).
-/// `store` only — `Asset` and `Balance` lack `copy`/`drop`.
+/// spec: §2.3
 public enum EscrowState<Asset: key + store, phantom CoinType> has store {
     Idle {
         asset: Asset,
@@ -112,10 +98,7 @@ public enum EscrowState<Asset: key + store, phantom CoinType> has store {
     },
 }
 
-/// spec: §2.4 — one shared object per integrated asset. Six fields:
-/// configuration snapshot, inbox-id snapshot, integration timestamp,
-/// owner-earnings accumulator, and the variant-typed state cell wrapped
-/// in `Option` for the swap pattern (see §2.6).
+/// spec: §2.4
 public struct RentalEscrow<Asset: key + store, phantom CoinType> has key {
     id:                UID,
     config:            IntegrationConfig,
@@ -125,16 +108,13 @@ public struct RentalEscrow<Asset: key + store, phantom CoinType> has key {
     state:             Option<EscrowState<Asset, CoinType>>,
 }
 
-/// spec: §2.5 — hot potato; consumed by `return_asset` in the same PTB
-/// that created it via `borrow_asset`.
+/// spec: §2.5
 public struct AssetReceipt {
     escrow_id: ID,
     asset_id:  ID,
 }
 
-/// spec: §2.6 — internal hot potato. Produced by `take_state`, consumed
-/// by `put_state`. Lifts P13 ("Option<EscrowState> is Some at every tx
-/// boundary") to a compile-time invariant.
+/// spec: §2.6
 public struct StateReceipt {}
 
 // === Events ===
@@ -268,9 +248,7 @@ public fun integrate<Asset: key + store, CoinType>(
     cap
 }
 
-/// spec: §5.1 — dispatch over the current state to the appropriate
-/// transition helper. Each helper handles its own take_state/put_state
-/// and event emission.
+/// spec: §5.1
 public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -289,15 +267,11 @@ public fun rent<Asset: key + store, CoinType>(
             do_place_bid(escrow, payment, floor, now, ctx),
         EscrowState::HandoverConfirmed { .. } =>
             do_supersede_bid(escrow, payment, floor, ctx),
-        // Unreachable: compute_floor_price aborts ERetiredNoBid on Retired
-        // before this match runs.
         EscrowState::Retired { .. } => abort EInvariantViolation,
     }
 }
 
-/// spec: §4.2 — dispatch over the current state to either immediate
-/// retirement (Idle / AtDutchAuction) or deferred retirement via the
-/// `retiring` flag (HandoverOpen / HandoverConfirmed).
+/// spec: §4.2
 public fun retire<Asset: key + store, CoinType>(
     escrow:    &mut RentalEscrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -332,8 +306,6 @@ public fun claim_asset<Asset: key + store, CoinType>(
         id, config: _, fee_inbox_id: _, integrated_at_ms: _,
         owner_earnings, state,
     } = escrow;
-    // Unwrap Option<EscrowState> — guaranteed Some by P13 (state-cell
-    // invariant: always Some at tx boundary; see Design Conventions).
     assert!(option::is_some(&state), EInvariantViolation);
     let inner_state = option::destroy_some(state);
     let asset = match (inner_state) {
@@ -410,7 +382,6 @@ public fun return_asset<Asset: key + store, CoinType>(
     let tenant_cap_id = match (read_state(escrow)) {
         EscrowState::HandoverOpen { .. }
         | EscrowState::HandoverConfirmed { .. } => do_fill_asset(escrow, asset),
-        // Unreachable by PTB clock-fixity (§6.1).
         EscrowState::Idle { .. }
         | EscrowState::AtDutchAuction { .. }
         | EscrowState::Retired { .. } => abort EInvariantViolation,
@@ -450,11 +421,6 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ): EscrowStateTag {
     let now = clock::timestamp_ms(clock);
-    // Each iteration matches on the current state. Chaining is structural:
-    // the next iteration sees whatever state the previous `do_*` produced.
-    // Termination is guaranteed by the strictly progressive state lattice;
-    // `MAX_APT_ITERATIONS` is a runtime canary against `do_*` bugs that
-    // could break that guarantee.
     let mut keep_going = true;
     let mut iterations: u64 = 0;
     while (keep_going) {
@@ -524,7 +490,7 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
     }
 }
 
-/// spec: §8.7 — discriminator projection.
+/// spec: §8.7
 public fun state_tag<Asset: key + store, CoinType>(
     s: &EscrowState<Asset, CoinType>,
 ): EscrowStateTag {
@@ -541,7 +507,7 @@ public fun state_tag<Asset: key + store, CoinType>(
 
 // === Private Functions ===
 
-/// spec: §8.2 — Dutch descent. Caller has dispatched on AtDutchAuction.
+/// spec: §8.2
 fun compute_price_descent<Asset: key + store, CoinType>(
     escrow:       &RentalEscrow<Asset, CoinType>,
     timestamp_ms: u64,
@@ -563,14 +529,12 @@ fun compute_price_descent<Asset: key + store, CoinType>(
     last_acquisition_price - consumed
 }
 
-/// spec: §8.3 — takeover/supersede floor.
+/// spec: §8.3
 fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64): u64 {
     price_function::evaluate_price_fn(config::price_function(cfg), price)
 }
 
-/// spec: §2.6 — sole producer of `StateReceipt`. Asserts the state-cell
-/// invariant explicitly so a violation aborts with `EInvariantViolation`
-/// rather than the generic `option::EOPTION_NOT_SET`.
+/// spec: §2.6 — take/put/read are the only sites that touch escrow.state.
 fun take_state<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
 ): (EscrowState<Asset, CoinType>, StateReceipt) {
@@ -578,9 +542,6 @@ fun take_state<Asset: key + store, CoinType>(
     (option::extract(&mut escrow.state), StateReceipt {})
 }
 
-/// spec: §2.6 — sole consumer of `StateReceipt`. Asserts the state cell is
-/// `None` (i.e. between `take_state` and `put_state`) so a double-fill
-/// aborts with `EInvariantViolation` rather than `option::EOPTION_IS_SET`.
 fun put_state<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     new:     EscrowState<Asset, CoinType>,
@@ -591,10 +552,6 @@ fun put_state<Asset: key + store, CoinType>(
     option::fill(&mut escrow.state, new);
 }
 
-/// spec: §2.6 — sole read accessor. Single site of `option::borrow` on
-/// `escrow.state`. Must never be called between `take_state` and `put_state`;
-/// the assert turns a P_READ violation into an `EInvariantViolation` abort
-/// rather than `option::EOPTION_NOT_SET`. See Design Conventions section.
 fun read_state<Asset: key + store, CoinType>(
     escrow: &RentalEscrow<Asset, CoinType>,
 ): &EscrowState<Asset, CoinType> {
@@ -602,8 +559,7 @@ fun read_state<Asset: key + store, CoinType>(
     option::borrow(&escrow.state)
 }
 
-/// spec: §7.1 — pending handover. Pre: state is HandoverConfirmed and
-/// `boundary_ms == handover_countdown_expiry`.
+/// spec: §7.1
 fun do_handover<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
@@ -625,9 +581,6 @@ fun do_handover<Asset: key + store, CoinType>(
     let Tenant { cap_id: _, address: displaced_tenant, stake: outgoing_stake } = current;
     let principal = balance::value(&outgoing_stake);
 
-    // Curve-derived used_credit (same math as compute_used_credit, on the
-    // owned outgoing stake). Clamp would be a no-op here (boundary equals
-    // handover_countdown_expiry by precondition).
     let elapsed = boundary_ms - phase_start_outgoing;
     let g = curve_shape::evaluate_curve(
         config::credit_curve(&escrow.config),
@@ -637,21 +590,18 @@ fun do_handover<Asset: key + store, CoinType>(
     let used_credit   = math::mul_div(principal, g, curve_shape::scale());
     let remain_credit = principal - used_credit;
 
-    // Push remain_credit before any rotation (push-before-rotate, P3).
     let mut outgoing_balance = outgoing_stake;
     if (remain_credit > 0) {
         let remain_part = balance::split(&mut outgoing_balance, remain_credit);
         transfer::public_transfer(coin::from_balance(remain_part, ctx), displaced_tenant);
     };
 
-    // Settle remainder == used_credit.
     let fee_inbox_id = escrow.fee_inbox_id;
     let (owner_share, protocol_fee) = settle_stake_earnings(
         &mut escrow.owner_earnings, outgoing_balance, used_credit,
         escrow_id, fee_inbox_id, displaced_tenant, ctx,
     );
 
-    // Rotate pending → new current.
     let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
     let new_rent_price = balance::value(&new_stake);
     let new_current = Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake };
@@ -676,7 +626,7 @@ fun do_handover<Asset: key + store, CoinType>(
     });
 }
 
-/// spec: §7.2 — tenure expiry. Pre: state is HandoverOpen.
+/// spec: §7.2
 fun do_tenure_expiry<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
@@ -692,8 +642,6 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
         EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
     };
-    // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can be open
-    // when do_tenure_expiry fires; PTB clock-fixity §6.1).
     assert!(option::is_some(&asset_opt), EInvariantViolation);
     let asset = option::destroy_some(asset_opt);
 
@@ -735,7 +683,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     };
 }
 
-/// spec: §7.3 — auction expiry. Pre: state is AtDutchAuction.
+/// spec: §7.3
 fun do_auction_expiry<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
@@ -760,10 +708,7 @@ fun split_fee(amount: u64): (u64, u64) {
     (owner, fee)
 }
 
-/// spec: §7.5 — Idle | AtDutchAuction → HandoverOpen with a fresh tenant.
-/// Performs take_state / put_state internally; emits RentStarted with the
-/// originating variant in `from_state`. Receives `now` from the caller
-/// (rent) since the PTB clock is fixed — anchors phase_start_ms = now.
+/// spec: §7.5
 fun do_install_new_tenant<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -803,9 +748,7 @@ fun do_install_new_tenant<Asset: key + store, CoinType>(
     new_cap
 }
 
-/// spec: §5.1 — HandoverOpen → HandoverConfirmed (initial pending bid).
-/// Performs take_state / put_state internally; emits BidPlaced. Receives
-/// `now` from the caller (rent) — anchors handover_countdown_expiry.
+/// spec: §7.10
 fun do_place_bid<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -848,9 +791,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     cap
 }
 
-/// spec: §5.1 — HandoverConfirmed → HandoverConfirmed (replace pending bid).
-/// Refunds the displaced bidder, registers the new pending tenant.
-/// Performs take_state / put_state internally; emits BidSuperseded.
+/// spec: §7.11
 fun do_supersede_bid<Asset: key + store, CoinType>(
     escrow:  &mut RentalEscrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -898,10 +839,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     cap
 }
 
-/// spec: §4.2 — Idle | AtDutchAuction → Retired (immediate retirement).
-/// Performs take_state / put_state internally; emits both RetireFlagSet
-/// and AssetRetired (terminal transition, no deferral). Returns the new
-/// state tag (always Retired).
+/// spec: §7.8
 fun do_retire_immediately<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     ctx:    &TxContext,
@@ -923,11 +861,7 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
     EscrowStateTag::Retired
 }
 
-/// spec: §4.2 — HandoverOpen | HandoverConfirmed → same variant with
-/// `retiring = true` (deferred retirement). Performs take_state / put_state
-/// internally; emits RetireFlagSet only — AssetRetired is emitted later
-/// by `do_tenure_expiry` when the flag is honored. Returns the (unchanged)
-/// state tag.
+/// spec: §7.9
 fun do_set_retiring_flag<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     ctx:    &TxContext,
@@ -962,13 +896,7 @@ fun do_set_retiring_flag<Asset: key + store, CoinType>(
     prior_tag
 }
 
-/// spec: §6.1 — extract the asset from the active rented variant.
-/// Pre: state is HandoverOpen or HandoverConfirmed (filtered by the
-/// public dispatch in `borrow_asset`). Validates the caller's TenantCap
-/// against `current.cap_id` (and rejects the `pending` cap on Confirmed).
-/// Aborts EInvariantViolation on terminal variants — unreachable because
-/// `borrow_asset` aborts EStaleTenantCap before calling.
-/// EAssetAlreadyBorrowed only fires from same-tenant double-borrow in one PTB.
+/// spec: §7.12
 fun do_extract_asset<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     cap_id: ID,
@@ -1007,11 +935,7 @@ fun do_extract_asset<Asset: key + store, CoinType>(
     asset
 }
 
-/// spec: §6.2 — fill the asset back into the active rented variant.
-/// Returns the current tenant's cap_id for the AssetReturned event.
-/// Aborts EInvariantViolation on terminal variants — unreachable by PTB
-/// clock-fixity (§6.1): AssetReceipt is only produced from active states,
-/// and state cannot change between borrow and return inside one PTB.
+/// spec: §7.13
 fun do_fill_asset<Asset: key + store, CoinType>(
     escrow: &mut RentalEscrow<Asset, CoinType>,
     asset:  Asset,
@@ -1049,8 +973,7 @@ fun do_fill_asset<Asset: key + store, CoinType>(
     tenant_cap_id
 }
 
-/// spec: §7.6 — split + (gated) fee post + drain into owner_earnings.
-/// Operates on the owned destructured stake; caller passes `&mut owner_earnings`.
+/// spec: §7.6
 fun settle_stake_earnings<CoinType>(
     owner_earnings: &mut Balance<CoinType>,
     mut stake:      Balance<CoinType>,
@@ -1069,9 +992,7 @@ fun settle_stake_earnings<CoinType>(
     (owner_share, protocol_fee)
 }
 
-/// spec: §7.7 — pending bid construction tail. Returns the cap, its ID,
-/// the bid amount, and a fully-built `Tenant<C>` for the caller to embed
-/// in `HandoverConfirmed.pending`.
+/// spec: §7.7
 fun register_pending_bid<CoinType>(
     escrow_id: ID,
     payment:   Coin<CoinType>,
@@ -1087,91 +1008,3 @@ fun register_pending_bid<CoinType>(
 
 // === Test Functions ===
 
-// === Design Conventions ===
-//
-// CONVENTION P_READ: `read_state` must never be called inside a take_state /
-// put_state window (i.e. while a `StateReceipt` is live in the same frame).
-//
-// Enforcement summary
-// ───────────────────
-// │ Guarantee                                         │ Level         │
-// │ put_state always follows take_state in same PTB   │ compile-time  │
-// │   (StateReceipt has no `drop` — hot potato)       │               │
-// │ read_state not called while state is None         │ convention    │
-// │   (Move type system cannot track Option contents) │               │
-// │ No external code touches escrow.state directly    │ compile-time  │
-// │   (field is private; take/put/read are private)   │               │
-//
-// Why violating P_READ is a runtime abort, not silent corruption
-// ──────────────────────────────────────────────────────────────
-// `read_state` asserts `option::is_some(&escrow.state)` first, so a P_READ
-// violation aborts with `EInvariantViolation` (0xDEADC0DE) rather than the
-// generic `option::EOPTION_NOT_SET` (262145). Same for `take_state` /
-// `put_state` — every state-cell access is guarded by an explicit assert
-// against the same invariant code, making protocol bugs distinguishable
-// from user errors in logs and indexers.
-// The transaction rolls back entirely — no half-written state persists.
-// The risk is liveness (unexpected abort), not correctness (state corruption).
-//
-// Required expected_failure test
-// ────────────────────────────────
-// To document and pin the runtime behaviour, the test suite must include:
-//
-//   #[test, expected_failure(abort_code = usufruct::rental_escrow::EInvariantViolation)]
-//   fun test_read_state_aborts_inside_take_put_window() {
-//       // ... set up a minimal RentalEscrow in a test scenario ...
-//       let (state, receipt) = take_state(&mut escrow);
-//       // P_READ violated — read_state sees None here:
-//       let _ = read_state(&escrow);      // must abort EInvariantViolation
-//       // put_state unreachable, but receipt would be consumed by abort.
-//       put_state(&mut escrow, state, receipt);
-//   }
-//
-// How to maintain the convention in future changes
-// ─────────────────────────────────────────────────
-// 1. read_state is private — only module-internal code can introduce a
-//    violation; no external caller can trigger it.
-// 2. Any new internal function that calls read_state must be audited to
-//    confirm it is never reachable from a call stack that holds a live
-//    StateReceipt.
-// 3. Functions that call take_state must call put_state before any branch
-//    that could reach read_state.  The compiler enforces that put_state is
-//    called before the end of the PTB; it does not enforce call ordering
-//    within the body — that ordering is the author's responsibility.
-//
-// CONVENTION P_DO: a private function carries the `do_*` prefix iff its body
-// owns a take_state / put_state window (i.e. produces and consumes a single
-// StateReceipt). The relation is bidirectional and exact: every do_* function
-// calls both take_state and put_state; no other function in the module calls
-// both.
-//
-// Enforcement summary
-// ───────────────────
-// │ Guarantee                                         │ Level         │
-// │ Every do_* function owns a take/put window        │ convention    │
-// │ No non-do_* function owns a take/put window       │ convention    │
-// │   (public fns dispatch to do_* helpers instead)   │               │
-// │ Every take_state pairs with a put_state in PTB    │ compile-time  │
-// │   (StateReceipt hot potato — see P_READ above)    │               │
-//
-// Why P_DO matters
-// ────────────────
-// The state-mutating helpers form a category with shared structural shape:
-// take_state → match → mutation → put_state → emit. Marking them with a
-// dedicated prefix makes the category scannable and the contract auditable:
-//
-//   grep '^fun do_'                             # all state-cell mutators
-//   grep -B5 'take_state(escrow)' | grep '^fun' # owners of take/put windows
-//
-// If those two sets diverge, P_DO is violated. The convention encodes a
-// structural property — public functions delegate to do_* helpers and never
-// own a take/put window themselves — making the call graph self-documenting.
-//
-// How to maintain the convention in future changes
-// ─────────────────────────────────────────────────
-// 1. A new helper that calls take_state and put_state must be named do_*.
-// 2. A new public function that needs to mutate state must delegate to a
-//    do_* helper rather than open its own take/put window.
-// 3. do_* helpers do not call each other today; if a chain is ever needed,
-//    each link must still own its own receipt and the bidirectional grep
-//    parity must continue to hold.

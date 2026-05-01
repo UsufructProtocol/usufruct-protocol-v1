@@ -1042,15 +1042,18 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
             (next, payer, remain_credit)
         },
         EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
-            // Pipeline: tenant remain → protocol fee → owner earnings.
-            let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
-            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+            // No tenant remain at tenure expiry: curve at elapsed=tenure_ceiling
+            // returns SCALE so used_credit == principal, remain_credit == 0.
+            // Pipeline: protocol fee → owner earnings (2 steps, not 3).
+            let Tenant { cap_id, address: payer, stake } = current;
+            let leftover = pay_protocol_fee(stake, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
             balance::join(&mut escrow.owner_earnings, leftover);
 
-            let next = EscrowState::HandoverOpen {
+            let zero_current = Tenant { cap_id, address: payer, stake: balance::zero() };
+            let next         = EscrowState::HandoverOpen {
                 asset, phase_start_ms, current: zero_current, retiring,
             };
-            (next, payer, remain_credit)
+            (next, payer, 0)
         },
         EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
         EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,

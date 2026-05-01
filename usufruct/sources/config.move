@@ -212,14 +212,6 @@ public(package) fun descent_window_ceiling(cfg: &IntegrationConfig): u64 {
     }
 }
 
-/// Whether `AtDutchAuction` is structurally observable under this config.
-public(package) fun is_auction_observable(cfg: &IntegrationConfig): bool {
-    match (&cfg.descent) {
-        DescentPolicy::Skipped     => false,
-        DescentPolicy::Window {..} => true,
-    }
-}
-
 // --- RetirePolicy dispatch ---
 
 /// Earliest clock timestamp at which `retire()` may proceed.

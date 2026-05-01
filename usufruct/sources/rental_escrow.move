@@ -497,14 +497,7 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
         },
         _ => abort ENotRented,
     };
-    if (effective_ts < phase_start_ms) return 0;
-    let elapsed_ms = effective_ts - phase_start_ms;
-    let g = curve_shape::evaluate_curve(
-        config::credit_curve(&escrow.config),
-        elapsed_ms,
-        config::tenure_ceiling(&escrow.config),
-    );
-    math::mul_div(principal, g, curve_shape::scale())
+    used_credit_for(&escrow.config, principal, phase_start_ms, effective_ts)
 }
 
 /// spec: §8.4
@@ -609,34 +602,24 @@ fun do_handover<Asset: key + store, CoinType>(
     boundary_ms: u64,
     ctx:         &mut TxContext,
 ) {
-    let escrow_id                   = object::id(escrow);
-    let used_credit                 = compute_used_credit(escrow, boundary_ms);
-    let (owner_share, protocol_fee) = split_fee(used_credit);
+    let escrow_id = object::id(escrow);
 
     let (old, receipt) = take_state(escrow);
-    let (asset, current, pending, retiring) = match (old) {
+    let (asset, phase_start_ms, current, pending, retiring) = match (old) {
         EscrowState::HandoverConfirmed {
-            asset, phase_start_ms: _, current, pending,
+            asset, phase_start_ms, current, pending,
             retiring, handover_countdown_expiry: _,
-        } => (asset, current, pending, retiring),
+        } => (asset, phase_start_ms, current, pending, retiring),
         EscrowState::Idle              { asset: _a }                       => abort EInvariantViolation,
         EscrowState::AtDutchAuction    { asset: _a, .. }                   => abort EInvariantViolation,
         EscrowState::HandoverOpen      { asset: _a, current: _c, .. }      => abort EInvariantViolation,
         EscrowState::Retired           { asset: _a }                       => abort EInvariantViolation,
     };
     let Tenant { cap_id: _, address: displaced_tenant, stake } = current;
-    let principal     = balance::value(&stake);
-    let remain_credit = principal - used_credit;
 
-    // Two splits → three balances (sizes: remain_credit, protocol_fee, owner_share).
-    let mut owner_balance = stake;
-    let remain_balance    = balance::split(&mut owner_balance, remain_credit);
-    let fee_balance       = balance::split(&mut owner_balance, protocol_fee);
-
-    // Three consumers.
-    pay_tenant_remain(remain_balance, displaced_tenant, ctx);
-    pay_protocol_fee(fee_balance, escrow_id, displaced_tenant, escrow.fee_inbox_id, ctx);
-    balance::join(&mut escrow.owner_earnings, owner_balance);
+    let (owner_share, protocol_fee, remain_credit) =
+        settle_outgoing(escrow, stake, displaced_tenant, phase_start_ms, boundary_ms, ctx);
+    let used_credit = owner_share + protocol_fee;
 
     // Rotate pending → new current.
     let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
@@ -671,9 +654,9 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
 ) {
     let escrow_id = object::id(escrow);
     let (old, receipt) = take_state(escrow);
-    let (asset_opt, current, retiring) = match (old) {
-        EscrowState::HandoverOpen { asset, phase_start_ms: _, current, retiring } =>
-            (asset, current, retiring),
+    let (asset_opt, phase_start_ms, current, retiring) = match (old) {
+        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } =>
+            (asset, phase_start_ms, current, retiring),
         EscrowState::Idle              { asset: _a }                                            => abort EInvariantViolation,
         EscrowState::AtDutchAuction    { asset: _a, .. }                                        => abort EInvariantViolation,
         EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
@@ -685,16 +668,12 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let asset = option::destroy_some(asset_opt);
 
     let Tenant { cap_id: _, address: tenant, stake } = current;
-    let last_acquisition_price      = balance::value(&stake);
-    let (owner_share, protocol_fee) = split_fee(last_acquisition_price);
+    let last_acquisition_price = balance::value(&stake);
 
-    // One split → two balances (no tenant push at tenure expiry).
-    let mut owner_balance = stake;
-    let fee_balance       = balance::split(&mut owner_balance, protocol_fee);
-
-    // Two consumers.
-    pay_protocol_fee(fee_balance, escrow_id, tenant, escrow.fee_inbox_id, ctx);
-    balance::join(&mut escrow.owner_earnings, owner_balance);
+    // At tenure expiry, the curve at elapsed=tenure_ceiling returns SCALE,
+    // so used_credit = principal (full settlement, no tenant remain).
+    let (owner_share, protocol_fee, _remain) =
+        settle_outgoing(escrow, stake, tenant, phase_start_ms, boundary_ms, ctx);
 
     let next_state: EscrowState<Asset, CoinType> = if (retiring) {
         EscrowState::Retired { asset }
@@ -1036,6 +1015,60 @@ fun do_fill_asset<Asset: key + store, CoinType>(
     };
     put_state(escrow, new_state, receipt);
     tenant_cap_id
+}
+
+/// spec: §8.1 core — pure curve-driven used_credit math. State-free; the
+/// public `compute_used_credit` view wraps this with state-reading.
+fun used_credit_for(
+    config:         &IntegrationConfig,
+    principal:      u64,
+    phase_start_ms: u64,
+    timestamp_ms:   u64,
+): u64 {
+    if (timestamp_ms < phase_start_ms) return 0;
+    let elapsed = timestamp_ms - phase_start_ms;
+    let g = curve_shape::evaluate_curve(
+        config::credit_curve(config),
+        elapsed,
+        config::tenure_ceiling(config),
+    );
+    math::mul_div(principal, g, curve_shape::scale())
+}
+
+/// spec: §7.1/§7.2/§7.6 — settle the outgoing tenant's stake at a
+/// transition. Computes used_credit from the curve, splits the stake
+/// three ways (tenant remain, protocol fee, owner earnings), and
+/// dispatches each part. Returns u64 amounts for event emission.
+///
+/// Unified for both transitions:
+///   - do_handover:      elapsed < tenure_ceiling → used_credit < principal
+///   - do_tenure_expiry: elapsed = tenure_ceiling → used_credit = principal
+///                       (curve returns SCALE; remain_credit = 0)
+fun settle_outgoing<Asset: key + store, CoinType>(
+    escrow:         &mut RentalEscrow<Asset, CoinType>,
+    stake:          Balance<CoinType>,
+    payer:          address,
+    phase_start_ms: u64,
+    boundary_ms:    u64,
+    ctx:            &mut TxContext,
+): (u64, u64, u64) {  // (owner_share, protocol_fee, remain_credit)
+    let principal     = balance::value(&stake);
+    let used_credit   = used_credit_for(&escrow.config, principal, phase_start_ms, boundary_ms);
+    let remain_credit = principal - used_credit;
+    let (owner_share, protocol_fee) = split_fee(used_credit);
+
+    let escrow_id    = object::id(escrow);
+    let fee_inbox_id = escrow.fee_inbox_id;
+
+    let mut owner_balance = stake;
+    let unused_credit     = balance::split(&mut owner_balance, remain_credit);
+    let fee_balance       = balance::split(&mut owner_balance, protocol_fee);
+
+    pay_tenant_remain(unused_credit, payer, ctx);
+    pay_protocol_fee(fee_balance, escrow_id, payer, fee_inbox_id, ctx);
+    balance::join(&mut escrow.owner_earnings, owner_balance);
+
+    (owner_share, protocol_fee, remain_credit)
 }
 
 /// spec: §7.1 push-before-rotate (P3) — refund `balance` to the tenant.

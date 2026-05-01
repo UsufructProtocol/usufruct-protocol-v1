@@ -4176,6 +4176,54 @@ axes — e.g., "all configs with `h=0`", "all configs with `c=2`"); the
 projection set will be specified after corpus materialization in
 `tests/rental_escrow_corpus.move`.
 
+**Operational rules for using the corpus.**
+
+The corpus is a defense against codifying single-config assumptions
+as protocol behavior, not a mandatory iteration target. Three rules
+keep its cost-to-value ratio honest:
+
+1. **Default to the minimum projection, not `all_configs()`.** Every
+   row of §10 declares which subset of the corpus it iterates over
+   and why. The full corpus is used only when the asserted property
+   is genuinely cross-axis — typically §10.1 (`integrate` happy
+   path), §10.11 (fee routing), §10.12 (full lifecycle). All other
+   rows project to the axes they actually exercise (e.g., M6b uses
+   `with_descent_zero()`, ~84 configs; C1 uses
+   `with_retire_floor_nonzero()`, ~84 configs). Treating
+   "`all_configs()`" as a lazy default inflates suite runtime and
+   obscures which property the row actually verifies.
+
+2. **Assert properties, not config-indexed values.** A row written
+   as `assert!(value == expected_for_this_cfg, ...)` forces the
+   author to compute `expected_for_this_cfg` per config — that
+   computation almost always requires reading the implementation,
+   which is impl-mirroring (Form A in
+   `ctx/rental-escrow-tests.note`), not spec-driven testing.
+   Prefer formulations that hold across the projection: invariants,
+   inequalities, structural shape (`state_tag == X`,
+   `events.length == N`, `cap_id` triple-JOIN across event pairs).
+   When the spec mandates an exact numeric value derivable from the
+   config (rare), call the public helper that computes it
+   (`compute_floor_price`, `compute_used_credit`) — never duplicate
+   the formula in the test body.
+
+3. **Single-config rows are legitimate and expected.** Not every row
+   benefits from the corpus:
+   - **§10.14 unit rows on pure helpers**: no `IntegrationConfig`
+     dependency.
+   - **Structural abort guards**: P_READ (§10.14.5),
+     `E_WRONG_ESCROW_OWNER_CAP`, `E_RECEIPT_ESCROW_MISMATCH`,
+     `E_RETIRED_NO_BID` — abort regardless of config.
+   - **Sender / actor identity rows** (e.g., `KEEPER ≠ TENANT_A`
+     §10.16): the property is about which address is captured, not
+     about config.
+
+   Rough working partition: ~30–40 % of §10 rows benefit from the
+   full corpus; ~30 % from a small projection (2–10 configs
+   targeting one or two axes); ~30 % are single-config. The split
+   is descriptive, not prescriptive — the rule is to justify the
+   projection per row, not to hit a percentage.
+
 #### Test-only shims on private helpers
 
 The private helpers (§7) are exercised indirectly through the state

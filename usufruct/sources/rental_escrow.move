@@ -609,47 +609,30 @@ fun do_handover<Asset: key + store, CoinType>(
     boundary_ms: u64,
     ctx:         &mut TxContext,
 ) {
-    let escrow_id = object::id(escrow);
+    let escrow_id   = object::id(escrow);
+    let used_credit = compute_used_credit(escrow, boundary_ms);
+
     let (old, receipt) = take_state(escrow);
-    let (asset, phase_start_outgoing, current, pending, retiring) = match (old) {
+    let (asset, current, pending, retiring) = match (old) {
         EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending,
+            asset, phase_start_ms: _, current, pending,
             retiring, handover_countdown_expiry: _,
-        } => (asset, phase_start_ms, current, pending, retiring),
+        } => (asset, current, pending, retiring),
         EscrowState::Idle              { asset: _a }                       => abort EInvariantViolation,
         EscrowState::AtDutchAuction    { asset: _a, .. }                   => abort EInvariantViolation,
         EscrowState::HandoverOpen      { asset: _a, current: _c, .. }      => abort EInvariantViolation,
         EscrowState::Retired           { asset: _a }                       => abort EInvariantViolation,
     };
-
-    let Tenant { cap_id: _, address: displaced_tenant, stake: outgoing_stake } = current;
-    let principal = balance::value(&outgoing_stake);
-
-    // Curve-derived used_credit (same math as compute_used_credit, on the
-    // owned outgoing stake). Clamp would be a no-op here (boundary equals
-    // handover_countdown_expiry by precondition).
-    let elapsed = boundary_ms - phase_start_outgoing;
-    let g = curve_shape::evaluate_curve(
-        config::credit_curve(&escrow.config),
-        elapsed,
-        config::tenure_ceiling(&escrow.config),
-    );
-    let used_credit   = math::mul_div(principal, g, curve_shape::scale());
+    let Tenant { cap_id: _, address: displaced_tenant, stake } = current;
+    let principal     = balance::value(&stake);
     let remain_credit = principal - used_credit;
 
-    // Push remain_credit before any rotation (push-before-rotate, P3).
-    let mut outgoing_balance = outgoing_stake;
-    if (remain_credit > 0) {
-        let remain_part = balance::split(&mut outgoing_balance, remain_credit);
-        transfer::public_transfer(coin::from_balance(remain_part, ctx), displaced_tenant);
-    };
-
-    // Settle remainder == used_credit.
-    let fee_inbox_id = escrow.fee_inbox_id;
-    let (owner_share, protocol_fee) = settle_stake_earnings(
-        &mut escrow.owner_earnings, outgoing_balance, used_credit,
-        escrow_id, fee_inbox_id, displaced_tenant, ctx,
+    // Pipeline: tenant remain → protocol fee → owner earnings.
+    let stake = pay_tenant_remain(stake, remain_credit, displaced_tenant, ctx);
+    let (owner_share, protocol_fee, stake) = pay_protocol_fee(
+        stake, used_credit, escrow_id, displaced_tenant, escrow.fee_inbox_id, ctx,
     );
+    balance::join(&mut escrow.owner_earnings, stake);
 
     // Rotate pending → new current.
     let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
@@ -697,15 +680,14 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     assert!(option::is_some(&asset_opt), EInvariantViolation);
     let asset = option::destroy_some(asset_opt);
 
-    let Tenant { cap_id: _, address: tenant, stake: outgoing_stake } = current;
-    let stake_total            = balance::value(&outgoing_stake);
-    let last_acquisition_price = stake_total;
+    let Tenant { cap_id: _, address: tenant, stake } = current;
+    let last_acquisition_price = balance::value(&stake);
 
-    let fee_inbox_id = escrow.fee_inbox_id;
-    let (owner_share, protocol_fee) = settle_stake_earnings(
-        &mut escrow.owner_earnings, outgoing_stake, stake_total,
-        escrow_id, fee_inbox_id, tenant, ctx,
+    // Pipeline: protocol fee → owner earnings (no tenant push at tenure expiry).
+    let (owner_share, protocol_fee, stake) = pay_protocol_fee(
+        stake, last_acquisition_price, escrow_id, tenant, escrow.fee_inbox_id, ctx,
     );
+    balance::join(&mut escrow.owner_earnings, stake);
 
     let next_state: EscrowState<Asset, CoinType> = if (retiring) {
         EscrowState::Retired { asset }
@@ -1049,24 +1031,39 @@ fun do_fill_asset<Asset: key + store, CoinType>(
     tenant_cap_id
 }
 
-/// spec: §7.6 — split + (gated) fee post + drain into owner_earnings.
-/// Operates on the owned destructured stake; caller passes `&mut owner_earnings`.
-fun settle_stake_earnings<CoinType>(
-    owner_earnings: &mut Balance<CoinType>,
-    mut stake:      Balance<CoinType>,
-    principal:      u64,
-    escrow_id:      ID,
-    fee_inbox_id:   ID,
-    payer:          address,
-    ctx:            &mut TxContext,
-): (u64, u64) {
+/// spec: §7.1 push-before-rotate (P3) — split `remain_credit` off the
+/// balance and refund it to the tenant; return the residual.
+fun pay_tenant_remain<CoinType>(
+    mut balance:   Balance<CoinType>,
+    remain_credit: u64,
+    tenant:        address,
+    ctx:           &mut TxContext,
+): Balance<CoinType> {
+    if (remain_credit > 0) {
+        let part = balance::split(&mut balance, remain_credit);
+        transfer::public_transfer(coin::from_balance(part, ctx), tenant);
+    };
+    balance
+}
+
+/// spec: §7.6 — compute `split_fee(principal)`, post `protocol_fee` to the
+/// inbox, return `(owner_share, protocol_fee, residual_balance)`. Reused
+/// by do_handover (principal = used_credit) and do_tenure_expiry
+/// (principal = stake_total).
+fun pay_protocol_fee<CoinType>(
+    mut balance:  Balance<CoinType>,
+    principal:    u64,
+    escrow_id:    ID,
+    payer:        address,
+    fee_inbox_id: ID,
+    ctx:          &mut TxContext,
+): (u64, u64, Balance<CoinType>) {
     let (owner_share, protocol_fee) = split_fee(principal);
     if (protocol_fee > 0) {
-        let fee_balance = balance::split(&mut stake, protocol_fee);
-        fee_message::post<CoinType>(fee_balance, escrow_id, payer, fee_inbox_id, ctx);
+        let part = balance::split(&mut balance, protocol_fee);
+        fee_message::post<CoinType>(part, escrow_id, payer, fee_inbox_id, ctx);
     };
-    balance::join(owner_earnings, stake);
-    (owner_share, protocol_fee)
+    (owner_share, protocol_fee, balance)
 }
 
 /// spec: §7.7 — pending bid construction tail. Returns the cap, its ID,

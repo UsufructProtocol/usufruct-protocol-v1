@@ -604,21 +604,12 @@ fun do_handover<Asset: key + store, CoinType>(
 ) {
     let escrow_id = object::id(escrow);
 
-    let (old, receipt) = take_state(escrow);
-    let (asset, phase_start_ms, current, pending, retiring) = match (old) {
-        EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending,
-            retiring, handover_countdown_expiry: _,
-        } => (asset, phase_start_ms, current, pending, retiring),
-        EscrowState::Idle              { asset: _a }                       => abort EInvariantViolation,
-        EscrowState::AtDutchAuction    { asset: _a, .. }                   => abort EInvariantViolation,
-        EscrowState::HandoverOpen      { asset: _a, current: _c, .. }      => abort EInvariantViolation,
-        EscrowState::Retired           { asset: _a }                       => abort EInvariantViolation,
-    };
-    let Tenant { cap_id: _, address: displaced_tenant, stake } = current;
-
-    let (owner_share, protocol_fee, remain_credit) =
-        settle_outgoing(escrow, stake, displaced_tenant, phase_start_ms, boundary_ms, ctx);
+    let (receipt, asset, pending_opt, retiring, displaced_tenant,
+         owner_share, protocol_fee, remain_credit) =
+        settle_outgoing(escrow, boundary_ms, ctx);
+    // HandoverConfirmed precondition → pending is always Some.
+    assert!(option::is_some(&pending_opt), EInvariantViolation);
+    let pending = option::destroy_some(pending_opt);
     let used_credit = owner_share + protocol_fee;
 
     // Rotate pending → new current.
@@ -653,27 +644,21 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     ctx:         &mut TxContext,
 ) {
     let escrow_id = object::id(escrow);
-    let (old, receipt) = take_state(escrow);
-    let (asset_opt, phase_start_ms, current, retiring) = match (old) {
-        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } =>
-            (asset, phase_start_ms, current, retiring),
-        EscrowState::Idle              { asset: _a }                                            => abort EInvariantViolation,
-        EscrowState::AtDutchAuction    { asset: _a, .. }                                        => abort EInvariantViolation,
-        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
-        EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
-    };
+
+    let (receipt, asset_opt, pending_opt, retiring, tenant,
+         owner_share, protocol_fee, _remain) =
+        settle_outgoing(escrow, boundary_ms, ctx);
+    // HandoverOpen precondition → pending is always None.
+    option::destroy_none(pending_opt);
     // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can be open
     // when do_tenure_expiry fires; PTB clock-fixity §6.1).
     assert!(option::is_some(&asset_opt), EInvariantViolation);
     let asset = option::destroy_some(asset_opt);
 
-    let Tenant { cap_id: _, address: tenant, stake } = current;
-    let last_acquisition_price = balance::value(&stake);
-
     // At tenure expiry, the curve at elapsed=tenure_ceiling returns SCALE,
-    // so used_credit = principal (full settlement, no tenant remain).
-    let (owner_share, protocol_fee, _remain) =
-        settle_outgoing(escrow, stake, tenant, phase_start_ms, boundary_ms, ctx);
+    // so used_credit = principal and remain = 0; principal recovered as
+    // owner_share + protocol_fee.
+    let last_acquisition_price = owner_share + protocol_fee;
 
     let next_state: EscrowState<Asset, CoinType> = if (retiring) {
         EscrowState::Retired { asset }
@@ -1036,22 +1021,44 @@ fun used_credit_for(
 }
 
 /// spec: §7.1/§7.2/§7.6 — settle the outgoing tenant's stake at a
-/// transition. Computes used_credit from the curve, splits the stake
-/// three ways (tenant remain, protocol fee, owner earnings), and
-/// dispatches each part. Returns u64 amounts for event emission.
+/// transition. Takes state, matches HandoverConfirmed or HandoverOpen,
+/// computes used_credit from the curve, splits the stake three ways
+/// (tenant remain, protocol fee, owner earnings), and dispatches each
+/// part. Returns the receipt + state-specific pieces (asset, pending)
+/// for the caller to construct the next state.
 ///
 /// Unified for both transitions:
-///   - do_handover:      elapsed < tenure_ceiling → used_credit < principal
-///   - do_tenure_expiry: elapsed = tenure_ceiling → used_credit = principal
-///                       (curve returns SCALE; remain_credit = 0)
+///   - do_handover (HandoverConfirmed): pending_opt = Some
+///   - do_tenure_expiry (HandoverOpen): pending_opt = None
+///
+/// Curve unification: at elapsed = tenure_ceiling, evaluate_curve returns
+/// SCALE so used_credit = principal (full settlement, remain_credit = 0).
 fun settle_outgoing<Asset: key + store, CoinType>(
-    escrow:         &mut RentalEscrow<Asset, CoinType>,
-    stake:          Balance<CoinType>,
-    payer:          address,
-    phase_start_ms: u64,
-    boundary_ms:    u64,
-    ctx:            &mut TxContext,
-): (u64, u64, u64) {  // (owner_share, protocol_fee, remain_credit)
+    escrow:      &mut RentalEscrow<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+): (
+    StateReceipt,
+    Option<Asset>,
+    Option<Tenant<CoinType>>,   // pending — Some only in HandoverConfirmed
+    bool,                        // retiring
+    address,                     // payer
+    u64, u64, u64,               // owner_share, protocol_fee, remain_credit
+) {
+    let (old, receipt) = take_state(escrow);
+    let (asset_opt, phase_start_ms, current, pending_opt, retiring) = match (old) {
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms, current, pending,
+            retiring, handover_countdown_expiry: _,
+        } => (asset, phase_start_ms, current, option::some(pending), retiring),
+        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } =>
+            (asset, phase_start_ms, current, option::none(), retiring),
+        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
+    };
+
+    let Tenant { cap_id: _, address: payer, stake } = current;
     let principal     = balance::value(&stake);
     let used_credit   = used_credit_for(&escrow.config, principal, phase_start_ms, boundary_ms);
     let remain_credit = principal - used_credit;
@@ -1068,7 +1075,7 @@ fun settle_outgoing<Asset: key + store, CoinType>(
     pay_protocol_fee(fee_balance, escrow_id, payer, fee_inbox_id, ctx);
     balance::join(&mut escrow.owner_earnings, owner_balance);
 
-    (owner_share, protocol_fee, remain_credit)
+    (receipt, asset_opt, pending_opt, retiring, payer, owner_share, protocol_fee, remain_credit)
 }
 
 /// spec: §7.1 push-before-rotate (P3) — refund `balance` to the tenant.

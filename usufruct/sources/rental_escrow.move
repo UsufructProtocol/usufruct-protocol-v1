@@ -497,7 +497,14 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
         },
         _ => abort ENotRented,
     };
-    used_credit_for(&escrow.config, principal, phase_start_ms, effective_ts)
+    if (effective_ts < phase_start_ms) return 0;
+    let elapsed = effective_ts - phase_start_ms;
+    let g = curve_shape::evaluate_curve(
+        config::credit_curve(&escrow.config),
+        elapsed,
+        config::tenure_ceiling(&escrow.config),
+    );
+    math::mul_div(principal, g, curve_shape::scale())
 }
 
 /// spec: §8.4
@@ -980,37 +987,18 @@ fun do_fill_asset<Asset: key + store, CoinType>(
     tenant_cap_id
 }
 
-/// spec: §8.1 core — pure curve-driven used_credit math. State-free; the
-/// public `compute_used_credit` view wraps this with state-reading.
-fun used_credit_for(
-    config:         &IntegrationConfig,
-    principal:      u64,
-    phase_start_ms: u64,
-    timestamp_ms:   u64,
-): u64 {
-    if (timestamp_ms < phase_start_ms) return 0;
-    let elapsed = timestamp_ms - phase_start_ms;
-    let g = curve_shape::evaluate_curve(
-        config::credit_curve(config),
-        elapsed,
-        config::tenure_ceiling(config),
-    );
-    math::mul_div(principal, g, curve_shape::scale())
-}
-
-/// Sub-helper: settle the Tenant's stake (split + dispatch). Returns a
-/// new Tenant with `balance::zero()` stake plus the settlement amounts
-/// for events. State-window-free; used by `distribute_balance`.
+/// Sub-helper: settle the Tenant's stake against a precomputed
+/// `used_credit`. Splits 3-way (tenant remain, protocol fee, owner),
+/// dispatches each part, returns a new Tenant with `balance::zero()`
+/// stake plus the settlement amounts for events.
 fun settle_tenant<Asset: key + store, CoinType>(
-    escrow:         &mut RentalEscrow<Asset, CoinType>,
-    tenant:         Tenant<CoinType>,
-    phase_start_ms: u64,
-    boundary_ms:    u64,
-    ctx:            &mut TxContext,
+    escrow:      &mut RentalEscrow<Asset, CoinType>,
+    tenant:      Tenant<CoinType>,
+    used_credit: u64,
+    ctx:         &mut TxContext,
 ): (Tenant<CoinType>, address, u64, u64, u64) {
     let Tenant { cap_id, address: payer, stake } = tenant;
     let principal     = balance::value(&stake);
-    let used_credit   = used_credit_for(&escrow.config, principal, phase_start_ms, boundary_ms);
     let remain_credit = principal - used_credit;
     let (owner_share, protocol_fee) = split_fee(used_credit);
 
@@ -1033,11 +1021,16 @@ fun settle_tenant<Asset: key + store, CoinType>(
 /// `current.stake = balance::zero()`. The transient zero-balance current
 /// is consumed by the follow-up step (`do_rotate_for_handover` or
 /// `do_terminate_tenure`).
+///
+/// `compute_used_credit` is called BEFORE `take_state` because it reads
+/// `escrow.state`; the resulting u64 is then threaded through the
+/// settlement after take_state extracts the state cell.
 fun do_distribute_balance<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
     ctx:         &mut TxContext,
 ): (address, u64, u64, u64) {  // payer, owner_share, protocol_fee, remain_credit
+    let used_credit = compute_used_credit(escrow, boundary_ms);
     let (old, receipt) = take_state(escrow);
     let (next, payer, owner_share, protocol_fee, remain_credit) = match (old) {
         EscrowState::HandoverConfirmed {
@@ -1045,7 +1038,7 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
             retiring, handover_countdown_expiry,
         } => {
             let (zero_current, payer, o, p, r) =
-                settle_tenant(escrow, current, phase_start_ms, boundary_ms, ctx);
+                settle_tenant(escrow, current, used_credit, ctx);
             let next = EscrowState::HandoverConfirmed {
                 asset, phase_start_ms, current: zero_current, pending,
                 retiring, handover_countdown_expiry,
@@ -1054,7 +1047,7 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
         },
         EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
             let (zero_current, payer, o, p, r) =
-                settle_tenant(escrow, current, phase_start_ms, boundary_ms, ctx);
+                settle_tenant(escrow, current, used_credit, ctx);
             let next = EscrowState::HandoverOpen {
                 asset, phase_start_ms, current: zero_current, retiring,
             };

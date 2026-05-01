@@ -270,7 +270,7 @@ public fun retire<Asset: key + store, CoinType>(
     apply_pending_transitions(escrow, clock, ctx);
     assert!(
         clock::timestamp_ms(clock) >= config::retire_unlock(
-            config::retire(&escrow.config),
+            &escrow.config,
             escrow.integrated_at_ms,
         ),
         ERetireFloorNotElapsed,
@@ -422,7 +422,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
             },
             EscrowState::AtDutchAuction { phase_start_ms, .. } => {
                 let e = config::descent_boundary(
-                    config::descent(&escrow.config),
+                    &escrow.config,
                     *phase_start_ms,
                 );
                 if (now >= e) { do_auction_expiry(escrow, e); true } else false
@@ -506,7 +506,7 @@ fun compute_price_descent<Asset: key + store, CoinType>(
     let h = curve_shape::evaluate_curve(
         config::descent_curve(&escrow.config),
         elapsed_ms,
-        config::descent_window_ceiling(config::descent(&escrow.config)),
+        config::descent_window_ceiling(&escrow.config),
     );
     let spread   = last_acquisition_price - config::min_rent_price(&escrow.config);
     let consumed = math::mul_div(spread, h, curve_shape::scale());
@@ -680,10 +680,9 @@ fun do_place_bid<Asset: key + store, CoinType>(
         EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
     };
     let handover_countdown_expiry = config::handover_expiry(
-        config::handover(&escrow.config),
+        &escrow.config,
         now,
         phase_start_ms,
-        config::tenure_ceiling(&escrow.config),
     );
     let (cap, pending) = register_pending_bid(escrow_id, payment, pending_tenant, ctx);
     let pending_cap_id = object::id(&cap);

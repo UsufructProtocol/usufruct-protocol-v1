@@ -160,16 +160,15 @@ public(package) fun price_function(cfg: &IntegrationConfig): &PriceFunction { &c
 /// boundary; `FixedTime` is the boundary itself; `Instant` collapses
 /// to `now`.
 public(package) fun handover_expiry(
-    policy:         &HandoverPolicy,
+    cfg:            &IntegrationConfig,
     now:            u64,
     phase_start_ms: u64,
-    tenure_ceiling: u64,
 ): u64 {
-    match (policy) {
+    match (&cfg.handover) {
         HandoverPolicy::Instant                => now,
         HandoverPolicy::Countdown { floor_ms } =>
-            u64::min(now + *floor_ms, phase_start_ms + tenure_ceiling),
-        HandoverPolicy::FixedTime              => phase_start_ms + tenure_ceiling,
+            u64::min(now + *floor_ms, phase_start_ms + cfg.tenure_ceiling),
+        HandoverPolicy::FixedTime              => phase_start_ms + cfg.tenure_ceiling,
     }
 }
 
@@ -181,10 +180,10 @@ public(package) fun handover_expiry(
 /// `AtDutchAuction` variant — collapsing the cascade to `Idle` in one
 /// APT step (spec M6b / Q11).
 public(package) fun descent_boundary(
-    policy:         &DescentPolicy,
+    cfg:            &IntegrationConfig,
     phase_start_ms: u64,
 ): u64 {
-    match (policy) {
+    match (&cfg.descent) {
         DescentPolicy::Skipped               => phase_start_ms,
         DescentPolicy::Window { ceiling_ms } => phase_start_ms + *ceiling_ms,
     }
@@ -195,16 +194,16 @@ public(package) fun descent_boundary(
 /// reached an unreachable state — `compute_price_descent` is only
 /// called from `AtDutchAuction`, and that variant is structurally
 /// unobservable under `Skipped`.
-public(package) fun descent_window_ceiling(policy: &DescentPolicy): u64 {
-    match (policy) {
+public(package) fun descent_window_ceiling(cfg: &IntegrationConfig): u64 {
+    match (&cfg.descent) {
         DescentPolicy::Window { ceiling_ms } => *ceiling_ms,
         DescentPolicy::Skipped               => abort EDescentSkippedNoWindow,
     }
 }
 
-/// Whether `AtDutchAuction` is structurally observable under this policy.
-public(package) fun is_auction_observable(policy: &DescentPolicy): bool {
-    match (policy) {
+/// Whether `AtDutchAuction` is structurally observable under this config.
+public(package) fun is_auction_observable(cfg: &IntegrationConfig): bool {
+    match (&cfg.descent) {
         DescentPolicy::Skipped     => false,
         DescentPolicy::Window {..} => true,
     }
@@ -217,10 +216,10 @@ public(package) fun is_auction_observable(policy: &DescentPolicy): bool {
 /// is trivially satisfied. `Deferred` anchors the unlock to integration
 /// time.
 public(package) fun retire_unlock(
-    policy:           &RetirePolicy,
+    cfg:              &IntegrationConfig,
     integrated_at_ms: u64,
 ): u64 {
-    match (policy) {
+    match (&cfg.retire) {
         RetirePolicy::Immediate             => 0,
         RetirePolicy::Deferred { floor_ms } => integrated_at_ms + *floor_ms,
     }

@@ -1079,6 +1079,7 @@ fun do_rotate_for_handover<Asset: key + store, CoinType>(
             retiring, handover_countdown_expiry: _,
         } => {
             let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
+            assert!(balance::value(&zero_stake) == 0, EInvariantViolation);
             balance::destroy_zero(zero_stake);
 
             let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
@@ -1111,6 +1112,7 @@ fun do_terminate_tenure<Asset: key + store, CoinType>(
     let (next, tag) = match (old) {
         EscrowState::HandoverOpen { asset: asset_opt, phase_start_ms: _, current, retiring } => {
             let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
+            assert!(balance::value(&zero_stake) == 0, EInvariantViolation);
             balance::destroy_zero(zero_stake);
 
             // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can

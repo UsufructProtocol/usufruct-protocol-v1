@@ -609,8 +609,9 @@ fun do_handover<Asset: key + store, CoinType>(
     boundary_ms: u64,
     ctx:         &mut TxContext,
 ) {
-    let escrow_id   = object::id(escrow);
-    let used_credit = compute_used_credit(escrow, boundary_ms);
+    let escrow_id                   = object::id(escrow);
+    let used_credit                 = compute_used_credit(escrow, boundary_ms);
+    let (owner_share, protocol_fee) = split_fee(used_credit);
 
     let (old, receipt) = take_state(escrow);
     let (asset, current, pending, retiring) = match (old) {
@@ -627,12 +628,15 @@ fun do_handover<Asset: key + store, CoinType>(
     let principal     = balance::value(&stake);
     let remain_credit = principal - used_credit;
 
-    // Pipeline: tenant remain → protocol fee → owner earnings.
-    let stake = pay_tenant_remain(stake, remain_credit, displaced_tenant, ctx);
-    let (owner_share, protocol_fee, stake) = pay_protocol_fee(
-        stake, used_credit, escrow_id, displaced_tenant, escrow.fee_inbox_id, ctx,
-    );
-    balance::join(&mut escrow.owner_earnings, stake);
+    // Two splits → three balances (sizes: remain_credit, protocol_fee, owner_share).
+    let mut owner_balance = stake;
+    let remain_balance    = balance::split(&mut owner_balance, remain_credit);
+    let fee_balance       = balance::split(&mut owner_balance, protocol_fee);
+
+    // Three consumers.
+    pay_tenant_remain(remain_balance, displaced_tenant, ctx);
+    pay_protocol_fee(fee_balance, escrow_id, displaced_tenant, escrow.fee_inbox_id, ctx);
+    balance::join(&mut escrow.owner_earnings, owner_balance);
 
     // Rotate pending → new current.
     let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
@@ -681,13 +685,16 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let asset = option::destroy_some(asset_opt);
 
     let Tenant { cap_id: _, address: tenant, stake } = current;
-    let last_acquisition_price = balance::value(&stake);
+    let last_acquisition_price      = balance::value(&stake);
+    let (owner_share, protocol_fee) = split_fee(last_acquisition_price);
 
-    // Pipeline: protocol fee → owner earnings (no tenant push at tenure expiry).
-    let (owner_share, protocol_fee, stake) = pay_protocol_fee(
-        stake, last_acquisition_price, escrow_id, tenant, escrow.fee_inbox_id, ctx,
-    );
-    balance::join(&mut escrow.owner_earnings, stake);
+    // One split → two balances (no tenant push at tenure expiry).
+    let mut owner_balance = stake;
+    let fee_balance       = balance::split(&mut owner_balance, protocol_fee);
+
+    // Two consumers.
+    pay_protocol_fee(fee_balance, escrow_id, tenant, escrow.fee_inbox_id, ctx);
+    balance::join(&mut escrow.owner_earnings, owner_balance);
 
     let next_state: EscrowState<Asset, CoinType> = if (retiring) {
         EscrowState::Retired { asset }
@@ -1031,39 +1038,34 @@ fun do_fill_asset<Asset: key + store, CoinType>(
     tenant_cap_id
 }
 
-/// spec: §7.1 push-before-rotate (P3) — split `remain_credit` off the
-/// balance and refund it to the tenant; return the residual.
+/// spec: §7.1 push-before-rotate (P3) — refund `balance` to the tenant.
+/// Caller pre-splits to size `remain_credit`.
 fun pay_tenant_remain<CoinType>(
-    mut balance:   Balance<CoinType>,
-    remain_credit: u64,
-    tenant:        address,
-    ctx:           &mut TxContext,
-): Balance<CoinType> {
-    if (remain_credit > 0) {
-        let part = balance::split(&mut balance, remain_credit);
-        transfer::public_transfer(coin::from_balance(part, ctx), tenant);
-    };
-    balance
+    balance: Balance<CoinType>,
+    tenant:  address,
+    ctx:     &mut TxContext,
+) {
+    if (balance::value(&balance) > 0) {
+        transfer::public_transfer(coin::from_balance(balance, ctx), tenant);
+    } else {
+        balance::destroy_zero(balance);
+    }
 }
 
-/// spec: §7.6 — compute `split_fee(principal)`, post `protocol_fee` to the
-/// inbox, return `(owner_share, protocol_fee, residual_balance)`. Reused
-/// by do_handover (principal = used_credit) and do_tenure_expiry
-/// (principal = stake_total).
+/// spec: §7.6 — post `balance` to the protocol fee inbox. Caller pre-splits
+/// to size `protocol_fee` (from `split_fee`).
 fun pay_protocol_fee<CoinType>(
-    mut balance:  Balance<CoinType>,
-    principal:    u64,
+    balance:      Balance<CoinType>,
     escrow_id:    ID,
     payer:        address,
     fee_inbox_id: ID,
     ctx:          &mut TxContext,
-): (u64, u64, Balance<CoinType>) {
-    let (owner_share, protocol_fee) = split_fee(principal);
-    if (protocol_fee > 0) {
-        let part = balance::split(&mut balance, protocol_fee);
-        fee_message::post<CoinType>(part, escrow_id, payer, fee_inbox_id, ctx);
-    };
-    (owner_share, protocol_fee, balance)
+) {
+    if (balance::value(&balance) > 0) {
+        fee_message::post<CoinType>(balance, escrow_id, payer, fee_inbox_id, ctx);
+    } else {
+        balance::destroy_zero(balance);
+    }
 }
 
 /// spec: §7.7 — pending bid construction tail. Returns the cap, its ID,

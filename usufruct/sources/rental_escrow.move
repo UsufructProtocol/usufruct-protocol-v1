@@ -597,38 +597,32 @@ fun read_state<Asset: key + store, CoinType>(
 
 /// spec: §7.1 — pending handover. Pre: state is HandoverConfirmed and
 /// `boundary_ms == handover_countdown_expiry`.
+///
+/// Two-step transformation inside one take/put cycle:
+///   1. `distribute_balance` — split outgoing tenant's stake 3-way; state
+///      becomes HandoverConfirmed with `current.stake = balance::zero()`.
+///   2. `rotate_for_handover` — destroy zero-balance current, promote
+///      pending → current; state becomes HandoverOpen.
 fun do_handover<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
     ctx:         &mut TxContext,
 ) {
     let escrow_id = object::id(escrow);
+    let (s0, receipt) = take_state(escrow);
 
-    let (receipt, asset, pending_opt, retiring, displaced_tenant,
-         owner_share, protocol_fee, remain_credit) =
-        settle_outgoing(escrow, boundary_ms, ctx);
-    // HandoverConfirmed precondition → pending is always Some.
-    assert!(option::is_some(&pending_opt), EInvariantViolation);
-    let pending = option::destroy_some(pending_opt);
-    let used_credit = owner_share + protocol_fee;
+    let (s1, displaced_tenant, owner_share, protocol_fee, remain_credit) =
+        distribute_balance(escrow, s0, boundary_ms, ctx);
+    let (s2, new_tenant_cap_id, new_rent_price) =
+        rotate_for_handover(s1, boundary_ms);
 
-    // Rotate pending → new current.
-    let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
-    let new_rent_price = balance::value(&new_stake);
-    let new_current = Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake };
-
-    put_state(escrow, EscrowState::HandoverOpen {
-        asset,
-        phase_start_ms: boundary_ms,
-        current:        new_current,
-        retiring,
-    }, receipt);
+    put_state(escrow, s2, receipt);
 
     event::emit(HandoverCompleted {
         escrow_id,
         displaced_tenant,
-        new_tenant_cap_id: new_cap_id,
-        used_credit,
+        new_tenant_cap_id,
+        used_credit: owner_share + protocol_fee,
         owner_share,
         protocol_fee,
         remain_credit,
@@ -638,39 +632,29 @@ fun do_handover<Asset: key + store, CoinType>(
 }
 
 /// spec: §7.2 — tenure expiry. Pre: state is HandoverOpen.
+///
+/// Two-step transformation inside one take/put cycle:
+///   1. `distribute_balance` — split outgoing tenant's stake; at
+///      elapsed=tenure_ceiling the curve returns SCALE so used_credit =
+///      principal (remain_credit = 0). State becomes HandoverOpen with
+///      `current.stake = balance::zero()`.
+///   2. `terminate_tenure` — destroy zero-balance current, unwrap asset,
+///      branch on `retiring` to AtDutchAuction or Retired.
 fun do_tenure_expiry<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
     ctx:         &mut TxContext,
 ) {
     let escrow_id = object::id(escrow);
+    let (s0, receipt) = take_state(escrow);
 
-    let (receipt, asset_opt, pending_opt, retiring, tenant,
-         owner_share, protocol_fee, _remain) =
-        settle_outgoing(escrow, boundary_ms, ctx);
-    // HandoverOpen precondition → pending is always None.
-    option::destroy_none(pending_opt);
-    // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can be open
-    // when do_tenure_expiry fires; PTB clock-fixity §6.1).
-    assert!(option::is_some(&asset_opt), EInvariantViolation);
-    let asset = option::destroy_some(asset_opt);
-
-    // At tenure expiry, the curve at elapsed=tenure_ceiling returns SCALE,
-    // so used_credit = principal and remain = 0; principal recovered as
-    // owner_share + protocol_fee.
+    let (s1, tenant, owner_share, protocol_fee, _remain) =
+        distribute_balance(escrow, s0, boundary_ms, ctx);
     let last_acquisition_price = owner_share + protocol_fee;
+    let (s2, next_tag) =
+        terminate_tenure(s1, boundary_ms, last_acquisition_price);
 
-    let next_state: EscrowState<Asset, CoinType> = if (retiring) {
-        EscrowState::Retired { asset }
-    } else {
-        EscrowState::AtDutchAuction {
-            asset,
-            phase_start_ms: boundary_ms,
-            last_acquisition_price,
-        }
-    };
-    let next_tag = state_tag(&next_state);
-    put_state(escrow, next_state, receipt);
+    put_state(escrow, s2, receipt);
 
     event::emit(TenureExpired {
         escrow_id, tenant, owner_share, protocol_fee,
@@ -1020,45 +1004,17 @@ fun used_credit_for(
     math::mul_div(principal, g, curve_shape::scale())
 }
 
-/// spec: §7.1/§7.2/§7.6 — settle the outgoing tenant's stake at a
-/// transition. Takes state, matches HandoverConfirmed or HandoverOpen,
-/// computes used_credit from the curve, splits the stake three ways
-/// (tenant remain, protocol fee, owner earnings), and dispatches each
-/// part. Returns the receipt + state-specific pieces (asset, pending)
-/// for the caller to construct the next state.
-///
-/// Unified for both transitions:
-///   - do_handover (HandoverConfirmed): pending_opt = Some
-///   - do_tenure_expiry (HandoverOpen): pending_opt = None
-///
-/// Curve unification: at elapsed = tenure_ceiling, evaluate_curve returns
-/// SCALE so used_credit = principal (full settlement, remain_credit = 0).
-fun settle_outgoing<Asset: key + store, CoinType>(
-    escrow:      &mut RentalEscrow<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
-): (
-    StateReceipt,
-    Option<Asset>,
-    Option<Tenant<CoinType>>,   // pending — Some only in HandoverConfirmed
-    bool,                        // retiring
-    address,                     // payer
-    u64, u64, u64,               // owner_share, protocol_fee, remain_credit
-) {
-    let (old, receipt) = take_state(escrow);
-    let (asset_opt, phase_start_ms, current, pending_opt, retiring) = match (old) {
-        EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending,
-            retiring, handover_countdown_expiry: _,
-        } => (asset, phase_start_ms, current, option::some(pending), retiring),
-        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } =>
-            (asset, phase_start_ms, current, option::none(), retiring),
-        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
-        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
-        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
-    };
-
-    let Tenant { cap_id: _, address: payer, stake } = current;
+/// Sub-helper: settle the Tenant's stake (split + dispatch). Returns a
+/// new Tenant with `balance::zero()` stake plus the settlement amounts
+/// for events. State-window-free; used by `distribute_balance`.
+fun settle_tenant<Asset: key + store, CoinType>(
+    escrow:         &mut RentalEscrow<Asset, CoinType>,
+    tenant:         Tenant<CoinType>,
+    phase_start_ms: u64,
+    boundary_ms:    u64,
+    ctx:            &mut TxContext,
+): (Tenant<CoinType>, address, u64, u64, u64) {
+    let Tenant { cap_id, address: payer, stake } = tenant;
     let principal     = balance::value(&stake);
     let used_credit   = used_credit_for(&escrow.config, principal, phase_start_ms, boundary_ms);
     let remain_credit = principal - used_credit;
@@ -1070,12 +1026,123 @@ fun settle_outgoing<Asset: key + store, CoinType>(
     let mut owner_balance = stake;
     let unused_credit     = balance::split(&mut owner_balance, remain_credit);
     let fee_balance       = balance::split(&mut owner_balance, protocol_fee);
-
     pay_tenant_remain(unused_credit, payer, ctx);
     pay_protocol_fee(fee_balance, escrow_id, payer, fee_inbox_id, ctx);
     balance::join(&mut escrow.owner_earnings, owner_balance);
 
-    (receipt, asset_opt, pending_opt, retiring, payer, owner_share, protocol_fee, remain_credit)
+    let zero_tenant = Tenant { cap_id, address: payer, stake: balance::zero() };
+    (zero_tenant, payer, owner_share, protocol_fee, remain_credit)
+}
+
+/// State transformer: takes EscrowState by value, distributes the outgoing
+/// tenant's balance (3-way), returns the SAME variant with `current.stake`
+/// emptied to `balance::zero()`. Caller threads the returned state into a
+/// follow-up transformer (rotate_for_handover or terminate_tenure).
+///
+/// This function does NOT take/put state — it's the first of two
+/// transformers composed inside a single take/put cycle by do_handover or
+/// do_tenure_expiry.
+fun distribute_balance<Asset: key + store, CoinType>(
+    escrow:      &mut RentalEscrow<Asset, CoinType>,
+    state:       EscrowState<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+): (
+    EscrowState<Asset, CoinType>,
+    address, u64, u64, u64,  // payer, owner_share, protocol_fee, remain_credit
+) {
+    match (state) {
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms, current, pending,
+            retiring, handover_countdown_expiry,
+        } => {
+            let (zero_current, payer, o, p, r) =
+                settle_tenant(escrow, current, phase_start_ms, boundary_ms, ctx);
+            let next = EscrowState::HandoverConfirmed {
+                asset, phase_start_ms, current: zero_current, pending,
+                retiring, handover_countdown_expiry,
+            };
+            (next, payer, o, p, r)
+        },
+        EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
+            let (zero_current, payer, o, p, r) =
+                settle_tenant(escrow, current, phase_start_ms, boundary_ms, ctx);
+            let next = EscrowState::HandoverOpen {
+                asset, phase_start_ms, current: zero_current, retiring,
+            };
+            (next, payer, o, p, r)
+        },
+        EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
+    }
+}
+
+/// State transformer: HandoverConfirmed (post-distribute) → HandoverOpen
+/// with rotated tenant. Destroys the zero-balance outgoing current,
+/// promotes pending to current. Returns next state + event info
+/// (new_tenant_cap_id, new_rent_price).
+fun rotate_for_handover<Asset: key + store, CoinType>(
+    state:       EscrowState<Asset, CoinType>,
+    boundary_ms: u64,
+): (EscrowState<Asset, CoinType>, ID, u64) {
+    match (state) {
+        EscrowState::HandoverConfirmed {
+            asset, phase_start_ms: _, current, pending,
+            retiring, handover_countdown_expiry: _,
+        } => {
+            let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
+            balance::destroy_zero(zero_stake);
+
+            let Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake } = pending;
+            let new_rent_price = balance::value(&new_stake);
+            let new_current = Tenant { cap_id: new_cap_id, address: new_address, stake: new_stake };
+
+            let next = EscrowState::HandoverOpen {
+                asset, phase_start_ms: boundary_ms, current: new_current, retiring,
+            };
+            (next, new_cap_id, new_rent_price)
+        },
+        EscrowState::Idle           { asset: _a }                            => abort EInvariantViolation,
+        EscrowState::AtDutchAuction { asset: _a, .. }                        => abort EInvariantViolation,
+        EscrowState::HandoverOpen   { asset: _a, current: _c, .. }           => abort EInvariantViolation,
+        EscrowState::Retired        { asset: _a }                            => abort EInvariantViolation,
+    }
+}
+
+/// State transformer: HandoverOpen (post-distribute) → AtDutchAuction or
+/// Retired. Destroys the zero-balance outgoing current, unwraps the
+/// asset, branches on `retiring`. Returns next state + tag for events.
+fun terminate_tenure<Asset: key + store, CoinType>(
+    state:                  EscrowState<Asset, CoinType>,
+    boundary_ms:            u64,
+    last_acquisition_price: u64,
+): (EscrowState<Asset, CoinType>, EscrowStateTag) {
+    match (state) {
+        EscrowState::HandoverOpen { asset: asset_opt, phase_start_ms: _, current, retiring } => {
+            let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
+            balance::destroy_zero(zero_stake);
+
+            // Unwrap Option<Asset> — guaranteed Some by P11 (no borrow can
+            // be open at tenure expiry; PTB clock-fixity §6.1).
+            assert!(option::is_some(&asset_opt), EInvariantViolation);
+            let asset = option::destroy_some(asset_opt);
+
+            let next: EscrowState<Asset, CoinType> = if (retiring) {
+                EscrowState::Retired { asset }
+            } else {
+                EscrowState::AtDutchAuction {
+                    asset, phase_start_ms: boundary_ms, last_acquisition_price,
+                }
+            };
+            let tag = state_tag(&next);
+            (next, tag)
+        },
+        EscrowState::Idle              { asset: _a }                                        => abort EInvariantViolation,
+        EscrowState::AtDutchAuction    { asset: _a, .. }                                    => abort EInvariantViolation,
+        EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }          => abort EInvariantViolation,
+        EscrowState::Retired           { asset: _a }                                        => abort EInvariantViolation,
+    }
 }
 
 /// spec: §7.1 push-before-rotate (P3) — refund `balance` to the tenant.
@@ -1214,3 +1281,23 @@ fun register_pending_bid<CoinType>(
 // 3. do_* helpers do not call each other today; if a chain is ever needed,
 //    each link must still own its own receipt and the bidirectional grep
 //    parity must continue to hold.
+//
+// CONVENTION P_TRANSFORM: a do_* function may compose multiple state
+// transformations inside its single take/put window by threading the
+// EscrowState value through pure-ish "transformer" helpers. A transformer
+// takes `EscrowState<A,C>` by value and returns a (possibly different)
+// `EscrowState<A,C>` plus auxiliary results. Transformers do NOT call
+// take_state or put_state — they operate on the state value already
+// extracted by the enclosing do_*.
+//
+// Used by do_handover and do_tenure_expiry, which each thread state
+// through two transformers (`distribute_balance` → `rotate_for_handover`
+// or `terminate_tenure`) inside one take/put cycle. This decomposes a
+// transition that conceptually mutates state twice (balance redistribution,
+// then variant change) into named, composable steps without the cost of
+// two take/put round-trips or an artificial intermediate state cell.
+//
+// The intermediate `EscrowState` between transformers may carry a
+// `current.stake = balance::zero()` — semantically transient (post-settle,
+// pre-rotate) and only observable inside the do_* body, never at a tx
+// boundary (P13).

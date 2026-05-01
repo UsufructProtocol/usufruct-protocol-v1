@@ -598,25 +598,23 @@ fun read_state<Asset: key + store, CoinType>(
 /// spec: §7.1 — pending handover. Pre: state is HandoverConfirmed and
 /// `boundary_ms == handover_countdown_expiry`.
 ///
-/// Two-step transformation inside one take/put cycle:
-///   1. `distribute_balance` — split outgoing tenant's stake 3-way; state
-///      becomes HandoverConfirmed with `current.stake = balance::zero()`.
-///   2. `rotate_for_handover` — destroy zero-balance current, promote
-///      pending → current; state becomes HandoverOpen.
+/// Orchestrator: composes two state-mutating sub-steps, each owning its
+/// own take/put window.
+///   1. `do_distribute_balance` — split outgoing stake 3-way, leave state
+///      with `current.stake = balance::zero()`.
+///   2. `do_rotate_for_handover` — destroy zero-balance current, promote
+///      pending → current, transition to HandoverOpen.
 fun do_handover<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
     ctx:         &mut TxContext,
 ) {
     let escrow_id = object::id(escrow);
-    let (s0, receipt) = take_state(escrow);
 
-    let (s1, displaced_tenant, owner_share, protocol_fee, remain_credit) =
-        distribute_balance(escrow, s0, boundary_ms, ctx);
-    let (s2, new_tenant_cap_id, new_rent_price) =
-        rotate_for_handover(s1, boundary_ms);
-
-    put_state(escrow, s2, receipt);
+    let (displaced_tenant, owner_share, protocol_fee, remain_credit) =
+        do_distribute_balance(escrow, boundary_ms, ctx);
+    let (new_tenant_cap_id, new_rent_price) =
+        do_rotate_for_handover(escrow, boundary_ms);
 
     event::emit(HandoverCompleted {
         escrow_id,
@@ -633,12 +631,11 @@ fun do_handover<Asset: key + store, CoinType>(
 
 /// spec: §7.2 — tenure expiry. Pre: state is HandoverOpen.
 ///
-/// Two-step transformation inside one take/put cycle:
-///   1. `distribute_balance` — split outgoing tenant's stake; at
-///      elapsed=tenure_ceiling the curve returns SCALE so used_credit =
-///      principal (remain_credit = 0). State becomes HandoverOpen with
-///      `current.stake = balance::zero()`.
-///   2. `terminate_tenure` — destroy zero-balance current, unwrap asset,
+/// Orchestrator: composes two state-mutating sub-steps.
+///   1. `do_distribute_balance` — split stake; at elapsed=tenure_ceiling
+///      the curve returns SCALE so used_credit = principal (remain = 0).
+///      State stays HandoverOpen with `current.stake = balance::zero()`.
+///   2. `do_terminate_tenure` — destroy zero current, unwrap asset,
 ///      branch on `retiring` to AtDutchAuction or Retired.
 fun do_tenure_expiry<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
@@ -646,15 +643,12 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     ctx:         &mut TxContext,
 ) {
     let escrow_id = object::id(escrow);
-    let (s0, receipt) = take_state(escrow);
 
-    let (s1, tenant, owner_share, protocol_fee, _remain) =
-        distribute_balance(escrow, s0, boundary_ms, ctx);
+    let (tenant, owner_share, protocol_fee, _remain) =
+        do_distribute_balance(escrow, boundary_ms, ctx);
     let last_acquisition_price = owner_share + protocol_fee;
-    let (s2, next_tag) =
-        terminate_tenure(s1, boundary_ms, last_acquisition_price);
-
-    put_state(escrow, s2, receipt);
+    let next_tag =
+        do_terminate_tenure(escrow, boundary_ms, last_acquisition_price);
 
     event::emit(TenureExpired {
         escrow_id, tenant, owner_share, protocol_fee,
@@ -1034,24 +1028,18 @@ fun settle_tenant<Asset: key + store, CoinType>(
     (zero_tenant, payer, owner_share, protocol_fee, remain_credit)
 }
 
-/// State transformer: takes EscrowState by value, distributes the outgoing
-/// tenant's balance (3-way), returns the SAME variant with `current.stake`
-/// emptied to `balance::zero()`. Caller threads the returned state into a
-/// follow-up transformer (rotate_for_handover or terminate_tenure).
-///
-/// This function does NOT take/put state — it's the first of two
-/// transformers composed inside a single take/put cycle by do_handover or
-/// do_tenure_expiry.
-fun distribute_balance<Asset: key + store, CoinType>(
+/// First step of a transition: distributes the outgoing tenant's balance
+/// 3-way and leaves the state cell on the SAME variant with
+/// `current.stake = balance::zero()`. The transient zero-balance current
+/// is consumed by the follow-up step (`do_rotate_for_handover` or
+/// `do_terminate_tenure`).
+fun do_distribute_balance<Asset: key + store, CoinType>(
     escrow:      &mut RentalEscrow<Asset, CoinType>,
-    state:       EscrowState<Asset, CoinType>,
     boundary_ms: u64,
     ctx:         &mut TxContext,
-): (
-    EscrowState<Asset, CoinType>,
-    address, u64, u64, u64,  // payer, owner_share, protocol_fee, remain_credit
-) {
-    match (state) {
+): (address, u64, u64, u64) {  // payer, owner_share, protocol_fee, remain_credit
+    let (old, receipt) = take_state(escrow);
+    let (next, payer, owner_share, protocol_fee, remain_credit) = match (old) {
         EscrowState::HandoverConfirmed {
             asset, phase_start_ms, current, pending,
             retiring, handover_countdown_expiry,
@@ -1075,18 +1063,20 @@ fun distribute_balance<Asset: key + store, CoinType>(
         EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
         EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
         EscrowState::Retired        { asset: _a }     => abort EInvariantViolation,
-    }
+    };
+    put_state(escrow, next, receipt);
+    (payer, owner_share, protocol_fee, remain_credit)
 }
 
-/// State transformer: HandoverConfirmed (post-distribute) → HandoverOpen
-/// with rotated tenant. Destroys the zero-balance outgoing current,
-/// promotes pending to current. Returns next state + event info
-/// (new_tenant_cap_id, new_rent_price).
-fun rotate_for_handover<Asset: key + store, CoinType>(
-    state:       EscrowState<Asset, CoinType>,
+/// Second step of handover: HandoverConfirmed (post-distribute) →
+/// HandoverOpen with rotated tenant. Destroys the zero-balance outgoing
+/// current, promotes pending to current.
+fun do_rotate_for_handover<Asset: key + store, CoinType>(
+    escrow:      &mut RentalEscrow<Asset, CoinType>,
     boundary_ms: u64,
-): (EscrowState<Asset, CoinType>, ID, u64) {
-    match (state) {
+): (ID, u64) {  // (new_tenant_cap_id, new_rent_price)
+    let (old, receipt) = take_state(escrow);
+    let (next, new_cap_id, new_rent_price) = match (old) {
         EscrowState::HandoverConfirmed {
             asset, phase_start_ms: _, current, pending,
             retiring, handover_countdown_expiry: _,
@@ -1107,18 +1097,21 @@ fun rotate_for_handover<Asset: key + store, CoinType>(
         EscrowState::AtDutchAuction { asset: _a, .. }                        => abort EInvariantViolation,
         EscrowState::HandoverOpen   { asset: _a, current: _c, .. }           => abort EInvariantViolation,
         EscrowState::Retired        { asset: _a }                            => abort EInvariantViolation,
-    }
+    };
+    put_state(escrow, next, receipt);
+    (new_cap_id, new_rent_price)
 }
 
-/// State transformer: HandoverOpen (post-distribute) → AtDutchAuction or
-/// Retired. Destroys the zero-balance outgoing current, unwraps the
-/// asset, branches on `retiring`. Returns next state + tag for events.
-fun terminate_tenure<Asset: key + store, CoinType>(
-    state:                  EscrowState<Asset, CoinType>,
+/// Second step of tenure expiry: HandoverOpen (post-distribute) →
+/// AtDutchAuction or Retired. Destroys the zero-balance outgoing current,
+/// unwraps the asset, branches on `retiring`.
+fun do_terminate_tenure<Asset: key + store, CoinType>(
+    escrow:                 &mut RentalEscrow<Asset, CoinType>,
     boundary_ms:            u64,
     last_acquisition_price: u64,
-): (EscrowState<Asset, CoinType>, EscrowStateTag) {
-    match (state) {
+): EscrowStateTag {
+    let (old, receipt) = take_state(escrow);
+    let (next, tag) = match (old) {
         EscrowState::HandoverOpen { asset: asset_opt, phase_start_ms: _, current, retiring } => {
             let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
             balance::destroy_zero(zero_stake);
@@ -1142,7 +1135,9 @@ fun terminate_tenure<Asset: key + store, CoinType>(
         EscrowState::AtDutchAuction    { asset: _a, .. }                                    => abort EInvariantViolation,
         EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }          => abort EInvariantViolation,
         EscrowState::Retired           { asset: _a }                                        => abort EInvariantViolation,
-    }
+    };
+    put_state(escrow, next, receipt);
+    tag
 }
 
 /// spec: §7.1 push-before-rotate (P3) — refund `balance` to the tenant.
@@ -1251,53 +1246,60 @@ fun register_pending_bid<CoinType>(
 // calls both take_state and put_state; no other function in the module calls
 // both.
 //
+// Two flavors of do_*:
+//   (a) STATE-WINDOW OWNERS — body contains a take_state / put_state pair.
+//       Single-step transitions: do_install_new_tenant, do_place_bid,
+//       do_supersede_bid, do_retire_immediately, do_set_retiring_flag,
+//       do_extract_asset, do_fill_asset, do_auction_expiry, and the
+//       sub-step helpers do_distribute_balance, do_rotate_for_handover,
+//       do_terminate_tenure.
+//   (b) ORCHESTRATORS — body contains no take_state directly; instead
+//       calls two or more do_* state-window owners back-to-back. The
+//       transitions do_handover and do_tenure_expiry are orchestrators —
+//       each splits into a balance-distribution step and a variant-change
+//       step, each step owning its own take/put.
+//
 // Enforcement summary
 // ───────────────────
-// │ Guarantee                                         │ Level         │
-// │ Every do_* function owns a take/put window        │ convention    │
-// │ No non-do_* function owns a take/put window       │ convention    │
-// │   (public fns dispatch to do_* helpers instead)   │               │
-// │ Every take_state pairs with a put_state in PTB    │ compile-time  │
-// │   (StateReceipt hot potato — see P_READ above)    │               │
+// │ Guarantee                                                  │ Level         │
+// │ Every do_* function either owns a take/put window OR       │ convention    │
+// │   composes do_* sub-steps                                  │               │
+// │ No non-do_* function owns a take/put window                │ convention    │
+// │ Every take_state pairs with a put_state in PTB             │ compile-time  │
+// │   (StateReceipt hot potato — see P_READ above)             │               │
 //
 // Why P_DO matters
 // ────────────────
 // The state-mutating helpers form a category with shared structural shape:
-// take_state → match → mutation → put_state → emit. Marking them with a
-// dedicated prefix makes the category scannable and the contract auditable:
+// take_state → match → mutation → put_state. Marking them with a dedicated
+// prefix makes the category scannable and the contract auditable:
 //
-//   grep '^fun do_'                             # all state-cell mutators
-//   grep -B5 'take_state(escrow)' | grep '^fun' # owners of take/put windows
+//   grep '^fun do_'                             # all state mutators (both flavors)
+//   grep -B5 'take_state(escrow)' | grep '^fun' # state-window owners only
 //
-// If those two sets diverge, P_DO is violated. The convention encodes a
-// structural property — public functions delegate to do_* helpers and never
-// own a take/put window themselves — making the call graph self-documenting.
+// Window owners ⊆ do_* always. Orchestrators are do_* but not window
+// owners; they call window-owner do_* helpers instead. Non-do_* functions
+// never own a window. The convention encodes a structural property — every
+// state mutation is funneled through a do_* — making the call graph
+// self-documenting.
+//
+// Why orchestrators exist
+// ────────────────────────
+// A transition may conceptually mutate state more than once (e.g., handover:
+// redistribute balance, then rotate tenant). Decomposing into two do_*
+// sub-steps, each with its own take/put, separates concerns at the cost of
+// one extra take/put cycle per transition. An intermediate state value
+// (e.g., `current.stake = balance::zero()`) lives between the two steps —
+// transient and only observable inside the orchestrator body, never at a tx
+// boundary (P13).
 //
 // How to maintain the convention in future changes
 // ─────────────────────────────────────────────────
 // 1. A new helper that calls take_state and put_state must be named do_*.
 // 2. A new public function that needs to mutate state must delegate to a
 //    do_* helper rather than open its own take/put window.
-// 3. do_* helpers do not call each other today; if a chain is ever needed,
-//    each link must still own its own receipt and the bidirectional grep
-//    parity must continue to hold.
-//
-// CONVENTION P_TRANSFORM: a do_* function may compose multiple state
-// transformations inside its single take/put window by threading the
-// EscrowState value through pure-ish "transformer" helpers. A transformer
-// takes `EscrowState<A,C>` by value and returns a (possibly different)
-// `EscrowState<A,C>` plus auxiliary results. Transformers do NOT call
-// take_state or put_state — they operate on the state value already
-// extracted by the enclosing do_*.
-//
-// Used by do_handover and do_tenure_expiry, which each thread state
-// through two transformers (`distribute_balance` → `rotate_for_handover`
-// or `terminate_tenure`) inside one take/put cycle. This decomposes a
-// transition that conceptually mutates state twice (balance redistribution,
-// then variant change) into named, composable steps without the cost of
-// two take/put round-trips or an artificial intermediate state cell.
-//
-// The intermediate `EscrowState` between transformers may carry a
-// `current.stake = balance::zero()` — semantically transient (post-settle,
-// pre-rotate) and only observable inside the do_* body, never at a tx
-// boundary (P13).
+// 3. An orchestrator do_* that composes sub-step do_* helpers stays in the
+//    do_* family even though its body has no direct take_state call.
+// 4. Sub-step do_* helpers may call each other only via the orchestrator;
+//    each link's receipt is consumed locally before the next sub-step takes
+//    state again.

@@ -987,33 +987,22 @@ fun do_fill_asset<Asset: key + store, CoinType>(
     tenant_cap_id
 }
 
-/// Sub-helper: settle the Tenant's stake against a precomputed
-/// `used_credit`. Splits 3-way (tenant remain, protocol fee, owner),
-/// dispatches each part, returns a new Tenant with `balance::zero()`
-/// stake plus the settlement amounts for events.
-fun settle_tenant<Asset: key + store, CoinType>(
-    escrow:      &mut RentalEscrow<Asset, CoinType>,
+/// Sub-helper: pays the outgoing tenant their `remain_credit` (=
+/// principal − used_credit) and returns the leftover Balance (size =
+/// used_credit) for the caller to continue the pipeline. Also returns
+/// a zero-stake Tenant for state reconstruction.
+fun settle_tenant<CoinType>(
     tenant:      Tenant<CoinType>,
     used_credit: u64,
     ctx:         &mut TxContext,
-): (Tenant<CoinType>, address, u64, u64, u64) {
+): (Tenant<CoinType>, address, Balance<CoinType>, u64) {
+    // Returns: (zero_tenant, payer, leftover, remain_credit)
     let Tenant { cap_id, address: payer, stake } = tenant;
     let principal     = balance::value(&stake);
     let remain_credit = principal - used_credit;
-    let (owner_share, protocol_fee) = split_fee(used_credit);
-
-    let escrow_id    = object::id(escrow);
-    let fee_inbox_id = escrow.fee_inbox_id;
-
-    let mut owner_balance = stake;
-    let unused_credit     = balance::split(&mut owner_balance, remain_credit);
-    let fee_balance       = balance::split(&mut owner_balance, protocol_fee);
-    pay_tenant_remain(unused_credit, payer, ctx);
-    pay_protocol_fee(fee_balance, escrow_id, payer, fee_inbox_id, ctx);
-    balance::join(&mut escrow.owner_earnings, owner_balance);
-
-    let zero_tenant = Tenant { cap_id, address: payer, stake: balance::zero() };
-    (zero_tenant, payer, owner_share, protocol_fee, remain_credit)
+    let leftover      = pay_tenant_remain(stake, remain_credit, payer, ctx);
+    let zero_tenant   = Tenant { cap_id, address: payer, stake: balance::zero() };
+    (zero_tenant, payer, leftover, remain_credit)
 }
 
 /// First step of a transition: distributes the outgoing tenant's balance
@@ -1030,28 +1019,38 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
     boundary_ms: u64,
     ctx:         &mut TxContext,
 ): (address, u64, u64, u64) {  // payer, owner_share, protocol_fee, remain_credit
-    let used_credit = compute_used_credit(escrow, boundary_ms);
+    let used_credit                 = compute_used_credit(escrow, boundary_ms);
+    let (owner_share, protocol_fee) = split_fee(used_credit);
+    let escrow_id                   = object::id(escrow);
+    let fee_inbox_id                = escrow.fee_inbox_id;
+
     let (old, receipt) = take_state(escrow);
-    let (next, payer, owner_share, protocol_fee, remain_credit) = match (old) {
+    let (next, payer, remain_credit) = match (old) {
         EscrowState::HandoverConfirmed {
             asset, phase_start_ms, current, pending,
             retiring, handover_countdown_expiry,
         } => {
-            let (zero_current, payer, o, p, r) =
-                settle_tenant(escrow, current, used_credit, ctx);
+            // Pipeline: tenant remain → protocol fee → owner earnings.
+            let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
+            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+            balance::join(&mut escrow.owner_earnings, leftover);
+
             let next = EscrowState::HandoverConfirmed {
                 asset, phase_start_ms, current: zero_current, pending,
                 retiring, handover_countdown_expiry,
             };
-            (next, payer, o, p, r)
+            (next, payer, remain_credit)
         },
         EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
-            let (zero_current, payer, o, p, r) =
-                settle_tenant(escrow, current, used_credit, ctx);
+            // Pipeline: tenant remain → protocol fee → owner earnings.
+            let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
+            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+            balance::join(&mut escrow.owner_earnings, leftover);
+
             let next = EscrowState::HandoverOpen {
                 asset, phase_start_ms, current: zero_current, retiring,
             };
-            (next, payer, o, p, r)
+            (next, payer, remain_credit)
         },
         EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
         EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,
@@ -1133,34 +1132,36 @@ fun do_terminate_tenure<Asset: key + store, CoinType>(
     tag
 }
 
-/// spec: §7.1 push-before-rotate (P3) — refund `balance` to the tenant.
-/// Caller pre-splits to size `remain_credit`.
+/// spec: §7.1 push-before-rotate (P3) — splits `remain_amount` from
+/// `balance` and refunds it to the tenant; returns the leftover.
 fun pay_tenant_remain<CoinType>(
-    balance: Balance<CoinType>,
-    tenant:  address,
-    ctx:     &mut TxContext,
-) {
-    if (balance::value(&balance) > 0) {
-        transfer::public_transfer(coin::from_balance(balance, ctx), tenant);
-    } else {
-        balance::destroy_zero(balance);
-    }
+    mut balance:   Balance<CoinType>,
+    remain_amount: u64,
+    tenant:        address,
+    ctx:           &mut TxContext,
+): Balance<CoinType> {
+    if (remain_amount > 0) {
+        let part = balance::split(&mut balance, remain_amount);
+        transfer::public_transfer(coin::from_balance(part, ctx), tenant);
+    };
+    balance
 }
 
-/// spec: §7.6 — post `balance` to the protocol fee inbox. Caller pre-splits
-/// to size `protocol_fee` (from `split_fee`).
+/// spec: §7.6 — splits `fee_amount` from `balance` and posts it to the
+/// protocol fee inbox; returns the leftover.
 fun pay_protocol_fee<CoinType>(
-    balance:      Balance<CoinType>,
+    mut balance:  Balance<CoinType>,
+    fee_amount:   u64,
     escrow_id:    ID,
     payer:        address,
     fee_inbox_id: ID,
     ctx:          &mut TxContext,
-) {
-    if (balance::value(&balance) > 0) {
-        fee_message::post<CoinType>(balance, escrow_id, payer, fee_inbox_id, ctx);
-    } else {
-        balance::destroy_zero(balance);
-    }
+): Balance<CoinType> {
+    if (fee_amount > 0) {
+        let part = balance::split(&mut balance, fee_amount);
+        fee_message::post<CoinType>(part, escrow_id, payer, fee_inbox_id, ctx);
+    };
+    balance
 }
 
 /// spec: §7.7 — pending bid construction tail. Returns the cap, its ID,

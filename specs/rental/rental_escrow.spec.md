@@ -4224,6 +4224,267 @@ keep its cost-to-value ratio honest:
    is descriptive, not prescriptive — the rule is to justify the
    projection per row, not to hit a percentage.
 
+#### Test corpus — `rental_escrow_corpus` module API
+
+The previous subsection defined the corpus as a *design space* —
+axes, cardinality, tag scheme. This subsection specifies the
+**module API** that materializes that space and is consumed by
+every row of §10.1–§10.13.
+
+A dedicated module (rather than inline construction in each test
+row) exists because:
+
+- The 168 configs need a **single source of construction**. Spreading
+  the constructor across rows guarantees drift on the first
+  parameter change; centralizing keeps every row consuming the same
+  physical configs and enforces the §10.16 "Corpus drift" rule
+  mechanically.
+- **Filter and projection logic is non-trivial enough to deserve
+  reuse.** Reimplementing the per-axis predicate per row multiplies
+  the surface for bugs.
+- The module **hosts its own self-integrity tests** (corpus
+  cardinality, tag uniqueness, `by_tag ↔ tag` inversion) that no
+  individual row could enforce in isolation — without them, a
+  generator regression would surface as a confusing failure in a
+  random downstream row instead of a clear corpus bug.
+
+The API is documented at the spec level (rather than left as an
+implementation detail) because:
+
+- **It is the contract between the corpus and the §10 row catalog.**
+  Every row names a projection or filter (`with_descent_skipped()`,
+  `filter_c(..., 2)`, `by_tag(10010)`); a silent rename invalidates
+  downstream rows. Pinning the surface here makes refactor blast
+  radius visible.
+- **The three-layer split (filter primitives / named projections /
+  single-config helper) encodes the §10.0 operational rules in code
+  shape.** Named projections make the common case readable
+  (rule #1); filter primitives keep arbitrary intersections
+  composable without inflating the namespace; `by_tag` is the
+  explicit escape hatch for single-config rows (rule #3). The API
+  itself is a defense against the lazy default.
+- **Constant getters close the §10.16 "Corpus drift" loop.** Time
+  arithmetic in §10 rows (`t0 + 150_000`, `t0 + 10_000_000`) derives
+  from the getters listed below; specifying them here makes the
+  single source of truth visible at the same level as the rows that
+  consume it.
+
+**Materialization.**
+
+```
+module:     usufruct::rental_escrow_corpus     (#[test_only])
+location:   usufruct/tests/rental_escrow_corpus.move
+visibility: public(package)  — symbols never cross the package boundary
+section:    === Package Functions === per code-style convention
+```
+
+Visibility is `public(package)` rather than `public` even though
+`#[test_only]` already prevents the module from appearing in
+production builds. The narrower modifier declares the symbolic
+intent ("does not leave the package") and matches the protocol-wide
+default for utility modules.
+
+**`CorpusEntry` — config + axis indices + tag.**
+
+```move
+public struct CorpusEntry has copy, drop, store {
+    cfg: IntegrationConfig,
+    c:   u8,   // 0..2
+    d:   u8,   // 0..1
+    e:   u8,   // 0..6
+    h:   u8,   // 0..1
+    f:   u8,   // 0..1
+    tag: u64,  // c·10_000 + d·1_000 + e·100 + h·10 + f
+}
+```
+
+Coupling cfg, axes and tag in one struct keeps the breadcrumb
+travelling alongside the config through filter chains and into
+`assert!` calls.
+
+**Accessors via method aliases.**
+
+```move
+public(package) use fun entry_cfg as CorpusEntry.cfg;
+public(package) use fun entry_tag as CorpusEntry.tag;
+public(package) use fun entry_c   as CorpusEntry.c;
+public(package) use fun entry_d   as CorpusEntry.d;
+public(package) use fun entry_e   as CorpusEntry.e;
+public(package) use fun entry_h   as CorpusEntry.h;
+public(package) use fun entry_f   as CorpusEntry.f;
+```
+
+In test code the aliases read like methods:
+
+```move
+let cfg: &IntegrationConfig = entry.cfg();
+let tag: u64                = entry.tag();
+let c:   u8                 = entry.c();
+```
+
+The standalone constructor `tag(c, d, e, h, f) -> u64` (below) does
+not conflict — it lives in the module function namespace, while the
+alias lives in the type method namespace of `CorpusEntry`.
+
+**Sources.**
+
+```move
+public(package) fun all(): vector<CorpusEntry>           // 168 entries (eager)
+public(package) fun by_tag(tag: u64): IntegrationConfig  // single-config lookup
+```
+
+`all()` reconstructs the 168-entry corpus on each call (eager,
+~µs cost). Convention: each test calls `all()` (or one of the
+named projections) once at the top of the test body and binds
+to a local; never inside the iteration loop.
+
+`by_tag(tag)` decodes the tag into axis indices, validates each
+against its range, and returns the corresponding `IntegrationConfig`
+**directly** (without the wrapper). Asymmetric on purpose: when the
+caller already has the tag, the wrapper carries no new information,
+and returning `IntegrationConfig` is what single-config rows
+actually consume.
+
+**Filter primitives — composable.**
+
+```move
+public(package) fun filter_c(es: vector<CorpusEntry>, c: u8): vector<CorpusEntry>
+public(package) fun filter_d(es: vector<CorpusEntry>, d: u8): vector<CorpusEntry>
+public(package) fun filter_e(es: vector<CorpusEntry>, e: u8): vector<CorpusEntry>
+public(package) fun filter_h(es: vector<CorpusEntry>, h: u8): vector<CorpusEntry>
+public(package) fun filter_f(es: vector<CorpusEntry>, f: u8): vector<CorpusEntry>
+```
+
+Each validates its axis argument in range. Multi-axis intersections
+compose by chaining; named projections are reserved for combinations
+that the spec recognizes as protocol modes:
+
+```move
+// M6c: HandoverConfirmed → Idle in one APT — c=2 ∧ h=0 (28 configs)
+let es = corpus::filter_h(corpus::filter_c(corpus::all(), 2), 0);
+```
+
+**Named projections — protocol modes.**
+
+Only modes that the spec recognizes by name (axis values that
+correspond to qualitatively distinct protocol behavior) earn a named
+projection. Unnamed combinations compose via filter primitives.
+
+| Projection | Axis fix | `|·|` | Mode in spec |
+|---|---|---|---|
+| `with_handover_instant()` | c=0 | 56 | rent+borrow same-tx |
+| `with_handover_countdown()` | c=1 | 56 | standard countdown |
+| `with_handover_fixed_time()` | c=2 | 56 | tenure-saturated countdown (fixed-time rental) |
+| `with_descent_skipped()` | h=0 | 84 | AtDutchAuction unobservable (M6b / Q11) |
+| `with_descent_observable()` | h=1 | 84 | full descent window |
+| `with_retire_floor_active()` | f=1 | 84 | guard temporal active (C1) |
+| `with_retire_floor_immediate()` | f=0 | 84 | no guard |
+| `with_fixed_pricing()` | d=0 | 84 | additive escalation |
+| `with_compound_pricing()` | d=1 | 84 | multiplicative escalation |
+
+Axis `E` has no named projections: the curve dimension is swept
+as a whole when shape matters, and filtered via `filter_e` (with
+`e ∈ [0, 6]`) for curve-insensitive rows that need to fix one
+specific shape.
+
+**Tag constructor.**
+
+```move
+public(package) fun tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64
+```
+
+Validates each axis in range, then returns the τ2 tag value. Used
+internally by the corpus generator and externally by tests that
+compute tags indirectly (rare).
+
+**Constant getters — single source of truth for time arithmetic.**
+
+The pinned canonical values are exposed as getters so test rows
+reference them in derivations without duplicating literals (per
+§10.16 "Corpus drift" rule):
+
+```move
+public(package) fun tenure_ceiling_const():       u64    // 100_000
+public(package) fun min_rent_price_const():       u64    // 10_000_000_000
+public(package) fun handover_floor_c1_const():    u64    // 25_000
+public(package) fun descent_ceiling_h1_const():   u64    // 100_000
+public(package) fun retire_floor_f1_const():      u64    // 10_000_000
+public(package) fun fixed_delta_value_const():    u64    // 10_000_000_000
+public(package) fun compound_delta_bps_const():   u64    // 1_000
+public(package) fun compound_delta_value_const(): u64    // 1
+```
+
+A test asserting "clock at mid-descent" writes the derivation in
+terms of these getters:
+
+```move
+let t_mid = t0
+          + corpus::tenure_ceiling_const()
+          + corpus::descent_ceiling_h1_const() / 2;
+```
+
+Changing a canonical value requires editing one place; rows that
+hardcode `150_000` would silently desync. The compiler does not
+enforce this — it is a discipline anchored in §10.16 and reviewed
+at code-review time.
+
+**Errors — per-axis granularity.**
+
+```move
+const EAxisCOutOfRange: u64 = 0;
+const EAxisDOutOfRange: u64 = 1;
+const EAxisEOutOfRange: u64 = 2;
+const EAxisHOutOfRange: u64 = 3;
+const EAxisFOutOfRange: u64 = 4;
+```
+
+Per-axis codes give diagnostic precision: a tag with a malformed
+digit aborts with the specific axis code, not a generic "invalid
+input". Validation is enforced at every input boundary
+(`tag(c,d,e,h,f)`, `by_tag(tag)`, `filter_*(es, val)`). The corpus
+generator (`all()`) cannot produce invalid entries by construction
+— its loop bounds match the per-axis ranges.
+
+**Self-integrity tests.**
+
+The module hosts its own `#[test]` functions guarding generator
+invariants. A failure in any of these is a corpus-construction bug,
+not a protocol regression:
+
+| Test | Property |
+|---|---|
+| `all_has_168_entries` | `all().length() == 168` |
+| `all_tags_unique` | every entry in `all()` has a distinct `tag` field |
+| `by_tag_inverts_tag_constructor` | for every valid `(c,d,e,h,f)`, `by_tag(tag(c,d,e,h,f))` is field-equivalent to `build_config(c,d,e,h,f)` |
+
+**Standard iteration idiom.**
+
+Move has no closures — each test writes the loop explicitly. The tag
+goes into `assert!` as the abort code so a failure self-identifies
+the offending config:
+
+```move
+let entries = corpus::with_descent_skipped();
+let mut i = 0;
+let n = entries.length();
+while (i < n) {
+    let entry = entries.borrow(i);
+    let cfg = *entry.cfg();    // copy out — IntegrationConfig has `copy`
+    let tag =  entry.tag();
+
+    // ts::begin(OWNER) ... clock ... fee_inbox ...
+    // let owner_cap = rental_escrow::integrate(asset, cfg, &fee_ref, &clk, scn.ctx());
+    // drive transitions, observe events
+    // assert!(<spec-derived property>, tag);
+
+    i = i + 1;
+};
+```
+
+The dereference on `entry.cfg()` (which returns `&IntegrationConfig`)
+is the standard pattern: `IntegrationConfig` has `copy`, so dereferencing
+is free, and consuming functions like `integrate` take it by value.
+
 #### Test-only shims on private helpers
 
 The private helpers (§7) are exercised indirectly through the state

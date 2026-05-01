@@ -768,8 +768,9 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let remaining                 = tenure_e - now;
     let countdown                 = u64::min(config::handover_floor(&escrow.config), remaining);
     let handover_countdown_expiry = now + countdown;
-    let (cap, pending_cap_id, bid_amount, pending) =
-        register_pending_bid(escrow_id, payment, pending_tenant, ctx);
+    let (cap, pending) = register_pending_bid(escrow_id, payment, pending_tenant, ctx);
+    let pending_cap_id = object::id(&cap);
+    let bid_amount     = balance::value(&pending.stake);
     put_state(escrow, EscrowState::HandoverConfirmed {
         asset, phase_start_ms, current, pending,
         retiring,
@@ -815,8 +816,9 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     } = displaced;
     let refunded_amount = balance::value(&refund_balance);
     transfer::public_transfer(coin::from_balance(refund_balance, ctx), displaced_bidder);
-    let (cap, new_pending_cap_id, new_bid_amount, new_pending) =
-        register_pending_bid(escrow_id, payment, new_bidder, ctx);
+    let (cap, new_pending) = register_pending_bid(escrow_id, payment, new_bidder, ctx);
+    let new_pending_cap_id = object::id(&cap);
+    let new_bid_amount     = balance::value(&new_pending.stake);
     put_state(escrow, EscrowState::HandoverConfirmed {
         asset, phase_start_ms, current,
         pending: new_pending,
@@ -1171,20 +1173,20 @@ fun pay_protocol_fee<CoinType>(
     balance
 }
 
-/// spec: §7.7 — pending bid construction tail. Returns the cap, its ID,
-/// the bid amount, and a fully-built `Tenant<C>` for the caller to embed
-/// in `HandoverConfirmed.pending`.
+/// spec: §7.7 — pending bid construction tail. Returns the cap and a
+/// fully-built `Tenant<C>` for the caller to embed in
+/// `HandoverConfirmed.pending`. Caller derives `tenant_cap_id` via
+/// `object::id(&cap)` and `bid_amount` via `balance::value(&pending.stake)`.
 fun register_pending_bid<CoinType>(
     escrow_id: ID,
     payment:   Coin<CoinType>,
     bidder:    address,
     ctx:       &mut TxContext,
-): (TenantCap, ID, u64, Tenant<CoinType>) {
-    let bid_amount = coin::value(&payment);
-    let stake      = coin::into_balance(payment);
+): (TenantCap, Tenant<CoinType>) {
+    let stake = coin::into_balance(payment);
     let (cap, tenant_cap_id) = tenant_cap::new(escrow_id, bidder, ctx);
     let pending = Tenant { cap_id: tenant_cap_id, address: bidder, stake };
-    (cap, tenant_cap_id, bid_amount, pending)
+    (cap, pending)
 }
 
 // === Test Functions ===

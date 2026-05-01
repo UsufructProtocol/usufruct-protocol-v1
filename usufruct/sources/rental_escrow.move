@@ -1042,18 +1042,20 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
             (next, payer, remain_credit)
         },
         EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
-            // No tenant remain at tenure expiry: curve at elapsed=tenure_ceiling
-            // returns SCALE so used_credit == principal, remain_credit == 0.
-            // Pipeline: protocol fee → owner earnings (2 steps, not 3).
-            let Tenant { cap_id, address: payer, stake } = current;
-            let leftover = pay_protocol_fee(stake, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+            // Pipeline: tenant remain → protocol fee → owner earnings.
+            let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
+            // Invariant: at tenure expiry, curve at elapsed=tenure_ceiling
+            // returns SCALE so used_credit == principal and remain_credit == 0.
+            // The tenant payment above is a no-op; assert makes the property
+            // explicit.
+            assert!(remain_credit == 0, EInvariantViolation);
+            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
             balance::join(&mut escrow.owner_earnings, leftover);
 
-            let zero_current = Tenant { cap_id, address: payer, stake: balance::zero() };
-            let next         = EscrowState::HandoverOpen {
+            let next = EscrowState::HandoverOpen {
                 asset, phase_start_ms, current: zero_current, retiring,
             };
-            (next, payer, 0)
+            (next, payer, remain_credit)
         },
         EscrowState::Idle           { asset: _a }     => abort EInvariantViolation,
         EscrowState::AtDutchAuction { asset: _a, .. } => abort EInvariantViolation,

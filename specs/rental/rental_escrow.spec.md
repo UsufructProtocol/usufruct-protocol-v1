@@ -3973,27 +3973,208 @@ unrelated paths separately.
 - **`ProtocolFeeInbox`.** Instantiated via
   `protocol_fee_inbox::init_for_testing` under `ADMIN`; the
   `ProtocolFeeRef` is retrieved with `take_immutable`.
-- **`IntegrationConfig`.** Built through the public `config::new_config`
-  constructor with a shared helper:
-  ```move
-  #[test_only] fun demo_config(
-      tenure_ceiling_ms:  u64,
-      descent_ceiling_ms: u64,
-      handover_floor_ms:  u64,
-      retire_floor_ms:    u64,
-      min_rent_price:     u64,
-  ): IntegrationConfig { ... }
-  ```
-  Curve shapes and price function default to a linear credit curve,
-  linear descent, and `price_function::new_fixed_delta(1)` — unless
-  a row specifically exercises curve behavior (those rows override
-  via the helper variant).
+- **`IntegrationConfig`.** Not constructed inline per row. Every test
+  draws from a fixed **deterministic corpus** of 168 configs, enumerated
+  in the next subsection ("Test corpus — `IntegrationConfig` axes").
+  Each row of §10.1–§10.13 specifies which projection of the corpus it
+  iterates over.
 - **Clock.** `sui::clock::create_for_testing(ctx)` plus
   `clock::set_for_testing(&mut clock, ms)` to advance
   deterministically. Scenario epoch helpers are **avoided** —
   `scenario.later_epoch(...)` does not map to `clock::timestamp_ms()`
   with guaranteed millisecond granularity, and every boundary in the
   spec is expressed in ms.
+
+#### Test corpus — `IntegrationConfig` axes
+
+The integration surface of `rental_escrow` is parameterized by
+`IntegrationConfig`. A single instance covers one point in a
+multi-dimensional space; testing on one point would codify it as
+"the expected behavior" while the spec dictates behavior over the
+whole space. The test suite therefore operates over a
+**deterministic corpus** of configs constructed as the cross-product
+of the orthogonal axes that produce **distinct observable behavior**,
+holding constant only parameters that are *scales* (no boundary
+across them).
+
+The corpus is materialized in a dedicated test module
+`tests/rental_escrow_corpus.move` and consumed by every row of
+§10.1–§10.13 through named projections (forthcoming subsection).
+
+**Constants — same value in every escrow.**
+
+| Symbol | Value | Type | Rationale |
+|---|---|---|---|
+| `CoinType` | `sui::sui::SUI` | phantom type | Phantom: enforced at compile-time, no runtime branch on `CoinType`. Multi-coin smoke test (§10.11) is separate from the corpus. |
+| `Asset` | `DemoAsset` | phantom type | Same argument as `CoinType`. |
+| `integrated_at_ms` | scenario-chosen | u64 ms | Used only as `(clock − integrated_at_ms)` delta in the `retire_floor` guard; absolute value irrelevant to behavior. |
+| `tenure_ceiling` | `100_000` (100s) | u64 ms | Scale, not boundary. The constructor forbids `= 0` (`ETenureCeilingZero`); arithmetic is proportional across magnitudes. Round number that simplifies clock-advance arithmetic in scenarios. |
+| `min_rent_price` | `10_000_000_000` (10 SUI) | u64 mist | Scale, not boundary. Constructor forbids `= 0` (`EMinRentPriceZero`). 10 SUI keeps the 10% protocol-fee split divisible (`1 SUI` exact) and round arithmetic for compound growth. |
+
+**Orthogonal axes — each value materializes a distinct observable behavior.**
+
+| Axis | Field | Values | Indices | Behavioral split |
+|---|---|---|---|---|
+| `C` | `handover_floor` | `{0, 25_000, 100_000}` ms | `c ∈ {0,1,2}` | `c=0` enables rent+borrow same-tx (no clock advance needed). `c=1` (= `tenure_ceiling/4`) is the standard countdown mode. `c=2` (= `tenure_ceiling`) is **fixed-time rental**: the saturation in §5.1 (`min(now + handover_floor, phase_start_ms + tenure_ceiling)`) clamps the countdown to the tenure boundary, eliminating early handovers — a distinct protocol mode, not a magnitude variation. |
+| `D` | `price_fn` | `{ FixedDelta(δ=10¹⁰), CompoundDelta(bps=1000, δ=1) }` | `d ∈ {0,1}` | `d=0` adds a fixed 10 SUI per re-price (pure additive). `d=1` adds 10% per re-price plus 1 mist (constructor forbids `delta=0`, so `δ=1` is the closest approximation to "pure compound"). The boundary is between additive and multiplicative price escalation. |
+| `E` | `(credit_curve, descent_curve)` | 7 diagonal pairs (table below) | `e ∈ {0..6}` | Distinct shape modes: linear, smoothstep (S-shape symmetric), logistic (S-shape pronounced), power_law concave (`α=1/2`), power_law convex (`α=2`), exp concave saturating (`α=2,neg`), exp convex explosive (`α=2,pos`). Curve pairs are diagonal (not cross-product) because `compute_used_credit` (§8.1) consumes only `credit_curve` and `compute_price_descent` (§8.2) consumes only `descent_curve` — no spec section correlates them. The diagonal ensures every shape plays both roles. |
+| `H` | `descent_ceiling` | `{0, 100_000}` ms | `h ∈ {0,1}` | `h=0` makes `AtDutchAuction` structurally unobservable: `do_tenure_expiry` and `do_auction_expiry` co-emit at identical timestamps (M6b, Q11). `h=1` (= `tenure_ceiling`) gives a full descent window; mid-descent assertions are observable via `clock = phase_start_AtDutchAuction + descent_ceiling/2` without introducing a third axis value. |
+| `F` | `retire_floor` | `{0, 10_000_000}` ms | `f ∈ {0,1}` | `f=0` removes the time guard on `retire()` — any clock value passes. `f=1` (= `100×tenure_ceiling`) places the threshold so far in the future that any scenario advancing the clock by ~`tenure_ceiling` units always aborts `E_RETIRE_FLOOR_NOT_ELAPSED` — separating tests that exercise the guard from tests that exercise the rest of the lifecycle. |
+
+**Axis `E` — curve pair table.**
+
+| `e` | label | constructor | concavity / role |
+|---|---|---|---|
+| 0 | `linear` | `curve_shape::new_linear()` | linear (baseline) |
+| 1 | `smoothstep` | `curve_shape::new_smoothstep()` | S-shape symmetric |
+| 2 | `logistic` | `curve_shape::new_logistic()` | S-shape pronounced |
+| 3 | `power_concave` | `curve_shape::new_power_law(1, 2)` | x^(1/2), concave |
+| 4 | `power_convex` | `curve_shape::new_power_law(2, 1)` | x², convex |
+| 5 | `exp_concave` | `curve_shape::new_exponential(2, true)` | saturating concave |
+| 6 | `exp_convex` | `curve_shape::new_exponential(2, false)` | explosive convex |
+
+`α=2` is the minimal magnitude that distinguishes concave/convex from
+linear. Internal-branch coverage in `curve_shape`:
+
+- `eval_power_law`: `e=4` exercises the `if (alpha_den == 1) return acc`
+  shortcut; `e=3` exercises the `nth_root_u128` branch (`SCALE_U128`).
+- `eval_exponential`: `e=5` exercises `TAYLOR_SCALE − exp_ax`
+  (alpha_neg=true); `e=6` exercises `exp_ax − TAYLOR_SCALE`
+  (alpha_neg=false). Both branches share `EXP_A_NORM_2_{NEG,POS}`.
+
+Both internal branches of each curve type are reached by the
+diagonal — additional `α` magnitudes do not expose new branches at
+the `rental_escrow` integration layer.
+
+**Cardinal.**
+
+```
+|Corpus| = |C| × |D| × |E| × |H| × |F| = 3 × 2 × 7 × 2 × 2 = 168
+```
+
+**Tag scheme (τ2).**
+
+Each escrow is identified by a single `u64` tag built from axis
+indices in positional decimal:
+
+```
+tag(c, d, e, h, f) = c · 10_000 + d · 1_000 + e · 100 + h · 10 + f
+```
+
+Padded to 5 digits, the tag reads left-to-right as `C-D-E-H-F`.
+Decoding:
+
+```
+f = tag mod 10
+h = (tag /     10) mod 10
+e = (tag /    100) mod 10
+d = (tag /  1_000) mod 10
+c =  tag / 10_000
+```
+
+Constraints: `c ∈ [0,2]`, `d ∈ [0,1]`, `e ∈ [0,6]`,
+`h ∈ [0,1]`, `f ∈ [0,1]`. A digit out of range is a
+corpus-construction bug, not a regression.
+
+**Use as failure breadcrumb.** The Move test framework does not
+propagate strings through assertion failures — only the `u64`
+abort code. The tag is therefore passed as the `abort_code`
+argument to `assert!`, so a failure code is itself the breadcrumb
+to the offending config:
+
+```move
+let tag = corpus::tag(c, d, e, h, f);
+assert!(rental_escrow::state_tag(read_state(&escrow))
+        == EscrowStateTag::Idle, tag);
+```
+
+A failure with abort code `10610` decodes to `c=1, d=0, e=6, h=1, f=0`:
+`handover_floor = 25_000ms`, `fixed_delta(10 SUI)`, `exp_convex`,
+`descent_ceiling = 100_000ms`, `retire_floor = 0`.
+
+**Time arithmetic derivable from the corpus.**
+
+With `t0 = integrated_at_ms` and the constants above:
+
+| Quantity | Value | Conditions |
+|---|---|---|
+| `phase_start_HandoverOpen` | `t0` | first rent into Idle at `clock=t0` |
+| `phase_start_AtDutchAuction` | `t0 + 100_000` | reached via `do_tenure_expiry`; phase_start is fresh = boundary_ms (§7.2) |
+| clock for tenure boundary | `t0 + 100_000` | exact-boundary inclusivity row |
+| clock for descent boundary | `t0 + 200_000` | only meaningful when `h=1` |
+| clock for mid-descent | `t0 + 150_000` | only meaningful when `h=1`; samples at `descent_ceiling/2` |
+| clock past `retire_floor` | `t0 + 10_000_000` | only meaningful when `f=1`; under `f=0` any clock value passes |
+
+Under `c=2` (fixed-time mode) the same relationships hold:
+`handover_countdown_expiry` saturates to `phase_start_ms +
+tenure_ceiling`, indistinguishable from the tenure boundary itself.
+
+**Audit — explicit omissions from the corpus.**
+
+The corpus is not exhaustive over the value space of
+`IntegrationConfig`; it is exhaustive over **observable boundaries
+from `rental_escrow`'s perspective**. The following are deliberately
+out of corpus:
+
+1. **`curve_shape` internal branches with `alpha_den ∈ {3, 4}` (cube /
+   quartic root)** and exponential with `alpha_abs ∈ {1, 3..8}`. These
+   are arithmetic branches inside `curve_shape` whose coverage is the
+   responsibility of `curve_shape_tests` (already green). For
+   `rental_escrow`'s integration the qualitative shape (concave /
+   convex / S / linear) is what selects downstream behavior in
+   `compute_used_credit` / `compute_price_descent`; magnitude is not.
+2. **`descent_ceiling > tenure_ceiling`.** Allowed by the constructor
+   (no asserted ordering between the two), but no code path branches
+   on the sign of `(descent_ceiling − tenure_ceiling)` — both are
+   independent additions onto `phase_start_ms`. Adds no new boundary.
+3. **`min_rent_price` and `tenure_ceiling` magnitudes other than the
+   canonical values.** Both are scales without boundary semantics
+   (the constructor forbids only `= 0`).
+
+**Out-of-corpus obligations — observable in tests, not via corpus.**
+
+The corpus parameterizes config but not state or scenario timing.
+Three classes of obligations remain on individual rows of §10:
+
+- **Boundary inclusivity (`>=` vs `>`).** Every transition guard
+  expressed as `now >= boundary_ms` (§4.2 step 3 for `retire_floor`;
+  `do_tenure_expiry`; `do_auction_expiry`; `do_handover`'s
+  `handover_countdown_expiry`) requires a row that fires the action
+  with `clock == boundary_ms` exactly. Cross-references: C1a (already
+  in §10.8); analogous "exact-boundary" rows must exist for tenure /
+  descent / handover transitions.
+- **Zero-spread descent.** When the first tenant rents at exactly
+  `min_rent_price`, lets tenure expire without a successor, and the
+  auction starts with `last_acquisition_price = min_rent_price`,
+  `compute_price_descent` operates on a zero-width spread
+  `[min_rent_price, min_rent_price]` and saturates from `t=0`. State-level
+  scenario reachable under any config; must be enumerated as an
+  explicit row in §10.10 (cross-reference: complements Q7/Q8).
+- **APT cascade combinations.** The cross-product of the corpus
+  produces config combinations that drive multi-step cascades inside
+  a single APT call. M6b is already catalogued (`HandoverOpen →
+  AtDutchAuction → Idle` under `h=0`). Add **M6c**: `HandoverConfirmed →
+  HandoverOpen → AtDutchAuction-skipped → Idle` in one APT under
+  `(c=2, h=0)`. Other cascade combinations fall out of the matrix and
+  should be named explicitly when their config triple uniquely
+  produces them.
+
+**Corpus is config; state is per-test.**
+
+The corpus is orthogonal to `EscrowState`. Each test scenario starts
+at `Idle` and drives transitions to reach the variant under test.
+The full meaningful coverage matrix is:
+
+```
+{ EscrowState variants } × { corpus configs } = 5 × 168 = 840
+```
+
+This is the upper bound of meaningful (state, config) tuples, not the
+number of tests. Each row of §10.1–§10.13 declares which projection
+of the corpus it iterates over (typically a slice fixing one or two
+axes — e.g., "all configs with `h=0`", "all configs with `c=2`"); the
+projection set will be specified after corpus materialization in
+`tests/rental_escrow_corpus.move`.
 
 #### Test-only shims on private helpers
 
@@ -4443,12 +4624,18 @@ inside the `rental_escrow` module under `#[test]`.
 
 ### 10.16 Open questions
 
-- **`demo_config` drift.** The test fixture is shared across dozens
-  of rows. A parameter addition to `IntegrationConfig` will break
-  the helper signature in one place, which is desirable; but a
-  parameter *default* change would silently shift many success rows.
-  Rule: numeric defaults inside `demo_config` are pinned in the
-  helper body as named constants.
+- **Corpus drift.** The 168-element corpus is shared across every
+  row of §10.1–§10.13. A parameter addition to `IntegrationConfig`
+  will break the corpus constructor in one place, which is desirable;
+  but changing a canonical value (e.g., bumping `tenure_ceiling` or
+  the `δ` of `FixedDelta`) silently shifts every assertion that
+  hardcoded a derived timestamp or price. Rule: every numeric value
+  in the corpus is declared as a named `const` in
+  `tests/rental_escrow_corpus.move` and referenced (not duplicated)
+  in row assertions. Time-arithmetic derivations
+  (`t0 + 150_000` etc.) are written as explicit
+  `t0 + corpus::tenure_ceiling() + corpus::descent_ceiling_h1() / 2`
+  to fail loudly at compile time on canonical-value changes.
 - **Clock primitive choice.** `clock::set_for_testing` sets absolute
   ms; `clock::increment_for_testing` moves it forward. Rows that
   test pre-phase guards (Q13, Q17) need absolute-set semantics.

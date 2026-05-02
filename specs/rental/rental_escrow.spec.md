@@ -1363,9 +1363,11 @@ expiry (pre-call state was Rented).
    interpretation of the cap/escrow ID mismatch.
 2. `apply_pending_transitions(escrow, clock, ctx)` — settle all elapsed
    boundaries first.
-3. Assert `clock::timestamp_ms(clock) >= escrow.integrated_at_ms +
-   config::retire_floor(&escrow.config)`, abort
-   `E_RETIRE_FLOOR_NOT_ELAPSED`.
+3. Assert `clock::timestamp_ms(clock) >= config::retire_unlock(
+   &escrow.config, escrow.integrated_at_ms)`, abort
+   `E_RETIRE_FLOOR_NOT_ELAPSED`. Under `RetirePolicy::Immediate` the
+   helper returns `0` and the guard is trivially satisfied; under
+   `Deferred { floor_ms }` it returns `integrated_at_ms + floor_ms`.
 4. **Dispatch via `read_state`** to either the immediate-retirement
    helper or the deferred-flag helper. Each `do_*` helper owns its own
    take/put window (P_DO) and emits its own events:
@@ -1689,11 +1691,11 @@ while (keep_going) {
             if (now >= e) { do_handover(escrow, e, ctx); true } else false
         },
         EscrowState::HandoverOpen { phase_start_ms, .. } => {
-            let e = *phase_start_ms + config::tenure_ceiling(&escrow.config);
+            let e = config::tenure_boundary(&escrow.config, *phase_start_ms);
             if (now >= e) { do_tenure_expiry(escrow, e, ctx); true } else false
         },
         EscrowState::AtDutchAuction { phase_start_ms, .. } => {
-            let e = *phase_start_ms + config::descent_ceiling(&escrow.config);
+            let e = config::descent_boundary(&escrow.config, *phase_start_ms);
             if (now >= e) { do_auction_expiry(escrow, e); true } else false
         },
         EscrowState::Idle { .. } | EscrowState::Retired { .. } => false,
@@ -2875,10 +2877,16 @@ let (asset, phase_start_ms, current, retiring) = match (old) {
     EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort E_INVARIANT_VIOLATION,
     EscrowState::Retired           { asset: _a }                                            => abort E_INVARIANT_VIOLATION,
 };
-let tenure_e                  = phase_start_ms + config::tenure_ceiling(&escrow.config);
-let remaining                 = tenure_e - now;
-let countdown                 = std::u64::min(config::handover_floor(&escrow.config), remaining);
-let handover_countdown_expiry = now + countdown;
+let handover_countdown_expiry = config::handover_expiry(
+    &escrow.config,
+    now,
+    phase_start_ms,
+);
+// Encapsulates the saturation rule of §5.1: under HandoverPolicy::
+// Countdown { floor_ms } the helper returns
+// `min(now + floor_ms, phase_start_ms + tenure_ceiling)`; under
+// FixedTime it returns `phase_start_ms + tenure_ceiling`; under
+// Instant it returns `now`. Consumers never replicate the formula.
 let (cap, pending_cap_id, bid_amount, pending) =
     register_pending_bid(escrow_id, payment, pending_tenant, ctx);
 put_state(escrow, EscrowState::HandoverConfirmed {
@@ -3553,10 +3561,14 @@ Returns `min_rent_price` once the descent saturates.
     let elapsed_ms = timestamp_ms - phase_start_ms;
 
     // 2. Evaluate the normalized descent curve.
+    //    descent_window_ceiling aborts EDescentSkippedNoWindow if the
+    //    config's DescentPolicy is Skipped — structurally unreachable
+    //    here because compute_price_descent is only entered from
+    //    AtDutchAuction, which is unobservable under Skipped.
     let h = curve_shape::evaluate_curve(
         config::descent_curve(&escrow.config),
         elapsed_ms,
-        config::descent_ceiling(&escrow.config),
+        config::descent_window_ceiling(&escrow.config),
     );
 
     // 3. Scale by the spread, then descend from last_acquisition_price.
@@ -4007,19 +4019,19 @@ The corpus is materialized in a dedicated test module
 |---|---|---|---|
 | `CoinType` | `sui::sui::SUI` | phantom type | Phantom: enforced at compile-time, no runtime branch on `CoinType`. Multi-coin smoke test (§10.11) is separate from the corpus. |
 | `Asset` | `DemoAsset` | phantom type | Same argument as `CoinType`. |
-| `integrated_at_ms` | scenario-chosen | u64 ms | Used only as `(clock − integrated_at_ms)` delta in the `retire_floor` guard; absolute value irrelevant to behavior. |
+| `integrated_at_ms` | scenario-chosen | u64 ms | Used only as `(clock − integrated_at_ms)` delta in the `retire_unlock` guard; absolute value irrelevant to behavior. |
 | `tenure_ceiling` | `100_000` (100s) | u64 ms | Scale, not boundary. The constructor forbids `= 0` (`ETenureCeilingZero`); arithmetic is proportional across magnitudes. Round number that simplifies clock-advance arithmetic in scenarios. |
 | `min_rent_price` | `10_000_000_000` (10 SUI) | u64 mist | Scale, not boundary. Constructor forbids `= 0` (`EMinRentPriceZero`). 10 SUI keeps the 10% protocol-fee split divisible (`1 SUI` exact) and round arithmetic for compound growth. |
 
 **Orthogonal axes — each value materializes a distinct observable behavior.**
 
-| Axis | Field | Values | Indices | Behavioral split |
+| Axis | Field | Values (variant → numeric payload) | Indices | Behavioral split |
 |---|---|---|---|---|
-| `C` | `handover_floor` | `{0, 25_000, 100_000}` ms | `c ∈ {0,1,2}` | `c=0` enables rent+borrow same-tx (no clock advance needed). `c=1` (= `tenure_ceiling/4`) is the standard countdown mode. `c=2` (= `tenure_ceiling`) is **fixed-time rental**: the saturation in §5.1 (`min(now + handover_floor, phase_start_ms + tenure_ceiling)`) clamps the countdown to the tenure boundary, eliminating early handovers — a distinct protocol mode, not a magnitude variation. |
-| `D` | `price_fn` | `{ FixedDelta(δ=10¹⁰), CompoundDelta(bps=1000, δ=1) }` | `d ∈ {0,1}` | `d=0` adds a fixed 10 SUI per re-price (pure additive). `d=1` adds 10% per re-price plus 1 mist (constructor forbids `delta=0`, so `δ=1` is the closest approximation to "pure compound"). The boundary is between additive and multiplicative price escalation. |
+| `C` | `handover` (HandoverPolicy) | `{Instant, Countdown(25_000), FixedTime}` ms | `c ∈ {0,1,2}` | `c=0` (`Instant`) enables rent+borrow same-tx (no clock advance needed). `c=1` (`Countdown(tenure_ceiling/4)`) is the standard countdown mode. `c=2` (`FixedTime`) is **fixed-time rental**: `config::handover_expiry` saturates to `phase_start_ms + tenure_ceiling`, eliminating early handovers — a distinct protocol mode, not a magnitude variation. |
+| `D` | `price_function` | `{ FixedDelta(δ=10¹⁰), CompoundDelta(bps=1000, δ=1) }` | `d ∈ {0,1}` | `d=0` adds a fixed 10 SUI per re-price (pure additive). `d=1` adds 10% per re-price plus 1 mist (constructor forbids `delta=0`, so `δ=1` is the closest approximation to "pure compound"). The boundary is between additive and multiplicative price escalation. |
 | `E` | `(credit_curve, descent_curve)` | 7 diagonal pairs (table below) | `e ∈ {0..6}` | Distinct shape modes: linear, smoothstep (S-shape symmetric), logistic (S-shape pronounced), power_law concave (`α=1/2`), power_law convex (`α=2`), exp concave saturating (`α=2,neg`), exp convex explosive (`α=2,pos`). Curve pairs are diagonal (not cross-product) because `compute_used_credit` (§8.1) consumes only `credit_curve` and `compute_price_descent` (§8.2) consumes only `descent_curve` — no spec section correlates them. The diagonal ensures every shape plays both roles. |
-| `H` | `descent_ceiling` | `{0, 100_000}` ms | `h ∈ {0,1}` | `h=0` makes `AtDutchAuction` structurally unobservable: `do_tenure_expiry` and `do_auction_expiry` co-emit at identical timestamps (M6b, Q11). `h=1` (= `tenure_ceiling`) gives a full descent window; mid-descent assertions are observable via `clock = phase_start_AtDutchAuction + descent_ceiling/2` without introducing a third axis value. |
-| `F` | `retire_floor` | `{0, 10_000_000}` ms | `f ∈ {0,1}` | `f=0` removes the time guard on `retire()` — any clock value passes. `f=1` (= `100×tenure_ceiling`) places the threshold so far in the future that any scenario advancing the clock by ~`tenure_ceiling` units always aborts `E_RETIRE_FLOOR_NOT_ELAPSED` — separating tests that exercise the guard from tests that exercise the rest of the lifecycle. |
+| `H` | `descent` (DescentPolicy) | `{Skipped, Window(100_000)}` ms | `h ∈ {0,1}` | `h=0` (`Skipped`) makes `AtDutchAuction` structurally unobservable: `do_tenure_expiry` and `do_auction_expiry` co-emit at identical timestamps because `config::descent_boundary` collapses to `phase_start_ms` (M6b, Q11). `h=1` (`Window(tenure_ceiling)`) gives a full descent window; mid-descent assertions are observable via `clock = phase_start_AtDutchAuction + ceiling_ms/2` without introducing a third axis value. |
+| `F` | `retire` (RetirePolicy) | `{Immediate, Deferred(10_000_000)}` ms | `f ∈ {0,1}` | `f=0` (`Immediate`) removes the time guard on `retire()` — `config::retire_unlock` returns `0`, any clock value passes. `f=1` (`Deferred(100×tenure_ceiling)`) places the threshold so far in the future that any scenario advancing the clock by ~`tenure_ceiling` units always aborts `E_RETIRE_FLOOR_NOT_ELAPSED` — separating tests that exercise the guard from tests that exercise the rest of the lifecycle. |
 
 **Axis `E` — curve pair table.**
 
@@ -4089,8 +4101,8 @@ assert!(rental_escrow::state_tag(read_state(&escrow))
 ```
 
 A failure with abort code `10610` decodes to `c=1, d=0, e=6, h=1, f=0`:
-`handover_floor = 25_000ms`, `fixed_delta(10 SUI)`, `exp_convex`,
-`descent_ceiling = 100_000ms`, `retire_floor = 0`.
+`Countdown(25_000)`, `fixed_delta(10 SUI)`, `exp_convex`,
+`Window(100_000)`, `Immediate`.
 
 **Time arithmetic derivable from the corpus.**
 
@@ -4102,8 +4114,8 @@ With `t0 = integrated_at_ms` and the constants above:
 | `phase_start_AtDutchAuction` | `t0 + 100_000` | reached via `do_tenure_expiry`; phase_start is fresh = boundary_ms (§7.2) |
 | clock for tenure boundary | `t0 + 100_000` | exact-boundary inclusivity row |
 | clock for descent boundary | `t0 + 200_000` | only meaningful when `h=1` |
-| clock for mid-descent | `t0 + 150_000` | only meaningful when `h=1`; samples at `descent_ceiling/2` |
-| clock past `retire_floor` | `t0 + 10_000_000` | only meaningful when `f=1`; under `f=0` any clock value passes |
+| clock for mid-descent | `t0 + 150_000` | only meaningful when `h=1`; samples at `Window.ceiling_ms/2` |
+| clock past `retire_unlock` | `t0 + 10_000_000` | only meaningful when `f=1` (Deferred); under `f=0` (Immediate) any clock value passes |
 
 Under `c=2` (fixed-time mode) the same relationships hold:
 `handover_countdown_expiry` saturates to `phase_start_ms +
@@ -4123,10 +4135,11 @@ out of corpus:
    `rental_escrow`'s integration the qualitative shape (concave /
    convex / S / linear) is what selects downstream behavior in
    `compute_used_credit` / `compute_price_descent`; magnitude is not.
-2. **`descent_ceiling > tenure_ceiling`.** Allowed by the constructor
-   (no asserted ordering between the two), but no code path branches
-   on the sign of `(descent_ceiling − tenure_ceiling)` — both are
-   independent additions onto `phase_start_ms`. Adds no new boundary.
+2. **`Window { ceiling_ms } > tenure_ceiling`.** Allowed by the
+   constructor (no asserted ordering between the two), but no code
+   path branches on the sign of `(ceiling_ms − tenure_ceiling)` —
+   both are independent additions onto `phase_start_ms`. Adds no new
+   boundary.
 3. **`min_rent_price` and `tenure_ceiling` magnitudes other than the
    canonical values.** Both are scales without boundary semantics
    (the constructor forbids only `= 0`).
@@ -4137,7 +4150,7 @@ The corpus parameterizes config but not state or scenario timing.
 Three classes of obligations remain on individual rows of §10:
 
 - **Boundary inclusivity (`>=` vs `>`).** Every transition guard
-  expressed as `now >= boundary_ms` (§4.2 step 3 for `retire_floor`;
+  expressed as `now >= boundary_ms` (§4.2 step 3 for `retire_unlock`;
   `do_tenure_expiry`; `do_auction_expiry`; `do_handover`'s
   `handover_countdown_expiry`) requires a row that fires the action
   with `clock == boundary_ms` exactly. Cross-references: C1a (already
@@ -4188,8 +4201,8 @@ keep its cost-to-value ratio honest:
    is genuinely cross-axis — typically §10.1 (`integrate` happy
    path), §10.11 (fee routing), §10.12 (full lifecycle). All other
    rows project to the axes they actually exercise (e.g., M6b uses
-   `with_descent_zero()`, ~84 configs; C1 uses
-   `with_retire_floor_nonzero()`, ~84 configs). Treating
+   `with_descent_skipped()`, ~84 configs; C1 uses
+   `with_retire_deferred()`, ~84 configs). Treating
    "`all_configs()`" as a lazy default inflates suite runtime and
    obscures which property the row actually verifies.
 
@@ -4372,15 +4385,15 @@ projection. Unnamed combinations compose via filter primitives.
 
 | Projection | Axis fix | `|·|` | Mode in spec |
 |---|---|---|---|
-| `with_handover_instant()` | c=0 | 56 | rent+borrow same-tx |
-| `with_handover_countdown()` | c=1 | 56 | standard countdown |
-| `with_handover_fixed_time()` | c=2 | 56 | tenure-saturated countdown (fixed-time rental) |
-| `with_descent_skipped()` | h=0 | 84 | AtDutchAuction unobservable (M6b / Q11) |
-| `with_descent_observable()` | h=1 | 84 | full descent window |
-| `with_retire_floor_active()` | f=1 | 84 | guard temporal active (C1) |
-| `with_retire_floor_immediate()` | f=0 | 84 | no guard |
-| `with_fixed_pricing()` | d=0 | 84 | additive escalation |
-| `with_compound_pricing()` | d=1 | 84 | multiplicative escalation |
+| `with_handover_instant()` | c=0 | 56 | `HandoverPolicy::Instant` — rent+borrow same-tx |
+| `with_handover_countdown()` | c=1 | 56 | `HandoverPolicy::Countdown(...)` — standard countdown |
+| `with_handover_fixed_time()` | c=2 | 56 | `HandoverPolicy::FixedTime` — fixed-time rental |
+| `with_descent_skipped()` | h=0 | 84 | `DescentPolicy::Skipped` — AtDutchAuction unobservable (M6b / Q11) |
+| `with_descent_window()` | h=1 | 84 | `DescentPolicy::Window(...)` — full descent window |
+| `with_retire_deferred()` | f=1 | 84 | `RetirePolicy::Deferred(...)` — guard temporally active (C1) |
+| `with_retire_immediate()` | f=0 | 84 | `RetirePolicy::Immediate` — no guard |
+| `with_fixed_pricing()` | d=0 | 84 | `PriceFunction::FixedDelta` — additive escalation |
+| `with_compound_pricing()` | d=1 | 84 | `PriceFunction::CompoundDelta` — multiplicative escalation |
 
 Axis `E` has no named projections: the curve dimension is swept
 as a whole when shape matters, and filtered via `filter_e` (with
@@ -4404,14 +4417,14 @@ reference them in derivations without duplicating literals (per
 §10.16 "Corpus drift" rule):
 
 ```move
-public(package) fun tenure_ceiling_const():       u64    // 100_000
-public(package) fun min_rent_price_const():       u64    // 10_000_000_000
-public(package) fun handover_floor_c1_const():    u64    // 25_000
-public(package) fun descent_ceiling_h1_const():   u64    // 100_000
-public(package) fun retire_floor_f1_const():      u64    // 10_000_000
-public(package) fun fixed_delta_value_const():    u64    // 10_000_000_000
-public(package) fun compound_delta_bps_const():   u64    // 1_000
-public(package) fun compound_delta_value_const(): u64    // 1
+public(package) fun tenure_ceiling_const():            u64    // 100_000
+public(package) fun min_rent_price_const():            u64    // 10_000_000_000
+public(package) fun handover_countdown_c1_const():     u64    // 25_000  (Countdown.floor_ms at c=1)
+public(package) fun descent_window_h1_const():         u64    // 100_000 (Window.ceiling_ms at h=1)
+public(package) fun retire_deferred_f1_const():        u64    // 10_000_000 (Deferred.floor_ms at f=1)
+public(package) fun fixed_delta_value_const():         u64    // 10_000_000_000
+public(package) fun compound_delta_bps_const():        u64    // 1_000
+public(package) fun compound_delta_value_const():      u64    // 1
 ```
 
 A test asserting "clock at mid-descent" writes the derivation in
@@ -4420,7 +4433,7 @@ terms of these getters:
 ```move
 let t_mid = t0
           + corpus::tenure_ceiling_const()
-          + corpus::descent_ceiling_h1_const() / 2;
+          + corpus::descent_window_h1_const() / 2;
 ```
 
 Changing a canonical value requires editing one place; rows that
@@ -4943,7 +4956,7 @@ inside the `rental_escrow` module under `#[test]`.
   `tests/rental_escrow_corpus.move` and referenced (not duplicated)
   in row assertions. Time-arithmetic derivations
   (`t0 + 150_000` etc.) are written as explicit
-  `t0 + corpus::tenure_ceiling() + corpus::descent_ceiling_h1() / 2`
+  `t0 + corpus::tenure_ceiling_const() + corpus::descent_window_h1_const() / 2`
   to fail loudly at compile time on canonical-value changes.
 - **Clock primitive choice.** `clock::set_for_testing` sets absolute
   ms; `clock::increment_for_testing` moves it forward. Rows that

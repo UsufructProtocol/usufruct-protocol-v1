@@ -13,6 +13,8 @@ const ENotAbsent:   u64 = 0;
 const ENotOccupied: u64 = 1;
 const ENotDemand:   u64 = 2;
 
+// === Constants ===
+
 // === Structs ===
 
 public struct Tenant<phantom CoinType> has store {
@@ -26,6 +28,16 @@ public enum TenantState<phantom CoinType> has store {
     Occupied { t1: Tenant<CoinType> },
     Demand   { t1: Tenant<CoinType>, t2: Tenant<CoinType> },
 }
+
+// === Events ===
+
+// === Method Aliases ===
+
+// === Public Functions ===
+
+// === View Functions ===
+
+// === Admin Functions ===
 
 // === Package Functions ===
 
@@ -121,8 +133,10 @@ public(package) fun unbundle<CoinType>(
     (cap_id, address, stake)
 }
 
-// --- Tenant accessors ---
-
 public(package) fun cap_id<CoinType>(t: &Tenant<CoinType>):      ID      { t.cap_id }
 public(package) fun addr<CoinType>(t: &Tenant<CoinType>):        address { t.address }
 public(package) fun stake_value<CoinType>(t: &Tenant<CoinType>): u64     { t.stake.value() }
+
+// === Private Functions ===
+
+// === Test Functions ===

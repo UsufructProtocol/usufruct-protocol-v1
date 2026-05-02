@@ -469,8 +469,7 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
         },
         _ => abort ENotRented,
     };
-    if (effective_ts < phase_start_ms) return 0;
-    let elapsed = effective_ts - phase_start_ms;
+    let elapsed = phases::elapsed_since(phase_start_ms, effective_ts);
     let g = curve_shape::evaluate_curve(
         config::credit_curve(&escrow.config),
         elapsed,
@@ -520,8 +519,7 @@ fun compute_price_descent<Asset: key + store, CoinType>(
             (*phase_start_ms, *last_acquisition_price),
         _ => abort EInvariantViolation,
     };
-    if (timestamp_ms < phase_start_ms) return last_acquisition_price;
-    let elapsed_ms = timestamp_ms - phase_start_ms;
+    let elapsed_ms = phases::elapsed_since(phase_start_ms, timestamp_ms);
     let h = curve_shape::evaluate_curve(
         config::descent_curve(&escrow.config),
         elapsed_ms,

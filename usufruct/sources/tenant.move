@@ -120,3 +120,9 @@ public(package) fun unbundle<CoinType>(
     let Tenant { cap_id, address, stake } = tenant;
     (cap_id, address, stake)
 }
+
+// --- Tenant accessors ---
+
+public(package) fun cap_id<CoinType>(t: &Tenant<CoinType>):      ID      { t.cap_id }
+public(package) fun addr<CoinType>(t: &Tenant<CoinType>):        address { t.address }
+public(package) fun stake_value<CoinType>(t: &Tenant<CoinType>): u64     { t.stake.value() }

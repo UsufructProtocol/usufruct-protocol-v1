@@ -102,3 +102,14 @@ public(package) fun vacate<CoinType>(
         TenantState::Demand { t1: _t1, t2: _t2 }   => abort ENotOccupied,
     }
 }
+
+/// Destructure a `Tenant` into its three components. The caller
+/// decides what to do with the Balance — refund whole, split between
+/// owner_earnings / protocol fee / refund, etc. Tenant.move stays
+/// agnostic to `Coin`, `transfer`, and `TxContext`.
+public(package) fun unbundle<CoinType>(
+    tenant: Tenant<CoinType>,
+): (ID, address, Balance<CoinType>) {
+    let Tenant { cap_id, address, stake } = tenant;
+    (cap_id, address, stake)
+}

@@ -63,7 +63,7 @@ public(package) fun expiry_at(
 ): u64 {
     match (policy) {
         DescentPolicy::Skipped               => phase_start_ms,
-        DescentPolicy::Window { ceiling_ms } => phase_start_ms + *ceiling_ms,
+        DescentPolicy::Window { ceiling_ms } => phases::boundary_at(phase_start_ms, *ceiling_ms),
     }
 }
 

@@ -5,7 +5,6 @@ module usufruct::rental_escrow;
 
 // === Imports ===
 
-use std::u64;
 use sui::{
     balance::{Self, Balance},
     clock::{Self, Clock},
@@ -429,7 +428,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
             EscrowState::HandoverOpen { phase_start_ms, .. } => {
                 let tenure = config::tenure_ceiling(&escrow.config);
                 if (phases::has_passed(*phase_start_ms, tenure, now)) {
-                    do_tenure_expiry(escrow, *phase_start_ms + tenure, ctx);
+                    do_tenure_expiry(escrow, phases::boundary_at(*phase_start_ms, tenure), ctx);
                     true
                 } else false
             },
@@ -464,7 +463,7 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
                 *phase_start_ms,
                 config::tenure_ceiling(&escrow.config),
             );
-            let eff = u64::min(timestamp_ms, expiry);
+            let eff = phases::earliest(timestamp_ms, expiry);
             (*phase_start_ms, balance::value(&current.stake), eff)
         },
         _ => abort ENotRented,

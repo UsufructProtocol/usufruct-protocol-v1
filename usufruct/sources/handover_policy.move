@@ -5,7 +5,6 @@ module usufruct::handover_policy;
 
 // === Imports ===
 
-use std::u64;
 use usufruct::phases;
 
 // === Errors ===
@@ -88,8 +87,11 @@ public(package) fun expiry_at(
 ): u64 {
     match (policy) {
         HandoverPolicy::Instant   => bid_time_ms,
-        HandoverPolicy::FixedTime => phase_start_ms + tenure_ceiling,
+        HandoverPolicy::FixedTime => phases::boundary_at(phase_start_ms, tenure_ceiling),
         HandoverPolicy::Countdown { floor_ms } =>
-            u64::min(bid_time_ms + *floor_ms, phase_start_ms + tenure_ceiling),
+            phases::earliest(
+                phases::boundary_at(bid_time_ms,    *floor_ms),
+                phases::boundary_at(phase_start_ms, tenure_ceiling),
+            ),
     }
 }

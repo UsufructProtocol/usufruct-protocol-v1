@@ -48,6 +48,25 @@ public(package) fun has_expired(
     }
 }
 
+/// Canonical auction-collapse boundary timestamp — the moment at
+/// which `do_auction_expiry` fires. Sister view of `has_expired`:
+/// the bool dispatcher gates the cascade, this names the boundary
+/// itself for the `AuctionExpired.timestamp_ms` event payload.
+///
+/// Skipped collapses to `phase_start_ms` itself, so the boundary is
+/// trivially reached at the same instant `do_tenure_expiry` produces
+/// `AtDutchAuction` — the cascade collapses to `Idle` in one APT step
+/// (spec M6b / Q11).
+public(package) fun expiry_at(
+    policy:         &DescentPolicy,
+    phase_start_ms: u64,
+): u64 {
+    match (policy) {
+        DescentPolicy::Skipped               => phase_start_ms,
+        DescentPolicy::Window { ceiling_ms } => phase_start_ms + *ceiling_ms,
+    }
+}
+
 /// Width of the descent window, used by the dutch-auction price
 /// curve to evaluate descent progress. Aborts on `Skipped`: a caller
 /// asking for the window width when no auction exists has reached an

@@ -29,6 +29,13 @@ public enum TenantState<phantom CoinType> has store {
 
 // === Package Functions ===
 
+/// Construct the initial `TenantState`. Only entry point — once
+/// active, the slot rotates through `occupy` / `demand` / `redemand`
+/// / `reoccupy` / `vacate`.
+public(package) fun absence<CoinType>(): TenantState<CoinType> {
+    TenantState::Absence
+}
+
 /// Transition Absence → Occupied.
 public(package) fun occupy<CoinType>(
     state:   TenantState<CoinType>,

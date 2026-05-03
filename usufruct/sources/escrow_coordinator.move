@@ -23,6 +23,7 @@ use usufruct::{
     phases,
     price_function,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
+    retire_policy,
     refund_state,
     tenant::{Self, Tenant},
     tenant_cap::{Self, TenantCap},
@@ -240,6 +241,41 @@ public fun integrate<Asset: key + store, CoinType>(
     transfer::share_object(escrow);
     event::emit(AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id, asset_id });
     owner_cap
+}
+
+/// Owner-gated retire entry. Calls APT first, then enforces the
+/// retire-policy floor (if `Deferred`), then dispatches by tag:
+///   Idle | AtDutchAuction → `do_retire_immediately`
+///                          (state becomes Retired in this call)
+///   HandoverOpen          → `do_set_retiring_flag` (flag lifted;
+///   HandoverConfirmed       state stays Rented; tenure expiry will
+///                          collapse to Retired in `do_tenure_expiry`)
+///   Retired               → abort EAlreadyRetired
+public fun retire<Asset: key + store, CoinType>(
+    escrow:    &mut EscrowCoordinator<Asset, CoinType>,
+    owner_cap: &OwnerCap,
+    clock:     &Clock,
+    ctx:       &mut TxContext,
+): EscrowStateTag {
+    assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
+    apply_pending_transitions(escrow, clock, ctx);
+    assert!(
+        retire_policy::is_unlocked(
+            config::retire(&escrow.config),
+            escrow.integrated_at_ms,
+            clock::timestamp_ms(clock),
+        ),
+        ERetireFloorNotElapsed,
+    );
+    let tag = state_tag(escrow);
+    if (is_tag_idle(&tag) || is_tag_at_dutch_auction(&tag)) {
+        do_retire_immediately(escrow, ctx)
+    } else if (is_tag_handover_open(&tag) || is_tag_handover_confirmed(&tag)) {
+        do_set_retiring_flag(escrow, ctx)
+    } else {
+        // Retired.
+        abort EAlreadyRetired
+    }
 }
 
 /// Single entry point to become tenant or place a bid. Calls
@@ -734,6 +770,43 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
     event::emit(AuctionExpired { escrow_id, timestamp_ms: boundary_ms });
 }
 
+/// Retire from Idle | AtDutchAuction → Retired. The state transitions
+/// in the same call (no flag-then-wait dance because no tenant is
+/// active). Co-emits `RetireFlagSet` (for off-chain observers tracking
+/// the owner's intent) and `AssetRetired` (for terminal-state markers).
+fun do_retire_immediately<Asset: key + store, CoinType>(
+    escrow: &mut EscrowCoordinator<Asset, CoinType>,
+    ctx:    &TxContext,
+): EscrowStateTag {
+    let escrow_id = object::id(escrow);
+    let prior_tag = state_tag(escrow);
+    let (s, receipt) = take_state(escrow);
+    let new_s        = lifecycle_state::retire_now(s);
+    put_state(escrow, new_s, receipt);
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
+    event::emit(AssetRetired   { escrow_id, from_state:    prior_tag });
+    EscrowStateTag::Retired
+}
+
+/// Retire from HandoverOpen | HandoverConfirmed → flag lifted, state
+/// stays Rented. The current tenant runs out their tenure; tenure
+/// expiry detects the flag and collapses straight to Retired (see
+/// `do_tenure_expiry` retiring branch). New bids are blocked while
+/// the flag is set (`ERetireFlagBlocksBid` in `do_place_bid`).
+fun do_set_retiring_flag<Asset: key + store, CoinType>(
+    escrow: &mut EscrowCoordinator<Asset, CoinType>,
+    ctx:    &TxContext,
+): EscrowStateTag {
+    let escrow_id = object::id(escrow);
+    let prior_tag = state_tag(escrow);
+    assert!(!lifecycle_state::is_retiring(read_state(escrow)), EAlreadyRetired);
+    let (s, receipt) = take_state(escrow);
+    let new_s        = lifecycle_state::set_retiring(s);
+    put_state(escrow, new_s, receipt);
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
+    prior_tag
+}
+
 // === Test Functions ===
 
 #[test_only]
@@ -854,6 +927,13 @@ public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64       
 public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID                            { e.escrow_id }
 #[test_only]
 public(package) fun asset_retired_from_state(e: &AssetRetired): EscrowStateTag               { e.from_state }
+
+#[test_only]
+public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID                         { e.escrow_id }
+#[test_only]
+public(package) fun retire_flag_set_owner(e: &RetireFlagSet): address                         { e.owner }
+#[test_only]
+public(package) fun retire_flag_set_state_at_set(e: &RetireFlagSet): EscrowStateTag           { e.state_at_set }
 
 // ─── Drive helpers for test-only state composition ───────────────────────────
 // Bypass `rent`/`retire` (not yet implemented) by chaining

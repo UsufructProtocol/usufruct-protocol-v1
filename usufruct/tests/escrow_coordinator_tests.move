@@ -24,10 +24,11 @@ use usufruct::{
         TenureExpired,
         AuctionExpired,
         AssetRetired,
+        RetireFlagSet,
     },
     escrow_corpus,
     fee_message::FeeMessageSent,
-    owner_cap,
+    owner_cap::{Self, OwnerCap},
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     tenant::{Self, Tenant},
     tenant_cap::TenantCap,
@@ -938,6 +939,174 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     assert!(escrow_coordinator::is_tag_handover_open(&from), 2);
 
     transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §13. do_auction_expiry ──────────────────────────────────────────────────
+
+// ─── §14. retire ─────────────────────────────────────────────────────────────
+
+/// retire from Idle → Retired in one call. Co-emits RetireFlagSet
+/// (state_at_set=Idle) and AssetRetired (from_state=Idle).
+#[test]
+fun retire_from_idle_collapses_to_retired() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0); // f=0 immediate
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let tag_after = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_tag_retired(&tag_after), 0);
+    assert!(escrow_coordinator::is_tag_retired(&escrow_coordinator::state_tag(&escrow)), 1);
+
+    let flagged = event::events_by_type<RetireFlagSet>();
+    assert_eq!(flagged.length(), 1);
+    let prev = escrow_coordinator::retire_flag_set_state_at_set(&flagged[0]);
+    assert!(escrow_coordinator::is_tag_idle(&prev), 2);
+
+    let retired = event::events_by_type<AssetRetired>();
+    assert_eq!(retired.length(), 1);
+    let from = escrow_coordinator::asset_retired_from_state(&retired[0]);
+    assert!(escrow_coordinator::is_tag_idle(&from), 3);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// retire from AtDutch → Retired (same flow as Idle, different
+/// from_state). Drives via the test-only AtDutch helper.
+#[test]
+fun retire_from_at_dutch_collapses_to_retired() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 window
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow_coordinator::drive_to_rented_for_testing(
+        &mut escrow,
+        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        0,
+    );
+    escrow_coordinator::drive_to_at_dutch_for_testing(
+        &mut escrow, STAKE_T1, 0, escrow_corpus::min_rent_price_const() * 2, 100_000,
+    );
+
+    let tag_after = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_tag_retired(&tag_after), 0);
+
+    let retired = event::events_by_type<AssetRetired>();
+    assert_eq!(retired.length(), 1);
+    let from = escrow_coordinator::asset_retired_from_state(&retired[0]);
+    assert!(escrow_coordinator::is_tag_at_dutch_auction(&from), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// retire from HandoverOpen → flag set; state stays HandoverOpen.
+/// RetireFlagSet emitted with state_at_set=HandoverOpen; no AssetRetired
+/// (the asset stays with the tenant until tenure expiry).
+#[test]
+fun retire_from_handover_open_only_lifts_flag() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    let tag_after = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_tag_handover_open(&tag_after), 0);
+    assert!(escrow_coordinator::is_tag_handover_open(&escrow_coordinator::state_tag(&escrow)), 1);
+
+    let flagged = event::events_by_type<RetireFlagSet>();
+    assert_eq!(flagged.length(), 1);
+    let prev = escrow_coordinator::retire_flag_set_state_at_set(&flagged[0]);
+    assert!(escrow_coordinator::is_tag_handover_open(&prev), 2);
+
+    let retired = event::events_by_type<AssetRetired>();
+    assert_eq!(retired.length(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EAlreadyRetired, location = usufruct::escrow_coordinator)]
+fun retire_when_already_retired_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    escrow_coordinator::drive_to_retired_for_testing(&mut escrow);
+    let _ = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EAlreadyRetired, location = usufruct::escrow_coordinator)]
+fun retire_when_already_retiring_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+    let _ = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    // Second call must fail — flag is already set.
+    let _ = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EWrongEscrowOwnerCap, location = usufruct::escrow_coordinator)]
+fun retire_with_wrong_cap_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Mint a foreign cap bound to a different escrow_id.
+    let foreign_cap = owner_cap::new(object::id_from_address(@0xDEAD), OWNER, sc.ctx());
+    let _ = escrow_coordinator::retire(&mut escrow, &foreign_cap, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    owner_cap::burn(foreign_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::ERetireFloorNotElapsed, location = usufruct::escrow_coordinator)]
+fun retire_before_floor_aborts_under_deferred_policy() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 1)); // f=1 deferred
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    // clock at 0 is far below the deferred floor (10_000_000).
+    let _ = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);

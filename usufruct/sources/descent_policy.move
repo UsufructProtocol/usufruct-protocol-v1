@@ -42,7 +42,14 @@ public(package) fun has_expired(
     now_ms:         u64,
 ): bool {
     match (policy) {
-        DescentPolicy::Skipped               => true,
+        // Skipped collapses at `phase_start_ms`: zero window means the
+        // gate opens at the moment AtDutchAuction is entered, not
+        // vacuously before. Defensive monotonicity — preserves the
+        // sister identity `has_expired ⇔ now >= expiry_at`
+        // unconditionally (Skipped's expiry_at is phase_start_ms). In
+        // production, clock-monotone makes this equivalent to `=> true`.
+        DescentPolicy::Skipped               =>
+            phases::has_passed(phase_start_ms, 0, now_ms),
         DescentPolicy::Window { ceiling_ms } =>
             phases::has_passed(phase_start_ms, *ceiling_ms, now_ms),
     }

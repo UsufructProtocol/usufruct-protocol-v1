@@ -39,7 +39,13 @@ public(package) fun is_unlocked(
     now_ms:           u64,
 ): bool {
     match (policy) {
-        RetirePolicy::Immediate             => true,
+        // Immediate unlocks from `integrated_at_ms` onward: zero floor
+        // means the gate opens at integration, not vacuously before.
+        // Defensive monotonicity — every variant gates through the time
+        // layer (`phases::has_passed`); none are vacuous. In production,
+        // clock-monotone makes this equivalent to `=> true`.
+        RetirePolicy::Immediate             =>
+            phases::has_passed(integrated_at_ms, 0, now_ms),
         RetirePolicy::Deferred { floor_ms } =>
             phases::has_passed(integrated_at_ms, *floor_ms, now_ms),
     }

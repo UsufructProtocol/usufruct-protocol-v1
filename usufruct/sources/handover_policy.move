@@ -49,7 +49,13 @@ public(package) fun has_expired(
     now_ms:         u64,
 ): bool {
     match (policy) {
-        HandoverPolicy::Instant   => true,
+        // Instant fires from `bid_time_ms` onward: zero countdown means
+        // the gate opens at the moment of the bid, not vacuously before.
+        // Defensive monotonicity — preserves the sister identity
+        // `has_expired ⇔ now >= expiry_at` unconditionally (Instant's
+        // expiry_at is bid_time_ms). In production, clock-monotone makes
+        // this equivalent to `=> true`.
+        HandoverPolicy::Instant   => phases::has_passed(bid_time_ms,    0,              now_ms),
         HandoverPolicy::FixedTime => phases::has_passed(phase_start_ms, tenure_ceiling, now_ms),
         HandoverPolicy::Countdown { floor_ms } =>
             phases::has_passed(bid_time_ms,    *floor_ms,      now_ms) ||

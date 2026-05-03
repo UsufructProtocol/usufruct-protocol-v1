@@ -62,9 +62,9 @@ no consensus. All other operations stay on the single escrow object.
 ║  │  Asset (key + store)   │  │  IntegrationConfig  (immutable)  │  ║
 ║  │  ← always present;     │  │  · min_rent_price                │  ║
 ║  │    escrow exists ↔     │  │  · tenure_ceiling                │  ║
-║  │    asset exists        │  │  · handover_floor                │  ║
-║  └────────────────────────┘  │  · descent_ceiling               │  ║
-║                               │  · retire_floor                  │  ║
+║  │    asset exists        │  │  · handover: HandoverPolicy      │  ║
+║  └────────────────────────┘  │  · descent:  DescentPolicy       │  ║
+║                               │  · retire:   RetirePolicy        │  ║
 ║  ┌────────────────────────┐  │  · CurveShape g  (credit)        │  ║
 ║  │  AssetState            │  │  · CurveShape h  (descent)       │  ║
 ║  │  Idle                  │  │  · PriceFunction                 │  ║
@@ -72,21 +72,24 @@ no consensus. All other operations stay on the single escrow object.
 ║  │    HandoverOpen        │                                         ║
 ║  │    HandoverConfirmed   │  ┌───────────────────────────────────┐ ║
 ║  │  AtDutchAuction        │  │  Phase anchors                    │ ║
-║  │  Retired               │  │  · last_rent_price: u64           │ ║
+║  │  Retired               │  │  · last_acquisition_price: u64    │ ║
 ║  └────────────────────────┘  │  · phase_start_ms: u64            │ ║
-║                               │  · handover_countdown_expiry      │ ║
+║                               │  · bid_time_ms: u64               │ ║
+║  ┌──────────────────┐         │      (HandoverConfirmed only;     │ ║
+║  │  tenant_stake    │         │       handover boundary derived   │ ║
+║  │  Balance<C>      │         │       via handover_policy::       │ ║
+║  └──────────────────┘         │       expiry_at — not cached)     │ ║
 ║  ┌──────────────────┐         │  · current_tenant_cap_id          │ ║
-║  │  tenant_stake    │         │  · current_tenant_address         │ ║
+║  │  pending_bid     │         │  · current_tenant_address         │ ║
 ║  │  Balance<C>      │         │  · pending_tenant_address         │ ║
 ║  └──────────────────┘         └───────────────────────────────────┘ ║
 ║  ┌──────────────────┐                                               ║
-║  │  pending_bid     │         ┌───────────────────────────────────┐ ║
+║  │  owner_earnings  │         ┌───────────────────────────────────┐ ║
 ║  │  Balance<C>      │         │  Flags + routing                  │ ║
-║  └──────────────────┘         │  · retire_flag: bool              │ ║
-║  ┌──────────────────┐         │  · integrated_at_ms: u64          │ ║
-║  │  owner_earnings  │         │  · fee_inbox_id: ID               │ ║
-║  │  Balance<C>      │         └───────────────────────────────────┘ ║
-║  └──────────────────┘                                               ║
+║  └──────────────────┘         │  · retiring: bool                 │ ║
+║                               │  · integrated_at_ms: u64          │ ║
+║                               │  · fee_inbox_id: ID               │ ║
+║                               └───────────────────────────────────┘ ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 
@@ -115,16 +118,16 @@ no consensus. All other operations stay on the single escrow object.
 
  apply_pending_transitions() — handover fires:
    pending_bid              →  tenant_stake  (new tenant)
-   used_credit × 0.95       →  owner_earnings
-   used_credit × 0.05       →  FeeMessage<C>  →  transfer-to-object  →  fee_inbox_id
+   used_credit × 0.90       →  owner_earnings
+   used_credit × 0.10       →  FeeMessage<C>  →  transfer-to-object  →  fee_inbox_id
    remain_credit            ←  Coin<C>  (push to current_tenant_address)
 
  apply_pending_transitions() — tenure expiry:
-   tenant_stake × 0.95      →  owner_earnings
-   tenant_stake × 0.05      →  FeeMessage<C>  →  transfer-to-object  →  fee_inbox_id
+   tenant_stake × 0.90      →  owner_earnings
+   tenant_stake × 0.10      →  FeeMessage<C>  →  transfer-to-object  →  fee_inbox_id
 
  withdraw_earnings()        ←  Coin<C>  ←  owner_earnings                   (pull, OwnerCap)
- retire()                   —  sets retire_flag only, no asset movement
+ retire()                   —  sets retiring flag only, no asset movement
  claim_asset()              ←  Coin<C>  ←  owner_earnings (sweep)
                             ←  Asset    ←  RentalEscrow (unwrapped, deleted)
  collect_fee_messages<C>()    ←  Coin<C>  ←  FeeMessage<C>[]                  (&mut ProtocolFeeInbox, fastpath, deleted, one call per CoinType)
@@ -145,7 +148,7 @@ objects — fastpath, no consensus.
 | `integrate` | serial on RentalEscrow · read `ProtocolFeeRef` (frozen — no consensus) |
 | `claim_asset` | serial on RentalEscrow only — transfer-to-object does not touch `ProtocolFeeInbox` |
 | `collect_fee_messages<C>` | owned `ProtocolFeeInbox` only — fastpath, no consensus, one call per CoinType |
-| `current_state`, `compute_used_credit`, `compute_price_descent`, `compute_next_rent_price` | read-only (`&RentalEscrow`) — no contention |
+| `compute_used_credit`, `compute_floor_price` | read-only (`&RentalEscrow`) — no contention |
 
 ---
 
@@ -153,11 +156,11 @@ objects — fastpath, no consensus.
 
 ```toml
 [package]
-name    = "LiquidRenting"
+name    = "usufruct"
 edition = "2024"
 
 [addresses]
-liquid_renting = "0x0"
+usufruct = "0x0"
 ```
 
 ---
@@ -165,36 +168,58 @@ liquid_renting = "0x0"
 ## Module Dependency Graph
 
 ```
-      math
-     ^    ^
-     |    |
- curve_shape  price_function
-          \        /
-           \      /
-            \    /
-             \  /
-              \/
-           config   owner_cap   tenant_cap   protocol_fee_inbox
-               ^         ^           ^                  ^
-                \        |           |                  |
-                 \       |           |       fee_message
-                  \      |           |                  ^
-                   \     |           |                 /
-                                        rental_escrow
+                        math
+                       ^    ^
+                       |    |
+                  curve_shape  price_function
+                  (math)       (math)
+                       \        /
+                        \      /
+                         \    /
+                          \  /
+
+                        phases                            owner_cap   tenant_cap   protocol_fee_inbox
+                  (std::u64 only)                         (leaf)      (leaf)       (leaf)
+                         |                                                          ^
+            ┌────────────┼────────────┐                                             |
+            v            v            v                                       fee_message
+   handover_policy  descent_policy  retire_policy                             (protocol_fee_inbox)
+            \            |            /
+             \           |           /
+              v          v          v
+                      config
+              (curve_shape, price_function, handover_policy,
+               descent_policy, retire_policy)
+                          |
+                          v
+                    rental_escrow
+              (config, owner_cap, tenant_cap, protocol_fee_inbox,
+               fee_message, phases, handover_policy, descent_policy,
+               retire_policy, curve_shape, price_function, math)
 ```
 
 Arrows point from dependency to dependent.
 `rental_escrow` is the integration point; every other module is independent of it.
-`rental_escrow` also imports `protocol_fee_inbox` directly (for `ProtocolFeeRef` in
-`integrate`) in addition to `fee_message`.
+`rental_escrow` imports `protocol_fee_inbox` directly (for `ProtocolFeeRef` in
+`integrate`) in addition to `fee_message`, and imports the policy modules + `phases`
+directly to dispatch on the fields exposed by `config`.
+
+**Time-layer single-owner invariant:** `phases` is the only module in the
+codebase that performs `+` or `u64::min` on values whose semantic is a
+timestamp (the `_ms` discriminator is what makes the invariant
+mechanically chequeable — see `phases.spec.md` §6 P7). Every other module
+that needs temporal arithmetic — including the policy modules and
+`rental_escrow` — calls `phases::has_passed`, `phases::elapsed_since`,
+`phases::boundary_at`, or `phases::earliest`.
 
 **Events:** there is no standalone `events` module. Each module owns its own
 observability — event structs are defined in the module that emits them.
 All protocol state-machine events live in `rental_escrow`. Cap lifecycle events
 (`TenantCapMinted`, `TenantCapBurned`, `OwnerCapMinted`, `OwnerCapBurned`) live in
 `tenant_cap` and `owner_cap` respectively. Fee events live in `fee_message`.
-This follows the idiomatic Sui Move pattern: the Sui Verifier requires the emitted
-type to be internal to the module calling `event::emit`.
+The integration registration event (`IntegrationConfigRegistered`) lives in
+`config`. This follows the idiomatic Sui Move pattern: the Sui Verifier requires
+the emitted type to be internal to the module calling `event::emit`.
 
 ---
 
@@ -211,7 +236,7 @@ No protocol types, no objects, no Sui framework dependencies.
 |---|---|---|---|
 | `TAYLOR_SCALE` | `u128` | `10^18` | Fixed-point denominator for `exp_scaled` results. Used by `curve_shape` to interpret them. |
 | `TAYLOR_SCALE_SQ` | `u128` | `10^36` | `TAYLOR_SCALE²`. Used by `curve_shape` for the `exp_scaled` negative path. |
-| `E_MUL_DIV_OVERFLOW` | `u64` | `0` | Abort code when `mul_div` result overflows u64. |
+| `EMulDivOverflow` | `u64` | `0` | Abort code when `mul_div` result overflows u64. |
 
 **Exports (public):**
 
@@ -219,9 +244,8 @@ No protocol types, no objects, no Sui framework dependencies.
 |---|---|---|
 | `mul_div` | `(a: u64, b: u64, c: u64): u64` | `floor(a * b / c)` via u128, overflow-safe. |
 | `nth_root_u128` | `(n: u128, d: u32): u128` | `floor(n^(1/d))` via Newton-Raphson. Used by `curve_shape` for the PowerLaw variant. `d ∈ {2, 3, 4}`. |
-| `exp_scaled` | `(y_num: u64, y_den: u64, neg: bool): u128` | `floor(e^(y_num/y_den) · TAYLOR_SCALE)` with sign via `neg`. Used by `curve_shape` for the Exponential and Logistic variants. |
 
-**Status:** [ ] `mul_div` · [ ] `nth_root_u128` · [ ] `exp_scaled`
+**Status:** [*] `mul_div` · [*] `nth_root_u128`
 
 **Depends on:** nothing.
 
@@ -243,12 +267,6 @@ shape functions. All functions are pure — no objects, no mutation, no Sui stat
 - `LOGISTIC_K: u64 = 12`
 - `LOGISTIC_DENOM: u64` — algorithm-derived literal, established once at initial implementation
 
-**Error constants (public):**
-- `E_ALPHA_NUM_RANGE: u64 = 0`
-- `E_ALPHA_DEN_RANGE: u64 = 1`
-- `E_DEGENERATE_LINEAR: u64 = 2`
-- `E_ALPHA_ABS_RANGE: u64 = 3`
-
 **Constructors (`public`):** `new_linear()`, `new_smoothstep()`, `new_logistic()` — no validation. `new_power_law(alpha_num, alpha_den)` — validates `alpha_num ∈ [1, 8]`, `alpha_den ∈ {1, 2, 3, 4}`, `alpha_num != alpha_den`; normalizes by `gcd(alpha_num, alpha_den)`. `new_exponential(alpha_abs, alpha_neg)` — validates `alpha_abs ∈ [1, 8]`.
 
 **Functions:**
@@ -257,7 +275,7 @@ shape functions. All functions are pure — no objects, no mutation, no Sui stat
 |---|---|---|---|
 | `evaluate_curve` | `public(package)` | `(shape: &CurveShape, t: u64, t_max: u64): u64` | Evaluate normalized shape at `x = t/t_max`, result in `[0, SCALE]`. Short-circuits at `t == 0 → 0` and `t >= t_max → SCALE`. Protocol-level scaling (by `tenant_stake`, spread) is applied by `rental_escrow` callers. |
 
-**Status:** [ ] `CurveShape` · [ ] `evaluate_curve`
+**Status:** [*] `CurveShape` · [*] `evaluate_curve`
 
 **Depends on:** `math`.
 
@@ -274,12 +292,6 @@ shape functions. All functions are pure — no objects, no mutation, no Sui stat
 |---|---|---|
 | `PriceFunction` | `copy, drop, store` | `FixedDelta { delta: u64 }`, `CompoundDelta { bps: u64, delta: u64 }` |
 
-Note: there is no standalone `Percentage` variant. Pure percentage behavior is expressed as `CompoundDelta { bps, delta: 1 }`.
-
-**Error constants (public):**
-- `E_FIXED_DELTA_ZERO: u64 = 0`
-- `E_BPS_RANGE: u64 = 1`
-
 **Constructors (`public`):** `new_fixed_delta(delta)` — validates `delta > 0`. `new_compound_delta(bps, delta)` — validates `bps ∈ [1, u64::MAX − 10000]`, `delta > 0`.
 
 **Functions:**
@@ -287,60 +299,191 @@ Note: there is no standalone `Percentage` variant. Pure percentage behavior is e
 | Function | Visibility | Signature | Purpose |
 |---|---|---|---|
 | `evaluate_price_fn` | `public(package)` | `(price_fn: &PriceFunction, last_rent_price: u64): u64` | Dispatcher — match on `PriceFunction` variant. Called by `rental_escrow::compute_next_rent_price`. Result always `> last_rent_price` (constructor-enforced). |
-| `eval_fixed_delta` | private | `(last_rent_price: u64, delta: u64): u64` | `last_rent_price + delta`. |
-| `eval_compound_delta` | private | `(last_rent_price: u64, bps: u64, delta: u64): u64` | `mul_div(last_rent_price, 10000 + bps, 10000) + delta`. |
 
-**Status:** [ ] `PriceFunction` · [ ] `evaluate_price_fn`
+**Status:** [*] `PriceFunction` · [*] `evaluate_price_fn`
 
 **Depends on:** `math`.
 
 ---
 
-### 4. `config.move` — Integration configuration
+### 4. `phases.move` — Time-layer primitives
 
-**Responsibility:** `IntegrationConfig` struct and its validated constructor.
-Bundles all immutable parameters set once at integration time.
-No UID, no object identity — plain data struct embedded inside `RentalEscrow`.
+**Responsibility:** Single-owner module for all timestamp arithmetic and
+clock comparisons. Every other module that needs to reason about time
+calls into `phases`; no module performs naked `+` or `u64::min` on a
+timestamp-tagged value (`_ms` suffix). Mechanically chequeable invariant
+(see `phases.spec.md` §6 P7).
+
+**Functions:**
+
+| Function | Visibility | Signature | Purpose |
+|---|---|---|---|
+| `has_passed` | `public(package)` | `(anchor_ms: u64, duration_ms: u64, now_ms: u64): bool` | True iff `now_ms >= anchor_ms + duration_ms`. The bool gate that every policy dispatcher delegates to. |
+| `elapsed_since` | `public(package)` | `(start_ms: u64, now_ms: u64): u64` | Saturating `now - start` (returns 0 if `now < start`). Used by `compute_used_credit` and `compute_price_descent`. |
+| `boundary_at` | `public(package)` | `(anchor_ms: u64, duration_ms: u64): u64` | `anchor + duration`. The u64 sister of `has_passed`. Used by every policy module's `expiry_at` and by `apply_pending_transitions` HandoverOpen. |
+| `earliest` | `public(package)` | `(a_ms: u64, b_ms: u64): u64` | `min(a, b)`. Used both for clock-vs-boundary clamps (`compute_used_credit`) and boundary-vs-boundary saturation (`handover_policy::expiry_at` Countdown). |
+
+**Architectural property:** the four primitives split into two pairs:
+`has_passed` (bool) ↔ `boundary_at` (u64) are sister views of the same
+"is the boundary crossed?" concept; `elapsed_since` and `earliest` cover
+saturating subtraction and minimum-over-timestamps. The sister identity
+`has_passed(a, d, n) ⇔ n >= boundary_at(a, d)` is the time-layer
+invariant — every policy module's own `has_expired ⇔ now >= expiry_at`
+identity collapses to this one.
+
+**Status:** [*] `has_passed` · [*] `elapsed_since` · [*] `boundary_at` · [*] `earliest`
+
+**Depends on:** `std::u64` (for `min` in `earliest`). Nothing else.
+
+---
+
+### 5. `handover_policy.move` — Handover countdown rule
+
+**Responsibility:** Defines the `HandoverPolicy` enum and dispatches over
+its variants. Parameterizes how long the protocol waits between a bid
+landing in `HandoverOpen` (transitioning to `HandoverConfirmed`) and the
+actual handover firing.
+
+**Types:**
+
+| Type | Abilities | Variants |
+|---|---|---|
+| `HandoverPolicy` | `copy, drop, store` | `Instant`, `Countdown { floor_ms: u64 }`, `FixedTime` |
+
+**Constructors (`public`):** `new_handover_instant()`, `new_handover_fixed_time()` — no validation. `new_handover_countdown(floor_ms)` — validates `floor_ms > 0` (zero is the `Instant` mode).
+
+**Error constants:**
+- `EHandoverFloorZero: u64 = 0` — `new_handover_countdown(0)`
+
+**Dispatchers (`public(package)`):**
+
+| Function | Signature | Purpose |
+|---|---|---|
+| `has_expired` | `(policy: &HandoverPolicy, bid_time_ms, phase_start_ms, tenure_ceiling, now_ms): bool` | Bool gate: has the handover countdown expired? Called by `apply_pending_transitions` HandoverConfirmed branch. |
+| `expiry_at` | `(policy: &HandoverPolicy, bid_time_ms, phase_start_ms, tenure_ceiling): u64` | u64 sister: canonical handover boundary. Used by the same call site to forward to `do_handover`, by `compute_used_credit` to clamp credit accrual, and by `do_place_bid` to emit `BidPlaced.handover_countdown_expiry`. |
+| `countdown_floor_lt` | `(policy: &HandoverPolicy, ceiling: u64): bool` | Cross-field predicate consumed by `config::new_config` to enforce `Countdown.floor_ms < tenure_ceiling`. Encapsulated here because Move 2024 restricts variant pattern-matching to the defining module. |
+
+**Status:** [*] `HandoverPolicy` · [*] constructors · [*] `has_expired` · [*] `expiry_at` · [*] `countdown_floor_lt`
+
+**Depends on:** `phases`.
+
+---
+
+### 6. `descent_policy.move` — Dutch auction descent rule
+
+**Responsibility:** Defines the `DescentPolicy` enum and dispatches over
+its variants. Parameterizes whether the auction window exists and (if so)
+its duration.
+
+**Types:**
+
+| Type | Abilities | Variants |
+|---|---|---|
+| `DescentPolicy` | `copy, drop, store` | `Skipped`, `Window { ceiling_ms: u64 }` |
+
+**Constructors (`public`):** `new_descent_skipped()` — no validation. `new_descent_window(ceiling_ms)` — validates `ceiling_ms > 0` (zero is the `Skipped` mode).
+
+**Error constants:**
+- `EDescentCeilingZero: u64 = 0` — `new_descent_window(0)`
+- `EDescentSkippedNoWindow: u64 = 1` — `window_ceiling` on `Skipped` (structurally unreachable; defensive landmine)
+
+**Dispatchers (`public(package)`):**
+
+| Function | Signature | Purpose |
+|---|---|---|
+| `has_expired` | `(policy: &DescentPolicy, phase_start_ms, now_ms): bool` | Bool gate: has the descent window expired? Called by `apply_pending_transitions` AtDutchAuction branch. |
+| `expiry_at` | `(policy: &DescentPolicy, phase_start_ms): u64` | u64 sister: canonical auction-collapse boundary. Used by the same call site to forward to `do_auction_expiry` for the `AuctionExpired.timestamp_ms` event payload. |
+| `window_ceiling` | `(policy: &DescentPolicy): u64` | Width of the descent window — `t_max` input for `evaluate_curve` in `compute_price_descent`. Aborts on `Skipped`. |
+
+**Status:** [*] `DescentPolicy` · [*] constructors · [*] `has_expired` · [*] `expiry_at` · [*] `window_ceiling`
+
+**Depends on:** `phases`.
+
+---
+
+### 7. `retire_policy.move` — Retire unlock rule
+
+**Responsibility:** Defines the `RetirePolicy` enum and dispatches over
+its variants. Parameterizes whether `retire()` may be called immediately
+upon integration or only after a deferred floor elapses.
+
+**Types:**
+
+| Type | Abilities | Variants |
+|---|---|---|
+| `RetirePolicy` | `copy, drop, store` | `Immediate`, `Deferred { floor_ms: u64 }` |
+
+**Constructors (`public`):** `new_retire_immediate()` — no validation. `new_retire_deferred(floor_ms)` — validates `floor_ms > 0` (zero is the `Immediate` mode).
+
+**Error constants:**
+- `ERetireFloorZero: u64 = 0` — `new_retire_deferred(0)`
+
+**Dispatchers (`public(package)`):**
+
+| Function | Signature | Purpose |
+|---|---|---|
+| `is_unlocked` | `(policy: &RetirePolicy, integrated_at_ms, now_ms): bool` | Bool gate: may `retire()` proceed? Called by `rental_escrow::retire`. |
+
+**No u64 sister.** Unlike `handover_policy` and `descent_policy`,
+`retire_policy` exposes only the bool view — the unlock timestamp has
+no non-gate consumer downstream (no event payload, no time-clamp, no
+boundary forwarding). See `retire_policy.spec.md` §4 P3.
+
+**Status:** [*] `RetirePolicy` · [*] constructors · [*] `is_unlocked`
+
+**Depends on:** `phases`.
+
+---
+
+### 8. `config.move` — Integration configuration (data carrier)
+
+**Responsibility:** Owns the `IntegrationConfig` struct that bundles all
+immutable integration parameters embedded inside `RentalEscrow`, the
+bundle constructor, the registration event, and the per-field getters.
+Pure data-carrier role — does not own the policy enums or their dispatch
+logic (those live in their own modules).
 
 **Types:**
 
 | Type | Abilities |
 |---|---|
 | `IntegrationConfig` | `copy, drop, store` |
+| `IntegrationConfigRegistered` | `copy, drop` (event) |
 
-**Fields:**
+**Fields (`IntegrationConfig`):**
 - `min_rent_price: u64`
 - `tenure_ceiling: u64` — ms
-- `handover_floor: u64` — ms
-- `descent_ceiling: u64` — ms
-- `retire_floor: u64` — ms
+- `handover: HandoverPolicy`
+- `descent: DescentPolicy`
+- `retire: RetirePolicy`
 - `credit_curve: CurveShape` — g, for `f_credit_ascent`
 - `descent_curve: CurveShape` — h, for `f_price_descent`
 - `price_function: PriceFunction` — for `f_next_rent_price`
 
+**Error constants (public):**
+- `E_MIN_RENT_PRICE_ZERO: u64 = 0`
+- `E_TENURE_CEILING_ZERO: u64 = 1`
+- `E_HANDOVER_FLOOR_EXCEEDS_TENURE: u64 = 2` — strict `>=` (equality is FixedTime)
+
+The remaining intra-variant errors (`E_HANDOVER_FLOOR_ZERO`,
+`E_DESCENT_CEILING_ZERO`, `E_RETIRE_FLOOR_ZERO`,
+`E_DESCENT_SKIPPED_NO_WINDOW`) live in their owning policy modules.
+
 **Exports (public):**
 
-| Function | Purpose |
-|---|---|
-| `new_config(min_rent_price, tenure_ceiling, handover_floor, descent_ceiling, retire_floor, credit_curve, descent_curve, price_function): IntegrationConfig` | Validates all constraints, aborts on violation |
-| One `public(package)` getter per field | Immutable access for `rental_escrow` |
+| Function | Visibility | Purpose |
+|---|---|---|
+| `new_config(...)` | `public` | Validates scalar fields and the one cross-field constraint (delegates to `handover_policy::countdown_floor_lt`); aborts on violation. PTB-callable bundle constructor. |
+| `emit_registration(cfg, escrow_id)` | `public(package)` | Emits `IntegrationConfigRegistered`. Called from `rental_escrow::integrate` once the escrow ID is known. |
+| One getter per field | `public(package)` | Scalars by value; policy/curve/price-function fields by `&` reference. |
 
-**Validation constraints (enforced in `new`):**
-```
-min_rent_price   > 0
-tenure_ceiling   > 0
-0 <= handover_floor <= tenure_ceiling
-descent_ceiling  > 0
-retire_floor     >= 0   (always true for u64)
-```
+**Status:** [*] `IntegrationConfig` · [*] `new_config` · [*] `emit_registration` · [*] getters
 
-**Status:** [ ] `IntegrationConfig` · [ ] `new` · [ ] getters
-
-**Depends on:** `curve_shape`, `price_function`.
+**Depends on:** `curve_shape`, `price_function`, `handover_policy`, `descent_policy`, `retire_policy` (type imports + the cross-field predicate).
 
 ---
 
-### 5. `owner_cap.move` — Owner capability
+### 9. `owner_cap.move` — Owner capability
 
 **Responsibility:** `OwnerCap` object. One per integration instance.
 Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
@@ -363,19 +506,13 @@ Proves authority for `retire()`, `claim_asset()`, and `withdraw_earnings()`.
 | `burn(cap, owner)` | `public(package)` | Destroy. Called only by `rental_escrow::claim_asset`. `owner: address` is the burn-time holder (hoisted by the caller from `tx_context::sender`); recorded in `OwnerCapBurned`. |
 | `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow` at each owner-gated entry to compare against the target escrow's ID inline (abort constant `E_WRONG_ESCROW_OWNER_CAP` lives in rental_escrow). |
 
-**Error constants:** none. The escrow-match check that used to live
-here as `assert_escrow` has moved to `rental_escrow` as an inline
-assert with a rental-side constant — "wrong escrow" is the
-consumer's semantic interpretation of an ID mismatch, not a
-cap-intrinsic property.
-
-**Status:** [ ] `OwnerCap` · [ ] `new` · [ ] `burn` · [ ] `escrow_id`
+**Status:** [*] `OwnerCap` · [*] `new` · [*] `burn` · [*] `escrow_id`
 
 **Depends on:** nothing (only `sui::object`).
 
 ---
 
-### 6. `tenant_cap.move` — Tenant capability and asset receipt
+### 10. `tenant_cap.move` — Tenant capability
 
 **Responsibility:** `TenantCap` object only.
 `TenantCap` is minted only when a bidder becomes the current tenant — not at bid time.
@@ -387,7 +524,7 @@ Stale caps from displaced tenants are inert.
 |---|---|---|
 | `TenantCap` | `key + store` | Symmetric with `OwnerCap`. Holders may custody / multisig / transfer; the protocol does not police ownership. |
 
-**`TenantCap` fields:**
+**Fields:**
 - `id: UID`
 - `escrow_id: ID`
 
@@ -395,32 +532,27 @@ Stale caps from displaced tenants are inert.
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `new(escrow_id, tenant, ctx): (TenantCap, ID)` | `public(package)` | Pure constructor + emitter. Builds the cap, emits `TenantCapMinted { tenant_cap_id, escrow_id, tenant }`, returns `(cap, cap_id)` by value. No transfer. Called by `rental_escrow::install_new_tenant` (return-by-value out of `rent`) and `rental_escrow::do_handover` (which then pushes via `transfer::public_transfer(cap, pending_tenant_address)` — legal under `store`). |
-| `burn(cap, ctx)` | `public(package)` | Destroys the cap by value. Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant: tx_context::sender(ctx) }` — the burner address is genuinely new information under `store`. Called only from `rental_escrow::burn_tenant_cap`, which gates the call on the cap being structurally stale. Symmetric with `owner_cap::burn` (gated by `claim_asset`). |
+| `new(escrow_id, tenant, ctx): (TenantCap, ID)` | `public(package)` | Pure constructor + emitter. Builds the cap, emits `TenantCapMinted { tenant_cap_id, escrow_id, tenant }`, returns `(cap, cap_id)` by value. No transfer. |
+| `burn(cap, ctx)` | `public(package)` | Destroys the cap by value. Emits `TenantCapBurned { tenant_cap_id, escrow_id, tenant: tx_context::sender(ctx) }`. Called only from `rental_escrow::burn_tenant_cap`, which gates the call on the cap being structurally stale. |
 | `escrow_id(cap): ID` | `public` | Getter. Read by `rental_escrow::borrow_asset` to compare against the target escrow's ID inline (abort constants `E_WRONG_ESCROW_TENANT_CAP` and `E_STALE_TENANT_CAP` live in rental_escrow). |
 
-**Error constants:** none. The two gating checks that used to live
-here as `assert_escrow` and `assert_current` have moved to
-`rental_escrow::borrow_asset` as inline asserts with rental-side
-constants — "wrong escrow" and "stale" are the consumer's semantic
-interpretations of ID mismatches, not cap-intrinsic properties.
-
-**Status:** [ ] `TenantCap` · [ ] `new` · [ ] `burn` · [ ] `escrow_id`
+**Status:** [*] `TenantCap` · [*] `new` · [*] `burn` · [*] `escrow_id`
 
 **Depends on:** nothing (only `sui::object`).
 
 ---
 
-### 7. ~~`events.move`~~ — No standalone events module
+### 11. ~~`events.move`~~ — No standalone events module
 
 Event structs live in the module that emits them. See **Events** note in the
 dependency graph above. Protocol state-machine events are specified in
 `rental_escrow.spec.md`. Cap lifecycle events in `owner_cap.spec.md` and
-`tenant_cap.spec.md`. Fee events in `fee_message.spec.md`.
+`tenant_cap.spec.md`. Fee events in `fee_message.spec.md`. The integration
+registration event in `config.spec.md`.
 
 ---
 
-### 8. `protocol_fee_inbox.move` — Protocol fee inbox
+### 12. `protocol_fee_inbox.move` — Protocol fee inbox
 
 **Responsibility:** `ProtocolFeeInbox` singleton and `ProtocolFeeRef` frozen pointer.
 `ProtocolFeeInbox` is the transfer-to-object target for all `FeeMessage<C>` objects
@@ -434,13 +566,6 @@ inbox's ID — passed to `integrate` by any integrator without consensus overhea
 | `ProtocolFeeInbox` | `key, store` | Singleton. Transferable. Fee inbox. |
 | `ProtocolFeeRef` | `key` | Frozen singleton. Immutable pointer to `ProtocolFeeInbox`. |
 
-**Fields (`ProtocolFeeInbox`):**
-- `id: UID`
-
-**Fields (`ProtocolFeeRef`):**
-- `id: UID`
-- `inbox_id: ID`
-
 **Exports:**
 
 | Function | Visibility | Purpose |
@@ -449,16 +574,16 @@ inbox's ID — passed to `integrate` by any integrator without consensus overhea
 | `uid_mut(inbox): &mut UID` | `public(package)` | Exposes `&mut UID` for `transfer::receive` in `fee_message`. |
 | `inbox_id(fee_ref): ID` | `public` | Returns `inbox_id`. Used by `rental_escrow::integrate`. |
 
-**Status:** [x] `ProtocolFeeInbox` · [x] `ProtocolFeeRef` · [x] `init` · [x] `uid_mut` · [x] `inbox_id`
+**Status:** [*] `ProtocolFeeInbox` · [*] `ProtocolFeeRef` · [*] `init` · [*] `uid_mut` · [*] `inbox_id`
 
 **Depends on:** nothing.
 
 ---
 
-### 9. `fee_message.move` — Protocol fee message and drain
+### 13. `fee_message.move` — Protocol fee message and drain
 
 **Responsibility:** `FeeMessage<C>` per-boundary-event fee object, and all
-fund-routing logic: `send_fee` creates and routes to the inbox at each boundary;
+fund-routing logic: `post` creates and routes to the inbox at each boundary;
 `collect_fee_messages` receives and drains. `transfer::receive` is restricted to this
 module (`key` only type).
 
@@ -468,33 +593,20 @@ module (`key` only type).
 |---|---|---|
 | `FeeMessage<phantom CoinType>` | `key` | Per-boundary-event. Transferred to `ProtocolFeeInbox` as child. Deleted at drain. |
 
-**Fields (`FeeMessage`):**
-- `id: UID`
-- `escrow_id: ID`
-- `balance: Balance<CoinType>`
-
-No `fee_inbox_id` field — the routing inbox is the transfer-to-object
-parent relation tracked by Sui; `transfer::receive` aborts at drain if
-the presented parent does not own the ticket, so a stored ID would be
-strictly redundant for correctness. `fee_inbox_id` is still emitted on
-both lifecycle events.
-
 **Exports:**
 
 | Function | Visibility | Purpose |
 |---|---|---|
-| `send_fee<C>(balance, fee_inbox_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_handover` and `do_tenure_expiry` in `rental_escrow`. |
-| `receive_message<C>(inbox, ticket)` | private | Receives one `FeeMessage<C>` from inbox via `transfer::receive`. |
-| `consume_message<C>(msg, fee_inbox_id, collector)` | private | Destructures `FeeMessage<C>`, deletes UID, emits `FeeMessageCollected<C>`, returns `Balance<C>`. Both scalar parameters are hoisted once by `collect_fee_messages` (`object::id(inbox)` and `tx_context::sender(ctx)`) and passed down — invariant within a drain tx. |
-| `collect_fee_messages<C>(inbox, tickets, ctx): Coin<C>` | `public` | Pipeline of `receive_message` + `consume_message` over `tickets` via `vector::do!`. Single pass O(n). Returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
+| `post<C>(balance, escrow_id, payer, fee_inbox_id, ctx)` | `public(package)` | If `balance > 0`: creates `FeeMessage<C>`, transfers to `fee_inbox_id`. If `balance == 0`: destroys zero balance. Called by `do_distribute_balance` in `rental_escrow`. |
+| `collect_fee_messages<C>(inbox, tickets, ctx): Coin<C>` | `public` | Pipeline of receive + consume over `tickets` via `vector::do!`. Single pass O(n). Returns `Coin<C>`. Fastpath — no shared objects. One call per CoinType. |
 
-**Status:** [x] `FeeMessage` · [x] `send_fee` · [x] `receive_message` · [x] `consume_message` · [x] `collect_fee_messages`
+**Status:** [*] `FeeMessage` · [*] `post` · [*] `collect_fee_messages`
 
 **Depends on:** `protocol_fee_inbox`.
 
 ---
 
-### 10. `rental_escrow.move` — Core escrow and public API
+### 14. `rental_escrow.move` — Core escrow and public API
 
 **Responsibility:** The central shared object, state machine, lazy evaluation,
 all public entry points, and fund distribution logic.
@@ -505,151 +617,147 @@ This is the integration point — it consumes every other module.
 | Type | Abilities | Notes |
 |---|---|---|
 | `RentalEscrow<phantom Asset, phantom CoinType>` | `key` | Shared object. One per integrated asset. |
-| `AssetState` | `copy, drop, store` | Public enum: `Idle`, `Rented { phase: RentPhase }`, `AtDutchAuction`, `Retired` |
-| `RentPhase` | `copy, drop, store` | Public enum: `HandoverOpen`, `HandoverConfirmed` |
-| `AssetReceipt` | *(none)* | Hot potato. Created by `borrow_asset`, consumed by `return_asset`. Carries `escrow_id` and `asset_id` to enforce same-PTB return of the exact asset to the exact escrow. |
-
-`AssetState` and `RentPhase` are public so external callers can pattern-match on
-`escrow.state` after `apply_pending_transitions` settles it. The `state` field is
-not directly writable from outside the module — all transitions go through module
-functions.
+| `EscrowState<Asset, CoinType>` | `store` | Sealed enum: `Idle`, `AtDutchAuction`, `HandoverOpen`, `HandoverConfirmed`, `Retired`. Each variant carries its own state-relevant fields (e.g., `HandoverConfirmed` carries `bid_time_ms`). |
+| `EscrowStateTag` | `copy, drop, store` | Public enum mirror of `EscrowState` for off-chain consumers / events; one variant per `EscrowState` variant, no payload. |
+| `Tenant<phantom CoinType>` | `store` | Per-tenant slot: `cap_id`, `address`, `stake: Balance<C>`. |
+| `AssetReceipt` | *(none)* | Hot potato. Created by `borrow_asset`, consumed by `return_asset`. Carries `escrow_id` and `asset_id`. |
+| `StateReceipt` | *(none)* | Hot potato. Internal — wraps the take/put discipline for `state`. |
 
 **`RentalEscrow` fields:**
 - `id: UID`
-- `asset: Asset`
 - `config: IntegrationConfig`
-- `state: AssetState`
-- `last_rent_price: u64`
-- `phase_start_ms: u64`
-- `current_tenant_cap_id: Option<ID>`
-- `current_tenant_address: Option<address>`
-- `pending_tenant_address: Option<address>`
-- `pending_bid: Balance<CoinType>`
-- `handover_countdown_expiry: Option<u64>`
-- `tenant_stake: Balance<CoinType>`
-- `owner_earnings: Balance<CoinType>`
-- `retire_flag: bool`
+- `fee_inbox_id: ID`
 - `integrated_at_ms: u64`
-- `fee_inbox_id: ID` — ID of `ProtocolFeeInbox`. Registered at `integrate` via `ProtocolFeeRef`.
+- `owner_earnings: Balance<CoinType>`
+- `state: Option<EscrowState<Asset, CoinType>>` — wrapped in `Option` only because the take/put discipline temporarily extracts it during transitions
+
+The state-shape distribution: `Asset`, `phase_start_ms`, tenant slots, and
+`bid_time_ms` (for `HandoverConfirmed` only) live inside the `EscrowState`
+variants — not as flat fields on `RentalEscrow`. This means each variant
+exposes exactly the fields its semantic requires: e.g., `Idle` has only
+`asset`, `HandoverConfirmed` has `asset / phase_start_ms / current /
+pending / retiring / bid_time_ms`. The handover boundary is **derived on
+demand** via `handover_policy::expiry_at(policy, bid_time_ms,
+phase_start_ms, tenure_ceiling)` — `bid_time_ms` is the stored input,
+the boundary is computed when needed (state-stores-inputs principle).
 
 **Public API:**
 
 | Function | Visibility | Summary |
 |---|---|---|
-| `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen, no consensus) — reads `inbox_id(fee_ref)` and stores it as `fee_inbox_id`. Accepts `&Clock` — reads `clock.timestamp_ms()` and stores it as `integrated_at_ms` (used by `retire_floor` enforcement). Returns `OwnerCap`. |
-| `rent` | `public` | Single entry point to become tenant or place a bid. Returns the bidder's `TenantCap` by value in **every** non-`Retired` state — under eager minting the cap is built at bid time, even if the bid will be promoted to tenancy lazily by a later `do_handover`. Calls `apply_pending_transitions()` first, then dispatches by state: **Idle** — pays `min_rent_price`, mints `TenantCap`, registers it in `current_tenant_cap_id`, returns it. **AtDutchAuction** — pays `>= compute_price_descent(now)`. Full `coin.value` becomes `tenant_stake` — no refund. Accepts overpayment to handle latency between PTB construction and execution. Same registration / return as Idle. **Rented(HandoverOpen)** — pays `evaluate_price_fn()`, stores `pending_tenant_address`, sets `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`, mints `TenantCap` and registers it in `pending_tenant_cap_id` (cap inert under `E_PENDING_TENANT_CAP` until rotation), returns it. Aborts if `retire_flag` is set — no new bids accepted, current tenant runs to `tenure_ceiling`. **Rented(HandoverConfirmed)** — pays `evaluate_price_fn()`, refunds previous `pending_bid` (push to the placer's address-of-record), captures the displaced cap ID for the event, overwrites `pending_tenant_address` and `pending_tenant_cap_id` with the new bidder (the displaced cap becomes structurally stale). `handover_countdown_expiry` is unchanged. `retire_flag` does not abort here — the pending bid is already committed; handover completes normally and T(n+1) enters `HandoverOpen` with the flag active (no new bids). **Retired** — aborts. |
-| `borrow_asset` | `public` | Integration point between the protocol and the integrating ecosystem. Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt { escrow_id, asset_id: object::id(&asset) }` inline. The tenant holds the asset within the PTB and can pass it to any function in the integrating protocol — this is how usus and fructus are exercised. Asset must be returned in the same PTB via `return_asset()`. |
-| `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies `receipt.escrow_id` matches the escrow and `receipt.asset_id` matches `object::id(&asset)`. Returns asset to escrow. No state resolution needed. |
-| `burn_tenant_cap` | `public` | Wrapper around `tenant_cap::burn`. Calls `apply_pending_transitions()` first; verifies escrow-match (`E_WRONG_ESCROW_TENANT_CAP`); rejects caps still referenced by `current_tenant_cap_id` or `pending_tenant_cap_id` (`E_TENANT_CAP_NOT_STALE`); then delegates to the package-private `tenant_cap::burn` to destroy the cap and emit `TenantCapBurned`. Prevents accidental destruction of a holder's own active access (current) or their pending bid's promotion target (pending). Symmetric with how `claim_asset` gates `owner_cap::burn`. |
-| `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. Sets `retire_flag`. Never returns asset. Returns the post-call `AssetState` so the caller can branch in the same PTB on whether the transition fired immediately (`Retired`) or is deferred (`Rented{*}` for the Rented pre-call states). |
-| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()` first. State must be `Retired`. Sweeps `owner_earnings` to caller as `Coin`. Burns `OwnerCap`, deletes `RentalEscrow`. Returns `(Asset, Coin<C>)`. |
-| `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. No state resolution needed. |
-| `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order. Returns `AssetState` — the settled state after all transitions. Called internally by every public mutating function. Also callable directly by incentivized actors (frontend, bots) to advance state on-chain, credit pending earnings, and read the resulting state in one transaction. See §Pending Transitions. |
-| `current_state` | `public` | `(escrow: &RentalEscrow, clock: &Clock): AssetState`. Read-only. Computes the settled state without mutating — free via `devInspectTransactionBlock`. Does not advance state on-chain. Use when the caller only needs to read state without paying gas. |
-| `compute_used_credit` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Aborts `E_NOT_RENTED` if state is not `Rented`. Clamps `timestamp_ms` to `handover_countdown_expiry` if state is `HandoverConfirmed` — prevents showing used_credit beyond the boundary. Calls `curve_shape::evaluate_curve` and scales by `tenant_stake` with `math::mul_div`. |
-| `compute_price_descent` | `public` | `(escrow: &RentalEscrow, timestamp_ms: u64): u64`. Read-only query. Aborts `E_NOT_AUCTION` if state is not `AtDutchAuction`. Calls `curve_shape::evaluate_curve` and descends from `last_rent_price` by the spread with `math::mul_div`. |
-| `compute_next_rent_price` | `public` | `(escrow: &RentalEscrow): u64`. Read-only query. Aborts `E_NOT_RENTED` if state is not `Rented`. Delegates to `price_function::evaluate_price_fn`. |
+| `integrate` | `public` | Creates and shares `RentalEscrow`. Accepts `&ProtocolFeeRef` (frozen) and `&Clock`. Returns `OwnerCap`. Emits `IntegrationConfigRegistered` (via `config::emit_registration`) and `AssetIntegrated`. |
+| `rent` | `public` | Single entry point to become tenant or place a bid. Calls `apply_pending_transitions()` first, then dispatches by state: **Idle / AtDutchAuction** — `do_install_new_tenant`. **HandoverOpen** — `do_place_bid` (stores `bid_time_ms = now`). **HandoverConfirmed** — `do_supersede_bid` (preserves `bid_time_ms`). **Retired** — aborts. |
+| `borrow_asset` | `public` | Calls `apply_pending_transitions()` first. Verifies current `TenantCap`. Extracts asset, creates `AssetReceipt` inline. |
+| `return_asset` | `public` | Consumes `AssetReceipt` inline. Verifies escrow + asset IDs. Returns asset to escrow. |
+| `burn_tenant_cap` | `public` | Wrapper around `tenant_cap::burn`. Calls `apply_pending_transitions()` first; verifies escrow-match; rejects caps still referenced. |
+| `retire` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()`. Gates on `retire_policy::is_unlocked(config::retire(&cfg), integrated_at_ms, clock::timestamp_ms(clock))`; aborts `E_RETIRE_FLOOR_NOT_ELAPSED`. Returns the post-call `EscrowStateTag`. |
+| `claim_asset` | `public` | Requires `OwnerCap`. Calls `apply_pending_transitions()`. State must be `Retired`. Sweeps `owner_earnings`, burns `OwnerCap`, deletes `RentalEscrow`. |
+| `withdraw_earnings` | `public` | Requires `OwnerCap`. Drains `owner_earnings` → `Coin`. |
+| `apply_pending_transitions` | `public` | Permissionless settler. Executes all elapsed lazy transitions in order via the bool dispatchers + u64 sister forwarding. Returns the settled `EscrowStateTag`. |
+| `compute_used_credit` | `public` | Read-only query. For `HandoverConfirmed`, derives `expiry = handover_policy::expiry_at(...)` then clamps `eff = phases::earliest(timestamp_ms, expiry)`. |
+| `compute_floor_price` | `public` | Read-only query. Routes to `min_rent_price` / `compute_next_rent_price` / `compute_price_descent` based on state. |
+| `state_tag` | `public` | Pure projection from `&EscrowState` to `EscrowStateTag`. |
 
-**Status:** [ ] `integrate` · [ ] `rent` · [ ] `borrow_asset` · [ ] `return_asset` · [ ] `retire` · [ ] `claim_asset` · [ ] `withdraw_earnings` · [ ] `apply_pending_transitions` · [ ] `current_state` · [ ] `compute_used_credit` · [ ] `compute_price_descent` · [ ] `compute_next_rent_price`
-
-**`phase_start_ms` assignment:**
-
-| Transition | New `phase_start_ms` |
-|---|---|
-| `rent()` from Idle | `clock.now()` |
-| `rent()` from AtDutchAuction | `clock.now()` |
-| Handover completes | `handover_countdown_expiry` |
-| Tenure expiry → AtDutchAuction | `phase_start_ms + tenure_ceiling` |
-| Auction expiry → Idle | `phase_start_ms + descent_ceiling` |
-
-`clock.now()` is used only when a tenant voluntarily starts a new tenure. All lazy
-boundaries use the exact expiry timestamp so no time is gifted or lost between
-when a transition logically occurred and when it was executed.
+**Status:** [*] all public API · [*] `apply_pending_transitions` · [*] view functions
 
 **Internal functions (private):**
 
 | Function | Purpose |
 |---|---|
-| `do_handover` | Executes handover boundary: push `remain_credit` to displaced tenant, delegate stake settlement to `settle_stake_earnings(used_credit, ...)` which splits 90/10 into `owner_earnings` (90%) and a `FeeMessage<C>` transferred to `fee_inbox_id` (10%), move `pending_bid` → `tenant_stake`, mint + push `TenantCap`, rotate addresses. Push-before-rotate invariant enforced here. |
-| `do_tenure_expiry` | Executes tenure boundary: delegate full-stake settlement to `settle_stake_earnings(stake_total, ...)` which splits 90/10 into `owner_earnings` (90%) and a `FeeMessage<C>` transferred to `fee_inbox_id` (10%). Transition to `AtDutchAuction` or `Retired`. |
-| `do_auction_expiry` | Transition to `Idle`. No funds to move. |
-| `split_fee` | Pure: splits an amount into (amount×0.90, amount×0.10) tuple. |
-| `install_new_tenant` | Shared acquisition path for `rent()` Idle / AtDutchAuction arms: absorb payment into `tenant_stake`, anchor `phase_start_ms = clock.now()`, mint + push `TenantCap`, register addresses, transition to `Rented { HandoverOpen }`. Returns the new `TenantCap` ID so the caller emits `RentStarted` with its arm-specific `from_state`. |
-| `settle_stake_earnings` | Shared stake-settlement tail for `do_handover` and `do_tenure_expiry`: given `principal == balance::value(&escrow.tenant_stake)` and the `payer` address, splits 90/10, routes the fee iff > 0 via `fee_message::post`, drains the remainder into `owner_earnings`. Returns `(owner_share, protocol_fee)` for the caller's event emit. |
-| `register_pending_bid` | Shared pending-bid installation tail for `rent()` Rented arms (HandoverOpen first-bid and HandoverConfirmed supersede): absorbs `payment` into `pending_bid`, builds the bidder's `TenantCap` via `tenant_cap::new`, registers its ID in `pending_tenant_cap_id` (overwriting any previous, which becomes stale by exclusion). Returns `(cap, tenant_cap_id, bid_amount)` — `rent()` surfaces the cap through its return to the PTB caller and uses `tenant_cap_id` and `bid_amount` for the `BidPlaced` / `BidSuperseded` event emit. |
+| `do_handover` | Executes handover boundary: distribute balance via `do_distribute_balance`, rotate via `do_rotate_for_handover`, emit `HandoverCompleted`. |
+| `do_tenure_expiry` | Executes tenure boundary: distribute via `do_distribute_balance`, terminate via `do_terminate_tenure`, emit `TenureExpired` and (if applicable) `AssetRetired`. |
+| `do_auction_expiry` | Transition AtDutchAuction → Idle. Emits `AuctionExpired` with `boundary_ms` from `descent_policy::expiry_at`. |
+| `do_install_new_tenant` | Shared acquisition path for Idle / AtDutchAuction arms of `rent()`. |
+| `do_place_bid` | HandoverOpen arm of `rent()`. Sets `bid_time_ms = now`, computes the BidPlaced event's `handover_countdown_expiry` via `handover_policy::expiry_at`. |
+| `do_supersede_bid` | HandoverConfirmed arm of `rent()`. Refunds the displaced bidder, installs the new pending bid. **Preserves `bid_time_ms`** — the boundary does not reset on supersede. |
+| `do_retire_immediately` | Idle / AtDutchAuction arms of `retire()`. |
+| `do_set_retiring_flag` | HandoverOpen / HandoverConfirmed arms of `retire()`. Sets `retiring: true`. |
+| `do_extract_asset` / `do_fill_asset` | Asset extraction/return primitives backing `borrow_asset` / `return_asset`. |
+| `do_distribute_balance` | Settles the current tenant (split fee, route via `fee_message::post`, credit owner). |
+| `do_rotate_for_handover` | Promotes the pending tenant to current, builds new `Tenant` slot. |
+| `do_terminate_tenure` | Transitions HandoverOpen → AtDutchAuction (or Retired if `retiring`). |
+| `compute_price_descent` | Reads `descent_policy::window_ceiling(config::descent(&cfg))` as `t_max` for `evaluate_curve`. Uses `phases::elapsed_since(phase_start_ms, timestamp_ms)` for the saturating elapsed input. |
+| `compute_next_rent_price` | Delegates to `price_function::evaluate_price_fn`. |
+| `take_state` / `put_state` / `read_state` | The only sites that touch `escrow.state`. Take/put discipline. |
+| `split_fee` | Pure 90/10 split. |
 
-**Depends on:** `math`, `curve_shape`, `price_function`, `config`, `owner_cap`, `tenant_cap`,
-`protocol_fee_inbox`, `fee_message`.
+**Depends on:** `math`, `curve_shape`, `price_function`, `phases`,
+`handover_policy`, `descent_policy`, `retire_policy`, `config`, `owner_cap`,
+`tenant_cap`, `protocol_fee_inbox`, `fee_message`.
 
 ---
 
 ## Pending Transitions
 
-### `apply_pending_transitions` — private, called by every public mutating function
-
-**Signature:** `public fun apply_pending_transitions<A, C>(escrow: &mut RentalEscrow<A, C>, clock: &Clock, ctx: &mut TxContext)`
+### `apply_pending_transitions` — public, called by every public mutating function
 
 **Sole responsibility:** execute every elapsed lazy transition — in order — before
 any public function applies its own logic. This guarantees that `owner_earnings`
-and protocol fees are never bypassed regardless of how long the escrow has
-been inactive or what state the caller finds it in.
-
-This is the critical invariant of the protocol. Every boundary event
-(handover, tenure expiry, auction expiry) distributes funds to the owner and
-the protocol. If any boundary is skipped, those funds never materialize.
-`apply_pending_transitions()` makes skipping impossible.
+and protocol fees are never bypassed regardless of how long the escrow has been
+inactive or what state the caller finds it in.
 
 **The three checks — sequential, each reads the state mutated by the previous:**
 
 ```
-// Check 1 — pending handover
-if escrow.state == Rented(HandoverConfirmed)
-   && clock.now() >= escrow.handover_countdown_expiry:
-     do_handover(escrow, clock, ctx)
-     // escrow.state is now Rented(HandoverOpen)
-     // escrow.phase_start_ms is now handover_countdown_expiry
-     // owner_earnings credited with used_credit × 0.95
-     // FeeMessage<C> created and transferred to fee_inbox_id (used_credit × 0.05)
-     // remain_credit pushed to displaced tenant
+EscrowState::HandoverConfirmed { phase_start_ms, bid_time_ms, .. } => {
+    let policy = config::handover(&escrow.config);
+    let tenure = config::tenure_ceiling(&escrow.config);
+    if (handover_policy::has_expired(policy, *bid_time_ms, *phase_start_ms, tenure, now)) {
+        let e = handover_policy::expiry_at(policy, *bid_time_ms, *phase_start_ms, tenure);
+        do_handover(escrow, e, ctx);
+        true
+    } else false
+},
 
-// Check 2 — tenure expired (reads state as mutated by check 1)
-if escrow.state == Rented(...)
-   && clock.now() >= escrow.phase_start_ms + config.tenure_ceiling:
-     do_tenure_expiry(escrow, ctx)
-     // escrow.state is now AtDutchAuction (or Retired if retire_flag)
-     // owner_earnings credited with tenant_stake × 0.95
-     // FeeMessage<C> created and transferred to fee_inbox_id (tenant_stake × 0.05)
+EscrowState::HandoverOpen { phase_start_ms, .. } => {
+    let tenure = config::tenure_ceiling(&escrow.config);
+    if (phases::has_passed(*phase_start_ms, tenure, now)) {
+        do_tenure_expiry(escrow, phases::boundary_at(*phase_start_ms, tenure), ctx);
+        true
+    } else false
+},
 
-// Check 3 — auction expired (reads state as mutated by check 2)
-if escrow.state == AtDutchAuction
-   && clock.now() >= escrow.phase_start_ms + config.descent_ceiling:
-     do_auction_expiry(escrow)
-     // escrow.state is now Idle
+EscrowState::AtDutchAuction { phase_start_ms, .. } => {
+    let policy = config::descent(&escrow.config);
+    if (descent_policy::has_expired(policy, *phase_start_ms, now)) {
+        do_auction_expiry(escrow, descent_policy::expiry_at(policy, *phase_start_ms));
+        true
+    } else false
+},
+
+EscrowState::Idle | Retired => false,
 ```
 
+**Pattern:** every gate uses a bool dispatcher (`has_expired` for handover/descent,
+`phases::has_passed` for tenure — there's no `tenure_policy` enum, just a scalar
+`tenure_ceiling`); the u64 boundary is derived only when the gate fires, for
+forward-passing to `do_*` cascades and for event timestamps. The architectural
+property: no naked `now >= e` outside the bool dispatchers; no naked `+`/`min`
+on timestamps outside `phases`.
+
 **Properties:**
-- Always exactly 3 checks — O(1), no loops, no counters.
-- At most 3 transitions fire in a single call — structural property of the state machine.
+- Bounded iterations: the loop runs while a transition fires, capped at
+  `MAX_APT_ITERATIONS = 4` (structural property — no real chain exceeds 3).
 - Each check reads the state written by the previous. Sequential order is mandatory.
 - No prior knowledge of how many transitions are pending. The clock and the stored
   state fields contain all necessary information.
-- If no transitions are pending, all 3 checks are no-ops. Zero overhead.
-- **Check 1 always precedes Check 2 when `pending_bid` is present.** `rent()` clamps
-  `handover_countdown_expiry = min(clock.now() + handover_floor, phase_start_ms + tenure_ceiling)`,
-  guaranteeing the handover fires at or before tenure expiry. Check 2 never sees
-  `HandoverConfirmed` with an orphaned `pending_bid`.
+- If no transitions are pending, all checks are no-ops. Zero overhead.
+- **Check 1 (Handover) always precedes Check 2 (Tenure) when `bid_time_ms` is
+  present.** `do_place_bid` records `bid_time_ms = now`, and `expiry_at`
+  saturates Countdown's boundary at `phase_start_ms + tenure_ceiling`,
+  guaranteeing the handover fires at or before tenure expiry. Check 2 never
+  sees `HandoverConfirmed` with an orphaned `bid_time_ms`.
 
 **Why every public mutating function calls it:**
 
 A public function that mutates state without first calling `apply_pending_transitions()`
-could act on a stale state — for example, treating an asset as AtDutchAuction when
+could act on a stale state — for example, treating an asset as `AtDutchAuction` when
 a handover and tenure expiry have logically occurred but not been executed. In that
 case, the owner's `used_credit` and the protocol's fees from those boundaries would
 never be credited. `apply_pending_transitions()` closes this gap unconditionally.
 
 **Exception — functions that do not call it:**
 - `return_asset()` — only returns the asset to escrow, no state dependency.
-- `withdraw_earnings()` — drains `owner_earnings` directly, no state change.
 
 ---
 
@@ -658,8 +766,6 @@ never be credited. `apply_pending_transitions()` closes this gap unconditionally
 `apply_pending_transitions` is both the internal settlement engine and a public
 permissionless entry point. Making it public eliminates the need for a separate
 `resolve_state` wrapper — the function is its own interface.
-
-**Signature:** `public fun apply_pending_transitions<A, C>(escrow: &mut RentalEscrow<A, C>, clock: &Clock, ctx: &mut TxContext)`
 
 **The protocol does not need external callers.** Every public mutating function
 (`rent`, `retire`, `claim_asset`, `borrow_asset`) calls it before its own logic.
@@ -681,28 +787,30 @@ a full protocol operation. Use cases:
 
 ### Tenant stake lifecycle
 
-Payment enters as `Coin<CoinType>` → `Balance` in `RentalEscrow.tenant_stake`.
+Payment enters as `Coin<CoinType>` → `Balance` in the current `Tenant`'s
+`stake` (inside `EscrowState::HandoverOpen` or `HandoverConfirmed`).
 At handover: split into `used_credit` + `remain_credit`.
 `remain_credit` → pushed immediately to displaced tenant as `Coin`.
-`used_credit` → split 95/5 → `owner_earnings` (95%) and `FeeMessage<C>` transferred to `ProtocolFeeInbox` (5%).
-At tenure expiry: full `tenant_stake` → split 95/5 → `owner_earnings` and `FeeMessage<C>` transferred to `ProtocolFeeInbox`.
+`used_credit` → split 90/10 → `owner_earnings` (90%) and `FeeMessage<C>` transferred to `ProtocolFeeInbox` (10%).
+At tenure expiry: full `tenant.stake` → split 90/10 → `owner_earnings` and `FeeMessage<C>` transferred to `ProtocolFeeInbox`.
 
 ### Pending bid lifecycle
 
-Incoming bid enters as `Coin<CoinType>` → `Balance` in `RentalEscrow.pending_bid`.
+Incoming bid enters as `Coin<CoinType>` → `Balance` in the pending `Tenant`'s
+`stake` (inside `EscrowState::HandoverConfirmed`).
 If superseded: refunded immediately as `Coin` (push to registered address).
-At handover: becomes new `tenant_stake`.
+At handover: becomes new current `Tenant.stake`.
 
 ### Owner earnings lifecycle
 
-Accumulated in `RentalEscrow.owner_earnings` at each handover and tenure expiry (95% share).
+Accumulated in `RentalEscrow.owner_earnings` at each handover and tenure expiry (90% share).
 Withdrawn by owner via `withdraw_earnings()` → `Coin` (pull, requires `OwnerCap`).
 Swept atomically by `claim_asset()` when the escrow is deleted.
 
 ### Protocol fee lifecycle
 
-At each handover and tenure expiry (5% share), `send_fee()` is called inline by
-`do_handover` and `do_tenure_expiry`. It immediately creates a `FeeMessage<C>` and
+At each handover and tenure expiry (10% share), `do_distribute_balance` calls
+`fee_message::post` inline. It immediately creates a `FeeMessage<C>` and
 transfers it to `ProtocolFeeInbox` via transfer-to-object — free, does not mutate
 `ProtocolFeeInbox`. No fee balance ever accumulates inside `RentalEscrow`.
 `FeeMessage<C>` objects are discoverable as children of `ProtocolFeeInbox`
@@ -720,12 +828,13 @@ so no coordination is needed to identify which coin to drain.
 - All prices in base token units (no decimals at protocol level).
 - Asset requires `key + store` abilities to live inside `RentalEscrow`.
 - `integrate()` creates and shares 1 object: `RentalEscrow`. It takes `&ProtocolFeeRef` (frozen — no consensus) and stores `inbox_id(fee_ref)` as `fee_inbox_id`. Publish-time `init()` creates two singletons: `ProtocolFeeInbox` (transferred to deployer) and `ProtocolFeeRef` (frozen).
-- `asset: Asset` — the asset is always present while the escrow exists. There is no valid persistent state where the escrow exists without the asset. `claim_asset()` extracts the asset and deletes the escrow atomically. The PTB borrow mechanism (`borrow_asset`/`return_asset`) is an implementation detail — the temporary extraction never persists across transaction boundaries.
+- `EscrowState` carries the asset by variant (always present in non-degenerate states; held in `Option<Asset>` for `HandoverOpen` / `HandoverConfirmed` to support the `borrow_asset`/`return_asset` cycle within a single PTB; held by value for `Idle` / `AtDutchAuction` / `Retired`).
 - Fund flows are asymmetric: owner pulls via `withdraw_earnings()` and `claim_asset()`; admin pulls via `collect_fee_messages()`; tenants receive pushes to the address registered at mint time.
-- Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `rental_escrow::burn_tenant_cap(escrow, cap, clock, ctx)` is available for gas recovery; it gates on the cap being structurally stale (neither current nor pending) and aborts `E_TENANT_CAP_NOT_STALE` otherwise — preventing accidental destruction of a holder's own active access or pending bid.
-- `OwnerCap` as asset is permitted without depth limit. The protocol does not inspect the type of the wrapped asset at integration time — any `key + store` type, including `OwnerCap`, is accepted.
-- Object discovery: `AssetIntegrated` includes `escrow_id` so off-chain consumers can track all instances from events. Sui RPC (`suix_queryObjects` by type) serves as a bootstrap fallback.
-- `CoinType` is a phantom type parameter fixed at integration time. Any fungible token satisfying Move's abilities works — integrating protocols can use their own native tokens as the rental currency rather than USDC or USDT. A protocol that mints its own asset can rent it out denominated in its own coin, creating a self-contained economic loop without dependency on external stablecoins.
+- Stale `TenantCap` objects in a wallet are inert — they fail the ID check. `rental_escrow::burn_tenant_cap(escrow, cap, clock, ctx)` is available for gas recovery.
+- `OwnerCap` as asset is permitted without depth limit. The protocol does not inspect the type of the wrapped asset at integration time.
+- Object discovery: `AssetIntegrated` includes `escrow_id` so off-chain consumers can track all instances from events.
+- `CoinType` is a phantom type parameter fixed at integration time. Any fungible token works — integrating protocols can use their own native tokens as the rental currency rather than USDC or USDT.
+- **Time-layer single-owner invariant:** `phases` is the only module that performs `+` or `u64::min` on timestamp-tagged values (`_ms` suffix). Mechanically chequeable — see `phases.spec.md` §6 P7. Any future change that introduces naked timestamp arithmetic outside `phases` surfaces as a grep hit.
 
 ---
 
@@ -736,19 +845,31 @@ sources/
     math.move                     §1   — pure arithmetic
     curve_shape.move              §2   — CurveShape type and shape function evaluation
     price_function.move           §3   — PriceFunction type and price escalation
-    config.move                   §4   — IntegrationConfig struct + validation
-    owner_cap.move                §5   — OwnerCap object (includes cap lifecycle events)
-    tenant_cap.move               §6   — TenantCap object (includes cap lifecycle events)
-    protocol_fee_inbox.move       §8   — ProtocolFeeInbox + ProtocolFeeRef
-    fee_message.move              §9   — FeeMessage + send_fee + drain
-    rental_escrow.move            §10  — RentalEscrow shared object + full public API
+    phases.move                   §4   — time-layer primitives (single owner of `+`/`min` on timestamps)
+    handover_policy.move          §5   — HandoverPolicy enum + dispatchers
+    descent_policy.move           §6   — DescentPolicy enum + dispatchers
+    retire_policy.move            §7   — RetirePolicy enum + dispatcher
+    config.move                   §8   — IntegrationConfig data carrier + validation + event
+    owner_cap.move                §9   — OwnerCap object (includes cap lifecycle events)
+    tenant_cap.move               §10  — TenantCap object (includes cap lifecycle events)
+    protocol_fee_inbox.move       §12  — ProtocolFeeInbox + ProtocolFeeRef
+    fee_message.move              §13  — FeeMessage + post + drain
+    rental_escrow.move            §14  — RentalEscrow shared object + full public API
 tests/
     math_tests.move
     curve_shape_tests.move
     price_function_tests.move
+    phases_tests.move
+    handover_policy_tests.move
+    descent_policy_tests.move
+    retire_policy_tests.move
     config_tests.move
+    owner_cap_tests.move
+    tenant_cap_tests.move
+    protocol_fee_inbox_tests.move
     fee_message_tests.move
     rental_escrow_tests.move
+    usufruct_tests.move
 Move.toml
 Move.lock
 ```
@@ -764,45 +885,81 @@ Only `owner_earnings` lives inside `RentalEscrow` as a `Balance<CoinType>` field
 external object. Every public mutating function carries only one shared object
 reference — no contention beyond the escrow itself.
 
-At each boundary event, `do_handover` and `do_tenure_expiry` call `send_fee()` to
-immediately create a `FeeMessage<C>` and transfer it to `ProtocolFeeInbox` via
-transfer-to-object. This is a free operation — it does not mutate `ProtocolFeeInbox`.
-No fee balance ever accumulates inside `RentalEscrow`. `claim_asset()` does not need
-to perform any fee cleanup — it simply sweeps `owner_earnings`, burns `OwnerCap`,
-and deletes the escrow.
+At each boundary event, `do_handover` and `do_tenure_expiry` route through
+`do_distribute_balance`, which calls `fee_message::post` to immediately create a
+`FeeMessage<C>` and transfer it to `ProtocolFeeInbox` via transfer-to-object.
+This is a free operation — it does not mutate `ProtocolFeeInbox`. No fee balance
+ever accumulates inside `RentalEscrow`. `claim_asset()` does not need to perform
+any fee cleanup — it simply sweeps `owner_earnings`, burns `OwnerCap`, and
+deletes the escrow.
 
-`ProtocolFeeInbox` is an owned singleton (`key + store`) created at publish time and
-transferred to the deployer. Its ID is registered in each escrow at `integrate` time
-via `ProtocolFeeRef` — a frozen (immutable) pointer accessible by any PTB without
-consensus overhead.
+### Why the time layer (`phases`) is its own module
 
-The admin discovers `FeeMessage<C>` objects as children of `ProtocolFeeInbox`
-via `suix_getOwnedObjects`, groups them by CoinType, and batch-drains each group via
-`collect_fee_messages<C>()` — up to 1024 messages per PTB, one call per CoinType,
-presenting only `&mut ProtocolFeeInbox` (owned, fastpath, no consensus).
-The CoinType is encoded in the object type: no coordination between owner and admin is
-required at any point in the lifecycle.
+Every operation that takes a timestamp as input — clock-vs-boundary
+comparisons, anchor + duration arithmetic, saturating subtraction,
+minimum-of-two-timestamps — lives in `phases`. The architectural goal is
+a **single-owner property** that is mechanically chequeable: a single
+grep (`grep -nE "_ms\\s*\\+|u64::min" usufruct/sources/*.move | grep -v
+phases.move`) returns no code hits in any other source file. Properties
+defended by judgment-under-precondition erode; properties defended by
+grep survive.
+
+The four primitives (`has_passed`, `elapsed_since`, `boundary_at`,
+`earliest`) split into two pairs: bool/u64 sister views of "is the
+boundary crossed?" and saturating arithmetic. Every policy module's
+own bool/u64 sister identity collapses to the time-layer one.
+
+### Why each policy is its own module
+
+`HandoverPolicy`, `DescentPolicy`, and `RetirePolicy` were originally
+defined inside `config` along with their dispatchers (`handover_expiry`,
+`descent_boundary`, `retire_unlock`, etc.). The dispatchers returned u64
+boundaries, and `rental_escrow` re-implemented `now >= boundary` checks
+at every call site.
+
+The refactor split each policy into its own module that owns:
+1. The enum definition + `public` PTB-callable variant constructors with
+   intra-variant validation (e.g., `Countdown.floor_ms > 0`).
+2. A bool dispatcher (`has_expired` / `is_unlocked`) — gate.
+3. A u64 dispatcher (`expiry_at`) — sister view, used at non-gate
+   consumers (event payloads, credit clamps, `do_handover` cascade).
+4. Module-specific helpers (e.g., `descent_policy::window_ceiling` for
+   the curve's `t_max`; `handover_policy::countdown_floor_lt` for the
+   cross-field check that `config::new_config` consumes).
+
+`config` becomes a pure data carrier — it stores the policies as fields,
+delegates back to `handover_policy::countdown_floor_lt` for the one
+cross-field check, and otherwise has no dispatch logic.
+
+The bool/u64 sister identity (`has_expired ⇔ now >= expiry_at`) is the
+load-bearing architectural invariant of the layer. Verified per module
+by `*_policy_tests::has_expired_iff_now_ge_expiry_at`. The vacuous
+variants (`Instant`, `Skipped`, `Immediate`) are implemented as
+`phases::has_passed(anchor, 0, now)` rather than `=> true` so the
+sister identity holds **unconditionally** — every variant gates through
+the time layer; none are vacuous.
 
 ### Why `apply_pending_transitions` is public
 
 The protocol guarantees settlement through its normal operations — no external
 caller is required for correctness. `apply_pending_transitions` is public because
 it is useful, not necessary: it lets any actor advance an idle escrow's state and
-credit pending earnings without performing a full protocol operation. A separate
-`resolve_state` wrapper would be a redundant indirection with an identical signature
-— making the function itself public is the simpler design.
+credit pending earnings without performing a full protocol operation.
 
-### Why `AssetState` and `RentPhase` live inside `rental_escrow`
+### Why `EscrowState` carries fields per variant
 
-`AssetState` and `RentPhase` are public types defined in `rental_escrow` so
-external callers can read and pattern-match on `escrow.state` after settlement.
+State-relevant fields (`asset`, `phase_start_ms`, tenant slots, `bid_time_ms`)
+live inside the `EscrowState` variant they apply to, not as flat fields on
+`RentalEscrow`. Each variant exposes exactly what its semantic requires —
+`Idle` has only `asset`; `HandoverConfirmed` has the full bid context.
+This eliminates `Option<...>` fields that would otherwise need to be threaded
+through every state, and lets the compiler enforce variant-specific invariants
+(can't read `bid_time_ms` from `Idle` because the field doesn't exist).
 
-They still live in `rental_escrow` rather than a separate module because no other
-module needs to construct or own them. Extracting them would create a module with
-no independent responsibility whose sole consumer remains `rental_escrow`.
-The `state` field is not directly writable from outside the module. All transitions
-go through module functions — `apply_pending_transitions`, `rent`, `retire`, and
-`claim_asset` — which control when and how state changes.
+The handover boundary is **derived on demand** (`expiry_at(policy, bid_time_ms,
+...)`), not cached. The state stores the input (`bid_time_ms`); the boundary
+is a derivation. Future policy changes propagate naturally — the cached
+boundary would have lied; the input still tells the truth.
 
 ### Why `OwnerCap` and `TenantCap` are separate modules
 
@@ -813,83 +970,44 @@ principle for objects that leave the module.
 
 ### Why `config` is its own module
 
-`IntegrationConfig` aggregates types from `curve` and applies cross-field validation.
-Inlining it in `rental_escrow` would force curve types and validation logic into
-the already-large escrow module. A dedicated module keeps the constructor focused
-and the validation constraints testable in isolation.
+`IntegrationConfig` aggregates types from `curve_shape`, `price_function`,
+and the three policy modules, and applies the one cross-field validation
+(`Countdown.floor_ms < tenure_ceiling`). Inlining it in `rental_escrow`
+would force all those type imports and validation logic into the already-large
+escrow module. A dedicated module keeps the constructor focused, the
+event emission scoped, and the validation testable in isolation.
 
 ### Why admin types are split into two modules
 
-`ProtocolFeeInbox` and `ProtocolFeeRef` are co-located in `protocol_fee_inbox.move` —
-they are created together at init and are tightly coupled: `ProtocolFeeRef` exists
-solely to carry the ID of `ProtocolFeeInbox`. Neither type has meaning without the other.
+`ProtocolFeeInbox` and `ProtocolFeeRef` are co-located in `protocol_fee_inbox.move`.
 `FeeMessage` lives in its own module because it owns the `transfer::receive`
 logic (restricted by `key` only) and depends on `protocol_fee_inbox` for `uid_mut`.
-Separating it keeps the drain logic isolated and independently testable. Two modules
-for admin concerns — not three — reflects the actual coupling in the design.
+Two modules for admin concerns — not three — reflects the actual coupling.
 
 ### Why `rent()` is the single entry point
 
 All paths to becoming a tenant go through `rent()`. The function calls
 `apply_pending_transitions()` first, then applies the appropriate sub-logic based
-on the resulting `escrow.state`: Idle, AtDutchAuction, Rented(HandoverOpen), or
-Rented(HandoverConfirmed).
-
-One responsibility: pay for access. The state determines the price and the mechanics.
-The API surface is minimal — no `takeover()`, no `rent_auction()`.
-
-The caller queries the current state and price off-chain via `devInspectTransactionBlock`
-before constructing the PTB with the exact payment amount.
+on the resulting `escrow.state`. One responsibility: pay for access. The state
+determines the price and the mechanics. The API surface is minimal.
 
 ### Lazy minting of TenantCap
 
 `TenantCap` is minted only when someone actually becomes the current tenant —
-not at bid time. `rent()` in Rented states stores `pending_tenant_address` but mints nothing.
-
-This eliminates the entire class of orphaned caps from superseded bidders.
-The only unavoidable orphan is one per completed handover: the displaced tenant's
-cap, whose storage cost they paid themselves and whose rebate is theirs to claim.
-
-The handover executes lazily inside `apply_pending_transitions()` — it fires
-automatically as a side effect of the next operation on the escrow (`rent()`,
-`borrow_asset()`, `retire()`, or `apply_pending_transitions()`). Two incentivized
-actors exist: the new tenant (wants cap and access) and the displaced tenant
-(wants remain_credit). Either can trigger it by calling `apply_pending_transitions()`.
-No cooperative dependency between
-them — `remain_credit` and `TenantCap` are pushed regardless of who triggers the
-settlement.
-
-**Push ordering invariant:** balances are pushed before addresses are rotated.
-`remain_credit` goes to `current_tenant_address` before that field is overwritten.
-`TenantCap` is pushed to `pending_tenant_address` before that field is cleared.
-
-**TenantCap as signal:** the cap appearing in the wallet is the clearest possible
-notification of tenancy. No indexer query, no event subscription needed —
-the object in the wallet says everything.
-
-**Edge case — both actors inactive:** if neither actor calls `apply_pending_transitions()`
-and the new tenant's tenure expires, the full lazy chain (handover → tenure expiry
-→ AtDutchAuction) executes when the next actor touches the escrow. No funds are
-permanently lost. The new tenant bears the cost of inaction — their stake is
-consumed for time they held exclusive rights but did not exercise.
+not at bid time. `rent()` in HandoverOpen registers a pending Tenant slot but
+does not mint a cap until handover fires. This eliminates the entire class of
+orphaned caps from superseded bidders.
 
 ### Why `retire` and `claim_asset` are separate functions
 
-`retire()` initiates retirement — it sets `retire_flag` and blocks new bids,
+`retire()` initiates retirement — it sets the `retiring` flag and blocks new bids,
 but never returns the asset. `claim_asset()` finalizes retirement — it requires
 state `Retired`, extracts the asset, burns the `OwnerCap`, and deletes the escrow.
 
 The owner always makes two calls regardless of the prior state:
-- `retire()` on Idle or AtDutchAuction: state transitions to Retired immediately
-  (no active tenant). Owner then calls `claim_asset()` to collect.
+- `retire()` on Idle or AtDutchAuction: state transitions to Retired immediately.
 - `retire()` on Rented: sets flag, tenant completes their block. Owner calls
   `claim_asset()` after tenure expires and state has lazily resolved to Retired.
-
-Consistent two-step flow for all cases. `retire()` never returns an asset.
-`claim_asset()` always does — and in the same call: sweeps `owner_earnings` to the
-owner, burns `OwnerCap`, and deletes `RentalEscrow`. All local balances are consumed
-before deletion — no orphaned funds, no locked balances.
-
 
 ---
 
@@ -899,16 +1017,23 @@ Build bottom-up following the dependency graph:
 
 ```
 1.  math                      (leaf — no dependencies)
-2.  curve_shape               (depends on math)
-3.  price_function            (depends on math)
-4.  config                    (depends on curve_shape, price_function)
-5.  owner_cap                 (leaf)
-6.  tenant_cap                (leaf)
-7.  protocol_fee_inbox        (leaf)
-8.  fee_message               (depends on protocol_fee_inbox)
-9.  rental_escrow             (depends on all above)
+2.  curve_shape               (math)
+3.  price_function            (math)
+4.  phases                    (leaf — std::u64 only)
+5.  handover_policy           (phases)
+6.  descent_policy            (phases)
+7.  retire_policy             (phases)
+8.  config                    (curve_shape, price_function, *_policy)
+9.  owner_cap                 (leaf)
+10. tenant_cap                (leaf)
+11. protocol_fee_inbox        (leaf)
+12. fee_message               (protocol_fee_inbox)
+13. rental_escrow             (depends on all above)
 ```
 
 Steps 2–3 are independent of each other (both depend only on math) and can be built in parallel.
-Steps 5–7 are independent leaves — build in parallel.
-Step 4 (config) waits on steps 2–3. Step 8 waits on step 7. Step 9 waits on all.
+Step 4 (phases) is independent — depends only on `std::u64`.
+Steps 5–7 (the three policy modules) are independent of each other (each depends only on phases) and can be built in parallel.
+Step 8 (config) waits on steps 2–3 + 5–7.
+Steps 9–11 are independent leaves — build in parallel.
+Step 12 waits on step 11. Step 13 waits on all.

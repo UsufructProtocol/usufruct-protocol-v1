@@ -101,6 +101,32 @@ public(package) fun has_asset<U: key + store>(s: &AssetState<U>): bool {
     }
 }
 
+/// Read `last_acquisition_price` from the AtDutch variant. Aborts if
+/// the state is not AtDutch — consumer is `compute_price_descent` in
+/// the rental-escrow layer, which already gates on the variant.
+public(package) fun at_dutch_last_acq_price<U: key + store>(s: &AssetState<U>): u64 {
+    match (s) {
+        AssetState::AtDutch { last_acquisition_price, .. } => *last_acquisition_price,
+        AssetState::Idle              { .. } => abort EInvariantViolation,
+        AssetState::HandoverOpen      { .. } => abort EInvariantViolation,
+        AssetState::HandoverConfirmed { .. } => abort EInvariantViolation,
+        AssetState::Retired           { .. } => abort EInvariantViolation,
+    }
+}
+
+/// Read `phase_start_ms` from the AtDutch variant. Aborts if the
+/// state is not AtDutch — feeds `descent_policy::has_expired` /
+/// `expiry_at` through `lifecycle_state::phase_start_ms`.
+public(package) fun at_dutch_phase_start_ms<U: key + store>(s: &AssetState<U>): u64 {
+    match (s) {
+        AssetState::AtDutch { phase_start_ms, .. } => *phase_start_ms,
+        AssetState::Idle              { .. } => abort EInvariantViolation,
+        AssetState::HandoverOpen      { .. } => abort EInvariantViolation,
+        AssetState::HandoverConfirmed { .. } => abort EInvariantViolation,
+        AssetState::Retired           { .. } => abort EInvariantViolation,
+    }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===

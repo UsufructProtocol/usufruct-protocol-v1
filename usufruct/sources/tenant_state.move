@@ -43,6 +43,36 @@ public(package) fun is_demand<CoinType>(s: &TenantState<CoinType>): bool {
     }
 }
 
+/// Borrow the current tenant (t1). Aborts if Absence — consumer is
+/// expected to gate via `is_occupied` or `is_demand` first.
+public(package) fun current<CoinType>(s: &TenantState<CoinType>): &Tenant<CoinType> {
+    match (s) {
+        TenantState::Occupied { t1 }                 => t1,
+        TenantState::Demand   { t1, t2: _, handover_countdown_expiry: _ } => t1,
+        TenantState::Absence                          => abort EInvariantViolation,
+    }
+}
+
+/// Borrow the pending tenant (t2). Aborts unless Demand.
+public(package) fun pending<CoinType>(s: &TenantState<CoinType>): &Tenant<CoinType> {
+    match (s) {
+        TenantState::Demand { t1: _, t2, handover_countdown_expiry: _ } => t2,
+        TenantState::Absence                              => abort EInvariantViolation,
+        TenantState::Occupied { t1: _t1 }                 => abort EInvariantViolation,
+    }
+}
+
+/// Read the handover-countdown expiry (absolute timestamp at which the
+/// pending bid auto-wins). Aborts unless Demand. Consumed by APT's
+/// Check 1 and `compute_used_credit`.
+public(package) fun demand_expiry_ms<CoinType>(s: &TenantState<CoinType>): u64 {
+    match (s) {
+        TenantState::Demand { t1: _, t2: _, handover_countdown_expiry } => *handover_countdown_expiry,
+        TenantState::Absence                              => abort EInvariantViolation,
+        TenantState::Occupied { t1: _t1 }                 => abort EInvariantViolation,
+    }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===

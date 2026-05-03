@@ -14,6 +14,7 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
+    asset::{Self, AssetReceipt},
     escrow_coordinator::{
         Self,
         EscrowCoordinator,
@@ -27,13 +28,15 @@ use usufruct::{
         RetireFlagSet,
         EarningsWithdrawn,
         AssetClaimed,
+        AssetBorrowed,
+        AssetReturned,
     },
     escrow_corpus,
     fee_message::FeeMessageSent,
     owner_cap::{Self, OwnerCap},
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     tenant::{Self, Tenant},
-    tenant_cap::TenantCap,
+    tenant_cap::{Self, TenantCap},
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -1267,6 +1270,204 @@ fun apt_cascade_tenure_then_auction_skipped() {
     assert_eq!(auction_e.length(), 1);
 
     transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §15.1 borrow_asset / return_asset ──────────────────────────────────────
+
+/// Happy path: rent → borrow → return cycles through the asset slot.
+/// The receipt's three internal asserts (cross-escrow, asset-swap,
+/// receipt-mismatch) all pass on a well-formed return.
+#[test]
+fun borrow_asset_then_return_completes_cycle() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    let (asset_out, receipt) = escrow_coordinator::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
+    let borrowed = event::events_by_type<AssetBorrowed>();
+    assert_eq!(borrowed.length(), 1);
+
+    escrow_coordinator::return_asset(&mut escrow, asset_out, receipt);
+    let returned = event::events_by_type<AssetReturned>();
+    assert_eq!(returned.length(), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EWrongEscrowTenantCap, location = usufruct::escrow_coordinator)]
+fun borrow_asset_with_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+    let (foreign_cap, _) = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
+
+    let (a, r) = escrow_coordinator::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
+    transfer::public_transfer(a, OWNER);
+    asset::destroy_receipt_for_testing(r);
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(foreign_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EStaleTenantCap, location = usufruct::escrow_coordinator)]
+fun borrow_asset_from_idle_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Mint a cap bound to this escrow but never used (no active rental).
+    let escrow_id = object::id(&escrow);
+    let (cap, _) = tenant_cap::new(escrow_id, TENANT_ADDR_1, sc.ctx());
+
+    let (a, r) = escrow_coordinator::borrow_asset(&mut escrow, &cap, &clk, sc.ctx());
+    transfer::public_transfer(a, OWNER);
+    asset::destroy_receipt_for_testing(r);
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EPendingTenantCap, location = usufruct::escrow_coordinator)]
+fun borrow_asset_with_pending_cap_aborts() {
+    let mut sc = setup();
+    // c=1 Countdown so place_bid stamps a future expiry (no APT
+    // handover before borrow).
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+    let now2 = 5_000;
+    clock::set_for_testing(&mut clk, now2);
+    let p2 = mk_payment(escrow_coordinator::compute_floor_price(&escrow, now2), sc.ctx());
+    let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
+
+    // cap_t2 is the pending bidder — cannot borrow.
+    let (a, r) = escrow_coordinator::borrow_asset(&mut escrow, &cap_t2, &clk, sc.ctx());
+    transfer::public_transfer(a, OWNER);
+    asset::destroy_receipt_for_testing(r);
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EReceiptEscrowMismatch, location = usufruct::escrow_coordinator)]
+fun return_asset_with_foreign_receipt_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+    let (asset_out, _real_receipt) = escrow_coordinator::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
+
+    // Forge a receipt with a foreign escrow_id but the right asset_id.
+    let asset_id   = object::id(&asset_out);
+    let foreign_rcpt = asset::forge_receipt_for_testing(asset_id, object::id_from_address(@0xDEAD));
+    escrow_coordinator::return_asset(&mut escrow, asset_out, foreign_rcpt);
+
+    asset::destroy_receipt_for_testing(_real_receipt);
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §15.2 burn_tenant_cap ───────────────────────────────────────────────────
+
+/// Stale cap (from a superseded bid) burns cleanly. Live caps abort.
+#[test]
+fun burn_tenant_cap_burns_displaced_bidder_cap() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+    let now2 = 5_000;
+    clock::set_for_testing(&mut clk, now2);
+    let p2 = mk_payment(escrow_coordinator::compute_floor_price(&escrow, now2), sc.ctx());
+    let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
+    // Supersede t2 with t3 — t2's cap is now stale.
+    let now3 = now2 + 100;
+    clock::set_for_testing(&mut clk, now3);
+    let p3 = mk_payment(escrow_coordinator::compute_floor_price(&escrow, now3), sc.ctx());
+    let cap_t3 = escrow_coordinator::rent(&mut escrow, p3, &clk, sc.ctx());
+
+    // Burn the stale cap_t2.
+    escrow_coordinator::burn_tenant_cap(&mut escrow, cap_t2, &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::ETenantCapNotStale, location = usufruct::escrow_coordinator)]
+fun burn_tenant_cap_on_live_current_cap_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+    // cap_t1 is the live current — burn must abort.
+    escrow_coordinator::burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EWrongEscrowTenantCap, location = usufruct::escrow_coordinator)]
+fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let (foreign, _) = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
+
+    escrow_coordinator::burn_tenant_cap(&mut escrow, foreign, &clk, sc.ctx());
+
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);

@@ -11,6 +11,7 @@ use sui::{
     event,
 };
 use usufruct::{
+    asset::{Self, AssetReceipt},
     asset_state,
     config::{Self, IntegrationConfig},
     curve_shape,
@@ -390,6 +391,100 @@ public fun rent<Asset: key + store, CoinType>(
         // Retired — unreachable: compute_floor_price aborted earlier.
         abort EInvariantViolation
     }
+}
+
+/// Tenant-side asset borrow. Calls APT first (asset borrow gates on
+/// the settled state). Cap-escrow guard, then state guards:
+///   Idle | AtDutchAuction | Retired → EStaleTenantCap (no rental)
+///   HandoverConfirmed + cap == pending → EPendingTenantCap
+///                                          (pending bidder cannot
+///                                           borrow during demand)
+///   cap ≠ current → EStaleTenantCap (foreign / superseded cap)
+/// On success: extracts asset via lifecycle_state::give, returns
+/// (asset, AssetReceipt) to caller. The receipt is hot-potato — must
+/// reach `return_asset` in the same PTB.
+public fun borrow_asset<Asset: key + store, CoinType>(
+    escrow:     &mut EscrowCoordinator<Asset, CoinType>,
+    tenant_cap: &TenantCap,
+    clock:      &Clock,
+    ctx:        &mut TxContext,
+): (Asset, AssetReceipt) {
+    apply_pending_transitions(escrow, clock, ctx);
+    let escrow_id = object::id(escrow);
+    assert!(tenant_cap::escrow_id(tenant_cap) == escrow_id, EWrongEscrowTenantCap);
+    let cap_id = object::id(tenant_cap);
+
+    {
+        let s = read_state(escrow);
+        if (!lifecycle_state::is_rented(s)) {
+            abort EStaleTenantCap
+        };
+        if (lifecycle_state::is_a_state_handover_confirmed(s)) {
+            assert!(cap_id != lifecycle_state::pending_cap_id(s), EPendingTenantCap);
+        };
+        assert!(cap_id == lifecycle_state::current_cap_id(s), EStaleTenantCap);
+    };
+
+    let (state_inner, sr) = take_state(escrow);
+    let (new_state, asset, asset_receipt) = lifecycle_state::give(state_inner);
+    put_state(escrow, new_state, sr);
+    event::emit(AssetBorrowed { escrow_id, tenant_cap_id: cap_id });
+    (asset, asset_receipt)
+}
+
+/// Tenant-side asset return. No APT — a borrow window is clock-fixed
+/// (the tenant cannot transition the lifecycle while holding the
+/// asset). The three-assert safety on the receipt fires inside
+/// `asset::put`; in addition, this entry surfaces the explicit
+/// `EReceiptEscrowMismatch` / `EReceiptAssetMismatch` codes at the
+/// coordinator layer per the public-API spec.
+public fun return_asset<Asset: key + store, CoinType>(
+    escrow:     &mut EscrowCoordinator<Asset, CoinType>,
+    asset:      Asset,
+    receipt_in: AssetReceipt,
+) {
+    let escrow_id = object::id(escrow);
+    assert!(asset::receipt_escrow_id(&receipt_in) == escrow_id,         EReceiptEscrowMismatch);
+    assert!(asset::receipt_asset_id(&receipt_in)  == object::id(&asset), EReceiptAssetMismatch);
+
+    let tenant_cap_id = {
+        let s = read_state(escrow);
+        assert!(lifecycle_state::is_rented(s), EInvariantViolation);
+        lifecycle_state::current_cap_id(s)
+    };
+    let (state_inner, sr) = take_state(escrow);
+    let new_state = lifecycle_state::give_back(state_inner, asset, receipt_in);
+    put_state(escrow, new_state, sr);
+    event::emit(AssetReturned { escrow_id, tenant_cap_id });
+}
+
+/// Burn a stale `TenantCap` for gas recovery. APT first; cap-escrow
+/// guard. Cap is "stale" iff it is not the live current or pending
+/// reference: any cap from a superseded bid, a former tenant, or
+/// when the lifecycle has no active tenants (Idle / AtDutch /
+/// Retired) qualifies. Aborts `ETenantCapNotStale` on a live cap.
+public fun burn_tenant_cap<Asset: key + store, CoinType>(
+    escrow: &mut EscrowCoordinator<Asset, CoinType>,
+    cap:    TenantCap,
+    clock:  &Clock,
+    ctx:    &mut TxContext,
+) {
+    apply_pending_transitions(escrow, clock, ctx);
+    let escrow_id = object::id(escrow);
+    assert!(tenant_cap::escrow_id(&cap) == escrow_id, EWrongEscrowTenantCap);
+    let cap_id = object::id(&cap);
+
+    {
+        let s = read_state(escrow);
+        if (lifecycle_state::is_rented(s)) {
+            assert!(cap_id != lifecycle_state::current_cap_id(s), ETenantCapNotStale);
+            if (lifecycle_state::is_t_state_demand(s)) {
+                assert!(cap_id != lifecycle_state::pending_cap_id(s), ETenantCapNotStale);
+            };
+        };
+        // NotRented — no live caps, anything stale.
+    };
+    tenant_cap::burn(cap, ctx);
 }
 
 /// Permissionless settler. Drives every elapsed lazy transition

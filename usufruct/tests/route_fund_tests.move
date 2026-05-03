@@ -16,7 +16,8 @@ use sui::{
     test_scenario,
 };
 use usufruct::{
-    fee_message::{Self, FeeMessageSent},
+    fee_message::{Self, FeeMessage, FeeMessageSent},
+    protocol_fee_inbox::{Self, ProtocolFeeInbox},
     route_fund,
     tenant_state,
 };
@@ -26,6 +27,8 @@ use usufruct::{
 public struct TEST_COIN has drop {}
 
 /// Tenant identity constants — fixed across all tests for cross-test legibility.
+const DEPLOYER:    address = @0xD1;
+const ADMIN:       address = @0xAD;
 const TENANT_ADDR: address = @0xA1;
 const CALLER:      address = @0xCA;
 
@@ -334,5 +337,67 @@ fun a2_fee_one_above_max_u64_stake_aborts() {
         fake_inbox_id(),
         sc.ctx(),
     );
+    sc.end();
+}
+
+// ─── §7. End-to-end — live inbox + tenant Coin ─────────────────────────────────
+// Closes the object-level verification gap: proves the FeeMessage is physically
+// receivable from the inbox, not just that the event was emitted.
+// Also verifies the refund Coin in the same flow — both routes confirmed
+// at the object level in one test.
+
+#[test]
+fun x1_fee_message_receivable_from_live_inbox_and_refund_arrives_at_tenant() {
+    // ── Setup: create a live ProtocolFeeInbox, hand it to ADMIN ──
+    let mut sc = test_scenario::begin(DEPLOYER);
+    {
+        protocol_fee_inbox::init_for_testing(sc.ctx());
+    };
+    sc.next_tx(DEPLOYER);
+    {
+        let inbox = sc.take_from_sender<ProtocolFeeInbox>();
+        transfer::public_transfer(inbox, ADMIN);
+    };
+
+    // ── route: use the real inbox ID ──
+    // stake=1_000, fee=300 → refund=700
+    let mut msg_id: ID;
+    sc.next_tx(ADMIN);
+    {
+        let inbox        = sc.take_from_sender<ProtocolFeeInbox>();
+        let real_inbox_id = object::id(&inbox);
+        route_fund::route(
+            tenant(1_000),
+            300,
+            fake_escrow_id(),
+            real_inbox_id,
+            sc.ctx(),
+        );
+        msg_id = fee_message::sent_fee_message_id(
+            &event::events_by_type<FeeMessageSent<TEST_COIN>>()[0]
+        );
+        sc.return_to_sender(inbox);
+    };
+
+    // ── Tenant receives refund Coin ──
+    sc.next_tx(TENANT_ADDR);
+    {
+        let coin = sc.take_from_sender<coin::Coin<TEST_COIN>>();
+        assert_eq!(coin::value(&coin), 700);
+        transfer::public_transfer(coin, TENANT_ADDR);
+    };
+
+    // ── Inbox receives FeeMessage — receivable and carries correct balance ──
+    sc.next_tx(ADMIN);
+    {
+        let mut inbox    = sc.take_from_sender<ProtocolFeeInbox>();
+        let fee_inbox_id = object::id(&inbox);
+        let ticket       = test_scenario::receiving_ticket_by_id<FeeMessage<TEST_COIN>>(msg_id);
+        let msg          = fee_message::receive_message_for_testing(&mut inbox, ticket);
+        let bal          = fee_message::consume_message_for_testing(msg, fee_inbox_id, ADMIN);
+        assert_eq!(balance::value(&bal), 300);
+        balance::destroy_for_testing(bal);
+        sc.return_to_sender(inbox);
+    };
     sc.end();
 }

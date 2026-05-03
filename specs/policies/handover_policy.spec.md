@@ -110,6 +110,57 @@ through these functions:
     //   assert!(floor_ms > 0, E_HANDOVER_FLOOR_ZERO)
 
 
+### 2.4 Design rationale — why three variants
+
+`HandoverPolicy` serves two simultaneous functions:
+
+**1. Time guarantee for the displaced tenant.** When a new tenant displaces
+the current one, the current tenant retains full access to the asset for
+exactly the handover countdown duration (bounded by remaining tenure time).
+This window is known and fixed at integration time — the current tenant
+entered their position knowing how much time they are guaranteed before any
+handover can execute. It makes rational entry possible at any point in the
+rental cycle: a tenant never faces instant, unannounced displacement.
+
+**2. Competitive bidding window.** During the handover countdown, any
+actor may supersede the pending bid by paying at least `next_rent_price`.
+The handover boundary (derived via `expiry_at` from the original
+`bid_time_ms`) does not reset with each supersede — it runs to completion
+regardless. Access transfers to the **last** valid bidder when it expires.
+This creates a price discovery window where future tenants compete against
+each other, driving the price upward before the handover settles.
+
+These two functions are inseparable: the same window that protects the
+displaced tenant is the window that enables competitive price discovery.
+
+**Variants in operational context:**
+
+- **`Instant`** — the handover fires at the bid moment. No time guarantee
+  for the displaced tenant; no competitive bidding window. The first bidder
+  at `next_rent_price` wins instantly. Suitable for integrators who do not
+  need either guarantee and want fully frictionless displacement.
+
+- **`Countdown { floor_ms }`** — the standard configuration. Both
+  guarantees are active. The size of `floor_ms` controls the trade-off
+  between tenant stability (larger = more protection for the current
+  tenant) and market responsiveness (smaller = faster rotation). Cross-field
+  constraint enforced by `config::new_config` via `countdown_floor_lt` (§5):
+  `0 < floor_ms < tenure_ceiling`.
+
+- **`FixedTime`** — the current tenant is guaranteed their full block
+  before any handover can execute. A new tenant pays `next_rent_price` and
+  waits for the entire remaining tenure before gaining access. This
+  replicates traditional fixed-term renting — a sequential queue of full
+  blocks — while retaining all liquid renting mechanics: price escalation,
+  fee distribution, and the Dutch Auction on tenure expiry. `remain_credit`
+  is always zero at handover in this configuration — the full block is
+  consumed before access transfers. The protocol does not special-case
+  this; it emerges naturally from the policy choice.
+
+The three variants are qualitatively distinct behavioral modes, not just
+different values of one parameter.
+
+
 3. `has_expired`
 ----------------
 

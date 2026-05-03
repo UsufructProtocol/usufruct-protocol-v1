@@ -93,6 +93,48 @@ through these functions:
     //   assert!(floor_ms > 0, E_RETIRE_FLOOR_ZERO)
 
 
+### 2.4 Design rationale — why `Deferred`
+
+At first glance, a `Deferred` policy is counter-incentivized: the owner who
+sets it is the same actor who pays the cost — a self-imposed restriction on
+their own exit flexibility — with no direct benefit to themselves. An owner
+acting purely in self-interest would choose `Immediate`.
+
+The value of `Deferred` is not for the owner; it is a credible commitment
+to potential tenants. For most assets, the rental price is market-driven
+and tenant trust in the owner's continuity of participation is not a
+prerequisite for engagement. But certain categories of asset derive a
+material fraction of their rental value from the guarantee that the owner
+will not withdraw arbitrarily:
+
+- **Protocol admin caps** — a tenant considering renting an `adminCap`
+  needs assurance that the rental market will remain active for a meaningful
+  period. With `Immediate`, the owner could retire instantly from `Idle` or
+  `AtDutchAuction` between tenures, collapsing the market arbitrarily. A
+  `Deferred` commitment gives prospective tenants confidence that the
+  opportunity to acquire the cap will persist for a minimum horizon.
+
+- **Yield-bearing rights** — assets representing ongoing revenue streams
+  (e.g. a claim on protocol fees or staking rewards) are worth more to a
+  tenant when the owner commits to keeping the yield source active inside
+  the protocol for a minimum horizon.
+
+- **Time-sensitive or expiring assets** — assets whose value decays or
+  terminates at a known future date (e.g. a governance vote right, an
+  option-like position) benefit from an owner commitment that prevents
+  early withdrawal before the value event occurs, making the rental market
+  viable for tenants who need certainty over that window.
+
+In these cases, an owner who chooses `Deferred { floor_ms }` signals
+verifiable on-chain commitment — not reputation, not terms-of-service, but
+an immutable parameter in the shared object that any participant can read.
+This can increase asset valorization by expanding the pool of tenants
+willing to engage.
+
+`Immediate` remains valid and is the correct default for owners who do not
+need to signal this commitment.
+
+
 3. `is_unlocked`
 ----------------
 

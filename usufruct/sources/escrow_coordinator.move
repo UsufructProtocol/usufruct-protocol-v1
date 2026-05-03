@@ -11,10 +11,14 @@ use sui::{
 };
 use usufruct::{
     config::{Self, IntegrationConfig},
+    curve_shape,
+    descent_policy,
     lifecycle_state::{Self, LifecycleState},
     math,
     owner::{Self, Owner},
     owner_cap::{Self, OwnerCap},
+    phases,
+    price_function,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
 };
 
@@ -268,6 +272,65 @@ public fun is_tag_retired(t: &EscrowStateTag): bool {
     match (t) { EscrowStateTag::Retired => true, _ => false }
 }
 
+// ─── Pricing views ───────────────────────────────────────────────────────────
+
+/// Used credit accrued by the current tenant since the rental's
+/// `phase_start_ms`, evaluated at `timestamp_ms`. Defined only while
+/// the lifecycle is `Rented` — aborts otherwise (`ENotRented`).
+///
+/// In `HandoverConfirmed`, the effective time is clamped at the
+/// handover-countdown expiry (the absolute timestamp at which the
+/// pending bid auto-wins). The clamp prevents credit from accruing
+/// past the auto-handover boundary even if the call happens later.
+public fun compute_used_credit<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    let s = read_state(escrow);
+    assert!(lifecycle_state::is_rented(s), ENotRented);
+    let phase_start_ms = lifecycle_state::phase_start_ms(s);
+    let principal      = lifecycle_state::current_stake_value(s);
+    let effective_ts = if (lifecycle_state::is_t_state_demand(s)) {
+        let expiry = lifecycle_state::handover_countdown_expiry_ms(s);
+        phases::earliest(timestamp_ms, expiry)
+    } else {
+        timestamp_ms
+    };
+    let elapsed = phases::elapsed_since(phase_start_ms, effective_ts);
+    let g = curve_shape::evaluate_curve(
+        config::credit_curve(&escrow.config),
+        elapsed,
+        config::tenure_ceiling(&escrow.config),
+    );
+    math::mul_div(principal, g, curve_shape::scale())
+}
+
+/// Minimum acceptable payment to win the rent for the next bidder,
+/// evaluated at `timestamp_ms`. Routes by `state_tag`:
+///   - `Idle`              → `config::min_rent_price`
+///   - `HandoverOpen`      → next price escalated from current's stake
+///   - `HandoverConfirmed` → next price escalated from pending's stake
+///   - `AtDutchAuction`    → descending price along the descent curve
+///   - `Retired`           → aborts `ERetiredNoBid` (terminal state)
+public fun compute_floor_price<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_idle(s)) {
+        config::min_rent_price(&escrow.config)
+    } else if (lifecycle_state::is_a_state_handover_open(s)) {
+        compute_next_rent_price(&escrow.config, lifecycle_state::current_stake_value(s))
+    } else if (lifecycle_state::is_a_state_handover_confirmed(s)) {
+        compute_next_rent_price(&escrow.config, lifecycle_state::pending_stake_value(s))
+    } else if (lifecycle_state::is_a_state_at_dutch(s)) {
+        compute_price_descent(escrow, timestamp_ms)
+    } else {
+        // is_a_state_retired
+        abort ERetiredNoBid
+    }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
@@ -333,6 +396,37 @@ fun split_fee(amount: u64): (u64, u64) {
     (owner, fee)
 }
 
+/// Dutch-auction price descent. Reads the AtDutch slot's anchor
+/// (`last_acquisition_price`) and start-time from `lifecycle_state`,
+/// evaluates the descent curve at `elapsed = now - phase_start_ms`,
+/// and subtracts the consumed fraction of the spread above
+/// `min_rent_price`. Aborts via the lifecycle-state accessor if the
+/// inner asset state is not AtDutch.
+fun compute_price_descent<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    let s                      = read_state(escrow);
+    let phase_start_ms         = lifecycle_state::phase_start_ms(s);
+    let last_acquisition_price = lifecycle_state::last_acq_price_of_at_dutch(s);
+    let elapsed_ms             = phases::elapsed_since(phase_start_ms, timestamp_ms);
+    let h = curve_shape::evaluate_curve(
+        config::descent_curve(&escrow.config),
+        elapsed_ms,
+        descent_policy::window_ceiling(config::descent(&escrow.config)),
+    );
+    let spread   = last_acquisition_price - config::min_rent_price(&escrow.config);
+    let consumed = math::mul_div(spread, h, curve_shape::scale());
+    last_acquisition_price - consumed
+}
+
+/// Escalate `price` via the integration's `PriceFunction`. Constructor
+/// guarantees the result strictly increases (`delta > 0` for both
+/// FixedDelta and CompoundDelta variants).
+fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64): u64 {
+    price_function::evaluate_price_fn(config::price_function(cfg), price)
+}
+
 // === Test Functions ===
 
 #[test_only]
@@ -357,4 +451,65 @@ public(package) fun take_put_no_op_for_testing<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
     split_fee(amount)
+}
+
+// ─── Drive helpers for test-only state composition ───────────────────────────
+// Bypass `rent`/`retire` (not yet implemented) by chaining
+// `lifecycle_state` transitions through the take/put discipline.
+// Subsequent commits supersede these once the corresponding public API
+// lands.
+
+/// NotRented{Idle} → Rented{HandoverOpen}.
+#[test_only]
+public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
+    escrow:         &mut EscrowCoordinator<Asset, CoinType>,
+    tenant:         usufruct::tenant::Tenant<CoinType>,
+    phase_start_ms: u64,
+) {
+    let escrow_id     = object::id(escrow);
+    let (s, receipt)  = take_state(escrow);
+    let new_s         = lifecycle_state::start_rent(s, tenant, phase_start_ms, escrow_id);
+    put_state(escrow, new_s, receipt);
+}
+
+/// Rented{HandoverOpen} → Rented{HandoverConfirmed}. Caller must have
+/// driven the escrow into Rented first.
+#[test_only]
+public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
+    escrow:                    &mut EscrowCoordinator<Asset, CoinType>,
+    tenant:                    usufruct::tenant::Tenant<CoinType>,
+    handover_countdown_expiry: u64,
+) {
+    let (s, receipt) = take_state(escrow);
+    let new_s        = lifecycle_state::place_bid(s, tenant, handover_countdown_expiry);
+    put_state(escrow, new_s, receipt);
+}
+
+/// Rented{HandoverOpen} → NotRented{AtDutch}. Drains any RefundState
+/// produced by `expire_tenure` via the entity-layer test helper.
+#[test_only]
+public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
+    escrow:             &mut EscrowCoordinator<Asset, CoinType>,
+    owner_amount:       u64,
+    fee_amount:         u64,
+    last_acq_price:     u64,
+    new_phase_start_ms: u64,
+) {
+    let escrow_id        = object::id(escrow);
+    let (s, receipt)     = take_state(escrow);
+    let (new_s, refund)  = lifecycle_state::expire_tenure(
+        s, owner_amount, fee_amount, last_acq_price, new_phase_start_ms, escrow_id,
+    );
+    usufruct::refund_state::destroy_for_testing(refund);
+    put_state(escrow, new_s, receipt);
+}
+
+/// NotRented{Idle | AtDutch} → NotRented{Retired}.
+#[test_only]
+public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
+    escrow: &mut EscrowCoordinator<Asset, CoinType>,
+) {
+    let (s, receipt) = take_state(escrow);
+    let new_s        = lifecycle_state::retire_now(s);
+    put_state(escrow, new_s, receipt);
 }

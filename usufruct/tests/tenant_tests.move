@@ -78,51 +78,7 @@ fun destroy_empty_stake_aborts_on_nonzero() {
     tenant::destroy_empty_stake(stake);
 }
 
-// ─── §4. split_stake ──────────────────────────────────────────────────────────
-
-#[test]
-fun split_stake_partial_reduces_stake_and_returns_balance() {
-    let mut t = t1();
-    let part = tenant::split_stake(&mut t, 300);
-    assert_eq!(balance::value(&part), 300);
-    assert_eq!(tenant::stake_value(&t), STAKE_T1 - 300);
-    // Identity preserved through split
-    assert_eq!(tenant::id_cap_id(tenant::identity(&t)),  cap_t1());
-    assert_eq!(tenant::id_address(tenant::identity(&t)), ADDR_T1);
-    balance::destroy_for_testing(part);
-    tenant::destroy_for_testing(t);
-}
-
-#[test]
-fun split_stake_zero_leaves_stake_unchanged() {
-    let mut t = t1();
-    let part = tenant::split_stake(&mut t, 0);
-    assert_eq!(balance::value(&part), 0);
-    assert_eq!(tenant::stake_value(&t), STAKE_T1);
-    balance::destroy_for_testing(part);
-    tenant::destroy_for_testing(t);
-}
-
-#[test]
-fun split_stake_full_leaves_zero_stake() {
-    let mut t = t1();
-    let part = tenant::split_stake(&mut t, STAKE_T1);
-    assert_eq!(balance::value(&part), STAKE_T1);
-    assert_eq!(tenant::stake_value(&t), 0);
-    balance::destroy_for_testing(part);
-    tenant::destroy_for_testing(t);
-}
-
-#[test]
-#[expected_failure]
-fun split_stake_more_than_stake_aborts() {
-    let mut t = t1();
-    let part = tenant::split_stake(&mut t, STAKE_T1 + 1);
-    balance::destroy_for_testing(part);
-    tenant::destroy_for_testing(t);
-}
-
-// ─── §5. take_fee_share ───────────────────────────────────────────────────────
+// ─── §4. take_fee_share ───────────────────────────────────────────────────────
 
 #[test]
 fun take_fee_share_partial_reduces_stake_and_returns_typed_share() {

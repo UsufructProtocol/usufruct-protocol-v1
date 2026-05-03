@@ -114,17 +114,6 @@ public(package) fun take_owner_earnings<C>(
     owner::new_earnings(part)
 }
 
-/// Drain `amount` off the tenant's stake as a raw `Balance<C>`.
-/// Temporary primitive used by callers whose destination wrapper
-/// does not yet exist (owner side) — to be replaced by
-/// `take_owner_earnings` once `owner.move` lands.
-public(package) fun split_stake<C>(
-    t:      &mut Tenant<C>,
-    amount: u64,
-): Balance<C> {
-    balance::split(&mut t.stake.balance, amount)
-}
-
 /// Consume a `TenantStake<C>` and send its balance to `to` as a
 /// `Coin<C>`. Symmetric counterpart to `fee_message::post` (sends to
 /// inbox) and `owner_earning::deposit` (joins into earning) — each

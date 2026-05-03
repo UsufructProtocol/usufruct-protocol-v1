@@ -5,7 +5,7 @@ module usufruct::route_fund;
 
 // === Imports ===
 
-use sui::coin;
+use sui::{balance, coin};
 use usufruct::{
     fee_message,
     tenant_state::{Self, Tenant},
@@ -43,7 +43,11 @@ public(package) fun route<C>(
     let (departing, fee_balance) = tenant_state::split(departing, fee_amount);
     let (cap_id, addr, refund)   = tenant_state::unbundle(departing);
     fee_message::post(fee_balance, escrow_id, addr, fee_inbox_id, ctx);
-    transfer::public_transfer(coin::from_balance(refund, ctx), addr);
+    if (balance::value(&refund) > 0) {
+        transfer::public_transfer(coin::from_balance(refund, ctx), addr);
+    } else {
+        balance::destroy_zero(refund);
+    };
     (cap_id, addr)
 }
 

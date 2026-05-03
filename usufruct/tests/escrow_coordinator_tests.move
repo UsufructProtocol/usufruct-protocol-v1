@@ -600,8 +600,9 @@ fun rent_from_at_dutch_installs_new_tenant() {
         &mut escrow, STAKE_T1, 0, last_acq, escrow_corpus::tenure_ceiling_const(),
     );
 
-    // The descent floor at full descent equals min_rent_price.
-    let now   = escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const();
+    // Sample mid-descent — APT must NOT fire auction_expiry yet (the
+    // descent window has not elapsed).
+    let now   = escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() / 2;
     clock::set_for_testing(&mut clk, now);
     let floor = escrow_coordinator::compute_floor_price(&escrow, now);
 
@@ -708,7 +709,9 @@ fun rent_from_handover_open_aborts_when_retiring_flag_set() {
 #[test]
 fun rent_from_handover_confirmed_supersedes_bid() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
+    // c=1 (Countdown) — non-zero handover-countdown so APT does NOT
+    // fire handover at the third rent before supersede can run.
+    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
@@ -1145,6 +1148,172 @@ fun do_auction_expiry_returns_to_idle() {
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
+    sc.end();
+}
+
+// ─── §15. apply_pending_transitions ──────────────────────────────────────────
+
+/// APT no-ops when nothing is due. Tag unchanged after the call.
+#[test]
+fun apt_noop_when_nothing_due() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Idle escrow at clock=0; no transitions are due.
+    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_tag_idle(&tag), 0);
+    assert!(escrow_coordinator::is_tag_idle(&escrow_coordinator::state_tag(&escrow)), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// APT fires handover when the handover-countdown expires.
+/// c=1 (Countdown); after rent → place_bid, jump clock past expiry,
+/// call APT. State becomes HandoverOpen (handover fired).
+#[test]
+fun apt_fires_handover_when_countdown_expires() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    let now2 = 5_000;
+    clock::set_for_testing(&mut clk, now2);
+    let floor2 = escrow_coordinator::compute_floor_price(&escrow, now2);
+    let p2 = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_tag_handover_confirmed(&escrow_coordinator::state_tag(&escrow)), 0);
+
+    // Jump clock past the countdown expiry.
+    let countdown_expiry = now2 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, countdown_expiry + 1);
+    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    // Handover fired: HandoverConfirmed → HandoverOpen (t2 now t1).
+    assert!(escrow_coordinator::is_tag_handover_open(&tag), 1);
+
+    let completed = event::events_by_type<HandoverCompleted>();
+    assert_eq!(completed.length(), 1);
+    assert_eq!(escrow_coordinator::handover_completed_timestamp_ms(&completed[0]), countdown_expiry);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// APT fires tenure expiry when the rental's tenure elapses.
+#[test]
+fun apt_fires_tenure_expiry_when_elapsed() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    // Jump clock past the tenure boundary.
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    // Tenure expired: HandoverOpen → AtDutch (h=1 window).
+    assert!(escrow_coordinator::is_tag_at_dutch_auction(&tag), 0);
+
+    let expired = event::events_by_type<TenureExpired>();
+    assert_eq!(expired.length(), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// APT cascade: rent → tenure expires → auction also expires under
+/// h=0 (Skipped descent) → state collapses to Idle in one APT call.
+/// Spec scenario M6b (HandoverOpen → AtDutchAuction → Idle in one
+/// pass). Verifies the cascade order and that MAX_APT_ITERATIONS
+/// holds (3 iterations needed: tenure, auction; the no-op final
+/// iteration to confirm steady state).
+#[test]
+fun apt_cascade_tenure_then_auction_skipped() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)); // h=0 Skipped
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    // Cascade: HandoverOpen → AtDutch (tenure_expiry) → Idle (auction_expiry under h=0 collapses to phase_start, immediately expired).
+    assert!(escrow_coordinator::is_tag_idle(&tag), 0);
+
+    let tenure_e = event::events_by_type<TenureExpired>();
+    assert_eq!(tenure_e.length(), 1);
+    let auction_e = event::events_by_type<AuctionExpired>();
+    assert_eq!(auction_e.length(), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// APT cascade: HandoverConfirmed → HandoverOpen → AtDutch → Idle in
+/// one pass under (c=2 FixedTime, h=0 Skipped). M6c spec scenario.
+/// FixedTime saturates handover_countdown_expiry to the tenure
+/// boundary; Skipped collapses descent — three transitions fire in
+/// sequence within a single APT call.
+#[test]
+fun apt_cascade_handover_tenure_auction_under_c2_h0() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FixedTime, h=0 Skipped
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    let now2 = 1_000;
+    clock::set_for_testing(&mut clk, now2);
+    let floor2 = escrow_coordinator::compute_floor_price(&escrow, now2);
+    let p2 = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_tag_handover_confirmed(&escrow_coordinator::state_tag(&escrow)), 0);
+
+    // Jump clock past the second tenure boundary so all three
+    // transitions are due in one APT call:
+    //   handover at tenure_ceiling (FixedTime expiry); after it,
+    //   the new phase_start is tenure_ceiling, so tenure expiry is
+    //   due at 2 × tenure_ceiling; auction fires immediately under
+    //   h=0 Skipped.
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() * 3);
+    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    // Cascade: HandoverConfirmed → HandoverOpen → AtDutch → Idle.
+    assert!(escrow_coordinator::is_tag_idle(&tag), 1);
+
+    // All three boundary events fired.
+    assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
+    assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
+    assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
     sc.end();
 }
 

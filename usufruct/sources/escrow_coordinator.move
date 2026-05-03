@@ -315,15 +315,95 @@ public fun rent<Asset: key + store, CoinType>(
 }
 
 /// Permissionless settler. Drives every elapsed lazy transition
-/// before any other operation observes the state. Stub in this commit
-/// — the real 3-check loop (handover countdown, tenure, auction)
-/// lands in C6 (Phase 6 of the implementation plan).
+/// before any other operation observes the state.
+///
+/// Three checks fire in order; each is gated by the variant + time
+/// predicate. The order matters: handover countdown (Demand) precedes
+/// tenure expiry (HandoverOpen) so a pending bid that auto-wins at
+/// the tenure boundary is processed correctly. Tenure precedes auction
+/// because tenure expiry transitions HandoverOpen → AtDutch (which
+/// then becomes a candidate for the auction check next iteration).
+///
+/// The loop is bounded by `MAX_APT_ITERATIONS = 4` — the longest real
+/// cascade is 3 (HandoverConfirmed → HandoverOpen → AtDutch → Idle
+/// under `descent::Skipped`).
 public fun apply_pending_transitions<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
-    _clock: &Clock,
-    _ctx:   &mut TxContext,
+    clock:  &Clock,
+    ctx:    &mut TxContext,
 ): EscrowStateTag {
+    let now = clock::timestamp_ms(clock);
+    let mut keep_going = true;
+    let mut iterations: u64 = 0;
+    while (keep_going) {
+        assert!(iterations < MAX_APT_ITERATIONS, EInvariantViolation);
+        iterations = iterations + 1;
+        keep_going = apt_step(escrow, now, ctx);
+    };
     state_tag(escrow)
+}
+
+/// Inspect the current state and fire at most one elapsed transition.
+/// Returns `true` if a transition fired (caller re-runs to chase
+/// cascades), `false` otherwise (steady state).
+fun apt_step<Asset: key + store, CoinType>(
+    escrow: &mut EscrowCoordinator<Asset, CoinType>,
+    now:    u64,
+    ctx:    &mut TxContext,
+): bool {
+    // Check 1 — Handover countdown (Rented + Demand).
+    let handover_due: Option<u64> = {
+        let s = read_state(escrow);
+        if (lifecycle_state::is_rented(s) && lifecycle_state::is_t_state_demand(s)) {
+            let expiry = lifecycle_state::handover_countdown_expiry_ms(s);
+            if (phases::has_passed(expiry, 0, now)) { option::some(expiry) }
+            else                                    { option::none() }
+        } else { option::none() }
+    };
+    if (option::is_some(&handover_due)) {
+        let boundary_ms = option::destroy_some(handover_due);
+        do_handover(escrow, boundary_ms, ctx);
+        return true
+    };
+    option::destroy_none(handover_due);
+
+    // Check 2 — Tenure expiry (Rented + HandoverOpen).
+    let tenure_due: Option<u64> = {
+        let s = read_state(escrow);
+        if (lifecycle_state::is_rented(s) && lifecycle_state::is_a_state_handover_open(s)) {
+            let phase_start = lifecycle_state::phase_start_ms(s);
+            let tenure      = config::tenure_ceiling(&escrow.config);
+            if (phases::has_passed(phase_start, tenure, now)) {
+                option::some(phases::boundary_at(phase_start, tenure))
+            } else { option::none() }
+        } else { option::none() }
+    };
+    if (option::is_some(&tenure_due)) {
+        let boundary_ms = option::destroy_some(tenure_due);
+        do_tenure_expiry(escrow, boundary_ms, ctx);
+        return true
+    };
+    option::destroy_none(tenure_due);
+
+    // Check 3 — Auction expiry (NotRented + AtDutch).
+    let auction_due: Option<u64> = {
+        let s = read_state(escrow);
+        if (lifecycle_state::is_not_rented(s) && lifecycle_state::is_a_state_at_dutch(s)) {
+            let phase_start = lifecycle_state::phase_start_ms(s);
+            let policy      = config::descent(&escrow.config);
+            if (descent_policy::has_expired(policy, phase_start, now)) {
+                option::some(descent_policy::expiry_at(policy, phase_start))
+            } else { option::none() }
+        } else { option::none() }
+    };
+    if (option::is_some(&auction_due)) {
+        let boundary_ms = option::destroy_some(auction_due);
+        do_auction_expiry(escrow, boundary_ms);
+        return true
+    };
+    option::destroy_none(auction_due);
+
+    false
 }
 
 // === View Functions ===

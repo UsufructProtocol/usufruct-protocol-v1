@@ -5,7 +5,6 @@ module usufruct::lifecycle_state;
 
 // === Imports ===
 
-use sui::balance::Balance;
 use usufruct::{
     asset_state::{Self, AssetState},
     owner_state::{Self, OwnerState},
@@ -74,16 +73,14 @@ public(package) fun new<Asset: key + store, CoinType>(
 /// sub-states advance in lockstep.
 public(package) fun start_rent<Asset: key + store, CoinType>(
     s:              LifecycleState<Asset, CoinType>,
-    cap_id:         ID,
-    addr:           address,
-    stake:          Balance<CoinType>,
+    t:              Tenant<CoinType>,
     phase_start_ms: u64,
 ): LifecycleState<Asset, CoinType> {
     match (s) {
         LifecycleState::NotRented { asset, tenant, earnings } => {
             LifecycleState::Rented {
                 asset:    asset_state::rent(asset),
-                tenant:   tenant_state::occupy(tenant, cap_id, addr, stake),
+                tenant:   tenant_state::occupy(tenant, t),
                 earnings: owner_state::cash_flow(earnings),
                 phase_start_ms,
                 retiring: false,
@@ -96,24 +93,23 @@ public(package) fun start_rent<Asset: key + store, CoinType>(
 
 /// Rented → NotRented. Tenure expires with no pending bid; current
 /// tenant departs, owner's share is extracted, asset enters AtDutch.
-/// Returns (new state, departing cap_id, departing addr, refund balance).
+/// Returns (new state, departing Tenant with remainder stake).
 public(package) fun expire_tenure<Asset: key + store, CoinType>(
     s:              LifecycleState<Asset, CoinType>,
     owner_amount:   u64,
     last_acq_price: u64,
-): (LifecycleState<Asset, CoinType>, ID, address, Balance<CoinType>) {
+): (LifecycleState<Asset, CoinType>, Tenant<CoinType>) {
     match (s) {
         LifecycleState::Rented { asset, tenant, earnings, phase_start_ms: _, retiring: _ } => {
             let (new_tenant, departing) = tenant_state::vacate(tenant);
             let (departing, owner_balance) = tenant_state::split(departing, owner_amount);
-            let (cap_id, addr, refund) = tenant_state::unbundle(departing);
             (
                 LifecycleState::NotRented {
                     asset:    asset_state::expire(asset, last_acq_price),
                     tenant:   new_tenant,
                     earnings: owner_state::stop_flow(owner_state::deposit(earnings, owner_balance)),
                 },
-                cap_id, addr, refund,
+                departing,
             )
         },
         LifecycleState::NotRented { asset: _a, tenant: _t, earnings: _e } =>
@@ -165,16 +161,14 @@ public(package) fun retire_now<Asset: key + store, CoinType>(
 /// Rented. `handover_countdown_expiry` is stored in TenantState::Demand.
 public(package) fun place_bid<Asset: key + store, CoinType>(
     s:                         LifecycleState<Asset, CoinType>,
-    cap_id:                    ID,
-    addr:                      address,
-    stake:                     Balance<CoinType>,
+    t:                         Tenant<CoinType>,
     handover_countdown_expiry: u64,
 ): LifecycleState<Asset, CoinType> {
     match (s) {
         LifecycleState::Rented { asset, tenant, earnings, phase_start_ms, retiring } => {
             LifecycleState::Rented {
                 asset:  asset_state::bid(asset),
-                tenant: tenant_state::demand(tenant, cap_id, addr, stake, handover_countdown_expiry),
+                tenant: tenant_state::demand(tenant, t, handover_countdown_expiry),
                 earnings,
                 phase_start_ms,
                 retiring,
@@ -189,14 +183,12 @@ public(package) fun place_bid<Asset: key + store, CoinType>(
 /// stays Rented. Returns displaced Tenant for the caller to refund.
 public(package) fun supersede_bid<Asset: key + store, CoinType>(
     s:                         LifecycleState<Asset, CoinType>,
-    cap_id:                    ID,
-    addr:                      address,
-    stake:                     Balance<CoinType>,
+    t:                         Tenant<CoinType>,
     handover_countdown_expiry: u64,
 ): (LifecycleState<Asset, CoinType>, Tenant<CoinType>) {
     match (s) {
         LifecycleState::Rented { asset, tenant, earnings, phase_start_ms, retiring } => {
-            let (new_tenant, displaced) = tenant_state::redemand(tenant, cap_id, addr, stake, handover_countdown_expiry);
+            let (new_tenant, displaced) = tenant_state::redemand(tenant, t, handover_countdown_expiry);
             (
                 LifecycleState::Rented {
                     asset, tenant: new_tenant, earnings,
@@ -212,17 +204,16 @@ public(package) fun supersede_bid<Asset: key + store, CoinType>(
 
 /// Rented: Demand → Occupied. Countdown expires; t2 takes over from
 /// t1. Variant stays Rented; owner's share extracted from t1's stake.
-/// Returns (new state, departing cap_id, departing addr, refund balance).
+/// Returns (new state, departing Tenant with remainder stake).
 public(package) fun accept_bid<Asset: key + store, CoinType>(
     s:                  LifecycleState<Asset, CoinType>,
     owner_amount:       u64,
     new_phase_start_ms: u64,
-): (LifecycleState<Asset, CoinType>, ID, address, Balance<CoinType>) {
+): (LifecycleState<Asset, CoinType>, Tenant<CoinType>) {
     match (s) {
         LifecycleState::Rented { asset, tenant, earnings, phase_start_ms: _, retiring } => {
             let (new_tenant, departing) = tenant_state::reoccupy(tenant);
             let (departing, owner_balance) = tenant_state::split(departing, owner_amount);
-            let (cap_id, addr, refund) = tenant_state::unbundle(departing);
             (
                 LifecycleState::Rented {
                     asset:    asset_state::handover(asset),
@@ -231,7 +222,7 @@ public(package) fun accept_bid<Asset: key + store, CoinType>(
                     phase_start_ms: new_phase_start_ms,
                     retiring,
                 },
-                cap_id, addr, refund,
+                departing,
             )
         },
         LifecycleState::NotRented { asset: _a, tenant: _t, earnings: _e } =>

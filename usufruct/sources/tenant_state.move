@@ -50,16 +50,24 @@ public(package) fun absence<CoinType>(): TenantState<CoinType> {
     TenantState::Absence
 }
 
-/// Transition Absence → Occupied.
-public(package) fun occupy<CoinType>(
-    state:   TenantState<CoinType>,
+/// Bundle raw tenant data into a `Tenant`. Called by the layer above
+/// before passing a new entrant into any transition.
+public(package) fun new_tenant<CoinType>(
     cap_id:  ID,
     address: address,
     stake:   Balance<CoinType>,
+): Tenant<CoinType> {
+    Tenant { cap_id, address, stake }
+}
+
+/// Transition Absence → Occupied.
+public(package) fun occupy<CoinType>(
+    state: TenantState<CoinType>,
+    t:     Tenant<CoinType>,
 ): TenantState<CoinType> {
     match (state) {
         TenantState::Absence =>
-            TenantState::Occupied { t1: Tenant { cap_id, address, stake } },
+            TenantState::Occupied { t1: t },
         TenantState::Occupied { t1: _t1 }           => abort EInvariantViolation,
         TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
     }
@@ -70,14 +78,12 @@ public(package) fun occupy<CoinType>(
 /// absolute timestamp at which the pending bid auto-wins.
 public(package) fun demand<CoinType>(
     state:                     TenantState<CoinType>,
-    cap_id:                    ID,
-    address:                   address,
-    stake:                     Balance<CoinType>,
+    t:                         Tenant<CoinType>,
     handover_countdown_expiry: u64,
 ): TenantState<CoinType> {
     match (state) {
         TenantState::Occupied { t1 } =>
-            TenantState::Demand { t1, t2: Tenant { cap_id, address, stake }, handover_countdown_expiry },
+            TenantState::Demand { t1, t2: t, handover_countdown_expiry },
         TenantState::Absence                                              => abort EInvariantViolation,
         TenantState::Demand { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
     }
@@ -88,14 +94,12 @@ public(package) fun demand<CoinType>(
 /// `handover_countdown_expiry` resets to the new bid's deadline.
 public(package) fun redemand<CoinType>(
     state:                     TenantState<CoinType>,
-    cap_id:                    ID,
-    address:                   address,
-    stake:                     Balance<CoinType>,
+    t:                         Tenant<CoinType>,
     handover_countdown_expiry: u64,
 ): (TenantState<CoinType>, Tenant<CoinType>) {
     match (state) {
         TenantState::Demand { t1, t2, handover_countdown_expiry: _ } =>
-            (TenantState::Demand { t1, t2: Tenant { cap_id, address, stake }, handover_countdown_expiry }, t2),
+            (TenantState::Demand { t1, t2: t, handover_countdown_expiry }, t2),
         TenantState::Absence              => abort EInvariantViolation,
         TenantState::Occupied { t1: _t1 } => abort EInvariantViolation,
     }

@@ -135,7 +135,7 @@ fun vacate_returns_t1_yields_absence() {
 // ─── §3. Transitions — abort paths ─────────────────────────────────────────────
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotAbsent, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun occupy_aborts_from_occupied() {
     let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
     let s = tenant::occupy(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
@@ -143,7 +143,7 @@ fun occupy_aborts_from_occupied() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotAbsent, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun occupy_aborts_from_demand() {
     let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
     let s = tenant::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
@@ -152,7 +152,7 @@ fun occupy_aborts_from_demand() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotOccupied, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun demand_aborts_from_absence() {
     let s = tenant::absence<TEST_COIN>();
     let s = tenant::demand(s, cap_t1(), ADDR_T1, stake(STAKE_T1));
@@ -160,7 +160,7 @@ fun demand_aborts_from_absence() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotOccupied, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun demand_aborts_from_demand() {
     let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
     let s = tenant::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
@@ -169,7 +169,7 @@ fun demand_aborts_from_demand() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotDemand, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun redemand_aborts_from_absence() {
     let s = tenant::absence<TEST_COIN>();
     let (s, t) = tenant::redemand(s, cap_t1(), ADDR_T1, stake(STAKE_T1));
@@ -178,7 +178,7 @@ fun redemand_aborts_from_absence() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotDemand, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun redemand_aborts_from_occupied() {
     let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
     let (s, t) = tenant::redemand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
@@ -187,7 +187,7 @@ fun redemand_aborts_from_occupied() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotDemand, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun reoccupy_aborts_from_absence() {
     let s = tenant::absence<TEST_COIN>();
     let (s, t) = tenant::reoccupy(s);
@@ -196,7 +196,7 @@ fun reoccupy_aborts_from_absence() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotDemand, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun reoccupy_aborts_from_occupied() {
     let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
     let (s, t) = tenant::reoccupy(s);
@@ -205,7 +205,7 @@ fun reoccupy_aborts_from_occupied() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotOccupied, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun vacate_aborts_from_absence() {
     let s = tenant::absence<TEST_COIN>();
     let (s, t) = tenant::vacate(s);
@@ -214,7 +214,7 @@ fun vacate_aborts_from_absence() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant::ENotOccupied, location = usufruct::tenant)]
+#[expected_failure(abort_code = tenant::EInvariantViolation, location = usufruct::tenant)]
 fun vacate_aborts_from_demand() {
     let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
     let s = tenant::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
@@ -324,6 +324,87 @@ fun accessors_read_without_consuming() {
     assert_eq!(tenant::addr(&t1), ADDR_T1);
     assert_eq!(tenant::stake_value(&t1), STAKE_T1);
 
+    consume_tenant(t1);
+    tenant::consume_absence(s);
+}
+
+// ─── §7. split ────────────────────────────────────────────────────────────────
+
+#[test]
+fun split_partial_reduces_stake() {
+    let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
+    let (s, t1) = tenant::vacate(s);
+
+    let (t1, separated) = tenant::split(t1, 300);
+    assert_eq!(tenant::stake_value(&t1), STAKE_T1 - 300);
+    assert_eq!(balance::value(&separated), 300);
+
+    // Identity preserved through split: cap_id and addr untouched
+    assert_eq!(tenant::cap_id(&t1), cap_t1());
+    assert_eq!(tenant::addr(&t1), ADDR_T1);
+
+    balance::destroy_for_testing(separated);
+    consume_tenant(t1);
+    tenant::consume_absence(s);
+}
+
+#[test]
+fun split_zero_leaves_stake_unchanged() {
+    let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
+    let (s, t1) = tenant::vacate(s);
+
+    let (t1, separated) = tenant::split(t1, 0);
+    assert_eq!(tenant::stake_value(&t1), STAKE_T1);
+    assert_eq!(balance::value(&separated), 0);
+
+    balance::destroy_for_testing(separated);
+    consume_tenant(t1);
+    tenant::consume_absence(s);
+}
+
+#[test]
+fun split_full_amount_leaves_zero_stake() {
+    let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
+    let (s, t1) = tenant::vacate(s);
+
+    let (t1, separated) = tenant::split(t1, STAKE_T1);
+    assert_eq!(tenant::stake_value(&t1), 0);
+    assert_eq!(balance::value(&separated), STAKE_T1);
+
+    balance::destroy_for_testing(separated);
+    consume_tenant(t1);
+    tenant::consume_absence(s);
+}
+
+#[test]
+fun split_chained_extracts_two_portions() {
+    // Simulates the handover-finalize flow: peel owner_share + protocol_fee,
+    // remainder ready for refund-via-unbundle.
+    let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
+    let (s, t1) = tenant::vacate(s);
+
+    let (t1, owner_share)   = tenant::split(t1, 600);
+    let (t1, protocol_fee)  = tenant::split(t1, 50);
+
+    assert_eq!(balance::value(&owner_share),  600);
+    assert_eq!(balance::value(&protocol_fee), 50);
+    assert_eq!(tenant::stake_value(&t1),      STAKE_T1 - 650);
+
+    balance::destroy_for_testing(owner_share);
+    balance::destroy_for_testing(protocol_fee);
+    consume_tenant(t1);
+    tenant::consume_absence(s);
+}
+
+#[test]
+#[expected_failure]
+fun split_more_than_stake_aborts() {
+    let s = tenant::occupy(tenant::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
+    let (s, t1) = tenant::vacate(s);
+
+    let (t1, separated) = tenant::split(t1, STAKE_T1 + 1);
+
+    balance::destroy_for_testing(separated);
     consume_tenant(t1);
     tenant::consume_absence(s);
 }

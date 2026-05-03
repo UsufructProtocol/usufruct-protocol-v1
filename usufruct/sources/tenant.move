@@ -9,9 +9,11 @@ use sui::balance::Balance;
 
 // === Errors ===
 
-const ENotAbsent:   u64 = 0;
-const ENotOccupied: u64 = 1;
-const ENotDemand:   u64 = 2;
+/// Sentinel for caller-contract violations: the caller invoked a
+/// transition (or `consume_absence`) from a state machine position
+/// that the function did not expect. Distinguishes programming bugs
+/// from legitimate runtime errors in logs and explorer UIs.
+const EInvariantViolation: u64 = 0xDEADC0DE;
 
 // === Constants ===
 
@@ -58,8 +60,8 @@ public(package) fun occupy<CoinType>(
     match (state) {
         TenantState::Absence =>
             TenantState::Occupied { t1: Tenant { cap_id, address, stake } },
-        TenantState::Occupied { t1: _t1 }           => abort ENotAbsent,
-        TenantState::Demand   { t1: _t1, t2: _t2 } => abort ENotAbsent,
+        TenantState::Occupied { t1: _t1 }           => abort EInvariantViolation,
+        TenantState::Demand   { t1: _t1, t2: _t2 } => abort EInvariantViolation,
     }
 }
 
@@ -74,8 +76,8 @@ public(package) fun demand<CoinType>(
     match (state) {
         TenantState::Occupied { t1 } =>
             TenantState::Demand { t1, t2: Tenant { cap_id, address, stake } },
-        TenantState::Absence                       => abort ENotOccupied,
-        TenantState::Demand { t1: _t1, t2: _t2 }   => abort ENotOccupied,
+        TenantState::Absence                       => abort EInvariantViolation,
+        TenantState::Demand { t1: _t1, t2: _t2 }   => abort EInvariantViolation,
     }
 }
 
@@ -90,8 +92,8 @@ public(package) fun redemand<CoinType>(
     match (state) {
         TenantState::Demand { t1, t2 } =>
             (TenantState::Demand { t1, t2: Tenant { cap_id, address, stake } }, t2),
-        TenantState::Absence              => abort ENotDemand,
-        TenantState::Occupied { t1: _t1 } => abort ENotDemand,
+        TenantState::Absence              => abort EInvariantViolation,
+        TenantState::Occupied { t1: _t1 } => abort EInvariantViolation,
     }
 }
 
@@ -104,8 +106,8 @@ public(package) fun reoccupy<CoinType>(
     match (state) {
         TenantState::Demand { t1, t2 } =>
             (TenantState::Occupied { t1: t2 }, t1),
-        TenantState::Absence              => abort ENotDemand,
-        TenantState::Occupied { t1: _t1 } => abort ENotDemand,
+        TenantState::Absence              => abort EInvariantViolation,
+        TenantState::Occupied { t1: _t1 } => abort EInvariantViolation,
     }
 }
 
@@ -117,15 +119,28 @@ public(package) fun vacate<CoinType>(
     match (state) {
         TenantState::Occupied { t1 } =>
             (TenantState::Absence, t1),
-        TenantState::Absence                       => abort ENotOccupied,
-        TenantState::Demand { t1: _t1, t2: _t2 }   => abort ENotOccupied,
+        TenantState::Absence                       => abort EInvariantViolation,
+        TenantState::Demand { t1: _t1, t2: _t2 }   => abort EInvariantViolation,
     }
 }
 
+/// Split `amount` off the Tenant's stake. Returns the (reduced)
+/// Tenant and the separated Balance. The caller decides where the
+/// split portion goes (owner_earnings / fee_inbox / etc.). Aborts if
+/// `amount > stake.value` via `balance::split`.
+public(package) fun split<CoinType>(
+    t:      Tenant<CoinType>,
+    amount: u64,
+): (Tenant<CoinType>, Balance<CoinType>) {
+    let Tenant { cap_id, address, mut stake } = t;
+    let separated = stake.split(amount);
+    (Tenant { cap_id, address, stake }, separated)
+}
+
 /// Destructure a `Tenant` into its three components. The caller
-/// decides what to do with the Balance — refund whole, split between
-/// owner_earnings / protocol fee / refund, etc. Tenant.move stays
-/// agnostic to `Coin`, `transfer`, and `TxContext`.
+/// decides what to do with the Balance — refund whole, route to
+/// owner_earnings / fee_inbox after upstream `split` calls, etc.
+/// Tenant.move stays agnostic to `Coin`, `transfer`, and `TxContext`.
 public(package) fun unbundle<CoinType>(
     tenant: Tenant<CoinType>,
 ): (ID, address, Balance<CoinType>) {
@@ -175,7 +190,7 @@ public fun is_demand<CoinType>(s: &TenantState<CoinType>): bool {
 public fun consume_absence<CoinType>(s: TenantState<CoinType>) {
     match (s) {
         TenantState::Absence                       => (),
-        TenantState::Occupied { t1: _t1 }          => abort 0xDEAD,
-        TenantState::Demand   { t1: _t1, t2: _t2 } => abort 0xDEAD,
+        TenantState::Occupied { t1: _t1 }          => abort EInvariantViolation,
+        TenantState::Demand   { t1: _t1, t2: _t2 } => abort EInvariantViolation,
     }
 }

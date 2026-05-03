@@ -60,7 +60,7 @@ fun occupy_creates_occupied_with_t1() {
 #[test]
 fun demand_creates_demand_with_t1_t2() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
     assert!(tenant_state::is_demand(&s));
 
     // reoccupy returns t1 (incumbent), promotes t2 to current
@@ -80,8 +80,8 @@ fun demand_creates_demand_with_t1_t2() {
 #[test]
 fun redemand_replaces_t2_returns_old_t2() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
-    let (s, displaced) = tenant_state::redemand(s, cap_t3(), ADDR_T3, stake(STAKE_T3));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
+    let (s, displaced) = tenant_state::redemand(s, cap_t3(), ADDR_T3, stake(STAKE_T3), 2_000);
     assert!(tenant_state::is_demand(&s));
 
     // Displaced is the old t2 (T2), not the new one (T3)
@@ -102,7 +102,7 @@ fun redemand_replaces_t2_returns_old_t2() {
 #[test]
 fun reoccupy_promotes_t2_returns_old_t1() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
     let (s, departing) = tenant_state::reoccupy(s);
     assert!(tenant_state::is_occupied(&s));
 
@@ -146,7 +146,7 @@ fun occupy_aborts_from_occupied() {
 #[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
 fun occupy_aborts_from_demand() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
     let s = tenant_state::occupy(s, cap_t3(), ADDR_T3, stake(STAKE_T3));
     tenant_state::consume_absence(s);
 }
@@ -155,7 +155,7 @@ fun occupy_aborts_from_demand() {
 #[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
 fun demand_aborts_from_absence() {
     let s = tenant_state::absence<TEST_COIN>();
-    let s = tenant_state::demand(s, cap_t1(), ADDR_T1, stake(STAKE_T1));
+    let s = tenant_state::demand(s, cap_t1(), ADDR_T1, stake(STAKE_T1), 1_000);
     tenant_state::consume_absence(s);
 }
 
@@ -163,8 +163,8 @@ fun demand_aborts_from_absence() {
 #[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
 fun demand_aborts_from_demand() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
-    let s = tenant_state::demand(s, cap_t3(), ADDR_T3, stake(STAKE_T3));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
+    let s = tenant_state::demand(s, cap_t3(), ADDR_T3, stake(STAKE_T3), 1_000);
     tenant_state::consume_absence(s);
 }
 
@@ -172,7 +172,7 @@ fun demand_aborts_from_demand() {
 #[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
 fun redemand_aborts_from_absence() {
     let s = tenant_state::absence<TEST_COIN>();
-    let (s, t) = tenant_state::redemand(s, cap_t1(), ADDR_T1, stake(STAKE_T1));
+    let (s, t) = tenant_state::redemand(s, cap_t1(), ADDR_T1, stake(STAKE_T1), 2_000);
     consume_tenant(t);
     tenant_state::consume_absence(s);
 }
@@ -181,7 +181,7 @@ fun redemand_aborts_from_absence() {
 #[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
 fun redemand_aborts_from_occupied() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let (s, t) = tenant_state::redemand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
+    let (s, t) = tenant_state::redemand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 2_000);
     consume_tenant(t);
     tenant_state::consume_absence(s);
 }
@@ -217,7 +217,7 @@ fun vacate_aborts_from_absence() {
 #[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
 fun vacate_aborts_from_demand() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
     let (s, t) = tenant_state::vacate(s);
     consume_tenant(t);
     tenant_state::consume_absence(s);
@@ -230,8 +230,8 @@ fun full_cycle_absence_to_absence_preserves_data() {
     // absence → occupy(T1) → demand(T2) → redemand(T3) → reoccupy → vacate → absence
     let s = tenant_state::absence<TEST_COIN>();
     let s = tenant_state::occupy(s, cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
-    let (s, t2_displaced) = tenant_state::redemand(s, cap_t3(), ADDR_T3, stake(STAKE_T3));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
+    let (s, t2_displaced) = tenant_state::redemand(s, cap_t3(), ADDR_T3, stake(STAKE_T3), 2_000);
 
     // T2 displaced — its data intact through the demand → redemand traversal
     assert_eq!(tenant_state::cap_id(&t2_displaced), cap_t2());
@@ -262,8 +262,8 @@ fun full_cycle_absence_to_absence_preserves_data() {
 #[test]
 fun redemand_preserves_t1_identity() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
-    let (s, _displaced) = tenant_state::redemand(s, cap_t3(), ADDR_T3, stake(STAKE_T3));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
+    let (s, _displaced) = tenant_state::redemand(s, cap_t3(), ADDR_T3, stake(STAKE_T3), 2_000);
     consume_tenant(_displaced);
 
     // After redemand, t1 inside Demand should still be T1 — only t2 swapped
@@ -281,7 +281,7 @@ fun redemand_preserves_t1_identity() {
 #[test]
 fun reoccupy_t2_becomes_new_t1() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), cap_t1(), ADDR_T1, stake(STAKE_T1));
-    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2));
+    let s = tenant_state::demand(s, cap_t2(), ADDR_T2, stake(STAKE_T2), 1_000);
     let (s, t1_departing) = tenant_state::reoccupy(s);
     consume_tenant(t1_departing);
 

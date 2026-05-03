@@ -21,6 +21,8 @@ fun destroy_asset(a: TestAsset) {
     object::delete(id);
 }
 
+const PRICE: u64 = 1_000;
+
 // ─── §1. Constructor ───────────────────────────────────────────────────────────
 
 #[test]
@@ -42,22 +44,20 @@ fun rent_from_idle_opens_handover() {
     assert!(asset_state::is_handover_open(&s));
     assert!(asset_state::has_asset(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
-        asset_state::no_winner(asset_state::expire(s)))));
+        asset_state::no_winner(asset_state::expire(s, PRICE)))));
     sc.end();
 }
 
 #[test]
 fun rent_from_at_dutch_opens_handover() {
     let mut sc = test_scenario::begin(@0xA);
-    // Build AtDutch via Idle → HandoverOpen → expire → AtDutch
     let s = asset_state::new(new_asset(sc.ctx()));
-    let s = asset_state::expire(asset_state::rent(s));
+    let s = asset_state::expire(asset_state::rent(s), PRICE);
     assert!(asset_state::is_at_dutch(&s));
-    // Re-rent from AtDutch
     let s = asset_state::rent(s);
     assert!(asset_state::is_handover_open(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
-        asset_state::no_winner(asset_state::expire(s)))));
+        asset_state::no_winner(asset_state::expire(s, PRICE)))));
     sc.end();
 }
 
@@ -67,10 +67,9 @@ fun bid_promotes_to_confirmed() {
     let s = asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx()))));
     assert!(asset_state::is_handover_confirmed(&s));
     assert!(asset_state::has_asset(&s));
-    // confirmed → open → expire → dutch → retire → claim
     destroy_asset(asset_state::claim(asset_state::retire(
         asset_state::no_winner(asset_state::expire(
-            asset_state::handover(s))))));
+            asset_state::handover(s), PRICE)))));
     sc.end();
 }
 
@@ -81,14 +80,15 @@ fun handover_returns_to_open() {
         asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx())))));
     assert!(asset_state::is_handover_open(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
-        asset_state::no_winner(asset_state::expire(s)))));
+        asset_state::no_winner(asset_state::expire(s, PRICE)))));
     sc.end();
 }
 
 #[test]
 fun expire_from_open_to_dutch() {
     let mut sc = test_scenario::begin(@0xA);
-    let s = asset_state::expire(asset_state::rent(asset_state::new(new_asset(sc.ctx()))));
+    let s = asset_state::expire(
+        asset_state::rent(asset_state::new(new_asset(sc.ctx()))), PRICE);
     assert!(asset_state::is_at_dutch(&s));
     assert!(asset_state::has_asset(&s));
     destroy_asset(asset_state::claim(asset_state::retire(s)));
@@ -99,7 +99,8 @@ fun expire_from_open_to_dutch() {
 fun no_winner_returns_to_idle() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::no_winner(
-        asset_state::expire(asset_state::rent(asset_state::new(new_asset(sc.ctx())))));
+        asset_state::expire(
+            asset_state::rent(asset_state::new(new_asset(sc.ctx()))), PRICE));
     assert!(asset_state::is_idle(&s));
     destroy_asset(asset_state::claim(asset_state::retire(s)));
     sc.end();
@@ -118,7 +119,8 @@ fun retire_from_idle_yields_retired() {
 fun retire_from_at_dutch_yields_retired() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::retire(
-        asset_state::expire(asset_state::rent(asset_state::new(new_asset(sc.ctx())))));
+        asset_state::expire(
+            asset_state::rent(asset_state::new(new_asset(sc.ctx()))), PRICE));
     assert!(asset_state::is_retired(&s));
     destroy_asset(asset_state::claim(s));
     sc.end();
@@ -131,7 +133,7 @@ fun retire_from_at_dutch_yields_retired() {
 fun rent_aborts_from_handover_open() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
-    let s = asset_state::rent(s);  // already in HandoverOpen
+    let s = asset_state::rent(s);
     destroy_asset(asset_state::claim(s));
     sc.end();
 }
@@ -139,10 +141,9 @@ fun rent_aborts_from_handover_open() {
 #[test]
 #[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
 fun expire_aborts_from_handover_confirmed() {
-    // Key invariant: HandoverConfirmed must resolve via handover() before expire.
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx()))));
-    let s = asset_state::expire(s);  // must abort — confirmed cannot expire directly
+    let s = asset_state::expire(s, PRICE);
     destroy_asset(asset_state::claim(s));
     sc.end();
 }
@@ -152,7 +153,7 @@ fun expire_aborts_from_handover_confirmed() {
 fun retire_aborts_from_handover_open() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
-    let s = asset_state::retire(s);  // retire only valid from Idle | AtDutch
+    let s = asset_state::retire(s);
     destroy_asset(asset_state::claim(s));
     sc.end();
 }
@@ -162,7 +163,7 @@ fun retire_aborts_from_handover_open() {
 fun claim_aborts_from_idle() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::new(new_asset(sc.ctx()));
-    destroy_asset(asset_state::claim(s));  // must abort — not Retired
+    destroy_asset(asset_state::claim(s));
     sc.end();
 }
 
@@ -173,15 +174,12 @@ fun give_extracts_asset_from_handover_open() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
     let (s, extracted) = asset_state::give(s);
-
     assert!(asset_state::is_handover_open(&s));
-    assert!(!asset_state::has_asset(&s));  // slot is None
-
-    // Return it and clean up
+    assert!(!asset_state::has_asset(&s));
     let s = asset_state::give_back(s, extracted);
     assert!(asset_state::has_asset(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
-        asset_state::no_winner(asset_state::expire(s)))));
+        asset_state::no_winner(asset_state::expire(s, PRICE)))));
     sc.end();
 }
 
@@ -191,9 +189,7 @@ fun expire_aborts_when_asset_is_borrowed() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
     let (s, extracted) = asset_state::give(s);
-    // Try to expire while asset is with tenant — should abort
-    let s = asset_state::expire(s);
-    // unreachable cleanup
+    let s = asset_state::expire(s, PRICE);
     destroy_asset(asset_state::claim(asset_state::retire(s)));
     destroy_asset(extracted);
     sc.end();
@@ -205,29 +201,17 @@ fun expire_aborts_when_asset_is_borrowed() {
 fun full_rental_cycle() {
     let mut sc = test_scenario::begin(@0xA);
     let ctx = sc.ctx();
-
-    // Idle → rent → HandoverOpen
     let s = asset_state::new(new_asset(ctx));
     let s = asset_state::rent(s);
     assert!(asset_state::is_handover_open(&s));
-
-    // bid → HandoverConfirmed
     let s = asset_state::bid(s);
     assert!(asset_state::is_handover_confirmed(&s));
-
-    // handover → HandoverOpen (new tenant takes over)
     let s = asset_state::handover(s);
     assert!(asset_state::is_handover_open(&s));
-
-    // tenure expires → AtDutch
-    let s = asset_state::expire(s);
+    let s = asset_state::expire(s, PRICE);
     assert!(asset_state::is_at_dutch(&s));
-
-    // no winner → Idle
     let s = asset_state::no_winner(s);
     assert!(asset_state::is_idle(&s));
-
-    // owner retires → Retired → claim
     let s = asset_state::retire(s);
     assert!(asset_state::is_retired(&s));
     destroy_asset(asset_state::claim(s));

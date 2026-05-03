@@ -28,7 +28,7 @@ public struct Tenant<phantom CoinType> has store {
 public enum TenantState<phantom CoinType> has store {
     Absence,
     Occupied { t1: Tenant<CoinType> },
-    Demand   { t1: Tenant<CoinType>, t2: Tenant<CoinType> },
+    Demand   { t1: Tenant<CoinType>, t2: Tenant<CoinType>, handover_countdown_expiry: u64 },
 }
 
 // === Events ===
@@ -61,37 +61,41 @@ public(package) fun occupy<CoinType>(
         TenantState::Absence =>
             TenantState::Occupied { t1: Tenant { cap_id, address, stake } },
         TenantState::Occupied { t1: _t1 }           => abort EInvariantViolation,
-        TenantState::Demand   { t1: _t1, t2: _t2 } => abort EInvariantViolation,
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
     }
 }
 
 /// Transition Occupied → Demand. The new tenant joins as the second
-/// (pending) party of the slot.
+/// (pending) party of the slot. `handover_countdown_expiry` is the
+/// absolute timestamp at which the pending bid auto-wins.
 public(package) fun demand<CoinType>(
-    state:   TenantState<CoinType>,
-    cap_id:  ID,
-    address: address,
-    stake:   Balance<CoinType>,
+    state:                     TenantState<CoinType>,
+    cap_id:                    ID,
+    address:                   address,
+    stake:                     Balance<CoinType>,
+    handover_countdown_expiry: u64,
 ): TenantState<CoinType> {
     match (state) {
         TenantState::Occupied { t1 } =>
-            TenantState::Demand { t1, t2: Tenant { cap_id, address, stake } },
-        TenantState::Absence                       => abort EInvariantViolation,
-        TenantState::Demand { t1: _t1, t2: _t2 }   => abort EInvariantViolation,
+            TenantState::Demand { t1, t2: Tenant { cap_id, address, stake }, handover_countdown_expiry },
+        TenantState::Absence                                              => abort EInvariantViolation,
+        TenantState::Demand { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
     }
 }
 
 /// Transition Demand → Demand. A new bid replaces the existing pending
 /// tenant; the displaced t2 is returned to the caller for refund.
+/// `handover_countdown_expiry` resets to the new bid's deadline.
 public(package) fun redemand<CoinType>(
-    state:   TenantState<CoinType>,
-    cap_id:  ID,
-    address: address,
-    stake:   Balance<CoinType>,
+    state:                     TenantState<CoinType>,
+    cap_id:                    ID,
+    address:                   address,
+    stake:                     Balance<CoinType>,
+    handover_countdown_expiry: u64,
 ): (TenantState<CoinType>, Tenant<CoinType>) {
     match (state) {
-        TenantState::Demand { t1, t2 } =>
-            (TenantState::Demand { t1, t2: Tenant { cap_id, address, stake } }, t2),
+        TenantState::Demand { t1, t2, handover_countdown_expiry: _ } =>
+            (TenantState::Demand { t1, t2: Tenant { cap_id, address, stake }, handover_countdown_expiry }, t2),
         TenantState::Absence              => abort EInvariantViolation,
         TenantState::Occupied { t1: _t1 } => abort EInvariantViolation,
     }
@@ -104,7 +108,7 @@ public(package) fun reoccupy<CoinType>(
     state: TenantState<CoinType>,
 ): (TenantState<CoinType>, Tenant<CoinType>) {
     match (state) {
-        TenantState::Demand { t1, t2 } =>
+        TenantState::Demand { t1, t2, handover_countdown_expiry: _ } =>
             (TenantState::Occupied { t1: t2 }, t1),
         TenantState::Absence              => abort EInvariantViolation,
         TenantState::Occupied { t1: _t1 } => abort EInvariantViolation,
@@ -120,7 +124,7 @@ public(package) fun vacate<CoinType>(
         TenantState::Occupied { t1 } =>
             (TenantState::Absence, t1),
         TenantState::Absence                       => abort EInvariantViolation,
-        TenantState::Demand { t1: _t1, t2: _t2 }   => abort EInvariantViolation,
+        TenantState::Demand { t1: _t1, t2: _t2, handover_countdown_expiry: _ }   => abort EInvariantViolation,
     }
 }
 
@@ -161,7 +165,7 @@ public fun is_absence<CoinType>(s: &TenantState<CoinType>): bool {
     match (s) {
         TenantState::Absence                       => true,
         TenantState::Occupied { t1: _t1 }          => false,
-        TenantState::Demand   { t1: _t1, t2: _t2 } => false,
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => false,
     }
 }
 
@@ -170,14 +174,14 @@ public fun is_occupied<CoinType>(s: &TenantState<CoinType>): bool {
     match (s) {
         TenantState::Occupied { t1: _t1 }          => true,
         TenantState::Absence                       => false,
-        TenantState::Demand   { t1: _t1, t2: _t2 } => false,
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => false,
     }
 }
 
 #[test_only]
 public fun is_demand<CoinType>(s: &TenantState<CoinType>): bool {
     match (s) {
-        TenantState::Demand   { t1: _t1, t2: _t2 } => true,
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => true,
         TenantState::Absence                       => false,
         TenantState::Occupied { t1: _t1 }          => false,
     }
@@ -191,6 +195,6 @@ public fun consume_absence<CoinType>(s: TenantState<CoinType>) {
     match (s) {
         TenantState::Absence                       => (),
         TenantState::Occupied { t1: _t1 }          => abort EInvariantViolation,
-        TenantState::Demand   { t1: _t1, t2: _t2 } => abort EInvariantViolation,
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
     }
 }

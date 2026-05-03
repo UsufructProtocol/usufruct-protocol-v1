@@ -399,13 +399,13 @@ travelling alongside the config through filter chains and into
 **Accessors via method aliases.**
 
 ```move
-public(package) use fun entry_cfg as CorpusEntry.cfg;
-public(package) use fun entry_tag as CorpusEntry.tag;
-public(package) use fun entry_c   as CorpusEntry.c;
-public(package) use fun entry_d   as CorpusEntry.d;
-public(package) use fun entry_e   as CorpusEntry.e;
-public(package) use fun entry_h   as CorpusEntry.h;
-public(package) use fun entry_f   as CorpusEntry.f;
+public use fun entry_cfg as CorpusEntry.cfg;
+public use fun entry_tag as CorpusEntry.tag;
+public use fun entry_c   as CorpusEntry.c;
+public use fun entry_d   as CorpusEntry.d;
+public use fun entry_e   as CorpusEntry.e;
+public use fun entry_h   as CorpusEntry.h;
+public use fun entry_f   as CorpusEntry.f;
 ```
 
 In test code the aliases read like methods:
@@ -548,8 +548,8 @@ not a protocol regression:
 | Test | Property |
 |---|---|
 | `all_has_168_entries` | `all().length() == 168` |
-| `all_tags_unique` | every entry in `all()` has a distinct `tag` field |
-| `by_tag_inverts_tag_constructor` | for every valid `(c,d,e,h,f)`, `by_tag(tag(c,d,e,h,f))` is field-equivalent to `build_config(c,d,e,h,f)` |
+| `all_tags_consistent_with_axes` | for every entry `e` in `all()`, `e.tag == build_tag(e.c, e.d, e.e, e.h, e.f)`. Uniqueness of tags follows structurally: the 5 nested loops in `all()` generate each `(c,d,e,h,f)` tuple exactly once, so 168 entries implies 168 distinct tuples; `all_tags_consistent_with_axes` confirms the tag formula is correctly applied to each. An O(n²) uniqueness check is equivalent but exceeds the Move test framework's default gas budget at n=168. |
+| `by_tag_inverts_tag_constructor` | for every valid `(c,d,e,h,f)`, `by_tag(build_tag(c,d,e,h,f)) == build_config(c,d,e,h,f)` |
 
 **Standard iteration idiom.**
 

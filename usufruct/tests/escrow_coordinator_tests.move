@@ -25,6 +25,8 @@ use usufruct::{
         AuctionExpired,
         AssetRetired,
         RetireFlagSet,
+        EarningsWithdrawn,
+        AssetClaimed,
     },
     escrow_corpus,
     fee_message::FeeMessageSent,
@@ -1266,6 +1268,182 @@ fun apt_cascade_tenure_then_auction_skipped() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §16. withdraw_earnings ──────────────────────────────────────────────────
+
+/// Happy path: drive a tenure expiry → owner accumulates 90% → withdraw
+/// returns a Coin with that exact value. EarningsWithdrawn fires.
+#[test]
+fun withdraw_earnings_drains_owner_balance() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let principal = escrow_corpus::min_rent_price_const();
+    let p1 = mk_payment(principal, sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    // Tenure expiry routes 90% to owner.
+    escrow_coordinator::fire_do_tenure_expiry_for_testing(
+        &mut escrow, escrow_corpus::tenure_ceiling_const(), sc.ctx(),
+    );
+    let owner_share_expected = principal - principal / 10;
+    assert_eq!(escrow_coordinator::owner_value_for_testing(&escrow), owner_share_expected);
+
+    let coin = escrow_coordinator::withdraw_earnings(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert_eq!(coin::value(&coin), owner_share_expected);
+    assert_eq!(escrow_coordinator::owner_value_for_testing(&escrow), 0);
+
+    let withdrawn = event::events_by_type<EarningsWithdrawn>();
+    assert_eq!(withdrawn.length(), 1);
+    assert_eq!(escrow_coordinator::earnings_withdrawn_amount(&withdrawn[0]), owner_share_expected);
+
+    coin::burn_for_testing(coin);
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::ENoEarnings, location = usufruct::escrow_coordinator)]
+fun withdraw_earnings_with_zero_balance_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let coin = escrow_coordinator::withdraw_earnings(&mut escrow, &owner_cap, &clk, sc.ctx());
+    coin::burn_for_testing(coin);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EWrongEscrowOwnerCap, location = usufruct::escrow_coordinator)]
+fun withdraw_earnings_with_wrong_cap_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let foreign = owner_cap::new(object::id_from_address(@0xDEAD), OWNER, sc.ctx());
+    let coin = escrow_coordinator::withdraw_earnings(&mut escrow, &foreign, &clk, sc.ctx());
+    coin::burn_for_testing(coin);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    owner_cap::burn(foreign, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §17. claim_asset ────────────────────────────────────────────────────────
+
+/// Happy path: drive escrow to Retired, then claim. Returns
+/// (asset, earnings_coin); the escrow object is deleted.
+/// AssetClaimed event fires with the swept earnings.
+#[test]
+fun claim_asset_returns_asset_and_earnings_and_deletes_escrow() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Force the escrow into Retired (no earnings) via the test helper.
+    escrow_coordinator::drive_to_retired_for_testing(&mut escrow_handle);
+
+    // Take the shared escrow by value so claim_asset can consume it.
+    test_scenario::return_shared(escrow_handle);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<DemoAsset, SUI>>();
+
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    assert_eq!(coin::value(&earnings), 0);
+
+    let claimed = event::events_by_type<AssetClaimed>();
+    assert_eq!(claimed.length(), 1);
+    assert_eq!(escrow_coordinator::asset_claimed_swept_earnings(&claimed[0]), 0);
+
+    coin::destroy_zero(earnings);
+    transfer::public_transfer(asset, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Earnings sweep: drive a tenure expiry to accumulate balance, then
+/// retire and claim. Earnings coin carries the owner's share.
+#[test]
+fun claim_asset_sweeps_owner_earnings() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let principal = escrow_corpus::min_rent_price_const();
+    let p1 = mk_payment(principal, sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow_handle, p1, &clk, sc.ctx());
+
+    escrow_coordinator::fire_do_tenure_expiry_for_testing(
+        &mut escrow_handle, escrow_corpus::tenure_ceiling_const(), sc.ctx(),
+    );
+    // Drive auction → idle → retired so claim can run.
+    escrow_coordinator::fire_do_auction_expiry_for_testing(
+        &mut escrow_handle, escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const(),
+    );
+    escrow_coordinator::drive_to_retired_for_testing(&mut escrow_handle);
+
+    test_scenario::return_shared(escrow_handle);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<DemoAsset, SUI>>();
+
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    let owner_share_expected = principal - principal / 10;
+    assert_eq!(coin::value(&earnings), owner_share_expected);
+
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::ENotRetired, location = usufruct::escrow_coordinator)]
+fun claim_asset_when_not_retired_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    // Idle, not Retired.
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::destroy_zero(earnings);
+    transfer::public_transfer(asset, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EWrongEscrowOwnerCap, location = usufruct::escrow_coordinator)]
+fun claim_asset_with_wrong_cap_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    escrow_coordinator::drive_to_retired_for_testing(&mut escrow_handle);
+    test_scenario::return_shared(escrow_handle);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<DemoAsset, SUI>>();
+
+    let foreign = owner_cap::new(object::id_from_address(@0xDEAD), OWNER, sc.ctx());
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, foreign, &clk, sc.ctx());
+    coin::destroy_zero(earnings);
+    transfer::public_transfer(asset, OWNER);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();

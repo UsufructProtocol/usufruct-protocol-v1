@@ -11,6 +11,7 @@ use sui::{
     event,
 };
 use usufruct::{
+    asset_state,
     config::{Self, IntegrationConfig},
     curve_shape,
     descent_policy,
@@ -23,10 +24,11 @@ use usufruct::{
     phases,
     price_function,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
-    retire_policy,
     refund_state,
+    retire_policy,
     tenant::{Self, Tenant},
     tenant_cap::{Self, TenantCap},
+    tenant_state,
 };
 
 // === Errors ===
@@ -241,6 +243,82 @@ public fun integrate<Asset: key + store, CoinType>(
     transfer::share_object(escrow);
     event::emit(AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id, asset_id });
     owner_cap
+}
+
+/// Owner-gated earnings withdrawal. APT first; cap-escrow guard;
+/// asserts non-zero balance (ENoEarnings — gas-saving sanity, not
+/// a correctness invariant). Drains all earnings to a Coin and
+/// returns it to the caller. Owner stays alive for further deposits.
+public fun withdraw_earnings<Asset: key + store, CoinType>(
+    escrow:    &mut EscrowCoordinator<Asset, CoinType>,
+    owner_cap: &OwnerCap,
+    clock:     &Clock,
+    ctx:       &mut TxContext,
+): Coin<CoinType> {
+    assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
+    apply_pending_transitions(escrow, clock, ctx);
+    let amount = owner::value(&escrow.owner);
+    assert!(amount > 0, ENoEarnings);
+    let earnings = owner::withdraw(&mut escrow.owner, owner_cap, ctx);
+    event::emit(EarningsWithdrawn {
+        escrow_id:    object::id(escrow),
+        owner_cap_id: object::id(owner_cap),
+        owner:        ctx.sender(),
+        amount,
+    });
+    earnings
+}
+
+/// Owner-gated terminal claim. The escrow is consumed by value:
+/// after this call there is no on-chain `EscrowCoordinator` for the
+/// asset.
+///
+/// Sequence: cap-escrow guard → APT → require Retired (ENotRetired)
+/// → decompose escrow → claim asset, sanity-check tenant slot is
+/// Absence, drain owner, burn cap, destroy empty owner, delete the
+/// shared object → return (asset, earnings_coin) to caller.
+public fun claim_asset<Asset: key + store, CoinType>(
+    mut escrow: EscrowCoordinator<Asset, CoinType>,
+    owner_cap:  OwnerCap,
+    clock:      &Clock,
+    ctx:        &mut TxContext,
+): (Asset, Coin<CoinType>) {
+    assert!(owner_cap::escrow_id(&owner_cap) == object::id(&escrow), EWrongEscrowOwnerCap);
+    apply_pending_transitions(&mut escrow, clock, ctx);
+    assert!(is_tag_retired(&state_tag(&escrow)), ENotRetired);
+
+    // Capture identifiers for the AssetClaimed event before
+    // destructuring (the borrows would otherwise conflict with the
+    // value-move inside `let EscrowCoordinator { .. } = escrow`).
+    let escrow_id    = object::id(&escrow);
+    let owner_cap_id = object::id(&owner_cap);
+    let owner_addr   = ctx.sender();
+
+    // Decompose the EscrowCoordinator; state and owner are
+    // store-only (no drop), so they must be consumed explicitly.
+    let EscrowCoordinator {
+        id, config: _, fee_inbox_id: _, integrated_at_ms: _, state, mut owner,
+    } = escrow;
+
+    // The Option<LifecycleState> is always Some at tx boundary
+    // (StateReceipt discipline).
+    let inner_state = option::destroy_some(state);
+    let (a_state, t_state) = lifecycle_state::decompose_retired(inner_state);
+    let asset = asset_state::claim(a_state);
+    tenant_state::consume_absence(t_state);
+
+    // Drain owner earnings. value > 0 is fine (returns the coin) and
+    // value == 0 is also fine (returns a zero coin); the caller can
+    // dispose of the zero coin off-chain or via destroy_zero.
+    let earnings = owner::withdraw(&mut owner, &owner_cap, ctx);
+    let swept_earnings = coin::value(&earnings);
+    owner::destroy_empty(owner);
+
+    owner_cap::burn(owner_cap, owner_addr);
+    object::delete(id);
+
+    event::emit(AssetClaimed { escrow_id, owner_cap_id, swept_earnings });
+    (asset, earnings)
 }
 
 /// Owner-gated retire entry. Calls APT first, then enforces the
@@ -1014,6 +1092,22 @@ public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID            
 public(package) fun retire_flag_set_owner(e: &RetireFlagSet): address                         { e.owner }
 #[test_only]
 public(package) fun retire_flag_set_state_at_set(e: &RetireFlagSet): EscrowStateTag           { e.state_at_set }
+
+#[test_only]
+public(package) fun earnings_withdrawn_escrow_id(e: &EarningsWithdrawn): ID                  { e.escrow_id }
+#[test_only]
+public(package) fun earnings_withdrawn_owner_cap_id(e: &EarningsWithdrawn): ID                { e.owner_cap_id }
+#[test_only]
+public(package) fun earnings_withdrawn_owner(e: &EarningsWithdrawn): address                  { e.owner }
+#[test_only]
+public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64                     { e.amount }
+
+#[test_only]
+public(package) fun asset_claimed_escrow_id(e: &AssetClaimed): ID                            { e.escrow_id }
+#[test_only]
+public(package) fun asset_claimed_owner_cap_id(e: &AssetClaimed): ID                          { e.owner_cap_id }
+#[test_only]
+public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64                       { e.swept_earnings }
 
 // ─── Drive helpers for test-only state composition ───────────────────────────
 // Bypass `rent`/`retire` (not yet implemented) by chaining

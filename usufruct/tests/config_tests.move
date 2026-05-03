@@ -14,12 +14,12 @@ use usufruct::{
         Self,
         IntegrationConfig,
         IntegrationConfigRegistered,
-        HandoverPolicy,
-        DescentPolicy,
-        RetirePolicy,
     },
     curve_shape,
+    descent_policy::{Self, DescentPolicy},
+    handover_policy::{Self, HandoverPolicy},
     price_function,
+    retire_policy::{Self, RetirePolicy},
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -31,9 +31,9 @@ const V2_HANDOVER_FLOOR:  u64 = 3_600_000;       // → Countdown
 const V2_DESCENT_CEILING: u64 = 43_200_000;      // → Window
 // V2_RETIRE_FLOOR == 0 (Immediate) inlined below where used.
 
-fun v2_handover(): HandoverPolicy { config::new_handover_countdown(V2_HANDOVER_FLOOR) }
-fun v2_descent():  DescentPolicy  { config::new_descent_window(V2_DESCENT_CEILING) }
-fun v2_retire():   RetirePolicy   { config::new_retire_immediate() }
+fun v2_handover(): HandoverPolicy { handover_policy::new_handover_countdown(V2_HANDOVER_FLOOR) }
+fun v2_descent():  DescentPolicy  { descent_policy::new_descent_window(V2_DESCENT_CEILING) }
+fun v2_retire():   RetirePolicy   { retire_policy::new_retire_immediate() }
 
 fun v2_config(): IntegrationConfig {
     config::new_config(
@@ -72,9 +72,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 1,
-            handover:       config::new_handover_instant(),
-            descent:        config::new_descent_window(1),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_instant(),
+            descent:        descent_policy::new_descent_window(1),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_linear(),
             descent_curve:  curve_shape::new_linear(),
             price_function: price_function::new_fixed_delta(1),
@@ -83,9 +83,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1_000_000,
             tenure_ceiling: 86_400_000,
-            handover:       config::new_handover_countdown(3_600_000),
-            descent:        config::new_descent_window(43_200_000),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_countdown(3_600_000),
+            descent:        descent_policy::new_descent_window(43_200_000),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_linear(),
             descent_curve:  curve_shape::new_linear(),
             price_function: price_function::new_fixed_delta(1),
@@ -94,9 +94,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 100,
             tenure_ceiling: 10_000,
-            handover:       config::new_handover_countdown(5_000),
-            descent:        config::new_descent_window(10_000),
-            retire:         config::new_retire_deferred(7_200_000),
+            handover:       handover_policy::new_handover_countdown(5_000),
+            descent:        descent_policy::new_descent_window(10_000),
+            retire:         retire_policy::new_retire_deferred(7_200_000),
             credit_curve:   curve_shape::new_smoothstep(),
             descent_curve:  curve_shape::new_smoothstep(),
             price_function: price_function::new_fixed_delta(10),
@@ -105,9 +105,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 50,
             tenure_ceiling: 100_000,
-            handover:       config::new_handover_instant(),
-            descent:        config::new_descent_window(50_000),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_instant(),
+            descent:        descent_policy::new_descent_window(50_000),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_power_law(1, 2),
             descent_curve:  curve_shape::new_linear(),
             price_function: price_function::new_fixed_delta(1),
@@ -116,9 +116,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 18_446_744_073_709_551_615,
             tenure_ceiling: 1_000,
-            handover:       config::new_handover_countdown(500),
-            descent:        config::new_descent_window(1_000),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_countdown(500),
+            descent:        descent_policy::new_descent_window(1_000),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_exponential(3, false),
             descent_curve:  curve_shape::new_exponential(3, true),
             price_function: price_function::new_fixed_delta(1),
@@ -127,9 +127,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 18_446_744_073_709_551_615,
-            handover:       config::new_handover_countdown(1),
-            descent:        config::new_descent_window(18_446_744_073_709_551_615),
-            retire:         config::new_retire_deferred(18_446_744_073_709_551_615),
+            handover:       handover_policy::new_handover_countdown(1),
+            descent:        descent_policy::new_descent_window(18_446_744_073_709_551_615),
+            retire:         retire_policy::new_retire_deferred(18_446_744_073_709_551_615),
             credit_curve:   curve_shape::new_logistic(),
             descent_curve:  curve_shape::new_logistic(),
             price_function: price_function::new_fixed_delta(1),
@@ -138,9 +138,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1_000,
             tenure_ceiling: 86_400_000,
-            handover:       config::new_handover_countdown(3_600_000),
-            descent:        config::new_descent_window(43_200_000),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_countdown(3_600_000),
+            descent:        descent_policy::new_descent_window(43_200_000),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_linear(),
             descent_curve:  curve_shape::new_linear(),
             price_function: price_function::new_compound_delta(500, 100),
@@ -150,9 +150,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 1_000,
-            handover:       config::new_handover_fixed_time(),
-            descent:        config::new_descent_window(1),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_fixed_time(),
+            descent:        descent_policy::new_descent_window(1),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_linear(),
             descent_curve:  curve_shape::new_linear(),
             price_function: price_function::new_fixed_delta(1),
@@ -161,9 +161,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 18_446_744_073_709_551_615,
-            handover:       config::new_handover_fixed_time(),
-            descent:        config::new_descent_window(1),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_fixed_time(),
+            descent:        descent_policy::new_descent_window(1),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_linear(),
             descent_curve:  curve_shape::new_linear(),
             price_function: price_function::new_fixed_delta(1),
@@ -174,9 +174,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 1_000,
-            handover:       config::new_handover_instant(),
-            descent:        config::new_descent_window(1),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_instant(),
+            descent:        descent_policy::new_descent_window(1),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_power_law(2, 4),
             descent_curve:  curve_shape::new_power_law(6, 3),
             price_function: price_function::new_fixed_delta(1),
@@ -185,9 +185,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 1_000,
-            handover:       config::new_handover_countdown(500),
-            descent:        config::new_descent_window(1),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_countdown(500),
+            descent:        descent_policy::new_descent_window(1),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_exponential(1, false),
             descent_curve:  curve_shape::new_exponential(8, true),
             price_function: price_function::new_compound_delta(1, 1),
@@ -196,9 +196,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 1_000,
-            handover:       config::new_handover_instant(),
-            descent:        config::new_descent_skipped(),
-            retire:         config::new_retire_immediate(),
+            handover:       handover_policy::new_handover_instant(),
+            descent:        descent_policy::new_descent_skipped(),
+            retire:         retire_policy::new_retire_immediate(),
             credit_curve:   curve_shape::new_linear(),
             descent_curve:  curve_shape::new_linear(),
             price_function: price_function::new_fixed_delta(1),
@@ -260,7 +260,7 @@ fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
 
 #[test]
 fun getter_roundtrip_r3_handover_instant() {
-    let h   = config::new_handover_instant();
+    let h   = handover_policy::new_handover_instant();
     let cfg = config::new_config(
         V2_MIN_RENT_PRICE, V2_TENURE_CEILING,
         h,
@@ -274,7 +274,7 @@ fun getter_roundtrip_r3_handover_instant() {
 #[test]
 fun getter_roundtrip_r3b_handover_fixed_time() {
     // Companion to R3 covering the upper-saturation variant.
-    let h   = config::new_handover_fixed_time();
+    let h   = handover_policy::new_handover_fixed_time();
     let cfg = config::new_config(
         V2_MIN_RENT_PRICE, V2_TENURE_CEILING,
         h,
@@ -287,7 +287,7 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
 
 #[test]
 fun getter_roundtrip_r4_descent_window_one() {
-    let d   = config::new_descent_window(1);
+    let d   = descent_policy::new_descent_window(1);
     let cfg = config::new_config(
         V2_MIN_RENT_PRICE, V2_TENURE_CEILING, v2_handover(),
         d,
@@ -301,7 +301,7 @@ fun getter_roundtrip_r4_descent_window_one() {
 #[test]
 fun getter_roundtrip_r4b_descent_skipped() {
     // Companion to R4 covering the auction-skipped variant.
-    let d   = config::new_descent_skipped();
+    let d   = descent_policy::new_descent_skipped();
     let cfg = config::new_config(
         V2_MIN_RENT_PRICE, V2_TENURE_CEILING, v2_handover(),
         d,
@@ -314,7 +314,7 @@ fun getter_roundtrip_r4b_descent_skipped() {
 
 #[test]
 fun getter_roundtrip_r5_retire_deferred_max() {
-    let r   = config::new_retire_deferred(18_446_744_073_709_551_615);
+    let r   = retire_policy::new_retire_deferred(18_446_744_073_709_551_615);
     let cfg = config::new_config(
         V2_MIN_RENT_PRICE, V2_TENURE_CEILING, v2_handover(), v2_descent(),
         r,
@@ -393,7 +393,7 @@ fun new_config_rejects_countdown_floor_gt_tenure_ceiling() {
     config::new_config(
         V2_MIN_RENT_PRICE,
         50,
-        config::new_handover_countdown(100),
+        handover_policy::new_handover_countdown(100),
         v2_descent(), v2_retire(),
         curve_shape::new_linear(), curve_shape::new_linear(),
         price_function::new_fixed_delta(1),
@@ -407,7 +407,7 @@ fun new_config_rejects_countdown_floor_tenure_ceiling_plus_one() {
     config::new_config(
         V2_MIN_RENT_PRICE,
         1_000,
-        config::new_handover_countdown(1_001),
+        handover_policy::new_handover_countdown(1_001),
         v2_descent(), v2_retire(),
         curve_shape::new_linear(), curve_shape::new_linear(),
         price_function::new_fixed_delta(1),
@@ -421,7 +421,7 @@ fun new_config_rejects_countdown_floor_u64_max_tenure_ceiling_max_minus_one() {
     config::new_config(
         V2_MIN_RENT_PRICE,
         18_446_744_073_709_551_614, // u64::MAX - 1
-        config::new_handover_countdown(18_446_744_073_709_551_615), // u64::MAX
+        handover_policy::new_handover_countdown(18_446_744_073_709_551_615), // u64::MAX
         v2_descent(), v2_retire(),
         curve_shape::new_linear(), curve_shape::new_linear(),
         price_function::new_fixed_delta(1),
@@ -437,32 +437,11 @@ fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
     config::new_config(
         V2_MIN_RENT_PRICE,
         1_000,
-        config::new_handover_countdown(1_000),
+        handover_policy::new_handover_countdown(1_000),
         v2_descent(), v2_retire(),
         curve_shape::new_linear(), curve_shape::new_linear(),
         price_function::new_fixed_delta(1),
     );
-}
-
-#[test]
-#[expected_failure(abort_code = config::EHandoverFloorZero, location = usufruct::config)]
-fun new_handover_countdown_rejects_zero() {
-    // I7: Countdown(0) is not allowed; the zero-countdown mode is Instant.
-    config::new_handover_countdown(0);
-}
-
-#[test]
-#[expected_failure(abort_code = config::EDescentCeilingZero, location = usufruct::config)]
-fun new_descent_window_rejects_zero() {
-    // I8: Window(0) is not allowed; the zero-ceiling mode is Skipped.
-    config::new_descent_window(0);
-}
-
-#[test]
-#[expected_failure(abort_code = config::ERetireFloorZero, location = usufruct::config)]
-fun new_retire_deferred_rejects_zero() {
-    // I9: Deferred(0) is not allowed; the zero-floor mode is Immediate.
-    config::new_retire_deferred(0);
 }
 
 // ─── §7.4 — emit_registration event tests ─────────────────────────────────────

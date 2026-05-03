@@ -5,7 +5,6 @@ module usufruct::rental_escrow;
 
 // === Imports ===
 
-use std::u64;
 use sui::{
     balance::{Self, Balance},
     clock::{Self, Clock},
@@ -15,11 +14,15 @@ use sui::{
 use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape,
+    descent_policy,
     fee_message,
+    handover_policy,
     math,
     owner_cap::{Self, OwnerCap},
+    phases,
     price_function,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
+    retire_policy,
     tenant_cap::{Self, TenantCap},
 };
 
@@ -81,12 +84,12 @@ public enum EscrowState<Asset: key + store, phantom CoinType> has store {
         retiring:        bool,
     },
     HandoverConfirmed {
-        asset:                     Option<Asset>,
-        phase_start_ms:            u64,
-        current:                   Tenant<CoinType>,
-        pending:                   Tenant<CoinType>,
-        retiring:                  bool,
-        handover_countdown_expiry: u64,
+        asset:          Option<Asset>,
+        phase_start_ms: u64,
+        current:        Tenant<CoinType>,
+        pending:        Tenant<CoinType>,
+        retiring:       bool,
+        bid_time_ms:    u64,
     },
     Retired {
         asset: Asset,
@@ -269,9 +272,10 @@ public fun retire<Asset: key + store, CoinType>(
     assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     apply_pending_transitions(escrow, clock, ctx);
     assert!(
-        clock::timestamp_ms(clock) >= config::retire_unlock(
-            &escrow.config,
+        retire_policy::is_unlocked(
+            config::retire(&escrow.config),
             escrow.integrated_at_ms,
+            clock::timestamp_ms(clock),
         ),
         ERetireFloorNotElapsed,
     );
@@ -412,20 +416,28 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
         assert!(iterations < MAX_APT_ITERATIONS, EInvariantViolation);
         iterations = iterations + 1;
         keep_going = match (read_state(escrow)) {
-            EscrowState::HandoverConfirmed { handover_countdown_expiry, .. } => {
-                let e = *handover_countdown_expiry;
-                if (now >= e) { do_handover(escrow, e, ctx); true } else false
+            EscrowState::HandoverConfirmed { phase_start_ms, bid_time_ms, .. } => {
+                let policy = config::handover(&escrow.config);
+                let tenure = config::tenure_ceiling(&escrow.config);
+                if (handover_policy::has_expired(policy, *bid_time_ms, *phase_start_ms, tenure, now)) {
+                    let e = handover_policy::expiry_at(policy, *bid_time_ms, *phase_start_ms, tenure);
+                    do_handover(escrow, e, ctx);
+                    true
+                } else false
             },
             EscrowState::HandoverOpen { phase_start_ms, .. } => {
-                let e = config::tenure_boundary(&escrow.config, *phase_start_ms);
-                if (now >= e) { do_tenure_expiry(escrow, e, ctx); true } else false
+                let tenure = config::tenure_ceiling(&escrow.config);
+                if (phases::has_passed(*phase_start_ms, tenure, now)) {
+                    do_tenure_expiry(escrow, phases::boundary_at(*phase_start_ms, tenure), ctx);
+                    true
+                } else false
             },
             EscrowState::AtDutchAuction { phase_start_ms, .. } => {
-                let e = config::descent_boundary(
-                    &escrow.config,
-                    *phase_start_ms,
-                );
-                if (now >= e) { do_auction_expiry(escrow, e); true } else false
+                let policy = config::descent(&escrow.config);
+                if (descent_policy::has_expired(policy, *phase_start_ms, now)) {
+                    do_auction_expiry(escrow, descent_policy::expiry_at(policy, *phase_start_ms));
+                    true
+                } else false
             },
             EscrowState::Idle { .. } | EscrowState::Retired { .. } => false,
         };
@@ -443,15 +455,20 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
         EscrowState::HandoverOpen { phase_start_ms, current, .. } =>
             (*phase_start_ms, balance::value(&current.stake), timestamp_ms),
         EscrowState::HandoverConfirmed {
-            phase_start_ms, current, handover_countdown_expiry, ..
+            phase_start_ms, current, bid_time_ms, ..
         } => {
-            let eff = u64::min(timestamp_ms, *handover_countdown_expiry);
+            let expiry = handover_policy::expiry_at(
+                config::handover(&escrow.config),
+                *bid_time_ms,
+                *phase_start_ms,
+                config::tenure_ceiling(&escrow.config),
+            );
+            let eff = phases::earliest(timestamp_ms, expiry);
             (*phase_start_ms, balance::value(&current.stake), eff)
         },
         _ => abort ENotRented,
     };
-    if (effective_ts < phase_start_ms) return 0;
-    let elapsed = effective_ts - phase_start_ms;
+    let elapsed = phases::elapsed_since(phase_start_ms, effective_ts);
     let g = curve_shape::evaluate_curve(
         config::credit_curve(&escrow.config),
         elapsed,
@@ -501,12 +518,11 @@ fun compute_price_descent<Asset: key + store, CoinType>(
             (*phase_start_ms, *last_acquisition_price),
         _ => abort EInvariantViolation,
     };
-    if (timestamp_ms < phase_start_ms) return last_acquisition_price;
-    let elapsed_ms = timestamp_ms - phase_start_ms;
+    let elapsed_ms = phases::elapsed_since(phase_start_ms, timestamp_ms);
     let h = curve_shape::evaluate_curve(
         config::descent_curve(&escrow.config),
         elapsed_ms,
-        config::descent_window_ceiling(&escrow.config),
+        descent_policy::window_ceiling(config::descent(&escrow.config)),
     );
     let spread   = last_acquisition_price - config::min_rent_price(&escrow.config);
     let consumed = math::mul_div(spread, h, curve_shape::scale());
@@ -679,18 +695,19 @@ fun do_place_bid<Asset: key + store, CoinType>(
         EscrowState::HandoverConfirmed { asset: _a, current: _c, pending: _p, .. }              => abort EInvariantViolation,
         EscrowState::Retired           { asset: _a }                                            => abort EInvariantViolation,
     };
-    let handover_countdown_expiry = config::handover_expiry(
-        &escrow.config,
-        now,
-        phase_start_ms,
-    );
     let (cap, pending) = register_pending_bid(escrow_id, payment, pending_tenant, ctx);
     let pending_cap_id = object::id(&cap);
     let bid_amount     = balance::value(&pending.stake);
+    let handover_countdown_expiry = handover_policy::expiry_at(
+        config::handover(&escrow.config),
+        now,
+        phase_start_ms,
+        config::tenure_ceiling(&escrow.config),
+    );
     put_state(escrow, EscrowState::HandoverConfirmed {
         asset, phase_start_ms, current, pending,
         retiring,
-        handover_countdown_expiry,
+        bid_time_ms: now,
     }, receipt);
     event::emit(BidPlaced {
         escrow_id,
@@ -712,11 +729,11 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let escrow_id  = object::id(escrow);
     let new_bidder = ctx.sender();
     let (old, receipt) = take_state(escrow);
-    let (asset, phase_start_ms, current, displaced, retiring, handover_countdown_expiry) = match (old) {
+    let (asset, phase_start_ms, current, displaced, retiring, bid_time_ms) = match (old) {
         EscrowState::HandoverConfirmed {
             asset, phase_start_ms, current, pending: displaced,
-            retiring, handover_countdown_expiry,
-        } => (asset, phase_start_ms, current, displaced, retiring, handover_countdown_expiry),
+            retiring, bid_time_ms,
+        } => (asset, phase_start_ms, current, displaced, retiring, bid_time_ms),
         EscrowState::Idle           { asset: _a }                          => abort EInvariantViolation,
         EscrowState::AtDutchAuction { asset: _a, .. }                      => abort EInvariantViolation,
         EscrowState::HandoverOpen   { asset: _a, current: _c, .. }         => abort EInvariantViolation,
@@ -736,7 +753,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         asset, phase_start_ms, current,
         pending: new_pending,
         retiring,
-        handover_countdown_expiry,
+        bid_time_ms,
     }, receipt);
     event::emit(BidSuperseded {
         escrow_id,
@@ -787,13 +804,13 @@ fun do_set_retiring_flag<Asset: key + store, CoinType>(
             (new, EscrowStateTag::HandoverOpen)
         },
         EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
+            asset, phase_start_ms, current, pending, retiring, bid_time_ms,
         } => {
             assert!(!retiring, EAlreadyRetired);
             let new = EscrowState::HandoverConfirmed {
                 asset, phase_start_ms, current, pending,
                 retiring: true,
-                handover_countdown_expiry,
+                bid_time_ms,
             };
             (new, EscrowStateTag::HandoverConfirmed)
         },
@@ -823,7 +840,7 @@ fun do_extract_asset<Asset: key + store, CoinType>(
             (extracted, new)
         },
         EscrowState::HandoverConfirmed {
-            asset, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
+            asset, phase_start_ms, current, pending, retiring, bid_time_ms,
         } => {
             assert!(cap_id != pending.cap_id, EPendingTenantCap);
             assert!(cap_id == current.cap_id, EStaleTenantCap);
@@ -832,7 +849,7 @@ fun do_extract_asset<Asset: key + store, CoinType>(
             let extracted = option::extract(&mut asset_opt);
             let new = EscrowState::HandoverConfirmed {
                 asset: asset_opt, phase_start_ms, current, pending, retiring,
-                handover_countdown_expiry,
+                bid_time_ms,
             };
             (extracted, new)
         },
@@ -861,7 +878,7 @@ fun do_fill_asset<Asset: key + store, CoinType>(
             (new, cap_id)
         },
         EscrowState::HandoverConfirmed {
-            asset: asset_slot, phase_start_ms, current, pending, retiring, handover_countdown_expiry,
+            asset: asset_slot, phase_start_ms, current, pending, retiring, bid_time_ms,
         } => {
             let cap_id = current.cap_id;
             let mut slot = asset_slot;
@@ -869,7 +886,7 @@ fun do_fill_asset<Asset: key + store, CoinType>(
             option::fill(&mut slot, asset);
             let new = EscrowState::HandoverConfirmed {
                 asset: slot, phase_start_ms, current, pending, retiring,
-                handover_countdown_expiry,
+                bid_time_ms,
             };
             (new, cap_id)
         },
@@ -908,7 +925,7 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
     let (next, payer, remain_credit) = match (old) {
         EscrowState::HandoverConfirmed {
             asset, phase_start_ms, current, pending,
-            retiring, handover_countdown_expiry,
+            retiring, bid_time_ms,
         } => {
             let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
             let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
@@ -916,7 +933,7 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
 
             let next = EscrowState::HandoverConfirmed {
                 asset, phase_start_ms, current: zero_current, pending,
-                retiring, handover_countdown_expiry,
+                retiring, bid_time_ms,
             };
             (next, payer, remain_credit)
         },
@@ -947,7 +964,7 @@ fun do_rotate_for_handover<Asset: key + store, CoinType>(
     let (next, new_cap_id, new_rent_price) = match (old) {
         EscrowState::HandoverConfirmed {
             asset, phase_start_ms: _, current, pending,
-            retiring, handover_countdown_expiry: _,
+            retiring, bid_time_ms: _,
         } => {
             let Tenant { cap_id: _, address: _, stake: zero_stake } = current;
             assert!(balance::value(&zero_stake) == 0, EInvariantViolation);

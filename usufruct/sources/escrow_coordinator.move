@@ -14,7 +14,7 @@ use usufruct::{
     asset::{Self, AssetReceipt},
     asset_state,
     config::{Self, IntegrationConfig},
-    curve_shape,
+    credit_state,
     descent_policy,
     fee_message,
     handover_policy,
@@ -23,7 +23,7 @@ use usufruct::{
     owner::{Self, Owner},
     owner_cap::{Self, OwnerCap},
     phases,
-    price_function,
+    price_state,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     refund_state,
     retire_policy,
@@ -624,57 +624,57 @@ public fun is_tag_retired(t: &EscrowStateTag): bool {
 /// `phase_start_ms`, evaluated at `timestamp_ms`. Defined only while
 /// the lifecycle is `Rented` — aborts otherwise (`ENotRented`).
 ///
-/// In `HandoverConfirmed`, the effective time is clamped at the
-/// handover-countdown expiry (the absolute timestamp at which the
-/// pending bid auto-wins). The clamp prevents credit from accruing
-/// past the auto-handover boundary even if the call happens later.
+/// Derives the credit regime from the lifecycle's tenant slot:
+/// HandoverConfirmed → `Capped` (effective time saturates at the
+/// pre-stamped countdown expiry); HandoverOpen → `Accruing` (no cap).
+/// All curve-and-arithmetic logic lives inside `credit_state::used_credit`.
 public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow:       &EscrowCoordinator<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
     let s = read_state(escrow);
     assert!(lifecycle_state::is_rented(s), ENotRented);
+    let stake          = lifecycle_state::current_stake_value(s);
     let phase_start_ms = lifecycle_state::phase_start_ms(s);
-    let principal      = lifecycle_state::current_stake_value(s);
-    let effective_ts = if (lifecycle_state::is_t_state_demand(s)) {
-        let expiry = lifecycle_state::handover_countdown_expiry_ms(s);
-        phases::earliest(timestamp_ms, expiry)
+    let cs = if (lifecycle_state::is_t_state_demand(s)) {
+        credit_state::capped(stake, phase_start_ms, lifecycle_state::handover_countdown_expiry_ms(s))
     } else {
-        timestamp_ms
+        credit_state::accruing(stake, phase_start_ms)
     };
-    let elapsed = phases::elapsed_since(phase_start_ms, effective_ts);
-    let g = curve_shape::evaluate_curve(
-        config::credit_curve(&escrow.config),
-        elapsed,
-        config::tenure_ceiling(&escrow.config),
-    );
-    math::mul_div(principal, g, curve_shape::scale())
+    credit_state::used_credit(&cs, &escrow.config, timestamp_ms)
 }
 
 /// Minimum acceptable payment to win the rent for the next bidder,
-/// evaluated at `timestamp_ms`. Routes by `state_tag`:
-///   - `Idle`              → `config::min_rent_price`
-///   - `HandoverOpen`      → next price escalated from current's stake
-///   - `HandoverConfirmed` → next price escalated from pending's stake
-///   - `AtDutchAuction`    → descending price along the descent curve
-///   - `Retired`           → aborts `ERetiredNoBid` (terminal state)
+/// evaluated at `timestamp_ms`. Derives the pricing regime from the
+/// lifecycle's asset slot:
+///   - `Idle`              → `Rest`       (min_rent_price)
+///   - `HandoverOpen`      → `Ascending`  over current's stake
+///   - `HandoverConfirmed` → `Ascending`  over pending's stake
+///   - `AtDutchAuction`    → `Descending` from last_acq_price
+///   - `Retired`           → aborts `ERetiredNoBid` (no pricing regime)
+///
+/// All pricing arithmetic lives inside `price_state::floor_price`.
 public fun compute_floor_price<Asset: key + store, CoinType>(
     escrow:       &EscrowCoordinator<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
     let s = read_state(escrow);
-    if (lifecycle_state::is_a_state_idle(s)) {
-        config::min_rent_price(&escrow.config)
+    let ps = if (lifecycle_state::is_a_state_idle(s)) {
+        price_state::rest()
     } else if (lifecycle_state::is_a_state_handover_open(s)) {
-        compute_next_rent_price(&escrow.config, lifecycle_state::current_stake_value(s))
+        price_state::ascending(lifecycle_state::current_stake_value(s))
     } else if (lifecycle_state::is_a_state_handover_confirmed(s)) {
-        compute_next_rent_price(&escrow.config, lifecycle_state::pending_stake_value(s))
+        price_state::ascending(lifecycle_state::pending_stake_value(s))
     } else if (lifecycle_state::is_a_state_at_dutch(s)) {
-        compute_price_descent(escrow, timestamp_ms)
+        price_state::descending(
+            lifecycle_state::last_acq_price_of_at_dutch(s),
+            lifecycle_state::phase_start_ms(s),
+        )
     } else {
         // is_a_state_retired
         abort ERetiredNoBid
-    }
+    };
+    price_state::floor_price(&ps, &escrow.config, timestamp_ms)
 }
 
 // === Admin Functions ===
@@ -740,37 +740,6 @@ fun split_fee(amount: u64): (u64, u64) {
     let fee   = math::mul_div(amount, PROTOCOL_FEE_BPS, BPS_PER_UNIT);
     let owner = amount - fee;
     (owner, fee)
-}
-
-/// Dutch-auction price descent. Reads the AtDutch slot's anchor
-/// (`last_acquisition_price`) and start-time from `lifecycle_state`,
-/// evaluates the descent curve at `elapsed = now - phase_start_ms`,
-/// and subtracts the consumed fraction of the spread above
-/// `min_rent_price`. Aborts via the lifecycle-state accessor if the
-/// inner asset state is not AtDutch.
-fun compute_price_descent<Asset: key + store, CoinType>(
-    escrow:       &EscrowCoordinator<Asset, CoinType>,
-    timestamp_ms: u64,
-): u64 {
-    let s                      = read_state(escrow);
-    let phase_start_ms         = lifecycle_state::phase_start_ms(s);
-    let last_acquisition_price = lifecycle_state::last_acq_price_of_at_dutch(s);
-    let elapsed_ms             = phases::elapsed_since(phase_start_ms, timestamp_ms);
-    let h = curve_shape::evaluate_curve(
-        config::descent_curve(&escrow.config),
-        elapsed_ms,
-        descent_policy::window_ceiling(config::descent(&escrow.config)),
-    );
-    let spread   = last_acquisition_price - config::min_rent_price(&escrow.config);
-    let consumed = math::mul_div(spread, h, curve_shape::scale());
-    last_acquisition_price - consumed
-}
-
-/// Escalate `price` via the integration's `PriceFunction`. Constructor
-/// guarantees the result strictly increases (`delta > 0` for both
-/// FixedDelta and CompoundDelta variants).
-fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64): u64 {
-    price_function::evaluate_price_fn(config::price_function(cfg), price)
 }
 
 // ─── do_* dispatch (rent path) ───────────────────────────────────────────────
@@ -944,9 +913,10 @@ fun do_handover<Asset: key + store, CoinType>(
     };
 
     let new_tenant_cap_id = lifecycle_state::current_cap_id(read_state(escrow));
-    let new_rent_price = compute_next_rent_price(
-        &escrow.config, lifecycle_state::current_stake_value(read_state(escrow)),
-    );
+    // Post-handover state is HandoverOpen → compute_floor_price
+    // returns Ascending(current_stake_value); timestamp irrelevant
+    // for that regime.
+    let new_rent_price = compute_floor_price(escrow, boundary_ms);
 
     event::emit(HandoverCompleted {
         escrow_id,

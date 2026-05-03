@@ -7,12 +7,14 @@ module usufruct::escrow_coordinator;
 
 use sui::{
     clock::{Self, Clock},
+    coin::{Self, Coin},
     event,
 };
 use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape,
     descent_policy,
+    handover_policy,
     lifecycle_state::{Self, LifecycleState},
     math,
     owner::{Self, Owner},
@@ -20,6 +22,9 @@ use usufruct::{
     phases,
     price_function,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
+    refund_state,
+    tenant::{Self, Tenant},
+    tenant_cap::{Self, TenantCap},
 };
 
 // === Errors ===
@@ -236,6 +241,54 @@ public fun integrate<Asset: key + store, CoinType>(
     owner_cap
 }
 
+/// Single entry point to become tenant or place a bid. Calls
+/// `apply_pending_transitions` first (stub in this commit; real APT
+/// in the upcoming wave), then dispatches by `state_tag`:
+///   Idle | AtDutchAuction → install (start_rent)
+///   HandoverOpen          → place bid
+///   HandoverConfirmed     → supersede pending bid
+///   Retired               → unreachable (compute_floor_price aborts
+///                           with ERetiredNoBid before dispatch)
+///
+/// Returns the freshly minted `TenantCap`. Caller is responsible for
+/// transferring it to the bidder's wallet (typical PTB usage:
+/// `transfer::public_transfer(cap, ctx.sender())`).
+public fun rent<Asset: key + store, CoinType>(
+    escrow:  &mut EscrowCoordinator<Asset, CoinType>,
+    payment: Coin<CoinType>,
+    clock:   &Clock,
+    ctx:     &mut TxContext,
+): TenantCap {
+    apply_pending_transitions(escrow, clock, ctx);
+    let now   = clock::timestamp_ms(clock);
+    let floor = compute_floor_price(escrow, now);
+    assert!(coin::value(&payment) >= floor, EInsufficientPayment);
+
+    let tag = state_tag(escrow);
+    if (is_tag_idle(&tag) || is_tag_at_dutch_auction(&tag)) {
+        do_install_new_tenant(escrow, payment, floor, now, ctx)
+    } else if (is_tag_handover_open(&tag)) {
+        do_place_bid(escrow, payment, floor, now, ctx)
+    } else if (is_tag_handover_confirmed(&tag)) {
+        do_supersede_bid(escrow, payment, floor, ctx)
+    } else {
+        // Retired — unreachable: compute_floor_price aborted earlier.
+        abort EInvariantViolation
+    }
+}
+
+/// Permissionless settler. Drives every elapsed lazy transition
+/// before any other operation observes the state. Stub in this commit
+/// — the real 3-check loop (handover countdown, tenure, auction)
+/// lands in C6 (Phase 6 of the implementation plan).
+public fun apply_pending_transitions<Asset: key + store, CoinType>(
+    escrow: &mut EscrowCoordinator<Asset, CoinType>,
+    _clock: &Clock,
+    _ctx:   &mut TxContext,
+): EscrowStateTag {
+    state_tag(escrow)
+}
+
 // === View Functions ===
 
 /// Project the inner lifecycle to the public 5-variant tag. Pure read
@@ -427,6 +480,135 @@ fun compute_next_rent_price(cfg: &IntegrationConfig, price: u64): u64 {
     price_function::evaluate_price_fn(config::price_function(cfg), price)
 }
 
+// ─── do_* dispatch (rent path) ───────────────────────────────────────────────
+// Each consumes the payment, mints a fresh TenantCap, threads the
+// resulting `Tenant<C>` through `lifecycle_state`, and emits the
+// corresponding boundary event.
+
+/// Idle | AtDutchAuction → Rented{HandoverOpen}. Records the
+/// `from_state` tag in `RentStarted` so off-chain observers can
+/// distinguish a fresh rental (Idle) from an auction-rescue (AtDutch).
+fun do_install_new_tenant<Asset: key + store, CoinType>(
+    escrow:  &mut EscrowCoordinator<Asset, CoinType>,
+    payment: Coin<CoinType>,
+    floor:   u64,
+    now:     u64,
+    ctx:     &mut TxContext,
+): TenantCap {
+    let escrow_id    = object::id(escrow);
+    let price_paid   = coin::value(&payment);
+    let from_state   = state_tag(escrow);
+    let tenant_addr  = ctx.sender();
+
+    let (cap, cap_id) = tenant_cap::new(escrow_id, tenant_addr, ctx);
+    let t = tenant::new<CoinType>(cap_id, tenant_addr, coin::into_balance(payment));
+
+    let (s, receipt) = take_state(escrow);
+    let new_s = lifecycle_state::start_rent<Asset, CoinType>(s, t, now, escrow_id);
+    put_state(escrow, new_s, receipt);
+
+    event::emit(RentStarted {
+        escrow_id,
+        tenant_cap_id: cap_id,
+        price_paid,
+        floor_price: floor,
+        from_state,
+    });
+    cap
+}
+
+/// Rented{HandoverOpen} → Rented{HandoverConfirmed}. Computes and
+/// stamps the handover-countdown expiry into TenantState::Demand
+/// once at bid time; APT and `compute_used_credit` later read it
+/// directly without re-deriving via `handover_policy::expiry_at`.
+fun do_place_bid<Asset: key + store, CoinType>(
+    escrow:  &mut EscrowCoordinator<Asset, CoinType>,
+    payment: Coin<CoinType>,
+    floor:   u64,
+    now:     u64,
+    ctx:     &mut TxContext,
+): TenantCap {
+    let s = read_state(escrow);
+    assert!(!lifecycle_state::is_retiring(s), ERetireFlagBlocksBid);
+    let phase_start = lifecycle_state::phase_start_ms(s);
+    let tenure      = config::tenure_ceiling(&escrow.config);
+    let expiry      = handover_policy::expiry_at(
+        config::handover(&escrow.config),
+        now,
+        phase_start,
+        tenure,
+    );
+
+    let escrow_id    = object::id(escrow);
+    let pending_addr = ctx.sender();
+    let bid_amount   = coin::value(&payment);
+
+    let (cap, cap_id) = tenant_cap::new(escrow_id, pending_addr, ctx);
+    let t = tenant::new<CoinType>(cap_id, pending_addr, coin::into_balance(payment));
+
+    let (st, receipt) = take_state(escrow);
+    let new_st = lifecycle_state::place_bid<Asset, CoinType>(st, t, expiry);
+    put_state(escrow, new_st, receipt);
+
+    event::emit(BidPlaced {
+        escrow_id,
+        tenant_cap_id: cap_id,
+        pending_tenant: pending_addr,
+        bid_amount,
+        floor_price: floor,
+        handover_countdown_expiry: expiry,
+    });
+    cap
+}
+
+/// Rented{HandoverConfirmed} → Rented{HandoverConfirmed} with the
+/// pending slot replaced. The displaced tenant's full stake is
+/// refunded to its registered address via `tenant::liquidate` (no
+/// owner share, no fee — `RefundState::Total`). The
+/// handover-countdown expiry is **preserved**, not reset: the current
+/// tenant's protection period started when the first bid landed, and
+/// supersede only swaps the bidder.
+fun do_supersede_bid<Asset: key + store, CoinType>(
+    escrow:  &mut EscrowCoordinator<Asset, CoinType>,
+    payment: Coin<CoinType>,
+    floor:   u64,
+    ctx:     &mut TxContext,
+): TenantCap {
+    let s = read_state(escrow);
+    let displaced_cap_id = lifecycle_state::pending_cap_id(s);
+    let displaced_addr   = lifecycle_state::pending_addr(s);
+    let existing_expiry  = lifecycle_state::handover_countdown_expiry_ms(s);
+
+    let escrow_id      = object::id(escrow);
+    let new_bidder     = ctx.sender();
+    let new_bid_amount = coin::value(&payment);
+
+    let (cap, cap_id) = tenant_cap::new(escrow_id, new_bidder, ctx);
+    let t = tenant::new<CoinType>(cap_id, new_bidder, coin::into_balance(payment));
+
+    let (st, receipt) = take_state(escrow);
+    let (new_st, refund) = lifecycle_state::supersede_bid<Asset, CoinType>(st, t, existing_expiry);
+    put_state(escrow, new_st, receipt);
+
+    // supersede_bid only ever produces Total — Nothing/Parcial appear
+    // at handover/tenure boundaries (Phase 4). consume_total aborts if
+    // it ever sees another variant.
+    let (_identity, stake) = refund_state::consume_total(refund);
+    let refunded_amount = tenant::stake_value_of(&stake);
+    tenant::liquidate(stake, displaced_addr, ctx);
+    event::emit(BidSuperseded {
+        escrow_id,
+        displaced_tenant_cap_id: displaced_cap_id,
+        new_tenant_cap_id: cap_id,
+        displaced_bidder: displaced_addr,
+        refunded_amount,
+        new_bidder,
+        new_bid_amount,
+        floor_price: floor,
+    });
+    cap
+}
+
 // === Test Functions ===
 
 #[test_only]
@@ -452,6 +634,50 @@ public(package) fun take_put_no_op_for_testing<Asset: key + store, CoinType>(
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
     split_fee(amount)
 }
+
+// ─── Event field accessors (test-only) ───────────────────────────────────────
+// Move struct fields are private to the defining module; tests
+// observe events via these accessors. Production callers read events
+// off-chain through Sui's event indexing.
+
+#[test_only]
+public(package) fun rent_started_escrow_id(e: &RentStarted): ID                  { e.escrow_id }
+#[test_only]
+public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID              { e.tenant_cap_id }
+#[test_only]
+public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
+#[test_only]
+public(package) fun rent_started_floor_price(e: &RentStarted): u64               { e.floor_price }
+#[test_only]
+public(package) fun rent_started_from_state(e: &RentStarted): EscrowStateTag     { e.from_state }
+
+#[test_only]
+public(package) fun bid_placed_escrow_id(e: &BidPlaced): ID                      { e.escrow_id }
+#[test_only]
+public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
+#[test_only]
+public(package) fun bid_placed_pending_tenant(e: &BidPlaced): address            { e.pending_tenant }
+#[test_only]
+public(package) fun bid_placed_bid_amount(e: &BidPlaced): u64                    { e.bid_amount }
+#[test_only]
+public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                   { e.floor_price }
+#[test_only]
+public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64     { e.handover_countdown_expiry }
+
+#[test_only]
+public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID              { e.escrow_id }
+#[test_only]
+public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID       { e.displaced_tenant_cap_id }
+#[test_only]
+public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID             { e.new_tenant_cap_id }
+#[test_only]
+public(package) fun bid_superseded_displaced_bidder(e: &BidSuperseded): address  { e.displaced_bidder }
+#[test_only]
+public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64       { e.refunded_amount }
+#[test_only]
+public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address        { e.new_bidder }
+#[test_only]
+public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64        { e.new_bid_amount }
 
 // ─── Drive helpers for test-only state composition ───────────────────────────
 // Bypass `rent`/`retire` (not yet implemented) by chaining
@@ -511,5 +737,16 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
 ) {
     let (s, receipt) = take_state(escrow);
     let new_s        = lifecycle_state::retire_now(s);
+    put_state(escrow, new_s, receipt);
+}
+
+/// Lift the `retiring` flag while staying in Rented. C5 supersedes
+/// this with `do_set_retiring_flag` reachable through `retire`.
+#[test_only]
+public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinType>(
+    escrow: &mut EscrowCoordinator<Asset, CoinType>,
+) {
+    let (s, receipt) = take_state(escrow);
+    let new_s        = lifecycle_state::set_retiring(s);
     put_state(escrow, new_s, receipt);
 }

@@ -94,6 +94,29 @@ public(package) fun total<C>(
     RefundState::Total { identity, stake }
 }
 
+/// Sentinel for caller-contract violations on `consume_*` paths:
+/// a refund variant other than the requested one was passed in.
+/// The hot-potato structure already prevents accidental drops; this
+/// constant only fires under a programming bug.
+const EWrongVariant: u64 = 0xDEADC0DE;
+
+/// Consume a `Total` refund and surface its components. Aborts via
+/// `EWrongVariant` if the supplied refund is not `Total` —
+/// `supersede_bid` is the only producer of this shape, and
+/// `escrow_coordinator::do_supersede_bid` is the only consumer site.
+/// Move 2024 restricts variant pattern matching to the defining
+/// module, so callers route through this function rather than
+/// matching directly.
+public(package) fun consume_total<C>(rs: RefundState<C>): (TenantIdentity, TenantStake<C>) {
+    match (rs) {
+        RefundState::Total   { identity, stake } => (identity, stake),
+        RefundState::Nothing { identity: _, fee_share: _fs, owner_earnings: _oe } =>
+            abort EWrongVariant,
+        RefundState::Parcial { identity: _, stake: _stk, fee_share: _fs, owner_earnings: _oe } =>
+            abort EWrongVariant,
+    }
+}
+
 // === Private Functions ===
 
 // === Test Functions ===

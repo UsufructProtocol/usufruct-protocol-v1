@@ -7,16 +7,19 @@ module usufruct::escrow_coordinator_tests;
 use std::unit_test::assert_eq;
 use sui::{
     balance,
-    clock,
+    clock::{Self, Clock},
+    coin::{Self, Coin},
+    event,
     sui::SUI,
-    test_scenario,
+    test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    escrow_coordinator::{Self, EscrowCoordinator},
+    escrow_coordinator::{Self, EscrowCoordinator, RentStarted, BidPlaced, BidSuperseded},
     escrow_corpus,
     owner_cap,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     tenant::{Self, Tenant},
+    tenant_cap::TenantCap,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -62,6 +65,10 @@ fun cap_id_2(): ID { object::id_from_address(@0xCA2) }
 
 fun mk_tenant(stake: u64, addr: address, cap: ID): Tenant<SUI> {
     tenant::new(cap, addr, balance::create_for_testing<SUI>(stake))
+}
+
+fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {
+    coin::from_balance(balance::create_for_testing<SUI>(amount), ctx)
 }
 
 /// Integrate, share, then take the shared escrow back. Returns the
@@ -526,3 +533,242 @@ fun used_credit_aborts_on_retired() {
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
+
+// ─── §7. rent — dispatch to do_install_new_tenant ────────────────────────────
+
+/// Idle → HandoverOpen via rent. Verifies state_tag transitions and
+/// RentStarted carries from_state=Idle.
+#[test]
+fun rent_from_idle_installs_new_tenant() {
+    let mut sc = setup();
+    let cfg     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let floor = escrow_corpus::min_rent_price_const();
+    let payment = mk_payment(floor, sc.ctx());
+    let t_cap = escrow_coordinator::rent(&mut escrow, payment, &clk, sc.ctx());
+
+    // Post-condition: state is HandoverOpen.
+    let tag = escrow_coordinator::state_tag(&escrow);
+    assert!(escrow_coordinator::is_tag_handover_open(&tag), 0);
+
+    // Event check: exactly one RentStarted with from_state=Idle and
+    // tenant_cap_id matching the returned cap.
+    let started = event::events_by_type<RentStarted>();
+    assert_eq!(started.length(), 1);
+    let from = escrow_coordinator::rent_started_from_state(&started[0]);
+    assert!(escrow_coordinator::is_tag_idle(&from), 1);
+    assert_eq!(escrow_coordinator::rent_started_tenant_cap_id(&started[0]), object::id(&t_cap));
+    assert_eq!(escrow_coordinator::rent_started_price_paid(&started[0]), floor);
+
+    transfer::public_transfer(t_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// AtDutch → HandoverOpen via rent. RentStarted.from_state = AtDutchAuction.
+#[test]
+fun rent_from_at_dutch_installs_new_tenant() {
+    let mut sc = setup();
+    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));  // h=1 for non-zero descent window
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // Drive to AtDutch via test-only helpers.
+    escrow_coordinator::drive_to_rented_for_testing(
+        &mut escrow,
+        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        0,
+    );
+    let last_acq = escrow_corpus::min_rent_price_const() * 2;
+    escrow_coordinator::drive_to_at_dutch_for_testing(
+        &mut escrow, STAKE_T1, 0, last_acq, escrow_corpus::tenure_ceiling_const(),
+    );
+
+    // The descent floor at full descent equals min_rent_price.
+    let now   = escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const();
+    clock::set_for_testing(&mut clk, now);
+    let floor = escrow_coordinator::compute_floor_price(&escrow, now);
+
+    let payment = mk_payment(floor, sc.ctx());
+    let t_cap = escrow_coordinator::rent(&mut escrow, payment, &clk, sc.ctx());
+
+    let tag = escrow_coordinator::state_tag(&escrow);
+    assert!(escrow_coordinator::is_tag_handover_open(&tag), 0);
+
+    let started = event::events_by_type<RentStarted>();
+    assert_eq!(started.length(), 1);
+    let from = escrow_coordinator::rent_started_from_state(&started[0]);
+    assert!(escrow_coordinator::is_tag_at_dutch_auction(&from), 1);
+
+    transfer::public_transfer(t_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §8. rent — dispatch to do_place_bid ─────────────────────────────────────
+
+/// HandoverOpen → HandoverConfirmed via rent. BidPlaced carries
+/// the pre-computed handover_countdown_expiry. Sweeps the C axis
+/// (HandoverPolicy) since handover_policy::expiry_at depends on it.
+#[test]
+fun rent_from_handover_open_places_bid() {
+    let mut sc = setup();
+    let mut c: u8 = 0;
+    while (c <= 2) {
+        let tag_cfg = escrow_corpus::tag(c, 0, 0, 0, 0);
+        let cfg     = escrow_corpus::by_tag(tag_cfg);
+        let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+        let mut clk = clock::create_for_testing(sc.ctx());
+
+        // First rent: Idle → HandoverOpen.
+        let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+        let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+        // Second rent: HandoverOpen → HandoverConfirmed.
+        let now2 = 5_000;
+        clock::set_for_testing(&mut clk, now2);
+        let floor2 = escrow_coordinator::compute_floor_price(&escrow, now2);
+        let p2 = mk_payment(floor2, sc.ctx());
+        let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
+
+        let tag = escrow_coordinator::state_tag(&escrow);
+        assert!(escrow_coordinator::is_tag_handover_confirmed(&tag), tag_cfg);
+
+        // Verify a BidPlaced event was emitted with cap_t2.
+        let placed = event::events_by_type<BidPlaced>();
+        assert!(placed.length() == 1, tag_cfg);
+        assert_eq!(escrow_coordinator::bid_placed_tenant_cap_id(&placed[0]), object::id(&cap_t2));
+        // The expiry was stamped — its specific value depends on c
+        // (Instant: now+0 = now2; Countdown: min(now2+25_000, phase_start+ceiling);
+        // FixedTime: phase_start+ceiling). Property: expiry > 0.
+        assert!(escrow_coordinator::bid_placed_handover_countdown_expiry(&placed[0]) > 0, tag_cfg);
+
+        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t2, OWNER);
+        test_scenario::return_shared(escrow);
+        owner_cap::burn(owner_cap, OWNER);
+        clock::destroy_for_testing(clk);
+        c = c + 1;
+    };
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::ERetireFlagBlocksBid, location = usufruct::escrow_coordinator)]
+fun rent_from_handover_open_aborts_when_retiring_flag_set() {
+    let mut sc = setup();
+    let cfg     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // First rent: Idle → HandoverOpen.
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    // Lift the retiring flag (real `retire`/`do_set_retiring_flag`
+    // arrive in C5; the drive helper exercises the place_bid guard
+    // in isolation here).
+    escrow_coordinator::drive_to_retiring_flag_for_testing(&mut escrow);
+
+    // Second rent: HandoverOpen + retiring=true → must abort.
+    let p2 = mk_payment(escrow_corpus::min_rent_price_const() * 2, sc.ctx());
+    let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §9. rent — dispatch to do_supersede_bid ─────────────────────────────────
+
+/// HandoverConfirmed → HandoverConfirmed via rent. The displaced
+/// bidder's full stake is refunded (RefundState::Total → liquidate).
+/// State tag is unchanged; pending cap_id is replaced.
+#[test]
+fun rent_from_handover_confirmed_supersedes_bid() {
+    let mut sc = setup();
+    let cfg     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    let p2_amt = escrow_corpus::min_rent_price_const() * 2;
+    let p2 = mk_payment(p2_amt, sc.ctx());
+    let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
+
+    // Third rent supersedes t2.
+    let now3 = 1_000;
+    clock::set_for_testing(&mut clk, now3);
+    let floor3 = escrow_coordinator::compute_floor_price(&escrow, now3);
+    let p3 = mk_payment(floor3, sc.ctx());
+    let cap_t3 = escrow_coordinator::rent(&mut escrow, p3, &clk, sc.ctx());
+
+    let tag = escrow_coordinator::state_tag(&escrow);
+    assert!(escrow_coordinator::is_tag_handover_confirmed(&tag), 0);
+
+    // Verify BidSuperseded carries the displaced bid amount.
+    let superseded = event::events_by_type<BidSuperseded>();
+    assert_eq!(superseded.length(), 1);
+    assert_eq!(escrow_coordinator::bid_superseded_displaced_cap_id(&superseded[0]), object::id(&cap_t2));
+    assert_eq!(escrow_coordinator::bid_superseded_new_cap_id(&superseded[0]), object::id(&cap_t3));
+    assert_eq!(escrow_coordinator::bid_superseded_refunded_amount(&superseded[0]), p2_amt);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §10. rent — abort paths ─────────────────────────────────────────────────
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::EInsufficientPayment, location = usufruct::escrow_coordinator)]
+fun rent_below_floor_aborts() {
+    let mut sc = setup();
+    let cfg     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let payment = mk_payment(escrow_corpus::min_rent_price_const() - 1, sc.ctx());
+    let cap = escrow_coordinator::rent(&mut escrow, payment, &clk, sc.ctx());
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = escrow_coordinator::ERetiredNoBid, location = usufruct::escrow_coordinator)]
+fun rent_from_retired_aborts() {
+    let mut sc = setup();
+    let cfg     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    escrow_coordinator::drive_to_retired_for_testing(&mut escrow);
+
+    let payment = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap = escrow_coordinator::rent(&mut escrow, payment, &clk, sc.ctx());
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+

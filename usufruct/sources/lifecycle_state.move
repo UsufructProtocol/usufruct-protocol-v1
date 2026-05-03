@@ -24,20 +24,20 @@ const EInvariantViolation: u64 = 0xDEADC0DE;
 /// Demand) lives in the sub-states; `LifecycleState` only encodes
 /// the business-level boundary: is there an active tenant or not?
 public enum LifecycleState<Asset: key + store, phantom CoinType> has store {
-    /// No active tenant. `asset` may be Idle, AtDutch (last_acquisition_price
+    /// No active tenant. `a_state` may be Idle, AtDutch (last_acquisition_price
     /// carried inside), or Retired. Earnings gate is closed (StopFlow).
     NotRented {
-        asset:    AssetState<Asset>,
-        tenant:   TenantState<CoinType>,
-        earnings: OwnerState<CoinType>,
+        a_state: AssetState<Asset>,
+        t_state: TenantState<CoinType>,
+        o_state: OwnerState<CoinType>,
     },
-    /// Active tenant. `asset` is HandoverOpen or HandoverConfirmed;
-    /// `tenant` is Occupied or Demand (handover_countdown_expiry
+    /// Active tenant. `a_state` is HandoverOpen or HandoverConfirmed;
+    /// `t_state` is Occupied or Demand (handover_countdown_expiry
     /// carried inside Demand). Earnings gate is open (CashFlow).
     Rented {
-        asset:          AssetState<Asset>,
-        tenant:         TenantState<CoinType>,
-        earnings:       OwnerState<CoinType>,
+        a_state:        AssetState<Asset>,
+        t_state:        TenantState<CoinType>,
+        o_state:        OwnerState<CoinType>,
         phase_start_ms: u64,
         retiring:       bool,
     },
@@ -61,9 +61,9 @@ public(package) fun new<Asset: key + store, CoinType>(
     asset: Asset,
 ): LifecycleState<Asset, CoinType> {
     LifecycleState::NotRented {
-        asset:    asset_state::new(asset),
-        tenant:   tenant_state::absence(),
-        earnings: owner_state::new(),
+        a_state: asset_state::new(asset),
+        t_state: tenant_state::absence(),
+        o_state: owner_state::new(),
     }
 }
 
@@ -77,17 +77,16 @@ public(package) fun start_rent<Asset: key + store, CoinType>(
     phase_start_ms: u64,
 ): LifecycleState<Asset, CoinType> {
     match (s) {
-        LifecycleState::NotRented { asset, tenant, earnings } => {
+        LifecycleState::NotRented { a_state, t_state, o_state } => {
             LifecycleState::Rented {
-                asset:    asset_state::rent(asset),
-                tenant:   tenant_state::occupy(tenant, t),
-                earnings: owner_state::cash_flow(earnings),
+                a_state:  asset_state::rent(a_state),
+                t_state:  tenant_state::occupy(t_state, t),
+                o_state:  owner_state::cash_flow(o_state),
                 phase_start_ms,
                 retiring: false,
             }
         },
-        LifecycleState::Rented { asset: _a, tenant: _t, earnings: _e, phase_start_ms: _, retiring: _ } =>
-            abort EInvariantViolation,
+        LifecycleState::Rented { a_state: _a, t_state: _t, o_state: _o, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
     }
 }
 
@@ -100,20 +99,19 @@ public(package) fun expire_tenure<Asset: key + store, CoinType>(
     last_acq_price: u64,
 ): (LifecycleState<Asset, CoinType>, Tenant<CoinType>) {
     match (s) {
-        LifecycleState::Rented { asset, tenant, earnings, phase_start_ms: _, retiring: _ } => {
-            let (new_tenant, departing) = tenant_state::vacate(tenant);
+        LifecycleState::Rented { a_state, t_state, o_state, phase_start_ms: _, retiring: _ } => {
+            let (new_t_state, departing) = tenant_state::vacate(t_state);
             let (departing, owner_balance) = tenant_state::split(departing, owner_amount);
             (
                 LifecycleState::NotRented {
-                    asset:    asset_state::expire(asset, last_acq_price),
-                    tenant:   new_tenant,
-                    earnings: owner_state::stop_flow(owner_state::deposit(earnings, owner_balance)),
+                    a_state: asset_state::expire(a_state, last_acq_price),
+                    t_state: new_t_state,
+                    o_state: owner_state::stop_flow(owner_state::deposit(o_state, owner_balance)),
                 },
                 departing,
             )
         },
-        LifecycleState::NotRented { asset: _a, tenant: _t, earnings: _e } =>
-            abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t, o_state: _o } => abort EInvariantViolation,
     }
 }
 
@@ -125,15 +123,14 @@ public(package) fun expire_auction<Asset: key + store, CoinType>(
     s: LifecycleState<Asset, CoinType>,
 ): LifecycleState<Asset, CoinType> {
     match (s) {
-        LifecycleState::NotRented { asset, tenant, earnings } => {
+        LifecycleState::NotRented { a_state, t_state, o_state } => {
             LifecycleState::NotRented {
-                asset: asset_state::no_winner(asset),
-                tenant,
-                earnings,
+                a_state: asset_state::no_winner(a_state),
+                t_state,
+                o_state,
             }
         },
-        LifecycleState::Rented { asset: _a, tenant: _t, earnings: _e, phase_start_ms: _, retiring: _ } =>
-            abort EInvariantViolation,
+        LifecycleState::Rented { a_state: _a, t_state: _t, o_state: _o, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
     }
 }
 
@@ -143,15 +140,14 @@ public(package) fun retire_now<Asset: key + store, CoinType>(
     s: LifecycleState<Asset, CoinType>,
 ): LifecycleState<Asset, CoinType> {
     match (s) {
-        LifecycleState::NotRented { asset, tenant, earnings } => {
+        LifecycleState::NotRented { a_state, t_state, o_state } => {
             LifecycleState::NotRented {
-                asset: asset_state::retire(asset),
-                tenant,
-                earnings,
+                a_state: asset_state::retire(a_state),
+                t_state,
+                o_state,
             }
         },
-        LifecycleState::Rented { asset: _a, tenant: _t, earnings: _e, phase_start_ms: _, retiring: _ } =>
-            abort EInvariantViolation,
+        LifecycleState::Rented { a_state: _a, t_state: _t, o_state: _o, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
     }
 }
 
@@ -165,17 +161,16 @@ public(package) fun place_bid<Asset: key + store, CoinType>(
     handover_countdown_expiry: u64,
 ): LifecycleState<Asset, CoinType> {
     match (s) {
-        LifecycleState::Rented { asset, tenant, earnings, phase_start_ms, retiring } => {
+        LifecycleState::Rented { a_state, t_state, o_state, phase_start_ms, retiring } => {
             LifecycleState::Rented {
-                asset:  asset_state::bid(asset),
-                tenant: tenant_state::demand(tenant, t, handover_countdown_expiry),
-                earnings,
+                a_state: asset_state::bid(a_state),
+                t_state: tenant_state::demand(t_state, t, handover_countdown_expiry),
+                o_state,
                 phase_start_ms,
                 retiring,
             }
         },
-        LifecycleState::NotRented { asset: _a, tenant: _t, earnings: _e } =>
-            abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t, o_state: _o } => abort EInvariantViolation,
     }
 }
 
@@ -187,18 +182,20 @@ public(package) fun supersede_bid<Asset: key + store, CoinType>(
     handover_countdown_expiry: u64,
 ): (LifecycleState<Asset, CoinType>, Tenant<CoinType>) {
     match (s) {
-        LifecycleState::Rented { asset, tenant, earnings, phase_start_ms, retiring } => {
-            let (new_tenant, displaced) = tenant_state::redemand(tenant, t, handover_countdown_expiry);
+        LifecycleState::Rented { a_state, t_state, o_state, phase_start_ms, retiring } => {
+            let (new_t_state, displaced) = tenant_state::redemand(t_state, t, handover_countdown_expiry);
             (
                 LifecycleState::Rented {
-                    asset, tenant: new_tenant, earnings,
-                    phase_start_ms, retiring,
+                    a_state,
+                    t_state: new_t_state,
+                    o_state,
+                    phase_start_ms,
+                    retiring,
                 },
                 displaced,
             )
         },
-        LifecycleState::NotRented { asset: _a, tenant: _t, earnings: _e } =>
-            abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t, o_state: _o } => abort EInvariantViolation,
     }
 }
 
@@ -211,22 +208,21 @@ public(package) fun accept_bid<Asset: key + store, CoinType>(
     new_phase_start_ms: u64,
 ): (LifecycleState<Asset, CoinType>, Tenant<CoinType>) {
     match (s) {
-        LifecycleState::Rented { asset, tenant, earnings, phase_start_ms: _, retiring } => {
-            let (new_tenant, departing) = tenant_state::reoccupy(tenant);
+        LifecycleState::Rented { a_state, t_state, o_state, phase_start_ms: _, retiring } => {
+            let (new_t_state, departing) = tenant_state::reoccupy(t_state);
             let (departing, owner_balance) = tenant_state::split(departing, owner_amount);
             (
                 LifecycleState::Rented {
-                    asset:    asset_state::handover(asset),
-                    tenant:   new_tenant,
-                    earnings: owner_state::deposit(earnings, owner_balance),
+                    a_state: asset_state::handover(a_state),
+                    t_state: new_t_state,
+                    o_state: owner_state::deposit(o_state, owner_balance),
                     phase_start_ms: new_phase_start_ms,
                     retiring,
                 },
                 departing,
             )
         },
-        LifecycleState::NotRented { asset: _a, tenant: _t, earnings: _e } =>
-            abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t, o_state: _o } => abort EInvariantViolation,
     }
 }
 
@@ -238,9 +234,8 @@ public(package) fun decompose_retired<Asset: key + store, CoinType>(
     s: LifecycleState<Asset, CoinType>,
 ): (AssetState<Asset>, TenantState<CoinType>, OwnerState<CoinType>) {
     match (s) {
-        LifecycleState::NotRented { asset, tenant, earnings } => (asset, tenant, earnings),
-        LifecycleState::Rented { asset: _a, tenant: _t, earnings: _e, phase_start_ms: _, retiring: _ } =>
-            abort EInvariantViolation,
+        LifecycleState::NotRented { a_state, t_state, o_state } => (a_state, t_state, o_state),
+        LifecycleState::Rented { a_state: _a, t_state: _t, o_state: _o, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
     }
 }
 

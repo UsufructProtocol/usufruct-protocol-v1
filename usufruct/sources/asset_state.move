@@ -30,8 +30,10 @@ public enum AssetState<U: key + store> has store {
     /// Escrow holds the asset; no active rental.
     Idle    { asset: U },
     /// Escrow holds the asset; Dutch auction in progress. Carries
-    /// the last acquisition price used to seed the descent curve.
-    AtDutch { asset: U, last_acquisition_price: u64 },
+    /// the last acquisition price (anchor for the descent curve)
+    /// and the timestamp at which the auction started (consumed by
+    /// `descent_policy::has_expired` and `compute_price_descent`).
+    AtDutch { asset: U, last_acquisition_price: u64, phase_start_ms: u64 },
     /// Rental active, single tenant. Asset may be borrowed
     /// (wrapper's slot is `None`) or held in escrow (`Some`).
     HandoverOpen      { asset: Asset<U> },
@@ -51,6 +53,54 @@ public enum AssetState<U: key + store> has store {
 
 // === View Functions ===
 
+public(package) fun is_idle<U: key + store>(s: &AssetState<U>): bool {
+    match (s) {
+        AssetState::Idle { .. } => true,
+        _                       => false,
+    }
+}
+
+public(package) fun is_at_dutch<U: key + store>(s: &AssetState<U>): bool {
+    match (s) {
+        AssetState::AtDutch { .. } => true,
+        _                          => false,
+    }
+}
+
+public(package) fun is_handover_open<U: key + store>(s: &AssetState<U>): bool {
+    match (s) {
+        AssetState::HandoverOpen { .. } => true,
+        _                               => false,
+    }
+}
+
+public(package) fun is_handover_confirmed<U: key + store>(s: &AssetState<U>): bool {
+    match (s) {
+        AssetState::HandoverConfirmed { .. } => true,
+        _                                    => false,
+    }
+}
+
+public(package) fun is_retired<U: key + store>(s: &AssetState<U>): bool {
+    match (s) {
+        AssetState::Retired { .. } => true,
+        _                          => false,
+    }
+}
+
+/// Return `true` iff the asset is currently in escrow custody (not
+/// borrowed by the tenant). State-agnostic — for the wrapped variants,
+/// reads through `asset::is_available`.
+public(package) fun has_asset<U: key + store>(s: &AssetState<U>): bool {
+    match (s) {
+        AssetState::Idle    { .. } => true,
+        AssetState::AtDutch { .. } => true,
+        AssetState::Retired { .. } => true,
+        AssetState::HandoverOpen      { asset } => asset::is_available(asset),
+        AssetState::HandoverConfirmed { asset } => asset::is_available(asset),
+    }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
@@ -69,7 +119,7 @@ public(package) fun rent<U: key + store>(
     match (s) {
         AssetState::Idle    { asset } =>
             AssetState::HandoverOpen { asset: asset::new(asset, escrow_id) },
-        AssetState::AtDutch { asset, last_acquisition_price: _ } =>
+        AssetState::AtDutch { asset, last_acquisition_price: _, phase_start_ms: _ } =>
             AssetState::HandoverOpen { asset: asset::new(asset, escrow_id) },
         AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
         AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
@@ -85,7 +135,7 @@ public(package) fun bid<U: key + store>(
     match (s) {
         AssetState::HandoverOpen { asset } => AssetState::HandoverConfirmed { asset },
         AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch           { asset: _a, last_acquisition_price: _ } => abort EInvariantViolation,
+        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
         AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
         AssetState::Retired           { asset: _a } => abort EInvariantViolation,
     }
@@ -99,7 +149,7 @@ public(package) fun handover<U: key + store>(
     match (s) {
         AssetState::HandoverConfirmed { asset } => AssetState::HandoverOpen { asset },
         AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch           { asset: _a, last_acquisition_price: _ } => abort EInvariantViolation,
+        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
         AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
         AssetState::Retired           { asset: _a } => abort EInvariantViolation,
     }
@@ -116,14 +166,15 @@ public(package) fun handover<U: key + store>(
 public(package) fun expire<U: key + store>(
     s:                      AssetState<U>,
     last_acquisition_price: u64,
+    phase_start_ms:         u64,
 ): AssetState<U> {
     match (s) {
         AssetState::HandoverOpen { asset } => {
             let a = asset::unbundle(asset);
-            AssetState::AtDutch { asset: a, last_acquisition_price }
+            AssetState::AtDutch { asset: a, last_acquisition_price, phase_start_ms }
         },
         AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch           { asset: _a, last_acquisition_price: _ } => abort EInvariantViolation,
+        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
         AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
         AssetState::Retired           { asset: _a } => abort EInvariantViolation,
     }
@@ -135,7 +186,7 @@ public(package) fun no_winner<U: key + store>(
     s: AssetState<U>,
 ): AssetState<U> {
     match (s) {
-        AssetState::AtDutch { asset, last_acquisition_price: _ } => AssetState::Idle { asset },
+        AssetState::AtDutch { asset, last_acquisition_price: _, phase_start_ms: _ } => AssetState::Idle { asset },
         AssetState::Idle              { asset: _a } => abort EInvariantViolation,
         AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
         AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
@@ -150,7 +201,7 @@ public(package) fun retire<U: key + store>(
 ): AssetState<U> {
     match (s) {
         AssetState::Idle    { asset } => AssetState::Retired { asset },
-        AssetState::AtDutch { asset, last_acquisition_price: _ } => AssetState::Retired { asset },
+        AssetState::AtDutch { asset, last_acquisition_price: _, phase_start_ms: _ } => AssetState::Retired { asset },
         AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
         AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
         AssetState::Retired           { asset: _a } => abort EInvariantViolation,
@@ -165,7 +216,7 @@ public(package) fun claim<U: key + store>(
     match (s) {
         AssetState::Retired { asset } => asset,
         AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch           { asset: _a, last_acquisition_price: _ } => abort EInvariantViolation,
+        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
         AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
         AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
     }
@@ -188,7 +239,7 @@ public(package) fun give<U: key + store>(
             (AssetState::HandoverConfirmed { asset }, u, receipt)
         },
         AssetState::Idle    { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch { asset: _a, last_acquisition_price: _ } => abort EInvariantViolation,
+        AssetState::AtDutch { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
         AssetState::Retired { asset: _a } => abort EInvariantViolation,
     }
 }
@@ -212,7 +263,7 @@ public(package) fun give_back<U: key + store>(
             AssetState::HandoverConfirmed { asset: slot }
         },
         AssetState::Idle    { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch { asset: _a, last_acquisition_price: _ } => abort EInvariantViolation,
+        AssetState::AtDutch { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
         AssetState::Retired { asset: _a } => abort EInvariantViolation,
     }
 }
@@ -220,57 +271,3 @@ public(package) fun give_back<U: key + store>(
 // === Private Functions ===
 
 // === Test Functions ===
-
-#[test_only]
-public fun is_idle<U: key + store>(s: &AssetState<U>): bool {
-    match (s) {
-        AssetState::Idle { .. } => true,
-        _                       => false,
-    }
-}
-
-#[test_only]
-public fun is_at_dutch<U: key + store>(s: &AssetState<U>): bool {
-    match (s) {
-        AssetState::AtDutch { .. } => true,
-        _                          => false,
-    }
-}
-
-#[test_only]
-public fun is_handover_open<U: key + store>(s: &AssetState<U>): bool {
-    match (s) {
-        AssetState::HandoverOpen { .. } => true,
-        _                               => false,
-    }
-}
-
-#[test_only]
-public fun is_handover_confirmed<U: key + store>(s: &AssetState<U>): bool {
-    match (s) {
-        AssetState::HandoverConfirmed { .. } => true,
-        _                                    => false,
-    }
-}
-
-#[test_only]
-public fun is_retired<U: key + store>(s: &AssetState<U>): bool {
-    match (s) {
-        AssetState::Retired { .. } => true,
-        _                          => false,
-    }
-}
-
-/// Return `true` iff the asset is currently in escrow custody (not
-/// borrowed by the tenant). State-agnostic — for the wrapped variants,
-/// reads through `asset::is_available`.
-#[test_only]
-public fun has_asset<U: key + store>(s: &AssetState<U>): bool {
-    match (s) {
-        AssetState::Idle    { .. } => true,
-        AssetState::AtDutch { .. } => true,
-        AssetState::Retired { .. } => true,
-        AssetState::HandoverOpen      { asset } => asset::is_available(asset),
-        AssetState::HandoverConfirmed { asset } => asset::is_available(asset),
-    }
-}

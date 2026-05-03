@@ -6,7 +6,10 @@ module usufruct::tenant;
 // === Imports ===
 
 use sui::{balance::{Self, Balance}, coin};
-use usufruct::fee_message::{Self, FeeShare};
+use usufruct::{
+    fee_message::{Self, FeeShare},
+    owner::{Self, OwnerEarnings},
+};
 
 // === Errors ===
 
@@ -98,6 +101,17 @@ public(package) fun take_fee_share<C>(
 ): FeeShare<C> {
     let part = balance::split(&mut t.stake.balance, amount);
     fee_message::new_share(part, escrow_id)
+}
+
+/// Drain `amount` off the tenant's stake as an `OwnerEarnings<C>`
+/// ready to be `deposit`-ed into an `Owner`. Aborts via `balance::split`
+/// if `amount > stake`.
+public(package) fun take_owner_earnings<C>(
+    t:      &mut Tenant<C>,
+    amount: u64,
+): OwnerEarnings<C> {
+    let part = balance::split(&mut t.stake.balance, amount);
+    owner::new_earnings(part)
 }
 
 /// Drain `amount` off the tenant's stake as a raw `Balance<C>`.

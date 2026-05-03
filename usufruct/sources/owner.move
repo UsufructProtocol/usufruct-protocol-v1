@@ -104,6 +104,17 @@ public(package) fun withdraw<C>(
     coin::from_balance(drained, ctx)
 }
 
+/// Tear down an `Owner<C>` known to hold zero earnings. Aborts via
+/// `balance::destroy_zero` if the inner balance is non-zero — guards
+/// the invariant at the consumption site rather than relying on caller
+/// arithmetic. Symmetric with `tenant::destroy_empty_stake`. Used at
+/// escrow-deletion time after `withdraw` has drained the earnings.
+public(package) fun destroy_empty<C>(o: Owner<C>) {
+    let Owner { identity: _, earnings } = o;
+    let OwnerEarnings { balance } = earnings;
+    balance::destroy_zero(balance);
+}
+
 // === Private Functions ===
 
 // === Test Functions ===

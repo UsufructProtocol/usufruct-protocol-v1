@@ -149,7 +149,54 @@ fun withdraw_with_wrong_cap_aborts() {
     sc.end();
 }
 
-// ─── §5. take_owner_earnings (via tenant) ──────────────────────────────────────
+// ─── §5. destroy_empty ────────────────────────────────────────────────────────
+
+#[test]
+fun destroy_empty_ok_on_zero() {
+    let mut sc = test_scenario::begin(OWNER_ADDR);
+    sc.next_tx(OWNER_ADDR);
+    {
+        let (cap, cap_id) = mk_cap(sc.ctx());
+        let o = owner::new<TEST_COIN>(cap_id);
+        owner::destroy_empty(o);
+        owner_cap::burn(cap, OWNER_ADDR);
+    };
+    sc.end();
+}
+
+#[test]
+fun destroy_empty_ok_after_full_withdraw() {
+    // Roundtrip: deposit, withdraw to zero, then destroy_empty succeeds.
+    let mut sc = test_scenario::begin(OWNER_ADDR);
+    sc.next_tx(OWNER_ADDR);
+    {
+        let (cap, cap_id) = mk_cap(sc.ctx());
+        let mut o = owner::new<TEST_COIN>(cap_id);
+        owner::deposit(&mut o, owner::new_earnings(balance::create_for_testing<TEST_COIN>(500)));
+        let drained = owner::withdraw(&mut o, &cap, sc.ctx());
+        coin::burn_for_testing(drained);
+        owner::destroy_empty(o);
+        owner_cap::burn(cap, OWNER_ADDR);
+    };
+    sc.end();
+}
+
+#[test]
+#[expected_failure]
+fun destroy_empty_aborts_on_nonzero() {
+    let mut sc = test_scenario::begin(OWNER_ADDR);
+    sc.next_tx(OWNER_ADDR);
+    {
+        let (cap, cap_id) = mk_cap(sc.ctx());
+        let mut o = owner::new<TEST_COIN>(cap_id);
+        owner::deposit(&mut o, owner::new_earnings(balance::create_for_testing<TEST_COIN>(1)));
+        owner::destroy_empty(o);
+        owner_cap::burn(cap, OWNER_ADDR);
+    };
+    sc.end();
+}
+
+// ─── §6. take_owner_earnings (via tenant) ──────────────────────────────────────
 
 #[test]
 fun take_owner_earnings_then_deposit_round_trip() {

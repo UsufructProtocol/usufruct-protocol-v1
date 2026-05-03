@@ -33,9 +33,32 @@ public enum TenantState<phantom CoinType> has store {
 
 // === View Functions ===
 
+/// True iff the slot currently holds a pending bidder (t2). Consumed
+/// by `lifecycle_state::is_t_state_demand` and APT's handover check.
+public(package) fun is_demand<CoinType>(s: &TenantState<CoinType>): bool {
+    match (s) {
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => true,
+        TenantState::Absence                       => false,
+        TenantState::Occupied { t1: _t1 }          => false,
+    }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
+
+/// Drop an Absence state. Aborts if the state is not Absence — sanity
+/// check that the caller reached the expected terminal position. Used
+/// by `escrow_coordinator::claim_asset` after `decompose_retired` to
+/// release the `TenantState` field; previously test-only, promoted
+/// because the production claim path needs to consume the state.
+public(package) fun consume_absence<CoinType>(s: TenantState<CoinType>) {
+    match (s) {
+        TenantState::Absence                       => (),
+        TenantState::Occupied { t1: _t1 }          => abort EInvariantViolation,
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
+    }
+}
 
 /// Construct the initial `TenantState`. Only entry point — once
 /// active, the slot rotates through `occupy` / `demand` / `redemand`
@@ -135,26 +158,5 @@ public fun is_occupied<CoinType>(s: &TenantState<CoinType>): bool {
         TenantState::Occupied { t1: _t1 }          => true,
         TenantState::Absence                       => false,
         TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => false,
-    }
-}
-
-#[test_only]
-public fun is_demand<CoinType>(s: &TenantState<CoinType>): bool {
-    match (s) {
-        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => true,
-        TenantState::Absence                       => false,
-        TenantState::Occupied { t1: _t1 }          => false,
-    }
-}
-
-/// Drop an Absence state at the end of a test. Aborts if the state is
-/// not Absence — sanity check that the test reached the expected
-/// terminal position.
-#[test_only]
-public fun consume_absence<CoinType>(s: TenantState<CoinType>) {
-    match (s) {
-        TenantState::Absence                       => (),
-        TenantState::Occupied { t1: _t1 }          => abort EInvariantViolation,
-        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
     }
 }

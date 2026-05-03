@@ -9,7 +9,8 @@ use sui::balance::{Self, Balance};
 use sui::test_scenario;
 use usufruct::{
     lifecycle_state::{Self, LifecycleState},
-    tenant_state::{Self, Tenant},
+    tenant::{Self, Tenant},
+    tenant_state,
     asset_state,
     owner_state,
 };
@@ -41,14 +42,14 @@ fun destroy_asset(a: TestAsset) { let TestAsset { id } = a; object::delete(id) }
 
 fun stake(amount: u64): Balance<TEST_COIN> { balance::create_for_testing<TEST_COIN>(amount) }
 
-fun t1(): Tenant<TEST_COIN> { tenant_state::new_tenant(cap_t1(), ADDR_T1, stake(STAKE_T1)) }
-fun t2(): Tenant<TEST_COIN> { tenant_state::new_tenant(cap_t2(), ADDR_T2, stake(STAKE_T2)) }
-fun t3(): Tenant<TEST_COIN> { tenant_state::new_tenant(cap_t3(), ADDR_T3, stake(STAKE_T3)) }
+fun t1(): Tenant<TEST_COIN> { tenant::new(cap_t1(), ADDR_T1, stake(STAKE_T1)) }
+fun t2(): Tenant<TEST_COIN> { tenant::new(cap_t2(), ADDR_T2, stake(STAKE_T2)) }
+fun t3(): Tenant<TEST_COIN> { tenant::new(cap_t3(), ADDR_T3, stake(STAKE_T3)) }
 
-fun consume_tenant(t: Tenant<TEST_COIN>) {
-    let (_id, _addr, b) = tenant_state::unbundle(t);
-    balance::destroy_for_testing(b);
-}
+fun consume_tenant(t: Tenant<TEST_COIN>) { tenant::destroy_for_testing(t) }
+
+fun cap_id_of(t: &Tenant<TEST_COIN>): ID      { tenant::id_cap_id(tenant::identity(t)) }
+fun addr_of(t: &Tenant<TEST_COIN>):   address { tenant::id_address(tenant::identity(t)) }
 
 /// Consume a NotRented state whose inner asset is already Retired.
 fun teardown_retired(s: LifecycleState<TestAsset, TEST_COIN>) {
@@ -96,9 +97,9 @@ fun expire_tenure_returns_to_not_rented_with_remainder_stake() {
     let (s, dep) = lifecycle_state::expire_tenure(s, OWNER_CUT, LAST_ACQ_PRICE);
 
     assert!(lifecycle_state::is_not_rented(&s));
-    assert_eq!(tenant_state::cap_id(&dep), cap_t1());
-    assert_eq!(tenant_state::addr(&dep), ADDR_T1);
-    assert_eq!(tenant_state::stake_value(&dep), STAKE_T1 - OWNER_CUT);
+    assert_eq!(cap_id_of(&dep), cap_t1());
+    assert_eq!(addr_of(&dep), ADDR_T1);
+    assert_eq!(tenant::stake_value(&dep), STAKE_T1 - OWNER_CUT);
 
     consume_tenant(dep);
     retire_and_teardown(s);
@@ -172,9 +173,9 @@ fun supersede_bid_displaces_pending_returns_full_t2_stake() {
 
     assert!(lifecycle_state::is_rented(&s));
     // Displaced is T2 — returned intact, no owner split on supersede
-    assert_eq!(tenant_state::cap_id(&displaced), cap_t2());
-    assert_eq!(tenant_state::addr(&displaced), ADDR_T2);
-    assert_eq!(tenant_state::stake_value(&displaced), STAKE_T2);
+    assert_eq!(cap_id_of(&displaced), cap_t2());
+    assert_eq!(addr_of(&displaced), ADDR_T2);
+    assert_eq!(tenant::stake_value(&displaced), STAKE_T2);
     consume_tenant(displaced);
 
     let (s, dep_t1) = lifecycle_state::accept_bid(s, 0, PHASE_MS);
@@ -194,9 +195,9 @@ fun accept_bid_promotes_t2_returns_t1_with_remainder_stake() {
     let (s, dep) = lifecycle_state::accept_bid(s, OWNER_CUT, PHASE_MS);
 
     assert!(lifecycle_state::is_rented(&s));
-    assert_eq!(tenant_state::cap_id(&dep), cap_t1());
-    assert_eq!(tenant_state::addr(&dep), ADDR_T1);
-    assert_eq!(tenant_state::stake_value(&dep), STAKE_T1 - OWNER_CUT);
+    assert_eq!(cap_id_of(&dep), cap_t1());
+    assert_eq!(addr_of(&dep), ADDR_T1);
+    assert_eq!(tenant::stake_value(&dep), STAKE_T1 - OWNER_CUT);
     consume_tenant(dep);
 
     let (s, dep_t2) = lifecycle_state::expire_tenure(s, 0, LAST_ACQ_PRICE);
@@ -359,7 +360,7 @@ fun full_cycle_no_bid() {
 
     let (s, dep) = lifecycle_state::expire_tenure(s, OWNER_CUT, LAST_ACQ_PRICE);
     assert!(lifecycle_state::is_not_rented(&s));
-    assert_eq!(tenant_state::stake_value(&dep), STAKE_T1 - OWNER_CUT);
+    assert_eq!(tenant::stake_value(&dep), STAKE_T1 - OWNER_CUT);
     consume_tenant(dep);
 
     let s = lifecycle_state::expire_auction(s);
@@ -379,13 +380,13 @@ fun full_cycle_with_bid_handover() {
     let s = lifecycle_state::place_bid(s, t2(), EXPIRY_MS);
 
     let (s, dep_t1) = lifecycle_state::accept_bid(s, OWNER_CUT, PHASE_MS);
-    assert_eq!(tenant_state::cap_id(&dep_t1), cap_t1());
-    assert_eq!(tenant_state::stake_value(&dep_t1), STAKE_T1 - OWNER_CUT);
+    assert_eq!(cap_id_of(&dep_t1), cap_t1());
+    assert_eq!(tenant::stake_value(&dep_t1), STAKE_T1 - OWNER_CUT);
     consume_tenant(dep_t1);
 
     let (s, dep_t2) = lifecycle_state::expire_tenure(s, OWNER_CUT, LAST_ACQ_PRICE);
-    assert_eq!(tenant_state::cap_id(&dep_t2), cap_t2());
-    assert_eq!(tenant_state::stake_value(&dep_t2), STAKE_T2 - OWNER_CUT);
+    assert_eq!(cap_id_of(&dep_t2), cap_t2());
+    assert_eq!(tenant::stake_value(&dep_t2), STAKE_T2 - OWNER_CUT);
     consume_tenant(dep_t2);
 
     retire_and_teardown(s);
@@ -402,18 +403,18 @@ fun full_cycle_with_supersede() {
     let s = lifecycle_state::place_bid(s, t2(), EXPIRY_MS);
 
     let (s, t2_displaced) = lifecycle_state::supersede_bid(s, t3(), EXPIRY_MS);
-    assert_eq!(tenant_state::cap_id(&t2_displaced), cap_t2());
-    assert_eq!(tenant_state::stake_value(&t2_displaced), STAKE_T2); // full stake — no split
+    assert_eq!(cap_id_of(&t2_displaced), cap_t2());
+    assert_eq!(tenant::stake_value(&t2_displaced), STAKE_T2); // full stake — no split
     consume_tenant(t2_displaced);
 
     let (s, dep_t1) = lifecycle_state::accept_bid(s, OWNER_CUT, PHASE_MS);
-    assert_eq!(tenant_state::cap_id(&dep_t1), cap_t1());
-    assert_eq!(tenant_state::stake_value(&dep_t1), STAKE_T1 - OWNER_CUT);
+    assert_eq!(cap_id_of(&dep_t1), cap_t1());
+    assert_eq!(tenant::stake_value(&dep_t1), STAKE_T1 - OWNER_CUT);
     consume_tenant(dep_t1);
 
     let (s, dep_t3) = lifecycle_state::expire_tenure(s, OWNER_CUT, LAST_ACQ_PRICE);
-    assert_eq!(tenant_state::cap_id(&dep_t3), cap_t3());
-    assert_eq!(tenant_state::stake_value(&dep_t3), STAKE_T3 - OWNER_CUT);
+    assert_eq!(cap_id_of(&dep_t3), cap_t3());
+    assert_eq!(tenant::stake_value(&dep_t3), STAKE_T3 - OWNER_CUT);
     consume_tenant(dep_t3);
 
     retire_and_teardown(s);

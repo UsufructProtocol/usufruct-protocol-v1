@@ -5,10 +5,9 @@ module usufruct::route_fund;
 
 // === Imports ===
 
-use sui::{balance, coin};
 use usufruct::{
     fee_message,
-    tenant_state::{Self, Tenant},
+    tenant::{Self, Tenant},
 };
 
 // === Errors ===
@@ -34,19 +33,21 @@ use usufruct::{
 /// Returns `(cap_id, addr)` — the tenant's identity — for the caller
 /// to use in event emission or further bookkeeping.
 public(package) fun route<C>(
-    departing:    Tenant<C>,
-    fee_amount:   u64,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    ctx:          &mut TxContext,
+    mut departing: Tenant<C>,
+    fee_amount:    u64,
+    escrow_id:     ID,
+    fee_inbox_id:  ID,
+    ctx:           &mut TxContext,
 ): (ID, address) {
-    let (departing, fee_balance) = tenant_state::split(departing, fee_amount);
-    let (cap_id, addr, refund)   = tenant_state::unbundle(departing);
-    fee_message::post(fee_message::new_share(fee_balance, escrow_id), fee_inbox_id, ctx);
-    if (balance::value(&refund) > 0) {
-        transfer::public_transfer(coin::from_balance(refund, ctx), addr);
+    let fee_share         = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
+    let (identity, stake) = tenant::unbundle(departing);
+    let cap_id            = tenant::id_cap_id(&identity);
+    let addr              = tenant::id_address(&identity);
+    fee_message::post(fee_share, fee_inbox_id, ctx);
+    if (tenant::stake_value_of(&stake) > 0) {
+        tenant::liquidate(stake, addr, ctx);
     } else {
-        balance::destroy_zero(refund);
+        tenant::destroy_empty_stake(stake);
     };
     (cap_id, addr)
 }

@@ -19,7 +19,7 @@ use usufruct::{
     fee_message::{Self, FeeMessage, FeeMessageSent},
     protocol_fee_inbox::{Self, ProtocolFeeInbox},
     route_fund,
-    tenant_state,
+    tenant as tnt,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -37,8 +37,8 @@ fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 fun fake_inbox_id():  ID { object::id_from_address(@0x1B) }
 
 /// Build a `Tenant` with the given stake. Pure — no ctx required.
-fun tenant(stake: u64): tenant_state::Tenant<TEST_COIN> {
-    tenant_state::new_tenant(cap_id(), TENANT_ADDR, balance::create_for_testing(stake))
+fun tenant(stake: u64): tnt::Tenant<TEST_COIN> {
+    tnt::new(cap_id(), TENANT_ADDR, balance::create_for_testing(stake))
 }
 
 // ─── §1. Return value identity ─────────────────────────────────────────────────

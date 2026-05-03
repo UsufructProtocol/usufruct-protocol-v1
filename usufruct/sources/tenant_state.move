@@ -5,7 +5,7 @@ module usufruct::tenant_state;
 
 // === Imports ===
 
-use sui::balance::Balance;
+use usufruct::tenant::Tenant;
 
 // === Errors ===
 
@@ -18,12 +18,6 @@ const EInvariantViolation: u64 = 0xDEADC0DE;
 // === Constants ===
 
 // === Structs ===
-
-public struct Tenant<phantom CoinType> has store {
-    cap_id:  ID,
-    address: address,
-    stake:   Balance<CoinType>,
-}
 
 public enum TenantState<phantom CoinType> has store {
     Absence,
@@ -48,16 +42,6 @@ public enum TenantState<phantom CoinType> has store {
 /// / `reoccupy` / `vacate`.
 public(package) fun absence<CoinType>(): TenantState<CoinType> {
     TenantState::Absence
-}
-
-/// Bundle raw tenant data into a `Tenant`. Called by the layer above
-/// before passing a new entrant into any transition.
-public(package) fun new_tenant<CoinType>(
-    cap_id:  ID,
-    address: address,
-    stake:   Balance<CoinType>,
-): Tenant<CoinType> {
-    Tenant { cap_id, address, stake }
 }
 
 /// Transition Absence → Occupied.
@@ -131,34 +115,6 @@ public(package) fun vacate<CoinType>(
         TenantState::Demand { t1: _t1, t2: _t2, handover_countdown_expiry: _ }   => abort EInvariantViolation,
     }
 }
-
-/// Split `amount` off the Tenant's stake. Returns the (reduced)
-/// Tenant and the separated Balance. The caller decides where the
-/// split portion goes (owner_earnings / fee_inbox / etc.). Aborts if
-/// `amount > stake.value` via `balance::split`.
-public(package) fun split<CoinType>(
-    t:      Tenant<CoinType>,
-    amount: u64,
-): (Tenant<CoinType>, Balance<CoinType>) {
-    let Tenant { cap_id, address, mut stake } = t;
-    let separated = stake.split(amount);
-    (Tenant { cap_id, address, stake }, separated)
-}
-
-/// Destructure a `Tenant` into its three components. The caller
-/// decides what to do with the Balance — refund whole, route to
-/// owner_earnings / fee_inbox after upstream `split` calls, etc.
-/// Tenant.move stays agnostic to `Coin`, `transfer`, and `TxContext`.
-public(package) fun unbundle<CoinType>(
-    tenant: Tenant<CoinType>,
-): (ID, address, Balance<CoinType>) {
-    let Tenant { cap_id, address, stake } = tenant;
-    (cap_id, address, stake)
-}
-
-public(package) fun cap_id<CoinType>(t: &Tenant<CoinType>):      ID      { t.cap_id }
-public(package) fun addr<CoinType>(t: &Tenant<CoinType>):        address { t.address }
-public(package) fun stake_value<CoinType>(t: &Tenant<CoinType>): u64     { t.stake.value() }
 
 // === Private Functions ===
 

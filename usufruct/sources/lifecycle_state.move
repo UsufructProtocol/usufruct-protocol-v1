@@ -8,7 +8,8 @@ module usufruct::lifecycle_state;
 use usufruct::{
     asset_state::{Self, AssetState},
     owner_state::{Self, OwnerState},
-    tenant_state::{Self, Tenant, TenantState},
+    tenant::{Self, Tenant},
+    tenant_state::{Self, TenantState},
 };
 
 // === Errors ===
@@ -100,8 +101,8 @@ public(package) fun expire_tenure<Asset: key + store, CoinType>(
 ): (LifecycleState<Asset, CoinType>, Tenant<CoinType>) {
     match (s) {
         LifecycleState::Rented { a_state, t_state, o_state, phase_start_ms: _, retiring: _ } => {
-            let (new_t_state, departing) = tenant_state::vacate(t_state);
-            let (departing, owner_balance) = tenant_state::split(departing, owner_amount);
+            let (new_t_state, mut departing) = tenant_state::vacate(t_state);
+            let owner_balance                = tenant::split_stake(&mut departing, owner_amount);
             (
                 LifecycleState::NotRented {
                     a_state: asset_state::expire(a_state, last_acq_price),
@@ -209,8 +210,8 @@ public(package) fun accept_bid<Asset: key + store, CoinType>(
 ): (LifecycleState<Asset, CoinType>, Tenant<CoinType>) {
     match (s) {
         LifecycleState::Rented { a_state, t_state, o_state, phase_start_ms: _, retiring } => {
-            let (new_t_state, departing) = tenant_state::reoccupy(t_state);
-            let (departing, owner_balance) = tenant_state::split(departing, owner_amount);
+            let (new_t_state, mut departing) = tenant_state::reoccupy(t_state);
+            let owner_balance                = tenant::split_stake(&mut departing, owner_amount);
             (
                 LifecycleState::Rented {
                     a_state: asset_state::handover(a_state),

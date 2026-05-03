@@ -50,6 +50,73 @@ fun setup(): Scenario {
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 fun fake_inbox_id():  ID { object::id_from_address(@0x1B) }
 
+// ─── N — new_share / share_value ───────────────────────────────────────────
+
+// N1: share_value reflects the input Balance's value.
+#[test]
+fun n1_share_value_reflects_input_balance() {
+    let mut scenario = test_scenario::begin(ALICE);
+    scenario.next_tx(ALICE);
+    {
+        let s = fee_message::new_share<sui::sui::SUI>(
+            balance::create_for_testing(1_234), fake_escrow_id(),
+        );
+        assert_eq!(fee_message::share_value(&s), 1_234);
+        fee_message::destroy_share_for_testing(s);
+    };
+    scenario.end();
+}
+
+// N2: share_escrow_id reflects the input escrow_id.
+#[test]
+fun n2_share_escrow_id_reflects_input() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let synthetic = object::id_from_address(@0xC0FFEE);
+    scenario.next_tx(ALICE);
+    {
+        let s = fee_message::new_share<sui::sui::SUI>(
+            balance::create_for_testing(1), synthetic,
+        );
+        assert_eq!(fee_message::share_escrow_id(&s), synthetic);
+        fee_message::destroy_share_for_testing(s);
+    };
+    scenario.end();
+}
+
+// N3: zero-balance share is allowed; share_value == 0.
+#[test]
+fun n3_share_with_zero_balance_allowed() {
+    let mut scenario = test_scenario::begin(ALICE);
+    scenario.next_tx(ALICE);
+    {
+        let s = fee_message::new_share<sui::sui::SUI>(
+            balance::create_for_testing(0), fake_escrow_id(),
+        );
+        assert_eq!(fee_message::share_value(&s), 0);
+        fee_message::destroy_share_for_testing(s);
+    };
+    scenario.end();
+}
+
+// N4: post consumes the share and forwards both escrow_id and amount to the event.
+#[test]
+fun n4_post_forwards_share_fields_to_event() {
+    let mut scenario = setup();
+    let escrow_id = object::id_from_address(@0xCAFEBABE);
+    scenario.next_tx(ALICE);
+    {
+        let s = fee_message::new_share<sui::sui::SUI>(
+            balance::create_for_testing(99), escrow_id,
+        );
+        fee_message::post(s, fake_inbox_id(), scenario.ctx());
+        let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
+        assert_eq!(sent.length(), 1);
+        assert_eq!(fee_message::sent_escrow_id(&sent[0]), escrow_id);
+        assert_eq!(fee_message::sent_amount(&sent[0]),    99);
+    };
+    scenario.end();
+}
+
 // ─── S — post ──────────────────────────────────────────────────────────────
 
 // S1: post creates a FeeMessage; Sent event carries the post arguments.
@@ -60,15 +127,14 @@ fun s1_post_creates_child_with_correct_fields() {
     scenario.next_tx(ALICE);
     {
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(1_000),
-            fake_escrow_id(), ALICE, fake_inbox_id(), scenario.ctx(),
+            fee_message::new_share(balance::create_for_testing(1_000), fake_escrow_id()),
+            fake_inbox_id(), scenario.ctx(),
         );
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         assert_eq!(sent.length(), 1);
         assert_eq!(fee_message::sent_fee_inbox_id(&sent[0]), fake_inbox_id());
         assert_eq!(fee_message::sent_escrow_id(&sent[0]),    fake_escrow_id());
         assert_eq!(fee_message::sent_amount(&sent[0]),        1_000);
-        assert_eq!(fee_message::sent_tenant(&sent[0]),        ALICE);
     };
     scenario.end();
 }
@@ -80,8 +146,8 @@ fun s2_post_with_zero_balance_does_not_abort() {
     scenario.next_tx(ALICE);
     {
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(0),
-            fake_escrow_id(), ALICE, fake_inbox_id(), scenario.ctx(),
+            fee_message::new_share(balance::create_for_testing(0), fake_escrow_id()),
+            fake_inbox_id(), scenario.ctx(),
         );
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         assert_eq!(sent.length(), 1);
@@ -90,20 +156,18 @@ fun s2_post_with_zero_balance_does_not_abort() {
     scenario.end();
 }
 
-// S3: two posts yield two distinct fee_message_ids and their respective tenants.
+// S3: two posts yield two distinct fee_message_ids.
 #[test]
 fun s3_post_twice_creates_two_distinct_messages() {
     let mut scenario = setup();
     scenario.next_tx(ALICE);
     {
         let fee_inbox_id = fake_inbox_id();
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(500), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(300), fake_escrow_id(), BOB,   fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(500), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(300), fake_escrow_id()), fee_inbox_id, scenario.ctx());
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         assert_eq!(sent.length(), 2);
         assert!(fee_message::sent_fee_message_id(&sent[0]) != fee_message::sent_fee_message_id(&sent[1]));
-        assert_eq!(fee_message::sent_tenant(&sent[0]), ALICE);
-        assert_eq!(fee_message::sent_tenant(&sent[1]), BOB);
     };
     scenario.end();
 }
@@ -115,41 +179,10 @@ fun s4_post_sui_and_fake_usdc_no_conflict() {
     scenario.next_tx(ALICE);
     {
         let fee_inbox_id = fake_inbox_id();
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(100), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<FAKE_USDC>(balance::create_for_testing(200),     fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(100), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<FAKE_USDC>(fee_message::new_share(balance::create_for_testing(200),     fake_escrow_id()), fee_inbox_id, scenario.ctx());
         assert_eq!(event::events_by_type<FeeMessageSent<sui::sui::SUI>>().length(), 1);
         assert_eq!(event::events_by_type<FeeMessageSent<FAKE_USDC>>().length(),     1);
-    };
-    scenario.end();
-}
-
-// S5: tenant field is the argument, not ctx.sender().
-#[test]
-fun s5_tenant_is_declarative_not_sender() {
-    let mut scenario = setup();
-    scenario.next_tx(ALICE);
-    {
-        // sender is ALICE; tenant argument is BOB
-        fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(100), fake_escrow_id(), BOB, fake_inbox_id(), scenario.ctx()
-        );
-        let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
-        assert_eq!(fee_message::sent_tenant(&sent[0]), BOB);
-    };
-    scenario.end();
-}
-
-// S6: tenant == @0x0 is not rejected; event records @0x0.
-#[test]
-fun s6_tenant_zero_address_allowed() {
-    let mut scenario = setup();
-    scenario.next_tx(ALICE);
-    {
-        fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(1), fake_escrow_id(), @0x0, fake_inbox_id(), scenario.ctx()
-        );
-        let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
-        assert_eq!(fee_message::sent_tenant(&sent[0]), @0x0);
     };
     scenario.end();
 }
@@ -162,7 +195,8 @@ fun s7_escrow_id_is_declarative() {
     scenario.next_tx(ALICE);
     {
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(1), synthetic, ALICE, fake_inbox_id(), scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(1), synthetic),
+            fake_inbox_id(), scenario.ctx()
         );
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         assert_eq!(fee_message::sent_escrow_id(&sent[0]), synthetic);
@@ -177,8 +211,8 @@ fun s9_post_with_max_u64_balance() {
     scenario.next_tx(ALICE);
     {
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(18_446_744_073_709_551_615),
-            fake_escrow_id(), ALICE, fake_inbox_id(), scenario.ctx(),
+            fee_message::new_share(balance::create_for_testing(18_446_744_073_709_551_615), fake_escrow_id()),
+            fake_inbox_id(), scenario.ctx(),
         );
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         assert_eq!(fee_message::sent_amount(&sent[0]), 18_446_744_073_709_551_615);
@@ -203,7 +237,8 @@ fun r1_receive_message_returns_correct_balance() {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(777), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(777), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx()
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -236,7 +271,8 @@ fun c1_consume_message_returns_balance_and_emits_collected_event() {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(500), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(500), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx()
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -276,7 +312,8 @@ fun c2_consume_message_with_arbitrary_scalar_metadata() {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(1), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx()
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -311,7 +348,8 @@ fun c3_consume_zero_balance_message() {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(0), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(0), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx()
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -365,7 +403,8 @@ fun d2_collect_one_ticket() {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(999), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(999), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx()
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -397,9 +436,9 @@ fun d3_collect_n_tickets_sums_balances() {
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(100), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(200), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(300), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(100), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(200), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(300), fake_escrow_id()), fee_inbox_id, scenario.ctx());
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         id1 = fee_message::sent_fee_message_id(&sent[0]);
         id2 = fee_message::sent_fee_message_id(&sent[1]);
@@ -432,8 +471,8 @@ fun d4_collect_sui_and_fake_usdc_same_inbox() {
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(111), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<FAKE_USDC>(balance::create_for_testing(222),     fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(111), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<FAKE_USDC>(fee_message::new_share(balance::create_for_testing(222),     fake_escrow_id()), fee_inbox_id, scenario.ctx());
         sui_id  = fee_message::sent_fee_message_id(&event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]);
         usdc_id = fee_message::sent_fee_message_id(&event::events_by_type<FeeMessageSent<FAKE_USDC>>()[0]);
         scenario.return_to_sender(inbox);
@@ -472,8 +511,8 @@ fun d6_distinct_escrow_ids_preserved_per_collected_event() {
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(10), esc1, ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(20), esc2, BOB,   fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(10), esc1), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(20), esc2), fee_inbox_id, scenario.ctx());
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         id1 = fee_message::sent_fee_message_id(&sent[0]);
         id2 = fee_message::sent_fee_message_id(&sent[1]);
@@ -514,7 +553,8 @@ fun d7_collector_follows_inbox_custody() {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(50), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(50), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx()
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -553,10 +593,10 @@ fun i1_total_drained_equals_total_sent() {
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(100), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(250), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(50),  fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(600), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(100), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(250), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(50),  fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(600), fake_escrow_id()), fee_inbox_id, scenario.ctx());
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         id0 = fee_message::sent_fee_message_id(&sent[0]);
         id1 = fee_message::sent_fee_message_id(&sent[1]);
@@ -592,14 +632,14 @@ fun e1_fee_message_sent_fields_match_post_args() {
     scenario.next_tx(ALICE);
     {
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(42), escrow_id, ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(42), escrow_id),
+            fee_inbox_id, scenario.ctx()
         );
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         assert_eq!(sent.length(), 1);
         assert_eq!(fee_message::sent_fee_inbox_id(&sent[0]), fee_inbox_id);
         assert_eq!(fee_message::sent_escrow_id(&sent[0]),    escrow_id);
         assert_eq!(fee_message::sent_amount(&sent[0]),        42);
-        assert_eq!(fee_message::sent_tenant(&sent[0]),        ALICE);
     };
     scenario.end();
 }
@@ -616,9 +656,9 @@ fun e4_collect_n_messages_emits_n_collected_events() {
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(10), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(20), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(30), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(10), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(20), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(30), fake_escrow_id()), fee_inbox_id, scenario.ctx());
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         id1 = fee_message::sent_fee_message_id(&sent[0]);
         id2 = fee_message::sent_fee_message_id(&sent[1]);
@@ -672,23 +712,22 @@ fun e5_collect_empty_vector_no_collected_events() {
     scenario.end();
 }
 
-// E6: Sent↔Collected join on fee_message_id; address fields non-overlapping.
+// E6: Sent↔Collected join on fee_message_id; shared identity fields match.
 #[test]
 fun e6_sent_collected_join_on_fee_message_id() {
     let mut scenario = setup();
     let escrow_id = fake_escrow_id();
     let mut msg_id: ID;
-    let mut sent_tenant_val: address;
     scenario.next_tx(ADMIN);
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(77), escrow_id, ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(77), escrow_id),
+            fee_inbox_id, scenario.ctx()
         );
-        let sent        = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
-        msg_id          = fee_message::sent_fee_message_id(&sent[0]);
-        sent_tenant_val = fee_message::sent_tenant(&sent[0]);
+        let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
+        msg_id   = fee_message::sent_fee_message_id(&sent[0]);
         scenario.return_to_sender(inbox);
     };
     scenario.next_tx(ADMIN);
@@ -708,8 +747,7 @@ fun e6_sent_collected_join_on_fee_message_id() {
         assert_eq!(fee_message::collected_fee_inbox_id(&coll[0]), fee_inbox_id);
         assert_eq!(fee_message::collected_escrow_id(&coll[0]),    escrow_id);
         assert_eq!(fee_message::collected_amount(&coll[0]),       77);
-        // Non-overlapping address fields
-        assert_eq!(sent_tenant_val,                                ALICE);
+        // Collector field
         assert_eq!(fee_message::collected_collector(&coll[0]),    ADMIN);
 
         scenario.return_to_sender(inbox);
@@ -746,7 +784,8 @@ fun d5_cross_inbox_ticket_rejected() {
         let inbox_a      = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox_a);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(1), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx()
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -782,7 +821,8 @@ fun p3_uid_deleted_on_drain() {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+            fee_message::new_share(balance::create_for_testing(1), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx()
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -819,7 +859,8 @@ fun d8_large_n_iteration_regression() {
         let mut k: u64 = 0;
         while (k < 64) {
             fee_message::post<sui::sui::SUI>(
-                balance::create_for_testing(1), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx()
+                fee_message::new_share(balance::create_for_testing(1), fake_escrow_id()),
+                fee_inbox_id, scenario.ctx()
             );
             k = k + 1;
         };
@@ -871,10 +912,10 @@ fun d8b_accumulator_near_u64_max() {
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(quarter), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(quarter), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(quarter), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(quarter), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(quarter), fake_escrow_id()), fee_inbox_id, scenario.ctx());
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         id0 = fee_message::sent_fee_message_id(&sent[0]);
         id1 = fee_message::sent_fee_message_id(&sent[1]);
@@ -916,8 +957,8 @@ fun drain_order_independence() {
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(300), esc_a, ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(700), esc_b, BOB,   fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(300), esc_a), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(700), esc_b), fee_inbox_id, scenario.ctx());
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         id_a = fee_message::sent_fee_message_id(&sent[0]);
         id_b = fee_message::sent_fee_message_id(&sent[1]);
@@ -961,8 +1002,8 @@ fun collect_single_max_u64_message() {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
         fee_message::post<sui::sui::SUI>(
-            balance::create_for_testing(18_446_744_073_709_551_615),
-            fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx(),
+            fee_message::new_share(balance::create_for_testing(18_446_744_073_709_551_615), fake_escrow_id()),
+            fee_inbox_id, scenario.ctx(),
         );
         msg_id = fee_message::sent_fee_message_id(
             &event::events_by_type<FeeMessageSent<sui::sui::SUI>>()[0]
@@ -996,10 +1037,10 @@ fun collect_mixed_zero_nonzero_batch() {
     {
         let inbox        = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id = object::id(&inbox);
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(0),   fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(100), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(0),   fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
-        fee_message::post<sui::sui::SUI>(balance::create_for_testing(200), fake_escrow_id(), ALICE, fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(0),   fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(100), fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(0),   fake_escrow_id()), fee_inbox_id, scenario.ctx());
+        fee_message::post<sui::sui::SUI>(fee_message::new_share(balance::create_for_testing(200), fake_escrow_id()), fee_inbox_id, scenario.ctx());
         let sent = event::events_by_type<FeeMessageSent<sui::sui::SUI>>();
         id0 = fee_message::sent_fee_message_id(&sent[0]);
         id1 = fee_message::sent_fee_message_id(&sent[1]);

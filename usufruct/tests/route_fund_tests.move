@@ -84,21 +84,6 @@ fun f1_fee_amount_matches_sent_event() {
 }
 
 #[test]
-fun f2_fee_event_tenant_field_is_tenants_address_not_callers() {
-    let mut sc = test_scenario::begin(CALLER);
-    // CALLER != TENANT_ADDR — fee event must record the tenant's address,
-    // not the transaction sender.
-    sc.next_tx(CALLER);
-    {
-        route_fund::route(tenant(500), 100, fake_escrow_id(), fake_inbox_id(), sc.ctx());
-        let sent = event::events_by_type<FeeMessageSent<TEST_COIN>>();
-        assert_eq!(fee_message::sent_tenant(&sent[0]), TENANT_ADDR);
-        assert!(fee_message::sent_tenant(&sent[0]) != CALLER);
-    };
-    sc.end();
-}
-
-#[test]
 fun f3_fee_inbox_id_preserved_in_event() {
     let mut sc = test_scenario::begin(CALLER);
     let inbox_id = fake_inbox_id();
@@ -167,29 +152,6 @@ fun r2_refund_value_equals_stake_minus_fee() {
         let coin = sc.take_from_sender<coin::Coin<TEST_COIN>>();
         assert_eq!(coin::value(&coin), 1_200);
         transfer::public_transfer(coin, TENANT_ADDR);
-    };
-    sc.end();
-}
-
-// The address used as FeeMessageSent.tenant and the address that receives the
-// refund Coin are the same field from the Tenant struct. This test proves both
-// routes use the same addr by joining them at the address level.
-#[test]
-fun r3_fee_event_tenant_and_refund_recipient_are_same_address() {
-    let mut sc = test_scenario::begin(CALLER);
-    let mut fee_tenant: address;
-    sc.next_tx(CALLER);
-    {
-        route_fund::route(tenant(1_000), 400, fake_escrow_id(), fake_inbox_id(), sc.ctx());
-        let sent = event::events_by_type<FeeMessageSent<TEST_COIN>>();
-        fee_tenant = fee_message::sent_tenant(&sent[0]);
-    };
-    // The refund Coin must be at fee_tenant — the same address from the event.
-    sc.next_tx(fee_tenant);
-    {
-        let coin = sc.take_from_sender<coin::Coin<TEST_COIN>>();
-        assert_eq!(coin::value(&coin), 600);
-        transfer::public_transfer(coin, fee_tenant);
     };
     sc.end();
 }

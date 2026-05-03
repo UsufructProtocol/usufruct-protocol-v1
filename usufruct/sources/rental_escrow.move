@@ -928,7 +928,7 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
             retiring, bid_time_ms,
         } => {
             let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
-            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, fee_inbox_id, ctx);
             balance::join(&mut escrow.owner_earnings, leftover);
 
             let next = EscrowState::HandoverConfirmed {
@@ -940,7 +940,7 @@ fun do_distribute_balance<Asset: key + store, CoinType>(
         EscrowState::HandoverOpen { asset, phase_start_ms, current, retiring } => {
             let (zero_current, payer, leftover, remain_credit) = settle_tenant(current, used_credit, ctx);
             assert!(remain_credit == 0, EInvariantViolation);
-            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, payer, fee_inbox_id, ctx);
+            let leftover                                       = pay_protocol_fee(leftover, protocol_fee, escrow_id, fee_inbox_id, ctx);
             balance::join(&mut escrow.owner_earnings, leftover);
 
             let next = EscrowState::HandoverOpen {
@@ -1039,13 +1039,12 @@ fun pay_protocol_fee<CoinType>(
     mut balance:  Balance<CoinType>,
     fee_amount:   u64,
     escrow_id:    ID,
-    payer:        address,
     fee_inbox_id: ID,
     ctx:          &mut TxContext,
 ): Balance<CoinType> {
     if (fee_amount > 0) {
         let part = balance::split(&mut balance, fee_amount);
-        fee_message::post<CoinType>(part, escrow_id, payer, fee_inbox_id, ctx);
+        fee_message::post<CoinType>(fee_message::new_share(part, escrow_id), fee_inbox_id, ctx);
     };
     balance
 }

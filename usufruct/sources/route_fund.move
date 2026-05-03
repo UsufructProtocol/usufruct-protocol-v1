@@ -42,7 +42,7 @@ public(package) fun route<C>(
 ): (ID, address) {
     let (departing, fee_balance) = tenant_state::split(departing, fee_amount);
     let (cap_id, addr, refund)   = tenant_state::unbundle(departing);
-    fee_message::post(fee_balance, escrow_id, addr, fee_inbox_id, ctx);
+    fee_message::post(fee_message::new_share(fee_balance, escrow_id), fee_inbox_id, ctx);
     if (balance::value(&refund) > 0) {
         transfer::public_transfer(coin::from_balance(refund, ctx), addr);
     } else {

@@ -90,7 +90,7 @@ fun new_returns_not_rented() {
 fun start_rent_transitions_to_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     assert!(lifecycle_state::is_rented(&s));
     let (s, rs) = lifecycle_state::expire_tenure(s, OWNER_T1, FEE_T1, LAST_ACQ_PRICE, fake_escrow_id());
     refund_state::destroy_for_testing(rs);
@@ -102,7 +102,7 @@ fun start_rent_transitions_to_rented() {
 fun expire_tenure_returns_nothing_variant() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let (s, rs) = lifecycle_state::expire_tenure(s, OWNER_T1, FEE_T1, LAST_ACQ_PRICE, fake_escrow_id());
 
     assert!(lifecycle_state::is_not_rented(&s));
@@ -119,7 +119,7 @@ fun expire_tenure_returns_nothing_variant() {
 fun expire_auction_stays_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let (s, rs) = lifecycle_state::expire_tenure(s, OWNER_T1, FEE_T1, LAST_ACQ_PRICE, fake_escrow_id());
     refund_state::destroy_for_testing(rs);
 
@@ -143,7 +143,7 @@ fun retire_now_stays_not_rented() {
 fun retire_now_from_at_dutch_stays_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let (s, rs) = lifecycle_state::expire_tenure(s, OWNER_T1, FEE_T1, LAST_ACQ_PRICE, fake_escrow_id());
     refund_state::destroy_for_testing(rs);
 
@@ -159,7 +159,7 @@ fun retire_now_from_at_dutch_stays_not_rented() {
 fun place_bid_stays_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let s = lifecycle_state::place_bid(s, t2(), EXPIRY_MS);
     assert!(lifecycle_state::is_rented(&s));
     // Drain via accept_bid (Parcial: T1 had partial consumption) then expire_tenure (Nothing)
@@ -175,7 +175,7 @@ fun place_bid_stays_rented() {
 fun supersede_bid_returns_total_variant() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let s = lifecycle_state::place_bid(s, t2(), EXPIRY_MS);
     let (s, rs) = lifecycle_state::supersede_bid(s, t3(), EXPIRY_MS);
 
@@ -196,7 +196,7 @@ fun supersede_bid_returns_total_variant() {
 fun accept_bid_with_remainder_returns_parcial() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let s = lifecycle_state::place_bid(s, t2(), EXPIRY_MS);
     // owner+fee < stake → remainder leftover → Parcial
     let (s, rs) = lifecycle_state::accept_bid(s, PARTIAL_OWNER, PARTIAL_FEE, PHASE_MS, fake_escrow_id());
@@ -217,7 +217,7 @@ fun accept_bid_with_zero_remainder_returns_nothing() {
     // Models the A8 spec edge case (used_credit == stake at handover).
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let s = lifecycle_state::place_bid(s, t2(), EXPIRY_MS);
     // T1's full stake split into owner + fee — nothing left for remainder
     let (s, rs) = lifecycle_state::accept_bid(s, OWNER_T1, FEE_T1, PHASE_MS, fake_escrow_id());
@@ -238,8 +238,8 @@ fun accept_bid_with_zero_remainder_returns_nothing() {
 fun start_rent_aborts_from_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
-    let s = lifecycle_state::start_rent(s, t2(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
+    let s = lifecycle_state::start_rent(s, t2(), PHASE_MS, fake_escrow_id());
     let (s, rs) = lifecycle_state::expire_tenure(s, OWNER_T1, FEE_T1, LAST_ACQ_PRICE, fake_escrow_id());
     refund_state::destroy_for_testing(rs);
     retire_and_teardown(s);
@@ -262,7 +262,7 @@ fun expire_tenure_aborts_from_not_rented() {
 fun expire_auction_aborts_from_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let s = lifecycle_state::expire_auction(s);
     retire_and_teardown(s);
     sc.end();
@@ -273,7 +273,7 @@ fun expire_auction_aborts_from_rented() {
 fun retire_now_aborts_from_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let s = lifecycle_state::retire_now(s);
     teardown_retired(s);
     sc.end();
@@ -316,7 +316,7 @@ fun accept_bid_aborts_from_not_rented() {
 fun decompose_retired_aborts_from_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let (a_state, t_state) = lifecycle_state::decompose_retired(s);
     destroy_asset(asset_state::claim(a_state));
     tenant_state::consume_absence(t_state);
@@ -349,7 +349,7 @@ fun full_cycle_no_bid() {
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
     assert!(lifecycle_state::is_not_rented(&s));
 
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     assert!(lifecycle_state::is_rented(&s));
 
     let (s, rs) = lifecycle_state::expire_tenure(s, OWNER_T1, FEE_T1, LAST_ACQ_PRICE, fake_escrow_id());
@@ -370,7 +370,7 @@ fun full_cycle_with_bid_handover() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
 
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let s = lifecycle_state::place_bid(s, t2(), EXPIRY_MS);
 
     let (s, rs1) = lifecycle_state::accept_bid(s, PARTIAL_OWNER, PARTIAL_FEE, PHASE_MS, fake_escrow_id());
@@ -391,7 +391,7 @@ fun full_cycle_with_supersede() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
 
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let s = lifecycle_state::place_bid(s, t2(), EXPIRY_MS);
 
     let (s, rs_displaced) = lifecycle_state::supersede_bid(s, t3(), EXPIRY_MS);
@@ -417,13 +417,13 @@ fun multi_rental_cycle_two_tenants_sequentially() {
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
 
     // First tenant
-    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t1(), PHASE_MS, fake_escrow_id());
     let (s, rs1) = lifecycle_state::expire_tenure(s, OWNER_T1, FEE_T1, LAST_ACQ_PRICE, fake_escrow_id());
     refund_state::destroy_for_testing(rs1);
     assert!(lifecycle_state::is_not_rented(&s)); // back to NotRented(AtDutch)
 
     // Second tenant takes over from AtDutch
-    let s = lifecycle_state::start_rent(s, t2(), PHASE_MS);
+    let s = lifecycle_state::start_rent(s, t2(), PHASE_MS, fake_escrow_id());
     assert!(lifecycle_state::is_rented(&s));
     let (s, rs2) = lifecycle_state::expire_tenure(s, OWNER_T2, FEE_T2, LAST_ACQ_PRICE, fake_escrow_id());
     refund_state::destroy_for_testing(rs2);

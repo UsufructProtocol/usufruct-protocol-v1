@@ -74,16 +74,18 @@ public(package) fun new<Asset: key + store, CoinType>(
 // ─── Boundary-crossing transitions ─────────────────────────────────────────────
 
 /// NotRented → Rented. New tenant starts the rental; sub-states
-/// advance in lockstep.
+/// advance in lockstep. `escrow_id` is threaded into `asset_state::rent`
+/// so the asset wrapper can stamp its identity at this transition.
 public(package) fun start_rent<Asset: key + store, CoinType>(
     s:              LifecycleState<Asset, CoinType>,
     t:              Tenant<CoinType>,
     phase_start_ms: u64,
+    escrow_id:      ID,
 ): LifecycleState<Asset, CoinType> {
     match (s) {
         LifecycleState::NotRented { a_state, t_state } => {
             LifecycleState::Rented {
-                a_state:  asset_state::rent(a_state),
+                a_state:  asset_state::rent(a_state, escrow_id),
                 t_state:  tenant_state::occupy(t_state, t),
                 phase_start_ms,
                 retiring: false,

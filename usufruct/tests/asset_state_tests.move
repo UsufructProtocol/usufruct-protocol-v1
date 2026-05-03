@@ -5,7 +5,7 @@
 module usufruct::asset_state_tests;
 
 use sui::test_scenario;
-use usufruct::asset_state;
+use usufruct::{asset, asset_state};
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -22,6 +22,7 @@ fun destroy_asset(a: TestAsset) {
 }
 
 const PRICE: u64 = 1_000;
+fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 
 // ─── §1. Constructor ───────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ fun new_returns_idle_with_asset() {
 #[test]
 fun rent_from_idle_opens_handover() {
     let mut sc = test_scenario::begin(@0xA);
-    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
+    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id());
     assert!(asset_state::is_handover_open(&s));
     assert!(asset_state::has_asset(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
@@ -52,9 +53,9 @@ fun rent_from_idle_opens_handover() {
 fun rent_from_at_dutch_opens_handover() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::new(new_asset(sc.ctx()));
-    let s = asset_state::expire(asset_state::rent(s), PRICE);
+    let s = asset_state::expire(asset_state::rent(s, fake_escrow_id()), PRICE);
     assert!(asset_state::is_at_dutch(&s));
-    let s = asset_state::rent(s);
+    let s = asset_state::rent(s, fake_escrow_id());
     assert!(asset_state::is_handover_open(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
         asset_state::no_winner(asset_state::expire(s, PRICE)))));
@@ -64,7 +65,7 @@ fun rent_from_at_dutch_opens_handover() {
 #[test]
 fun bid_promotes_to_confirmed() {
     let mut sc = test_scenario::begin(@0xA);
-    let s = asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx()))));
+    let s = asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id()));
     assert!(asset_state::is_handover_confirmed(&s));
     assert!(asset_state::has_asset(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
@@ -77,7 +78,7 @@ fun bid_promotes_to_confirmed() {
 fun handover_returns_to_open() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::handover(
-        asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx())))));
+        asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id())));
     assert!(asset_state::is_handover_open(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
         asset_state::no_winner(asset_state::expire(s, PRICE)))));
@@ -88,7 +89,7 @@ fun handover_returns_to_open() {
 fun expire_from_open_to_dutch() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::expire(
-        asset_state::rent(asset_state::new(new_asset(sc.ctx()))), PRICE);
+        asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id()), PRICE);
     assert!(asset_state::is_at_dutch(&s));
     assert!(asset_state::has_asset(&s));
     destroy_asset(asset_state::claim(asset_state::retire(s)));
@@ -100,7 +101,7 @@ fun no_winner_returns_to_idle() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::no_winner(
         asset_state::expire(
-            asset_state::rent(asset_state::new(new_asset(sc.ctx()))), PRICE));
+            asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id()), PRICE));
     assert!(asset_state::is_idle(&s));
     destroy_asset(asset_state::claim(asset_state::retire(s)));
     sc.end();
@@ -120,7 +121,7 @@ fun retire_from_at_dutch_yields_retired() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::retire(
         asset_state::expire(
-            asset_state::rent(asset_state::new(new_asset(sc.ctx()))), PRICE));
+            asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id()), PRICE));
     assert!(asset_state::is_retired(&s));
     destroy_asset(asset_state::claim(s));
     sc.end();
@@ -132,8 +133,8 @@ fun retire_from_at_dutch_yields_retired() {
 #[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
 fun rent_aborts_from_handover_open() {
     let mut sc = test_scenario::begin(@0xA);
-    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
-    let s = asset_state::rent(s);
+    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id());
+    let s = asset_state::rent(s, fake_escrow_id());
     destroy_asset(asset_state::claim(s));
     sc.end();
 }
@@ -142,7 +143,7 @@ fun rent_aborts_from_handover_open() {
 #[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
 fun expire_aborts_from_handover_confirmed() {
     let mut sc = test_scenario::begin(@0xA);
-    let s = asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx()))));
+    let s = asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id()));
     let s = asset_state::expire(s, PRICE);
     destroy_asset(asset_state::claim(s));
     sc.end();
@@ -152,7 +153,7 @@ fun expire_aborts_from_handover_confirmed() {
 #[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
 fun retire_aborts_from_handover_open() {
     let mut sc = test_scenario::begin(@0xA);
-    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
+    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id());
     let s = asset_state::retire(s);
     destroy_asset(asset_state::claim(s));
     sc.end();
@@ -170,13 +171,13 @@ fun claim_aborts_from_idle() {
 // ─── §4. give / give_back ──────────────────────────────────────────────────────
 
 #[test]
-fun give_extracts_asset_from_handover_open() {
+fun give_extracts_asset_and_mints_receipt() {
     let mut sc = test_scenario::begin(@0xA);
-    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
-    let (s, extracted) = asset_state::give(s);
+    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id());
+    let (s, extracted, receipt) = asset_state::give(s);
     assert!(asset_state::is_handover_open(&s));
     assert!(!asset_state::has_asset(&s));
-    let s = asset_state::give_back(s, extracted);
+    let s = asset_state::give_back(s, extracted, receipt);
     assert!(asset_state::has_asset(&s));
     destroy_asset(asset_state::claim(asset_state::retire(
         asset_state::no_winner(asset_state::expire(s, PRICE)))));
@@ -184,14 +185,15 @@ fun give_extracts_asset_from_handover_open() {
 }
 
 #[test]
-#[expected_failure]
+#[expected_failure(abort_code = asset::E_ASSET_NOT_AVAILABLE, location = usufruct::asset)]
 fun expire_aborts_when_asset_is_borrowed() {
     let mut sc = test_scenario::begin(@0xA);
-    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())));
-    let (s, extracted) = asset_state::give(s);
+    let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id());
+    let (s, extracted, receipt) = asset_state::give(s);
     let s = asset_state::expire(s, PRICE);
     destroy_asset(asset_state::claim(asset_state::retire(s)));
     destroy_asset(extracted);
+    asset::destroy_receipt_for_testing(receipt);
     sc.end();
 }
 
@@ -202,7 +204,7 @@ fun full_rental_cycle() {
     let mut sc = test_scenario::begin(@0xA);
     let ctx = sc.ctx();
     let s = asset_state::new(new_asset(ctx));
-    let s = asset_state::rent(s);
+    let s = asset_state::rent(s, fake_escrow_id());
     assert!(asset_state::is_handover_open(&s));
     let s = asset_state::bid(s);
     assert!(asset_state::is_handover_confirmed(&s));

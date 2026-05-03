@@ -27,7 +27,7 @@ use usufruct::{
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     refund_state,
     retire_policy,
-    tenant::{Self, Tenant},
+    tenant,
     tenant_cap::{Self, TenantCap},
     tenant_state,
 };
@@ -44,7 +44,10 @@ const ENotRetired:              u64 = 6;
 const EReceiptEscrowMismatch:   u64 = 7;
 const EReceiptAssetMismatch:    u64 = 8;
 const ENoEarnings:              u64 = 9;
-const EAssetAlreadyBorrowed:    u64 = 10;
+// Slot 10 reserved for `EAssetAlreadyBorrowed` parity with the legacy
+// rental_escrow.move; the new design enforces the invariant
+// structurally inside `asset::take` (option::extract aborts on None),
+// so the coordinator-layer code is unreachable.
 const EWrongEscrowOwnerCap:     u64 = 11;
 const EWrongEscrowTenantCap:    u64 = 12;
 const EPendingTenantCap:        u64 = 13;

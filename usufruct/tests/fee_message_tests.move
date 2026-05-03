@@ -24,7 +24,6 @@ use usufruct::{
 
 const DEPLOYER: address = @0xD1;
 const ALICE:    address = @0xA1;
-const BOB:      address = @0xB0;
 const ADMIN:    address = @0xAD;
 
 // ─── Test-only coin witness ─────────────────────────────────────────────────

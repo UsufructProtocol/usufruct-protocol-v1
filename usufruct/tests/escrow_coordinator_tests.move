@@ -7,14 +7,14 @@ module usufruct::escrow_coordinator_tests;
 use std::unit_test::assert_eq;
 use sui::{
     balance,
-    clock::{Self, Clock},
+    clock,
     coin::{Self, Coin},
     event,
     sui::SUI,
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    asset::{Self, AssetReceipt},
+    asset,
     escrow_coordinator::{
         Self,
         EscrowCoordinator,
@@ -36,7 +36,7 @@ use usufruct::{
     owner_cap::{Self, OwnerCap},
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     tenant::{Self, Tenant},
-    tenant_cap::{Self, TenantCap},
+    tenant_cap,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
 /// Initialise the protocol-fee singletons. Returns a scenario whose
 /// next-tx state has the `ProtocolFeeRef` frozen and the
 /// `ProtocolFeeInbox` owned by `OWNER`.
-fun setup(): test_scenario::Scenario {
+fun setup(): Scenario {
     let mut sc = test_scenario::begin(OWNER);
     {
         protocol_fee_inbox::init_for_testing(sc.ctx());
@@ -92,8 +92,8 @@ fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {
 /// escrow + cap. Common shape for view tests.
 fun integrate_and_take(
     cfg: usufruct::config::IntegrationConfig,
-    sc:  &mut test_scenario::Scenario,
-): (EscrowCoordinator<DemoAsset, SUI>, usufruct::owner_cap::OwnerCap) {
+    sc:  &mut Scenario,
+): (EscrowCoordinator<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
@@ -560,7 +560,7 @@ fun rent_from_idle_installs_new_tenant() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
 
     let floor = escrow_corpus::min_rent_price_const();
     let payment = mk_payment(floor, sc.ctx());
@@ -683,7 +683,7 @@ fun rent_from_handover_open_aborts_when_retiring_flag_set() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
 
     // First rent: Idle → HandoverOpen.
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -761,7 +761,7 @@ fun rent_below_floor_aborts() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
 
     let payment = mk_payment(escrow_corpus::min_rent_price_const() - 1, sc.ctx());
     let cap = escrow_coordinator::rent(&mut escrow, payment, &clk, sc.ctx());
@@ -779,7 +779,7 @@ fun rent_from_retired_aborts() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
     escrow_coordinator::drive_to_retired_for_testing(&mut escrow);
 
     let payment = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -869,7 +869,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
@@ -920,7 +920,7 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
@@ -1483,7 +1483,7 @@ fun withdraw_earnings_drains_owner_balance() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
 
     let principal = escrow_corpus::min_rent_price_const();
     let p1 = mk_payment(principal, sc.ctx());
@@ -1584,7 +1584,7 @@ fun claim_asset_sweeps_owner_earnings() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
 
     let principal = escrow_corpus::min_rent_price_const();
     let p1 = mk_payment(principal, sc.ctx());

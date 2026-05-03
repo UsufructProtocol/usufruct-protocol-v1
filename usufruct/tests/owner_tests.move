@@ -7,7 +7,7 @@ module usufruct::owner_tests;
 use std::unit_test::assert_eq;
 use sui::{balance, coin, test_scenario};
 use usufruct::{
-    owner::{Self, Owner},
+    owner,
     owner_cap::{Self, OwnerCap},
 };
 

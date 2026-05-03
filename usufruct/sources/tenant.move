@@ -140,3 +140,42 @@ public(package) fun stake_value<CoinType>(t: &Tenant<CoinType>): u64     { t.sta
 // === Private Functions ===
 
 // === Test Functions ===
+
+#[test_only]
+public fun is_absence<CoinType>(s: &TenantState<CoinType>): bool {
+    match (s) {
+        TenantState::Absence                       => true,
+        TenantState::Occupied { t1: _t1 }          => false,
+        TenantState::Demand   { t1: _t1, t2: _t2 } => false,
+    }
+}
+
+#[test_only]
+public fun is_occupied<CoinType>(s: &TenantState<CoinType>): bool {
+    match (s) {
+        TenantState::Occupied { t1: _t1 }          => true,
+        TenantState::Absence                       => false,
+        TenantState::Demand   { t1: _t1, t2: _t2 } => false,
+    }
+}
+
+#[test_only]
+public fun is_demand<CoinType>(s: &TenantState<CoinType>): bool {
+    match (s) {
+        TenantState::Demand   { t1: _t1, t2: _t2 } => true,
+        TenantState::Absence                       => false,
+        TenantState::Occupied { t1: _t1 }          => false,
+    }
+}
+
+/// Drop an Absence state at the end of a test. Aborts if the state is
+/// not Absence — sanity check that the test reached the expected
+/// terminal position.
+#[test_only]
+public fun consume_absence<CoinType>(s: TenantState<CoinType>) {
+    match (s) {
+        TenantState::Absence                       => (),
+        TenantState::Occupied { t1: _t1 }          => abort 0xDEAD,
+        TenantState::Demand   { t1: _t1, t2: _t2 } => abort 0xDEAD,
+    }
+}

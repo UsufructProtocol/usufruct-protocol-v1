@@ -14,6 +14,7 @@ use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape,
     descent_policy,
+    fee_message,
     handover_policy,
     lifecycle_state::{Self, LifecycleState},
     math,
@@ -609,6 +610,130 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     cap
 }
 
+// ─── Boundary handlers ───────────────────────────────────────────────────────
+// Fired by `apply_pending_transitions` when an elapsed boundary is
+// detected. C6 wires APT; C4 ships the handlers themselves so they
+// can be exercised directly via test-only fire helpers below.
+
+/// Handover boundary (Demand → Occupied): the pending bidder takes
+/// over from the current tenant. Computes used_credit at boundary_ms,
+/// splits it 90/10 (owner / fee), routes the resulting RefundState
+/// to its three terminal consumers (owner::deposit, fee_message::post,
+/// tenant::liquidate for the remainder if Parcial). The promoted
+/// tenant's cap was minted at place_bid/supersede_bid time — handover
+/// does not mint a fresh cap.
+fun do_handover<Asset: key + store, CoinType>(
+    escrow:      &mut EscrowCoordinator<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+) {
+    let escrow_id    = object::id(escrow);
+    let used_credit  = compute_used_credit(escrow, boundary_ms);
+    let (owner_amount, fee_amount) = split_fee(used_credit);
+    let displaced_addr = lifecycle_state::current_addr(read_state(escrow));
+    let principal      = lifecycle_state::current_stake_value(read_state(escrow));
+    let remain_credit  = principal - used_credit;
+
+    let (st, receipt) = take_state(escrow);
+    let (new_st, refund) = lifecycle_state::accept_bid<Asset, CoinType>(
+        st, owner_amount, fee_amount, boundary_ms, escrow_id,
+    );
+    put_state(escrow, new_st, receipt);
+
+    if (refund_state::has_remainder(&refund)) {
+        let (_id, stake, fee_share, owner_earnings) = refund_state::consume_parcial(refund);
+        owner::deposit(&mut escrow.owner, owner_earnings);
+        fee_message::post(fee_share, escrow.fee_inbox_id, ctx);
+        tenant::liquidate(stake, displaced_addr, ctx);
+    } else {
+        let (_id, fee_share, owner_earnings) = refund_state::consume_nothing(refund);
+        owner::deposit(&mut escrow.owner, owner_earnings);
+        fee_message::post(fee_share, escrow.fee_inbox_id, ctx);
+    };
+
+    let new_tenant_cap_id = lifecycle_state::current_cap_id(read_state(escrow));
+    let new_rent_price = compute_next_rent_price(
+        &escrow.config, lifecycle_state::current_stake_value(read_state(escrow)),
+    );
+
+    event::emit(HandoverCompleted {
+        escrow_id,
+        displaced_tenant: displaced_addr,
+        new_tenant_cap_id,
+        used_credit,
+        owner_share:    owner_amount,
+        protocol_fee:   fee_amount,
+        remain_credit,
+        new_rent_price,
+        timestamp_ms:   boundary_ms,
+    });
+}
+
+/// Tenure boundary (HandoverOpen → AtDutch | Retired). The current
+/// tenant departs; the full stake is consumed (owner + fee, no
+/// remainder — `RefundState::Nothing`). If the retiring flag was
+/// set during the rental, the resulting AtDutch is collapsed to
+/// Retired in the same call and an `AssetRetired` event fires.
+fun do_tenure_expiry<Asset: key + store, CoinType>(
+    escrow:      &mut EscrowCoordinator<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+) {
+    let escrow_id              = object::id(escrow);
+    let s                      = read_state(escrow);
+    let principal              = lifecycle_state::current_stake_value(s);
+    let tenant_addr            = lifecycle_state::current_addr(s);
+    let was_retiring           = lifecycle_state::is_retiring(s);
+    let (owner_amount, fee_amount) = split_fee(principal);
+    // At the tenure boundary, the credit curve has saturated — the
+    // full stake is the AtDutch anchor.
+    let last_acquisition_price = principal;
+
+    let (st, receipt) = take_state(escrow);
+    let (new_st, refund) = lifecycle_state::expire_tenure<Asset, CoinType>(
+        st, owner_amount, fee_amount, last_acquisition_price, boundary_ms, escrow_id,
+    );
+    put_state(escrow, new_st, receipt);
+
+    let (_id, fee_share, owner_earnings) = refund_state::consume_nothing(refund);
+    owner::deposit(&mut escrow.owner, owner_earnings);
+    fee_message::post(fee_share, escrow.fee_inbox_id, ctx);
+
+    // If the retiring flag was set, collapse AtDutch → Retired.
+    if (was_retiring) {
+        let (st2, receipt2) = take_state(escrow);
+        let new_st2 = lifecycle_state::retire_now(st2);
+        put_state(escrow, new_st2, receipt2);
+    };
+
+    let next_state = state_tag(escrow);
+    event::emit(TenureExpired {
+        escrow_id,
+        tenant:                 tenant_addr,
+        owner_share:            owner_amount,
+        protocol_fee:           fee_amount,
+        last_acquisition_price,
+        next_state,
+        timestamp_ms:           boundary_ms,
+    });
+    if (was_retiring) {
+        event::emit(AssetRetired { escrow_id, from_state: EscrowStateTag::HandoverOpen });
+    };
+}
+
+/// Auction boundary (AtDutch → Idle). No tenant funds involved; only
+/// emits `AuctionExpired` for off-chain observers.
+fun do_auction_expiry<Asset: key + store, CoinType>(
+    escrow:      &mut EscrowCoordinator<Asset, CoinType>,
+    boundary_ms: u64,
+) {
+    let escrow_id     = object::id(escrow);
+    let (st, receipt) = take_state(escrow);
+    let new_st        = lifecycle_state::expire_auction(st);
+    put_state(escrow, new_st, receipt);
+    event::emit(AuctionExpired { escrow_id, timestamp_ms: boundary_ms });
+}
+
 // === Test Functions ===
 
 #[test_only]
@@ -616,6 +741,13 @@ public(package) fun read_state_for_testing<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): &LifecycleState<Asset, CoinType> {
     read_state(escrow)
+}
+
+#[test_only]
+public(package) fun owner_value_for_testing<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): u64 {
+    owner::value(&escrow.owner)
 }
 
 /// Exercise the take/put cycle as a no-op. Verifies the
@@ -678,6 +810,50 @@ public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64      
 public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address        { e.new_bidder }
 #[test_only]
 public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64        { e.new_bid_amount }
+
+#[test_only]
+public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
+#[test_only]
+public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): address       { e.displaced_tenant }
+#[test_only]
+public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                  { e.new_tenant_cap_id }
+#[test_only]
+public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64                { e.used_credit }
+#[test_only]
+public(package) fun handover_completed_owner_share(e: &HandoverCompleted): u64                { e.owner_share }
+#[test_only]
+public(package) fun handover_completed_protocol_fee(e: &HandoverCompleted): u64               { e.protocol_fee }
+#[test_only]
+public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64              { e.remain_credit }
+#[test_only]
+public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u64             { e.new_rent_price }
+#[test_only]
+public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64               { e.timestamp_ms }
+
+#[test_only]
+public(package) fun tenure_expired_escrow_id(e: &TenureExpired): ID                          { e.escrow_id }
+#[test_only]
+public(package) fun tenure_expired_tenant(e: &TenureExpired): address                         { e.tenant }
+#[test_only]
+public(package) fun tenure_expired_owner_share(e: &TenureExpired): u64                        { e.owner_share }
+#[test_only]
+public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64                       { e.protocol_fee }
+#[test_only]
+public(package) fun tenure_expired_last_acq_price(e: &TenureExpired): u64                     { e.last_acquisition_price }
+#[test_only]
+public(package) fun tenure_expired_next_state(e: &TenureExpired): EscrowStateTag              { e.next_state }
+#[test_only]
+public(package) fun tenure_expired_timestamp_ms(e: &TenureExpired): u64                       { e.timestamp_ms }
+
+#[test_only]
+public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID                        { e.escrow_id }
+#[test_only]
+public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64                     { e.timestamp_ms }
+
+#[test_only]
+public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID                            { e.escrow_id }
+#[test_only]
+public(package) fun asset_retired_from_state(e: &AssetRetired): EscrowStateTag               { e.from_state }
 
 // ─── Drive helpers for test-only state composition ───────────────────────────
 // Bypass `rent`/`retire` (not yet implemented) by chaining
@@ -749,4 +925,33 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     let (s, receipt) = take_state(escrow);
     let new_s        = lifecycle_state::set_retiring(s);
     put_state(escrow, new_s, receipt);
+}
+
+/// Fire `do_handover` directly. C6 wires this through APT; C4 ships
+/// the handler and exposes this helper so tests can verify the
+/// boundary semantics in isolation.
+#[test_only]
+public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
+    escrow:      &mut EscrowCoordinator<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+) {
+    do_handover(escrow, boundary_ms, ctx)
+}
+
+#[test_only]
+public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinType>(
+    escrow:      &mut EscrowCoordinator<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+) {
+    do_tenure_expiry(escrow, boundary_ms, ctx)
+}
+
+#[test_only]
+public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
+    escrow:      &mut EscrowCoordinator<Asset, CoinType>,
+    boundary_ms: u64,
+) {
+    do_auction_expiry(escrow, boundary_ms)
 }

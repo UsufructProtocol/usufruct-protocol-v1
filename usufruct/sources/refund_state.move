@@ -117,6 +117,55 @@ public(package) fun consume_total<C>(rs: RefundState<C>): (TenantIdentity, Tenan
     }
 }
 
+/// Consume a `Parcial` refund and surface all four slots. Produced by
+/// `accept_bid` when the departing tenant's stake exceeds the
+/// owner+fee split (i.e. used_credit < principal). Caller is
+/// `escrow_coordinator::do_handover`. Aborts on wrong variant.
+public(package) fun consume_parcial<C>(rs: RefundState<C>): (
+    TenantIdentity,
+    TenantStake<C>,
+    FeeShare<C>,
+    OwnerEarnings<C>,
+) {
+    match (rs) {
+        RefundState::Parcial { identity, stake, fee_share, owner_earnings } =>
+            (identity, stake, fee_share, owner_earnings),
+        RefundState::Nothing { identity: _, fee_share: _fs, owner_earnings: _oe } =>
+            abort EWrongVariant,
+        RefundState::Total   { identity: _, stake: _stk } =>
+            abort EWrongVariant,
+    }
+}
+
+/// Consume a `Nothing` refund (no remainder). Produced by
+/// `expire_tenure` (full stake → owner+fee) and by `accept_bid` when
+/// used_credit exhausts the principal. Callers:
+/// `escrow_coordinator::do_tenure_expiry` and
+/// `escrow_coordinator::do_handover` (Nothing branch).
+public(package) fun consume_nothing<C>(rs: RefundState<C>): (
+    TenantIdentity,
+    FeeShare<C>,
+    OwnerEarnings<C>,
+) {
+    match (rs) {
+        RefundState::Nothing { identity, fee_share, owner_earnings } =>
+            (identity, fee_share, owner_earnings),
+        RefundState::Parcial { identity: _, stake: _stk, fee_share: _fs, owner_earnings: _oe } =>
+            abort EWrongVariant,
+        RefundState::Total   { identity: _, stake: _stk } =>
+            abort EWrongVariant,
+    }
+}
+
+/// True iff the variant is `Parcial`. Used by `do_handover` to
+/// dispatch between the Parcial / Nothing arms after `accept_bid`.
+public(package) fun has_remainder<C>(rs: &RefundState<C>): bool {
+    match (rs) {
+        RefundState::Parcial { .. } => true,
+        _                            => false,
+    }
+}
+
 // === Private Functions ===
 
 // === Test Functions ===

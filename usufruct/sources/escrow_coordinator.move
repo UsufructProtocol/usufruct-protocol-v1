@@ -1212,6 +1212,17 @@ public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
 // off-chain through Sui's event indexing.
 
 #[test_only]
+public(package) fun asset_integrated_escrow_id<A, C>(e: &AssetIntegrated<A, C>): ID      { e.escrow_id }
+#[test_only]
+public(package) fun asset_integrated_owner_cap_id<A, C>(e: &AssetIntegrated<A, C>): ID   { e.owner_cap_id }
+#[test_only]
+public(package) fun asset_integrated_asset_id<A, C>(e: &AssetIntegrated<A, C>): ID       { e.asset_id }
+#[test_only]
+public(package) fun asset_integrated_fee_inbox_id<A, C>(e: &AssetIntegrated<A, C>): ID   { e.fee_inbox_id }
+#[test_only]
+public(package) fun asset_integrated_at_ms<A, C>(e: &AssetIntegrated<A, C>): u64         { e.integrated_at_ms }
+
+#[test_only]
 public(package) fun rent_started_escrow_id(e: &RentStarted): ID                  { e.escrow_id }
 #[test_only]
 public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID              { e.tenant_cap_id }
@@ -1255,6 +1266,8 @@ public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64      
 public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address        { e.new_bidder }
 #[test_only]
 public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64        { e.new_bid_amount }
+#[test_only]
+public(package) fun bid_superseded_floor_price(e: &BidSuperseded): u64           { e.floor_price }
 #[test_only]
 public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded): u64 { e.handover_countdown_expiry }
 
@@ -1306,9 +1319,13 @@ public(package) fun auction_expired_last_acq_price(e: &AuctionExpired): u64     
 public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64                     { e.timestamp_ms }
 
 #[test_only]
+public(package) fun asset_borrowed_escrow_id(e: &AssetBorrowed): ID                          { e.escrow_id }
+#[test_only]
 public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID                      { e.tenant_cap_id }
 #[test_only]
 public(package) fun asset_borrowed_tenant(e: &AssetBorrowed): address                        { e.tenant }
+#[test_only]
+public(package) fun asset_returned_escrow_id(e: &AssetReturned): ID                          { e.escrow_id }
 #[test_only]
 public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID                      { e.tenant_cap_id }
 #[test_only]

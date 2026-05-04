@@ -146,12 +146,10 @@ fun eval_power_law(t: u64, t_max: u64, alpha_num: u8, alpha_den: u8): u64 {
     if (alpha_den == 1) {
         return acc
     };
-    let scale_pow: u128 = if (alpha_den == 2) {
-        SCALE_U128
-    } else if (alpha_den == 3) {
-        SCALE_SQ
-    } else {
-        SCALE_CB
+    let scale_pow: u128 = match (alpha_den) {
+        2 => SCALE_U128,
+        3 => SCALE_SQ,
+        _ => SCALE_CB,
     };
     let target: u128 = (acc as u128) * scale_pow;
     math::nth_root_u128(target, alpha_den as u32) as u64
@@ -208,24 +206,27 @@ fun exp_scaled_pos(y_num: u64, y_den: u64): u128 {
 
 // Pure dispatcher over the 16 EXP_A_NORM_{1..8}_{POS,NEG} module constants.
 fun exp_a_norm(alpha_abs: u8, alpha_neg: bool): u128 {
-    if (!alpha_neg) {
-        if      (alpha_abs == 1) { EXP_A_NORM_1_POS }
-        else if (alpha_abs == 2) { EXP_A_NORM_2_POS }
-        else if (alpha_abs == 3) { EXP_A_NORM_3_POS }
-        else if (alpha_abs == 4) { EXP_A_NORM_4_POS }
-        else if (alpha_abs == 5) { EXP_A_NORM_5_POS }
-        else if (alpha_abs == 6) { EXP_A_NORM_6_POS }
-        else if (alpha_abs == 7) { EXP_A_NORM_7_POS }
-        else                     { EXP_A_NORM_8_POS }
-    } else {
-        if      (alpha_abs == 1) { EXP_A_NORM_1_NEG }
-        else if (alpha_abs == 2) { EXP_A_NORM_2_NEG }
-        else if (alpha_abs == 3) { EXP_A_NORM_3_NEG }
-        else if (alpha_abs == 4) { EXP_A_NORM_4_NEG }
-        else if (alpha_abs == 5) { EXP_A_NORM_5_NEG }
-        else if (alpha_abs == 6) { EXP_A_NORM_6_NEG }
-        else if (alpha_abs == 7) { EXP_A_NORM_7_NEG }
-        else                     { EXP_A_NORM_8_NEG }
+    match (alpha_neg) {
+        false => match (alpha_abs) {
+            1 => EXP_A_NORM_1_POS,
+            2 => EXP_A_NORM_2_POS,
+            3 => EXP_A_NORM_3_POS,
+            4 => EXP_A_NORM_4_POS,
+            5 => EXP_A_NORM_5_POS,
+            6 => EXP_A_NORM_6_POS,
+            7 => EXP_A_NORM_7_POS,
+            _ => EXP_A_NORM_8_POS,
+        },
+        true => match (alpha_abs) {
+            1 => EXP_A_NORM_1_NEG,
+            2 => EXP_A_NORM_2_NEG,
+            3 => EXP_A_NORM_3_NEG,
+            4 => EXP_A_NORM_4_NEG,
+            5 => EXP_A_NORM_5_NEG,
+            6 => EXP_A_NORM_6_NEG,
+            7 => EXP_A_NORM_7_NEG,
+            _ => EXP_A_NORM_8_NEG,
+        },
     }
 }
 

@@ -85,3 +85,13 @@ public(package) fun window_ceiling(policy: &DescentPolicy): u64 {
         DescentPolicy::Skipped               => abort EDescentSkippedNoWindow,
     }
 }
+
+/// Optional window duration for display purposes.
+///   Window { ceiling_ms } → Some(ceiling_ms)
+///   Skipped               → None (no auction phase exists under this policy)
+public(package) fun window_ceiling_opt(policy: &DescentPolicy): Option<u64> {
+    match (policy) {
+        DescentPolicy::Window { ceiling_ms } => option::some(*ceiling_ms),
+        DescentPolicy::Skipped               => option::none(),
+    }
+}

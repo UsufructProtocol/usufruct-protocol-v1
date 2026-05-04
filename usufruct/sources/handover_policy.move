@@ -75,6 +75,16 @@ public(package) fun countdown_floor_lt(policy: &HandoverPolicy, ceiling: u64): b
     }
 }
 
+/// Optional countdown floor for display purposes.
+///   Countdown { floor_ms } → Some(floor_ms)
+///   Instant | FixedTime    → None (no configurable countdown floor)
+public(package) fun countdown_floor_ms_opt(policy: &HandoverPolicy): Option<u64> {
+    match (policy) {
+        HandoverPolicy::Countdown { floor_ms }               => option::some(*floor_ms),
+        HandoverPolicy::Instant | HandoverPolicy::FixedTime  => option::none(),
+    }
+}
+
 /// Canonical handover boundary timestamp — the moment at which the
 /// pending bid finalizes. Sister view of `has_expired`: the bool
 /// dispatcher answers "did we cross the boundary?", this one names

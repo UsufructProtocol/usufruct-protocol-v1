@@ -98,6 +98,7 @@ public struct StateReceipt {}
 public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
+    owner:            address,
     asset_id:         ID,
     fee_inbox_id:     ID,
     integrated_at_ms: u64,
@@ -116,16 +117,22 @@ public struct BidPlaced has copy, drop {
     escrow_id:                 ID,
     current_tenant_cap_id:     ID,
     current_tenant_addr:       address,
+    current_tenant_stake:      u64,
     current_phase_start_ms:    u64,
     tenant_cap_id:             ID,
     pending_tenant:            address,
     bid_amount:                u64,
     floor_price:               u64,
     handover_countdown_expiry: u64,
+    timestamp_ms:              u64,
 }
 
 public struct BidSuperseded has copy, drop {
     escrow_id:                 ID,
+    protected_tenant_cap_id:   ID,
+    protected_tenant_addr:     address,
+    protected_tenant_stake:    u64,
+    protected_phase_start_ms:  u64,
     displaced_tenant_cap_id:   ID,
     new_tenant_cap_id:         ID,
     displaced_bidder:          address,
@@ -134,13 +141,15 @@ public struct BidSuperseded has copy, drop {
     new_bid_amount:            u64,
     floor_price:               u64,
     handover_countdown_expiry: u64,
+    timestamp_ms:              u64,
 }
 
 public struct HandoverCompleted has copy, drop {
-    escrow_id:               ID,
-    displaced_tenant_cap_id: ID,
-    displaced_tenant:        address,
-    new_tenant_cap_id:       ID,
+    escrow_id:                ID,
+    displaced_tenant_cap_id:  ID,
+    displaced_tenant:         address,
+    displaced_phase_start_ms: u64,
+    new_tenant_cap_id:        ID,
     new_tenant_addr:         address,
     new_tenant_stake:        u64,
     used_credit:             u64,
@@ -163,9 +172,10 @@ public struct TenureExpired has copy, drop {
 }
 
 public struct AuctionExpired has copy, drop {
-    escrow_id:     ID,
+    escrow_id:      ID,
+    phase_start_ms: u64,
     last_acq_price: u64,
-    timestamp_ms:  u64,
+    timestamp_ms:   u64,
 }
 
 public struct RetireFlagSet has copy, drop {
@@ -247,7 +257,7 @@ public fun integrate<Asset: key + store, CoinType>(
     };
     config::emit_registration(&escrow.config, escrow_id);
     transfer::share_object(escrow);
-    event::emit(AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id, asset_id, fee_inbox_id, integrated_at_ms });
+    event::emit(AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id, owner: owner_addr, asset_id, fee_inbox_id, integrated_at_ms });
     owner_cap
 }
 
@@ -384,7 +394,7 @@ public fun rent<Asset: key + store, CoinType>(
     let action = lifecycle_state::rent_action(read_state(escrow));
     if      (rent_action::is_install(&action))      { do_install_new_tenant(escrow, payment, floor, now, ctx) }
     else if (rent_action::is_place_bid(&action))    { do_place_bid(escrow, payment, floor, now, ctx)         }
-    else if (rent_action::is_supersede_bid(&action)){ do_supersede_bid(escrow, payment, floor, ctx)          }
+    else if (rent_action::is_supersede_bid(&action)){ do_supersede_bid(escrow, payment, floor, now, ctx)     }
     else {
         // Retired — unreachable: compute_floor_price aborted earlier.
         abort EInvariantViolation
@@ -674,6 +684,22 @@ public fun pending_stake<Asset: key + store, CoinType>(
 
 // ─── Temporal views ───────────────────────────────────────────────────────────
 
+/// Absolute timestamp at which the current phase started, in milliseconds.
+/// `Some` while the lifecycle is Rented (HandoverOpen or HandoverConfirmed)
+/// or AtDutchAuction; `None` in Idle and Retired states.
+/// SDK use: display "rental started X days ago"; compute elapsed time
+/// without querying prior events; derive phase start from tenure expiry.
+public fun phase_start_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_rented(s) || lifecycle_state::is_a_state_at_dutch(s)) {
+        option::some(lifecycle_state::phase_start_ms(s))
+    } else {
+        option::none()
+    }
+}
+
 /// Absolute timestamp at which the active tenant's tenure expires.
 /// `Some` while the lifecycle is Rented; `None` otherwise.
 /// Computed as phase_start_ms + config::tenure_ceiling.
@@ -830,6 +856,45 @@ public fun owner_balance<Asset: key + store, CoinType>(
     owner::value(&escrow.owner)
 }
 
+// ─── Config views ────────────────────────────────────────────────────────────
+
+/// Minimum rent price configured for this escrow, in coin base units.
+/// This is the lowest possible floor price — reached when the lifecycle
+/// is `Idle` (Rest pricing regime). In Rented states the floor is higher
+/// (Ascending over the active stake); in AtDutchAuction it descends from
+/// the last acquisition price.
+/// SDK use: marketplace "starting from X SUI" card label; distinguish
+/// the configured base minimum from the current bid floor.
+public fun min_rent_price<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): u64 {
+    config::min_rent_price(&escrow.config)
+}
+
+/// Duration of the Dutch-auction descent window, in milliseconds.
+/// `Some(ceiling_ms)` when the descent policy is `Window`; `None` when
+/// `Skipped` (tenure expiry collapses directly to `Idle` — no auction
+/// phase exists under this policy).
+/// SDK use: display "auction lasts X hours" on asset listings; inform
+/// keepers of the window in which prices descend before reset.
+public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    descent_policy::window_ceiling_opt(config::descent(&escrow.config))
+}
+
+/// Floor duration of the handover-countdown protection window, in
+/// milliseconds. `Some(floor_ms)` when the handover policy is
+/// `Countdown`; `None` when `Instant` or `FixedTime` (no configurable
+/// countdown floor in those variants).
+/// SDK use: display "protection window is X hours" when explaining bid
+/// mechanics; inform bidders how long the current tenant has to react.
+public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    handover_policy::countdown_floor_ms_opt(config::handover(&escrow.config))
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
@@ -960,6 +1025,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     assert!(!lifecycle_state::is_retiring(s), ERetireFlagBlocksBid);
     let current_cap_id   = lifecycle_state::current_cap_id(s);
     let current_addr_val = lifecycle_state::current_addr(s);
+    let current_stake    = lifecycle_state::current_stake_value(s);
     let phase_start      = lifecycle_state::phase_start_ms(s);
     let tenure           = config::tenure_ceiling(&escrow.config);
     let expiry           = handover_policy::expiry_at(
@@ -984,12 +1050,14 @@ fun do_place_bid<Asset: key + store, CoinType>(
         escrow_id,
         current_tenant_cap_id:     current_cap_id,
         current_tenant_addr:       current_addr_val,
+        current_tenant_stake:      current_stake,
         current_phase_start_ms:    phase_start,
         tenant_cap_id:             cap_id,
         pending_tenant:            pending_addr,
         bid_amount,
         floor_price:               floor,
         handover_countdown_expiry: expiry,
+        timestamp_ms:              now,
     });
     cap
 }
@@ -1005,9 +1073,14 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     escrow:  &mut EscrowCoordinator<Asset, CoinType>,
     payment: Coin<CoinType>,
     floor:   u64,
+    now:     u64,
     ctx:     &mut TxContext,
 ): TenantCap {
     let s = read_state(escrow);
+    let protected_cap_id      = lifecycle_state::current_cap_id(s);
+    let protected_addr        = lifecycle_state::current_addr(s);
+    let protected_stake       = lifecycle_state::current_stake_value(s);
+    let protected_phase_start = lifecycle_state::phase_start_ms(s);
     let displaced_cap_id = lifecycle_state::pending_cap_id(s);
     let displaced_addr   = lifecycle_state::pending_addr(s);
     let refunded_amount  = lifecycle_state::pending_stake_value(s);
@@ -1027,6 +1100,10 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
     event::emit(BidSuperseded {
         escrow_id,
+        protected_tenant_cap_id:   protected_cap_id,
+        protected_tenant_addr:     protected_addr,
+        protected_tenant_stake:    protected_stake,
+        protected_phase_start_ms:  protected_phase_start,
         displaced_tenant_cap_id:   displaced_cap_id,
         new_tenant_cap_id:         cap_id,
         displaced_bidder:          displaced_addr,
@@ -1035,6 +1112,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         new_bid_amount,
         floor_price:               floor,
         handover_countdown_expiry: existing_expiry,
+        timestamp_ms:              now,
     });
     cap
 }
@@ -1058,11 +1136,12 @@ fun do_handover<Asset: key + store, CoinType>(
     let escrow_id    = object::id(escrow);
     let used_credit  = used_credit_at(escrow, boundary_ms);
     let (owner_amount, fee_amount) = split_fee(used_credit);
-    let s_pre            = read_state(escrow);
-    let displaced_cap_id = lifecycle_state::current_cap_id(s_pre);
-    let displaced_addr   = lifecycle_state::current_addr(s_pre);
-    let principal        = lifecycle_state::current_stake_value(s_pre);
-    let remain_credit  = principal - used_credit;
+    let s_pre                  = read_state(escrow);
+    let displaced_cap_id       = lifecycle_state::current_cap_id(s_pre);
+    let displaced_addr         = lifecycle_state::current_addr(s_pre);
+    let displaced_phase_start  = lifecycle_state::phase_start_ms(s_pre);
+    let principal              = lifecycle_state::current_stake_value(s_pre);
+    let remain_credit          = principal - used_credit;
 
     let (st, receipt) = take_state(escrow);
     let (new_st, refund) = lifecycle_state::accept_bid<Asset, CoinType>(
@@ -1083,8 +1162,9 @@ fun do_handover<Asset: key + store, CoinType>(
 
     event::emit(HandoverCompleted {
         escrow_id,
-        displaced_tenant_cap_id: displaced_cap_id,
-        displaced_tenant:        displaced_addr,
+        displaced_tenant_cap_id:  displaced_cap_id,
+        displaced_tenant:         displaced_addr,
+        displaced_phase_start_ms: displaced_phase_start,
         new_tenant_cap_id,
         new_tenant_addr,
         new_tenant_stake,
@@ -1146,11 +1226,13 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
     boundary_ms: u64,
 ) {
     let escrow_id      = object::id(escrow);
-    let last_acq_price = lifecycle_state::last_acq_price_of_at_dutch(read_state(escrow));
+    let s              = read_state(escrow);
+    let phase_start_ms = lifecycle_state::phase_start_ms(s);
+    let last_acq_price = lifecycle_state::last_acq_price_of_at_dutch(s);
     let (st, receipt)  = take_state(escrow);
     let new_st         = lifecycle_state::expire_auction(st);
     put_state(escrow, new_st, receipt);
-    event::emit(AuctionExpired { escrow_id, last_acq_price, timestamp_ms: boundary_ms });
+    event::emit(AuctionExpired { escrow_id, phase_start_ms, last_acq_price, timestamp_ms: boundary_ms });
 }
 
 /// Retire from Idle | AtDutchAuction → Retired. The state transitions
@@ -1231,6 +1313,8 @@ public(package) fun asset_integrated_escrow_id<A, C>(e: &AssetIntegrated<A, C>):
 #[test_only]
 public(package) fun asset_integrated_owner_cap_id<A, C>(e: &AssetIntegrated<A, C>): ID   { e.owner_cap_id }
 #[test_only]
+public(package) fun asset_integrated_owner<A, C>(e: &AssetIntegrated<A, C>): address      { e.owner }
+#[test_only]
 public(package) fun asset_integrated_asset_id<A, C>(e: &AssetIntegrated<A, C>): ID       { e.asset_id }
 #[test_only]
 public(package) fun asset_integrated_fee_inbox_id<A, C>(e: &AssetIntegrated<A, C>): ID   { e.fee_inbox_id }
@@ -1257,6 +1341,8 @@ public(package) fun bid_placed_current_tenant_cap_id(e: &BidPlaced): ID         
 #[test_only]
 public(package) fun bid_placed_current_tenant_addr(e: &BidPlaced): address       { e.current_tenant_addr }
 #[test_only]
+public(package) fun bid_placed_current_tenant_stake(e: &BidPlaced): u64          { e.current_tenant_stake }
+#[test_only]
 public(package) fun bid_placed_current_phase_start_ms(e: &BidPlaced): u64        { e.current_phase_start_ms }
 #[test_only]
 public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
@@ -1268,32 +1354,46 @@ public(package) fun bid_placed_bid_amount(e: &BidPlaced): u64                   
 public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                   { e.floor_price }
 #[test_only]
 public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64     { e.handover_countdown_expiry }
+#[test_only]
+public(package) fun bid_placed_timestamp_ms(e: &BidPlaced): u64                  { e.timestamp_ms }
 
 #[test_only]
-public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID              { e.escrow_id }
+public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID                      { e.escrow_id }
 #[test_only]
-public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID       { e.displaced_tenant_cap_id }
+public(package) fun bid_superseded_protected_cap_id(e: &BidSuperseded): ID               { e.protected_tenant_cap_id }
 #[test_only]
-public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID             { e.new_tenant_cap_id }
+public(package) fun bid_superseded_protected_addr(e: &BidSuperseded): address             { e.protected_tenant_addr }
 #[test_only]
-public(package) fun bid_superseded_displaced_bidder(e: &BidSuperseded): address  { e.displaced_bidder }
+public(package) fun bid_superseded_protected_stake(e: &BidSuperseded): u64               { e.protected_tenant_stake }
 #[test_only]
-public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64       { e.refunded_amount }
+public(package) fun bid_superseded_protected_phase_start_ms(e: &BidSuperseded): u64      { e.protected_phase_start_ms }
 #[test_only]
-public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address        { e.new_bidder }
+public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID               { e.displaced_tenant_cap_id }
 #[test_only]
-public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64        { e.new_bid_amount }
+public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID                     { e.new_tenant_cap_id }
 #[test_only]
-public(package) fun bid_superseded_floor_price(e: &BidSuperseded): u64           { e.floor_price }
+public(package) fun bid_superseded_displaced_bidder(e: &BidSuperseded): address           { e.displaced_bidder }
 #[test_only]
-public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded): u64 { e.handover_countdown_expiry }
+public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64               { e.refunded_amount }
+#[test_only]
+public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address                 { e.new_bidder }
+#[test_only]
+public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64                { e.new_bid_amount }
+#[test_only]
+public(package) fun bid_superseded_floor_price(e: &BidSuperseded): u64                   { e.floor_price }
+#[test_only]
+public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded): u64     { e.handover_countdown_expiry }
+#[test_only]
+public(package) fun bid_superseded_timestamp_ms(e: &BidSuperseded): u64                  { e.timestamp_ms }
 
 #[test_only]
 public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
 #[test_only]
-public(package) fun handover_completed_displaced_tenant_cap_id(e: &HandoverCompleted): ID     { e.displaced_tenant_cap_id }
+public(package) fun handover_completed_displaced_tenant_cap_id(e: &HandoverCompleted): ID    { e.displaced_tenant_cap_id }
 #[test_only]
-public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): address       { e.displaced_tenant }
+public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): address      { e.displaced_tenant }
+#[test_only]
+public(package) fun handover_completed_displaced_phase_start_ms(e: &HandoverCompleted): u64  { e.displaced_phase_start_ms }
 #[test_only]
 public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                  { e.new_tenant_cap_id }
 #[test_only]
@@ -1333,9 +1433,11 @@ public(package) fun tenure_expired_timestamp_ms(e: &TenureExpired): u64         
 #[test_only]
 public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID                        { e.escrow_id }
 #[test_only]
-public(package) fun auction_expired_last_acq_price(e: &AuctionExpired): u64                   { e.last_acq_price }
+public(package) fun auction_expired_phase_start_ms(e: &AuctionExpired): u64                  { e.phase_start_ms }
 #[test_only]
-public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64                     { e.timestamp_ms }
+public(package) fun auction_expired_last_acq_price(e: &AuctionExpired): u64                  { e.last_acq_price }
+#[test_only]
+public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64                    { e.timestamp_ms }
 
 #[test_only]
 public(package) fun asset_borrowed_escrow_id(e: &AssetBorrowed): ID                          { e.escrow_id }

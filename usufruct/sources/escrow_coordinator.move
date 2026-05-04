@@ -565,6 +565,48 @@ public fun is_retired<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): bool { lifecycle_state::is_a_state_retired(read_state(escrow)) }
 
+/// True iff the retire flag is set on the current rental. The asset will
+/// transition to Retired when the active tenure expires.
+/// Valid in any state; false when NotRented.
+public fun is_retiring<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { lifecycle_state::is_retiring(read_state(escrow)) }
+
+// ─── Identity views ──────────────────────────────────────────────────────────
+
+/// Address of the active tenant. `Some` while the lifecycle is Rented
+/// (HandoverOpen or HandoverConfirmed); `None` otherwise.
+public fun current_tenant_addr<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<address> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_rented(s)) option::some(lifecycle_state::current_addr(s))
+    else option::none()
+}
+
+/// Address of the pending bidder. `Some` only in HandoverConfirmed
+/// (a bid has been placed and is awaiting the countdown expiry);
+/// `None` in every other state.
+public fun pending_tenant_addr<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<address> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_handover_confirmed(s)) option::some(lifecycle_state::pending_addr(s))
+    else option::none()
+}
+
+// ─── Timing views ────────────────────────────────────────────────────────────
+
+/// True iff at least one time-based transition is due at the current
+/// clock time. Callers can probe this before committing to
+/// `apply_pending_transitions` to avoid paying gas for a no-op.
+public fun has_pending_transitions<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    clock:  &Clock,
+): bool {
+    option::is_some(&next_pending(escrow, clock::timestamp_ms(clock)))
+}
+
 // ─── Pricing views ───────────────────────────────────────────────────────────
 
 /// Used credit accrued by the current tenant since the rental's

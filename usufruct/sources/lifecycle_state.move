@@ -306,17 +306,16 @@ public(package) fun expire_tenure<Asset: key + store, CoinType>(
     escrow_id:          ID,
 ): (LifecycleState<Asset, CoinType>, RefundState<CoinType>) {
     match (s) {
-        LifecycleState::Rented { a_state, t_state, phase_start_ms: _, retiring: _ } => {
+        LifecycleState::Rented { a_state, t_state, phase_start_ms: _, retiring } => {
             let (new_t_state, mut departing) = tenant_state::vacate(t_state);
             let owner_earnings    = tenant::take_owner_earnings(&mut departing, owner_amount);
             let fee_share         = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
             let (identity, stake) = tenant::unbundle(departing);
             tenant::destroy_empty_stake(stake);
+            let expired = asset_state::expire(a_state, last_acq_price, new_phase_start_ms);
+            let final_a = if (retiring) { asset_state::retire(expired) } else { expired };
             (
-                LifecycleState::NotRented {
-                    a_state: asset_state::expire(a_state, last_acq_price, new_phase_start_ms),
-                    t_state: new_t_state,
-                },
+                LifecycleState::NotRented { a_state: final_a, t_state: new_t_state },
                 refund_state::nothing(identity, fee_share, owner_earnings),
             )
         },

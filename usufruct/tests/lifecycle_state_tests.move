@@ -581,9 +581,12 @@ fun set_retiring_lifts_flag_in_rented() {
     assert!(lifecycle_state::is_retiring(&s));
     assert!(lifecycle_state::is_rented(&s));
 
+    // expire_tenure with retiring=true collapses directly to Retired
+    // (no separate retire_now call needed).
     let (s, rs) = lifecycle_state::expire_tenure(s, OWNER_T1, FEE_T1, LAST_ACQ_PRICE, BOUNDARY_MS, fake_escrow_id());
     refund_state::destroy_for_testing(rs);
-    retire_and_teardown(s);
+    assert!(lifecycle_state::is_a_state_retired(&s));
+    teardown_retired(s);
     sc.end();
 }
 

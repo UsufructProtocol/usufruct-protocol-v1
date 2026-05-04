@@ -876,10 +876,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let s                      = read_state(escrow);
     let principal              = lifecycle_state::current_stake_value(s);
     let tenant_addr            = lifecycle_state::current_addr(s);
-    let was_retiring           = lifecycle_state::is_retiring(s);
     let (owner_amount, fee_amount) = split_fee(principal);
-    // At the tenure boundary, the credit curve has saturated — the
-    // full stake is the AtDutch anchor.
     let last_acquisition_price = principal;
 
     let (st, receipt) = take_state(escrow);
@@ -890,13 +887,6 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
 
     refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, tenant_addr, ctx);
 
-    // If the retiring flag was set, collapse AtDutch → Retired.
-    if (was_retiring) {
-        let (st2, receipt2) = take_state(escrow);
-        let new_st2 = lifecycle_state::retire_now(st2);
-        put_state(escrow, new_st2, receipt2);
-    };
-
     event::emit(TenureExpired {
         escrow_id,
         tenant:                 tenant_addr,
@@ -905,7 +895,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         last_acquisition_price,
         timestamp_ms:           boundary_ms,
     });
-    if (was_retiring) {
+    if (is_retired(escrow)) {
         event::emit(AssetRetired { escrow_id });
     };
 }

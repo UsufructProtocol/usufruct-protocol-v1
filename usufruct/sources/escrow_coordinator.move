@@ -133,10 +133,11 @@ public struct BidSuperseded has copy, drop {
 }
 
 public struct HandoverCompleted has copy, drop {
-    escrow_id:         ID,
-    displaced_tenant:  address,
-    new_tenant_cap_id: ID,
-    new_tenant_addr:   address,
+    escrow_id:              ID,
+    displaced_tenant_cap_id: ID,
+    displaced_tenant:        address,
+    new_tenant_cap_id:       ID,
+    new_tenant_addr:         address,
     used_credit:       u64,
     owner_share:       u64,
     protocol_fee:      u64,
@@ -1036,8 +1037,10 @@ fun do_handover<Asset: key + store, CoinType>(
     let escrow_id    = object::id(escrow);
     let used_credit  = used_credit_at(escrow, boundary_ms);
     let (owner_amount, fee_amount) = split_fee(used_credit);
-    let displaced_addr = lifecycle_state::current_addr(read_state(escrow));
-    let principal      = lifecycle_state::current_stake_value(read_state(escrow));
+    let s_pre            = read_state(escrow);
+    let displaced_cap_id = lifecycle_state::current_cap_id(s_pre);
+    let displaced_addr   = lifecycle_state::current_addr(s_pre);
+    let principal        = lifecycle_state::current_stake_value(s_pre);
     let remain_credit  = principal - used_credit;
 
     let (st, receipt) = take_state(escrow);
@@ -1057,7 +1060,8 @@ fun do_handover<Asset: key + store, CoinType>(
 
     event::emit(HandoverCompleted {
         escrow_id,
-        displaced_tenant: displaced_addr,
+        displaced_tenant_cap_id: displaced_cap_id,
+        displaced_tenant:        displaced_addr,
         new_tenant_cap_id,
         new_tenant_addr,
         used_credit,
@@ -1240,6 +1244,8 @@ public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded):
 
 #[test_only]
 public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
+#[test_only]
+public(package) fun handover_completed_displaced_tenant_cap_id(e: &HandoverCompleted): ID     { e.displaced_tenant_cap_id }
 #[test_only]
 public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): address       { e.displaced_tenant }
 #[test_only]

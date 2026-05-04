@@ -620,6 +620,67 @@ public fun pending_tenant_addr<Asset: key + store, CoinType>(
     else option::none()
 }
 
+// ─── Stake views ─────────────────────────────────────────────────────────────
+
+/// Stake value held by the active tenant, in coin base units.
+/// `Some` while the lifecycle is Rented (HandoverOpen or HandoverConfirmed);
+/// `None` otherwise.
+/// SDK use: show "current bid: X SUI" on the marketplace card.
+public fun current_stake<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_rented(s)) option::some(lifecycle_state::current_stake_value(s))
+    else option::none()
+}
+
+/// Stake value held by the pending bidder, in coin base units.
+/// `Some` only in HandoverConfirmed (a bid is awaiting countdown expiry);
+/// `None` in every other state.
+/// SDK use: show "pending bid: X SUI" on the marketplace card.
+public fun pending_stake<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_handover_confirmed(s)) option::some(lifecycle_state::pending_stake_value(s))
+    else option::none()
+}
+
+// ─── Temporal views ───────────────────────────────────────────────────────────
+
+/// Absolute timestamp at which the active tenant's tenure expires.
+/// `Some` while the lifecycle is Rented; `None` otherwise.
+/// Computed as phase_start_ms + config::tenure_ceiling.
+/// SDK use: show "rental expires at X" and drive expiry countdown timers.
+public fun tenure_expiry_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_rented(s)) {
+        option::some(phases::boundary_at(
+            lifecycle_state::phase_start_ms(s),
+            config::tenure_ceiling(&escrow.config),
+        ))
+    } else {
+        option::none()
+    }
+}
+
+/// Absolute timestamp at which the pending bid auto-wins the handover.
+/// `Some` only in HandoverConfirmed; `None` in every other state.
+/// SDK use: show "bid wins at X" countdown; inform keepers when to
+/// call `apply_pending_transitions`.
+public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_handover_confirmed(s)) {
+        option::some(lifecycle_state::handover_countdown_expiry_ms(s))
+    } else {
+        option::none()
+    }
+}
+
 // ─── Cap views ───────────────────────────────────────────────────────────────
 
 /// Authorization status of `cap_id` relative to the current lifecycle state.

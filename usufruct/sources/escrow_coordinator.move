@@ -16,7 +16,6 @@ use usufruct::{
     config::{Self, IntegrationConfig},
     credit_state,
     descent_policy,
-    fee_message,
     handover_policy,
     lifecycle_state::{Self, LifecycleState},
     math,
@@ -789,6 +788,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let s = read_state(escrow);
     let displaced_cap_id = lifecycle_state::pending_cap_id(s);
     let displaced_addr   = lifecycle_state::pending_addr(s);
+    let refunded_amount  = lifecycle_state::pending_stake_value(s);
     let existing_expiry  = lifecycle_state::handover_countdown_expiry_ms(s);
 
     let escrow_id      = object::id(escrow);
@@ -802,12 +802,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let (new_st, refund) = lifecycle_state::supersede_bid<Asset, CoinType>(st, t, existing_expiry);
     put_state(escrow, new_st, receipt);
 
-    // supersede_bid only ever produces Total — Nothing/Parcial appear
-    // at handover/tenure boundaries (Phase 4). consume_total aborts if
-    // it ever sees another variant.
-    let (_identity, stake) = refund_state::consume_total(refund);
-    let refunded_amount = tenant::stake_value_of(&stake);
-    tenant::liquidate(stake, displaced_addr, ctx);
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, displaced_addr, ctx);
     event::emit(BidSuperseded {
         escrow_id,
         displaced_tenant_cap_id: displaced_cap_id,
@@ -829,10 +824,9 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 /// Handover boundary (Demand → Occupied): the pending bidder takes
 /// over from the current tenant. Computes used_credit at boundary_ms,
 /// splits it 90/10 (owner / fee), routes the resulting RefundState
-/// to its three terminal consumers (owner::deposit, fee_message::post,
-/// tenant::liquidate for the remainder if Parcial). The promoted
-/// tenant's cap was minted at place_bid/supersede_bid time — handover
-/// does not mint a fresh cap.
+/// via `refund_state::distribute`. The promoted tenant's cap was
+/// minted at place_bid/supersede_bid time — handover does not mint
+/// a fresh cap.
 fun do_handover<Asset: key + store, CoinType>(
     escrow:      &mut EscrowCoordinator<Asset, CoinType>,
     boundary_ms: u64,
@@ -851,16 +845,7 @@ fun do_handover<Asset: key + store, CoinType>(
     );
     put_state(escrow, new_st, receipt);
 
-    if (refund_state::has_remainder(&refund)) {
-        let (_id, stake, fee_share, owner_earnings) = refund_state::consume_parcial(refund);
-        owner::deposit(&mut escrow.owner, owner_earnings);
-        fee_message::post(fee_share, escrow.fee_inbox_id, ctx);
-        tenant::liquidate(stake, displaced_addr, ctx);
-    } else {
-        let (_id, fee_share, owner_earnings) = refund_state::consume_nothing(refund);
-        owner::deposit(&mut escrow.owner, owner_earnings);
-        fee_message::post(fee_share, escrow.fee_inbox_id, ctx);
-    };
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, displaced_addr, ctx);
 
     let new_tenant_cap_id = lifecycle_state::current_cap_id(read_state(escrow));
     // Post-handover state is HandoverOpen → compute_floor_price
@@ -907,9 +892,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     );
     put_state(escrow, new_st, receipt);
 
-    let (_id, fee_share, owner_earnings) = refund_state::consume_nothing(refund);
-    owner::deposit(&mut escrow.owner, owner_earnings);
-    fee_message::post(fee_share, escrow.fee_inbox_id, ctx);
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, tenant_addr, ctx);
 
     // If the retiring flag was set, collapse AtDutch → Retired.
     if (was_retiring) {

@@ -10,7 +10,7 @@ use usufruct::{
     descent_policy,
     handover_policy,
     price_function,
-    price_state::{Self, PriceState},
+    price_state,
     retire_policy,
 };
 

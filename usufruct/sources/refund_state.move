@@ -6,9 +6,9 @@ module usufruct::refund_state;
 // === Imports ===
 
 use usufruct::{
-    fee_message::FeeShare,
-    owner::OwnerEarnings,
-    tenant::{TenantIdentity, TenantStake},
+    fee_message::{Self, FeeShare},
+    owner::{Self, Owner, OwnerEarnings},
+    tenant::{Self, TenantIdentity, TenantStake},
 };
 
 // === Errors ===
@@ -94,75 +94,36 @@ public(package) fun total<C>(
     RefundState::Total { identity, stake }
 }
 
-/// Sentinel for caller-contract violations on `consume_*` paths:
-/// a refund variant other than the requested one was passed in.
-/// The hot-potato structure already prevents accidental drops; this
-/// constant only fires under a programming bug.
-const EWrongVariant: u64 = 0xDEADC0DE;
-
-/// Consume a `Total` refund and surface its components. Aborts via
-/// `EWrongVariant` if the supplied refund is not `Total` —
-/// `supersede_bid` is the only producer of this shape, and
-/// `escrow_coordinator::do_supersede_bid` is the only consumer site.
-/// Move 2024 restricts variant pattern matching to the defining
-/// module, so callers route through this function rather than
-/// matching directly.
-public(package) fun consume_total<C>(rs: RefundState<C>): (TenantIdentity, TenantStake<C>) {
-    match (rs) {
-        RefundState::Total   { identity, stake } => (identity, stake),
-        RefundState::Nothing { identity: _, fee_share: _fs, owner_earnings: _oe } =>
-            abort EWrongVariant,
-        RefundState::Parcial { identity: _, stake: _stk, fee_share: _fs, owner_earnings: _oe } =>
-            abort EWrongVariant,
-    }
-}
-
-/// Consume a `Parcial` refund and surface all four slots. Produced by
-/// `accept_bid` when the departing tenant's stake exceeds the
-/// owner+fee split (i.e. used_credit < principal). Caller is
-/// `escrow_coordinator::do_handover`. Aborts on wrong variant.
-public(package) fun consume_parcial<C>(rs: RefundState<C>): (
-    TenantIdentity,
-    TenantStake<C>,
-    FeeShare<C>,
-    OwnerEarnings<C>,
+/// Route all three terminal operations for the departing tenant's
+/// funds. Exhaustive match over the three variants; lives here (the
+/// defining module) so it can see variant internals directly.
+///
+///   Nothing — full stake consumed; deposit owner share, post fee.
+///   Parcial — split stake; deposit + post + liquidate remainder.
+///   Total   — full stake refunded; liquidate only (no owner/fee).
+///
+/// `displaced` is the tenant address receiving any stake remainder;
+/// for `Nothing` it is unused.
+public(package) fun distribute<C>(
+    rs:           RefundState<C>,
+    owner:        &mut Owner<C>,
+    fee_inbox_id: ID,
+    displaced:    address,
+    ctx:          &mut TxContext,
 ) {
     match (rs) {
-        RefundState::Parcial { identity, stake, fee_share, owner_earnings } =>
-            (identity, stake, fee_share, owner_earnings),
-        RefundState::Nothing { identity: _, fee_share: _fs, owner_earnings: _oe } =>
-            abort EWrongVariant,
-        RefundState::Total   { identity: _, stake: _stk } =>
-            abort EWrongVariant,
-    }
-}
-
-/// Consume a `Nothing` refund (no remainder). Produced by
-/// `expire_tenure` (full stake → owner+fee) and by `accept_bid` when
-/// used_credit exhausts the principal. Callers:
-/// `escrow_coordinator::do_tenure_expiry` and
-/// `escrow_coordinator::do_handover` (Nothing branch).
-public(package) fun consume_nothing<C>(rs: RefundState<C>): (
-    TenantIdentity,
-    FeeShare<C>,
-    OwnerEarnings<C>,
-) {
-    match (rs) {
-        RefundState::Nothing { identity, fee_share, owner_earnings } =>
-            (identity, fee_share, owner_earnings),
-        RefundState::Parcial { identity: _, stake: _stk, fee_share: _fs, owner_earnings: _oe } =>
-            abort EWrongVariant,
-        RefundState::Total   { identity: _, stake: _stk } =>
-            abort EWrongVariant,
-    }
-}
-
-/// True iff the variant is `Parcial`. Used by `do_handover` to
-/// dispatch between the Parcial / Nothing arms after `accept_bid`.
-public(package) fun has_remainder<C>(rs: &RefundState<C>): bool {
-    match (rs) {
-        RefundState::Parcial { .. } => true,
-        _                            => false,
+        RefundState::Nothing { identity: _, fee_share, owner_earnings } => {
+            owner::deposit(owner, owner_earnings);
+            fee_message::post(fee_share, fee_inbox_id, ctx);
+        },
+        RefundState::Parcial { identity: _, stake, fee_share, owner_earnings } => {
+            owner::deposit(owner, owner_earnings);
+            fee_message::post(fee_share, fee_inbox_id, ctx);
+            tenant::liquidate(stake, displaced, ctx);
+        },
+        RefundState::Total { identity: _, stake } => {
+            tenant::liquidate(stake, displaced, ctx);
+        },
     }
 }
 
@@ -198,7 +159,6 @@ public fun is_total<C>(rs: &RefundState<C>): bool {
 /// the test_only destructors of each component module. State-agnostic.
 #[test_only]
 public fun destroy_for_testing<C>(rs: RefundState<C>) {
-    use usufruct::{fee_message, owner, tenant};
     match (rs) {
         RefundState::Nothing { identity: _, fee_share, owner_earnings } => {
             fee_message::destroy_share_for_testing(fee_share);

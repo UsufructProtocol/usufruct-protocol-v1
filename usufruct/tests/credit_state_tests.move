@@ -6,7 +6,7 @@ module usufruct::credit_state_tests;
 
 use usufruct::{
     config,
-    credit_state::{Self, CreditState},
+    credit_state,
     curve_shape,
     descent_policy,
     handover_policy,

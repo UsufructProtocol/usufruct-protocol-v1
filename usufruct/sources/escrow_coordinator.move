@@ -12,6 +12,7 @@ use sui::{
 };
 use usufruct::{
     asset::{Self, AssetReceipt},
+    cap_authorization,
     config::{Self, IntegrationConfig},
     credit_state,
     descent_policy,
@@ -391,14 +392,9 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     let cap_id = object::id(tenant_cap);
 
     {
-        let s = read_state(escrow);
-        if (!lifecycle_state::is_rented(s)) {
-            abort EStaleTenantCap
-        };
-        if (lifecycle_state::is_a_state_handover_confirmed(s)) {
-            assert!(cap_id != lifecycle_state::pending_cap_id(s), EPendingTenantCap);
-        };
-        assert!(cap_id == lifecycle_state::current_cap_id(s), EStaleTenantCap);
+        let auth = lifecycle_state::cap_authorization(read_state(escrow), cap_id);
+        if (cap_authorization::is_stale(&auth))   { abort EStaleTenantCap };
+        if (cap_authorization::is_pending(&auth)) { abort EPendingTenantCap };
     };
 
     let (state_inner, sr) = take_state(escrow);
@@ -451,14 +447,8 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     let cap_id = object::id(&cap);
 
     {
-        let s = read_state(escrow);
-        if (lifecycle_state::is_rented(s)) {
-            assert!(cap_id != lifecycle_state::current_cap_id(s), ETenantCapNotStale);
-            if (lifecycle_state::is_t_state_demand(s)) {
-                assert!(cap_id != lifecycle_state::pending_cap_id(s), ETenantCapNotStale);
-            };
-        };
-        // NotRented — no live caps, anything stale.
+        let auth = lifecycle_state::cap_authorization(read_state(escrow), cap_id);
+        if (!cap_authorization::is_stale(&auth)) { abort ETenantCapNotStale };
     };
     tenant_cap::burn(cap, ctx);
 }

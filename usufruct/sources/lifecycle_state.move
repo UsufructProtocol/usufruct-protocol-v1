@@ -8,6 +8,7 @@ module usufruct::lifecycle_state;
 use usufruct::{
     asset::AssetReceipt,
     asset_state::{Self, AssetState},
+    cap_authorization::{Self, CapAuthorization},
     refund_state::{Self, RefundState},
     tenant::{Self, Tenant},
     tenant_state::{Self, TenantState},
@@ -143,6 +144,25 @@ public(package) fun is_t_state_demand<Asset: key + store, CoinType>(
         LifecycleState::Rented    { t_state, a_state: _a, phase_start_ms: _, retiring: _ } => tenant_state::is_demand(t_state),
         LifecycleState::NotRented { a_state: _a, t_state: _t } => false,
     }
+}
+
+// ─── Cap authorization ────────────────────────────────────────────────────────
+
+/// Classify `cap_id` relative to the current lifecycle position.
+///   NotRented (any)         → Stale  (no active tenant)
+///   Rented, cap == current  → Current
+///   Rented{Demand}, cap == pending → Pending
+///   Rented, any other cap   → Stale
+public(package) fun cap_authorization<Asset: key + store, CoinType>(
+    s:      &LifecycleState<Asset, CoinType>,
+    cap_id: ID,
+): CapAuthorization {
+    if (!is_rented(s)) { return cap_authorization::stale() };
+    if (cap_id == current_cap_id(s)) { return cap_authorization::current() };
+    if (is_t_state_demand(s) && cap_id == pending_cap_id(s)) {
+        return cap_authorization::pending()
+    };
+    cap_authorization::stale()
 }
 
 // ─── Time fields ──────────────────────────────────────────────────────────────

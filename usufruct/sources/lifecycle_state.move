@@ -456,6 +456,17 @@ public(package) fun decompose_retired<Asset: key + store, CoinType>(
     }
 }
 
+/// Consume a retired `LifecycleState` and return the wrapped asset.
+/// Calls `asset_state::claim` and `tenant_state::consume_absence`
+/// internally — the coordinator does not need to see either sub-state.
+public(package) fun take_asset<Asset: key + store, CoinType>(
+    s: LifecycleState<Asset, CoinType>,
+): Asset {
+    let (a_state, t_state) = decompose_retired(s);
+    tenant_state::consume_absence(t_state);
+    asset_state::claim(a_state)
+}
+
 // ─── Retire flag mutator ─────────────────────────────────────────────────────
 
 /// Sets `retiring: true` while keeping the lifecycle in Rented. Used

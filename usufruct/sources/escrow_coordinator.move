@@ -12,7 +12,6 @@ use sui::{
 };
 use usufruct::{
     asset::{Self, AssetReceipt},
-    asset_state,
     config::{Self, IntegrationConfig},
     credit_state,
     descent_policy,
@@ -29,7 +28,6 @@ use usufruct::{
     retire_policy,
     tenant,
     tenant_cap::{Self, TenantCap},
-    tenant_state,
 };
 
 // === Errors ===
@@ -287,9 +285,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
     // The Option<LifecycleState> is always Some at tx boundary
     // (StateReceipt discipline).
     let inner_state = option::destroy_some(state);
-    let (a_state, t_state) = lifecycle_state::decompose_retired(inner_state);
-    let asset = asset_state::claim(a_state);
-    tenant_state::consume_absence(t_state);
+    let asset       = lifecycle_state::take_asset(inner_state);
 
     // Drain owner earnings. value > 0 is fine (returns the coin) and
     // value == 0 is also fine (returns a zero coin); the caller can

@@ -145,6 +145,7 @@ public struct HandoverCompleted has copy, drop {
 
 public struct TenureExpired has copy, drop {
     escrow_id:               ID,
+    tenant_cap_id:           ID,
     tenant:                  address,
     owner_share:             u64,
     protocol_fee:            u64,
@@ -158,27 +159,32 @@ public struct AuctionExpired has copy, drop {
 }
 
 public struct RetireFlagSet has copy, drop {
-    escrow_id: ID,
-    owner:     address,
+    escrow_id:    ID,
+    owner:        address,
+    timestamp_ms: u64,
 }
 
 public struct AssetRetired has copy, drop {
-    escrow_id: ID,
+    escrow_id:    ID,
+    timestamp_ms: u64,
 }
 
 public struct AssetBorrowed has copy, drop {
     escrow_id:     ID,
     tenant_cap_id: ID,
+    tenant:        address,
 }
 
 public struct AssetReturned has copy, drop {
     escrow_id:     ID,
     tenant_cap_id: ID,
+    tenant:        address,
 }
 
 public struct AssetClaimed has copy, drop {
     escrow_id:      ID,
     owner_cap_id:   ID,
+    owner:          address,
     swept_earnings: u64,
 }
 
@@ -303,7 +309,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
     owner_cap::burn(owner_cap, owner_addr);
     object::delete(id);
 
-    event::emit(AssetClaimed { escrow_id, owner_cap_id, swept_earnings });
+    event::emit(AssetClaimed { escrow_id, owner_cap_id, owner: owner_addr, swept_earnings });
     (asset, earnings)
 }
 
@@ -323,18 +329,15 @@ public fun retire<Asset: key + store, CoinType>(
 ) {
     assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     apply_pending_transitions(escrow, clock, ctx);
+    let now_ms = clock::timestamp_ms(clock);
     assert!(
-        retire_policy::is_unlocked(
-            config::retire(&escrow.config),
-            escrow.integrated_at_ms,
-            clock::timestamp_ms(clock),
-        ),
+        retire_policy::is_unlocked(config::retire(&escrow.config), escrow.integrated_at_ms, now_ms),
         ERetireFloorNotElapsed,
     );
     let route = lifecycle_state::retire_route(read_state(escrow));
-    if      (retire_route::is_immediate(&route))      { do_retire_immediately(escrow, ctx) }
-    else if (retire_route::is_deferred(&route))       { do_set_retiring_flag(escrow, ctx)  }
-    else                                              { abort EAlreadyRetired              }
+    if      (retire_route::is_immediate(&route))      { do_retire_immediately(escrow, now_ms, ctx) }
+    else if (retire_route::is_deferred(&route))       { do_set_retiring_flag(escrow, now_ms, ctx)  }
+    else                                              { abort EAlreadyRetired                      }
 }
 
 /// Single entry point to become tenant or place a bid. Calls
@@ -396,10 +399,11 @@ public fun borrow_asset<Asset: key + store, CoinType>(
         if (cap_authorization::is_pending(&auth)) { abort EPendingTenantCap };
     };
 
+    let tenant_addr = lifecycle_state::current_addr(read_state(escrow));
     let (state_inner, sr) = take_state(escrow);
     let (new_state, asset, asset_receipt) = lifecycle_state::give(state_inner);
     put_state(escrow, new_state, sr);
-    event::emit(AssetBorrowed { escrow_id, tenant_cap_id: cap_id });
+    event::emit(AssetBorrowed { escrow_id, tenant_cap_id: cap_id, tenant: tenant_addr });
     (asset, asset_receipt)
 }
 
@@ -418,15 +422,15 @@ public fun return_asset<Asset: key + store, CoinType>(
     assert!(asset::receipt_escrow_id(&receipt_in) == escrow_id,         EReceiptEscrowMismatch);
     assert!(asset::receipt_asset_id(&receipt_in)  == object::id(&asset), EReceiptAssetMismatch);
 
-    let tenant_cap_id = {
+    let (tenant_cap_id, tenant_addr) = {
         let s = read_state(escrow);
         assert!(lifecycle_state::is_rented(s), EInvariantViolation);
-        lifecycle_state::current_cap_id(s)
+        (lifecycle_state::current_cap_id(s), lifecycle_state::current_addr(s))
     };
     let (state_inner, sr) = take_state(escrow);
     let new_state = lifecycle_state::give_back(state_inner, asset, receipt_in);
     put_state(escrow, new_state, sr);
-    event::emit(AssetReturned { escrow_id, tenant_cap_id });
+    event::emit(AssetReturned { escrow_id, tenant_cap_id, tenant: tenant_addr });
 }
 
 /// Burn a stale `TenantCap` for gas recovery. APT first; cap-escrow
@@ -1075,6 +1079,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let s                      = read_state(escrow);
     let principal              = lifecycle_state::current_stake_value(s);
     let tenant_addr            = lifecycle_state::current_addr(s);
+    let tenant_cap_id          = lifecycle_state::current_cap_id(s);
     let (owner_amount, fee_amount) = split_fee(principal);
     let last_acquisition_price = principal;
 
@@ -1088,6 +1093,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
 
     event::emit(TenureExpired {
         escrow_id,
+        tenant_cap_id,
         tenant:                 tenant_addr,
         owner_share:            owner_amount,
         protocol_fee:           fee_amount,
@@ -1095,7 +1101,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         timestamp_ms:           boundary_ms,
     });
     if (is_retired(escrow)) {
-        event::emit(AssetRetired { escrow_id });
+        event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
     };
 }
 
@@ -1117,15 +1123,16 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
 /// active). Co-emits `RetireFlagSet` (for off-chain observers tracking
 /// the owner's intent) and `AssetRetired` (for terminal-state markers).
 fun do_retire_immediately<Asset: key + store, CoinType>(
-    escrow: &mut EscrowCoordinator<Asset, CoinType>,
-    ctx:    &TxContext,
+    escrow:       &mut EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+    ctx:          &TxContext,
 ) {
     let escrow_id    = object::id(escrow);
     let (s, receipt) = take_state(escrow);
     let new_s        = lifecycle_state::retire_now(s);
     put_state(escrow, new_s, receipt);
-    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender() });
-    event::emit(AssetRetired  { escrow_id });
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), timestamp_ms });
+    event::emit(AssetRetired  { escrow_id, timestamp_ms });
 }
 
 /// Retire from HandoverOpen | HandoverConfirmed → flag lifted, state
@@ -1134,15 +1141,16 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
 /// `do_tenure_expiry` retiring branch). New bids are blocked while
 /// the flag is set (`ERetireFlagBlocksBid` in `do_place_bid`).
 fun do_set_retiring_flag<Asset: key + store, CoinType>(
-    escrow: &mut EscrowCoordinator<Asset, CoinType>,
-    ctx:    &TxContext,
+    escrow:       &mut EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+    ctx:          &TxContext,
 ) {
     let escrow_id    = object::id(escrow);
     assert!(!lifecycle_state::is_retiring(read_state(escrow)), EAlreadyRetired);
     let (s, receipt) = take_state(escrow);
     let new_s        = lifecycle_state::set_retiring(s);
     put_state(escrow, new_s, receipt);
-    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender() });
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), timestamp_ms });
 }
 
 // === Test Functions ===
@@ -1246,6 +1254,8 @@ public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64 
 #[test_only]
 public(package) fun tenure_expired_escrow_id(e: &TenureExpired): ID                          { e.escrow_id }
 #[test_only]
+public(package) fun tenure_expired_tenant_cap_id(e: &TenureExpired): ID                       { e.tenant_cap_id }
+#[test_only]
 public(package) fun tenure_expired_tenant(e: &TenureExpired): address                         { e.tenant }
 #[test_only]
 public(package) fun tenure_expired_owner_share(e: &TenureExpired): u64                        { e.owner_share }
@@ -1264,15 +1274,23 @@ public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64       
 #[test_only]
 public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID                      { e.tenant_cap_id }
 #[test_only]
+public(package) fun asset_borrowed_tenant(e: &AssetBorrowed): address                        { e.tenant }
+#[test_only]
 public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID                      { e.tenant_cap_id }
+#[test_only]
+public(package) fun asset_returned_tenant(e: &AssetReturned): address                        { e.tenant }
 
 #[test_only]
 public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID                            { e.escrow_id }
+#[test_only]
+public(package) fun asset_retired_timestamp_ms(e: &AssetRetired): u64                        { e.timestamp_ms }
 
 #[test_only]
 public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID                         { e.escrow_id }
 #[test_only]
-public(package) fun retire_flag_set_owner(e: &RetireFlagSet): address                         { e.owner }
+public(package) fun retire_flag_set_owner(e: &RetireFlagSet): address                        { e.owner }
+#[test_only]
+public(package) fun retire_flag_set_timestamp_ms(e: &RetireFlagSet): u64                     { e.timestamp_ms }
 
 #[test_only]
 public(package) fun earnings_withdrawn_escrow_id(e: &EarningsWithdrawn): ID                  { e.escrow_id }
@@ -1287,6 +1305,8 @@ public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64       
 public(package) fun asset_claimed_escrow_id(e: &AssetClaimed): ID                            { e.escrow_id }
 #[test_only]
 public(package) fun asset_claimed_owner_cap_id(e: &AssetClaimed): ID                          { e.owner_cap_id }
+#[test_only]
+public(package) fun asset_claimed_owner(e: &AssetClaimed): address                            { e.owner }
 #[test_only]
 public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64                       { e.swept_earnings }
 

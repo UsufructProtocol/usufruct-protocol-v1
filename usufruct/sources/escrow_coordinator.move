@@ -483,7 +483,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
 ///
 /// Useful as a standalone query for keepers / `devInspectTransactionBlock`:
 /// callers can probe what would fire without committing the tx.
-public(package) fun next_pending<Asset: key + store, CoinType>(
+public fun next_pending<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
     now:    u64,
 ): Option<PendingTransition> {
@@ -679,6 +679,18 @@ public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     } else {
         option::none()
     }
+}
+
+/// Maximum duration a single rental can last, in milliseconds.
+/// Defined by the escrow's IntegrationConfig and constant for the
+/// escrow's lifetime.
+/// SDK use: risk protocols evaluating an idle escrow need the ceiling
+/// to estimate maximum exposure duration before `tenure_expiry_ms`
+/// becomes available (i.e. before a tenant installs).
+public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): u64 {
+    config::tenure_ceiling(&escrow.config)
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────

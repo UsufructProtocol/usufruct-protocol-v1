@@ -1672,4 +1672,93 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §APT-1. APT idempotency — double call at same clock is a no-op ──────────
+
+/// apply_pending_transitions is permissionless and may be called many times.
+/// The protocol guarantees it is idempotent: once the state has settled at
+/// a given timestamp, a second call emits no additional events and leaves
+/// the state unchanged.
+///
+/// This test drives through all three transition boundaries in sequence and
+/// calls APT twice at each one. The event count must not increase on the
+/// second call, and the state predicate must remain identical.
+///
+/// Transitions exercised:
+///   Boundary 1 — Handover (HC → HO): countdown_expiry = 1_000 + 25_000 = 26_000
+///   Boundary 2 — Tenure   (HO → AtDutch): T2.phase_start + tenure_ceiling = 126_000
+///   Boundary 3 — Auction  (AtDutch → Idle): 126_000 + descent_window = 226_000
+///
+/// Config: c=1 (Countdown — observable HC boundary), h=1 (Window — AtDutch
+/// observable), d=0, e=0, f=0.
+#[test]
+fun e2e_apt1_idempotent_double_call_at_every_boundary() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Countdown, h=1 Window
+    let cfg     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents from Idle → HandoverOpen (phase_start = 0).
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+
+    // T2 bids at t=1_000 → HandoverConfirmed (countdown_expiry = 26_000).
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, 1_000);
+    let cap_t2   = escrow_coordinator::rent(
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag);
+
+    // ── Boundary 1: Handover ────────────────────────────────────────────────
+    let countdown_expiry = 1_000 + escrow_corpus::handover_countdown_c1_const(); // 26_000
+    clock::set_for_testing(&mut clk, countdown_expiry);
+
+    // First APT: handover fires → HandoverOpen, 1 HandoverCompleted event.
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+    assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
+
+    // Second APT at same clock: no-op — state and event count unchanged.
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+    assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
+
+    // ── Boundary 2: Tenure expiry ───────────────────────────────────────────
+    // T2.phase_start = countdown_expiry = 26_000; tenure_boundary = 126_000.
+    let tenure_boundary = countdown_expiry + escrow_corpus::tenure_ceiling_const(); // 126_000
+    clock::set_for_testing(&mut clk, tenure_boundary);
+
+    // First APT: tenure fires → AtDutchAuction, 1 TenureExpired event.
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_at_dutch_auction(&escrow), tag);
+    assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
+
+    // Second APT at same clock: no-op.
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_at_dutch_auction(&escrow), tag);
+    assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
+
+    // ── Boundary 3: Auction expiry ──────────────────────────────────────────
+    // AtDutch.phase_start = tenure_boundary = 126_000; descent_boundary = 226_000.
+    let descent_boundary = tenure_boundary + escrow_corpus::descent_window_h1_const(); // 226_000
+    clock::set_for_testing(&mut clk, descent_boundary);
+
+    // First APT: auction fires → Idle, 1 AuctionExpired event.
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_idle(&escrow), tag);
+    assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
+
+    // Second APT at same clock: no-op — Idle has no pending transitions.
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_idle(&escrow), tag);
+    assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
 }

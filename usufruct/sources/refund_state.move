@@ -8,7 +8,7 @@ module usufruct::refund_state;
 use usufruct::{
     fee_message::{Self, FeeShare},
     owner::{Self, Owner, OwnerEarnings},
-    tenant::{Self, TenantIdentity, TenantStake},
+    tenant::{Self, Tenant, TenantIdentity, TenantStake},
 };
 
 // === Errors ===
@@ -92,6 +92,27 @@ public(package) fun total<C>(
     stake:    TenantStake<C>,
 ): RefundState<C> {
     RefundState::Total { identity, stake }
+}
+
+/// Construct `Parcial` or `Nothing` from a departing `Tenant` whose
+/// owner and fee shares have already been extracted. If the remaining
+/// stake is non-zero the tenant gets a partial refund (`Parcial`);
+/// otherwise the stake is empty and destroyed (`Nothing`). The
+/// classification belongs here — the defining module — rather than at
+/// every call site that produces a boundary refund.
+public(package) fun from_departing<C>(
+    departing:      Tenant<C>,
+    fee_share:      FeeShare<C>,
+    owner_earnings: OwnerEarnings<C>,
+): RefundState<C> {
+    if (tenant::stake_value(&departing) > 0) {
+        let (identity, stake) = tenant::unbundle(departing);
+        parcial(identity, stake, fee_share, owner_earnings)
+    } else {
+        let (identity, stake) = tenant::unbundle(departing);
+        tenant::destroy_empty_stake(stake);
+        nothing(identity, fee_share, owner_earnings)
+    }
 }
 
 /// Route all three terminal operations for the departing tenant's

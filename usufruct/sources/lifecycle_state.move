@@ -447,15 +447,7 @@ public(package) fun accept_bid<Asset: key + store, CoinType>(
                 phase_start_ms: new_phase_start_ms,
                 retiring,
             };
-            let refund = if (tenant::stake_value(&departing) > 0) {
-                let (identity, stake) = tenant::unbundle(departing);
-                refund_state::parcial(identity, stake, fee_share, owner_earnings)
-            } else {
-                let (identity, stake) = tenant::unbundle(departing);
-                tenant::destroy_empty_stake(stake);
-                refund_state::nothing(identity, fee_share, owner_earnings)
-            };
-            (new_state, refund)
+            (new_state, refund_state::from_departing(departing, fee_share, owner_earnings))
         },
         LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
     }

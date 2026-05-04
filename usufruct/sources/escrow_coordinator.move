@@ -784,7 +784,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let (new_st, refund) = lifecycle_state::supersede_bid<Asset, CoinType>(st, t, existing_expiry);
     put_state(escrow, new_st, receipt);
 
-    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, displaced_addr, ctx);
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
     event::emit(BidSuperseded {
         escrow_id,
         displaced_tenant_cap_id: displaced_cap_id,
@@ -827,7 +827,7 @@ fun do_handover<Asset: key + store, CoinType>(
     );
     put_state(escrow, new_st, receipt);
 
-    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, displaced_addr, ctx);
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
 
     let new_tenant_cap_id = lifecycle_state::current_cap_id(read_state(escrow));
     // Post-handover state is HandoverOpen → compute_floor_price
@@ -871,7 +871,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     );
     put_state(escrow, new_st, receipt);
 
-    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, tenant_addr, ctx);
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
 
     event::emit(TenureExpired {
         escrow_id,

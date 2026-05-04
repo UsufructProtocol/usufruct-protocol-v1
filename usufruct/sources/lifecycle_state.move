@@ -353,13 +353,13 @@ public(package) fun expire_tenure<Asset: key + store, CoinType>(
             let (new_t_state, mut departing) = tenant_state::vacate(t_state);
             let owner_earnings    = tenant::take_owner_earnings(&mut departing, owner_amount);
             let fee_share         = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
-            let (identity, stake) = tenant::unbundle(departing);
+            let (_, stake) = tenant::unbundle(departing);
             tenant::destroy_empty_stake(stake);
             let expired = asset_state::expire(a_state, last_acq_price, new_phase_start_ms);
             let final_a = if (retiring) { asset_state::retire(expired) } else { expired };
             (
                 LifecycleState::NotRented { a_state: final_a, t_state: new_t_state },
-                refund_state::nothing(identity, fee_share, owner_earnings),
+                refund_state::nothing(fee_share, owner_earnings),
             )
         },
         LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,

@@ -21,13 +21,14 @@ use usufruct::{
 /// tenant's stake. Three variants encode the legal distribution shapes
 /// of the departing tenant's funds:
 ///
-///   · `Nothing`  — full stake consumed by owner+fee; tenant gets nothing
-///                   back (e.g. tenure expiry; or accept_bid where
-///                   used_credit == stake).
-///   · `Parcial`  — stake split into owner + fee + remainder; remainder
-///                   refunds to the tenant via the carried `stake`.
+///   · `Nothing`  — full stake consumed by owner+fee; tenant receives
+///                   nothing back. No identity: there is no recipient,
+///                   so carrying one would be a lie.
+///   · `Parcial`  — stake split: owner + fee + remainder refunded to
+///                   the tenant. Carries `identity` — the remainder has
+///                   a recipient and the type must name them.
 ///   · `Total`    — full stake refunded to the tenant; no owner share,
-///                   no fee (e.g. supersede_bid — displaced bid).
+///                   no fee. Carries `identity` — same reason as Parcial.
 ///
 /// Hot potato: no abilities. Must be consumed in the same PTB it is
 /// produced — by a `match` at the boundary, never stored. This makes
@@ -36,7 +37,6 @@ use usufruct::{
 /// route the owner's share, because the enum cannot be discarded.
 public enum RefundState<phantom CoinType> {
     Nothing {
-        identity:       TenantIdentity,
         fee_share:      FeeShare<CoinType>,
         owner_earnings: OwnerEarnings<CoinType>,
     },
@@ -64,14 +64,13 @@ public enum RefundState<phantom CoinType> {
 
 // === Package Functions ===
 
-/// Construct `Nothing` — tenant identity preserved for events; fee and
-/// owner shares routed to their consumers; no remainder.
+/// Construct `Nothing` — fee and owner shares routed to their consumers;
+/// no remainder, no recipient.
 public(package) fun nothing<C>(
-    identity:       TenantIdentity,
     fee_share:      FeeShare<C>,
     owner_earnings: OwnerEarnings<C>,
 ): RefundState<C> {
-    RefundState::Nothing { identity, fee_share, owner_earnings }
+    RefundState::Nothing { fee_share, owner_earnings }
 }
 
 /// Construct `Parcial` — three-way split. The carried `stake` holds
@@ -109,9 +108,9 @@ public(package) fun from_departing<C>(
         let (identity, stake) = tenant::unbundle(departing);
         parcial(identity, stake, fee_share, owner_earnings)
     } else {
-        let (identity, stake) = tenant::unbundle(departing);
+        let (_, stake) = tenant::unbundle(departing);
         tenant::destroy_empty_stake(stake);
-        nothing(identity, fee_share, owner_earnings)
+        nothing(fee_share, owner_earnings)
     }
 }
 
@@ -119,31 +118,27 @@ public(package) fun from_departing<C>(
 /// funds. Exhaustive match over the three variants; lives here (the
 /// defining module) so it can see variant internals directly.
 ///
-///   Nothing — full stake consumed; deposit owner share, post fee.
-///   Parcial — split stake; deposit + post + liquidate remainder.
-///   Total   — full stake refunded; liquidate only (no owner/fee).
-///
-/// `displaced` is the tenant address receiving any stake remainder;
-/// for `Nothing` it is unused.
+///   Nothing — no recipient; deposit owner share, post fee.
+///   Parcial — split stake; deposit + post + liquidate remainder to identity.
+///   Total   — full stake refunded to identity; no owner/fee.
 public(package) fun distribute<C>(
     rs:           RefundState<C>,
     owner:        &mut Owner<C>,
     fee_inbox_id: ID,
-    displaced:    address,
     ctx:          &mut TxContext,
 ) {
     match (rs) {
-        RefundState::Nothing { identity: _, fee_share, owner_earnings } => {
+        RefundState::Nothing { fee_share, owner_earnings } => {
             owner::deposit(owner, owner_earnings);
             fee_message::post(fee_share, fee_inbox_id, ctx);
         },
-        RefundState::Parcial { identity: _, stake, fee_share, owner_earnings } => {
+        RefundState::Parcial { identity, stake, fee_share, owner_earnings } => {
             owner::deposit(owner, owner_earnings);
             fee_message::post(fee_share, fee_inbox_id, ctx);
-            tenant::liquidate(stake, displaced, ctx);
+            tenant::liquidate(stake, tenant::id_address(&identity), ctx);
         },
-        RefundState::Total { identity: _, stake } => {
-            tenant::liquidate(stake, displaced, ctx);
+        RefundState::Total { identity, stake } => {
+            tenant::liquidate(stake, tenant::id_address(&identity), ctx);
         },
     }
 }
@@ -181,7 +176,7 @@ public fun is_total<C>(rs: &RefundState<C>): bool {
 #[test_only]
 public fun destroy_for_testing<C>(rs: RefundState<C>) {
     match (rs) {
-        RefundState::Nothing { identity: _, fee_share, owner_earnings } => {
+        RefundState::Nothing { fee_share, owner_earnings } => {
             fee_message::destroy_share_for_testing(fee_share);
             owner::destroy_earnings_for_testing(owner_earnings);
         },

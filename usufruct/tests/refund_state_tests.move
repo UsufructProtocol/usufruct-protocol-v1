@@ -41,9 +41,9 @@ fun owner_earnings(amount: u64): OwnerEarnings<TEST_COIN> {
 
 #[test]
 fun nothing_constructs_nothing_variant() {
-    let (id, stake) = id_and_stake(0);
+    let (_, stake) = id_and_stake(0);
     tenant::destroy_empty_stake(stake);
-    let rs = refund_state::nothing<TEST_COIN>(id, fee_share(50), owner_earnings(450));
+    let rs = refund_state::nothing<TEST_COIN>(fee_share(50), owner_earnings(450));
     assert!(refund_state::is_nothing(&rs));
     assert!(!refund_state::is_parcial(&rs));
     assert!(!refund_state::is_total(&rs));
@@ -78,9 +78,9 @@ fun total_constructs_total_variant() {
 // three arms without leaks.
 #[test]
 fun destroy_for_testing_handles_all_three_variants() {
-    let (id_n, stake_n) = id_and_stake(0);
+    let (_, stake_n) = id_and_stake(0);
     tenant::destroy_empty_stake(stake_n);
-    let nothing = refund_state::nothing<TEST_COIN>(id_n, fee_share(10), owner_earnings(20));
+    let nothing = refund_state::nothing<TEST_COIN>(fee_share(10), owner_earnings(20));
     refund_state::destroy_for_testing(nothing);
 
     let (id_p, stake_p) = id_and_stake(100);

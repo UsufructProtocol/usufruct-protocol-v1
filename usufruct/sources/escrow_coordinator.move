@@ -103,11 +103,12 @@ public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
 }
 
 public struct RentStarted has copy, drop {
-    escrow_id:     ID,
-    tenant_cap_id: ID,
-    tenant:        address,
-    price_paid:    u64,
-    floor_price:   u64,
+    escrow_id:      ID,
+    tenant_cap_id:  ID,
+    tenant:         address,
+    phase_start_ms: u64,
+    price_paid:     u64,
+    floor_price:    u64,
 }
 
 public struct BidPlaced has copy, drop {
@@ -120,14 +121,15 @@ public struct BidPlaced has copy, drop {
 }
 
 public struct BidSuperseded has copy, drop {
-    escrow_id:               ID,
-    displaced_tenant_cap_id: ID,
-    new_tenant_cap_id:       ID,
-    displaced_bidder:        address,
-    refunded_amount:         u64,
-    new_bidder:              address,
-    new_bid_amount:          u64,
-    floor_price:             u64,
+    escrow_id:                 ID,
+    displaced_tenant_cap_id:   ID,
+    new_tenant_cap_id:         ID,
+    displaced_bidder:          address,
+    refunded_amount:           u64,
+    new_bidder:                address,
+    new_bid_amount:            u64,
+    floor_price:               u64,
+    handover_countdown_expiry: u64,
 }
 
 public struct HandoverCompleted has copy, drop {
@@ -917,10 +919,11 @@ fun do_install_new_tenant<Asset: key + store, CoinType>(
 
     event::emit(RentStarted {
         escrow_id,
-        tenant_cap_id: cap_id,
-        tenant:        tenant_addr,
+        tenant_cap_id:  cap_id,
+        tenant:         tenant_addr,
+        phase_start_ms: now,
         price_paid,
-        floor_price:   floor,
+        floor_price:    floor,
     });
     cap
 }
@@ -1002,13 +1005,14 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
     event::emit(BidSuperseded {
         escrow_id,
-        displaced_tenant_cap_id: displaced_cap_id,
-        new_tenant_cap_id: cap_id,
-        displaced_bidder: displaced_addr,
+        displaced_tenant_cap_id:   displaced_cap_id,
+        new_tenant_cap_id:         cap_id,
+        displaced_bidder:          displaced_addr,
         refunded_amount,
         new_bidder,
         new_bid_amount,
-        floor_price: floor,
+        floor_price:               floor,
+        handover_countdown_expiry: existing_expiry,
     });
     cap
 }
@@ -1198,6 +1202,8 @@ public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID             
 #[test_only]
 public(package) fun rent_started_tenant(e: &RentStarted): address                { e.tenant }
 #[test_only]
+public(package) fun rent_started_phase_start_ms(e: &RentStarted): u64            { e.phase_start_ms }
+#[test_only]
 public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
 #[test_only]
 public(package) fun rent_started_floor_price(e: &RentStarted): u64               { e.floor_price }
@@ -1229,6 +1235,8 @@ public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64      
 public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address        { e.new_bidder }
 #[test_only]
 public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64        { e.new_bid_amount }
+#[test_only]
+public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded): u64 { e.handover_countdown_expiry }
 
 #[test_only]
 public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }

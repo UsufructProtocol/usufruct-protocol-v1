@@ -105,6 +105,7 @@ public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
 public struct RentStarted has copy, drop {
     escrow_id:     ID,
     tenant_cap_id: ID,
+    tenant:        address,
     price_paid:    u64,
     floor_price:   u64,
 }
@@ -133,6 +134,7 @@ public struct HandoverCompleted has copy, drop {
     escrow_id:         ID,
     displaced_tenant:  address,
     new_tenant_cap_id: ID,
+    new_tenant_addr:   address,
     used_credit:       u64,
     owner_share:       u64,
     protocol_fee:      u64,
@@ -912,8 +914,9 @@ fun do_install_new_tenant<Asset: key + store, CoinType>(
     event::emit(RentStarted {
         escrow_id,
         tenant_cap_id: cap_id,
+        tenant:        tenant_addr,
         price_paid,
-        floor_price: floor,
+        floor_price:   floor,
     });
     cap
 }
@@ -1038,6 +1041,7 @@ fun do_handover<Asset: key + store, CoinType>(
     refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
 
     let new_tenant_cap_id = lifecycle_state::current_cap_id(read_state(escrow));
+    let new_tenant_addr   = lifecycle_state::current_addr(read_state(escrow));
     // Post-handover state is HandoverOpen → compute_floor_price
     // returns Ascending(current_stake_value); timestamp irrelevant
     // for that regime.
@@ -1047,6 +1051,7 @@ fun do_handover<Asset: key + store, CoinType>(
         escrow_id,
         displaced_tenant: displaced_addr,
         new_tenant_cap_id,
+        new_tenant_addr,
         used_credit,
         owner_share:    owner_amount,
         protocol_fee:   fee_amount,
@@ -1183,6 +1188,8 @@ public(package) fun rent_started_escrow_id(e: &RentStarted): ID                 
 #[test_only]
 public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID              { e.tenant_cap_id }
 #[test_only]
+public(package) fun rent_started_tenant(e: &RentStarted): address                { e.tenant }
+#[test_only]
 public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
 #[test_only]
 public(package) fun rent_started_floor_price(e: &RentStarted): u64               { e.floor_price }
@@ -1221,6 +1228,8 @@ public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID     
 public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): address       { e.displaced_tenant }
 #[test_only]
 public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                  { e.new_tenant_cap_id }
+#[test_only]
+public(package) fun handover_completed_new_tenant_addr(e: &HandoverCompleted): address        { e.new_tenant_addr }
 #[test_only]
 public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64                { e.used_credit }
 #[test_only]

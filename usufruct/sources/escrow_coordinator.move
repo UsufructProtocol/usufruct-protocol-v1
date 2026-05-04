@@ -12,7 +12,7 @@ use sui::{
 };
 use usufruct::{
     asset::{Self, AssetReceipt},
-    cap_authorization,
+    cap_authorization::{Self, CapAuthorization},
     config::{Self, IntegrationConfig},
     credit_state,
     descent_policy,
@@ -26,9 +26,9 @@ use usufruct::{
     price_state,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     refund_state,
-    rent_action,
+    rent_action::{Self, RentAction},
     retire_policy,
-    retire_route,
+    retire_route::{Self, RetireRoute},
     tenant,
     tenant_cap::{Self, TenantCap},
 };
@@ -572,6 +572,31 @@ public fun is_retiring<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): bool { lifecycle_state::is_retiring(read_state(escrow)) }
 
+// ─── Action classification ───────────────────────────────────────────────────
+
+/// How a `retire()` call will be routed given the current state.
+///   Immediate      — no active tenant; asset retires immediately.
+///   Deferred       — active tenant; sets the retiring flag for tenure-expiry.
+///   AlreadyRetired — call will abort; surface the error before signing.
+/// SDK use: explain to the owner what retire() will do before they sign.
+public fun retire_route<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): RetireRoute {
+    lifecycle_state::retire_route(read_state(escrow))
+}
+
+/// Which entry operation a `rent()` call will execute given the current state.
+///   Install      — no active tenant; starts a fresh rental.
+///   PlaceBid     — HandoverOpen; places a competing bid.
+///   SupersedeBid — HandoverConfirmed; replaces the existing pending bid.
+///   Retired      — call will abort; the rent action is unavailable.
+/// SDK use: label the rent button correctly and build the right UI flow.
+public fun rent_action<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): RentAction {
+    lifecycle_state::rent_action(read_state(escrow))
+}
+
 // ─── Identity views ──────────────────────────────────────────────────────────
 
 /// Address of the active tenant. `Some` while the lifecycle is Rented
@@ -595,6 +620,21 @@ public fun pending_tenant_addr<Asset: key + store, CoinType>(
     else option::none()
 }
 
+// ─── Cap views ───────────────────────────────────────────────────────────────
+
+/// Authorization status of `cap_id` relative to the current lifecycle state.
+///   Current — belongs to the active tenant; may borrow.
+///   Pending — belongs to the pending bidder in HandoverConfirmed.
+///   Stale   — superseded, former tenant, or no active rental.
+/// SDK use: check before `borrow_asset` or `burn_tenant_cap` to surface a
+/// meaningful error instead of letting the transaction abort.
+public fun tenant_cap_status<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    cap_id: ID,
+): CapAuthorization {
+    lifecycle_state::cap_authorization(read_state(escrow), cap_id)
+}
+
 // ─── Timing views ────────────────────────────────────────────────────────────
 
 /// True iff at least one time-based transition is due at the current
@@ -605,6 +645,22 @@ public fun has_pending_transitions<Asset: key + store, CoinType>(
     clock:  &Clock,
 ): bool {
     option::is_some(&next_pending(escrow, clock::timestamp_ms(clock)))
+}
+
+/// Timestamp at which the next pending transition fires, if any.
+/// `Some(ms)` when a transition is due; `None` when the escrow is quiescent.
+/// SDK use: schedule keeper calls and drive countdown timers without
+/// committing a transaction.
+public fun next_transition_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    clock:  &Clock,
+): Option<u64> {
+    let pending = next_pending(escrow, clock::timestamp_ms(clock));
+    if (option::is_some(&pending)) {
+        option::some(pending_transition::boundary_ms(option::borrow(&pending)))
+    } else {
+        option::none()
+    }
 }
 
 // ─── Pricing views ───────────────────────────────────────────────────────────
@@ -638,6 +694,19 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
     clock:  &Clock,
 ): u64 {
     floor_price_at(escrow, clock::timestamp_ms(clock))
+}
+
+// ─── Earnings views ──────────────────────────────────────────────────────────
+
+/// Accumulated owner earnings inside this escrow, in coin base units.
+/// Includes all owner shares from completed boundary transitions not yet
+/// drained by `withdraw_earnings`.
+/// SDK use: owner dashboard — show pending balance before prompting a
+/// `withdraw_earnings` transaction.
+public fun owner_balance<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): u64 {
+    owner::value(&escrow.owner)
 }
 
 // === Admin Functions ===

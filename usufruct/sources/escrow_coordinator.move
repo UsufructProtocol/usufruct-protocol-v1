@@ -22,6 +22,7 @@ use usufruct::{
     math,
     owner::{Self, Owner},
     owner_cap::{Self, OwnerCap},
+    pending_transition::{Self, PendingTransition},
     phases,
     price_state,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
@@ -519,67 +520,85 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     state_tag(escrow)
 }
 
-/// Inspect the current state and fire at most one elapsed transition.
-/// Returns `true` if a transition fired (caller re-runs to chase
-/// cascades), `false` otherwise (steady state).
+/// Detect the single transition that is due at `now`, if any.
+/// Priority order: Handover → Tenure → Auction. The first match wins;
+/// later checks short-circuit. Pure read — no mutation, no events.
+///
+/// Useful as a standalone query for keepers / `devInspectTransactionBlock`:
+/// callers can probe what would fire without committing the tx.
+public(package) fun next_pending<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    now:    u64,
+): Option<PendingTransition> {
+    let s = read_state(escrow);
+
+    // Check 1 — Handover countdown (Rented + Demand).
+    if (lifecycle_state::is_rented(s) && lifecycle_state::is_t_state_demand(s)) {
+        let expiry = lifecycle_state::handover_countdown_expiry_ms(s);
+        if (phases::has_passed(expiry, 0, now)) {
+            return option::some(pending_transition::handover(expiry))
+        };
+    };
+
+    // Check 2 — Tenure expiry (Rented + HandoverOpen).
+    if (lifecycle_state::is_rented(s) && lifecycle_state::is_a_state_handover_open(s)) {
+        let phase_start = lifecycle_state::phase_start_ms(s);
+        let tenure      = config::tenure_ceiling(&escrow.config);
+        if (phases::has_passed(phase_start, tenure, now)) {
+            return option::some(pending_transition::tenure(phases::boundary_at(phase_start, tenure)))
+        };
+    };
+
+    // Check 3 — Auction expiry (NotRented + AtDutch).
+    if (lifecycle_state::is_not_rented(s) && lifecycle_state::is_a_state_at_dutch(s)) {
+        let phase_start = lifecycle_state::phase_start_ms(s);
+        let policy      = config::descent(&escrow.config);
+        if (descent_policy::has_expired(policy, phase_start, now)) {
+            return option::some(pending_transition::auction(descent_policy::expiry_at(policy, phase_start)))
+        };
+    };
+
+    option::none()
+}
+
+/// Apply a `PendingTransition` by dispatching to the matching boundary
+/// handler. The dispatch uses the public predicates from
+/// `pending_transition` rather than variant pattern matching, since
+/// the enum lives in another module (Move 2024 restricts external
+/// matching). With three variants and copy ability, the if/else chain
+/// is honest dispatch — not the if/else-hides-state smell.
+fun fire<Asset: key + store, CoinType>(
+    escrow: &mut EscrowCoordinator<Asset, CoinType>,
+    t:      PendingTransition,
+    ctx:    &mut TxContext,
+) {
+    let boundary_ms = pending_transition::boundary_ms(&t);
+    if (pending_transition::is_handover(&t)) {
+        do_handover(escrow, boundary_ms, ctx)
+    } else if (pending_transition::is_tenure(&t)) {
+        do_tenure_expiry(escrow, boundary_ms, ctx)
+    } else {
+        // is_auction (only remaining variant — three are exhaustive
+        // and stable; new variants would need new lifecycle boundaries).
+        do_auction_expiry(escrow, boundary_ms)
+    }
+}
+
+/// Detect-then-fire one transition. Returns `true` if a transition
+/// fired (caller re-runs to chase cascades), `false` otherwise.
 fun apt_step<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
     now:    u64,
     ctx:    &mut TxContext,
 ): bool {
-    // Check 1 — Handover countdown (Rented + Demand).
-    let handover_due: Option<u64> = {
-        let s = read_state(escrow);
-        if (lifecycle_state::is_rented(s) && lifecycle_state::is_t_state_demand(s)) {
-            let expiry = lifecycle_state::handover_countdown_expiry_ms(s);
-            if (phases::has_passed(expiry, 0, now)) { option::some(expiry) }
-            else                                    { option::none() }
-        } else { option::none() }
-    };
-    if (option::is_some(&handover_due)) {
-        let boundary_ms = option::destroy_some(handover_due);
-        do_handover(escrow, boundary_ms, ctx);
-        return true
-    };
-    option::destroy_none(handover_due);
-
-    // Check 2 — Tenure expiry (Rented + HandoverOpen).
-    let tenure_due: Option<u64> = {
-        let s = read_state(escrow);
-        if (lifecycle_state::is_rented(s) && lifecycle_state::is_a_state_handover_open(s)) {
-            let phase_start = lifecycle_state::phase_start_ms(s);
-            let tenure      = config::tenure_ceiling(&escrow.config);
-            if (phases::has_passed(phase_start, tenure, now)) {
-                option::some(phases::boundary_at(phase_start, tenure))
-            } else { option::none() }
-        } else { option::none() }
-    };
-    if (option::is_some(&tenure_due)) {
-        let boundary_ms = option::destroy_some(tenure_due);
-        do_tenure_expiry(escrow, boundary_ms, ctx);
-        return true
-    };
-    option::destroy_none(tenure_due);
-
-    // Check 3 — Auction expiry (NotRented + AtDutch).
-    let auction_due: Option<u64> = {
-        let s = read_state(escrow);
-        if (lifecycle_state::is_not_rented(s) && lifecycle_state::is_a_state_at_dutch(s)) {
-            let phase_start = lifecycle_state::phase_start_ms(s);
-            let policy      = config::descent(&escrow.config);
-            if (descent_policy::has_expired(policy, phase_start, now)) {
-                option::some(descent_policy::expiry_at(policy, phase_start))
-            } else { option::none() }
-        } else { option::none() }
-    };
-    if (option::is_some(&auction_due)) {
-        let boundary_ms = option::destroy_some(auction_due);
-        do_auction_expiry(escrow, boundary_ms);
-        return true
-    };
-    option::destroy_none(auction_due);
-
-    false
+    let pending = next_pending(escrow, now);
+    if (option::is_some(&pending)) {
+        fire(escrow, option::destroy_some(pending), ctx);
+        true
+    } else {
+        option::destroy_none(pending);
+        false
+    }
 }
 
 // === View Functions ===

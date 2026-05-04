@@ -15,6 +15,7 @@ use sui::{
 };
 use usufruct::{
     asset,
+    pending_transition,
     escrow_coordinator::{
         Self,
         EscrowCoordinator,
@@ -1153,6 +1154,51 @@ fun do_auction_expiry_returns_to_idle() {
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
+    sc.end();
+}
+
+// ─── §14.5 next_pending — detection without firing ──────────────────────────
+
+/// next_pending returns None when nothing is due.
+#[test]
+fun next_pending_returns_none_in_steady_state() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+
+    // Idle escrow — nothing pending at any clock.
+    assert!(escrow_coordinator::next_pending(&escrow, 0).is_none(), 0);
+    assert!(escrow_coordinator::next_pending(&escrow, 1_000_000).is_none(), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    sc.end();
+}
+
+/// next_pending returns Tenure with the boundary_ms when tenure has elapsed.
+#[test]
+fun next_pending_detects_tenure_with_correct_boundary() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    // Probe at clock just past the tenure boundary — Tenure is pending.
+    let probe_ms = escrow_corpus::tenure_ceiling_const() + 1;
+    let pending = escrow_coordinator::next_pending(&escrow, probe_ms);
+    assert!(pending.is_some(), 0);
+    let t = pending.destroy_some();
+    assert!(pending_transition::is_tenure(&t), 1);
+    // boundary_ms is exactly tenure_ceiling (phase_start was 0).
+    assert_eq!(pending_transition::boundary_ms(&t), escrow_corpus::tenure_ceiling_const());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
     sc.end();
 }
 

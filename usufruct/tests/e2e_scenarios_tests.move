@@ -2219,4 +2219,229 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
     };
     sc.end();
 }
+
+// ─── §CORPUS-GAPS. Coverage for under-tested axis values ─────────────────────
+
+// ── Gap 1: c=2 (FixedTime) — handover fires at tenure boundary, full credit ──
+
+/// With HandoverPolicy::FixedTime, the handover countdown expiry is always
+/// phase_start + tenure_ceiling — the handover fires exactly at the tenure
+/// boundary. At that moment elapsed == tenure_ceiling, so evaluate_curve
+/// short-circuits to SCALE for every curve shape. This means:
+///
+///   used_credit == stake  (full credit consumed)
+///   remain_credit == 0    (nothing refunded to T1)
+///   owner_share + protocol_fee == stake  (all of T1's stake distributed)
+///
+/// Sweeps all 7 curve shapes (axis E) — the result must hold for every shape
+/// because it depends on the evaluate_curve saturation invariant (DESC-4),
+/// not on the specific curve formula.
+#[test]
+fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
+    let mut sc    = setup();
+    let stake     = escrow_corpus::min_rent_price_const();
+    let boundary  = escrow_corpus::tenure_ceiling_const(); // FixedTime expiry = 0 + 100_000
+    let mut e: u8 = 0;
+    while (e <= 6) {
+        let tag = escrow_corpus::tag(2, 0, e, 0, 0); // c=2 FixedTime, vary e
+        let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+        let mut clk = clock::create_for_testing(sc.ctx());
+
+        // T1 rents at t=0 (phase_start=0); T2 bids → HC (expiry=100_000).
+        let cap_t1 = escrow_coordinator::rent(
+            &mut escrow, mk_payment(stake, sc.ctx()), &clk, sc.ctx());
+        clock::set_for_testing(&mut clk, 1_000);
+        let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, 1_000);
+        let cap_t2   = escrow_coordinator::rent(
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+
+        // APT at tenure boundary: FixedTime expiry fires → handover.
+        clock::set_for_testing(&mut clk, boundary);
+        escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+        // used_credit = stake for all curves (elapsed = tenure_ceiling → SCALE saturation).
+        let hc = event::events_by_type<HandoverCompleted>();
+        let he = hc.borrow(0);
+        let used_credit   = escrow_coordinator::handover_completed_used_credit(he);
+        let remain_credit = escrow_coordinator::handover_completed_remain_credit(he);
+        assert_eq!(used_credit,   stake); // full credit consumed
+        assert_eq!(remain_credit, 0);     // nothing refunded to T1
+        assert_eq!(
+            escrow_coordinator::handover_completed_owner_share(he)
+            + escrow_coordinator::handover_completed_protocol_fee(he),
+            stake,                        // all of stake distributed
+        );
+
+        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t2, OWNER);
+        test_scenario::return_shared(escrow);
+        owner_cap::burn(owner_cap, OWNER);
+        clock::destroy_for_testing(clk);
+        e = e + 1;
+    };
+    sc.end();
+}
+
+// ── Gap 2: d=1 (CompoundDelta) — financial conservation holds ────────────────
+
+/// The FIN-1/2 conservation invariants hold regardless of the PriceFunction
+/// axis. CompoundDelta changes the floor price calculation (multiplicative
+/// escalation) but not the stake value stored after rent(), so the conservation
+/// identities are independent of D.
+///
+/// Verifies both boundaries in one lifecycle:
+///   FIN-1 (handover): owner_share + protocol_fee + remain_credit == T1_stake
+///   FIN-2 (tenure):   owner_share + protocol_fee == T2_stake
+#[test]
+fun e2e_corpus_gap_compound_delta_financial_conservation() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 1, 0, 1, 0); // d=1 CompoundDelta, h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let stake_t1 = escrow_corpus::min_rent_price_const();
+
+    // T1 rents at min_price; T2 bids at CompoundDelta floor (> T1+FixedDelta).
+    let cap_t1   = escrow_coordinator::rent(
+        &mut escrow, mk_payment(stake_t1, sc.ctx()), &clk, sc.ctx());
+    let t_mid    = escrow_corpus::tenure_ceiling_const() / 2;
+    clock::set_for_testing(&mut clk, t_mid);
+    let stake_t2 = escrow_coordinator::compute_floor_price(&escrow, t_mid);
+    assert!(stake_t2 > stake_t1, tag); // CompoundDelta raises the floor
+    let cap_t2   = escrow_coordinator::rent(
+        &mut escrow, mk_payment(stake_t2, sc.ctx()), &clk, sc.ctx());
+
+    // Instant handover fires → T2 current.
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // FIN-1: T1's stake partitioned into three outputs exactly.
+    {
+        let evs = event::events_by_type<HandoverCompleted>();
+        let he  = evs.borrow(0);
+        assert_eq!(
+            escrow_coordinator::handover_completed_owner_share(he)
+            + escrow_coordinator::handover_completed_protocol_fee(he)
+            + escrow_coordinator::handover_completed_remain_credit(he),
+            stake_t1,
+        );
+    };
+
+    // T2's tenure expires → AtDutchAuction (h=1 Window).
+    let t2_boundary = t_mid + escrow_corpus::tenure_ceiling_const();
+    clock::set_for_testing(&mut clk, t2_boundary);
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_at_dutch_auction(&escrow), tag);
+
+    // FIN-2: T2's full stake distributed (no remainder at expiry).
+    {
+        let evs = event::events_by_type<TenureExpired>();
+        let te  = evs.borrow(0);
+        assert_eq!(
+            escrow_coordinator::tenure_expired_owner_share(te)
+            + escrow_coordinator::tenure_expired_protocol_fee(te),
+            stake_t2,
+        );
+        assert_eq!(escrow_coordinator::tenure_expired_last_acq_price(te), stake_t2);
+    };
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── Gap 3: f=1 (Deferred) — retire from HandoverOpen after floor elapsed ─────
+
+/// §RETIRE uses f=0 throughout. This test verifies that retire() from
+/// HandoverOpen also works with f=1 once the retire_floor has elapsed.
+///
+/// T1 rents at t_rent (late enough that tenure_boundary > retire_floor).
+/// retire() is called between retire_floor and tenure_boundary — floor is
+/// unlocked, tenure not yet expired, so the retiring flag is set.
+/// APT at tenure_boundary: flag → Retired.
+///
+/// Key timing (integrated_at_ms = 0, retire_floor = 10_000_000, ceiling = 100_000):
+///   t_rent          = retire_floor − ceiling/2  = 9_950_000
+///   retire_at       = retire_floor + 1          = 10_000_001
+///   tenure_boundary = t_rent + ceiling          = 10_050_000
+#[test]
+fun e2e_corpus_gap_deferred_retire_from_handover_open_after_floor() {
+    let mut sc    = setup();
+    let tag       = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk   = clock::create_for_testing(sc.ctx());
+    let retire_floor     = escrow_corpus::retire_deferred_f1_const();  // 10_000_000
+    let tenure_ceiling   = escrow_corpus::tenure_ceiling_const();      // 100_000
+    let t_rent           = retire_floor - tenure_ceiling / 2;          // 9_950_000
+    let tenure_boundary  = t_rent + tenure_ceiling;                    // 10_050_000
+
+    // T1 rents late: tenure_boundary(10_050_000) > retire_floor(10_000_000).
+    clock::set_for_testing(&mut clk, t_rent);
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // retire() after floor elapses but before tenure expires.
+    // retire_at = 10_000_001: floor unlocked (> 10_000_000) AND tenure active (< 10_050_000).
+    clock::set_for_testing(&mut clk, retire_floor + 1);
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag); // flag set, still HO
+
+    // APT at tenure boundary → retiring flag → Retired (not AtDutch).
+    clock::set_for_testing(&mut clk, tenure_boundary);
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── Gap 4: h=1 (Window) + retiring flag — bypasses AtDutch descent ───────────
+
+/// §RETIRE tests (RETIRE-3/4/5/6) all use h=0 (Skipped). This verifies
+/// that the retiring flag correctly bypasses AtDutchAuction even when
+/// DescentPolicy is Window (h=1): tenure expiry → Retired directly,
+/// NOT AtDutch. The Window policy only affects the descent duration when
+/// there is NO retiring flag; the flag unconditionally collapses to Retired.
+#[test]
+fun e2e_corpus_gap_retiring_flag_bypasses_at_dutch_with_window_policy() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // Retire from HO with h=1: retiring flag set. State stays HO.
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // APT at tenure boundary: retiring flag → Retired (NOT AtDutch despite h=1).
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);     // flag bypassed AtDutch
+    assert!(!escrow_coordinator::is_at_dutch_auction(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
 }

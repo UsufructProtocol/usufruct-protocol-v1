@@ -353,7 +353,7 @@ public fun rent<Asset: key + store, CoinType>(
 ): TenantCap {
     apply_pending_transitions(escrow, clock, ctx);
     let now   = clock::timestamp_ms(clock);
-    let floor = compute_floor_price(escrow, now);
+    let floor = floor_price_at(escrow, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
 
     let action = lifecycle_state::rent_action(read_state(escrow));
@@ -609,33 +609,23 @@ public fun has_pending_transitions<Asset: key + store, CoinType>(
 
 // ─── Pricing views ───────────────────────────────────────────────────────────
 
-/// Used credit accrued by the current tenant since the rental's
-/// `phase_start_ms`, evaluated at `timestamp_ms`. Defined only while
-/// the lifecycle is `Rented` — aborts otherwise (`ENotRented`).
+/// Used credit accrued by the current tenant at the current clock time.
+/// Defined only while the lifecycle is `Rented` — aborts otherwise (`ENotRented`).
 ///
 /// Derives the credit regime from the lifecycle's tenant slot:
 /// HandoverConfirmed → `Capped` (effective time saturates at the
 /// pre-stamped countdown expiry); HandoverOpen → `Accruing` (no cap).
 /// All curve-and-arithmetic logic lives inside `credit_state::used_credit`.
 public fun compute_used_credit<Asset: key + store, CoinType>(
-    escrow:       &EscrowCoordinator<Asset, CoinType>,
-    timestamp_ms: u64,
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    clock:  &Clock,
 ): u64 {
-    let s = read_state(escrow);
-    assert!(lifecycle_state::is_rented(s), ENotRented);
-    let stake          = lifecycle_state::current_stake_value(s);
-    let phase_start_ms = lifecycle_state::phase_start_ms(s);
-    let cs = if (lifecycle_state::is_t_state_demand(s)) {
-        credit_state::capped(stake, phase_start_ms, lifecycle_state::handover_countdown_expiry_ms(s))
-    } else {
-        credit_state::accruing(stake, phase_start_ms)
-    };
-    credit_state::used_credit(&cs, &escrow.config, timestamp_ms)
+    used_credit_at(escrow, clock::timestamp_ms(clock))
 }
 
 /// Minimum acceptable payment to win the rent for the next bidder,
-/// evaluated at `timestamp_ms`. Derives the pricing regime from the
-/// lifecycle's asset slot:
+/// evaluated at the current clock time. Derives the pricing regime from
+/// the lifecycle's asset slot:
 ///   - `Idle`              → `Rest`       (min_rent_price)
 ///   - `HandoverOpen`      → `Ascending`  over current's stake
 ///   - `HandoverConfirmed` → `Ascending`  over pending's stake
@@ -644,26 +634,10 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
 ///
 /// All pricing arithmetic lives inside `price_state::floor_price`.
 public fun compute_floor_price<Asset: key + store, CoinType>(
-    escrow:       &EscrowCoordinator<Asset, CoinType>,
-    timestamp_ms: u64,
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    clock:  &Clock,
 ): u64 {
-    let s = read_state(escrow);
-    let ps = if (lifecycle_state::is_a_state_idle(s)) {
-        price_state::rest()
-    } else if (lifecycle_state::is_a_state_handover_open(s)) {
-        price_state::ascending(lifecycle_state::current_stake_value(s))
-    } else if (lifecycle_state::is_a_state_handover_confirmed(s)) {
-        price_state::ascending(lifecycle_state::pending_stake_value(s))
-    } else if (lifecycle_state::is_a_state_at_dutch(s)) {
-        price_state::descending(
-            lifecycle_state::last_acq_price_of_at_dutch(s),
-            lifecycle_state::phase_start_ms(s),
-        )
-    } else {
-        // is_a_state_retired
-        abort ERetiredNoBid
-    };
-    price_state::floor_price(&ps, &escrow.config, timestamp_ms)
+    floor_price_at(escrow, clock::timestamp_ms(clock))
 }
 
 // === Admin Functions ===
@@ -697,6 +671,44 @@ fun read_state<Asset: key + store, CoinType>(
 ): &LifecycleState<Asset, CoinType> {
     assert!(option::is_some(&escrow.state), EInvariantViolation);
     option::borrow(&escrow.state)
+}
+
+fun used_credit_at<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    let s = read_state(escrow);
+    assert!(lifecycle_state::is_rented(s), ENotRented);
+    let stake          = lifecycle_state::current_stake_value(s);
+    let phase_start_ms = lifecycle_state::phase_start_ms(s);
+    let cs = if (lifecycle_state::is_t_state_demand(s)) {
+        credit_state::capped(stake, phase_start_ms, lifecycle_state::handover_countdown_expiry_ms(s))
+    } else {
+        credit_state::accruing(stake, phase_start_ms)
+    };
+    credit_state::used_credit(&cs, &escrow.config, timestamp_ms)
+}
+
+fun floor_price_at<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    let s = read_state(escrow);
+    let ps = if (lifecycle_state::is_a_state_idle(s)) {
+        price_state::rest()
+    } else if (lifecycle_state::is_a_state_handover_open(s)) {
+        price_state::ascending(lifecycle_state::current_stake_value(s))
+    } else if (lifecycle_state::is_a_state_handover_confirmed(s)) {
+        price_state::ascending(lifecycle_state::pending_stake_value(s))
+    } else if (lifecycle_state::is_a_state_at_dutch(s)) {
+        price_state::descending(
+            lifecycle_state::last_acq_price_of_at_dutch(s),
+            lifecycle_state::phase_start_ms(s),
+        )
+    } else {
+        abort ERetiredNoBid
+    };
+    price_state::floor_price(&ps, &escrow.config, timestamp_ms)
 }
 
 /// Pure 90/10 split of `amount` into `(owner_share, protocol_fee)`.
@@ -846,7 +858,7 @@ fun do_handover<Asset: key + store, CoinType>(
     ctx:         &mut TxContext,
 ) {
     let escrow_id    = object::id(escrow);
-    let used_credit  = compute_used_credit(escrow, boundary_ms);
+    let used_credit  = used_credit_at(escrow, boundary_ms);
     let (owner_amount, fee_amount) = split_fee(used_credit);
     let displaced_addr = lifecycle_state::current_addr(read_state(escrow));
     let principal      = lifecycle_state::current_stake_value(read_state(escrow));
@@ -864,7 +876,7 @@ fun do_handover<Asset: key + store, CoinType>(
     // Post-handover state is HandoverOpen → compute_floor_price
     // returns Ascending(current_stake_value); timestamp irrelevant
     // for that regime.
-    let new_rent_price = compute_floor_price(escrow, boundary_ms);
+    let new_rent_price = floor_price_at(escrow, boundary_ms);
 
     event::emit(HandoverCompleted {
         escrow_id,

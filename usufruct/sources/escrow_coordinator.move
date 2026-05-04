@@ -1049,6 +1049,11 @@ public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID           
 public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64                     { e.timestamp_ms }
 
 #[test_only]
+public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID                      { e.tenant_cap_id }
+#[test_only]
+public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID                      { e.tenant_cap_id }
+
+#[test_only]
 public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID                            { e.escrow_id }
 
 #[test_only]

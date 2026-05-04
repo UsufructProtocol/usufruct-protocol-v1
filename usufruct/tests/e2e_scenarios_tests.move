@@ -27,6 +27,8 @@ use usufruct::{
         BidPlaced,
         BidSuperseded,
         AssetClaimed,
+        AssetBorrowed,
+        AssetReturned,
     },
     escrow_corpus,
     owner_cap::{Self, OwnerCap},
@@ -2527,6 +2529,160 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §EV. Event field invariants — cap IDs and timing ────────────────────────
+
+// ── EV-1 + EV-2: bid and handover cap_id consistency ─────────────────────────
+
+/// EV-1: BidPlaced.tenant_cap_id == object::id(&cap_t2)
+///   The cap returned by rent() in HandoverOpen is the same object whose ID
+///   is reported in the BidPlaced event.
+///
+/// EV-2: HandoverCompleted.new_tenant_cap_id == object::id(&cap_t2)
+///   After the handover fires, the new current cap is the same object whose
+///   ID was reported in BidPlaced. No new cap is minted at handover time —
+///   the cap from do_place_bid is promoted directly.
+#[test]
+fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // c=0 Instant
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents (Idle → HO).
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+
+    // T2 bids (HO → HC). cap_t2 is the pending cap.
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, 1_000);
+    let cap_t2   = escrow_coordinator::rent(
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+
+    // EV-1: BidPlaced.tenant_cap_id == the cap returned by rent().
+    let bp = event::events_by_type<BidPlaced>();
+    assert_eq!(bp.length(), 1);
+    assert_eq!(
+        escrow_coordinator::bid_placed_tenant_cap_id(bp.borrow(0)),
+        object::id(&cap_t2),
+    );
+
+    // APT fires Instant handover → T2 current.
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // EV-2: HandoverCompleted.new_tenant_cap_id == the same cap (promoted, not re-minted).
+    let hc = event::events_by_type<HandoverCompleted>();
+    assert_eq!(hc.length(), 1);
+    assert_eq!(
+        escrow_coordinator::handover_completed_new_cap_id(hc.borrow(0)),
+        object::id(&cap_t2),
+    );
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── EV-3: AssetBorrowed / AssetReturned cap_id consistency ───────────────────
+
+/// AssetBorrowed.tenant_cap_id and AssetReturned.tenant_cap_id must both
+/// equal the ID of the cap used in the borrow/return cycle. The borrow event
+/// is stamped with the cap passed to borrow_asset; the return event reads the
+/// current cap from the lifecycle state (which must be the same cap while
+/// no handover has occurred within the PTB).
+#[test]
+fun e2e_ev3_borrow_return_cap_id_consistency() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let clk     = clock::create_for_testing(sc.ctx());
+
+    // T1 rents → HO (T1 is current).
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+    let cap_t1_id = object::id(&cap_t1);
+
+    // Borrow and return in same PTB.
+    let (asset, receipt) = escrow_coordinator::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
+    escrow_coordinator::return_asset(&mut escrow, asset, receipt);
+
+    // EV-3a: AssetBorrowed.tenant_cap_id == cap_t1's ID.
+    let ab = event::events_by_type<AssetBorrowed>();
+    assert_eq!(ab.length(), 1);
+    assert_eq!(escrow_coordinator::asset_borrowed_tenant_cap_id(ab.borrow(0)), cap_t1_id);
+
+    // EV-3b: AssetReturned.tenant_cap_id == cap_t1's ID (still current at return time).
+    let ar = event::events_by_type<AssetReturned>();
+    assert_eq!(ar.length(), 1);
+    assert_eq!(escrow_coordinator::asset_returned_tenant_cap_id(ar.borrow(0)), cap_t1_id);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── EV-4: BidPlaced.handover_countdown_expiry accuracy per policy ─────────────
+
+/// The handover_countdown_expiry stamped in BidPlaced must match the value
+/// computed by handover_policy::expiry_at for each HandoverPolicy variant.
+///
+/// With phase_start=0, tenure_ceiling=100_000, bid at t=1_000:
+///   c=0 Instant:  expiry = bid_time                              = 1_000
+///   c=1 Countdown: expiry = min(bid_time + 25_000, 100_000)     = 26_000
+///   c=2 FixedTime: expiry = phase_start + tenure_ceiling         = 100_000
+///
+/// All three are derived from corpus constants — no hardcoded expectations.
+#[test]
+fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
+    let mut sc        = setup();
+    let bid_time      = 1_000u64;
+    let tenure_ceiling = escrow_corpus::tenure_ceiling_const();
+    let countdown     = escrow_corpus::handover_countdown_c1_const();
+    let mut c: u8     = 0;
+    while (c <= 2) {
+        let tag = escrow_corpus::tag(c, 0, 0, 0, 0); // vary c=0,1,2
+        let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+        let mut clk = clock::create_for_testing(sc.ctx());
+
+        // T1 rents → HO (phase_start = 0).
+        let cap_t1 = escrow_coordinator::rent(
+            &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+
+        // T2 bids at bid_time → HC. BidPlaced event stamps the expiry.
+        clock::set_for_testing(&mut clk, bid_time);
+        let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, bid_time);
+        let cap_t2   = escrow_coordinator::rent(
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+
+        let bp = event::events_by_type<BidPlaced>();
+        assert_eq!(bp.length(), 1);
+        let stamped_expiry = escrow_coordinator::bid_placed_handover_countdown_expiry(bp.borrow(0));
+
+        // Expected expiry per policy (all derived from corpus constants).
+        let expected_expiry = if (c == 0) {
+            bid_time                                           // Instant: expiry = bid_time
+        } else if (c == 1) {
+            bid_time + countdown                               // Countdown: bid + 25_000 = 26_000
+        } else {
+            tenure_ceiling                                     // FixedTime: phase_start(0) + ceiling
+        };
+        assert_eq!(stamped_expiry, expected_expiry);
+
+        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t2, OWNER);
+        test_scenario::return_shared(escrow);
+        owner_cap::burn(owner_cap, OWNER);
+        clock::destroy_for_testing(clk);
+        c = c + 1;
+    };
     sc.end();
 }
 }

@@ -68,17 +68,6 @@ const BPS_PER_UNIT:       u64 = 10_000;
 
 // === Structs ===
 
-/// Public 5-variant tag mirroring `LifecycleState` cross-product
-/// projection. Off-chain consumers / events surface this; protocol
-/// logic uses the inner `LifecycleState` accessors directly.
-public enum EscrowStateTag has copy, drop, store {
-    Idle,
-    AtDutchAuction,
-    HandoverOpen,
-    HandoverConfirmed,
-    Retired,
-}
-
 /// Central shared object. One per integrated asset.
 ///
 /// `state` is wrapped in `Option` solely to support the take/put
@@ -117,7 +106,6 @@ public struct RentStarted has copy, drop {
     tenant_cap_id: ID,
     price_paid:    u64,
     floor_price:   u64,
-    from_state:    EscrowStateTag,
 }
 
 public struct BidPlaced has copy, drop {
@@ -158,7 +146,6 @@ public struct TenureExpired has copy, drop {
     owner_share:             u64,
     protocol_fee:            u64,
     last_acquisition_price:  u64,
-    next_state:              EscrowStateTag,
     timestamp_ms:            u64,
 }
 
@@ -168,14 +155,12 @@ public struct AuctionExpired has copy, drop {
 }
 
 public struct RetireFlagSet has copy, drop {
-    escrow_id:    ID,
-    owner:        address,
-    state_at_set: EscrowStateTag,
+    escrow_id: ID,
+    owner:     address,
 }
 
 public struct AssetRetired has copy, drop {
-    escrow_id:  ID,
-    from_state: EscrowStateTag,
+    escrow_id: ID,
 }
 
 public struct AssetBorrowed has copy, drop {
@@ -285,7 +270,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
 ): (Asset, Coin<CoinType>) {
     assert!(owner_cap::escrow_id(&owner_cap) == object::id(&escrow), EWrongEscrowOwnerCap);
     apply_pending_transitions(&mut escrow, clock, ctx);
-    assert!(is_tag_retired(&state_tag(&escrow)), ENotRetired);
+    assert!(is_retired(&escrow), ENotRetired);
 
     // Capture identifiers for the AssetClaimed event before
     // destructuring (the borrows would otherwise conflict with the
@@ -334,7 +319,7 @@ public fun retire<Asset: key + store, CoinType>(
     owner_cap: &OwnerCap,
     clock:     &Clock,
     ctx:       &mut TxContext,
-): EscrowStateTag {
+) {
     assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     apply_pending_transitions(escrow, clock, ctx);
     assert!(
@@ -345,10 +330,9 @@ public fun retire<Asset: key + store, CoinType>(
         ),
         ERetireFloorNotElapsed,
     );
-    let tag = state_tag(escrow);
-    if (is_tag_idle(&tag) || is_tag_at_dutch_auction(&tag)) {
+    if (is_idle(escrow) || is_at_dutch_auction(escrow)) {
         do_retire_immediately(escrow, ctx)
-    } else if (is_tag_handover_open(&tag) || is_tag_handover_confirmed(&tag)) {
+    } else if (is_handover_open(escrow) || is_handover_confirmed(escrow)) {
         do_set_retiring_flag(escrow, ctx)
     } else {
         // Retired.
@@ -357,8 +341,7 @@ public fun retire<Asset: key + store, CoinType>(
 }
 
 /// Single entry point to become tenant or place a bid. Calls
-/// `apply_pending_transitions` first (stub in this commit; real APT
-/// in the upcoming wave), then dispatches by `state_tag`:
+/// `apply_pending_transitions` first, then dispatches by state:
 ///   Idle | AtDutchAuction → install (start_rent)
 ///   HandoverOpen          → place bid
 ///   HandoverConfirmed     → supersede pending bid
@@ -379,12 +362,11 @@ public fun rent<Asset: key + store, CoinType>(
     let floor = compute_floor_price(escrow, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
 
-    let tag = state_tag(escrow);
-    if (is_tag_idle(&tag) || is_tag_at_dutch_auction(&tag)) {
+    if (is_idle(escrow) || is_at_dutch_auction(escrow)) {
         do_install_new_tenant(escrow, payment, floor, now, ctx)
-    } else if (is_tag_handover_open(&tag)) {
+    } else if (is_handover_open(escrow)) {
         do_place_bid(escrow, payment, floor, now, ctx)
-    } else if (is_tag_handover_confirmed(&tag)) {
+    } else if (is_handover_confirmed(escrow)) {
         do_supersede_bid(escrow, payment, floor, ctx)
     } else {
         // Retired — unreachable: compute_floor_price aborted earlier.
@@ -502,12 +484,11 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
     clock:  &Clock,
     ctx:    &mut TxContext,
-): EscrowStateTag {
+) {
     let now = clock::timestamp_ms(clock);
     apt_step(escrow, now, ctx);
     apt_step(escrow, now, ctx);
     apt_step(escrow, now, ctx);
-    state_tag(escrow)
 }
 
 /// Detect the single transition that is due at `now`, if any.
@@ -592,39 +573,27 @@ fun apt_step<Asset: key + store, CoinType>(
 
 // === View Functions ===
 
-/// Project the inner lifecycle to the public 5-variant tag. Pure read
-/// — no state mutation, no APT, callable from any caller (off-chain
-/// consumers, integrating PTBs, internal dispatch).
-public fun state_tag<Asset: key + store, CoinType>(
+// ─── State predicates ────────────────────────────────────────────────────────
+
+public fun is_idle<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
-): EscrowStateTag {
-    project_tag(read_state(escrow))
-}
+): bool { lifecycle_state::is_a_state_idle(read_state(escrow)) }
 
-// ─── Tag predicates ──────────────────────────────────────────────────────────
-// Move 2024 restricts enum-variant construction to the defining module;
-// callers compare tags via these predicates rather than constructing one
-// to compare against.
+public fun is_at_dutch_auction<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { lifecycle_state::is_a_state_at_dutch(read_state(escrow)) }
 
-public fun is_tag_idle(t: &EscrowStateTag): bool {
-    match (t) { EscrowStateTag::Idle => true, _ => false }
-}
+public fun is_handover_open<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { lifecycle_state::is_a_state_handover_open(read_state(escrow)) }
 
-public fun is_tag_at_dutch_auction(t: &EscrowStateTag): bool {
-    match (t) { EscrowStateTag::AtDutchAuction => true, _ => false }
-}
+public fun is_handover_confirmed<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { lifecycle_state::is_a_state_handover_confirmed(read_state(escrow)) }
 
-public fun is_tag_handover_open(t: &EscrowStateTag): bool {
-    match (t) { EscrowStateTag::HandoverOpen => true, _ => false }
-}
-
-public fun is_tag_handover_confirmed(t: &EscrowStateTag): bool {
-    match (t) { EscrowStateTag::HandoverConfirmed => true, _ => false }
-}
-
-public fun is_tag_retired(t: &EscrowStateTag): bool {
-    match (t) { EscrowStateTag::Retired => true, _ => false }
-}
+public fun is_retired<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { lifecycle_state::is_a_state_retired(read_state(escrow)) }
 
 // ─── Pricing views ───────────────────────────────────────────────────────────
 
@@ -691,29 +660,6 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
 
 // === Private Functions ===
 
-/// Project a `LifecycleState` to the corresponding `EscrowStateTag`.
-/// The legal cross-products are:
-///   NotRented + Idle              → Idle
-///   NotRented + AtDutch           → AtDutchAuction
-///   NotRented + Retired           → Retired
-///   Rented    + HandoverOpen      → HandoverOpen
-///   Rented    + HandoverConfirmed → HandoverConfirmed
-/// Any other combination is a structural invariant violation.
-fun project_tag<Asset: key + store, CoinType>(
-    s: &LifecycleState<Asset, CoinType>,
-): EscrowStateTag {
-    if (lifecycle_state::is_not_rented(s)) {
-        if (lifecycle_state::is_a_state_idle(s))         { EscrowStateTag::Idle }
-        else if (lifecycle_state::is_a_state_at_dutch(s)) { EscrowStateTag::AtDutchAuction }
-        else if (lifecycle_state::is_a_state_retired(s))  { EscrowStateTag::Retired }
-        else                                              { abort EInvariantViolation }
-    } else {
-        if (lifecycle_state::is_a_state_handover_open(s))           { EscrowStateTag::HandoverOpen }
-        else if (lifecycle_state::is_a_state_handover_confirmed(s)) { EscrowStateTag::HandoverConfirmed }
-        else                                                         { abort EInvariantViolation }
-    }
-}
-
 /// take/put/read are the only sites that touch `escrow.state`. The
 /// `StateReceipt` hot-potato enforces that every take is followed by
 /// a put within the same PTB.
@@ -755,9 +701,7 @@ fun split_fee(amount: u64): (u64, u64) {
 // resulting `Tenant<C>` through `lifecycle_state`, and emits the
 // corresponding boundary event.
 
-/// Idle | AtDutchAuction → Rented{HandoverOpen}. Records the
-/// `from_state` tag in `RentStarted` so off-chain observers can
-/// distinguish a fresh rental (Idle) from an auction-rescue (AtDutch).
+/// Idle | AtDutchAuction → Rented{HandoverOpen}.
 fun do_install_new_tenant<Asset: key + store, CoinType>(
     escrow:  &mut EscrowCoordinator<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -765,10 +709,9 @@ fun do_install_new_tenant<Asset: key + store, CoinType>(
     now:     u64,
     ctx:     &mut TxContext,
 ): TenantCap {
-    let escrow_id    = object::id(escrow);
-    let price_paid   = coin::value(&payment);
-    let from_state   = state_tag(escrow);
-    let tenant_addr  = ctx.sender();
+    let escrow_id   = object::id(escrow);
+    let price_paid  = coin::value(&payment);
+    let tenant_addr = ctx.sender();
 
     let (cap, cap_id) = tenant_cap::new(escrow_id, tenant_addr, ctx);
     let t = tenant::new<CoinType>(cap_id, tenant_addr, coin::into_balance(payment));
@@ -782,7 +725,6 @@ fun do_install_new_tenant<Asset: key + store, CoinType>(
         tenant_cap_id: cap_id,
         price_paid,
         floor_price: floor,
-        from_state,
     });
     cap
 }
@@ -976,18 +918,16 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         put_state(escrow, new_st2, receipt2);
     };
 
-    let next_state = state_tag(escrow);
     event::emit(TenureExpired {
         escrow_id,
         tenant:                 tenant_addr,
         owner_share:            owner_amount,
         protocol_fee:           fee_amount,
         last_acquisition_price,
-        next_state,
         timestamp_ms:           boundary_ms,
     });
     if (was_retiring) {
-        event::emit(AssetRetired { escrow_id, from_state: EscrowStateTag::HandoverOpen });
+        event::emit(AssetRetired { escrow_id });
     };
 }
 
@@ -1011,15 +951,13 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
 fun do_retire_immediately<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
     ctx:    &TxContext,
-): EscrowStateTag {
-    let escrow_id = object::id(escrow);
-    let prior_tag = state_tag(escrow);
+) {
+    let escrow_id    = object::id(escrow);
     let (s, receipt) = take_state(escrow);
     let new_s        = lifecycle_state::retire_now(s);
     put_state(escrow, new_s, receipt);
-    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
-    event::emit(AssetRetired   { escrow_id, from_state:    prior_tag });
-    EscrowStateTag::Retired
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender() });
+    event::emit(AssetRetired  { escrow_id });
 }
 
 /// Retire from HandoverOpen | HandoverConfirmed → flag lifted, state
@@ -1030,15 +968,13 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
 fun do_set_retiring_flag<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
     ctx:    &TxContext,
-): EscrowStateTag {
-    let escrow_id = object::id(escrow);
-    let prior_tag = state_tag(escrow);
+) {
+    let escrow_id    = object::id(escrow);
     assert!(!lifecycle_state::is_retiring(read_state(escrow)), EAlreadyRetired);
     let (s, receipt) = take_state(escrow);
     let new_s        = lifecycle_state::set_retiring(s);
     put_state(escrow, new_s, receipt);
-    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), state_at_set: prior_tag });
-    prior_tag
+    event::emit(RetireFlagSet { escrow_id, owner: ctx.sender() });
 }
 
 // === Test Functions ===
@@ -1087,8 +1023,6 @@ public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID             
 public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
 #[test_only]
 public(package) fun rent_started_floor_price(e: &RentStarted): u64               { e.floor_price }
-#[test_only]
-public(package) fun rent_started_from_state(e: &RentStarted): EscrowStateTag     { e.from_state }
 
 #[test_only]
 public(package) fun bid_placed_escrow_id(e: &BidPlaced): ID                      { e.escrow_id }
@@ -1148,8 +1082,6 @@ public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64         
 #[test_only]
 public(package) fun tenure_expired_last_acq_price(e: &TenureExpired): u64                     { e.last_acquisition_price }
 #[test_only]
-public(package) fun tenure_expired_next_state(e: &TenureExpired): EscrowStateTag              { e.next_state }
-#[test_only]
 public(package) fun tenure_expired_timestamp_ms(e: &TenureExpired): u64                       { e.timestamp_ms }
 
 #[test_only]
@@ -1159,15 +1091,11 @@ public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64       
 
 #[test_only]
 public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID                            { e.escrow_id }
-#[test_only]
-public(package) fun asset_retired_from_state(e: &AssetRetired): EscrowStateTag               { e.from_state }
 
 #[test_only]
 public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID                         { e.escrow_id }
 #[test_only]
 public(package) fun retire_flag_set_owner(e: &RetireFlagSet): address                         { e.owner }
-#[test_only]
-public(package) fun retire_flag_set_state_at_set(e: &RetireFlagSet): EscrowStateTag           { e.state_at_set }
 
 #[test_only]
 public(package) fun earnings_withdrawn_escrow_id(e: &EarningsWithdrawn): ID                  { e.escrow_id }

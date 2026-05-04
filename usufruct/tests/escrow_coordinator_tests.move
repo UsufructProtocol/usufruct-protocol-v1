@@ -63,14 +63,12 @@ fun setup(): Scenario {
     sc
 }
 
-/// Asserts the projected state is `Idle`, using `breadcrumb` (typically
-/// the corpus τ2 tag) as the abort code on mismatch.
+/// Asserts the escrow is in Idle state, using `breadcrumb` as the abort code.
 fun assert_tag_idle<Asset: key + store, CoinType>(
-    escrow:    &EscrowCoordinator<Asset, CoinType>,
+    escrow:     &EscrowCoordinator<Asset, CoinType>,
     breadcrumb: u64,
 ) {
-    let actual = escrow_coordinator::state_tag(escrow);
-    assert!(escrow_coordinator::is_tag_idle(&actual), breadcrumb);
+    assert!(escrow_coordinator::is_idle(escrow), breadcrumb);
 }
 
 const TENANT_ADDR_1: address = @0xA1;
@@ -568,15 +566,11 @@ fun rent_from_idle_installs_new_tenant() {
     let t_cap = escrow_coordinator::rent(&mut escrow, payment, &clk, sc.ctx());
 
     // Post-condition: state is HandoverOpen.
-    let tag = escrow_coordinator::state_tag(&escrow);
-    assert!(escrow_coordinator::is_tag_handover_open(&tag), 0);
+    assert!(escrow_coordinator::is_handover_open(&escrow), 0);
 
-    // Event check: exactly one RentStarted with from_state=Idle and
-    // tenant_cap_id matching the returned cap.
+    // Event check: exactly one RentStarted with tenant_cap_id matching the returned cap.
     let started = event::events_by_type<RentStarted>();
     assert_eq!(started.length(), 1);
-    let from = escrow_coordinator::rent_started_from_state(&started[0]);
-    assert!(escrow_coordinator::is_tag_idle(&from), 1);
     assert_eq!(escrow_coordinator::rent_started_tenant_cap_id(&started[0]), object::id(&t_cap));
     assert_eq!(escrow_coordinator::rent_started_price_paid(&started[0]), floor);
 
@@ -615,13 +609,10 @@ fun rent_from_at_dutch_installs_new_tenant() {
     let payment = mk_payment(floor, sc.ctx());
     let t_cap = escrow_coordinator::rent(&mut escrow, payment, &clk, sc.ctx());
 
-    let tag = escrow_coordinator::state_tag(&escrow);
-    assert!(escrow_coordinator::is_tag_handover_open(&tag), 0);
+    assert!(escrow_coordinator::is_handover_open(&escrow), 0);
 
     let started = event::events_by_type<RentStarted>();
     assert_eq!(started.length(), 1);
-    let from = escrow_coordinator::rent_started_from_state(&started[0]);
-    assert!(escrow_coordinator::is_tag_at_dutch_auction(&from), 1);
 
     transfer::public_transfer(t_cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -656,8 +647,7 @@ fun rent_from_handover_open_places_bid() {
         let p2 = mk_payment(floor2, sc.ctx());
         let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
 
-        let tag = escrow_coordinator::state_tag(&escrow);
-        assert!(escrow_coordinator::is_tag_handover_confirmed(&tag), tag_cfg);
+        assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag_cfg);
 
         // Verify a BidPlaced event was emitted with cap_t2.
         let placed = event::events_by_type<BidPlaced>();
@@ -735,8 +725,7 @@ fun rent_from_handover_confirmed_supersedes_bid() {
     let p3 = mk_payment(floor3, sc.ctx());
     let cap_t3 = escrow_coordinator::rent(&mut escrow, p3, &clk, sc.ctx());
 
-    let tag = escrow_coordinator::state_tag(&escrow);
-    assert!(escrow_coordinator::is_tag_handover_confirmed(&tag), 0);
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), 0);
 
     // Verify BidSuperseded carries the displaced bid amount.
     let superseded = event::events_by_type<BidSuperseded>();
@@ -829,8 +818,7 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     escrow_coordinator::fire_do_handover_for_testing(&mut escrow, boundary_ms, sc.ctx());
 
     // Post-condition: HandoverOpen, current is t2.
-    let tag = escrow_coordinator::state_tag(&escrow);
-    assert!(escrow_coordinator::is_tag_handover_open(&tag), 0);
+    assert!(escrow_coordinator::is_handover_open(&escrow), 0);
 
     // Owner balance increased by the owner share (90% of used_credit).
     let owner_after = escrow_coordinator::owner_value_for_testing(&escrow);
@@ -881,8 +869,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
     escrow_coordinator::fire_do_tenure_expiry_for_testing(&mut escrow, boundary_ms, sc.ctx());
 
     // Post-condition: NotRented + AtDutch.
-    let tag = escrow_coordinator::state_tag(&escrow);
-    assert!(escrow_coordinator::is_tag_at_dutch_auction(&tag), 0);
+    assert!(escrow_coordinator::is_at_dutch_auction(&escrow), 0);
 
     // Owner balance += owner_share (90% of full principal).
     let owner_share_expected = principal - principal / 10;
@@ -895,8 +882,6 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
     assert_eq!(escrow_coordinator::tenure_expired_last_acq_price(&expired[0]), principal);
     assert_eq!(escrow_coordinator::tenure_expired_owner_share(&expired[0]) +
                escrow_coordinator::tenure_expired_protocol_fee(&expired[0]), principal);
-    let next = escrow_coordinator::tenure_expired_next_state(&expired[0]);
-    assert!(escrow_coordinator::is_tag_at_dutch_auction(&next), 2);
 
     // No AssetRetired (retiring flag was not set).
     let retired = event::events_by_type<AssetRetired>();
@@ -933,19 +918,14 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     escrow_coordinator::fire_do_tenure_expiry_for_testing(&mut escrow, boundary_ms, sc.ctx());
 
     // Post-condition: NotRented + Retired (not AtDutch).
-    let tag = escrow_coordinator::state_tag(&escrow);
-    assert!(escrow_coordinator::is_tag_retired(&tag), 0);
+    assert!(escrow_coordinator::is_retired(&escrow), 0);
 
-    // Both events emitted: TenureExpired (next_state=Retired) + AssetRetired.
+    // Both events emitted: TenureExpired + AssetRetired.
     let expired = event::events_by_type<TenureExpired>();
     assert_eq!(expired.length(), 1);
-    let next = escrow_coordinator::tenure_expired_next_state(&expired[0]);
-    assert!(escrow_coordinator::is_tag_retired(&next), 1);
 
     let retired = event::events_by_type<AssetRetired>();
     assert_eq!(retired.length(), 1);
-    let from = escrow_coordinator::asset_retired_from_state(&retired[0]);
-    assert!(escrow_coordinator::is_tag_handover_open(&from), 2);
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -967,19 +947,14 @@ fun retire_from_idle_collapses_to_retired() {
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    let tag_after = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_retired(&tag_after), 0);
-    assert!(escrow_coordinator::is_tag_retired(&escrow_coordinator::state_tag(&escrow)), 1);
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), 0);
 
     let flagged = event::events_by_type<RetireFlagSet>();
     assert_eq!(flagged.length(), 1);
-    let prev = escrow_coordinator::retire_flag_set_state_at_set(&flagged[0]);
-    assert!(escrow_coordinator::is_tag_idle(&prev), 2);
 
     let retired = event::events_by_type<AssetRetired>();
     assert_eq!(retired.length(), 1);
-    let from = escrow_coordinator::asset_retired_from_state(&retired[0]);
-    assert!(escrow_coordinator::is_tag_idle(&from), 3);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1005,13 +980,11 @@ fun retire_from_at_dutch_collapses_to_retired() {
         &mut escrow, STAKE_T1, 0, escrow_corpus::min_rent_price_const() * 2, 100_000,
     );
 
-    let tag_after = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_retired(&tag_after), 0);
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), 0);
 
     let retired = event::events_by_type<AssetRetired>();
     assert_eq!(retired.length(), 1);
-    let from = escrow_coordinator::asset_retired_from_state(&retired[0]);
-    assert!(escrow_coordinator::is_tag_at_dutch_auction(&from), 1);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1032,14 +1005,11 @@ fun retire_from_handover_open_only_lifts_flag() {
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
 
-    let tag_after = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_handover_open(&tag_after), 0);
-    assert!(escrow_coordinator::is_tag_handover_open(&escrow_coordinator::state_tag(&escrow)), 1);
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), 0);
 
     let flagged = event::events_by_type<RetireFlagSet>();
     assert_eq!(flagged.length(), 1);
-    let prev = escrow_coordinator::retire_flag_set_state_at_set(&flagged[0]);
-    assert!(escrow_coordinator::is_tag_handover_open(&prev), 2);
 
     let retired = event::events_by_type<AssetRetired>();
     assert_eq!(retired.length(), 0);
@@ -1059,7 +1029,7 @@ fun retire_when_already_retired_aborts() {
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     escrow_coordinator::drive_to_retired_for_testing(&mut escrow);
-    let _ = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
@@ -1076,9 +1046,9 @@ fun retire_when_already_retiring_aborts() {
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
-    let _ = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     // Second call must fail — flag is already set.
-    let _ = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -1097,7 +1067,7 @@ fun retire_with_wrong_cap_aborts() {
 
     // Mint a foreign cap bound to a different escrow_id.
     let foreign_cap = owner_cap::new(object::id_from_address(@0xDEAD), OWNER, sc.ctx());
-    let _ = escrow_coordinator::retire(&mut escrow, &foreign_cap, &clk, sc.ctx());
+    escrow_coordinator::retire(&mut escrow, &foreign_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1114,7 +1084,7 @@ fun retire_before_floor_aborts_under_deferred_policy() {
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     // clock at 0 is far below the deferred floor (10_000_000).
-    let _ = escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1145,8 +1115,7 @@ fun do_auction_expiry_returns_to_idle() {
     let boundary_ms = 100_000 + escrow_corpus::descent_window_h1_const();
     escrow_coordinator::fire_do_auction_expiry_for_testing(&mut escrow, boundary_ms);
 
-    let tag = escrow_coordinator::state_tag(&escrow);
-    assert!(escrow_coordinator::is_tag_idle(&tag), 0);
+    assert!(escrow_coordinator::is_idle(&escrow), 0);
 
     let expired = event::events_by_type<AuctionExpired>();
     assert_eq!(expired.length(), 1);
@@ -1213,9 +1182,8 @@ fun apt_noop_when_nothing_due() {
     let clk = clock::create_for_testing(sc.ctx());
 
     // Idle escrow at clock=0; no transitions are due.
-    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_idle(&tag), 0);
-    assert!(escrow_coordinator::is_tag_idle(&escrow_coordinator::state_tag(&escrow)), 1);
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_idle(&escrow), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1241,14 +1209,14 @@ fun apt_fires_handover_when_countdown_expires() {
     let floor2 = escrow_coordinator::compute_floor_price(&escrow, now2);
     let p2 = mk_payment(floor2, sc.ctx());
     let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_handover_confirmed(&escrow_coordinator::state_tag(&escrow)), 0);
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), 0);
 
     // Jump clock past the countdown expiry.
     let countdown_expiry = now2 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry + 1);
-    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
     // Handover fired: HandoverConfirmed → HandoverOpen (t2 now t1).
-    assert!(escrow_coordinator::is_tag_handover_open(&tag), 1);
+    assert!(escrow_coordinator::is_handover_open(&escrow), 1);
 
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 1);
@@ -1275,9 +1243,9 @@ fun apt_fires_tenure_expiry_when_elapsed() {
 
     // Jump clock past the tenure boundary.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
     // Tenure expired: HandoverOpen → AtDutch (h=1 window).
-    assert!(escrow_coordinator::is_tag_at_dutch_auction(&tag), 0);
+    assert!(escrow_coordinator::is_at_dutch_auction(&escrow), 0);
 
     let expired = event::events_by_type<TenureExpired>();
     assert_eq!(expired.length(), 1);
@@ -1306,9 +1274,9 @@ fun apt_cascade_tenure_then_auction_skipped() {
     let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
 
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
     // Cascade: HandoverOpen → AtDutch (tenure_expiry) → Idle (auction_expiry under h=0 collapses to phase_start, immediately expired).
-    assert!(escrow_coordinator::is_tag_idle(&tag), 0);
+    assert!(escrow_coordinator::is_idle(&escrow), 0);
 
     let tenure_e = event::events_by_type<TenureExpired>();
     assert_eq!(tenure_e.length(), 1);
@@ -1716,7 +1684,7 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     let floor2 = escrow_coordinator::compute_floor_price(&escrow, now2);
     let p2 = mk_payment(floor2, sc.ctx());
     let cap_t2 = escrow_coordinator::rent(&mut escrow, p2, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_handover_confirmed(&escrow_coordinator::state_tag(&escrow)), 0);
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), 0);
 
     // Jump clock past the second tenure boundary so all three
     // transitions are due in one APT call:
@@ -1725,9 +1693,9 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     //   due at 2 × tenure_ceiling; auction fires immediately under
     //   h=0 Skipped.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() * 3);
-    let tag = escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
     // Cascade: HandoverConfirmed → HandoverOpen → AtDutch → Idle.
-    assert!(escrow_coordinator::is_tag_idle(&tag), 1);
+    assert!(escrow_coordinator::is_idle(&escrow), 1);
 
     // All three boundary events fired.
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
@@ -1769,20 +1737,20 @@ fun e2e_full_rental_cycle_with_bid_and_handover() {
     // with t2 promoted).
     let countdown_expiry = now2 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry);
-    let _ = escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_handover_open(&escrow_coordinator::state_tag(&escrow_handle)), 0);
+    escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow_handle), 0);
 
     // APT past tenure: tenure expiry fires (HO → AtDutch).
     let tenure_boundary = countdown_expiry + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary);
-    let _ = escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_at_dutch_auction(&escrow_coordinator::state_tag(&escrow_handle)), 1);
+    escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_at_dutch_auction(&escrow_handle), 1);
 
     // APT past auction: auction expiry fires (AtDutch → Idle).
     let auction_boundary = tenure_boundary + escrow_corpus::descent_window_h1_const();
     clock::set_for_testing(&mut clk, auction_boundary);
-    let _ = escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_idle(&escrow_coordinator::state_tag(&escrow_handle)), 2);
+    escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_idle(&escrow_handle), 2);
 
     // Event count sanity — boundary events from the cycle so far.
     // events_by_type returns only events emitted in the current tx,
@@ -1833,16 +1801,16 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
 
         // APT past tenure → AtDutch.
         clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-        let _ = escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
-        assert!(escrow_coordinator::is_tag_at_dutch_auction(&escrow_coordinator::state_tag(&escrow_handle)), cfg_tag);
+        escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+        assert!(escrow_coordinator::is_at_dutch_auction(&escrow_handle), cfg_tag);
 
         // APT past descent → Idle.
         clock::set_for_testing(
             &mut clk,
             escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1,
         );
-        let _ = escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
-        assert!(escrow_coordinator::is_tag_idle(&escrow_coordinator::state_tag(&escrow_handle)), cfg_tag);
+        escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+        assert!(escrow_coordinator::is_idle(&escrow_handle), cfg_tag);
 
         // Owner accumulated 90 % of the principal (g(t_max)=SCALE
         // saturates the credit curve regardless of shape).
@@ -1872,13 +1840,13 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
     let cap_t1 = escrow_coordinator::rent(&mut escrow_handle, p1, &clk, sc.ctx());
 
     // Retire mid-rental — flag lifts, state stays HO.
-    let _ = escrow_coordinator::retire(&mut escrow_handle, &owner_cap, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_handover_open(&escrow_coordinator::state_tag(&escrow_handle)), 0);
+    escrow_coordinator::retire(&mut escrow_handle, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow_handle), 0);
 
     // APT past tenure: state collapses to Retired (skipping AtDutch).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-    let _ = escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
-    assert!(escrow_coordinator::is_tag_retired(&escrow_coordinator::state_tag(&escrow_handle)), 1);
+    escrow_coordinator::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow_handle), 1);
 
     // AssetRetired co-emitted with TenureExpired (do_tenure_expiry's
     // retiring branch).

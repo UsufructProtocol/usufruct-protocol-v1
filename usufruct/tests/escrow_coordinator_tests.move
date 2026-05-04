@@ -1167,8 +1167,9 @@ fun next_pending_returns_none_in_steady_state() {
     let (escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
 
     // Idle escrow — nothing pending at any clock.
-    assert!(escrow_coordinator::next_pending(&escrow, 0).is_none(), 0);
-    assert!(escrow_coordinator::next_pending(&escrow, 1_000_000).is_none(), 1);
+    let clk = clock::create_for_testing(sc.ctx());
+    assert!(escrow_coordinator::next_pending(&escrow, &clk).is_none(), 0);
+    clock::destroy_for_testing(clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1181,14 +1182,15 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let clk = clock::create_for_testing(sc.ctx());
+    let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow_coordinator::rent(&mut escrow, p1, &clk, sc.ctx());
 
     // Probe at clock just past the tenure boundary — Tenure is pending.
     let probe_ms = escrow_corpus::tenure_ceiling_const() + 1;
-    let pending = escrow_coordinator::next_pending(&escrow, probe_ms);
+    clock::set_for_testing(&mut clk, probe_ms);
+    let pending = escrow_coordinator::next_pending(&escrow, &clk);
     assert!(pending.is_some(), 0);
     let t = pending.destroy_some();
     assert!(pending_transition::is_tenure(&t), 1);

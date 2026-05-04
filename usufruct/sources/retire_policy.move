@@ -29,6 +29,19 @@ public fun new_retire_deferred(floor_ms: u64): RetirePolicy {
 
 // === Package Functions ===
 
+/// Absolute timestamp at which `retire()` becomes available.
+///   Immediate             → integrated_at_ms (unlocked from creation)
+///   Deferred { floor_ms } → integrated_at_ms + floor_ms
+public(package) fun unlock_at_ms(
+    policy:           &RetirePolicy,
+    integrated_at_ms: u64,
+): u64 {
+    match (policy) {
+        RetirePolicy::Immediate             => phases::boundary_at(integrated_at_ms, 0),
+        RetirePolicy::Deferred { floor_ms } => phases::boundary_at(integrated_at_ms, *floor_ms),
+    }
+}
+
 /// True iff `retire()` may proceed.
 ///   - Immediate is always unlocked.
 ///   - Deferred unlocks when `floor_ms` elapses since

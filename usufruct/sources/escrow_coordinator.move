@@ -96,9 +96,10 @@ public struct StateReceipt {}
 // === Events ===
 
 public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
-    escrow_id:    ID,
-    owner_cap_id: ID,
-    asset_id:     ID,
+    escrow_id:        ID,
+    owner_cap_id:     ID,
+    asset_id:         ID,
+    integrated_at_ms: u64,
 }
 
 public struct RentStarted has copy, drop {
@@ -226,7 +227,7 @@ public fun integrate<Asset: key + store, CoinType>(
     };
     config::emit_registration(&escrow.config, escrow_id);
     transfer::share_object(escrow);
-    event::emit(AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id, asset_id });
+    event::emit(AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id, asset_id, integrated_at_ms });
     owner_cap
 }
 
@@ -463,10 +464,9 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let now   = clock::timestamp_ms(clock);
     let mut i = 0u8;
     loop {
-        let pending = next_pending(escrow, now);
+        let pending = next_pending(escrow, clock);
         if (option::is_some(&pending)) {
             assert!(i < 3, EInvariantViolation);
             fire(escrow, option::destroy_some(pending), ctx);
@@ -485,8 +485,9 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
 /// callers can probe what would fire without committing the tx.
 public fun next_pending<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
-    now:    u64,
+    clock:  &Clock,
 ): Option<PendingTransition> {
+    let now = clock::timestamp_ms(clock);
     let s = read_state(escrow);
 
     // Check 1 — Handover countdown (Rented + Demand).
@@ -693,6 +694,28 @@ public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     config::tenure_ceiling(&escrow.config)
 }
 
+/// Timestamp at which this escrow was created, in milliseconds.
+/// SDK use: display "created on X"; combine with `retire_unlocks_at_ms`
+/// to show time elapsed since integration.
+public fun integrated_at_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): u64 {
+    escrow.integrated_at_ms
+}
+
+/// Absolute timestamp at which `retire()` becomes available.
+/// For Immediate policies this equals `integrated_at_ms`.
+/// For Deferred policies it is `integrated_at_ms + floor_ms`.
+/// SDK use: show "you can retire in X days" on the owner dashboard.
+public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): u64 {
+    retire_policy::unlock_at_ms(
+        config::retire(&escrow.config),
+        escrow.integrated_at_ms,
+    )
+}
+
 // ─── Cap views ───────────────────────────────────────────────────────────────
 
 /// Authorization status of `cap_id` relative to the current lifecycle state.
@@ -717,7 +740,7 @@ public fun has_pending_transitions<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
     clock:  &Clock,
 ): bool {
-    option::is_some(&next_pending(escrow, clock::timestamp_ms(clock)))
+    option::is_some(&next_pending(escrow, clock))
 }
 
 /// Timestamp at which the next pending transition fires, if any.
@@ -728,7 +751,7 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
     clock:  &Clock,
 ): Option<u64> {
-    let pending = next_pending(escrow, clock::timestamp_ms(clock));
+    let pending = next_pending(escrow, clock);
     if (option::is_some(&pending)) {
         option::some(pending_transition::boundary_ms(option::borrow(&pending)))
     } else {

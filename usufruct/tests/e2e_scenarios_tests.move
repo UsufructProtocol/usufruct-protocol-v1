@@ -2045,4 +2045,90 @@ fun e2e_retire7_already_retired_aborts() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §CRED-1. used_credit clamping in HandoverConfirmed ──────────────────────
+
+/// In HandoverOpen (Accruing regime) used_credit grows freely with time.
+/// Once a bid is placed (HandoverConfirmed, Capped regime) the effective
+/// timestamp is saturated at handover_countdown_expiry: for any t ≥ expiry_ms
+/// compute_used_credit returns the same value as at t = expiry_ms.
+///
+/// The clamped used_credit is earned by the protocol and owner; the remainder
+/// (stake − used_credit) is returned to the departing tenant as remain_credit.
+///
+/// Sweeps all 7 curve shapes (axis E) — clamping is a property of the Capped
+/// regime, not of any specific curve. Exact numeric split is asserted for e=0
+/// (Linear) since that value is independently derivable:
+///   expiry=26_000, tenure_ceiling=100_000 → uc = stake × 26/100 = 2_600_000_000
+///   remain_credit=7_400_000_000, owner_share=2_340_000_000, fee=260_000_000
+///
+/// Config: c=1 Countdown (expiry=26_000), vary e=0..6, h=0, d=0, f=0.
+#[test]
+fun e2e_cred1_used_credit_clamped_at_handover_confirmed_expiry_across_curves() {
+    let mut sc    = setup();
+    let stake     = escrow_corpus::min_rent_price_const();
+    let expiry    = 1_000 + escrow_corpus::handover_countdown_c1_const(); // 26_000
+    let ceiling   = escrow_corpus::tenure_ceiling_const();
+    let mut e: u8 = 0;
+    while (e <= 6) {
+        let tag = escrow_corpus::tag(1, 0, e, 0, 0); // c=1, vary e
+        let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+        let mut clk = clock::create_for_testing(sc.ctx());
+
+        // T1 rents at t=0 → HandoverOpen (Accruing regime).
+        let cap_t1 = escrow_coordinator::rent(
+            &mut escrow, mk_payment(stake, sc.ctx()), &clk, sc.ctx());
+
+        // Accruing: used_credit is strictly increasing before the bid.
+        let uc_500  = escrow_coordinator::compute_used_credit(&escrow, 500);
+        let uc_1000 = escrow_coordinator::compute_used_credit(&escrow, 1_000);
+        assert!(uc_500  > 0,      tag);
+        assert!(uc_1000 > uc_500, tag);
+
+        // T2 bids at t=1_000 → HandoverConfirmed (Capped, expiry=26_000).
+        clock::set_for_testing(&mut clk, 1_000);
+        let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, 1_000);
+        let cap_t2   = escrow_coordinator::rent(
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+
+        // CRED-1: Capped regime freezes credit at expiry for every curve shape.
+        let uc_at_expiry   = escrow_coordinator::compute_used_credit(&escrow, expiry);
+        let uc_past_expiry = escrow_coordinator::compute_used_credit(&escrow, expiry + 10_000);
+        let uc_at_ceiling  = escrow_coordinator::compute_used_credit(&escrow, ceiling);
+        assert_eq!(uc_past_expiry, uc_at_expiry); // t > expiry → clamped
+        assert_eq!(uc_at_ceiling,  uc_at_expiry); // tenure_ceiling → still clamped
+        assert!(uc_at_expiry > 0,     tag);
+        assert!(uc_at_expiry < stake, tag);
+
+        // Exact value for Linear (e=0): stake × elapsed / tenure_ceiling.
+        if (e == 0) { assert_eq!(uc_at_expiry, 2_600_000_000); };
+
+        // APT fires handover; event.used_credit must match the clamped view value.
+        clock::set_for_testing(&mut clk, expiry);
+        escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+        let hc = event::events_by_type<HandoverCompleted>();
+        let he = hc.borrow(0);
+        assert_eq!(escrow_coordinator::handover_completed_used_credit(he),
+                   uc_at_expiry);
+        assert_eq!(escrow_coordinator::handover_completed_remain_credit(he),
+                   stake - uc_at_expiry);
+
+        // Exact split for Linear (e=0).
+        if (e == 0) {
+            assert_eq!(escrow_coordinator::handover_completed_remain_credit(he), 7_400_000_000);
+            assert_eq!(escrow_coordinator::handover_completed_owner_share(he),   2_340_000_000);
+            assert_eq!(escrow_coordinator::handover_completed_protocol_fee(he),    260_000_000);
+        };
+
+        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t2, OWNER);
+        test_scenario::return_shared(escrow);
+        owner_cap::burn(owner_cap, OWNER);
+        clock::destroy_for_testing(clk);
+        e = e + 1;
+    };
+    sc.end();
+}
 }

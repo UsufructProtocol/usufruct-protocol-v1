@@ -116,6 +116,7 @@ public struct BidPlaced has copy, drop {
     escrow_id:                 ID,
     current_tenant_cap_id:     ID,
     current_tenant_addr:       address,
+    current_phase_start_ms:    u64,
     tenant_cap_id:             ID,
     pending_tenant:            address,
     bid_amount:                u64,
@@ -136,17 +137,18 @@ public struct BidSuperseded has copy, drop {
 }
 
 public struct HandoverCompleted has copy, drop {
-    escrow_id:              ID,
+    escrow_id:               ID,
     displaced_tenant_cap_id: ID,
     displaced_tenant:        address,
     new_tenant_cap_id:       ID,
     new_tenant_addr:         address,
-    used_credit:       u64,
-    owner_share:       u64,
-    protocol_fee:      u64,
-    remain_credit:     u64,
-    new_rent_price:    u64,
-    timestamp_ms:      u64,
+    new_tenant_stake:        u64,
+    used_credit:             u64,
+    owner_share:             u64,
+    protocol_fee:            u64,
+    remain_credit:           u64,
+    new_rent_price:          u64,
+    timestamp_ms:            u64,
 }
 
 public struct TenureExpired has copy, drop {
@@ -194,6 +196,7 @@ public struct AssetClaimed has copy, drop {
     owner_cap_id:   ID,
     owner:          address,
     swept_earnings: u64,
+    timestamp_ms:   u64,
 }
 
 public struct EarningsWithdrawn has copy, drop {
@@ -201,6 +204,7 @@ public struct EarningsWithdrawn has copy, drop {
     owner_cap_id: ID,
     owner:        address,
     amount:       u64,
+    timestamp_ms: u64,
 }
 
 // === Method Aliases ===
@@ -267,6 +271,7 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
         owner_cap_id: object::id(owner_cap),
         owner:        ctx.sender(),
         amount,
+        timestamp_ms: clock::timestamp_ms(clock),
     });
     earnings
 }
@@ -317,7 +322,13 @@ public fun claim_asset<Asset: key + store, CoinType>(
     owner_cap::burn(owner_cap, owner_addr);
     object::delete(id);
 
-    event::emit(AssetClaimed { escrow_id, owner_cap_id, owner: owner_addr, swept_earnings });
+    event::emit(AssetClaimed {
+        escrow_id,
+        owner_cap_id,
+        owner:        owner_addr,
+        swept_earnings,
+        timestamp_ms: clock::timestamp_ms(clock),
+    });
     (asset, earnings)
 }
 
@@ -973,6 +984,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
         escrow_id,
         current_tenant_cap_id:     current_cap_id,
         current_tenant_addr:       current_addr_val,
+        current_phase_start_ms:    phase_start,
         tenant_cap_id:             cap_id,
         pending_tenant:            pending_addr,
         bid_amount,
@@ -1060,8 +1072,10 @@ fun do_handover<Asset: key + store, CoinType>(
 
     refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
 
-    let new_tenant_cap_id = lifecycle_state::current_cap_id(read_state(escrow));
-    let new_tenant_addr   = lifecycle_state::current_addr(read_state(escrow));
+    let s_post            = read_state(escrow);
+    let new_tenant_cap_id = lifecycle_state::current_cap_id(s_post);
+    let new_tenant_addr   = lifecycle_state::current_addr(s_post);
+    let new_tenant_stake  = lifecycle_state::current_stake_value(s_post);
     // Post-handover state is HandoverOpen → compute_floor_price
     // returns Ascending(current_stake_value); timestamp irrelevant
     // for that regime.
@@ -1073,6 +1087,7 @@ fun do_handover<Asset: key + store, CoinType>(
         displaced_tenant:        displaced_addr,
         new_tenant_cap_id,
         new_tenant_addr,
+        new_tenant_stake,
         used_credit,
         owner_share:    owner_amount,
         protocol_fee:   fee_amount,
@@ -1242,6 +1257,8 @@ public(package) fun bid_placed_current_tenant_cap_id(e: &BidPlaced): ID         
 #[test_only]
 public(package) fun bid_placed_current_tenant_addr(e: &BidPlaced): address       { e.current_tenant_addr }
 #[test_only]
+public(package) fun bid_placed_current_phase_start_ms(e: &BidPlaced): u64        { e.current_phase_start_ms }
+#[test_only]
 public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
 #[test_only]
 public(package) fun bid_placed_pending_tenant(e: &BidPlaced): address            { e.pending_tenant }
@@ -1281,6 +1298,8 @@ public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): 
 public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                  { e.new_tenant_cap_id }
 #[test_only]
 public(package) fun handover_completed_new_tenant_addr(e: &HandoverCompleted): address        { e.new_tenant_addr }
+#[test_only]
+public(package) fun handover_completed_new_tenant_stake(e: &HandoverCompleted): u64           { e.new_tenant_stake }
 #[test_only]
 public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64                { e.used_credit }
 #[test_only]
@@ -1351,6 +1370,8 @@ public(package) fun earnings_withdrawn_owner_cap_id(e: &EarningsWithdrawn): ID  
 public(package) fun earnings_withdrawn_owner(e: &EarningsWithdrawn): address                  { e.owner }
 #[test_only]
 public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64                     { e.amount }
+#[test_only]
+public(package) fun earnings_withdrawn_timestamp_ms(e: &EarningsWithdrawn): u64               { e.timestamp_ms }
 
 #[test_only]
 public(package) fun asset_claimed_escrow_id(e: &AssetClaimed): ID                            { e.escrow_id }
@@ -1360,6 +1381,8 @@ public(package) fun asset_claimed_owner_cap_id(e: &AssetClaimed): ID            
 public(package) fun asset_claimed_owner(e: &AssetClaimed): address                            { e.owner }
 #[test_only]
 public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64                       { e.swept_earnings }
+#[test_only]
+public(package) fun asset_claimed_timestamp_ms(e: &AssetClaimed): u64                         { e.timestamp_ms }
 
 // ─── Drive helpers for test-only state composition ───────────────────────────
 // Bypass `rent`/`retire` (not yet implemented) by chaining

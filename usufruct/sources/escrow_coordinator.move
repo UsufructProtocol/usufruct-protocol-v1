@@ -65,11 +65,6 @@ const EInvariantViolation:      u64 = 0xDEADC0DE;
 const PROTOCOL_FEE_BPS:   u64 = 1_000;
 const BPS_PER_UNIT:       u64 = 10_000;
 
-/// Hard cap on `apply_pending_transitions` iterations. The longest
-/// real cascade is 3 (HandoverConfirmed → HandoverOpen → AtDutch →
-/// Idle under `descent::Skipped`); 4 leaves margin while still
-/// guaranteeing termination.
-const MAX_APT_ITERATIONS: u64 = 4;
 
 // === Structs ===
 
@@ -494,29 +489,24 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
 /// Permissionless settler. Drives every elapsed lazy transition
 /// before any other operation observes the state.
 ///
-/// Three checks fire in order; each is gated by the variant + time
-/// predicate. The order matters: handover countdown (Demand) precedes
-/// tenure expiry (HandoverOpen) so a pending bid that auto-wins at
-/// the tenure boundary is processed correctly. Tenure precedes auction
-/// because tenure expiry transitions HandoverOpen → AtDutch (which
-/// then becomes a candidate for the auction check next iteration).
+/// The protocol's cascade is structurally bounded at three transitions:
+///   Handover (HC → HO) → Tenure (HO → AtDutch) → Auction (AtDutch → Idle).
+/// After Idle (or Retired) the state machine has no further pending
+/// transitions, so three sequential `apt_step` calls cover every
+/// possible cascade. No loop, no iteration counter — the cascade
+/// depth IS the call count.
 ///
-/// The loop is bounded by `MAX_APT_ITERATIONS = 4` — the longest real
-/// cascade is 3 (HandoverConfirmed → HandoverOpen → AtDutch → Idle
-/// under `descent::Skipped`).
+/// Each `apt_step` is a no-op when nothing is due, so starting from
+/// any state (e.g. plain Idle, no transitions) is cheap.
 public fun apply_pending_transitions<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
     clock:  &Clock,
     ctx:    &mut TxContext,
 ): EscrowStateTag {
     let now = clock::timestamp_ms(clock);
-    let mut keep_going = true;
-    let mut iterations: u64 = 0;
-    while (keep_going) {
-        assert!(iterations < MAX_APT_ITERATIONS, EInvariantViolation);
-        iterations = iterations + 1;
-        keep_going = apt_step(escrow, now, ctx);
-    };
+    apt_step(escrow, now, ctx);
+    apt_step(escrow, now, ctx);
+    apt_step(escrow, now, ctx);
     state_tag(escrow)
 }
 
@@ -584,21 +574,20 @@ fun fire<Asset: key + store, CoinType>(
     }
 }
 
-/// Detect-then-fire one transition. Returns `true` if a transition
-/// fired (caller re-runs to chase cascades), `false` otherwise.
+/// Detect-then-fire one transition. No-op if nothing is due. Three
+/// sequential calls in `apply_pending_transitions` cover the
+/// structural cascade bound.
 fun apt_step<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
     now:    u64,
     ctx:    &mut TxContext,
-): bool {
+) {
     let pending = next_pending(escrow, now);
     if (option::is_some(&pending)) {
         fire(escrow, option::destroy_some(pending), ctx);
-        true
     } else {
         option::destroy_none(pending);
-        false
-    }
+    };
 }
 
 // === View Functions ===

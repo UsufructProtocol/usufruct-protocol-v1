@@ -12,7 +12,7 @@ use sui::{
 };
 use usufruct::{
     asset::{Self, AssetReceipt},
-    cap_authorization,
+    cap_authorization::{Self, CapAuthorization},
     config::{Self, IntegrationConfig},
     credit_state,
     descent_policy,
@@ -26,7 +26,9 @@ use usufruct::{
     price_state,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     refund_state,
+    rent_action::{Self, RentAction},
     retire_policy,
+    retire_route::{Self, RetireRoute},
     tenant,
     tenant_cap::{Self, TenantCap},
 };
@@ -326,14 +328,10 @@ public fun retire<Asset: key + store, CoinType>(
         ),
         ERetireFloorNotElapsed,
     );
-    if (is_idle(escrow) || is_at_dutch_auction(escrow)) {
-        do_retire_immediately(escrow, ctx)
-    } else if (is_handover_open(escrow) || is_handover_confirmed(escrow)) {
-        do_set_retiring_flag(escrow, ctx)
-    } else {
-        // Retired.
-        abort EAlreadyRetired
-    }
+    let route = lifecycle_state::retire_route(read_state(escrow));
+    if      (retire_route::is_immediate(&route))      { do_retire_immediately(escrow, ctx) }
+    else if (retire_route::is_deferred(&route))       { do_set_retiring_flag(escrow, ctx)  }
+    else                                              { abort EAlreadyRetired              }
 }
 
 /// Single entry point to become tenant or place a bid. Calls
@@ -355,16 +353,14 @@ public fun rent<Asset: key + store, CoinType>(
 ): TenantCap {
     apply_pending_transitions(escrow, clock, ctx);
     let now   = clock::timestamp_ms(clock);
-    let floor = compute_floor_price(escrow, now);
+    let floor = floor_price_at(escrow, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
 
-    if (is_idle(escrow) || is_at_dutch_auction(escrow)) {
-        do_install_new_tenant(escrow, payment, floor, now, ctx)
-    } else if (is_handover_open(escrow)) {
-        do_place_bid(escrow, payment, floor, now, ctx)
-    } else if (is_handover_confirmed(escrow)) {
-        do_supersede_bid(escrow, payment, floor, ctx)
-    } else {
+    let action = lifecycle_state::rent_action(read_state(escrow));
+    if      (rent_action::is_install(&action))      { do_install_new_tenant(escrow, payment, floor, now, ctx) }
+    else if (rent_action::is_place_bid(&action))    { do_place_bid(escrow, payment, floor, now, ctx)         }
+    else if (rent_action::is_supersede_bid(&action)){ do_supersede_bid(escrow, payment, floor, ctx)          }
+    else {
         // Retired — unreachable: compute_floor_price aborted earlier.
         abort EInvariantViolation
     }
@@ -458,22 +454,27 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
 ///
 /// The protocol's cascade is structurally bounded at three transitions:
 ///   Handover (HC → HO) → Tenure (HO → AtDutch) → Auction (AtDutch → Idle).
-/// After Idle (or Retired) the state machine has no further pending
-/// transitions, so three sequential `apt_step` calls cover every
-/// possible cascade. No loop, no iteration counter — the cascade
-/// depth IS the call count.
-///
-/// Each `apt_step` is a no-op when nothing is due, so starting from
-/// any state (e.g. plain Idle, no transitions) is cheap.
+/// After Idle (or Retired) no further transitions are pending. The loop
+/// exits early when nothing is due; `EInvariantViolation` fires if the
+/// state machine somehow requires a fourth step — that would indicate
+/// an impossible cycle in the transition graph.
 public fun apply_pending_transitions<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let now = clock::timestamp_ms(clock);
-    apt_step(escrow, now, ctx);
-    apt_step(escrow, now, ctx);
-    apt_step(escrow, now, ctx);
+    let now   = clock::timestamp_ms(clock);
+    let mut i = 0u8;
+    loop {
+        let pending = next_pending(escrow, now);
+        if (option::is_some(&pending)) {
+            assert!(i < 3, EInvariantViolation);
+            fire(escrow, option::destroy_some(pending), ctx);
+            i = i + 1;
+        } else {
+            break
+        }
+    }
 }
 
 /// Detect the single transition that is due at `now`, if any.
@@ -482,7 +483,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
 ///
 /// Useful as a standalone query for keepers / `devInspectTransactionBlock`:
 /// callers can probe what would fire without committing the tx.
-public(package) fun next_pending<Asset: key + store, CoinType>(
+public fun next_pending<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
     now:    u64,
 ): Option<PendingTransition> {
@@ -540,22 +541,6 @@ fun fire<Asset: key + store, CoinType>(
     }
 }
 
-/// Detect-then-fire one transition. No-op if nothing is due. Three
-/// sequential calls in `apply_pending_transitions` cover the
-/// structural cascade bound.
-fun apt_step<Asset: key + store, CoinType>(
-    escrow: &mut EscrowCoordinator<Asset, CoinType>,
-    now:    u64,
-    ctx:    &mut TxContext,
-) {
-    let pending = next_pending(escrow, now);
-    if (option::is_some(&pending)) {
-        fire(escrow, option::destroy_some(pending), ctx);
-    } else {
-        option::destroy_none(pending);
-    };
-}
-
 // === View Functions ===
 
 // ─── State predicates ────────────────────────────────────────────────────────
@@ -580,35 +565,196 @@ public fun is_retired<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): bool { lifecycle_state::is_a_state_retired(read_state(escrow)) }
 
+/// True iff the retire flag is set on the current rental. The asset will
+/// transition to Retired when the active tenure expires.
+/// Valid in any state; false when NotRented.
+public fun is_retiring<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { lifecycle_state::is_retiring(read_state(escrow)) }
+
+// ─── Action classification ───────────────────────────────────────────────────
+
+/// How a `retire()` call will be routed given the current state.
+///   Immediate      — no active tenant; asset retires immediately.
+///   Deferred       — active tenant; sets the retiring flag for tenure-expiry.
+///   AlreadyRetired — call will abort; surface the error before signing.
+/// SDK use: explain to the owner what retire() will do before they sign.
+public fun retire_route<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): RetireRoute {
+    lifecycle_state::retire_route(read_state(escrow))
+}
+
+/// Which entry operation a `rent()` call will execute given the current state.
+///   Install      — no active tenant; starts a fresh rental.
+///   PlaceBid     — HandoverOpen; places a competing bid.
+///   SupersedeBid — HandoverConfirmed; replaces the existing pending bid.
+///   Retired      — call will abort; the rent action is unavailable.
+/// SDK use: label the rent button correctly and build the right UI flow.
+public fun rent_action<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): RentAction {
+    lifecycle_state::rent_action(read_state(escrow))
+}
+
+// ─── Identity views ──────────────────────────────────────────────────────────
+
+/// Address of the active tenant. `Some` while the lifecycle is Rented
+/// (HandoverOpen or HandoverConfirmed); `None` otherwise.
+public fun current_tenant_addr<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<address> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_rented(s)) option::some(lifecycle_state::current_addr(s))
+    else option::none()
+}
+
+/// Address of the pending bidder. `Some` only in HandoverConfirmed
+/// (a bid has been placed and is awaiting the countdown expiry);
+/// `None` in every other state.
+public fun pending_tenant_addr<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<address> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_handover_confirmed(s)) option::some(lifecycle_state::pending_addr(s))
+    else option::none()
+}
+
+// ─── Stake views ─────────────────────────────────────────────────────────────
+
+/// Stake value held by the active tenant, in coin base units.
+/// `Some` while the lifecycle is Rented (HandoverOpen or HandoverConfirmed);
+/// `None` otherwise.
+/// SDK use: show "current bid: X SUI" on the marketplace card.
+public fun current_stake<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_rented(s)) option::some(lifecycle_state::current_stake_value(s))
+    else option::none()
+}
+
+/// Stake value held by the pending bidder, in coin base units.
+/// `Some` only in HandoverConfirmed (a bid is awaiting countdown expiry);
+/// `None` in every other state.
+/// SDK use: show "pending bid: X SUI" on the marketplace card.
+public fun pending_stake<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_handover_confirmed(s)) option::some(lifecycle_state::pending_stake_value(s))
+    else option::none()
+}
+
+// ─── Temporal views ───────────────────────────────────────────────────────────
+
+/// Absolute timestamp at which the active tenant's tenure expires.
+/// `Some` while the lifecycle is Rented; `None` otherwise.
+/// Computed as phase_start_ms + config::tenure_ceiling.
+/// SDK use: show "rental expires at X" and drive expiry countdown timers.
+public fun tenure_expiry_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_rented(s)) {
+        option::some(phases::boundary_at(
+            lifecycle_state::phase_start_ms(s),
+            config::tenure_ceiling(&escrow.config),
+        ))
+    } else {
+        option::none()
+    }
+}
+
+/// Absolute timestamp at which the pending bid auto-wins the handover.
+/// `Some` only in HandoverConfirmed; `None` in every other state.
+/// SDK use: show "bid wins at X" countdown; inform keepers when to
+/// call `apply_pending_transitions`.
+public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_handover_confirmed(s)) {
+        option::some(lifecycle_state::handover_countdown_expiry_ms(s))
+    } else {
+        option::none()
+    }
+}
+
+/// Maximum duration a single rental can last, in milliseconds.
+/// Defined by the escrow's IntegrationConfig and constant for the
+/// escrow's lifetime.
+/// SDK use: risk protocols evaluating an idle escrow need the ceiling
+/// to estimate maximum exposure duration before `tenure_expiry_ms`
+/// becomes available (i.e. before a tenant installs).
+public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): u64 {
+    config::tenure_ceiling(&escrow.config)
+}
+
+// ─── Cap views ───────────────────────────────────────────────────────────────
+
+/// Authorization status of `cap_id` relative to the current lifecycle state.
+///   Current — belongs to the active tenant; may borrow.
+///   Pending — belongs to the pending bidder in HandoverConfirmed.
+///   Stale   — superseded, former tenant, or no active rental.
+/// SDK use: check before `borrow_asset` or `burn_tenant_cap` to surface a
+/// meaningful error instead of letting the transaction abort.
+public fun tenant_cap_status<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    cap_id: ID,
+): CapAuthorization {
+    lifecycle_state::cap_authorization(read_state(escrow), cap_id)
+}
+
+// ─── Timing views ────────────────────────────────────────────────────────────
+
+/// True iff at least one time-based transition is due at the current
+/// clock time. Callers can probe this before committing to
+/// `apply_pending_transitions` to avoid paying gas for a no-op.
+public fun has_pending_transitions<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    clock:  &Clock,
+): bool {
+    option::is_some(&next_pending(escrow, clock::timestamp_ms(clock)))
+}
+
+/// Timestamp at which the next pending transition fires, if any.
+/// `Some(ms)` when a transition is due; `None` when the escrow is quiescent.
+/// SDK use: schedule keeper calls and drive countdown timers without
+/// committing a transaction.
+public fun next_transition_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    clock:  &Clock,
+): Option<u64> {
+    let pending = next_pending(escrow, clock::timestamp_ms(clock));
+    if (option::is_some(&pending)) {
+        option::some(pending_transition::boundary_ms(option::borrow(&pending)))
+    } else {
+        option::none()
+    }
+}
+
 // ─── Pricing views ───────────────────────────────────────────────────────────
 
-/// Used credit accrued by the current tenant since the rental's
-/// `phase_start_ms`, evaluated at `timestamp_ms`. Defined only while
-/// the lifecycle is `Rented` — aborts otherwise (`ENotRented`).
+/// Used credit accrued by the current tenant at the current clock time.
+/// Defined only while the lifecycle is `Rented` — aborts otherwise (`ENotRented`).
 ///
 /// Derives the credit regime from the lifecycle's tenant slot:
 /// HandoverConfirmed → `Capped` (effective time saturates at the
 /// pre-stamped countdown expiry); HandoverOpen → `Accruing` (no cap).
 /// All curve-and-arithmetic logic lives inside `credit_state::used_credit`.
 public fun compute_used_credit<Asset: key + store, CoinType>(
-    escrow:       &EscrowCoordinator<Asset, CoinType>,
-    timestamp_ms: u64,
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    clock:  &Clock,
 ): u64 {
-    let s = read_state(escrow);
-    assert!(lifecycle_state::is_rented(s), ENotRented);
-    let stake          = lifecycle_state::current_stake_value(s);
-    let phase_start_ms = lifecycle_state::phase_start_ms(s);
-    let cs = if (lifecycle_state::is_t_state_demand(s)) {
-        credit_state::capped(stake, phase_start_ms, lifecycle_state::handover_countdown_expiry_ms(s))
-    } else {
-        credit_state::accruing(stake, phase_start_ms)
-    };
-    credit_state::used_credit(&cs, &escrow.config, timestamp_ms)
+    used_credit_at(escrow, clock::timestamp_ms(clock))
 }
 
 /// Minimum acceptable payment to win the rent for the next bidder,
-/// evaluated at `timestamp_ms`. Derives the pricing regime from the
-/// lifecycle's asset slot:
+/// evaluated at the current clock time. Derives the pricing regime from
+/// the lifecycle's asset slot:
 ///   - `Idle`              → `Rest`       (min_rent_price)
 ///   - `HandoverOpen`      → `Ascending`  over current's stake
 ///   - `HandoverConfirmed` → `Ascending`  over pending's stake
@@ -617,26 +763,23 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
 ///
 /// All pricing arithmetic lives inside `price_state::floor_price`.
 public fun compute_floor_price<Asset: key + store, CoinType>(
-    escrow:       &EscrowCoordinator<Asset, CoinType>,
-    timestamp_ms: u64,
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+    clock:  &Clock,
 ): u64 {
-    let s = read_state(escrow);
-    let ps = if (lifecycle_state::is_a_state_idle(s)) {
-        price_state::rest()
-    } else if (lifecycle_state::is_a_state_handover_open(s)) {
-        price_state::ascending(lifecycle_state::current_stake_value(s))
-    } else if (lifecycle_state::is_a_state_handover_confirmed(s)) {
-        price_state::ascending(lifecycle_state::pending_stake_value(s))
-    } else if (lifecycle_state::is_a_state_at_dutch(s)) {
-        price_state::descending(
-            lifecycle_state::last_acq_price_of_at_dutch(s),
-            lifecycle_state::phase_start_ms(s),
-        )
-    } else {
-        // is_a_state_retired
-        abort ERetiredNoBid
-    };
-    price_state::floor_price(&ps, &escrow.config, timestamp_ms)
+    floor_price_at(escrow, clock::timestamp_ms(clock))
+}
+
+// ─── Earnings views ──────────────────────────────────────────────────────────
+
+/// Accumulated owner earnings inside this escrow, in coin base units.
+/// Includes all owner shares from completed boundary transitions not yet
+/// drained by `withdraw_earnings`.
+/// SDK use: owner dashboard — show pending balance before prompting a
+/// `withdraw_earnings` transaction.
+public fun owner_balance<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): u64 {
+    owner::value(&escrow.owner)
 }
 
 // === Admin Functions ===
@@ -670,6 +813,44 @@ fun read_state<Asset: key + store, CoinType>(
 ): &LifecycleState<Asset, CoinType> {
     assert!(option::is_some(&escrow.state), EInvariantViolation);
     option::borrow(&escrow.state)
+}
+
+fun used_credit_at<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    let s = read_state(escrow);
+    assert!(lifecycle_state::is_rented(s), ENotRented);
+    let stake          = lifecycle_state::current_stake_value(s);
+    let phase_start_ms = lifecycle_state::phase_start_ms(s);
+    let cs = if (lifecycle_state::is_t_state_demand(s)) {
+        credit_state::capped(stake, phase_start_ms, lifecycle_state::handover_countdown_expiry_ms(s))
+    } else {
+        credit_state::accruing(stake, phase_start_ms)
+    };
+    credit_state::used_credit(&cs, &escrow.config, timestamp_ms)
+}
+
+fun floor_price_at<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    let s = read_state(escrow);
+    let ps = if (lifecycle_state::is_a_state_idle(s)) {
+        price_state::rest()
+    } else if (lifecycle_state::is_a_state_handover_open(s)) {
+        price_state::ascending(lifecycle_state::current_stake_value(s))
+    } else if (lifecycle_state::is_a_state_handover_confirmed(s)) {
+        price_state::ascending(lifecycle_state::pending_stake_value(s))
+    } else if (lifecycle_state::is_a_state_at_dutch(s)) {
+        price_state::descending(
+            lifecycle_state::last_acq_price_of_at_dutch(s),
+            lifecycle_state::phase_start_ms(s),
+        )
+    } else {
+        abort ERetiredNoBid
+    };
+    price_state::floor_price(&ps, &escrow.config, timestamp_ms)
 }
 
 /// Pure 90/10 split of `amount` into `(owner_share, protocol_fee)`.
@@ -788,7 +969,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let (new_st, refund) = lifecycle_state::supersede_bid<Asset, CoinType>(st, t, existing_expiry);
     put_state(escrow, new_st, receipt);
 
-    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, displaced_addr, ctx);
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
     event::emit(BidSuperseded {
         escrow_id,
         displaced_tenant_cap_id: displaced_cap_id,
@@ -819,7 +1000,7 @@ fun do_handover<Asset: key + store, CoinType>(
     ctx:         &mut TxContext,
 ) {
     let escrow_id    = object::id(escrow);
-    let used_credit  = compute_used_credit(escrow, boundary_ms);
+    let used_credit  = used_credit_at(escrow, boundary_ms);
     let (owner_amount, fee_amount) = split_fee(used_credit);
     let displaced_addr = lifecycle_state::current_addr(read_state(escrow));
     let principal      = lifecycle_state::current_stake_value(read_state(escrow));
@@ -831,13 +1012,13 @@ fun do_handover<Asset: key + store, CoinType>(
     );
     put_state(escrow, new_st, receipt);
 
-    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, displaced_addr, ctx);
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
 
     let new_tenant_cap_id = lifecycle_state::current_cap_id(read_state(escrow));
     // Post-handover state is HandoverOpen → compute_floor_price
     // returns Ascending(current_stake_value); timestamp irrelevant
     // for that regime.
-    let new_rent_price = compute_floor_price(escrow, boundary_ms);
+    let new_rent_price = floor_price_at(escrow, boundary_ms);
 
     event::emit(HandoverCompleted {
         escrow_id,
@@ -875,7 +1056,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     );
     put_state(escrow, new_st, receipt);
 
-    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, tenant_addr, ctx);
+    refund_state::distribute(refund, &mut escrow.owner, escrow.fee_inbox_id, ctx);
 
     event::emit(TenureExpired {
         escrow_id,

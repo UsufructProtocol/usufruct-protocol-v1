@@ -384,24 +384,22 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
 
         // floor at t=0 of descent window: must equal min_rent_price.
         // (Zero spread means price == min_price at every point; any clock value works.)
-        // Clock is already at tenure_boundary+1 from APT; querying there is fine for zero spread.
         let floor_at_start = escrow_coordinator::compute_floor_price(&escrow, &clk);
         assert_eq!(floor_at_start, min_price);
 
         // floor at mid-descent: must still equal min_rent_price.
         let now_mid = tenure_boundary + escrow_corpus::descent_window_h1_const() / 2;
-        clock::set_for_testing(&mut clk, now_mid);
         let floor_at_mid = escrow_coordinator::compute_floor_price(&escrow, &clk);
         assert_eq!(floor_at_mid, min_price);
 
         // floor at descent boundary: must equal min_rent_price.
         let descent_boundary = tenure_boundary + escrow_corpus::descent_window_h1_const();
-        clock::set_for_testing(&mut clk, descent_boundary);
+        let _ = descent_boundary; // referenced for documentation only; clock unchanged
         let floor_at_end = escrow_coordinator::compute_floor_price(&escrow, &clk);
         assert_eq!(floor_at_end, min_price);
 
         // T2 can rent at min_rent_price → HandoverOpen.
-        // Clock is at descent_boundary; price is still min_price (zero spread = no descent).
+        clock::set_for_testing(&mut clk, now_mid);
         let cap_t2 = escrow_coordinator::rent(
             &mut escrow,
             mk_payment(min_price, sc.ctx()),

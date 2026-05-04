@@ -10,6 +10,8 @@ use usufruct::{
     asset_state::{Self, AssetState},
     cap_authorization::{Self, CapAuthorization},
     refund_state::{Self, RefundState},
+    rent_action::{Self, RentAction},
+    retire_route::{Self, RetireRoute},
     tenant::{Self, Tenant},
     tenant_state::{Self, TenantState},
 };
@@ -163,6 +165,27 @@ public(package) fun cap_authorization<Asset: key + store, CoinType>(
         return cap_authorization::pending()
     };
     cap_authorization::stale()
+}
+
+/// Which retirement path applies given the current state.
+/// Produced for `escrow_coordinator::retire`.
+public(package) fun retire_route<Asset: key + store, CoinType>(
+    s: &LifecycleState<Asset, CoinType>,
+): RetireRoute {
+    if (is_a_state_retired(s))  { return retire_route::already_retired() };
+    if (is_rented(s))           { return retire_route::deferred()        };
+    retire_route::immediate()
+}
+
+/// Which rental-entry operation applies given the current state.
+/// Produced for `escrow_coordinator::rent`.
+public(package) fun rent_action<Asset: key + store, CoinType>(
+    s: &LifecycleState<Asset, CoinType>,
+): RentAction {
+    if (is_a_state_retired(s))         { return rent_action::retired()       };
+    if (is_not_rented(s))              { return rent_action::install()        };
+    if (is_a_state_handover_open(s))   { return rent_action::place_bid()     };
+    rent_action::supersede_bid()
 }
 
 // ─── Time fields ──────────────────────────────────────────────────────────────
@@ -330,13 +353,13 @@ public(package) fun expire_tenure<Asset: key + store, CoinType>(
             let (new_t_state, mut departing) = tenant_state::vacate(t_state);
             let owner_earnings    = tenant::take_owner_earnings(&mut departing, owner_amount);
             let fee_share         = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
-            let (identity, stake) = tenant::unbundle(departing);
+            let (_, stake) = tenant::unbundle(departing);
             tenant::destroy_empty_stake(stake);
             let expired = asset_state::expire(a_state, last_acq_price, new_phase_start_ms);
             let final_a = if (retiring) { asset_state::retire(expired) } else { expired };
             (
                 LifecycleState::NotRented { a_state: final_a, t_state: new_t_state },
-                refund_state::nothing(identity, fee_share, owner_earnings),
+                refund_state::nothing(fee_share, owner_earnings),
             )
         },
         LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,

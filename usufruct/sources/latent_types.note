@@ -1,0 +1,242 @@
+escrow_coordinator.move — Latent Type Audit
+============================================
+
+Audit started after PriceState/CreditState extraction (commit 8aaff39).
+Refined across multiple waves; each wave exposed residue from the
+previous design that the prior wave made visible.
+
+The probe is unchanged:
+
+    "What type would replace this snippet with a match?"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THREE KINDS OF if/else SMELL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Type 1 — Hidden state in branching (extraction of a NEW type)
+  Each branch parameterises the SAME operation with different data.
+  The body is a function of an implicit value; the value deserves a
+  type. Extraction creates a module, condenses the logic to one site.
+
+Type 2 — Predicate-based dispatch on an EXISTING type
+  The type that would justify `match` is already defined; the code
+  uses `is_*` predicates in if/else instead of pattern matching.
+  Refactor is syntactic — replace if/else with `match { | => }`,
+  optionally with or-patterns. The win is exhaustiveness.
+
+Type 3 — Control-flow that belongs in a deeper layer
+  A boolean (or other flag) is checked multiple times in the same
+  body, gating branches that should live inside a lower module.
+  The flag is a leak of the lower layer's logic into the consumer.
+  Refactor: push the dispatch down; the consumer reads the resolved
+  state, not the flag.
+
+Type 1 and Type 3 reduce code size and shift responsibility. Type 2
+reduces cognitive load and gives the compiler more to verify.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+META-PATTERNS DISCOVERED ACROSS WAVES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PATTERN A — Smell migrates from producer to consumer
+  After every successful extraction, audit the *caller* of the new
+  abstraction with the same lens. Closure is a system-level claim, not
+  a module-level one. The smell doesn't disappear — it migrates.
+
+PATTERN B — Intermediate abstraction absorbs imports
+  When a coordinator calls module M to produce a value V, then calls
+  modules A, B, C on V's components — and M already imports A, B, C —
+  the operations belong inside M. Discovered via:
+    RefundState::distribute  (absorbed owner, fee_message, tenant)
+    lifecycle_state::take_asset  (absorbed asset_state, tenant_state)
+    refund_state::from_departing  (absorbed Parcial/Nothing choice)
+  Rule: if M already imports A and the coordinator calls A-on-M-value,
+  push the call into M.
+
+PATTERN C — Coordinator should observe results, not implement logic
+  If the coordinator reads internal flags from lifecycle_state to make
+  decisions AFTER a transition, those decisions belong in the transition
+  itself. The coordinator should observe the resulting state, not
+  re-derive consequences from a flag that leaked across the boundary.
+  Closed by: absorbing `retiring` into expire_tenure (Type 3).
+
+PATTERN D — Config abstraction (decided NOT to extract)
+  config::tenure_ceiling + phases::has_passed etc. looks like Pattern B
+  but is structurally different: the computations require BOTH a state
+  value (phase_start, from lifecycle_state) AND a config value (policy).
+  The coordinator owns both, so this is legitimate coordination, not
+  smell. `phases` is not imported by config at all — adding it would be
+  a new dependency without structural justification. Verdict: leave as is.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MOVE 2024 LANGUAGE CONSTRAINT — EXTERNAL MATCH FORBIDDEN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Move 2024 splits enum visibility into two levels:
+
+  · The TYPE is public — any module can hold a value of the type.
+  · The VARIANTS are private to the defining module — only the defining
+    module can pattern match on them (construct, read, unpack).
+
+Source: The Move Book, "Enums and Match":
+  "Enums are internal to the module in which they are defined. This
+   means an enum can only be constructed, read, and unpacked within
+   the same module."
+
+  "With the addition of is_variant functions, we enabled external
+   modules to check which variant an enum instance represents.
+   However, external code still cannot access the inner value of a
+   variant due to enums being internal to their module."
+
+This is not a limitation — it is the language enforcing the same
+module-boundary principle we have been applying manually:
+
+  "If you have logic that dispatches on variants, that logic belongs
+   in the module that defines the variants."
+
+CONSEQUENCE for this codebase:
+  · if/else over is_a_state_* predicates in the coordinator is the
+    CORRECT pattern — it is how an external module consumes an opaque
+    type whose variants it cannot see.
+  · Every Type 2 smell we could not close ("blocked by Move") is
+    actually the language correctly requiring that dispatch logic live
+    inside lifecycle_state, pending_transition, etc.
+  · The is_variant + predicate API (is_a_state_idle, is_handover,
+    is_stale…) IS the canonical Move 2024 interface for external
+    consumers of an enum.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CLOSED — REFACTORS EXECUTED (HEAD = 2d96b96)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ EscrowStateTag — eliminated entirely (commit 7fea24f)
+   EscrowStateTag was a parallel type maintained for event fields and
+   external tag-dispatch — a projection of LifecycleState that lived in
+   the coordinator. Replaced with five direct predicates on
+   EscrowCoordinator (is_idle, is_at_dutch_auction, is_handover_open,
+   is_handover_confirmed, is_retired) forwarding to lifecycle_state.
+   Event fields that carried the tag were removed (derivable from event
+   sequence). −104 lines net.
+
+✅ RefundState::distribute — TYPE 1 (commit 5a7a960)
+   consume_nothing / consume_parcial / consume_total + has_remainder
+   removed. Single distribute(rs, &mut owner, fee_inbox_id, displaced,
+   ctx) with exhaustive match inside refund_state. Coordinator call sites
+   in do_handover, do_tenure_expiry, do_supersede_bid each collapsed to
+   one line. Also absorbed: fee_message and tenant imports eliminated
+   from coordinator.
+
+✅ lifecycle_state::take_asset — PATTERN B (commit 5f44c3a)
+   decompose_retired returned (AssetState, TenantState) and coordinator
+   called asset_state::claim + tenant_state::consume_absence on them.
+   lifecycle_state already imported both. take_asset absorbs both ops;
+   coordinator's claim_asset collapses to one line. Eliminates
+   asset_state and tenant_state from coordinator imports.
+
+✅ do_tenure_expiry retiring branch — TYPE 3 (commit ba75c2d)
+   was_retiring local read before expire_tenure, used in two if-blocks
+   after it (second take/put cycle + AssetRetired event). retire flag
+   is internal to lifecycle_state. expire_tenure now consumes retiring
+   directly: chains asset_state::expire → asset_state::retire when
+   retiring=true. Coordinator checks is_retired(escrow) instead of the
+   propagated boolean. Second take/put cycle eliminated.
+
+✅ CapAuthorization — TYPE 1, own module (commit 14ea4d8)
+   borrow_asset and burn_tenant_cap each implemented multi-field
+   lifecycle_state queries to classify "what role does this cap play?"
+   New module cap_authorization.move (mirrors pending_transition.move):
+   enum CapAuthorization { Current, Pending, Stale } with public(package)
+   constructors and public predicates. lifecycle_state::cap_authorization
+   owns the classification; coordinator observes result and aborts with
+   its own error codes.
+
+✅ refund_state::from_departing — PATTERN B (commit 53b29a5)
+   accept_bid in lifecycle_state had if (stake_value > 0) to choose
+   between refund_state::parcial and refund_state::nothing. Both branches
+   called tenant::unbundle. refund_state already imports tenant. The
+   Parcial/Nothing choice belongs in the defining module. Call site
+   collapses to one line.
+
+✅ curve_shape integer dispatches — TYPE 2 (commit 2d96b96)
+   eval_power_law dispatched on alpha_den ∈ {2,3,4} with if/else.
+   exp_a_norm dispatched on (alpha_abs ∈ 1..8, alpha_neg) with 16-case
+   nested if/else. Move 2024 supports match on integer literals and bool.
+   Both converted to match expressions (tuple patterns not supported;
+   exp_a_norm uses match(alpha_neg) { match(alpha_abs) }).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HONEST DISPATCH — NOT SMELL (verified clean)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A. rent / retire / fire dispatchers (coordinator)
+   if/else over is_idle, is_at_dutch_auction, is_handover_open etc.
+   These cannot be match expressions: LifecycleState variants are
+   private to lifecycle_state (Move 2024 constraint). The predicates
+   ARE the canonical external interface. This is honest dispatch —
+   the language requires it.
+
+B. compute_floor_price / compute_used_credit (coordinator)
+   if/else over lifecycle_state predicates to derive PriceState /
+   CreditState regime. This IS the regime derivation step: extracting
+   parameters from lifecycle_state to construct the correct regime
+   variant. Legitimate work, not smell. The arithmetic moved into
+   price_state / credit_state; the parameter extraction stays here.
+   (Also blocked by Move constraint — same as A.)
+
+C. next_pending (coordinator)
+   Three if-blocks over lifecycle_state predicates + config values.
+   Needs BOTH state (phase_start, expiry) AND config (tenure_ceiling,
+   descent policy). The coordinator owns both. Cannot push to either
+   lifecycle_state (no config) or config (no state). Genuine
+   coordination logic, not a leak.
+
+D. is_retiring guard in do_place_bid
+   assert!(!lifecycle_state::is_retiring(s), ERetireFlagBlocksBid)
+   The coordinator OBSERVES a public predicate and enforces a business
+   rule with its own error code. This is different from was_retiring
+   (which implemented a state transition consequence). Correct pattern.
+
+E. apt_step Option dispatch
+   if (option::is_some(&pending)) { fire } else { destroy_none }
+   Idiomatic Option handling. No domain type hiding.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OPEN QUESTION — PRE-READING BEFORE MUTATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+do_handover and do_tenure_expiry read lifecycle_state fields BEFORE the
+transition to capture data for events:
+
+  do_handover:      current_addr, current_stake_value (before accept_bid)
+  do_tenure_expiry: current_addr, current_stake_value (before expire_tenure)
+
+These values are also known internally to accept_bid / expire_tenure
+before they mutate the state. If the transition functions returned
+them as output, the coordinator wouldn't need to pre-read internal state.
+
+Candidate shape:
+  accept_bid   → (LifecycleState, RefundState, displaced_addr, principal)
+  expire_tenure → (LifecycleState, RefundState, tenant_addr, principal)
+
+Risk: larger API change; gain is modest (removes two reads per call site).
+Verdict: DEFERRED — not currently worth the API surface expansion.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TEST PROTOCOL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The 429-test suite is the safety net. Each extraction is one commit
+that must keep all tests green.
+
+A test failure is diagnostic in two ways:
+  1. The abstraction did not preserve observable behavior.
+  2. A test was verifying the OLD implementation shape, not the
+     semantic contract. In that case the test must be updated to assert
+     the new contract — not silenced. Example: set_retiring_lifts_flag
+     was asserting "expire_tenure produces AtDutch when retiring=true"
+     (old shape). Updated to assert "expire_tenure produces Retired
+     when retiring=true" (new semantic contract).
+
+Distinguishing (1) from (2): if the protocol-level observable behavior
+is preserved (same final state, same events emitted, same fund routing)
+and only the internal step count changed, it is (2).

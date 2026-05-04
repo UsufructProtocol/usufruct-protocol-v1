@@ -10,6 +10,8 @@ use usufruct::{
     asset_state::{Self, AssetState},
     cap_authorization::{Self, CapAuthorization},
     refund_state::{Self, RefundState},
+    rent_action::{Self, RentAction},
+    retire_route::{Self, RetireRoute},
     tenant::{Self, Tenant},
     tenant_state::{Self, TenantState},
 };
@@ -163,6 +165,27 @@ public(package) fun cap_authorization<Asset: key + store, CoinType>(
         return cap_authorization::pending()
     };
     cap_authorization::stale()
+}
+
+/// Which retirement path applies given the current state.
+/// Produced for `escrow_coordinator::retire`.
+public(package) fun retire_route<Asset: key + store, CoinType>(
+    s: &LifecycleState<Asset, CoinType>,
+): RetireRoute {
+    if (is_a_state_retired(s))  { return retire_route::already_retired() };
+    if (is_rented(s))           { return retire_route::deferred()        };
+    retire_route::immediate()
+}
+
+/// Which rental-entry operation applies given the current state.
+/// Produced for `escrow_coordinator::rent`.
+public(package) fun rent_action<Asset: key + store, CoinType>(
+    s: &LifecycleState<Asset, CoinType>,
+): RentAction {
+    if (is_a_state_retired(s))         { return rent_action::retired()       };
+    if (is_not_rented(s))              { return rent_action::install()        };
+    if (is_a_state_handover_open(s))   { return rent_action::place_bid()     };
+    rent_action::supersede_bid()
 }
 
 // ─── Time fields ──────────────────────────────────────────────────────────────

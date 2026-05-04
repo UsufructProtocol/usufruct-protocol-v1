@@ -26,7 +26,9 @@ use usufruct::{
     price_state,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     refund_state,
+    rent_action,
     retire_policy,
+    retire_route,
     tenant,
     tenant_cap::{Self, TenantCap},
 };
@@ -326,14 +328,10 @@ public fun retire<Asset: key + store, CoinType>(
         ),
         ERetireFloorNotElapsed,
     );
-    if (is_idle(escrow) || is_at_dutch_auction(escrow)) {
-        do_retire_immediately(escrow, ctx)
-    } else if (is_handover_open(escrow) || is_handover_confirmed(escrow)) {
-        do_set_retiring_flag(escrow, ctx)
-    } else {
-        // Retired.
-        abort EAlreadyRetired
-    }
+    let route = lifecycle_state::retire_route(read_state(escrow));
+    if      (retire_route::is_immediate(&route))      { do_retire_immediately(escrow, ctx) }
+    else if (retire_route::is_deferred(&route))       { do_set_retiring_flag(escrow, ctx)  }
+    else                                              { abort EAlreadyRetired              }
 }
 
 /// Single entry point to become tenant or place a bid. Calls
@@ -358,13 +356,11 @@ public fun rent<Asset: key + store, CoinType>(
     let floor = compute_floor_price(escrow, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
 
-    if (is_idle(escrow) || is_at_dutch_auction(escrow)) {
-        do_install_new_tenant(escrow, payment, floor, now, ctx)
-    } else if (is_handover_open(escrow)) {
-        do_place_bid(escrow, payment, floor, now, ctx)
-    } else if (is_handover_confirmed(escrow)) {
-        do_supersede_bid(escrow, payment, floor, ctx)
-    } else {
+    let action = lifecycle_state::rent_action(read_state(escrow));
+    if      (rent_action::is_install(&action))      { do_install_new_tenant(escrow, payment, floor, now, ctx) }
+    else if (rent_action::is_place_bid(&action))    { do_place_bid(escrow, payment, floor, now, ctx)         }
+    else if (rent_action::is_supersede_bid(&action)){ do_supersede_bid(escrow, payment, floor, ctx)          }
+    else {
         // Retired — unreachable: compute_floor_price aborted earlier.
         abort EInvariantViolation
     }

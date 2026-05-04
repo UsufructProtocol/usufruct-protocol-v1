@@ -454,22 +454,27 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
 ///
 /// The protocol's cascade is structurally bounded at three transitions:
 ///   Handover (HC → HO) → Tenure (HO → AtDutch) → Auction (AtDutch → Idle).
-/// After Idle (or Retired) the state machine has no further pending
-/// transitions, so three sequential `apt_step` calls cover every
-/// possible cascade. No loop, no iteration counter — the cascade
-/// depth IS the call count.
-///
-/// Each `apt_step` is a no-op when nothing is due, so starting from
-/// any state (e.g. plain Idle, no transitions) is cheap.
+/// After Idle (or Retired) no further transitions are pending. The loop
+/// exits early when nothing is due; `EInvariantViolation` fires if the
+/// state machine somehow requires a fourth step — that would indicate
+/// an impossible cycle in the transition graph.
 public fun apply_pending_transitions<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let now = clock::timestamp_ms(clock);
-    apt_step(escrow, now, ctx);
-    apt_step(escrow, now, ctx);
-    apt_step(escrow, now, ctx);
+    let now   = clock::timestamp_ms(clock);
+    let mut i = 0u8;
+    loop {
+        let pending = next_pending(escrow, now);
+        if (option::is_some(&pending)) {
+            assert!(i < 3, EInvariantViolation);
+            fire(escrow, option::destroy_some(pending), ctx);
+            i = i + 1;
+        } else {
+            break
+        }
+    }
 }
 
 /// Detect the single transition that is due at `now`, if any.
@@ -534,22 +539,6 @@ fun fire<Asset: key + store, CoinType>(
         // and stable; new variants would need new lifecycle boundaries).
         do_auction_expiry(escrow, boundary_ms)
     }
-}
-
-/// Detect-then-fire one transition. No-op if nothing is due. Three
-/// sequential calls in `apply_pending_transitions` cover the
-/// structural cascade bound.
-fun apt_step<Asset: key + store, CoinType>(
-    escrow: &mut EscrowCoordinator<Asset, CoinType>,
-    now:    u64,
-    ctx:    &mut TxContext,
-) {
-    let pending = next_pending(escrow, now);
-    if (option::is_some(&pending)) {
-        fire(escrow, option::destroy_some(pending), ctx);
-    } else {
-        option::destroy_none(pending);
-    };
 }
 
 // === View Functions ===

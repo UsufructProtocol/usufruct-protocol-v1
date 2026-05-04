@@ -99,6 +99,7 @@ public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
     asset_id:         ID,
+    fee_inbox_id:     ID,
     integrated_at_ms: u64,
 }
 
@@ -113,6 +114,8 @@ public struct RentStarted has copy, drop {
 
 public struct BidPlaced has copy, drop {
     escrow_id:                 ID,
+    current_tenant_cap_id:     ID,
+    current_tenant_addr:       address,
     tenant_cap_id:             ID,
     pending_tenant:            address,
     bid_amount:                u64,
@@ -150,6 +153,7 @@ public struct TenureExpired has copy, drop {
     escrow_id:               ID,
     tenant_cap_id:           ID,
     tenant:                  address,
+    phase_start_ms:          u64,
     owner_share:             u64,
     protocol_fee:            u64,
     last_acquisition_price:  u64,
@@ -157,8 +161,9 @@ public struct TenureExpired has copy, drop {
 }
 
 public struct AuctionExpired has copy, drop {
-    escrow_id:    ID,
-    timestamp_ms: u64,
+    escrow_id:     ID,
+    last_acq_price: u64,
+    timestamp_ms:  u64,
 }
 
 public struct RetireFlagSet has copy, drop {
@@ -238,7 +243,7 @@ public fun integrate<Asset: key + store, CoinType>(
     };
     config::emit_registration(&escrow.config, escrow_id);
     transfer::share_object(escrow);
-    event::emit(AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id, asset_id, integrated_at_ms });
+    event::emit(AssetIntegrated<Asset, CoinType> { escrow_id, owner_cap_id, asset_id, fee_inbox_id, integrated_at_ms });
     owner_cap
 }
 
@@ -942,9 +947,11 @@ fun do_place_bid<Asset: key + store, CoinType>(
 ): TenantCap {
     let s = read_state(escrow);
     assert!(!lifecycle_state::is_retiring(s), ERetireFlagBlocksBid);
-    let phase_start = lifecycle_state::phase_start_ms(s);
-    let tenure      = config::tenure_ceiling(&escrow.config);
-    let expiry      = handover_policy::expiry_at(
+    let current_cap_id   = lifecycle_state::current_cap_id(s);
+    let current_addr_val = lifecycle_state::current_addr(s);
+    let phase_start      = lifecycle_state::phase_start_ms(s);
+    let tenure           = config::tenure_ceiling(&escrow.config);
+    let expiry           = handover_policy::expiry_at(
         config::handover(&escrow.config),
         now,
         phase_start,
@@ -964,10 +971,12 @@ fun do_place_bid<Asset: key + store, CoinType>(
 
     event::emit(BidPlaced {
         escrow_id,
-        tenant_cap_id: cap_id,
-        pending_tenant: pending_addr,
+        current_tenant_cap_id:     current_cap_id,
+        current_tenant_addr:       current_addr_val,
+        tenant_cap_id:             cap_id,
+        pending_tenant:            pending_addr,
         bid_amount,
-        floor_price: floor,
+        floor_price:               floor,
         handover_countdown_expiry: expiry,
     });
     cap
@@ -1088,6 +1097,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let principal              = lifecycle_state::current_stake_value(s);
     let tenant_addr            = lifecycle_state::current_addr(s);
     let tenant_cap_id          = lifecycle_state::current_cap_id(s);
+    let phase_start_ms         = lifecycle_state::phase_start_ms(s);
     let (owner_amount, fee_amount) = split_fee(principal);
     let last_acquisition_price = principal;
 
@@ -1103,6 +1113,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         escrow_id,
         tenant_cap_id,
         tenant:                 tenant_addr,
+        phase_start_ms,
         owner_share:            owner_amount,
         protocol_fee:           fee_amount,
         last_acquisition_price,
@@ -1119,11 +1130,12 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
     escrow:      &mut EscrowCoordinator<Asset, CoinType>,
     boundary_ms: u64,
 ) {
-    let escrow_id     = object::id(escrow);
-    let (st, receipt) = take_state(escrow);
-    let new_st        = lifecycle_state::expire_auction(st);
+    let escrow_id      = object::id(escrow);
+    let last_acq_price = lifecycle_state::last_acq_price_of_at_dutch(read_state(escrow));
+    let (st, receipt)  = take_state(escrow);
+    let new_st         = lifecycle_state::expire_auction(st);
     put_state(escrow, new_st, receipt);
-    event::emit(AuctionExpired { escrow_id, timestamp_ms: boundary_ms });
+    event::emit(AuctionExpired { escrow_id, last_acq_price, timestamp_ms: boundary_ms });
 }
 
 /// Retire from Idle | AtDutchAuction → Retired. The state transitions
@@ -1215,6 +1227,10 @@ public(package) fun rent_started_floor_price(e: &RentStarted): u64              
 #[test_only]
 public(package) fun bid_placed_escrow_id(e: &BidPlaced): ID                      { e.escrow_id }
 #[test_only]
+public(package) fun bid_placed_current_tenant_cap_id(e: &BidPlaced): ID          { e.current_tenant_cap_id }
+#[test_only]
+public(package) fun bid_placed_current_tenant_addr(e: &BidPlaced): address       { e.current_tenant_addr }
+#[test_only]
 public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
 #[test_only]
 public(package) fun bid_placed_pending_tenant(e: &BidPlaced): address            { e.pending_tenant }
@@ -1272,6 +1288,8 @@ public(package) fun tenure_expired_tenant_cap_id(e: &TenureExpired): ID         
 #[test_only]
 public(package) fun tenure_expired_tenant(e: &TenureExpired): address                         { e.tenant }
 #[test_only]
+public(package) fun tenure_expired_phase_start_ms(e: &TenureExpired): u64                    { e.phase_start_ms }
+#[test_only]
 public(package) fun tenure_expired_owner_share(e: &TenureExpired): u64                        { e.owner_share }
 #[test_only]
 public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64                       { e.protocol_fee }
@@ -1282,6 +1300,8 @@ public(package) fun tenure_expired_timestamp_ms(e: &TenureExpired): u64         
 
 #[test_only]
 public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID                        { e.escrow_id }
+#[test_only]
+public(package) fun auction_expired_last_acq_price(e: &AuctionExpired): u64                   { e.last_acq_price }
 #[test_only]
 public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64                     { e.timestamp_ms }
 

@@ -2444,4 +2444,89 @@ fun e2e_corpus_gap_retiring_flag_bypasses_at_dutch_with_window_policy() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §SUP-1. Supersede preserves the original countdown expiry ────────────────
+
+/// When T3 supersedes T2's pending bid, the handover_countdown_expiry must
+/// be PRESERVED from T2's original bid — not reset to T3's bid_time + countdown.
+///
+/// The countdown protects the current tenant (T1) for a fixed window from when
+/// the FIRST bid landed. Resetting on supersede would let a malicious actor
+/// extend that window indefinitely by superseding just before expiry.
+///
+/// Oracle: read BidPlaced.handover_countdown_expiry from T2's bid event (26_000).
+///
+/// Discriminating assertion: APT at original_expiry - 1 → no-op (still HC).
+///                           APT at original_expiry     → handover fires (T3 wins).
+/// If the expiry had reset to 2_000 + 25_000 = 27_000, the second APT at 26_000
+/// would be a no-op — the test would catch the bug.
+///
+/// Config: c=1 Countdown (25_000 ms), d=0, e=0, h=0, f=0.
+///   T2 bids  at t=1_000  →  original_expiry = 26_000
+///   T3 supersedes at t=2_000  →  reset_expiry (bug) would be 27_000
+#[test]
+fun e2e_sup1_supersede_preserves_countdown_expiry() {
+    let mut sc    = setup();
+    let tag       = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk   = clock::create_for_testing(sc.ctx());
+    let min_price = escrow_corpus::min_rent_price_const();
+
+    // T1 rents (Idle → HO, phase_start=0).
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(min_price, sc.ctx()), &clk, sc.ctx());
+
+    // T2 bids at t=1_000 → HC. Stamps countdown_expiry = 1_000 + 25_000 = 26_000.
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, 1_000);
+    let cap_t2   = escrow_coordinator::rent(
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag);
+
+    // Read the original countdown expiry from the BidPlaced event — this is the oracle.
+    let original_expiry = {
+        let bp = event::events_by_type<BidPlaced>();
+        assert_eq!(bp.length(), 1);
+        escrow_coordinator::bid_placed_handover_countdown_expiry(bp.borrow(0))
+    };
+    assert_eq!(original_expiry, 1_000 + escrow_corpus::handover_countdown_c1_const()); // 26_000
+
+    // T3 supersedes T2 at t=2_000 (before expiry).
+    // Bug scenario: if expiry reset → new expiry = 2_000 + 25_000 = 27_000.
+    // Correct:      expiry preserved → stays at 26_000.
+    clock::set_for_testing(&mut clk, 2_000);
+    let floor_t3 = escrow_coordinator::compute_floor_price(&escrow, 2_000);
+    let cap_t3   = escrow_coordinator::rent(
+        &mut escrow, mk_payment(floor_t3, sc.ctx()), &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag);
+    assert_eq!(event::events_by_type<BidSuperseded>().length(), 1);
+
+    // SUP-1a: one ms before original expiry → APT is a no-op.
+    clock::set_for_testing(&mut clk, original_expiry - 1);
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag);
+    assert_eq!(event::events_by_type<HandoverCompleted>().length(), 0);
+
+    // SUP-1b: at original expiry → handover fires. T3 wins.
+    // If expiry had reset to 27_000, this APT would be a no-op (bug caught).
+    clock::set_for_testing(&mut clk, original_expiry);
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+    assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
+
+    // T3's cap is the one promoted by the handover.
+    let new_cap_id = {
+        let hc = event::events_by_type<HandoverCompleted>();
+        escrow_coordinator::handover_completed_new_cap_id(hc.borrow(0))
+    };
+    assert_eq!(new_cap_id, object::id(&cap_t3));
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
 }

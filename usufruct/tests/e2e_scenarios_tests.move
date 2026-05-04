@@ -1761,4 +1761,288 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §RETIRE. All paths to Retired — asset always recoverable (f=0) ──────────
+//
+// For every reachable lifecycle state, the owner can retire the escrow when
+// retire_policy = Immediate (f=0, retire_floor = 0, always unlocked) and
+// subsequently recover the asset via claim_asset. The Deferred-policy gate
+// (f=1, ERetireFloorNotElapsed) is covered separately in §3.
+//
+// Each test drives to a specific entry state, calls retire(), completes the
+// protocol cascade to Retired, and verifies claim_asset returns the asset.
+//
+//   RETIRE-1  Idle                  → retire() immediate        → Retired
+//   RETIRE-2  AtDutchAuction        → retire() immediate        → Retired
+//   RETIRE-3  HandoverOpen          → retire() flag → tenure    → Retired
+//   RETIRE-4  HandoverConfirmed     → retire() flag → handover
+//                                              → tenure         → Retired
+//   RETIRE-5  HandoverOpen+borrow   → borrow → retire() flag
+//                                   → return → tenure           → Retired
+//   RETIRE-6  HandoverConfirmed+borrow → borrow → retire() flag
+//                                      → return → handover
+//                                      → tenure                 → Retired
+
+// RETIRE-0: Retired → claim_asset returns the asset ─────────────────────────
+/// Explicit proof that once the escrow reaches Retired state, the owner can
+/// always recover the asset via claim_asset. This is the terminal invariant
+/// that all RETIRE-1 through RETIRE-6 also verify — made standalone here
+/// so it is directly findable.
+#[test]
+fun e2e_retire0_retired_claim_asset_succeeds() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::destroy_zero(earnings);
+    transfer::public_transfer(asset, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// RETIRE-1: Idle ─────────────────────────────────────────────────────────────
+#[test]
+fun e2e_retire1_from_idle() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::destroy_zero(earnings); // no tenants → no earnings
+    transfer::public_transfer(asset, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// RETIRE-2: AtDutchAuction ───────────────────────────────────────────────────
+#[test]
+fun e2e_retire2_from_at_dutch() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Window → AtDutch observable
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents; tenure expires → AtDutchAuction.
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_at_dutch_auction(&escrow), tag);
+
+    // do_retire_immediately from AtDutch → Retired.
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// RETIRE-3: HandoverOpen ─────────────────────────────────────────────────────
+#[test]
+fun e2e_retire3_from_handover_open() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // h=0 Skipped — irrelevant with flag
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // Retiring flag set; state stays HandoverOpen.
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // APT at tenure boundary: tenure fires; flag → Retired (not AtDutch).
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// RETIRE-4: HandoverConfirmed ────────────────────────────────────────────────
+#[test]
+fun e2e_retire4_from_handover_confirmed() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, 1_000);
+    let cap_t2   = escrow_coordinator::rent(
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag);
+
+    // Retiring flag set in HC; state stays HandoverConfirmed.
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag);
+
+    // APT at countdown expiry: handover fires; T2 current, flag inherited → HO.
+    let countdown_expiry = 1_000 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, countdown_expiry);
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // APT at T2 tenure boundary: tenure fires; flag → Retired.
+    clock::set_for_testing(&mut clk, countdown_expiry + escrow_corpus::tenure_ceiling_const());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// RETIRE-5: HandoverOpen + asset borrowed ────────────────────────────────────
+#[test]
+fun e2e_retire5_from_handover_open_while_borrowed() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+
+    // Asset borrowed — lifecycle state has asset = None.
+    let (asset, receipt) = escrow_coordinator::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
+
+    // retire() in HO: APT no-op (t=0 < tenure_boundary), do_set_retiring_flag
+    // operates on the lifecycle state with asset=None without accessing the slot.
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // Hot-potato resolved: asset returned, slot restored to Some.
+    escrow_coordinator::return_asset(&mut escrow, asset, receipt);
+
+    // APT at tenure boundary: tenure fires; flag → Retired.
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// RETIRE-6: HandoverConfirmed + asset borrowed ───────────────────────────────
+#[test]
+fun e2e_retire6_from_handover_confirmed_while_borrowed() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow_coordinator::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, 1_000);
+    let cap_t2   = escrow_coordinator::rent(
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag);
+
+    // T1 (current cap) borrows in HC. borrow_asset APT: t=1_000 < expiry=26_000 → no-op.
+    let (asset, receipt) = escrow_coordinator::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
+
+    // retire() in HC: APT no-op, do_set_retiring_flag runs with asset=None safely.
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_confirmed(&escrow), tag);
+
+    // Hot-potato resolved.
+    escrow_coordinator::return_asset(&mut escrow, asset, receipt);
+
+    // APT at countdown expiry: handover fires; T2 current, retiring flag inherited → HO.
+    let countdown_expiry = 1_000 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, countdown_expiry);
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+    // APT at T2 tenure boundary: tenure fires; flag → Retired.
+    clock::set_for_testing(&mut clk, countdown_expiry + escrow_corpus::tenure_ceiling_const());
+    escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    test_scenario::return_shared(escrow);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+    let (asset, earnings) = escrow_coordinator::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// RETIRE-7: Retired → retire() aborts EAlreadyRetired ─────────────────────
+#[test]
+#[expected_failure(
+    abort_code = escrow_coordinator::EAlreadyRetired,
+    location   = usufruct::escrow_coordinator,
+)]
+fun e2e_retire7_already_retired_aborts() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Retire once → Retired.
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    assert!(escrow_coordinator::is_retired(&escrow), tag);
+
+    // Second retire() → EAlreadyRetired.
+    escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
 }

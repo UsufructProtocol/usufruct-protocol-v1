@@ -1466,9 +1466,9 @@ fun e2e_fin3_90_10_split_exact() {
         let te_lap   = escrow_coordinator::tenure_expired_last_acq_price(te);
         // Use min_price (the known T1 stake) as the independent oracle.
         assert_eq!(te_fee + te_owner, min_price);
-        // Exact 10 % fee on 10 SUI (min_price = 10_000_000_000, divisible by 10).
-        assert_eq!(te_fee,   1_000_000_000);
-        assert_eq!(te_owner, 9_000_000_000);
+        // Exact 10 % fee: min_price divisible by 10 → fee = min_price/10 exactly.
+        assert_eq!(te_fee,   min_price / 10);
+        assert_eq!(te_owner, min_price - min_price / 10);
         // last_acquisition_price == T1's stake here (no handover → founding ==
         // departing tenant), and marks the AtDutch descent starting point.
         assert_eq!(te_lap, min_price);
@@ -1497,13 +1497,11 @@ fun e2e_fin3_90_10_split_exact() {
         let uc  = escrow_coordinator::handover_completed_used_credit(he);
         let ho  = escrow_coordinator::handover_completed_owner_share(he);
         let hf  = escrow_coordinator::handover_completed_protocol_fee(he);
-        // Linear curve (e=0), phase_start=0, t_mid=50_000, tenure_ceiling=100_000:
-        //   g = mul_div(50_000, SCALE, 100_000) = SCALE/2
-        //   used_credit = mul_div(min_price, SCALE/2, SCALE) = min_price / 2
-        // This is computed from the formula independently of the event.
-        assert_eq!(uc, min_price / 2);                 // 5_000_000_000
-        assert_eq!(hf, min_price / 20);                // 10 % of uc = 500_000_000
-        assert_eq!(ho, min_price * 9 / 20);            // 90 % of uc = 4_500_000_000
+        // Linear curve (e=0): used_credit = stake × t_mid / ceiling = min_price / 2.
+        let expected_uc = min_price / 2;
+        assert_eq!(uc, expected_uc);
+        assert_eq!(hf, expected_uc / 10);               // 10 % of used_credit
+        assert_eq!(ho, expected_uc - expected_uc / 10); // 90 % of used_credit
     };
     transfer::public_transfer(cap_b1, OWNER);
     transfer::public_transfer(cap_b2, OWNER);
@@ -2100,8 +2098,8 @@ fun e2e_cred1_used_credit_clamped_at_handover_confirmed_expiry_across_curves() {
         assert!(uc_at_expiry > 0,     tag);
         assert!(uc_at_expiry < stake, tag);
 
-        // Exact value for Linear (e=0): stake × elapsed / tenure_ceiling.
-        if (e == 0) { assert_eq!(uc_at_expiry, 2_600_000_000); };
+        // Exact value for Linear (e=0): stake × elapsed / ceiling (elapsed = expiry, phase_start=0).
+        if (e == 0) { assert_eq!(uc_at_expiry, stake * expiry / ceiling); };
 
         // APT fires handover; event.used_credit must match the clamped view value.
         clock::set_for_testing(&mut clk, expiry);
@@ -2115,17 +2113,107 @@ fun e2e_cred1_used_credit_clamped_at_handover_confirmed_expiry_across_curves() {
         assert_eq!(escrow_coordinator::handover_completed_remain_credit(he),
                    stake - uc_at_expiry);
 
-        // Exact split for Linear (e=0).
+        // Exact split for Linear (e=0): fee and owner derived from uc_at_expiry.
         if (e == 0) {
-            assert_eq!(escrow_coordinator::handover_completed_remain_credit(he), 7_400_000_000);
-            assert_eq!(escrow_coordinator::handover_completed_owner_share(he),   2_340_000_000);
-            assert_eq!(escrow_coordinator::handover_completed_protocol_fee(he),    260_000_000);
+            assert_eq!(escrow_coordinator::handover_completed_protocol_fee(he),
+                       uc_at_expiry / 10);
+            assert_eq!(escrow_coordinator::handover_completed_owner_share(he),
+                       uc_at_expiry - uc_at_expiry / 10);
         };
 
         transfer::public_transfer(cap_t1, OWNER);
         transfer::public_transfer(cap_t2, OWNER);
         test_scenario::return_shared(escrow);
         owner_cap::burn(owner_cap, OWNER);
+        clock::destroy_for_testing(clk);
+        e = e + 1;
+    };
+    sc.end();
+}
+
+// ─── §CLAIM-1. AssetClaimed.swept_earnings accumulates across all tenants ────
+
+/// claim_asset drains the owner's full accumulated balance and reports it
+/// as swept_earnings in AssetClaimed. With multiple tenants, each boundary
+/// event deposits into the owner balance; swept_earnings must equal the sum.
+///
+///   swept_earnings == HandoverCompleted.owner_share   (T1's earned share)
+///                  +  TenureExpired.owner_share       (T2's full share)
+///
+/// Both shares are read from the events themselves — no curve-specific
+/// constants needed. The accumulation identity holds for all 7 curve shapes
+/// because the individual owner_share values are already correct per FIN-1/2.
+///
+/// Verifies that swept_earnings > each individual share (both tenants
+/// contributed), and that AssetClaimed.swept_earnings matches coin::value.
+///
+/// Config: c=0 (Instant), h=0 (Skipped → Idle), d=0, f=0; vary e=0..6.
+#[test]
+fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
+    let mut sc    = setup();
+    let min_price = escrow_corpus::min_rent_price_const();
+    let t_mid     = escrow_corpus::tenure_ceiling_const() / 2; // 50_000
+    let mut e: u8 = 0;
+    while (e <= 6) {
+        let tag = escrow_corpus::tag(0, 0, e, 0, 0); // c=0 Instant, h=0 Skipped, vary e
+        let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+        let mut clk = clock::create_for_testing(sc.ctx());
+
+        // T1 rents at t=0 → HandoverOpen.
+        let cap_t1 = escrow_coordinator::rent(
+            &mut escrow, mk_payment(min_price, sc.ctx()), &clk, sc.ctx());
+
+        // T2 bids at t_mid → Instant handover fires → T2 current.
+        clock::set_for_testing(&mut clk, t_mid);
+        let floor_t2 = escrow_coordinator::compute_floor_price(&escrow, t_mid);
+        let cap_t2   = escrow_coordinator::rent(
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
+        escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        assert!(escrow_coordinator::is_handover_open(&escrow), tag);
+
+        // Read T1's owner share from HandoverCompleted (curve-specific value).
+        let ho_share = {
+            let evs = event::events_by_type<HandoverCompleted>();
+            escrow_coordinator::handover_completed_owner_share(evs.borrow(0))
+        };
+
+        // T2's tenure expires → Skipped → AuctionExpired → Idle.
+        let t2_tenure_boundary = t_mid + escrow_corpus::tenure_ceiling_const();
+        clock::set_for_testing(&mut clk, t2_tenure_boundary);
+        escrow_coordinator::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        assert!(escrow_coordinator::is_idle(&escrow), tag);
+
+        // Read T2's owner share from TenureExpired.
+        let te_share = {
+            let evs = event::events_by_type<TenureExpired>();
+            escrow_coordinator::tenure_expired_owner_share(evs.borrow(0))
+        };
+
+        // Expected swept = sum of all per-boundary owner shares.
+        let expected_swept = ho_share + te_share;
+        assert!(expected_swept > ho_share, tag); // T2 contributed
+        assert!(expected_swept > te_share, tag); // T1 contributed
+
+        // Retire from Idle → Retired.
+        escrow_coordinator::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+
+        // claim_asset in a new PTB: swept_earnings must equal the accumulated sum.
+        test_scenario::return_shared(escrow);
+        sc.next_tx(OWNER);
+        let escrow = sc.take_shared<EscrowCoordinator<E2eAsset, SUI>>();
+        let (asset, earnings) = escrow_coordinator::claim_asset(
+            escrow, owner_cap, &clk, sc.ctx());
+        assert_eq!(coin::value(&earnings), expected_swept);
+        let ac = event::events_by_type<AssetClaimed>();
+        assert_eq!(
+            escrow_coordinator::asset_claimed_swept_earnings(ac.borrow(0)),
+            expected_swept,
+        );
+
+        coin::burn_for_testing(earnings);
+        transfer::public_transfer(asset, OWNER);
+        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t2, OWNER);
         clock::destroy_for_testing(clk);
         e = e + 1;
     };

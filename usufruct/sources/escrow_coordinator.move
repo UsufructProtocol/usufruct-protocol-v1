@@ -1094,6 +1094,17 @@ public fun owner_balance<Asset: key + store, CoinType>(
 
 // ─── Config views ────────────────────────────────────────────────────────────
 
+/// Full integration config as a single value. All 8 fields — policies,
+/// curves, price function, and rent/tenure parameters — returned by
+/// value in one call.
+/// SDK use: devInspect "dump all config"; pass to utilities that need
+/// the full config without 8 individual view calls.
+public fun integration_config<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): IntegrationConfig {
+    escrow.config
+}
+
 /// ID of the `ProtocolFeeInbox` that receives protocol fees from this escrow.
 /// SDK use: verify fee routing integrity; cross-reference with
 /// `AssetIntegrated.fee_inbox_id` to confirm the inbox has not changed.

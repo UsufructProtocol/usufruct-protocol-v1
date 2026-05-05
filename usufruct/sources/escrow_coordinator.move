@@ -611,6 +611,16 @@ public fun is_rented<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): bool { lifecycle_state::is_rented(read_state(escrow)) }
 
+/// True iff the descent policy is `Skipped` — no Dutch-auction phase
+/// exists; tenure expiry collapses directly to `Idle`. Equivalent to
+/// `dutch_auction_ceiling_ms(escrow).is_none()` but expressed as a
+/// direct predicate for symmetry with the other policy predicates.
+/// SDK use: policy description "no auction phase"; hide auction-related
+/// UI when Skipped.
+public fun is_descent_skipped<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { descent_policy::is_skipped(config::descent(&escrow.config)) }
+
 /// True iff the retire policy is `Immediate` — `retire()` is available
 /// from integration time onward with no waiting period.
 /// SDK use: owner dashboard "you can retire at any time" vs "you must
@@ -678,6 +688,17 @@ public fun asset_id<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): ID {
     lifecycle_state::asset_id(read_state(escrow))
+}
+
+/// Object ID of the `OwnerCap` bound to this escrow. Set at
+/// `integrate` time and constant for the escrow's lifetime.
+/// SDK use: on-chain compositors that need to verify owner authority
+/// without the owner passing their cap; cross-reference with
+/// `AssetIntegrated.owner_cap_id`.
+public fun owner_cap_id<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): ID {
+    owner::id_cap_id(owner::identity(&escrow.owner))
 }
 
 /// Address of the active tenant. `Some` while the lifecycle is Rented

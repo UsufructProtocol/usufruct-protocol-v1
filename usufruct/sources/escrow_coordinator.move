@@ -23,6 +23,7 @@ use usufruct::{
     owner_cap::{Self, OwnerCap},
     pending_transition::{Self, PendingTransition},
     phases,
+    price_function,
     price_state,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     refund_state,
@@ -765,6 +766,33 @@ public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     }
 }
 
+/// Countdown expiry that would be stamped on a bid placed at
+/// `bid_time_ms`, given the current HandoverPolicy:
+///   Instant              → bid_time_ms  (no protection window)
+///   FixedTime            → phase_start + tenure_ceiling
+///   Countdown { floor }  → min(bid_time + floor, phase_start + tenure)
+///
+/// Returns `Some` only in HandoverOpen (the only state where a new
+/// first-bid can be placed); `None` otherwise. In HandoverConfirmed the
+/// expiry is already fixed — read it directly via `handover_countdown_expiry_ms`.
+/// SDK use: show "if you bid now, your protection expires at X" before
+/// the user signs.
+public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
+    escrow:      &EscrowCoordinator<Asset, CoinType>,
+    bid_time_ms: u64,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (!lifecycle_state::is_a_state_handover_open(s)) return option::none();
+    let phase_start = lifecycle_state::phase_start_ms(s);
+    let tenure      = config::tenure_ceiling(&escrow.config);
+    option::some(handover_policy::expiry_at(
+        config::handover(&escrow.config),
+        bid_time_ms,
+        phase_start,
+        tenure,
+    ))
+}
+
 /// Maximum duration a single rental can last, in milliseconds.
 /// Defined by the escrow's IntegrationConfig and constant for the
 /// escrow's lifetime.
@@ -904,6 +932,19 @@ public fun compute_floor_price_at_ms<Asset: key + store, CoinType>(
     timestamp_ms: u64,
 ): u64 {
     floor_price_at(escrow, timestamp_ms)
+}
+
+/// Minimum payment the *next* bidder would need if the current bid is
+/// `bid_amount`. Applies the escrow's `PriceFunction` to `bid_amount`
+/// — identical to what `compute_floor_price` returns when `bid_amount`
+/// becomes the active stake.
+/// SDK use: bid-strategy UI "if you bid X SUI, the next bidder needs
+/// at least Y SUI"; preview the cost for a hypothetical superseder.
+public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
+    escrow:     &EscrowCoordinator<Asset, CoinType>,
+    bid_amount: u64,
+): u64 {
+    price_function::evaluate_price_fn(config::price_function(&escrow.config), bid_amount)
 }
 
 /// The last acquisition price driving the current Dutch-auction descent.

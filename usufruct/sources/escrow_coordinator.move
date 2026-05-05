@@ -5,6 +5,7 @@ module usufruct::escrow_coordinator;
 
 // === Imports ===
 
+use std::type_name::{Self, TypeName};
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
@@ -688,6 +689,28 @@ public fun asset_id<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): ID {
     lifecycle_state::asset_id(read_state(escrow))
+}
+
+/// Fully-qualified Move type name of the `Asset` type parameter
+/// (e.g. `"0xabc::my_nft::MyNFT"`). Constant for the escrow's lifetime.
+/// SDK use: on-chain compositors verifying the wrapped asset type;
+/// off-chain display of the asset collection name without parsing
+/// the object's type tag.
+public fun asset_type_name<Asset: key + store, CoinType>(
+    _escrow: &EscrowCoordinator<Asset, CoinType>,
+): TypeName {
+    type_name::with_defining_ids<Asset>()
+}
+
+/// Fully-qualified Move type name of the `CoinType` payment currency
+/// (e.g. `"0x2::sui::SUI"`). Constant for the escrow's lifetime.
+/// SDK use: on-chain compositors verifying the payment denomination;
+/// off-chain display of the accepted currency without parsing the
+/// object's type tag.
+public fun coin_type_name<Asset: key + store, CoinType>(
+    _escrow: &EscrowCoordinator<Asset, CoinType>,
+): TypeName {
+    type_name::with_defining_ids<CoinType>()
 }
 
 /// Object ID of the `OwnerCap` bound to this escrow. Set at

@@ -669,6 +669,17 @@ public fun rent_action<Asset: key + store, CoinType>(
 
 // ─── Identity views ──────────────────────────────────────────────────────────
 
+/// Object ID of the asset held in this escrow. Constant from
+/// `integrate` onward — never changes across the rental lifecycle.
+/// Valid in every state including Retired (before `claim_asset`).
+/// SDK use: on-chain compositors that need to know which specific
+/// object is wrapped; off-chain display without querying prior events.
+public fun asset_id<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): ID {
+    lifecycle_state::asset_id(read_state(escrow))
+}
+
 /// Address of the active tenant. `Some` while the lifecycle is Rented
 /// (HandoverOpen or HandoverConfirmed); `None` otherwise.
 public fun current_tenant_addr<Asset: key + store, CoinType>(

@@ -819,11 +819,26 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
 /// HandoverConfirmed → `Capped` (effective time saturates at the
 /// pre-stamped countdown expiry); HandoverOpen → `Accruing` (no cap).
 /// All curve-and-arithmetic logic lives inside `credit_state::used_credit`.
+/// Use `compute_used_credit_at_ms` for devInspect credit simulation
+/// at arbitrary timestamps (decay charts, refund projections).
 public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
     clock:  &Clock,
 ): u64 {
     used_credit_at(escrow, clock::timestamp_ms(clock))
+}
+
+/// Used credit at an arbitrary `timestamp_ms`. Identical semantics to
+/// `compute_used_credit` but accepts a caller-supplied timestamp instead
+/// of `&Clock`. Use via `devInspect` to build credit-decay charts or
+/// project the refund a tenant would receive at a given future time.
+/// On-chain composers that need authoritative current credit should
+/// use `compute_used_credit(&Clock)` instead.
+public fun compute_used_credit_at_ms<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    used_credit_at(escrow, timestamp_ms)
 }
 
 /// Minimum acceptable payment to win the rent for the next bidder,
@@ -836,11 +851,27 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
 ///   - `Retired`           → aborts `ERetiredNoBid` (no pricing regime)
 ///
 /// All pricing arithmetic lives inside `price_state::floor_price`.
+/// Use `compute_floor_price_at_ms` for devInspect price simulation
+/// at arbitrary timestamps (price charts, keeper threshold predictions).
 public fun compute_floor_price<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
     clock:  &Clock,
 ): u64 {
     floor_price_at(escrow, clock::timestamp_ms(clock))
+}
+
+/// Floor price at an arbitrary `timestamp_ms`. Identical semantics to
+/// `compute_floor_price` but accepts a caller-supplied timestamp instead
+/// of `&Clock`. Use via `devInspect` to build price charts, simulate
+/// Dutch-auction descent, or predict keeper thresholds — the `u64`
+/// argument is freely controlled by the caller.
+/// On-chain composers that need the authoritative current price should
+/// use `compute_floor_price(&Clock)` instead.
+public fun compute_floor_price_at_ms<Asset: key + store, CoinType>(
+    escrow:       &EscrowCoordinator<Asset, CoinType>,
+    timestamp_ms: u64,
+): u64 {
+    floor_price_at(escrow, timestamp_ms)
 }
 
 // ─── Earnings views ──────────────────────────────────────────────────────────

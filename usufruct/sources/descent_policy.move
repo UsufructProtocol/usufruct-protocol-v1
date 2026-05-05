@@ -30,6 +30,15 @@ public fun new_descent_window(ceiling_ms: u64): DescentPolicy {
 
 // === Package Functions ===
 
+/// True iff the policy is `Skipped` — no Dutch-auction phase exists;
+/// tenure expiry collapses directly to `Idle`.
+public(package) fun is_skipped(policy: &DescentPolicy): bool {
+    match (policy) {
+        DescentPolicy::Skipped => true,
+        _                      => false,
+    }
+}
+
 /// True iff the descent window has expired — the auction should
 /// collapse to `Idle`.
 ///   - Skipped collapses to true immediately (no auction window
@@ -83,5 +92,15 @@ public(package) fun window_ceiling(policy: &DescentPolicy): u64 {
     match (policy) {
         DescentPolicy::Window { ceiling_ms } => *ceiling_ms,
         DescentPolicy::Skipped               => abort EDescentSkippedNoWindow,
+    }
+}
+
+/// Optional window duration for display purposes.
+///   Window { ceiling_ms } → Some(ceiling_ms)
+///   Skipped               → None (no auction phase exists under this policy)
+public(package) fun window_ceiling_opt(policy: &DescentPolicy): Option<u64> {
+    match (policy) {
+        DescentPolicy::Window { ceiling_ms } => option::some(*ceiling_ms),
+        DescentPolicy::Skipped               => option::none(),
     }
 }

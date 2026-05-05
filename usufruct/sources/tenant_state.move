@@ -5,7 +5,7 @@ module usufruct::tenant_state;
 
 // === Imports ===
 
-use sui::balance::Balance;
+use usufruct::tenant::Tenant;
 
 // === Errors ===
 
@@ -18,12 +18,6 @@ const EInvariantViolation: u64 = 0xDEADC0DE;
 // === Constants ===
 
 // === Structs ===
-
-public struct Tenant<phantom CoinType> has store {
-    cap_id:  ID,
-    address: address,
-    stake:   Balance<CoinType>,
-}
 
 public enum TenantState<phantom CoinType> has store {
     Absence,
@@ -39,25 +33,68 @@ public enum TenantState<phantom CoinType> has store {
 
 // === View Functions ===
 
+/// True iff the slot currently holds a pending bidder (t2). Consumed
+/// by `lifecycle_state::is_t_state_demand` and APT's handover check.
+public(package) fun is_demand<CoinType>(s: &TenantState<CoinType>): bool {
+    match (s) {
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => true,
+        TenantState::Absence                       => false,
+        TenantState::Occupied { t1: _t1 }          => false,
+    }
+}
+
+/// Borrow the current tenant (t1). Aborts if Absence — consumer is
+/// expected to gate via `is_occupied` or `is_demand` first.
+public(package) fun current<CoinType>(s: &TenantState<CoinType>): &Tenant<CoinType> {
+    match (s) {
+        TenantState::Occupied { t1 }                 => t1,
+        TenantState::Demand   { t1, t2: _, handover_countdown_expiry: _ } => t1,
+        TenantState::Absence                          => abort EInvariantViolation,
+    }
+}
+
+/// Borrow the pending tenant (t2). Aborts unless Demand.
+public(package) fun pending<CoinType>(s: &TenantState<CoinType>): &Tenant<CoinType> {
+    match (s) {
+        TenantState::Demand { t1: _, t2, handover_countdown_expiry: _ } => t2,
+        TenantState::Absence                              => abort EInvariantViolation,
+        TenantState::Occupied { t1: _t1 }                 => abort EInvariantViolation,
+    }
+}
+
+/// Read the handover-countdown expiry (absolute timestamp at which the
+/// pending bid auto-wins). Aborts unless Demand. Consumed by APT's
+/// Check 1 and `compute_used_credit`.
+public(package) fun demand_expiry_ms<CoinType>(s: &TenantState<CoinType>): u64 {
+    match (s) {
+        TenantState::Demand { t1: _, t2: _, handover_countdown_expiry } => *handover_countdown_expiry,
+        TenantState::Absence                              => abort EInvariantViolation,
+        TenantState::Occupied { t1: _t1 }                 => abort EInvariantViolation,
+    }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
+
+/// Drop an Absence state. Aborts if the state is not Absence — sanity
+/// check that the caller reached the expected terminal position. Used
+/// by `escrow_coordinator::claim_asset` after `decompose_retired` to
+/// release the `TenantState` field; previously test-only, promoted
+/// because the production claim path needs to consume the state.
+public(package) fun consume_absence<CoinType>(s: TenantState<CoinType>) {
+    match (s) {
+        TenantState::Absence                       => (),
+        TenantState::Occupied { t1: _t1 }          => abort EInvariantViolation,
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
+    }
+}
 
 /// Construct the initial `TenantState`. Only entry point — once
 /// active, the slot rotates through `occupy` / `demand` / `redemand`
 /// / `reoccupy` / `vacate`.
 public(package) fun absence<CoinType>(): TenantState<CoinType> {
     TenantState::Absence
-}
-
-/// Bundle raw tenant data into a `Tenant`. Called by the layer above
-/// before passing a new entrant into any transition.
-public(package) fun new_tenant<CoinType>(
-    cap_id:  ID,
-    address: address,
-    stake:   Balance<CoinType>,
-): Tenant<CoinType> {
-    Tenant { cap_id, address, stake }
 }
 
 /// Transition Absence → Occupied.
@@ -132,34 +169,6 @@ public(package) fun vacate<CoinType>(
     }
 }
 
-/// Split `amount` off the Tenant's stake. Returns the (reduced)
-/// Tenant and the separated Balance. The caller decides where the
-/// split portion goes (owner_earnings / fee_inbox / etc.). Aborts if
-/// `amount > stake.value` via `balance::split`.
-public(package) fun split<CoinType>(
-    t:      Tenant<CoinType>,
-    amount: u64,
-): (Tenant<CoinType>, Balance<CoinType>) {
-    let Tenant { cap_id, address, mut stake } = t;
-    let separated = stake.split(amount);
-    (Tenant { cap_id, address, stake }, separated)
-}
-
-/// Destructure a `Tenant` into its three components. The caller
-/// decides what to do with the Balance — refund whole, route to
-/// owner_earnings / fee_inbox after upstream `split` calls, etc.
-/// Tenant.move stays agnostic to `Coin`, `transfer`, and `TxContext`.
-public(package) fun unbundle<CoinType>(
-    tenant: Tenant<CoinType>,
-): (ID, address, Balance<CoinType>) {
-    let Tenant { cap_id, address, stake } = tenant;
-    (cap_id, address, stake)
-}
-
-public(package) fun cap_id<CoinType>(t: &Tenant<CoinType>):      ID      { t.cap_id }
-public(package) fun addr<CoinType>(t: &Tenant<CoinType>):        address { t.address }
-public(package) fun stake_value<CoinType>(t: &Tenant<CoinType>): u64     { t.stake.value() }
-
 // === Private Functions ===
 
 // === Test Functions ===
@@ -179,26 +188,5 @@ public fun is_occupied<CoinType>(s: &TenantState<CoinType>): bool {
         TenantState::Occupied { t1: _t1 }          => true,
         TenantState::Absence                       => false,
         TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => false,
-    }
-}
-
-#[test_only]
-public fun is_demand<CoinType>(s: &TenantState<CoinType>): bool {
-    match (s) {
-        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => true,
-        TenantState::Absence                       => false,
-        TenantState::Occupied { t1: _t1 }          => false,
-    }
-}
-
-/// Drop an Absence state at the end of a test. Aborts if the state is
-/// not Absence — sanity check that the test reached the expected
-/// terminal position.
-#[test_only]
-public fun consume_absence<CoinType>(s: TenantState<CoinType>) {
-    match (s) {
-        TenantState::Absence                       => (),
-        TenantState::Occupied { t1: _t1 }          => abort EInvariantViolation,
-        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
     }
 }

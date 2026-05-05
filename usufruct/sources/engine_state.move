@@ -3,31 +3,18 @@
 
 /// Engine state and coordination.
 ///
-/// `EngineState` aggregates everything the protocol's coordination
-/// layer mutates or consults: the lifecycle state machine, the owner's
-/// earnings, the integration config, and the immutable identity/anchor
-/// metadata. Two variants:
+/// `EngineState` aggregates only what transitions: the lifecycle state
+/// machine and the owner's earnings.  Immutable escrow metadata (config,
+/// fee_inbox_id, integrated_at_ms) lives on the outer `EscrowCoordinator`
+/// where it is written once; escrow_id is always `object::id(&escrow)`.
 ///
-///   Active   — engine is running; full operational state available.
-///   Inactive — asset has been retired; only the asset and the owner's
-///              residual earnings persist, awaiting `unwrap_for_claim`.
-///
-/// The `Active → Inactive` transition is one-way and fires at exactly
-/// two boundaries:
-///   1. `do_retire_immediately` (owner retires from Idle/AtDutch).
-///   2. `do_tenure_expiry` with the retiring flag set (a tenure that
-///      ended after the owner signalled retire mid-rental).
-///
-/// `Inactive` is terminal: no transitions out; only `unwrap_for_claim`
-/// consumes it. Re-running an integration is a fresh `EngineState`,
-/// not a transition from Inactive.
+/// Two variants:
+///   Active   — engine is running.
+///   Inactive — asset has been retired; only asset + owner residual persist.
 ///
 /// Function signatures take `EngineState` by value (consume + return)
-/// or by reference for views — never `&mut`. The `Option<EngineState>`
-/// take/put discipline lives at the outer layer (`escrow.move`) per the
-/// canonical Sui Move pattern (see `lifecycle_state` for the analogous
-/// convention with `AssetState` and `TenantState` — neither is wrapped
-/// in `Option` because the take/put boundary lives one layer above).
+/// or by reference for views — never `&mut`.  The immutable escrow
+/// context is passed explicitly by the coordinator.
 module usufruct::engine_state;
 
 // === Imports ===
@@ -47,7 +34,7 @@ use usufruct::{
     lifecycle_state::{Self, LifecycleState},
     math,
     owner::{Self, Owner},
-    owner_cap::{Self, OwnerCap},
+    owner_cap::OwnerCap,
     pending_transition::{Self, PendingTransition},
     phases,
     price_state,
@@ -79,22 +66,18 @@ const ENoEarnings:              u64 = 13;
 
 // === Constants ===
 
-/// Protocol fee — 10 % of `used_credit` at every boundary that touches
-/// a tenant's stake (handover, tenure expiry).
 const PROTOCOL_FEE_BPS: u64 = 1_000;
 const BPS_PER_UNIT:     u64 = 10_000;
 
 // === Structs ===
 
-/// Engine state. See module docstring for the Active/Inactive split.
+/// Mutable engine state. Immutable escrow context (config, fee_inbox_id,
+/// integrated_at_ms, escrow_id) lives at the coordinator layer and is
+/// passed explicitly to functions that need it.
 public enum EngineState<Asset: key + store, phantom CoinType> has store {
     Active {
-        l_state:          LifecycleState<Asset, CoinType>,
-        owner:            Owner<CoinType>,
-        config:           IntegrationConfig,
-        escrow_id:        ID,
-        fee_inbox_id:     ID,
-        integrated_at_ms: u64,
+        l_state: LifecycleState<Asset, CoinType>,
+        owner:   Owner<CoinType>,
     },
     Inactive {
         asset: Asset,
@@ -214,21 +197,14 @@ public struct EarningsWithdrawn has copy, drop {
 // ─── Constructor ──────────────────────────────────────────────────────────────
 
 /// Construct a fresh Active engine. Called once at integrate time.
+/// Immutable escrow context is stored by the caller, not here.
 public(package) fun new<Asset: key + store, CoinType>(
-    asset:            Asset,
-    config:           IntegrationConfig,
-    fee_inbox_id:     ID,
-    owner_cap_id:     ID,
-    integrated_at_ms: u64,
-    escrow_id:        ID,
+    asset:        Asset,
+    owner_cap_id: ID,
 ): EngineState<Asset, CoinType> {
     EngineState::Active {
-        l_state:          lifecycle_state::new<Asset, CoinType>(asset),
-        owner:            owner::new<CoinType>(owner_cap_id),
-        config,
-        escrow_id,
-        fee_inbox_id,
-        integrated_at_ms,
+        l_state: lifecycle_state::new<Asset, CoinType>(asset),
+        owner:   owner::new<CoinType>(owner_cap_id),
     }
 }
 
@@ -252,55 +228,14 @@ public(package) fun is_inactive<Asset: key + store, CoinType>(
     }
 }
 
-// ─── Identity views (defined in every variant) ────────────────────────────────
+// ─── Identity views ───────────────────────────────────────────────────────────
 
-/// Object ID of the wrapped asset. Defined in every state — for
-/// Active, reads through the lifecycle's `asset_id`; for Inactive,
-/// reads `object::id` of the held asset directly.
 public(package) fun asset_id<Asset: key + store, CoinType>(
     s: &EngineState<Asset, CoinType>,
 ): ID {
     match (s) {
         EngineState::Active   { l_state, .. } => lifecycle_state::asset_id(l_state),
         EngineState::Inactive { asset,   .. } => object::id(asset),
-    }
-}
-
-// ─── Active-only views ────────────────────────────────────────────────────────
-
-public(package) fun config<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
-): &IntegrationConfig {
-    match (s) {
-        EngineState::Active   { config, .. } => config,
-        EngineState::Inactive { .. }         => abort unreachable::unreachable(),
-    }
-}
-
-public(package) fun escrow_id<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
-): ID {
-    match (s) {
-        EngineState::Active   { escrow_id, .. } => *escrow_id,
-        EngineState::Inactive { .. }            => abort unreachable::unreachable(),
-    }
-}
-
-public(package) fun fee_inbox_id<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
-): ID {
-    match (s) {
-        EngineState::Active   { fee_inbox_id, .. } => *fee_inbox_id,
-        EngineState::Inactive { .. }               => abort unreachable::unreachable(),
-    }
-}
-
-public(package) fun integrated_at_ms<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
-): u64 {
-    match (s) {
-        EngineState::Active   { integrated_at_ms, .. } => *integrated_at_ms,
-        EngineState::Inactive { .. }                   => abort unreachable::unreachable(),
     }
 }
 
@@ -333,14 +268,15 @@ public(package) fun owner_cap_id<Asset: key + store, CoinType>(
 
 // ─── Pricing views ────────────────────────────────────────────────────────────
 
-/// Used credit at `timestamp_ms`. Aborts unless the lifecycle is Rented.
+/// Used credit at `timestamp_ms`. Caller supplies `config` (lives on Escrow).
 public(package) fun used_credit_at<Asset: key + store, CoinType>(
     s:            &EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
     timestamp_ms: u64,
 ): u64 {
     match (s) {
         EngineState::Inactive { .. } => abort ENotRented,
-        EngineState::Active { l_state, config, .. } => {
+        EngineState::Active { l_state, .. } => {
             assert!(lifecycle_state::is_rented(l_state), ENotRented);
             let stake          = lifecycle_state::current_stake_value(l_state);
             let phase_start_ms = lifecycle_state::phase_start_ms(l_state);
@@ -354,14 +290,15 @@ public(package) fun used_credit_at<Asset: key + store, CoinType>(
     }
 }
 
-/// Floor price at `timestamp_ms`. Aborts on Retired (Inactive).
+/// Floor price at `timestamp_ms`. Caller supplies `config`.
 public(package) fun floor_price_at<Asset: key + store, CoinType>(
     s:            &EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
     timestamp_ms: u64,
 ): u64 {
     match (s) {
         EngineState::Inactive { .. } => abort ERetiredNoBid,
-        EngineState::Active { l_state, config, .. } => {
+        EngineState::Active { l_state, .. } => {
             let ps = if (lifecycle_state::is_a_state_idle(l_state)) {
                 price_state::rest()
             } else if (lifecycle_state::is_a_state_handover_open(l_state)) {
@@ -374,8 +311,6 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
                     lifecycle_state::phase_start_ms(l_state),
                 )
             } else {
-                // Retired sub-state inside Active is unreachable — Active
-                // never contains a Retired lifecycle.
                 abort unreachable::unreachable()
             };
             price_state::floor_price(&ps, config, timestamp_ms)
@@ -383,7 +318,6 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
     }
 }
 
-/// Pure 90/10 split of `amount` into `(owner_share, protocol_fee)`.
 public(package) fun split_fee(amount: u64): (u64, u64) {
     let fee   = math::mul_div(amount, PROTOCOL_FEE_BPS, BPS_PER_UNIT);
     let owner = amount - fee;
@@ -396,13 +330,15 @@ public(package) fun bps_denominator(): u64  { BPS_PER_UNIT }
 // ─── APT and pending detection ────────────────────────────────────────────────
 
 /// Detect the single transition that is due at `now`, if any.
+/// Caller supplies `config` (lives on Escrow).
 public(package) fun next_pending<Asset: key + store, CoinType>(
-    s:     &EngineState<Asset, CoinType>,
-    clock: &Clock,
+    s:      &EngineState<Asset, CoinType>,
+    config: &IntegrationConfig,
+    clock:  &Clock,
 ): Option<PendingTransition> {
     match (s) {
         EngineState::Inactive { .. } => option::none(),
-        EngineState::Active { l_state, config, .. } => {
+        EngineState::Active { l_state, .. } => {
             let now = clock::timestamp_ms(clock);
 
             if (lifecycle_state::is_rented(l_state) && lifecycle_state::is_t_state_demand(l_state)) {
@@ -435,18 +371,21 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
 
 /// Permissionless settler. Drives every elapsed lazy transition.
 public(package) fun apply_pending_transitions<Asset: key + store, CoinType>(
-    state: EngineState<Asset, CoinType>,
-    clock: &Clock,
-    ctx:   &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    clock:        &Clock,
+    ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
     let mut current = state;
     let mut i = 0u8;
     loop {
         if (is_inactive(&current)) break;
-        let pending = next_pending(&current, clock);
+        let pending = next_pending(&current, config, clock);
         if (option::is_some(&pending)) {
             assert!(i < 3, unreachable::unreachable());
-            current = fire(current, option::destroy_some(pending), ctx);
+            current = fire(current, config, escrow_id, fee_inbox_id, option::destroy_some(pending), ctx);
             i = i + 1;
         } else {
             break
@@ -456,89 +395,96 @@ public(package) fun apply_pending_transitions<Asset: key + store, CoinType>(
 }
 
 fun fire<Asset: key + store, CoinType>(
-    state: EngineState<Asset, CoinType>,
-    t:     PendingTransition,
-    ctx:   &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    t:            PendingTransition,
+    ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
     let boundary_ms = pending_transition::boundary_ms(&t);
     if (pending_transition::is_handover(&t)) {
-        do_handover(state, boundary_ms, ctx)
+        do_handover(state, config, escrow_id, fee_inbox_id, boundary_ms, ctx)
     } else if (pending_transition::is_tenure(&t)) {
-        do_tenure_expiry(state, boundary_ms, ctx)
+        do_tenure_expiry(state, escrow_id, fee_inbox_id, boundary_ms, ctx)
     } else {
-        do_auction_expiry(state, boundary_ms)
+        do_auction_expiry(state, escrow_id, boundary_ms)
     }
 }
 
 // ─── Public action executors ──────────────────────────────────────────────────
 
-/// Single entry point to become tenant or place a bid.
 public(package) fun execute_rent<Asset: key + store, CoinType>(
-    state:   EngineState<Asset, CoinType>,
-    payment: Coin<CoinType>,
-    clock:   &Clock,
-    ctx:     &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    payment:      Coin<CoinType>,
+    clock:        &Clock,
+    ctx:          &mut TxContext,
 ): (EngineState<Asset, CoinType>, TenantCap) {
-    let state = apply_pending_transitions(state, clock, ctx);
+    let state = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
     if (is_inactive(&state)) { abort ERetiredNoBid };
 
     let now   = clock::timestamp_ms(clock);
-    let floor = floor_price_at(&state, now);
+    let floor = floor_price_at(&state, config, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
     let action = lifecycle_state::rent_action(lifecycle(&state));
     if (rent_action::is_install(&action)) {
-        do_install_new_tenant(state, payment, floor, now, ctx)
+        do_install_new_tenant(state, escrow_id, payment, floor, now, ctx)
     } else if (rent_action::is_place_bid(&action)) {
-        do_place_bid(state, payment, floor, now, ctx)
+        do_place_bid(state, config, escrow_id, payment, floor, now, ctx)
     } else if (rent_action::is_supersede_bid(&action)) {
-        do_supersede_bid(state, payment, floor, now, ctx)
+        do_supersede_bid(state, escrow_id, fee_inbox_id, payment, floor, now, ctx)
     } else {
-        // Retired action — unreachable: floor_price_at would have aborted
-        // earlier (Inactive guarded above; Retired in Active is impossible).
         abort unreachable::unreachable()
     }
 }
 
-/// Owner-gated retire entry.
 public(package) fun execute_retire<Asset: key + store, CoinType>(
-    state: EngineState<Asset, CoinType>,
-    clock: &Clock,
-    ctx:   &mut TxContext,
+    state:            EngineState<Asset, CoinType>,
+    config:           &IntegrationConfig,
+    escrow_id:        ID,
+    fee_inbox_id:     ID,
+    integrated_at_ms: u64,
+    clock:            &Clock,
+    ctx:              &mut TxContext,
 ): EngineState<Asset, CoinType> {
-    let state = apply_pending_transitions(state, clock, ctx);
+    let state  = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
     let now_ms = clock::timestamp_ms(clock);
     match (state) {
         EngineState::Inactive { asset: _a, owner: _o } => abort EAlreadyRetired,
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             assert!(
-                retire_policy::is_unlocked(config::retire(&config), integrated_at_ms, now_ms),
+                retire_policy::is_unlocked(config::retire(config), integrated_at_ms, now_ms),
                 ERetireFloorNotElapsed,
             );
             let route = lifecycle_state::retire_route(&l_state);
-            let s = EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms };
+            let s = EngineState::Active { l_state, owner };
             if (retire_route::is_immediate(&route)) {
-                do_retire_immediately(s, now_ms, ctx)
+                do_retire_immediately(s, escrow_id, now_ms, ctx)
             } else if (retire_route::is_deferred(&route)) {
-                do_set_retiring_flag(s, now_ms, ctx)
+                do_set_retiring_flag(s, escrow_id, now_ms, ctx)
             } else {
-                // AlreadyRetired branch — unreachable since we matched on Active.
                 abort unreachable::unreachable()
             }
         },
     }
 }
 
-/// Tenant-side asset borrow.
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
-    state:      EngineState<Asset, CoinType>,
-    tenant_cap: &TenantCap,
-    clock:      &Clock,
-    ctx:        &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    tenant_cap:   &TenantCap,
+    clock:        &Clock,
+    ctx:          &mut TxContext,
 ): (EngineState<Asset, CoinType>, Asset, AssetReceipt) {
-    let state = apply_pending_transitions(state, clock, ctx);
+    let state = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
     match (state) {
         EngineState::Inactive { asset: _a, owner: _o } => abort EStaleTenantCap,
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             assert!(tenant_cap::escrow_id(tenant_cap) == escrow_id, EWrongEscrowTenantCap);
             let cap_id = object::id(tenant_cap);
 
@@ -551,31 +497,20 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
 
             event::emit(AssetBorrowed { escrow_id, tenant_cap_id: cap_id, tenant: tenant_addr });
 
-            (
-                EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms },
-                asset_out,
-                receipt,
-            )
+            (EngineState::Active { l_state: new_l, owner }, asset_out, receipt)
         },
     }
 }
 
-/// Tenant-side asset return.
 public(package) fun execute_return<Asset: key + store, CoinType>(
     state:      EngineState<Asset, CoinType>,
+    escrow_id:  ID,
     asset_in:   Asset,
     receipt_in: AssetReceipt,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Inactive { asset: _a, owner: _o } => {
-            // Returning to a retired escrow is impossible by construction:
-            // borrow_asset (which mints AssetReceipt) is gated on Active,
-            // and the receipt is hot-potato (must reach return_asset within
-            // the same PTB — no APT runs in between). Treat as receipt
-            // mismatch; abort consumes asset_in and receipt_in by divergence.
-            abort EReceiptEscrowMismatch
-        },
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Inactive { asset: _a, owner: _o } => abort EReceiptEscrowMismatch,
+        EngineState::Active { l_state, owner } => {
             assert!(asset::receipt_escrow_id(&receipt_in)  == escrow_id,             EReceiptEscrowMismatch);
             assert!(asset::receipt_asset_id(&receipt_in)   == object::id(&asset_in), EReceiptAssetMismatch);
             assert!(lifecycle_state::is_rented(&l_state), unreachable::unreachable());
@@ -586,82 +521,70 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
 
             event::emit(AssetReturned { escrow_id, tenant_cap_id, tenant: tenant_addr });
 
-            EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state: new_l, owner }
         },
     }
 }
 
-/// Burn a stale TenantCap for gas recovery.
 public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
-    state: EngineState<Asset, CoinType>,
-    cap:   TenantCap,
-    clock: &Clock,
-    ctx:   &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    cap:          TenantCap,
+    clock:        &Clock,
+    ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
-    let state = apply_pending_transitions(state, clock, ctx);
+    let state = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
     match (state) {
         EngineState::Inactive { asset, owner } => {
-            // Inactive — no live caps. Any cap belonging to this escrow is
-            // stale. (If the cap belongs to a different escrow, the caller
-            // (escrow.move) is expected to verify before calling — but we
-            // also can't verify here without escrow_id, so trust the caller.)
             tenant_cap::burn(cap, ctx);
             EngineState::Inactive { asset, owner }
         },
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             assert!(tenant_cap::escrow_id(&cap) == escrow_id, EWrongEscrowTenantCap);
             let cap_id = object::id(&cap);
             let auth = lifecycle_state::cap_authorization(&l_state, cap_id);
             if (!cap_authorization::is_stale(&auth)) { abort ETenantCapNotStale };
             tenant_cap::burn(cap, ctx);
-            EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state, owner }
         },
     }
 }
 
-/// Owner-gated earnings withdrawal. Emits EarningsWithdrawn with the
-/// engine's escrow_id (Active) or via the asset's wrapped escrow_id
-/// stamp (Inactive — read at the lifecycle layer's wrap time).
 public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
-    state:     EngineState<Asset, CoinType>,
-    owner_cap: &OwnerCap,
-    clock:     &Clock,
-    ctx:       &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    owner_cap:    &OwnerCap,
+    clock:        &Clock,
+    ctx:          &mut TxContext,
 ): (EngineState<Asset, CoinType>, Coin<CoinType>) {
-    let state = apply_pending_transitions(state, clock, ctx);
+    let state        = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
 
     match (state) {
-        EngineState::Active { l_state, mut owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, mut owner } => {
             let amount = owner::value(&owner);
             assert!(amount > 0, ENoEarnings);
             let coin = owner::withdraw(&mut owner, owner_cap, ctx);
-            event::emit(EarningsWithdrawn {
-                escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms,
-            });
-            (
-                EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms },
-                coin,
-            )
+            event::emit(EarningsWithdrawn { escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms });
+            (EngineState::Active { l_state, owner }, coin)
         },
         EngineState::Inactive { asset, mut owner } => {
             let amount = owner::value(&owner);
             assert!(amount > 0, ENoEarnings);
             let coin = owner::withdraw(&mut owner, owner_cap, ctx);
-            // Inactive lacks a stored escrow_id; read it from the OwnerCap
-            // (the cap-escrow binding stamped at integrate time).
-            let escrow_id = owner_cap::escrow_id(owner_cap);
-            event::emit(EarningsWithdrawn {
-                escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms,
-            });
+            event::emit(EarningsWithdrawn { escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms });
             (EngineState::Inactive { asset, owner }, coin)
         },
     }
 }
 
-/// Terminal: consume an Inactive engine and return (asset, residual earnings coin).
+/// Terminal: consume an Inactive engine and return (asset, residual earnings).
 public(package) fun unwrap_for_claim<Asset: key + store, CoinType>(
     state:     EngineState<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -673,11 +596,11 @@ public(package) fun unwrap_for_claim<Asset: key + store, CoinType>(
             owner::destroy_empty(owner);
             (asset, coin)
         },
-        EngineState::Active { l_state: _l, owner: _o, config: _, escrow_id: _, fee_inbox_id: _, integrated_at_ms: _ } => abort ENotRetired,
+        EngineState::Active { l_state: _l, owner: _o } => abort ENotRetired,
     }
 }
 
-// ─── Cap-authorization view (for SDK) ─────────────────────────────────────────
+// ─── Cap-authorization view ───────────────────────────────────────────────────
 
 public(package) fun cap_authorization<Asset: key + store, CoinType>(
     s:      &EngineState<Asset, CoinType>,
@@ -691,24 +614,21 @@ public(package) fun cap_authorization<Asset: key + store, CoinType>(
 
 // === Private Functions ===
 
-// ─── do_* dispatch (rent path) ───────────────────────────────────────────────
-
-/// Idle | AtDutchAuction → Rented{HandoverOpen}. Active stays Active.
 fun do_install_new_tenant<Asset: key + store, CoinType>(
-    state:   EngineState<Asset, CoinType>,
-    payment: Coin<CoinType>,
-    floor:   u64,
-    now:     u64,
-    ctx:     &mut TxContext,
+    state:     EngineState<Asset, CoinType>,
+    escrow_id: ID,
+    payment:   Coin<CoinType>,
+    floor:     u64,
+    now:       u64,
+    ctx:       &mut TxContext,
 ): (EngineState<Asset, CoinType>, TenantCap) {
     match (state) {
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             let price_paid  = coin::value(&payment);
             let tenant_addr = ctx.sender();
 
             let (cap, cap_id) = tenant_cap::new(escrow_id, tenant_addr, ctx);
             let t = tenant::new<CoinType>(cap_id, tenant_addr, coin::into_balance(payment));
-
             let new_l = lifecycle_state::start_rent<Asset, CoinType>(l_state, t, now, escrow_id);
 
             event::emit(RentStarted {
@@ -716,33 +636,31 @@ fun do_install_new_tenant<Asset: key + store, CoinType>(
                 phase_start_ms: now, price_paid, floor_price: floor,
             });
 
-            (
-                EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms },
-                cap,
-            )
+            (EngineState::Active { l_state: new_l, owner }, cap)
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
 }
 
-/// Rented{HandoverOpen} → Rented{HandoverConfirmed}. Active stays Active.
 fun do_place_bid<Asset: key + store, CoinType>(
-    state:   EngineState<Asset, CoinType>,
-    payment: Coin<CoinType>,
-    floor:   u64,
-    now:     u64,
-    ctx:     &mut TxContext,
+    state:     EngineState<Asset, CoinType>,
+    config:    &IntegrationConfig,
+    escrow_id: ID,
+    payment:   Coin<CoinType>,
+    floor:     u64,
+    now:       u64,
+    ctx:       &mut TxContext,
 ): (EngineState<Asset, CoinType>, TenantCap) {
     match (state) {
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             assert!(!lifecycle_state::is_retiring(&l_state), ERetireFlagBlocksBid);
             let current_cap_id   = lifecycle_state::current_cap_id(&l_state);
             let current_addr_val = lifecycle_state::current_addr(&l_state);
             let current_stake    = lifecycle_state::current_stake_value(&l_state);
             let phase_start      = lifecycle_state::phase_start_ms(&l_state);
-            let tenure           = config::tenure_ceiling(&config);
+            let tenure           = config::tenure_ceiling(config);
             let expiry           = handover_policy::expiry_at(
-                config::handover(&config), now, phase_start, tenure,
+                config::handover(config), now, phase_start, tenure,
             );
 
             let pending_addr = ctx.sender();
@@ -750,7 +668,6 @@ fun do_place_bid<Asset: key + store, CoinType>(
 
             let (cap, cap_id) = tenant_cap::new(escrow_id, pending_addr, ctx);
             let t = tenant::new<CoinType>(cap_id, pending_addr, coin::into_balance(payment));
-
             let new_l = lifecycle_state::place_bid<Asset, CoinType>(l_state, t, expiry);
 
             event::emit(BidPlaced {
@@ -767,25 +684,23 @@ fun do_place_bid<Asset: key + store, CoinType>(
                 timestamp_ms:              now,
             });
 
-            (
-                EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms },
-                cap,
-            )
+            (EngineState::Active { l_state: new_l, owner }, cap)
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
 }
 
-/// Rented{HandoverConfirmed} supersede. Active stays Active.
 fun do_supersede_bid<Asset: key + store, CoinType>(
-    state:   EngineState<Asset, CoinType>,
-    payment: Coin<CoinType>,
-    floor:   u64,
-    now:     u64,
-    ctx:     &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    payment:      Coin<CoinType>,
+    floor:        u64,
+    now:          u64,
+    ctx:          &mut TxContext,
 ): (EngineState<Asset, CoinType>, TenantCap) {
     match (state) {
-        EngineState::Active { l_state, mut owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, mut owner } => {
             let protected_cap_id      = lifecycle_state::current_cap_id(&l_state);
             let protected_addr        = lifecycle_state::current_addr(&l_state);
             let protected_stake       = lifecycle_state::current_stake_value(&l_state);
@@ -800,7 +715,6 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 
             let (cap, cap_id) = tenant_cap::new(escrow_id, new_bidder, ctx);
             let t = tenant::new<CoinType>(cap_id, new_bidder, coin::into_balance(payment));
-
             let (new_l, refund) = lifecycle_state::supersede_bid<Asset, CoinType>(l_state, t, existing_expiry);
             refund_state::distribute(refund, &mut owner, fee_inbox_id, ctx);
 
@@ -821,28 +735,25 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
                 timestamp_ms:              now,
             });
 
-            (
-                EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms },
-                cap,
-            )
+            (EngineState::Active { l_state: new_l, owner }, cap)
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
 }
 
-// ─── Boundary handlers ───────────────────────────────────────────────────────
-
-/// Handover boundary. Active stays Active.
 fun do_handover<Asset: key + store, CoinType>(
-    state:       EngineState<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    boundary_ms:  u64,
+    ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
-    let used_credit = used_credit_at(&state, boundary_ms);
+    let used_credit = used_credit_at(&state, config, boundary_ms);
     let (owner_amount, fee_amount) = split_fee(used_credit);
 
     match (state) {
-        EngineState::Active { l_state, mut owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, mut owner } => {
             let displaced_cap_id      = lifecycle_state::current_cap_id(&l_state);
             let displaced_addr        = lifecycle_state::current_addr(&l_state);
             let displaced_phase_start = lifecycle_state::phase_start_ms(&l_state);
@@ -857,12 +768,9 @@ fun do_handover<Asset: key + store, CoinType>(
             let new_tenant_cap_id = lifecycle_state::current_cap_id(&new_l);
             let new_tenant_addr   = lifecycle_state::current_addr(&new_l);
             let new_tenant_stake  = lifecycle_state::current_stake_value(&new_l);
-
-            // After handover the lifecycle is in HandoverOpen; price regime is
-            // Ascending(current_stake_value).
             let new_rent_price = {
                 let ps = price_state::ascending(new_tenant_stake);
-                price_state::floor_price(&ps, &config, boundary_ms)
+                price_state::floor_price(&ps, config, boundary_ms)
             };
 
             event::emit(HandoverCompleted {
@@ -881,20 +789,21 @@ fun do_handover<Asset: key + store, CoinType>(
                 timestamp_ms:   boundary_ms,
             });
 
-            EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state: new_l, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
 }
 
-/// Tenure boundary. May transition Active → Inactive (if retiring flag was set).
 fun do_tenure_expiry<Asset: key + store, CoinType>(
-    state:       EngineState<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    boundary_ms:  u64,
+    ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, mut owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, mut owner } => {
             let principal              = lifecycle_state::current_stake_value(&l_state);
             let tenant_addr            = lifecycle_state::current_addr(&l_state);
             let tenant_cap_id          = lifecycle_state::current_cap_id(&l_state);
@@ -921,67 +830,60 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
                 event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                 EngineState::Inactive { asset, owner }
             } else {
-                EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+                EngineState::Active { l_state: new_l, owner }
             }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
 }
 
-/// Auction boundary. Active stays Active.
 fun do_auction_expiry<Asset: key + store, CoinType>(
     state:       EngineState<Asset, CoinType>,
+    escrow_id:   ID,
     boundary_ms: u64,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             let phase_start_ms = lifecycle_state::phase_start_ms(&l_state);
             let last_acq_price = lifecycle_state::last_acq_price_of_at_dutch(&l_state);
             let new_l          = lifecycle_state::expire_auction(l_state);
-
             event::emit(AuctionExpired { escrow_id, phase_start_ms, last_acq_price, timestamp_ms: boundary_ms });
-
-            EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state: new_l, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
 }
 
-/// Retire from Idle | AtDutchAuction → Inactive. Active → Inactive.
 fun do_retire_immediately<Asset: key + store, CoinType>(
     state:        EngineState<Asset, CoinType>,
+    escrow_id:    ID,
     timestamp_ms: u64,
     ctx:          &TxContext,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, owner, config: _, escrow_id, fee_inbox_id: _, integrated_at_ms: _ } => {
-            // Transition lifecycle to Retired (intermediate), then extract asset.
+        EngineState::Active { l_state, owner } => {
             let retired_l = lifecycle_state::retire_now(l_state);
             let asset     = lifecycle_state::take_asset(retired_l);
-
             event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), timestamp_ms });
             event::emit(AssetRetired  { escrow_id, timestamp_ms });
-
             EngineState::Inactive { asset, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
 }
 
-/// Set the retiring flag on an active rental. Active stays Active.
 fun do_set_retiring_flag<Asset: key + store, CoinType>(
     state:        EngineState<Asset, CoinType>,
+    escrow_id:    ID,
     timestamp_ms: u64,
     ctx:          &TxContext,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             assert!(!lifecycle_state::is_retiring(&l_state), EAlreadyRetired);
             let new_l = lifecycle_state::set_retiring(l_state);
-
             event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), timestamp_ms });
-
-            EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state: new_l, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
@@ -996,28 +898,34 @@ public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
 
 #[test_only]
 public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
-    state:       EngineState<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    boundary_ms:  u64,
+    ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
-    do_handover(state, boundary_ms, ctx)
+    do_handover(state, config, escrow_id, fee_inbox_id, boundary_ms, ctx)
 }
 
 #[test_only]
 public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinType>(
-    state:       EngineState<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    state:        EngineState<Asset, CoinType>,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    boundary_ms:  u64,
+    ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
-    do_tenure_expiry(state, boundary_ms, ctx)
+    do_tenure_expiry(state, escrow_id, fee_inbox_id, boundary_ms, ctx)
 }
 
 #[test_only]
 public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
     state:       EngineState<Asset, CoinType>,
+    escrow_id:   ID,
     boundary_ms: u64,
 ): EngineState<Asset, CoinType> {
-    do_auction_expiry(state, boundary_ms)
+    do_auction_expiry(state, escrow_id, boundary_ms)
 }
 
 #[test_only]
@@ -1025,11 +933,12 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     state:          EngineState<Asset, CoinType>,
     tenant_in:      tenant::Tenant<CoinType>,
     phase_start_ms: u64,
+    escrow_id:      ID,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             let new_l = lifecycle_state::start_rent(l_state, tenant_in, phase_start_ms, escrow_id);
-            EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state: new_l, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
@@ -1042,9 +951,9 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     handover_countdown_expiry: u64,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             let new_l = lifecycle_state::place_bid(l_state, tenant_in, handover_countdown_expiry);
-            EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state: new_l, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
@@ -1057,14 +966,15 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     fee_amount:         u64,
     last_acq_price:     u64,
     new_phase_start_ms: u64,
+    escrow_id:          ID,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             let (new_l, refund) = lifecycle_state::expire_tenure(
                 l_state, owner_amount, fee_amount, last_acq_price, new_phase_start_ms, escrow_id,
             );
             refund_state::destroy_for_testing(refund);
-            EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state: new_l, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }
@@ -1075,7 +985,7 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
     state: EngineState<Asset, CoinType>,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, owner, config: _, escrow_id: _, fee_inbox_id: _, integrated_at_ms: _ } => {
+        EngineState::Active { l_state, owner } => {
             let retired_l = lifecycle_state::retire_now(l_state);
             let asset = lifecycle_state::take_asset(retired_l);
             EngineState::Inactive { asset, owner }
@@ -1089,9 +999,9 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     state: EngineState<Asset, CoinType>,
 ): EngineState<Asset, CoinType> {
     match (state) {
-        EngineState::Active { l_state, owner, config, escrow_id, fee_inbox_id, integrated_at_ms } => {
+        EngineState::Active { l_state, owner } => {
             let new_l = lifecycle_state::set_retiring(l_state);
-            EngineState::Active { l_state: new_l, owner, config, escrow_id, fee_inbox_id, integrated_at_ms }
+            EngineState::Active { l_state: new_l, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
     }

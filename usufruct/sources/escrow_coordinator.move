@@ -15,6 +15,7 @@ use usufruct::{
     cap_authorization::{Self, CapAuthorization},
     config::{Self, IntegrationConfig},
     credit_state,
+    curve_shape::CurveShape,
     descent_policy,
     handover_policy,
     lifecycle_state::{Self, LifecycleState},
@@ -23,7 +24,7 @@ use usufruct::{
     owner_cap::{Self, OwnerCap},
     pending_transition::{Self, PendingTransition},
     phases,
-    price_function,
+    price_function::{Self, PriceFunction},
     price_state,
     protocol_fee_inbox::{Self, ProtocolFeeRef},
     refund_state,
@@ -610,6 +611,22 @@ public fun is_rented<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): bool { lifecycle_state::is_rented(read_state(escrow)) }
 
+/// True iff the handover policy is `Instant` — a bid immediately triggers
+/// handover with no protection window for the current tenant.
+/// SDK use: policy description "bids execute immediately"; distinguish from
+/// `FixedTime` (both return `None` from `handover_countdown_floor_ms`).
+public fun is_handover_instant<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { handover_policy::is_instant(config::handover(&escrow.config)) }
+
+/// True iff the handover policy is `FixedTime` — the handover fires at the
+/// end of the current tenure regardless of when the bid was placed.
+/// SDK use: policy description "bid locks in at tenure expiry"; distinguish
+/// from `Instant` (both return `None` from `handover_countdown_floor_ms`).
+public fun is_handover_fixed_time<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { handover_policy::is_fixed_time(config::handover(&escrow.config)) }
+
 /// True iff the retire flag is set on the current rental. The asset will
 /// transition to Retired when the active tenure expires.
 /// Valid in any state; false when NotRented.
@@ -1034,6 +1051,37 @@ public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): Option<u64> {
     handover_policy::countdown_floor_ms_opt(config::handover(&escrow.config))
+}
+
+/// Curve shape used to interpolate used-credit over a rental period.
+/// Determines how quickly the tenant's stake is consumed over time.
+/// SDK use: on-chain compositors verifying risk profile; off-chain
+/// visualization of the credit-decay curve shape.
+public fun credit_curve<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): CurveShape {
+    *config::credit_curve(&escrow.config)
+}
+
+/// Curve shape used to interpolate the Dutch-auction price descent.
+/// Determines how quickly the floor price falls from `last_acq_price`
+/// toward `min_rent_price` over the descent window.
+/// SDK use: on-chain compositors verifying auction behavior; off-chain
+/// rendering of the descent curve for price-chart tooltips.
+public fun descent_curve<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): CurveShape {
+    *config::descent_curve(&escrow.config)
+}
+
+/// Price function applied to the current stake to compute the floor
+/// for the next ascending bid.
+/// SDK use: on-chain compositors verifying bid-increment predictability
+/// (FixedDelta = constant increment, CompoundDelta = geometric growth).
+public fun ascending_price_function<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): PriceFunction {
+    *config::price_function(&escrow.config)
 }
 
 // === Admin Functions ===

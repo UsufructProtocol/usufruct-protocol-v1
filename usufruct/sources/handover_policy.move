@@ -85,6 +85,24 @@ public(package) fun countdown_floor_ms_opt(policy: &HandoverPolicy): Option<u64>
     }
 }
 
+/// True iff the policy is `Instant` — a bid immediately triggers handover
+/// with no protection window for the current tenant.
+public(package) fun is_instant(policy: &HandoverPolicy): bool {
+    match (policy) {
+        HandoverPolicy::Instant => true,
+        _                       => false,
+    }
+}
+
+/// True iff the policy is `FixedTime` — the handover fires at the end of
+/// the current tenure regardless of when the bid was placed.
+public(package) fun is_fixed_time(policy: &HandoverPolicy): bool {
+    match (policy) {
+        HandoverPolicy::FixedTime => true,
+        _                         => false,
+    }
+}
+
 /// Canonical handover boundary timestamp — the moment at which the
 /// pending bid finalizes. Sister view of `has_expired`: the bool
 /// dispatcher answers "did we cross the boundary?", this one names

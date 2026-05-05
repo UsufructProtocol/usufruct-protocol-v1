@@ -611,6 +611,14 @@ public fun is_rented<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): bool { lifecycle_state::is_rented(read_state(escrow)) }
 
+/// True iff the retire policy is `Immediate` — `retire()` is available
+/// from integration time onward with no waiting period.
+/// SDK use: owner dashboard "you can retire at any time" vs "you must
+/// wait until X"; symmetric to `is_handover_instant` for policy UX.
+public fun is_retire_immediate<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { retire_policy::is_immediate(config::retire(&escrow.config)) }
+
 /// True iff the handover policy is `Instant` — a bid immediately triggers
 /// handover with no protection window for the current tenant.
 /// SDK use: policy description "bids execute immediately"; distinguish from
@@ -1051,6 +1059,17 @@ public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): Option<u64> {
     handover_policy::countdown_floor_ms_opt(config::handover(&escrow.config))
+}
+
+/// Minimum waiting period before `retire()` becomes available, in
+/// milliseconds. `Some(floor_ms)` when the retire policy is `Deferred`;
+/// `None` when `Immediate` (retire is available from integration onward).
+/// SDK use: owner dashboard "you must wait X ms from integration to
+/// retire"; symmetric to `handover_countdown_floor_ms` for policy UX.
+public fun retire_floor_ms<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    retire_policy::floor_ms_opt(config::retire(&escrow.config))
 }
 
 /// Curve shape used to interpolate used-credit over a rental period.

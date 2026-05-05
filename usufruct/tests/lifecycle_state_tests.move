@@ -14,6 +14,7 @@ use usufruct::{
     refund_state,
     tenant::{Self, Tenant},
     tenant_state,
+    unreachable,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -236,7 +237,7 @@ fun accept_bid_with_zero_remainder_returns_nothing() {
 // ─── §5. Abort paths ──────────────────────────────────────────────────────────
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun start_rent_aborts_from_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -249,7 +250,7 @@ fun start_rent_aborts_from_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun expire_tenure_aborts_from_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -260,7 +261,7 @@ fun expire_tenure_aborts_from_not_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun expire_auction_aborts_from_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -271,7 +272,7 @@ fun expire_auction_aborts_from_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun retire_now_aborts_from_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -282,7 +283,7 @@ fun retire_now_aborts_from_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun place_bid_aborts_from_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -292,7 +293,7 @@ fun place_bid_aborts_from_not_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun supersede_bid_aborts_from_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -303,7 +304,7 @@ fun supersede_bid_aborts_from_not_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun accept_bid_aborts_from_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -314,7 +315,7 @@ fun accept_bid_aborts_from_not_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun decompose_retired_aborts_from_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -523,7 +524,7 @@ fun accessors_in_not_rented_idle() {
 }
 
 #[test]
-#[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::asset_state)]
 fun phase_start_ms_aborts_on_idle() {
     // Idle has no phase in progress; phase_start_ms delegates to the
     // AtDutch accessor on asset_state, which aborts on Idle.
@@ -535,7 +536,7 @@ fun phase_start_ms_aborts_on_idle() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun handover_countdown_expiry_ms_aborts_in_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -545,7 +546,7 @@ fun handover_countdown_expiry_ms_aborts_in_not_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun current_stake_value_aborts_in_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -555,7 +556,7 @@ fun current_stake_value_aborts_in_not_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun pending_stake_value_aborts_in_occupied() {
     // Occupied has no pending bid — the underlying tenant_state::pending aborts.
     let mut sc = test_scenario::begin(@0xA);
@@ -591,7 +592,7 @@ fun set_retiring_lifts_flag_in_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun set_retiring_aborts_in_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));
@@ -621,7 +622,7 @@ fun give_extracts_then_give_back_restores_in_rented() {
 }
 
 #[test]
-#[expected_failure(abort_code = lifecycle_state::EInvariantViolation, location = usufruct::lifecycle_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::lifecycle_state)]
 fun give_aborts_in_not_rented() {
     let mut sc = test_scenario::begin(@0xA);
     let s = lifecycle_state::new<TestAsset, TEST_COIN>(new_asset(sc.ctx()));

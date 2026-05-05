@@ -9,6 +9,7 @@ use sui::balance::{Self, Balance};
 use usufruct::{
     tenant::{Self, Tenant},
     tenant_state,
+    unreachable,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -140,7 +141,7 @@ fun vacate_returns_t1_yields_absence() {
 // ─── §3. Transitions — abort paths ─────────────────────────────────────────────
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun occupy_aborts_from_occupied() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), t1());
     let s = tenant_state::occupy(s, t2());
@@ -148,7 +149,7 @@ fun occupy_aborts_from_occupied() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun occupy_aborts_from_demand() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), t1());
     let s = tenant_state::demand(s, t2(), 1_000);
@@ -157,7 +158,7 @@ fun occupy_aborts_from_demand() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun demand_aborts_from_absence() {
     let s = tenant_state::absence<TEST_COIN>();
     let s = tenant_state::demand(s, t1(), 1_000);
@@ -165,7 +166,7 @@ fun demand_aborts_from_absence() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun demand_aborts_from_demand() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), t1());
     let s = tenant_state::demand(s, t2(), 1_000);
@@ -174,7 +175,7 @@ fun demand_aborts_from_demand() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun redemand_aborts_from_absence() {
     let s = tenant_state::absence<TEST_COIN>();
     let (s, t) = tenant_state::redemand(s, t1(), 2_000);
@@ -183,7 +184,7 @@ fun redemand_aborts_from_absence() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun redemand_aborts_from_occupied() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), t1());
     let (s, t) = tenant_state::redemand(s, t2(), 2_000);
@@ -192,7 +193,7 @@ fun redemand_aborts_from_occupied() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun reoccupy_aborts_from_absence() {
     let s = tenant_state::absence<TEST_COIN>();
     let (s, t) = tenant_state::reoccupy(s);
@@ -201,7 +202,7 @@ fun reoccupy_aborts_from_absence() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun reoccupy_aborts_from_occupied() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), t1());
     let (s, t) = tenant_state::reoccupy(s);
@@ -210,7 +211,7 @@ fun reoccupy_aborts_from_occupied() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun vacate_aborts_from_absence() {
     let s = tenant_state::absence<TEST_COIN>();
     let (s, t) = tenant_state::vacate(s);
@@ -219,7 +220,7 @@ fun vacate_aborts_from_absence() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenant_state::EInvariantViolation, location = usufruct::tenant_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::tenant_state)]
 fun vacate_aborts_from_demand() {
     let s = tenant_state::occupy(tenant_state::absence<TEST_COIN>(), t1());
     let s = tenant_state::demand(s, t2(), 1_000);

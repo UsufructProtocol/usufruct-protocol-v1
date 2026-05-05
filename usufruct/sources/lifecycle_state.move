@@ -14,11 +14,10 @@ use usufruct::{
     retire_route::{Self, RetireRoute},
     tenant::{Self, Tenant},
     tenant_state::{Self, TenantState},
+    unreachable,
 };
 
 // === Errors ===
-
-const EInvariantViolation: u64 = 0xDEADC0DE;
 
 // === Constants ===
 
@@ -224,7 +223,7 @@ public(package) fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
 ): u64 {
     match (s) {
         LifecycleState::Rented    { t_state, a_state: _a, phase_start_ms: _, retiring: _ } => tenant_state::demand_expiry_ms(t_state),
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -235,7 +234,7 @@ public(package) fun last_acq_price_of_at_dutch<Asset: key + store, CoinType>(
 ): u64 {
     match (s) {
         LifecycleState::NotRented { a_state, t_state: _t } => asset_state::at_dutch_last_acq_price(a_state),
-        LifecycleState::Rented    { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
+        LifecycleState::Rented    { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort unreachable::unreachable(),
     }
 }
 
@@ -248,7 +247,7 @@ public(package) fun current_stake_value<Asset: key + store, CoinType>(
 ): u64 {
     match (s) {
         LifecycleState::Rented    { t_state, a_state: _a, phase_start_ms: _, retiring: _ } => tenant::stake_value(tenant_state::current(t_state)),
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -259,7 +258,7 @@ public(package) fun pending_stake_value<Asset: key + store, CoinType>(
 ): u64 {
     match (s) {
         LifecycleState::Rented    { t_state, a_state: _a, phase_start_ms: _, retiring: _ } => tenant::stake_value(tenant_state::pending(t_state)),
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -270,7 +269,7 @@ public(package) fun current_cap_id<Asset: key + store, CoinType>(
 ): ID {
     match (s) {
         LifecycleState::Rented    { t_state, a_state: _a, phase_start_ms: _, retiring: _ } => tenant::id_cap_id(tenant::identity(tenant_state::current(t_state))),
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -281,7 +280,7 @@ public(package) fun current_addr<Asset: key + store, CoinType>(
 ): address {
     match (s) {
         LifecycleState::Rented    { t_state, a_state: _a, phase_start_ms: _, retiring: _ } => tenant::id_address(tenant::identity(tenant_state::current(t_state))),
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -291,7 +290,7 @@ public(package) fun pending_cap_id<Asset: key + store, CoinType>(
 ): ID {
     match (s) {
         LifecycleState::Rented    { t_state, a_state: _a, phase_start_ms: _, retiring: _ } => tenant::id_cap_id(tenant::identity(tenant_state::pending(t_state))),
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -301,7 +300,7 @@ public(package) fun pending_addr<Asset: key + store, CoinType>(
 ): address {
     match (s) {
         LifecycleState::Rented    { t_state, a_state: _a, phase_start_ms: _, retiring: _ } => tenant::id_address(tenant::identity(tenant_state::pending(t_state))),
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -340,7 +339,7 @@ public(package) fun start_rent<Asset: key + store, CoinType>(
                 retiring: false,
             }
         },
-        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
+        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort unreachable::unreachable(),
     }
 }
 
@@ -376,7 +375,7 @@ public(package) fun expire_tenure<Asset: key + store, CoinType>(
                 refund_state::nothing(fee_share, owner_earnings),
             )
         },
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -394,7 +393,7 @@ public(package) fun expire_auction<Asset: key + store, CoinType>(
                 t_state,
             }
         },
-        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
+        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort unreachable::unreachable(),
     }
 }
 
@@ -410,7 +409,7 @@ public(package) fun retire_now<Asset: key + store, CoinType>(
                 t_state,
             }
         },
-        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
+        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort unreachable::unreachable(),
     }
 }
 
@@ -432,7 +431,7 @@ public(package) fun place_bid<Asset: key + store, CoinType>(
                 retiring,
             }
         },
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -458,7 +457,7 @@ public(package) fun supersede_bid<Asset: key + store, CoinType>(
                 refund_state::total(identity, stake),
             )
         },
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -486,7 +485,7 @@ public(package) fun accept_bid<Asset: key + store, CoinType>(
             };
             (new_state, refund_state::from_departing(departing, fee_share, owner_earnings))
         },
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -500,7 +499,7 @@ public(package) fun decompose_retired<Asset: key + store, CoinType>(
 ): (AssetState<Asset>, TenantState<CoinType>) {
     match (s) {
         LifecycleState::NotRented { a_state, t_state } => (a_state, t_state),
-        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort EInvariantViolation,
+        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort unreachable::unreachable(),
     }
 }
 
@@ -528,7 +527,7 @@ public(package) fun set_retiring<Asset: key + store, CoinType>(
     match (s) {
         LifecycleState::Rented { a_state, t_state, phase_start_ms, retiring: _ } =>
             LifecycleState::Rented { a_state, t_state, phase_start_ms, retiring: true },
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -550,7 +549,7 @@ public(package) fun give<Asset: key + store, CoinType>(
                 receipt,
             )
         },
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 
@@ -567,7 +566,7 @@ public(package) fun give_back<Asset: key + store, CoinType>(
             let new_a = asset_state::give_back(a_state, asset, receipt);
             LifecycleState::Rented { a_state: new_a, t_state, phase_start_ms, retiring }
         },
-        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort EInvariantViolation,
+        LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
 }
 

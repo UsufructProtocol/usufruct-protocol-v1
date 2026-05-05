@@ -34,6 +34,7 @@ use usufruct::{
     retire_route::{Self, RetireRoute},
     tenant,
     tenant_cap::{Self, TenantCap},
+    unreachable,
 };
 
 // === Errors ===
@@ -57,7 +58,6 @@ const EWrongEscrowTenantCap:    u64 = 12;
 const EPendingTenantCap:        u64 = 13;
 const EStaleTenantCap:          u64 = 14;
 const ETenantCapNotStale:       u64 = 15;
-const EInvariantViolation:      u64 = 0xDEADC0DE;
 
 // === Constants ===
 
@@ -400,7 +400,7 @@ public fun rent<Asset: key + store, CoinType>(
     else if (rent_action::is_supersede_bid(&action)){ do_supersede_bid(escrow, payment, floor, now, ctx)     }
     else {
         // Retired — unreachable: compute_floor_price aborted earlier.
-        abort EInvariantViolation
+        abort unreachable::unreachable()
     }
 }
 
@@ -456,7 +456,7 @@ public fun return_asset<Asset: key + store, CoinType>(
 
     let (tenant_cap_id, tenant_addr) = {
         let s = read_state(escrow);
-        assert!(lifecycle_state::is_rented(s), EInvariantViolation);
+        assert!(lifecycle_state::is_rented(s), unreachable::unreachable());
         (lifecycle_state::current_cap_id(s), lifecycle_state::current_addr(s))
     };
     let (state_inner, sr) = take_state(escrow);
@@ -494,7 +494,7 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
 /// The protocol's cascade is structurally bounded at three transitions:
 ///   Handover (HC → HO) → Tenure (HO → AtDutch) → Auction (AtDutch → Idle).
 /// After Idle (or Retired) no further transitions are pending. The loop
-/// exits early when nothing is due; `EInvariantViolation` fires if the
+/// exits early when nothing is due; `unreachable::unreachable()` fires if the
 /// state machine somehow requires a fourth step — that would indicate
 /// an impossible cycle in the transition graph.
 public fun apply_pending_transitions<Asset: key + store, CoinType>(
@@ -506,7 +506,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     loop {
         let pending = next_pending(escrow, clock);
         if (option::is_some(&pending)) {
-            assert!(i < 3, EInvariantViolation);
+            assert!(i < 3, unreachable::unreachable());
             fire(escrow, option::destroy_some(pending), ctx);
             i = i + 1;
         } else {
@@ -1217,7 +1217,7 @@ public fun ascending_price_function<Asset: key + store, CoinType>(
 fun take_state<Asset: key + store, CoinType>(
     escrow: &mut EscrowCoordinator<Asset, CoinType>,
 ): (LifecycleState<Asset, CoinType>, StateReceipt) {
-    assert!(option::is_some(&escrow.state), EInvariantViolation);
+    assert!(option::is_some(&escrow.state), unreachable::unreachable());
     (option::extract(&mut escrow.state), StateReceipt {})
 }
 
@@ -1227,14 +1227,14 @@ fun put_state<Asset: key + store, CoinType>(
     receipt: StateReceipt,
 ) {
     let StateReceipt {} = receipt;
-    assert!(option::is_none(&escrow.state), EInvariantViolation);
+    assert!(option::is_none(&escrow.state), unreachable::unreachable());
     option::fill(&mut escrow.state, new);
 }
 
 fun read_state<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): &LifecycleState<Asset, CoinType> {
-    assert!(option::is_some(&escrow.state), EInvariantViolation);
+    assert!(option::is_some(&escrow.state), unreachable::unreachable());
     option::borrow(&escrow.state)
 }
 

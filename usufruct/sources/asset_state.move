@@ -6,12 +6,9 @@ module usufruct::asset_state;
 // === Imports ===
 
 use usufruct::asset::{Self, Asset, AssetReceipt};
+use usufruct::unreachable;
 
 // === Errors ===
-
-/// Sentinel for caller-contract violations: transition or operation
-/// invoked from an invalid state machine position.
-const EInvariantViolation: u64 = 0xDEADC0DE;
 
 // === Constants ===
 
@@ -121,10 +118,10 @@ public(package) fun asset_id<U: key + store>(s: &AssetState<U>): ID {
 public(package) fun at_dutch_last_acq_price<U: key + store>(s: &AssetState<U>): u64 {
     match (s) {
         AssetState::AtDutch { last_acquisition_price, .. } => *last_acquisition_price,
-        AssetState::Idle              { .. } => abort EInvariantViolation,
-        AssetState::HandoverOpen      { .. } => abort EInvariantViolation,
-        AssetState::HandoverConfirmed { .. } => abort EInvariantViolation,
-        AssetState::Retired           { .. } => abort EInvariantViolation,
+        AssetState::Idle              { .. } => abort unreachable::unreachable(),
+        AssetState::HandoverOpen      { .. } => abort unreachable::unreachable(),
+        AssetState::HandoverConfirmed { .. } => abort unreachable::unreachable(),
+        AssetState::Retired           { .. } => abort unreachable::unreachable(),
     }
 }
 
@@ -134,10 +131,10 @@ public(package) fun at_dutch_last_acq_price<U: key + store>(s: &AssetState<U>): 
 public(package) fun at_dutch_phase_start_ms<U: key + store>(s: &AssetState<U>): u64 {
     match (s) {
         AssetState::AtDutch { phase_start_ms, .. } => *phase_start_ms,
-        AssetState::Idle              { .. } => abort EInvariantViolation,
-        AssetState::HandoverOpen      { .. } => abort EInvariantViolation,
-        AssetState::HandoverConfirmed { .. } => abort EInvariantViolation,
-        AssetState::Retired           { .. } => abort EInvariantViolation,
+        AssetState::Idle              { .. } => abort unreachable::unreachable(),
+        AssetState::HandoverOpen      { .. } => abort unreachable::unreachable(),
+        AssetState::HandoverConfirmed { .. } => abort unreachable::unreachable(),
+        AssetState::Retired           { .. } => abort unreachable::unreachable(),
     }
 }
 
@@ -161,9 +158,9 @@ public(package) fun rent<U: key + store>(
             AssetState::HandoverOpen { asset: asset::new(asset, escrow_id) },
         AssetState::AtDutch { asset, last_acquisition_price: _, phase_start_ms: _ } =>
             AssetState::HandoverOpen { asset: asset::new(asset, escrow_id) },
-        AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
-        AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
-        AssetState::Retired           { asset: _a } => abort EInvariantViolation,
+        AssetState::HandoverOpen      { asset: _a } => abort unreachable::unreachable(),
+        AssetState::HandoverConfirmed { asset: _a } => abort unreachable::unreachable(),
+        AssetState::Retired           { asset: _a } => abort unreachable::unreachable(),
     }
 }
 
@@ -174,10 +171,10 @@ public(package) fun bid<U: key + store>(
 ): AssetState<U> {
     match (s) {
         AssetState::HandoverOpen { asset } => AssetState::HandoverConfirmed { asset },
-        AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
-        AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
-        AssetState::Retired           { asset: _a } => abort EInvariantViolation,
+        AssetState::Idle              { asset: _a } => abort unreachable::unreachable(),
+        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort unreachable::unreachable(),
+        AssetState::HandoverConfirmed { asset: _a } => abort unreachable::unreachable(),
+        AssetState::Retired           { asset: _a } => abort unreachable::unreachable(),
     }
 }
 
@@ -188,10 +185,10 @@ public(package) fun handover<U: key + store>(
 ): AssetState<U> {
     match (s) {
         AssetState::HandoverConfirmed { asset } => AssetState::HandoverOpen { asset },
-        AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
-        AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
-        AssetState::Retired           { asset: _a } => abort EInvariantViolation,
+        AssetState::Idle              { asset: _a } => abort unreachable::unreachable(),
+        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort unreachable::unreachable(),
+        AssetState::HandoverOpen      { asset: _a } => abort unreachable::unreachable(),
+        AssetState::Retired           { asset: _a } => abort unreachable::unreachable(),
     }
 }
 
@@ -213,10 +210,10 @@ public(package) fun expire<U: key + store>(
             let a = asset::unbundle(asset);
             AssetState::AtDutch { asset: a, last_acquisition_price, phase_start_ms }
         },
-        AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
-        AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
-        AssetState::Retired           { asset: _a } => abort EInvariantViolation,
+        AssetState::Idle              { asset: _a } => abort unreachable::unreachable(),
+        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort unreachable::unreachable(),
+        AssetState::HandoverConfirmed { asset: _a } => abort unreachable::unreachable(),
+        AssetState::Retired           { asset: _a } => abort unreachable::unreachable(),
     }
 }
 
@@ -227,10 +224,10 @@ public(package) fun no_winner<U: key + store>(
 ): AssetState<U> {
     match (s) {
         AssetState::AtDutch { asset, last_acquisition_price: _, phase_start_ms: _ } => AssetState::Idle { asset },
-        AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
-        AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
-        AssetState::Retired           { asset: _a } => abort EInvariantViolation,
+        AssetState::Idle              { asset: _a } => abort unreachable::unreachable(),
+        AssetState::HandoverOpen      { asset: _a } => abort unreachable::unreachable(),
+        AssetState::HandoverConfirmed { asset: _a } => abort unreachable::unreachable(),
+        AssetState::Retired           { asset: _a } => abort unreachable::unreachable(),
     }
 }
 
@@ -242,9 +239,9 @@ public(package) fun retire<U: key + store>(
     match (s) {
         AssetState::Idle    { asset } => AssetState::Retired { asset },
         AssetState::AtDutch { asset, last_acquisition_price: _, phase_start_ms: _ } => AssetState::Retired { asset },
-        AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
-        AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
-        AssetState::Retired           { asset: _a } => abort EInvariantViolation,
+        AssetState::HandoverOpen      { asset: _a } => abort unreachable::unreachable(),
+        AssetState::HandoverConfirmed { asset: _a } => abort unreachable::unreachable(),
+        AssetState::Retired           { asset: _a } => abort unreachable::unreachable(),
     }
 }
 
@@ -255,10 +252,10 @@ public(package) fun claim<U: key + store>(
 ): U {
     match (s) {
         AssetState::Retired { asset } => asset,
-        AssetState::Idle              { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
-        AssetState::HandoverOpen      { asset: _a } => abort EInvariantViolation,
-        AssetState::HandoverConfirmed { asset: _a } => abort EInvariantViolation,
+        AssetState::Idle              { asset: _a } => abort unreachable::unreachable(),
+        AssetState::AtDutch           { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort unreachable::unreachable(),
+        AssetState::HandoverOpen      { asset: _a } => abort unreachable::unreachable(),
+        AssetState::HandoverConfirmed { asset: _a } => abort unreachable::unreachable(),
     }
 }
 
@@ -278,9 +275,9 @@ public(package) fun give<U: key + store>(
             let (u, receipt) = asset::take(&mut asset);
             (AssetState::HandoverConfirmed { asset }, u, receipt)
         },
-        AssetState::Idle    { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
-        AssetState::Retired { asset: _a } => abort EInvariantViolation,
+        AssetState::Idle    { asset: _a } => abort unreachable::unreachable(),
+        AssetState::AtDutch { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort unreachable::unreachable(),
+        AssetState::Retired { asset: _a } => abort unreachable::unreachable(),
     }
 }
 
@@ -302,9 +299,9 @@ public(package) fun give_back<U: key + store>(
             asset::put(&mut slot, asset, receipt);
             AssetState::HandoverConfirmed { asset: slot }
         },
-        AssetState::Idle    { asset: _a } => abort EInvariantViolation,
-        AssetState::AtDutch { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort EInvariantViolation,
-        AssetState::Retired { asset: _a } => abort EInvariantViolation,
+        AssetState::Idle    { asset: _a } => abort unreachable::unreachable(),
+        AssetState::AtDutch { asset: _a, last_acquisition_price: _, phase_start_ms: _ } => abort unreachable::unreachable(),
+        AssetState::Retired { asset: _a } => abort unreachable::unreachable(),
     }
 }
 

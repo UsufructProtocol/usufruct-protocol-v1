@@ -5,7 +5,7 @@
 module usufruct::asset_state_tests;
 
 use sui::test_scenario;
-use usufruct::{asset, asset_state};
+use usufruct::{asset, asset_state, unreachable};
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -131,7 +131,7 @@ fun retire_from_at_dutch_yields_retired() {
 // ─── §3. Transitions — abort paths ─────────────────────────────────────────────
 
 #[test]
-#[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::asset_state)]
 fun rent_aborts_from_handover_open() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id());
@@ -141,7 +141,7 @@ fun rent_aborts_from_handover_open() {
 }
 
 #[test]
-#[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::asset_state)]
 fun expire_aborts_from_handover_confirmed() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::bid(asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id()));
@@ -151,7 +151,7 @@ fun expire_aborts_from_handover_confirmed() {
 }
 
 #[test]
-#[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::asset_state)]
 fun retire_aborts_from_handover_open() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::rent(asset_state::new(new_asset(sc.ctx())), fake_escrow_id());
@@ -161,7 +161,7 @@ fun retire_aborts_from_handover_open() {
 }
 
 #[test]
-#[expected_failure(abort_code = asset_state::EInvariantViolation, location = usufruct::asset_state)]
+#[expected_failure(abort_code = unreachable::EInvariantViolation, location = usufruct::asset_state)]
 fun claim_aborts_from_idle() {
     let mut sc = test_scenario::begin(@0xA);
     let s = asset_state::new(new_asset(sc.ctx()));

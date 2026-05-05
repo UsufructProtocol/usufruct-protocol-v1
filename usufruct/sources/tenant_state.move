@@ -6,14 +6,9 @@ module usufruct::tenant_state;
 // === Imports ===
 
 use usufruct::tenant::Tenant;
+use usufruct::unreachable;
 
 // === Errors ===
-
-/// Sentinel for caller-contract violations: the caller invoked a
-/// transition (or `consume_absence`) from a state machine position
-/// that the function did not expect. Distinguishes programming bugs
-/// from legitimate runtime errors in logs and explorer UIs.
-const EInvariantViolation: u64 = 0xDEADC0DE;
 
 // === Constants ===
 
@@ -49,7 +44,7 @@ public(package) fun current<CoinType>(s: &TenantState<CoinType>): &Tenant<CoinTy
     match (s) {
         TenantState::Occupied { t1 }                 => t1,
         TenantState::Demand   { t1, t2: _, handover_countdown_expiry: _ } => t1,
-        TenantState::Absence                          => abort EInvariantViolation,
+        TenantState::Absence                          => abort unreachable::unreachable(),
     }
 }
 
@@ -57,8 +52,8 @@ public(package) fun current<CoinType>(s: &TenantState<CoinType>): &Tenant<CoinTy
 public(package) fun pending<CoinType>(s: &TenantState<CoinType>): &Tenant<CoinType> {
     match (s) {
         TenantState::Demand { t1: _, t2, handover_countdown_expiry: _ } => t2,
-        TenantState::Absence                              => abort EInvariantViolation,
-        TenantState::Occupied { t1: _t1 }                 => abort EInvariantViolation,
+        TenantState::Absence                              => abort unreachable::unreachable(),
+        TenantState::Occupied { t1: _t1 }                 => abort unreachable::unreachable(),
     }
 }
 
@@ -68,8 +63,8 @@ public(package) fun pending<CoinType>(s: &TenantState<CoinType>): &Tenant<CoinTy
 public(package) fun demand_expiry_ms<CoinType>(s: &TenantState<CoinType>): u64 {
     match (s) {
         TenantState::Demand { t1: _, t2: _, handover_countdown_expiry } => *handover_countdown_expiry,
-        TenantState::Absence                              => abort EInvariantViolation,
-        TenantState::Occupied { t1: _t1 }                 => abort EInvariantViolation,
+        TenantState::Absence                              => abort unreachable::unreachable(),
+        TenantState::Occupied { t1: _t1 }                 => abort unreachable::unreachable(),
     }
 }
 
@@ -85,8 +80,8 @@ public(package) fun demand_expiry_ms<CoinType>(s: &TenantState<CoinType>): u64 {
 public(package) fun consume_absence<CoinType>(s: TenantState<CoinType>) {
     match (s) {
         TenantState::Absence                       => (),
-        TenantState::Occupied { t1: _t1 }          => abort EInvariantViolation,
-        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
+        TenantState::Occupied { t1: _t1 }          => abort unreachable::unreachable(),
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort unreachable::unreachable(),
     }
 }
 
@@ -105,8 +100,8 @@ public(package) fun occupy<CoinType>(
     match (state) {
         TenantState::Absence =>
             TenantState::Occupied { t1: t },
-        TenantState::Occupied { t1: _t1 }           => abort EInvariantViolation,
-        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
+        TenantState::Occupied { t1: _t1 }           => abort unreachable::unreachable(),
+        TenantState::Demand   { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort unreachable::unreachable(),
     }
 }
 
@@ -121,8 +116,8 @@ public(package) fun demand<CoinType>(
     match (state) {
         TenantState::Occupied { t1 } =>
             TenantState::Demand { t1, t2: t, handover_countdown_expiry },
-        TenantState::Absence                                              => abort EInvariantViolation,
-        TenantState::Demand { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort EInvariantViolation,
+        TenantState::Absence                                              => abort unreachable::unreachable(),
+        TenantState::Demand { t1: _t1, t2: _t2, handover_countdown_expiry: _ } => abort unreachable::unreachable(),
     }
 }
 
@@ -137,8 +132,8 @@ public(package) fun redemand<CoinType>(
     match (state) {
         TenantState::Demand { t1, t2, handover_countdown_expiry: _ } =>
             (TenantState::Demand { t1, t2: t, handover_countdown_expiry }, t2),
-        TenantState::Absence              => abort EInvariantViolation,
-        TenantState::Occupied { t1: _t1 } => abort EInvariantViolation,
+        TenantState::Absence              => abort unreachable::unreachable(),
+        TenantState::Occupied { t1: _t1 } => abort unreachable::unreachable(),
     }
 }
 
@@ -151,8 +146,8 @@ public(package) fun reoccupy<CoinType>(
     match (state) {
         TenantState::Demand { t1, t2, handover_countdown_expiry: _ } =>
             (TenantState::Occupied { t1: t2 }, t1),
-        TenantState::Absence              => abort EInvariantViolation,
-        TenantState::Occupied { t1: _t1 } => abort EInvariantViolation,
+        TenantState::Absence              => abort unreachable::unreachable(),
+        TenantState::Occupied { t1: _t1 } => abort unreachable::unreachable(),
     }
 }
 
@@ -164,8 +159,8 @@ public(package) fun vacate<CoinType>(
     match (state) {
         TenantState::Occupied { t1 } =>
             (TenantState::Absence, t1),
-        TenantState::Absence                       => abort EInvariantViolation,
-        TenantState::Demand { t1: _t1, t2: _t2, handover_countdown_expiry: _ }   => abort EInvariantViolation,
+        TenantState::Absence                       => abort unreachable::unreachable(),
+        TenantState::Demand { t1: _t1, t2: _t2, handover_countdown_expiry: _ }   => abort unreachable::unreachable(),
     }
 }
 

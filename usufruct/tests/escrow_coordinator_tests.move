@@ -35,7 +35,8 @@ use usufruct::{
     escrow_corpus,
     fee_message::FeeMessageSent,
     owner_cap::{Self, OwnerCap},
-    protocol_fee_inbox::{Self, ProtocolFeeRef},
+    protocol_fee_inbox,
+    protocol_fee_ref::ProtocolFeeRef,
     tenant::{Self, Tenant},
     tenant_cap,
 };

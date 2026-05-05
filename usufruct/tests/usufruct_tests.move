@@ -7,7 +7,8 @@ module usufruct::usufruct_tests;
 use sui::package::Publisher;
 use sui::test_scenario::{Self, Scenario};
 use usufruct::owner_cap::OwnerCap;
-use usufruct::protocol_fee_inbox::{ProtocolFeeInbox, ProtocolFeeRef};
+use usufruct::protocol_fee_inbox::ProtocolFeeInbox;
+use usufruct::protocol_fee_ref::ProtocolFeeRef;
 use usufruct::tenant_cap::TenantCap;
 use usufruct::usufruct;
 

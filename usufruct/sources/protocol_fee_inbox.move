@@ -5,6 +5,8 @@ module usufruct::protocol_fee_inbox;
 
 // === Imports ===
 
+use usufruct::protocol_fee_ref;
+
 // === Errors ===
 
 // === Constants ===
@@ -15,11 +17,6 @@ public struct ProtocolFeeInbox has key, store {
     id: UID,
 }
 
-public struct ProtocolFeeRef has key {
-    id:       UID,
-    inbox_id: ID,
-}
-
 // === Events ===
 
 // === Method Aliases ===
@@ -27,11 +24,6 @@ public struct ProtocolFeeRef has key {
 // === Public Functions ===
 
 // === View Functions ===
-
-/// Returns the ID of the `ProtocolFeeInbox` this ref points to.
-public fun inbox_id(fee_ref: &ProtocolFeeRef): ID {
-    fee_ref.inbox_id
-}
 
 // === Admin Functions ===
 
@@ -46,15 +38,9 @@ public(package) fun uid_mut(inbox: &mut ProtocolFeeInbox): &mut UID {
 // === Private Functions ===
 
 fun init(ctx: &mut TxContext) {
-    let inbox = ProtocolFeeInbox {
-        id: object::new(ctx),
-    };
-    let fee_ref = ProtocolFeeRef {
-        id:       object::new(ctx),
-        inbox_id: object::id(&inbox),
-    };
+    let inbox = ProtocolFeeInbox { id: object::new(ctx) };
+    protocol_fee_ref::create_and_freeze(object::id(&inbox), ctx);
     transfer::public_transfer(inbox, ctx.sender());
-    transfer::freeze_object(fee_ref);
 }
 
 // === Test Functions ===

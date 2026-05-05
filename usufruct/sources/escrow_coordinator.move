@@ -27,7 +27,7 @@ use usufruct::{
     phases,
     price_function::{Self, PriceFunction},
     price_state,
-    protocol_fee_inbox::{Self, ProtocolFeeRef},
+    protocol_fee_ref::{Self, ProtocolFeeRef},
     refund_state,
     rent_action::{Self, RentAction},
     retire_policy,
@@ -244,7 +244,7 @@ public fun integrate<Asset: key + store, CoinType>(
     let owner_addr       = ctx.sender();
     let owner_cap        = owner_cap::new(escrow_id, owner_addr, ctx);
     let owner_cap_id     = object::id(&owner_cap);
-    let fee_inbox_id     = protocol_fee_inbox::inbox_id(fee_ref);
+    let fee_inbox_id     = protocol_fee_ref::inbox_id(fee_ref);
     let integrated_at_ms = clock::timestamp_ms(clock);
 
     let state_inner = lifecycle_state::new<Asset, CoinType>(asset);

@@ -8,7 +8,8 @@
 module usufruct::protocol_fee_inbox_tests;
 
 use sui::test_scenario::{Self, Scenario};
-use usufruct::protocol_fee_inbox::{Self, ProtocolFeeInbox, ProtocolFeeRef};
+use usufruct::protocol_fee_inbox::{Self, ProtocolFeeInbox};
+use usufruct::protocol_fee_ref::{Self, ProtocolFeeRef};
 
 // ─── Actors ────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ fun i4_inbox_id_matches_inbox_object_id() {
         let inbox   = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_ref = scenario.take_immutable<ProtocolFeeRef>();
 
-        assert!(protocol_fee_inbox::inbox_id(&fee_ref) == object::id(&inbox));
+        assert!(protocol_fee_ref::inbox_id(&fee_ref) == object::id(&inbox));
 
         scenario.return_to_sender(inbox);
         test_scenario::return_immutable(fee_ref);
@@ -89,8 +90,8 @@ fun i5_inbox_id_is_pure() {
     {
         let fee_ref = scenario.take_immutable<ProtocolFeeRef>();
 
-        let id1 = protocol_fee_inbox::inbox_id(&fee_ref);
-        let id2 = protocol_fee_inbox::inbox_id(&fee_ref);
+        let id1 = protocol_fee_ref::inbox_id(&fee_ref);
+        let id2 = protocol_fee_ref::inbox_id(&fee_ref);
         assert!(id1 == id2);
 
         test_scenario::return_immutable(fee_ref);
@@ -283,14 +284,14 @@ fun inbox_id_stable_across_transactions_and_callers() {
     scenario.next_tx(DEPLOYER);
     {
         let fee_ref = scenario.take_immutable<ProtocolFeeRef>();
-        id_from_deployer = protocol_fee_inbox::inbox_id(&fee_ref);
+        id_from_deployer = protocol_fee_ref::inbox_id(&fee_ref);
         test_scenario::return_immutable(fee_ref);
     };
     // Read inbox_id as ALICE in tx 2 — must be identical
     scenario.next_tx(ALICE);
     {
         let fee_ref = scenario.take_immutable<ProtocolFeeRef>();
-        assert!(protocol_fee_inbox::inbox_id(&fee_ref) == id_from_deployer);
+        assert!(protocol_fee_ref::inbox_id(&fee_ref) == id_from_deployer);
         test_scenario::return_immutable(fee_ref);
     };
     scenario.end();

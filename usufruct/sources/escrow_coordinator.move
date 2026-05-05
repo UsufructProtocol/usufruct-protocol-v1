@@ -1020,6 +1020,42 @@ public fun last_acq_price<Asset: key + store, CoinType>(
     }
 }
 
+// ─── Settlement views ────────────────────────────────────────────────────────
+
+/// Preview the fund distribution when a handover fires at `boundary_ms`.
+/// Returns `(remain_credit, owner_share, protocol_fee)` using the same
+/// `split_fee` arithmetic the protocol applies at the real boundary:
+///   remain_credit — returned to the current tenant (Parcial variant)
+///   owner_share   — deposited into the owner's earnings
+///   protocol_fee  — posted to the protocol fee inbox
+/// Aborts `ENotRented` if the lifecycle is not Rented.
+/// SDK use: preview payout breakdown before a handover; show "you will
+/// receive X SUI back" to the current tenant in the bid UI.
+public fun compute_handover_settlement<Asset: key + store, CoinType>(
+    escrow:      &EscrowCoordinator<Asset, CoinType>,
+    boundary_ms: u64,
+): (u64, u64, u64) {
+    let stake      = lifecycle_state::current_stake_value(read_state(escrow));
+    let used       = used_credit_at(escrow, boundary_ms);
+    let (owner_share, protocol_fee) = split_fee(used);
+    let remain     = stake - used;
+    (remain, owner_share, protocol_fee)
+}
+
+/// Preview the fund distribution when the current tenant's tenure expires
+/// with no pending bid. Returns `(owner_share, protocol_fee)` — the full
+/// stake is consumed (Nothing variant); the tenant receives nothing back.
+/// Aborts `ENotRented` if the lifecycle is not Rented.
+/// SDK use: show "your stake will be fully consumed at expiry" to a
+/// tenant in HandoverOpen; compute expected owner yield at tenure end.
+public fun compute_tenure_settlement<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): (u64, u64) {
+    let s = read_state(escrow);
+    assert!(lifecycle_state::is_rented(s), ENotRented);
+    split_fee(lifecycle_state::current_stake_value(s))
+}
+
 // ─── Earnings views ──────────────────────────────────────────────────────────
 
 /// Accumulated owner earnings inside this escrow, in coin base units.

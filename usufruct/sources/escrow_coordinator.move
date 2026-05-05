@@ -906,6 +906,22 @@ public fun compute_floor_price_at_ms<Asset: key + store, CoinType>(
     floor_price_at(escrow, timestamp_ms)
 }
 
+/// The last acquisition price driving the current Dutch-auction descent.
+/// `Some(price)` only in `AtDutchAuction`; `None` in every other state.
+/// This is the price from which the descent curve starts — pair it with
+/// `phase_start_ms` and `compute_floor_price_at_ms` to show "started at
+/// X SUI, now at Y SUI (Z% down)" on the auction card.
+public fun last_acq_price<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_at_dutch(s)) {
+        option::some(lifecycle_state::last_acq_price_of_at_dutch(s))
+    } else {
+        option::none()
+    }
+}
+
 // ─── Earnings views ──────────────────────────────────────────────────────────
 
 /// Accumulated owner earnings inside this escrow, in coin base units.

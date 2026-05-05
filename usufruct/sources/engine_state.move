@@ -1206,6 +1206,8 @@ public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64         
 #[test_only]
 public(package) fun tenure_expired_last_acquisition_price(e: &TenureExpired): u64    { e.last_acquisition_price }
 #[test_only]
+public(package) fun tenure_expired_last_acq_price(e: &TenureExpired): u64            { e.last_acquisition_price }
+#[test_only]
 public(package) fun tenure_expired_timestamp_ms(e: &TenureExpired): u64              { e.timestamp_ms }
 
 #[test_only]

@@ -190,6 +190,20 @@ public(package) fun rent_action<Asset: key + store, CoinType>(
 
 // ─── Time fields ──────────────────────────────────────────────────────────────
 
+/// Object ID of the wrapped asset. Constant for the lifetime of
+/// the escrow — delegates to `asset_state::asset_id` which reads
+/// from both raw and wrapped asset holders.
+public(package) fun asset_id<Asset: key + store, CoinType>(
+    s: &LifecycleState<Asset, CoinType>,
+): ID {
+    match (s) {
+        LifecycleState::NotRented { a_state, t_state: _t } =>
+            asset_state::asset_id(a_state),
+        LifecycleState::Rented { a_state, t_state: _t, phase_start_ms: _, retiring: _ } =>
+            asset_state::asset_id(a_state),
+    }
+}
+
 /// Read the phase_start_ms field. In Rented, it is the rental's start.
 /// In NotRented{AtDutch}, it is the auction's start (stamped by
 /// `expire_tenure`). Aborts in NotRented{Idle} / NotRented{Retired}

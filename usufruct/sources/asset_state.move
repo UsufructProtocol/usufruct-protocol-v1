@@ -101,6 +101,20 @@ public(package) fun has_asset<U: key + store>(s: &AssetState<U>): bool {
     }
 }
 
+/// Object ID of the wrapped asset. Constant for the lifetime of
+/// the AssetState — for raw variants, reads `object::id`; for
+/// wrapped variants, reads the stamped `AssetIdentity.asset_id`
+/// (valid even when the asset is currently borrowed out).
+public(package) fun asset_id<U: key + store>(s: &AssetState<U>): ID {
+    match (s) {
+        AssetState::Idle    { asset }     => object::id(asset),
+        AssetState::AtDutch { asset, .. } => object::id(asset),
+        AssetState::Retired { asset }     => object::id(asset),
+        AssetState::HandoverOpen      { asset } => asset::id_asset_id(asset::identity(asset)),
+        AssetState::HandoverConfirmed { asset } => asset::id_asset_id(asset::identity(asset)),
+    }
+}
+
 /// Read `last_acquisition_price` from the AtDutch variant. Aborts if
 /// the state is not AtDutch — consumer is `compute_price_descent` in
 /// the rental-escrow layer, which already gates on the variant.

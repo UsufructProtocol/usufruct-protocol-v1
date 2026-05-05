@@ -601,6 +601,14 @@ public fun is_retired<Asset: key + store, CoinType>(
     escrow: &EscrowCoordinator<Asset, CoinType>,
 ): bool { lifecycle_state::is_a_state_retired(read_state(escrow)) }
 
+/// True iff an active tenant occupies the escrow (HandoverOpen or
+/// HandoverConfirmed). Equivalent to `is_handover_open || is_handover_confirmed`.
+/// Precondition for `borrow_asset`, `compute_used_credit`, and the deferred
+/// `retire` path. SDK use: single-call gate before any tenant-dependent action.
+public fun is_rented<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): bool { lifecycle_state::is_rented(read_state(escrow)) }
+
 /// True iff the retire flag is set on the current rental. The asset will
 /// transition to Retired when the active tenure expires.
 /// Valid in any state; false when NotRented.
@@ -645,6 +653,18 @@ public fun current_tenant_addr<Asset: key + store, CoinType>(
     else option::none()
 }
 
+/// Object ID of the active tenant's `TenantCap`. `Some` while the
+/// lifecycle is Rented (HandoverOpen or HandoverConfirmed); `None` otherwise.
+/// SDK use: keepers tracking cap liveness; indexers building the full
+/// identity triple (addr, cap_id, stake) for the current tenant.
+public fun current_tenant_cap_id<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<ID> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_rented(s)) option::some(lifecycle_state::current_cap_id(s))
+    else option::none()
+}
+
 /// Address of the pending bidder. `Some` only in HandoverConfirmed
 /// (a bid has been placed and is awaiting the countdown expiry);
 /// `None` in every other state.
@@ -653,6 +673,18 @@ public fun pending_tenant_addr<Asset: key + store, CoinType>(
 ): Option<address> {
     let s = read_state(escrow);
     if (lifecycle_state::is_a_state_handover_confirmed(s)) option::some(lifecycle_state::pending_addr(s))
+    else option::none()
+}
+
+/// Object ID of the pending bidder's `TenantCap`. `Some` only in
+/// HandoverConfirmed; `None` in every other state.
+/// SDK use: keepers tracking pending bid caps; indexers building the
+/// full identity triple (addr, cap_id, stake) for the pending bidder.
+public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): Option<ID> {
+    let s = read_state(escrow);
+    if (lifecycle_state::is_a_state_handover_confirmed(s)) option::some(lifecycle_state::pending_cap_id(s))
     else option::none()
 }
 
@@ -888,6 +920,27 @@ public fun owner_balance<Asset: key + store, CoinType>(
 }
 
 // ─── Config views ────────────────────────────────────────────────────────────
+
+/// ID of the `ProtocolFeeInbox` that receives protocol fees from this escrow.
+/// SDK use: verify fee routing integrity; cross-reference with
+/// `AssetIntegrated.fee_inbox_id` to confirm the inbox has not changed.
+public fun fee_inbox_id<Asset: key + store, CoinType>(
+    escrow: &EscrowCoordinator<Asset, CoinType>,
+): ID {
+    escrow.fee_inbox_id
+}
+
+/// Protocol fee rate in basis points (e.g. 1_000 = 10 %).
+/// Applied to `used_credit` at every boundary that touches a tenant's
+/// stake (handover, tenure expiry). Module-level constant — identical
+/// for every escrow in this deployment.
+/// SDK use: compute expected net owner yield; build fee-sharing protocols
+/// without hardcoding the rate.
+public fun protocol_fee_bps(): u64 { PROTOCOL_FEE_BPS }
+
+/// Basis-point denominator (10_000). Pair with `protocol_fee_bps` to
+/// compute the fee fraction: `fee = amount * protocol_fee_bps() / bps_denominator()`.
+public fun bps_denominator(): u64 { BPS_PER_UNIT }
 
 /// Minimum rent price configured for this escrow, in coin base units.
 /// This is the lowest possible floor price — reached when the lifecycle

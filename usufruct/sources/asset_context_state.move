@@ -955,16 +955,16 @@ public(package) fun do_apt_transition<Asset: key + store, CoinType>(
     ctx:          &mut TxContext,
 ): RentingFireResult<Asset, CoinType> {
     match (tenancy) {
-        TenancyState::Demand { asset, current, pending, handover_expiry, phase_start_ms, retiring } => {
+        TenancyState::Demand { asset, current, pending, handover_expiry: _, phase_start_ms, retiring } => {
             let new_tenancy = do_handover(
-                TenancyState::Demand { asset, current, pending, handover_expiry, phase_start_ms, retiring },
+                asset, current, pending, phase_start_ms, retiring,
                 owner, config, escrow_id, fee_inbox_id, boundary_ms, ctx,
             );
             RentingFireResult::Handover { tenancy: new_tenancy }
         },
         TenancyState::Occupied { asset, tenant, phase_start_ms, retiring } => {
             let (wrapped, last_acq_price, retiring) = do_tenure_expiry(
-                TenancyState::Occupied { asset, tenant, phase_start_ms, retiring },
+                asset, tenant, phase_start_ms, retiring,
                 owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
             );
             RentingFireResult::TenureExpired { asset: asset::unbundle(wrapped), last_acq_price, retiring }
@@ -986,109 +986,104 @@ public(package) fun set_retiring_flag_checked<Asset: key + store, CoinType>(
 
 /// Demand → Occupied: fire the handover transition at `boundary_ms`.
 /// Distributes used credit to owner; retiring flag propagates to new Occupied.
-public(package) fun do_handover<Asset: key + store, CoinType>(
-    tenancy:      TenancyState<Asset, CoinType>,
-    owner:        &mut Owner<CoinType>,
-    config:       &IntegrationConfig,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    boundary_ms:  u64,
-    ctx:          &mut TxContext,
+fun do_handover<Asset: key + store, CoinType>(
+    asset:          asset::Asset<Asset>,
+    current:        Tenant<CoinType>,
+    pending:        Tenant<CoinType>,
+    phase_start_ms: u64,
+    retiring:       bool,
+    owner:          &mut Owner<CoinType>,
+    config:         &IntegrationConfig,
+    escrow_id:      ID,
+    fee_inbox_id:   ID,
+    boundary_ms:    u64,
+    ctx:            &mut TxContext,
 ): TenancyState<Asset, CoinType> {
-    match (tenancy) {
-        TenancyState::Demand { asset, current, pending, handover_expiry: _, phase_start_ms, retiring } => {
-            let principal   = tenant::stake_value(&current);
-            let used_credit = {
-                let cs = credit_state::capped(principal, phase_start_ms, boundary_ms);
-                credit_state::used_credit(&cs, config, boundary_ms)
-            };
-            let (owner_amount, fee_amount) = split_fee(used_credit);
-            let remain_credit = principal - used_credit;
+    let principal   = tenant::stake_value(&current);
+    let used_credit = {
+        let cs = credit_state::capped(principal, phase_start_ms, boundary_ms);
+        credit_state::used_credit(&cs, config, boundary_ms)
+    };
+    let (owner_amount, fee_amount) = split_fee(used_credit);
+    let remain_credit = principal - used_credit;
 
-            let displaced_cap_id = tenant::id_cap_id(tenant::identity(&current));
-            let displaced_addr   = tenant::id_address(tenant::identity(&current));
+    let displaced_cap_id = tenant::id_cap_id(tenant::identity(&current));
+    let displaced_addr   = tenant::id_address(tenant::identity(&current));
 
-            let mut departing  = current;
-            let owner_earnings = tenant::take_owner_earnings(&mut departing, owner_amount);
-            let fee_share      = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
-            let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
-            refund_state::distribute(refund, owner, fee_inbox_id, ctx);
+    let mut departing  = current;
+    let owner_earnings = tenant::take_owner_earnings(&mut departing, owner_amount);
+    let fee_share      = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
+    let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
+    refund_state::distribute(refund, owner, fee_inbox_id, ctx);
 
-            let new_cap_id     = tenant::id_cap_id(tenant::identity(&pending));
-            let new_addr       = tenant::id_address(tenant::identity(&pending));
-            let new_stake      = tenant::stake_value(&pending);
-            let new_rent_price = {
-                let ps = price_state::ascending(new_stake);
-                price_state::floor_price(&ps, config, boundary_ms)
-            };
+    let new_cap_id     = tenant::id_cap_id(tenant::identity(&pending));
+    let new_addr       = tenant::id_address(tenant::identity(&pending));
+    let new_stake      = tenant::stake_value(&pending);
+    let new_rent_price = {
+        let ps = price_state::ascending(new_stake);
+        price_state::floor_price(&ps, config, boundary_ms)
+    };
 
-            event::emit(HandoverCompleted {
-                escrow_id,
-                displaced_tenant_cap_id:  displaced_cap_id,
-                displaced_tenant:         displaced_addr,
-                displaced_phase_start_ms: phase_start_ms,
-                new_tenant_cap_id:        new_cap_id,
-                new_tenant_addr:          new_addr,
-                new_tenant_stake:         new_stake,
-                used_credit,
-                owner_share:              owner_amount,
-                protocol_fee:             fee_amount,
-                remain_credit,
-                new_rent_price,
-                timestamp_ms:             boundary_ms,
-            });
+    event::emit(HandoverCompleted {
+        escrow_id,
+        displaced_tenant_cap_id:  displaced_cap_id,
+        displaced_tenant:         displaced_addr,
+        displaced_phase_start_ms: phase_start_ms,
+        new_tenant_cap_id:        new_cap_id,
+        new_tenant_addr:          new_addr,
+        new_tenant_stake:         new_stake,
+        used_credit,
+        owner_share:              owner_amount,
+        protocol_fee:             fee_amount,
+        remain_credit,
+        new_rent_price,
+        timestamp_ms:             boundary_ms,
+    });
 
-            TenancyState::Occupied {
-                asset,
-                tenant:         pending,
-                phase_start_ms: boundary_ms,
-                retiring,
-            }
-        },
-        TenancyState::Occupied { asset: _a, tenant: _t, phase_start_ms: _p, retiring: _r } =>
-            abort 0,
+    TenancyState::Occupied {
+        asset,
+        tenant:         pending,
+        phase_start_ms: boundary_ms,
+        retiring,
     }
 }
 
 /// Consume an Occupied tenancy at tenure expiry. Distributes full stake to
 /// owner/protocol. Returns (wrapped_asset, last_acq_price, retiring_flag).
-public(package) fun do_tenure_expiry<Asset: key + store, CoinType>(
-    tenancy:      TenancyState<Asset, CoinType>,
-    owner:        &mut Owner<CoinType>,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    boundary_ms:  u64,
-    ctx:          &mut TxContext,
+fun do_tenure_expiry<Asset: key + store, CoinType>(
+    asset:          asset::Asset<Asset>,
+    tenant:         Tenant<CoinType>,
+    phase_start_ms: u64,
+    retiring:       bool,
+    owner:          &mut Owner<CoinType>,
+    escrow_id:      ID,
+    fee_inbox_id:   ID,
+    boundary_ms:    u64,
+    ctx:            &mut TxContext,
 ): (asset::Asset<Asset>, u64, bool) {
-    match (tenancy) {
-        TenancyState::Occupied { asset, tenant, phase_start_ms, retiring } => {
-            let principal      = tenant::stake_value(&tenant);
-            let tenant_cap_id  = tenant::id_cap_id(tenant::identity(&tenant));
-            let tenant_addr    = tenant::id_address(tenant::identity(&tenant));
-            let (owner_amount, fee_amount) = split_fee(principal);
+    let principal      = tenant::stake_value(&tenant);
+    let tenant_cap_id  = tenant::id_cap_id(tenant::identity(&tenant));
+    let tenant_addr    = tenant::id_address(tenant::identity(&tenant));
+    let (owner_amount, fee_amount) = split_fee(principal);
 
-            let mut departing  = tenant;
-            let owner_earnings = tenant::take_owner_earnings(&mut departing, owner_amount);
-            let fee_share      = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
-            let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
-            refund_state::distribute(refund, owner, fee_inbox_id, ctx);
+    let mut departing  = tenant;
+    let owner_earnings = tenant::take_owner_earnings(&mut departing, owner_amount);
+    let fee_share      = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
+    let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
+    refund_state::distribute(refund, owner, fee_inbox_id, ctx);
 
-            event::emit(TenureExpired {
-                escrow_id,
-                tenant_cap_id,
-                tenant:                 tenant_addr,
-                phase_start_ms,
-                owner_share:            owner_amount,
-                protocol_fee:           fee_amount,
-                last_acquisition_price: principal,
-                timestamp_ms:           boundary_ms,
-            });
+    event::emit(TenureExpired {
+        escrow_id,
+        tenant_cap_id,
+        tenant:                 tenant_addr,
+        phase_start_ms,
+        owner_share:            owner_amount,
+        protocol_fee:           fee_amount,
+        last_acquisition_price: principal,
+        timestamp_ms:           boundary_ms,
+    });
 
-            (asset, principal, retiring)
-        },
-        TenancyState::Demand { asset: _a, current: _c, pending: _p, handover_expiry: _e, phase_start_ms: _s, retiring: _r } =>
-            abort 0,
-    }
+    (asset, principal, retiring)
 }
 
 /// Set the retiring flag on the current tenancy (Occupied or Demand).
@@ -1573,12 +1568,14 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     ctx:         &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyState::Demand { asset, current, pending, handover_expiry: _, phase_start_ms, retiring } }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = do_handover(
-                tenancy, &mut owner, &config, escrow_id, fee_inbox_id, boundary_ms, ctx,
+                asset, current, pending, phase_start_ms, retiring,
+                &mut owner, &config, escrow_id, fee_inbox_id, boundary_ms, ctx,
             );
             AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyState::Occupied { asset: _a, tenant: _t, phase_start_ms: _p, retiring: _r } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
@@ -1592,9 +1589,10 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     ctx:         &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyState::Occupied { asset, tenant, phase_start_ms, retiring } }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let (wrapped, last_acq_price, retiring) = do_tenure_expiry(
-                tenancy, &mut owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
+                asset, tenant, phase_start_ms, retiring,
+                &mut owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
             );
             let raw_asset = asset::unbundle(wrapped);
             if (retiring) {
@@ -1604,6 +1602,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
                 AssetContext { asset_state: AssetState::AtDutch { asset: raw_asset, last_acq_price, phase_start_ms: boundary_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
             }
         },
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyState::Demand { asset: _a, current: _c, pending: _p, handover_expiry: _e, phase_start_ms: _s, retiring: _r } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,

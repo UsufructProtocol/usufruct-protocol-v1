@@ -1,17 +1,18 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-/// Flat engine state machine.
+/// Engine: lifecycle state machine + immutable escrow context + owner earnings.
 ///
-/// Four variants correspond exactly to the four observable outer states of the
-/// rental protocol. The renting sub-machine (Occupied / Demand) lives in
-/// tenancy_state.move and is embedded as EngineState::Renting.
+/// AssetState (four outer variants) is the lifecycle enum; owner no longer
+/// lives inside each variant — it belongs to Engine, which holds it as a
+/// single invariant field across all states.
 ///
-/// Absorbs lifecycle_state, asset_state, and tenant_state. Transitions are
-/// direct `match` arms. Zero `unreachable()`.
+/// Engine absorbs the four context fields that previously floated through
+/// every execute_* signature: config, fee_inbox_id, integrated_at_ms,
+/// escrow_id. Callers (escrow.move) just pass the Engine; no context threading.
 ///
-/// Immutable escrow context (config, fee_inbox_id, integrated_at_ms,
-/// escrow_id) lives at the coordinator layer and is passed explicitly.
+/// TenancyState sub-machine (Occupied / Demand) lives in tenancy_state.move
+/// and is embedded as AssetState::Renting { tenancy }.
 module usufruct::engine_state;
 
 // === Imports ===
@@ -49,35 +50,34 @@ const EReceiptEscrowMismatch: u64 = 10;
 const EReceiptAssetMismatch:  u64 = 11;
 const ENotRetired:            u64 = 12;
 const ENoEarnings:            u64 = 13;
-const EAlreadyRetiring:       u64 = 14;
 
 // === Structs ===
 
-/// Flat engine state — four outer variants.
+/// Lifecycle state — four outer variants. No owner field; owner lives in Engine.
 ///
 ///   · Idle    — no tenant, no auction. Asset sits in escrow.
 ///   · Renting — active tenancy (Occupied or Demand sub-state).
 ///   · AtDutch — Dutch auction in progress. No active tenant.
 ///   · Retired — asset extracted; awaiting owner claim.
-public enum EngineState<Asset: key + store, phantom CoinType> has store {
-    Idle {
-        asset: Asset,
-        owner: Owner<CoinType>,
-    },
-    Renting {
-        tenancy: TenancyState<Asset, CoinType>,
-        owner:   Owner<CoinType>,
-    },
-    AtDutch {
-        asset:          Asset,
-        last_acq_price: u64,
-        phase_start_ms: u64,
-        owner:          Owner<CoinType>,
-    },
-    Retired {
-        asset: Asset,
-        owner: Owner<CoinType>,
-    },
+public enum AssetState<Asset: key + store, phantom CoinType> has store {
+    Idle    { asset: Asset },
+    Renting { tenancy: TenancyState<Asset, CoinType> },
+    AtDutch { asset: Asset, last_acq_price: u64, phase_start_ms: u64 },
+    Retired { asset: Asset },
+}
+
+/// Central engine: lifecycle state + owner + immutable escrow context.
+///
+/// Context fields (config, fee_inbox_id, integrated_at_ms, escrow_id) are
+/// written once at integrate time and never mutated. Stored in Escrow as
+/// Option<Engine> to enable by-value extraction.
+public struct Engine<Asset: key + store, phantom CoinType> has store {
+    asset_state:      AssetState<Asset, CoinType>,
+    owner:            Owner<CoinType>,
+    config:           IntegrationConfig,
+    fee_inbox_id:     ID,
+    integrated_at_ms: u64,
+    escrow_id:        ID,
 }
 
 // === Events ===
@@ -117,116 +117,126 @@ public struct EarningsWithdrawn has copy, drop {
 
 /// Construct a fresh engine. Called once at integrate time.
 public(package) fun new<Asset: key + store, CoinType>(
-    asset:        Asset,
-    owner_cap_id: ID,
-): EngineState<Asset, CoinType> {
-    EngineState::Idle {
-        asset,
-        owner: owner::new<CoinType>(owner_cap_id),
+    asset:            Asset,
+    owner_cap_id:     ID,
+    config:           IntegrationConfig,
+    fee_inbox_id:     ID,
+    integrated_at_ms: u64,
+    escrow_id:        ID,
+): Engine<Asset, CoinType> {
+    Engine {
+        asset_state:      AssetState::Idle { asset },
+        owner:            owner::new<CoinType>(owner_cap_id),
+        config,
+        fee_inbox_id,
+        integrated_at_ms,
+        escrow_id,
     }
 }
 
 // ─── Variant predicates ───────────────────────────────────────────────────────
 
 public(package) fun is_active<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): bool {
-    match (s) {
-        EngineState::Retired { .. } => false,
-        _                           => true,
-    }
+    match (&e.asset_state) { AssetState::Retired { .. } => false, _ => true }
 }
 
 public(package) fun is_inactive<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): bool {
-    match (s) {
-        EngineState::Retired { .. } => true,
-        _                           => false,
-    }
+    match (&e.asset_state) { AssetState::Retired { .. } => true, _ => false }
 }
+
+// ─── Context accessors ────────────────────────────────────────────────────────
+
+public(package) fun config<Asset: key + store, CoinType>(
+    e: &Engine<Asset, CoinType>,
+): &IntegrationConfig { &e.config }
+
+public(package) fun fee_inbox_id<Asset: key + store, CoinType>(
+    e: &Engine<Asset, CoinType>,
+): ID { e.fee_inbox_id }
+
+public(package) fun integrated_at_ms<Asset: key + store, CoinType>(
+    e: &Engine<Asset, CoinType>,
+): u64 { e.integrated_at_ms }
+
+public(package) fun escrow_id<Asset: key + store, CoinType>(
+    e: &Engine<Asset, CoinType>,
+): ID { e.escrow_id }
 
 // ─── Identity views ───────────────────────────────────────────────────────────
 
 public(package) fun asset_id<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): ID {
-    match (s) {
-        EngineState::Idle    { asset, .. } => object::id(asset),
-        EngineState::AtDutch { asset, .. } => object::id(asset),
-        EngineState::Retired { asset, .. } => object::id(asset),
-        EngineState::Renting { tenancy, .. } => tenancy_state::asset_id(tenancy),
+    match (&e.asset_state) {
+        AssetState::Idle    { asset }    => object::id(asset),
+        AssetState::AtDutch { asset, .. } => object::id(asset),
+        AssetState::Retired { asset }    => object::id(asset),
+        AssetState::Renting { tenancy }  => tenancy_state::asset_id(tenancy),
     }
 }
 
 public(package) fun owner_balance<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): u64 {
-    match (s) {
-        EngineState::Idle    { owner, .. } => owner::value(owner),
-        EngineState::Renting { owner, .. } => owner::value(owner),
-        EngineState::AtDutch { owner, .. } => owner::value(owner),
-        EngineState::Retired { owner, .. } => owner::value(owner),
-    }
+    owner::value(&e.owner)
 }
 
 public(package) fun owner_cap_id<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): ID {
-    match (s) {
-        EngineState::Idle    { owner, .. } => owner::id_cap_id(owner::identity(owner)),
-        EngineState::Renting { owner, .. } => owner::id_cap_id(owner::identity(owner)),
-        EngineState::AtDutch { owner, .. } => owner::id_cap_id(owner::identity(owner)),
-        EngineState::Retired { owner, .. } => owner::id_cap_id(owner::identity(owner)),
-    }
+    owner::id_cap_id(owner::identity(&e.owner))
 }
 
 // ─── State predicate views (SDK surface via escrow.move) ──────────────────────
 
 public(package) fun is_idle_state<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): bool {
-    match (s) { EngineState::Idle { .. } => true, _ => false }
+    match (&e.asset_state) { AssetState::Idle { .. } => true, _ => false }
 }
 
 public(package) fun is_at_dutch_state<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): bool {
-    match (s) { EngineState::AtDutch { .. } => true, _ => false }
+    match (&e.asset_state) { AssetState::AtDutch { .. } => true, _ => false }
 }
 
 /// True iff there is an active tenancy (Occupied or Demand).
 public(package) fun is_rented_state<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): bool {
-    match (s) { EngineState::Renting { .. } => true, _ => false }
+    match (&e.asset_state) { AssetState::Renting { .. } => true, _ => false }
 }
 
 /// True iff renting and tenancy is Occupied (no pending bid yet).
 public(package) fun is_handover_open_state<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): bool {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::is_occupied(tenancy),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::is_occupied(tenancy),
         _ => false,
     }
 }
 
 /// True iff renting and tenancy is Demand (pending bidder present).
 public(package) fun is_handover_confirmed_state<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): bool {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::is_demand(tenancy),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::is_demand(tenancy),
         _ => false,
     }
 }
 
 public(package) fun is_retiring_state<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): bool {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::is_retiring(tenancy),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::is_retiring(tenancy),
         _ => false,
     }
 }
@@ -234,92 +244,92 @@ public(package) fun is_retiring_state<Asset: key + store, CoinType>(
 // ─── Tenant data views (Option variants — only present in Renting) ────────────
 
 public(package) fun current_addr_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<address> {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => option::some(tenancy_state::current_addr(tenancy)),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => option::some(tenancy_state::current_addr(tenancy)),
         _ => option::none(),
     }
 }
 
 public(package) fun current_cap_id_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<ID> {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => option::some(tenancy_state::current_cap_id(tenancy)),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => option::some(tenancy_state::current_cap_id(tenancy)),
         _ => option::none(),
     }
 }
 
 public(package) fun pending_addr_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<address> {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::pending_addr_opt(tenancy),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::pending_addr_opt(tenancy),
         _ => option::none(),
     }
 }
 
 public(package) fun pending_cap_id_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<ID> {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::pending_cap_id_opt(tenancy),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::pending_cap_id_opt(tenancy),
         _ => option::none(),
     }
 }
 
 public(package) fun current_stake_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<u64> {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => option::some(tenancy_state::current_stake(tenancy)),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => option::some(tenancy_state::current_stake(tenancy)),
         _ => option::none(),
     }
 }
 
 public(package) fun current_stake_value<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): u64 {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::current_stake(tenancy),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::current_stake(tenancy),
         _ => abort ENotRented,
     }
 }
 
 public(package) fun pending_stake_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<u64> {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::pending_stake_opt(tenancy),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::pending_stake_opt(tenancy),
         _ => option::none(),
     }
 }
 
 public(package) fun phase_start_ms_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<u64> {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => option::some(tenancy_state::phase_start_ms(tenancy)),
-        EngineState::AtDutch { phase_start_ms, .. } => option::some(*phase_start_ms),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => option::some(tenancy_state::phase_start_ms(tenancy)),
+        AssetState::AtDutch { phase_start_ms, .. } => option::some(*phase_start_ms),
         _ => option::none(),
     }
 }
 
 public(package) fun handover_expiry_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<u64> {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::handover_expiry_opt(tenancy),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::handover_expiry_opt(tenancy),
         _ => option::none(),
     }
 }
 
 public(package) fun last_acq_price_opt<Asset: key + store, CoinType>(
-    s: &EngineState<Asset, CoinType>,
+    e: &Engine<Asset, CoinType>,
 ): Option<u64> {
-    match (s) {
-        EngineState::AtDutch { last_acq_price, .. } => option::some(*last_acq_price),
+    match (&e.asset_state) {
+        AssetState::AtDutch { last_acq_price, .. } => option::some(*last_acq_price),
         _ => option::none(),
     }
 }
@@ -327,31 +337,29 @@ public(package) fun last_acq_price_opt<Asset: key + store, CoinType>(
 // ─── Pricing views ────────────────────────────────────────────────────────────
 
 public(package) fun floor_price_at<Asset: key + store, CoinType>(
-    s:            &EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
+    e:            &Engine<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    match (s) {
-        EngineState::Idle { .. } =>
-            config::min_rent_price(config),
-        EngineState::Renting { tenancy, .. } =>
-            tenancy_state::floor_price_at(tenancy, config, timestamp_ms),
-        EngineState::AtDutch { last_acq_price, phase_start_ms, .. } => {
+    match (&e.asset_state) {
+        AssetState::Idle { .. } =>
+            config::min_rent_price(&e.config),
+        AssetState::Renting { tenancy } =>
+            tenancy_state::floor_price_at(tenancy, &e.config, timestamp_ms),
+        AssetState::AtDutch { last_acq_price, phase_start_ms, .. } => {
             let ps = price_state::descending(*last_acq_price, *phase_start_ms);
-            price_state::floor_price(&ps, config, timestamp_ms)
+            price_state::floor_price(&ps, &e.config, timestamp_ms)
         },
-        EngineState::Retired { .. } => abort ERetiredNoBid,
+        AssetState::Retired { .. } => abort ERetiredNoBid,
     }
 }
 
 public(package) fun used_credit_at<Asset: key + store, CoinType>(
-    s:            &EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
+    e:            &Engine<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    match (s) {
-        EngineState::Renting { tenancy, .. } =>
-            tenancy_state::used_credit_at(tenancy, config, timestamp_ms),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } =>
+            tenancy_state::used_credit_at(tenancy, &e.config, timestamp_ms),
         _ => abort ENotRented,
     }
 }
@@ -366,11 +374,11 @@ public(package) fun bps_denominator(): u64  { tenancy_state::bps_denominator() }
 // ─── Cap-authorization view ───────────────────────────────────────────────────
 
 public(package) fun cap_authorization_state<Asset: key + store, CoinType>(
-    s:      &EngineState<Asset, CoinType>,
+    e:      &Engine<Asset, CoinType>,
     cap_id: ID,
 ): CapAuthorizationState {
-    match (s) {
-        EngineState::Renting { tenancy, .. } => tenancy_state::cap_authorization_state(tenancy, cap_id),
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => tenancy_state::cap_authorization_state(tenancy, cap_id),
         _ => usufruct::cap_authorization_state::stale(),
     }
 }
@@ -378,16 +386,15 @@ public(package) fun cap_authorization_state<Asset: key + store, CoinType>(
 // ─── APT and pending detection ────────────────────────────────────────────────
 
 public(package) fun next_pending<Asset: key + store, CoinType>(
-    s:      &EngineState<Asset, CoinType>,
-    config: &IntegrationConfig,
-    clock:  &Clock,
+    e:     &Engine<Asset, CoinType>,
+    clock: &Clock,
 ): Option<PendingTransitionState> {
     let now = clock::timestamp_ms(clock);
-    match (s) {
-        EngineState::Renting { tenancy, .. } =>
-            tenancy_state::next_pending_from_tenancy(tenancy, config, now),
-        EngineState::AtDutch { phase_start_ms, .. } => {
-            let policy = config::descent(config);
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } =>
+            tenancy_state::next_pending_from_tenancy(tenancy, &e.config, now),
+        AssetState::AtDutch { phase_start_ms, .. } => {
+            let policy = config::descent(&e.config);
             if (descent_policy_state::has_expired(policy, *phase_start_ms, now)) {
                 return option::some(
                     pending_transition_state::auction(descent_policy_state::expiry_at(policy, *phase_start_ms))
@@ -395,252 +402,216 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
             };
             option::none()
         },
-        EngineState::Idle { .. } | EngineState::Retired { .. } => option::none(),
+        AssetState::Idle { .. } | AssetState::Retired { .. } => option::none(),
     }
 }
 
 public(package) fun apply_pending_transition_states<Asset: key + store, CoinType>(
-    state:        EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    clock:        &Clock,
-    ctx:          &mut TxContext,
-): EngineState<Asset, CoinType> {
-    let mut current = state;
-    let mut pending = next_pending(&current, config, clock);
+    engine: Engine<Asset, CoinType>,
+    clock:  &Clock,
+    ctx:    &mut TxContext,
+): Engine<Asset, CoinType> {
+    let mut current = engine;
+    let mut pending = next_pending(&current, clock);
     while (option::is_some(&pending)) {
-        current = fire(current, config, escrow_id, fee_inbox_id, option::destroy_some(pending), ctx);
-        pending = next_pending(&current, config, clock);
+        current = fire(current, option::destroy_some(pending), ctx);
+        pending = next_pending(&current, clock);
     };
     current
 }
 
-fun fire<Asset: key + store, CoinType>(
-    state:        EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    t:            PendingTransitionState,
-    ctx:          &mut TxContext,
-): EngineState<Asset, CoinType> {
-    let boundary_ms = pending_transition_state::boundary_ms(&t);
-    match (state) {
-        EngineState::Renting { tenancy, owner } => {
-            let (tenancy_opt, asset_opt, last_acq_price, retiring, owner) =
-                tenancy_state::do_apt_transition(tenancy, owner, config, escrow_id, fee_inbox_id, boundary_ms, ctx);
-            if (option::is_some(&tenancy_opt)) {
-                option::destroy_none(asset_opt);
-                EngineState::Renting { tenancy: option::destroy_some(tenancy_opt), owner }
-            } else {
-                option::destroy_none(tenancy_opt);
-                let raw_asset = option::destroy_some(asset_opt);
-                if (retiring) {
-                    event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
-                    EngineState::Retired { asset: raw_asset, owner }
-                } else {
-                    EngineState::AtDutch { asset: raw_asset, last_acq_price, phase_start_ms: boundary_ms, owner }
-                }
-            }
-        },
-        EngineState::AtDutch { asset, last_acq_price, phase_start_ms, owner } =>
-            do_auction_expiry(asset, last_acq_price, phase_start_ms, owner, escrow_id, boundary_ms),
-        EngineState::Idle    { asset: _a, owner: _o } => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o } => abort ENotRented,
-    }
-}
-
-// ─── Public action executors ──────────────────────────────────────────────────
+// ─── Action executors ─────────────────────────────────────────────────────────
 
 public(package) fun execute_rent<Asset: key + store, CoinType>(
-    state:        EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    payment:      Coin<CoinType>,
-    clock:        &Clock,
-    ctx:          &mut TxContext,
-): (EngineState<Asset, CoinType>, TenantCap) {
-    let state = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
-    let now   = clock::timestamp_ms(clock);
-    let floor = floor_price_at(&state, config, now);
+    engine:  Engine<Asset, CoinType>,
+    payment: Coin<CoinType>,
+    clock:   &Clock,
+    ctx:     &mut TxContext,
+): (Engine<Asset, CoinType>, TenantCap) {
+    let engine = apply_pending_transition_states(engine, clock, ctx);
+    let now    = clock::timestamp_ms(clock);
+    let floor  = floor_price_at(&engine, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
-    match (state) {
-        EngineState::Idle { asset, owner } =>
-            do_install(asset, owner, escrow_id, payment, floor, now, ctx),
-        EngineState::AtDutch { asset, owner, .. } =>
-            do_install(asset, owner, escrow_id, payment, floor, now, ctx),
-        EngineState::Renting { tenancy, mut owner } => {
-            let (new_tenancy, cap) = tenancy_state::accept_rent_payment(
-                tenancy, &mut owner, config, escrow_id, fee_inbox_id, payment, floor, now, ctx,
-            );
-            (EngineState::Renting { tenancy: new_tenancy, owner }, cap)
+    match (engine) {
+        Engine { asset_state: AssetState::Idle { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+            let (new_state, cap) = do_install(asset, escrow_id, payment, floor, now, ctx);
+            (Engine { asset_state: new_state, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }, cap)
         },
-        EngineState::Retired { asset: _a, owner: _o } => abort ERetiredNoBid,
+        Engine { asset_state: AssetState::AtDutch { asset, .. }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+            let (new_state, cap) = do_install(asset, escrow_id, payment, floor, now, ctx);
+            (Engine { asset_state: new_state, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }, cap)
+        },
+        Engine { asset_state: AssetState::Renting { tenancy }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+            let (new_tenancy, cap) = tenancy_state::accept_rent_payment(
+                tenancy, &mut owner, &config, escrow_id, fee_inbox_id, payment, floor, now, ctx,
+            );
+            (Engine { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }, cap)
+        },
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ERetiredNoBid,
     }
 }
 
 public(package) fun execute_retire<Asset: key + store, CoinType>(
-    state:            EngineState<Asset, CoinType>,
-    config:           &IntegrationConfig,
-    escrow_id:        ID,
-    fee_inbox_id:     ID,
-    integrated_at_ms: u64,
-    clock:            &Clock,
-    ctx:              &mut TxContext,
-): EngineState<Asset, CoinType> {
-    let state  = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
+    engine: Engine<Asset, CoinType>,
+    clock:  &Clock,
+    ctx:    &mut TxContext,
+): Engine<Asset, CoinType> {
+    let engine = apply_pending_transition_states(engine, clock, ctx);
     let now_ms = clock::timestamp_ms(clock);
     assert!(
-        retire_policy_state::is_unlocked(config::retire(config), integrated_at_ms, now_ms),
+        retire_policy_state::is_unlocked(config::retire(&engine.config), engine.integrated_at_ms, now_ms),
         ERetireFloorNotElapsed,
     );
-    match (state) {
-        EngineState::Retired { asset: _a, owner: _o } => abort EAlreadyRetired,
-        EngineState::Idle    { asset, owner } =>
-            do_retire_immediately(asset, owner, escrow_id, now_ms, ctx),
-        EngineState::AtDutch { asset, owner, .. } =>
-            do_retire_immediately(asset, owner, escrow_id, now_ms, ctx),
-        EngineState::Renting { tenancy, owner } => {
-            assert!(!tenancy_state::is_retiring(&tenancy), EAlreadyRetiring);
-            let new_tenancy = tenancy_state::set_retiring_flag(tenancy, escrow_id, now_ms, ctx);
-            EngineState::Renting { tenancy: new_tenancy, owner }
+    match (engine) {
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort EAlreadyRetired,
+        Engine { asset_state: AssetState::Idle { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } =>
+            Engine { asset_state: do_retire_immediately(asset, escrow_id, now_ms, ctx), owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
+        Engine { asset_state: AssetState::AtDutch { asset, .. }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } =>
+            Engine { asset_state: do_retire_immediately(asset, escrow_id, now_ms, ctx), owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
+        Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+            let new_tenancy = tenancy_state::set_retiring_flag_checked(tenancy, escrow_id, now_ms, ctx);
+            Engine { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
     }
 }
 
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
-    state:        EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    tenant_cap:   &TenantCap,
-    clock:        &Clock,
-    ctx:          &mut TxContext,
-): (EngineState<Asset, CoinType>, Asset, AssetReceipt) {
-    let state = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
-    assert!(tenant_cap::escrow_id(tenant_cap) == escrow_id, EWrongEscrowTenantCap);
+    engine:     Engine<Asset, CoinType>,
+    tenant_cap: &TenantCap,
+    clock:      &Clock,
+    ctx:        &mut TxContext,
+): (Engine<Asset, CoinType>, Asset, AssetReceipt) {
+    let engine = apply_pending_transition_states(engine, clock, ctx);
+    assert!(tenant_cap::escrow_id(tenant_cap) == engine.escrow_id, EWrongEscrowTenantCap);
     let cap_id = object::id(tenant_cap);
-    match (state) {
-        EngineState::Renting { tenancy, owner } => {
+    match (engine) {
+        Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let (new_tenancy, u, receipt) = tenancy_state::take_asset(tenancy, escrow_id, cap_id);
-            (EngineState::Renting { tenancy: new_tenancy, owner }, u, receipt)
+            (Engine { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }, u, receipt)
         },
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort EStaleTenantCap,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort EStaleTenantCap,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort EStaleTenantCap,
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort EStaleTenantCap,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort EStaleTenantCap,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort EStaleTenantCap,
     }
 }
 
 public(package) fun execute_return<Asset: key + store, CoinType>(
-    state:      EngineState<Asset, CoinType>,
-    escrow_id:  ID,
+    engine:     Engine<Asset, CoinType>,
     asset_in:   Asset,
     receipt_in: AssetReceipt,
-): EngineState<Asset, CoinType> {
-    assert!(asset::receipt_escrow_id(&receipt_in)  == escrow_id,             EReceiptEscrowMismatch);
-    assert!(asset::receipt_asset_id(&receipt_in)   == object::id(&asset_in), EReceiptAssetMismatch);
-    match (state) {
-        EngineState::Renting { tenancy, owner } => {
+): Engine<Asset, CoinType> {
+    assert!(asset::receipt_escrow_id(&receipt_in)  == engine.escrow_id,             EReceiptEscrowMismatch);
+    assert!(asset::receipt_asset_id(&receipt_in)   == object::id(&asset_in),        EReceiptAssetMismatch);
+    match (engine) {
+        Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = tenancy_state::put_asset(tenancy, escrow_id, asset_in, receipt_in);
-            EngineState::Renting { tenancy: new_tenancy, owner }
+            Engine { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort EReceiptEscrowMismatch,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort EReceiptEscrowMismatch,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort EReceiptEscrowMismatch,
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort EReceiptEscrowMismatch,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort EReceiptEscrowMismatch,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort EReceiptEscrowMismatch,
     }
 }
 
 public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
-    state:        EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    cap:          TenantCap,
-    clock:        &Clock,
-    ctx:          &mut TxContext,
-): EngineState<Asset, CoinType> {
-    let state = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
-    match (state) {
-        EngineState::Retired { asset, owner } => {
+    engine: Engine<Asset, CoinType>,
+    cap:    TenantCap,
+    clock:  &Clock,
+    ctx:    &mut TxContext,
+): Engine<Asset, CoinType> {
+    let engine = apply_pending_transition_states(engine, clock, ctx);
+    match (engine) {
+        Engine { asset_state: AssetState::Retired { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             tenant_cap::burn(cap, ctx);
-            EngineState::Retired { asset, owner }
+            Engine { asset_state: AssetState::Retired { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::Idle { asset, owner } => {
+        Engine { asset_state: AssetState::Idle { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             assert!(tenant_cap::escrow_id(&cap) == escrow_id, EWrongEscrowTenantCap);
             tenant_cap::burn(cap, ctx);
-            EngineState::Idle { asset, owner }
+            Engine { asset_state: AssetState::Idle { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::AtDutch { asset, last_acq_price, phase_start_ms, owner } => {
+        Engine { asset_state: AssetState::AtDutch { asset, last_acq_price, phase_start_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             assert!(tenant_cap::escrow_id(&cap) == escrow_id, EWrongEscrowTenantCap);
             tenant_cap::burn(cap, ctx);
-            EngineState::AtDutch { asset, last_acq_price, phase_start_ms, owner }
+            Engine { asset_state: AssetState::AtDutch { asset, last_acq_price, phase_start_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::Renting { tenancy, owner } => {
+        Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             assert!(tenant_cap::escrow_id(&cap) == escrow_id, EWrongEscrowTenantCap);
             tenancy_state::assert_cap_stale(&tenancy, object::id(&cap));
             tenant_cap::burn(cap, ctx);
-            EngineState::Renting { tenancy, owner }
+            Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
     }
 }
 
 public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
-    state:        EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    owner_cap:    &OwnerCap,
-    clock:        &Clock,
-    ctx:          &mut TxContext,
-): (EngineState<Asset, CoinType>, Coin<CoinType>) {
-    let state        = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
+    engine:    Engine<Asset, CoinType>,
+    owner_cap: &OwnerCap,
+    clock:     &Clock,
+    ctx:       &mut TxContext,
+): (Engine<Asset, CoinType>, Coin<CoinType>) {
+    let engine       = apply_pending_transition_states(engine, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
-    match (state) {
-        EngineState::Idle { asset, mut owner } => {
-            let (coin, amount) = do_withdraw(&mut owner, owner_cap, ctx);
-            event::emit(EarningsWithdrawn { escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms });
-            (EngineState::Idle { asset, owner }, coin)
-        },
-        EngineState::Renting { tenancy, mut owner } => {
-            let (coin, amount) = do_withdraw(&mut owner, owner_cap, ctx);
-            event::emit(EarningsWithdrawn { escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms });
-            (EngineState::Renting { tenancy, owner }, coin)
-        },
-        EngineState::AtDutch { asset, last_acq_price, phase_start_ms, mut owner } => {
-            let (coin, amount) = do_withdraw(&mut owner, owner_cap, ctx);
-            event::emit(EarningsWithdrawn { escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms });
-            (EngineState::AtDutch { asset, last_acq_price, phase_start_ms, owner }, coin)
-        },
-        EngineState::Retired { asset, mut owner } => {
-            let (coin, amount) = do_withdraw(&mut owner, owner_cap, ctx);
-            event::emit(EarningsWithdrawn { escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms });
-            (EngineState::Retired { asset, owner }, coin)
-        },
-    }
+    let Engine { asset_state, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } = engine;
+    let (coin, amount) = do_withdraw(&mut owner, owner_cap, ctx);
+    event::emit(EarningsWithdrawn { escrow_id, owner_cap_id, owner: owner_addr, amount, timestamp_ms });
+    (Engine { asset_state, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }, coin)
 }
 
 /// Terminal: consume a Retired engine and return (asset, residual earnings).
 public(package) fun unwrap_for_claim<Asset: key + store, CoinType>(
-    state:     EngineState<Asset, CoinType>,
+    engine:    Engine<Asset, CoinType>,
     owner_cap: &OwnerCap,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
-    match (state) {
-        EngineState::Retired { asset, mut owner } => {
+    match (engine) {
+        Engine { asset_state: AssetState::Retired { asset }, mut owner, .. } => {
             let coin = owner::withdraw(&mut owner, owner_cap, ctx);
             owner::destroy_empty(owner);
             (asset, coin)
         },
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort ENotRetired,
-        EngineState::Renting { tenancy: _t, owner: _o }                                        => abort ENotRetired,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort ENotRetired,
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRetired,
+        Engine { asset_state: AssetState::Renting { tenancy: _t }, owner: _o, .. } => abort ENotRetired,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRetired,
     }
 }
 
 // === Private Functions ===
+
+fun fire<Asset: key + store, CoinType>(
+    engine: Engine<Asset, CoinType>,
+    t:      PendingTransitionState,
+    ctx:    &mut TxContext,
+): Engine<Asset, CoinType> {
+    let boundary_ms = pending_transition_state::boundary_ms(&t);
+    match (engine) {
+        Engine { asset_state: AssetState::Renting { tenancy }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+            let result = tenancy_state::do_apt_transition(
+                tenancy, &mut owner, &config, escrow_id, fee_inbox_id, boundary_ms, ctx,
+            );
+            if (tenancy_state::fire_result_is_handover(&result)) {
+                let new_tenancy = tenancy_state::fire_result_into_handover(result);
+                Engine { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
+            } else {
+                let (asset, last_acq_price, retiring) = tenancy_state::fire_result_into_tenure_expired(result);
+                if (retiring) {
+                    event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
+                    Engine { asset_state: AssetState::Retired { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
+                } else {
+                    Engine { asset_state: AssetState::AtDutch { asset, last_acq_price, phase_start_ms: boundary_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
+                }
+            }
+        },
+        Engine { asset_state: AssetState::AtDutch { asset, last_acq_price, phase_start_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+            let new_state = do_auction_expiry(asset, last_acq_price, phase_start_ms, escrow_id, boundary_ms);
+            Engine { asset_state: new_state, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
+        },
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
+    }
+}
 
 fun do_withdraw<CoinType>(
     owner:     &mut Owner<CoinType>,
@@ -655,13 +626,12 @@ fun do_withdraw<CoinType>(
 
 fun do_install<Asset: key + store, CoinType>(
     asset:     Asset,
-    owner:     Owner<CoinType>,
     escrow_id: ID,
     payment:   Coin<CoinType>,
     floor:     u64,
     now:       u64,
     ctx:       &mut TxContext,
-): (EngineState<Asset, CoinType>, TenantCap) {
+): (AssetState<Asset, CoinType>, TenantCap) {
     let price_paid  = coin::value(&payment);
     let tenant_addr = ctx.sender();
     let (cap, cap_id) = tenant_cap::new(escrow_id, tenant_addr, ctx);
@@ -671,37 +641,29 @@ fun do_install<Asset: key + store, CoinType>(
         escrow_id, tenant_cap_id: cap_id, tenant: tenant_addr,
         phase_start_ms: now, price_paid, floor_price: floor,
     });
-    (
-        EngineState::Renting {
-            tenancy: tenancy_state::new_occupied(wrapped, t, now),
-            owner,
-        },
-        cap,
-    )
+    (AssetState::Renting { tenancy: tenancy_state::new_occupied(wrapped, t, now) }, cap)
 }
 
 fun do_auction_expiry<Asset: key + store, CoinType>(
     asset:          Asset,
     last_acq_price: u64,
     phase_start_ms: u64,
-    owner:          Owner<CoinType>,
     escrow_id:      ID,
     boundary_ms:    u64,
-): EngineState<Asset, CoinType> {
+): AssetState<Asset, CoinType> {
     event::emit(AuctionExpired { escrow_id, phase_start_ms, last_acq_price, timestamp_ms: boundary_ms });
-    EngineState::Idle { asset, owner }
+    AssetState::Idle { asset }
 }
 
 fun do_retire_immediately<Asset: key + store, CoinType>(
     asset:        Asset,
-    owner:        Owner<CoinType>,
     escrow_id:    ID,
     timestamp_ms: u64,
     ctx:          &TxContext,
-): EngineState<Asset, CoinType> {
+): AssetState<Asset, CoinType> {
     tenancy_state::emit_retire_flag_set(escrow_id, ctx.sender(), timestamp_ms);
     event::emit(AssetRetired { escrow_id, timestamp_ms });
-    EngineState::Retired { asset, owner }
+    AssetState::Retired { asset }
 }
 
 // === Test Functions ===
@@ -713,154 +675,147 @@ public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
 
 #[test_only]
 public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
-    state:        EngineState<Asset, CoinType>,
-    config:       &IntegrationConfig,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    boundary_ms:  u64,
-    ctx:          &mut TxContext,
-): EngineState<Asset, CoinType> {
-    match (state) {
-        EngineState::Renting { tenancy, mut owner } => {
+    engine:      Engine<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+): Engine<Asset, CoinType> {
+    match (engine) {
+        Engine { asset_state: AssetState::Renting { tenancy }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = tenancy_state::do_handover(
-                tenancy, &mut owner, config, escrow_id, fee_inbox_id, boundary_ms, ctx,
+                tenancy, &mut owner, &config, escrow_id, fee_inbox_id, boundary_ms, ctx,
             );
-            EngineState::Renting { tenancy: new_tenancy, owner }
+            Engine { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort ENotRented,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort ENotRented,
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
     }
 }
 
 #[test_only]
 public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinType>(
-    state:        EngineState<Asset, CoinType>,
-    escrow_id:    ID,
-    fee_inbox_id: ID,
-    boundary_ms:  u64,
-    ctx:          &mut TxContext,
-): EngineState<Asset, CoinType> {
-    match (state) {
-        EngineState::Renting { tenancy, mut owner } => {
+    engine:      Engine<Asset, CoinType>,
+    boundary_ms: u64,
+    ctx:         &mut TxContext,
+): Engine<Asset, CoinType> {
+    match (engine) {
+        Engine { asset_state: AssetState::Renting { tenancy }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let (wrapped, last_acq_price, retiring) = tenancy_state::do_tenure_expiry(
                 tenancy, &mut owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
             );
             let raw_asset = asset::unbundle(wrapped);
             if (retiring) {
                 event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
-                EngineState::Retired { asset: raw_asset, owner }
+                Engine { asset_state: AssetState::Retired { asset: raw_asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
             } else {
-                EngineState::AtDutch { asset: raw_asset, last_acq_price, phase_start_ms: boundary_ms, owner }
+                Engine { asset_state: AssetState::AtDutch { asset: raw_asset, last_acq_price, phase_start_ms: boundary_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
             }
         },
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort ENotRented,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort ENotRented,
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
     }
 }
 
 #[test_only]
 public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
-    state:       EngineState<Asset, CoinType>,
-    escrow_id:   ID,
+    engine:      Engine<Asset, CoinType>,
     boundary_ms: u64,
-): EngineState<Asset, CoinType> {
-    match (state) {
-        EngineState::AtDutch { asset, last_acq_price, phase_start_ms, owner } =>
-            do_auction_expiry(asset, last_acq_price, phase_start_ms, owner, escrow_id, boundary_ms),
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort ENotRented,
-        EngineState::Renting { tenancy: _t, owner: _o }                                        => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort ENotRented,
+): Engine<Asset, CoinType> {
+    match (engine) {
+        Engine { asset_state: AssetState::AtDutch { asset, last_acq_price, phase_start_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } =>
+            Engine { asset_state: do_auction_expiry(asset, last_acq_price, phase_start_ms, escrow_id, boundary_ms), owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Renting { tenancy: _t }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
     }
 }
 
 #[test_only]
 public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
-    state:          EngineState<Asset, CoinType>,
+    engine:         Engine<Asset, CoinType>,
     tenant_in:      tenant::Tenant<CoinType>,
     phase_start_ms: u64,
-    escrow_id:      ID,
-): EngineState<Asset, CoinType> {
-    match (state) {
-        EngineState::Idle { asset, owner } => {
+): Engine<Asset, CoinType> {
+    match (engine) {
+        Engine { asset_state: AssetState::Idle { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let tenancy = tenancy_state::new_occupied(
                 asset::new(asset, escrow_id), tenant_in, phase_start_ms,
             );
-            EngineState::Renting { tenancy, owner }
+            Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::Renting { tenancy: _t, owner: _o }                                        => abort ENotRented,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort ENotRented,
+        Engine { asset_state: AssetState::Renting { tenancy: _t }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
     }
 }
 
 #[test_only]
 public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
-    state:                     EngineState<Asset, CoinType>,
+    engine:                    Engine<Asset, CoinType>,
     tenant_in:                 usufruct::tenant::Tenant<CoinType>,
     handover_countdown_expiry: u64,
-): EngineState<Asset, CoinType> {
-    match (state) {
-        EngineState::Renting { tenancy, owner } => {
+): Engine<Asset, CoinType> {
+    match (engine) {
+        Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = tenancy_state::drive_to_demand_for_testing(
                 tenancy, tenant_in, handover_countdown_expiry,
             );
-            EngineState::Renting { tenancy: new_tenancy, owner }
+            Engine { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort ENotRented,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort ENotRented,
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
     }
 }
 
 #[test_only]
 public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
-    state:              EngineState<Asset, CoinType>,
+    engine:             Engine<Asset, CoinType>,
     owner_amount:       u64,
     fee_amount:         u64,
     last_acq_price:     u64,
     new_phase_start_ms: u64,
-    escrow_id:          ID,
-): EngineState<Asset, CoinType> {
-    match (state) {
-        EngineState::Renting { tenancy, owner } => {
+): Engine<Asset, CoinType> {
+    match (engine) {
+        Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let wrapped = tenancy_state::unbundle_occupied_for_testing(
                 tenancy, owner_amount, fee_amount, escrow_id,
             );
             let raw_asset = asset::unbundle(wrapped);
-            EngineState::AtDutch { asset: raw_asset, last_acq_price, phase_start_ms: new_phase_start_ms, owner }
+            Engine { asset_state: AssetState::AtDutch { asset: raw_asset, last_acq_price, phase_start_ms: new_phase_start_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort ENotRented,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort ENotRented,
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
     }
 }
 
 #[test_only]
 public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
-    state: EngineState<Asset, CoinType>,
-): EngineState<Asset, CoinType> {
-    match (state) {
-        EngineState::Idle    { asset, owner } => EngineState::Retired { asset, owner },
-        EngineState::Renting { tenancy: _t, owner: _o }                                        => abort ENotRented,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort ENotRented,
+    engine: Engine<Asset, CoinType>,
+): Engine<Asset, CoinType> {
+    match (engine) {
+        Engine { asset_state: AssetState::Idle { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } =>
+            Engine { asset_state: AssetState::Retired { asset }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
+        Engine { asset_state: AssetState::Renting { tenancy: _t }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
     }
 }
 
 #[test_only]
 public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinType>(
-    state: EngineState<Asset, CoinType>,
-): EngineState<Asset, CoinType> {
-    match (state) {
-        EngineState::Renting { tenancy, owner } => {
+    engine: Engine<Asset, CoinType>,
+): Engine<Asset, CoinType> {
+    match (engine) {
+        Engine { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = tenancy_state::set_retiring_flag_for_testing(tenancy);
-            EngineState::Renting { tenancy: new_tenancy, owner }
+            Engine { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        EngineState::Idle    { asset: _a, owner: _o }                                          => abort ENotRented,
-        EngineState::AtDutch { asset: _a, last_acq_price: _l, phase_start_ms: _p, owner: _o } => abort ENotRented,
-        EngineState::Retired { asset: _a, owner: _o }                                          => abort ENotRented,
+        Engine { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
+        Engine { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
     }
 }
 

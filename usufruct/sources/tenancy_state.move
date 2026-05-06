@@ -33,6 +33,7 @@ use usufruct::{
 
 // === Errors ===
 
+const EAlreadyRetiring:     u64 = 14;
 const ERetireFlagBlocksBid: u64 = 2;
 const EPendingTenantCap:    u64 = 7;
 const EStaleTenantCap:      u64 = 8;
@@ -63,6 +64,24 @@ public enum TenancyState<Asset: key + store, phantom CoinType> has store {
         handover_expiry: u64,
         phase_start_ms:  u64,
         retiring:        bool,
+    },
+}
+
+/// Result of do_apt_transition. Two named variants replace the raw 5-tuple,
+/// making the two outcomes explicit and type-safe for the caller.
+///
+/// engine_state::fire uses the is_*/into_* accessors below since Move does
+/// not support cross-module enum field destructuring.
+public enum RentingFireResult<Asset: key + store, phantom CoinType> {
+    /// Demand → Occupied handover completed; tenancy stays active.
+    Handover {
+        tenancy: TenancyState<Asset, CoinType>,
+    },
+    /// Occupied tenure expired; caller decides AtDutch vs Retired.
+    TenureExpired {
+        asset:          Asset,
+        last_acq_price: u64,
+        retiring:       bool,
     },
 }
 
@@ -383,38 +402,72 @@ public(package) fun accept_rent_payment<Asset: key + store, CoinType>(
     }
 }
 
-/// Dispatch the pending APT transition — same pattern as accept_rent_payment.
-/// Match lives here; engine_state::fire calls this without inspecting tenancy.
-///
-/// Returns (tenancy_opt, asset_opt, last_acq_price, retiring, owner):
-///   Demand   path → (Some(new_tenancy), None,         0,    false, owner)
-///   Occupied path → (None,             Some(raw_asset), price, flag, owner)
+/// Dispatch the pending APT transition. Match lives here so engine_state::fire
+/// receives a typed result and never inspects TenancyState variant internals.
+/// Owner is mutated in-place; caller (Engine) owns it and passes &mut.
 public(package) fun do_apt_transition<Asset: key + store, CoinType>(
     tenancy:      TenancyState<Asset, CoinType>,
-    owner:        Owner<CoinType>,
+    owner:        &mut Owner<CoinType>,
     config:       &IntegrationConfig,
     escrow_id:    ID,
     fee_inbox_id: ID,
     boundary_ms:  u64,
     ctx:          &mut TxContext,
-): (Option<TenancyState<Asset, CoinType>>, Option<Asset>, u64, bool, Owner<CoinType>) {
-    let mut owner = owner;
+): RentingFireResult<Asset, CoinType> {
     match (tenancy) {
         TenancyState::Demand { asset, current, pending, handover_expiry, phase_start_ms, retiring } => {
             let new_tenancy = do_handover(
                 TenancyState::Demand { asset, current, pending, handover_expiry, phase_start_ms, retiring },
-                &mut owner, config, escrow_id, fee_inbox_id, boundary_ms, ctx,
+                owner, config, escrow_id, fee_inbox_id, boundary_ms, ctx,
             );
-            (option::some(new_tenancy), option::none(), 0, false, owner)
+            RentingFireResult::Handover { tenancy: new_tenancy }
         },
         TenancyState::Occupied { asset, tenant, phase_start_ms, retiring } => {
-            let (wrapped, last_acq_price, retiring_flag) = do_tenure_expiry(
+            let (wrapped, last_acq_price, retiring) = do_tenure_expiry(
                 TenancyState::Occupied { asset, tenant, phase_start_ms, retiring },
-                &mut owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
+                owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
             );
-            let raw_asset = asset::unbundle(wrapped);
-            (option::none(), option::some(raw_asset), last_acq_price, retiring_flag, owner)
+            RentingFireResult::TenureExpired { asset: asset::unbundle(wrapped), last_acq_price, retiring }
         },
+    }
+}
+
+/// Set the retiring flag, aborting if already set. Consolidates the
+/// is_retiring check into tenancy_state where it belongs.
+public(package) fun set_retiring_flag_checked<Asset: key + store, CoinType>(
+    tenancy:      TenancyState<Asset, CoinType>,
+    escrow_id:    ID,
+    timestamp_ms: u64,
+    ctx:          &TxContext,
+): TenancyState<Asset, CoinType> {
+    assert!(!is_retiring(&tenancy), EAlreadyRetiring);
+    set_retiring_flag(tenancy, escrow_id, timestamp_ms, ctx)
+}
+
+// ─── RentingFireResult accessors ─────────────────────────────────────────────
+
+public(package) fun fire_result_is_handover<Asset: key + store, CoinType>(
+    r: &RentingFireResult<Asset, CoinType>,
+): bool {
+    match (r) { RentingFireResult::Handover { .. } => true, _ => false }
+}
+
+public(package) fun fire_result_into_handover<Asset: key + store, CoinType>(
+    r: RentingFireResult<Asset, CoinType>,
+): TenancyState<Asset, CoinType> {
+    match (r) {
+        RentingFireResult::Handover { tenancy } => tenancy,
+        RentingFireResult::TenureExpired { asset: _a, last_acq_price: _l, retiring: _r } => abort 0,
+    }
+}
+
+public(package) fun fire_result_into_tenure_expired<Asset: key + store, CoinType>(
+    r: RentingFireResult<Asset, CoinType>,
+): (Asset, u64, bool) {
+    match (r) {
+        RentingFireResult::TenureExpired { asset, last_acq_price, retiring } =>
+            (asset, last_acq_price, retiring),
+        RentingFireResult::Handover { tenancy: _t } => abort 0,
     }
 }
 

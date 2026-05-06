@@ -558,16 +558,10 @@ public(package) fun apply_pending_transition_states<Asset: key + store, CoinType
     ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
     let mut current = state;
-    let mut i = 0u8;
-    loop {
-        let pending = next_pending(&current, config, clock);
-        if (option::is_some(&pending)) {
-            assert!(i < 3, ENotRented); // protocol invariant: max 3 transitions per APT
-            current = fire(current, config, escrow_id, fee_inbox_id, option::destroy_some(pending), ctx);
-            i = i + 1;
-        } else {
-            break
-        }
+    let mut pending = next_pending(&current, config, clock);
+    while (option::is_some(&pending)) {
+        current = fire(current, config, escrow_id, fee_inbox_id, option::destroy_some(pending), ctx);
+        pending = next_pending(&current, config, clock);
     };
     current
 }

@@ -1,19 +1,16 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-/// Engine: lifecycle state machine + immutable escrow context + owner earnings.
+/// Engine: lifecycle coordinator + immutable escrow context + owner earnings.
 ///
-/// AssetState (four outer variants) is the lifecycle enum; owner no longer
-/// lives inside each variant — it belongs to Engine, which holds it as a
-/// single invariant field across all states.
-///
-/// Engine absorbs the four context fields that previously floated through
-/// every execute_* signature: config, fee_inbox_id, integrated_at_ms,
-/// escrow_id. Callers (escrow.move) just pass the Engine; no context threading.
+/// AssetState (four outer variants) and Engine live in the same module:
+/// Move 2024 enforces the enum variant restriction at the pattern level even
+/// inside struct patterns — Engine { asset_state: AssetState::Idle { .. }, .. }
+/// requires both types in the same module.
 ///
 /// TenancyState sub-machine (Occupied / Demand) lives in tenancy_state.move
 /// and is embedded as AssetState::Renting { tenancy }.
-module usufruct::engine_state;
+module usufruct::engine;
 
 // === Imports ===
 

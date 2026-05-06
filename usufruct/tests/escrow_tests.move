@@ -15,7 +15,7 @@ use sui::{
 };
 use usufruct::{
     asset,
-    engine_state::{
+    engine::{
         Self,
         RentStarted,
         AuctionExpired,
@@ -418,7 +418,7 @@ fun floor_price_at_dutch_at_full_descent_equals_min_rent_price() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::ERetiredNoBid, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::ERetiredNoBid, location = usufruct::engine)]
 fun floor_price_aborts_on_retired() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -535,7 +535,7 @@ fun used_credit_handover_confirmed_clamps_at_expiry() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::ENotRented, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::ENotRented, location = usufruct::engine)]
 fun used_credit_aborts_on_idle() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -549,7 +549,7 @@ fun used_credit_aborts_on_idle() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::ENotRented, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::ENotRented, location = usufruct::engine)]
 fun used_credit_aborts_on_at_dutch() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -571,7 +571,7 @@ fun used_credit_aborts_on_at_dutch() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::ENotRented, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::ENotRented, location = usufruct::engine)]
 fun used_credit_aborts_on_retired() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -606,8 +606,8 @@ fun rent_from_idle_installs_new_tenant() {
     // Event check: exactly one RentStarted with tenant_cap_id matching the returned cap.
     let started = event::events_by_type<RentStarted>();
     assert_eq!(started.length(), 1);
-    assert_eq!(engine_state::rent_started_tenant_cap_id(&started[0]), object::id(&t_cap));
-    assert_eq!(engine_state::rent_started_price_paid(&started[0]), floor);
+    assert_eq!(engine::rent_started_tenant_cap_id(&started[0]), object::id(&t_cap));
+    assert_eq!(engine::rent_started_price_paid(&started[0]), floor);
 
     transfer::public_transfer(t_cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -781,7 +781,7 @@ fun rent_from_handover_confirmed_supersedes_bid() {
 // ─── §10. rent — abort paths ─────────────────────────────────────────────────
 
 #[test]
-#[expected_failure(abort_code = engine_state::EInsufficientPayment, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::EInsufficientPayment, location = usufruct::engine)]
 fun rent_below_floor_aborts() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -799,7 +799,7 @@ fun rent_below_floor_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::ERetiredNoBid, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::ERetiredNoBid, location = usufruct::engine)]
 fun rent_from_retired_aborts() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -1058,7 +1058,7 @@ fun retire_from_handover_open_only_lifts_flag() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::EAlreadyRetired, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::EAlreadyRetired, location = usufruct::engine)]
 fun retire_when_already_retired_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1113,7 +1113,7 @@ fun retire_with_wrong_cap_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::ERetireFloorNotElapsed, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::ERetireFloorNotElapsed, location = usufruct::engine)]
 fun retire_before_floor_aborts_under_deferred_policy() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 1)); // f=1 deferred
@@ -1155,7 +1155,7 @@ fun do_auction_expiry_returns_to_idle() {
 
     let expired = event::events_by_type<AuctionExpired>();
     assert_eq!(expired.length(), 1);
-    assert_eq!(engine_state::auction_expired_timestamp_ms(&expired[0]), boundary_ms);
+    assert_eq!(engine::auction_expired_timestamp_ms(&expired[0]), boundary_ms);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1359,7 +1359,7 @@ fun borrow_asset_then_return_completes_cycle() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::EWrongEscrowTenantCap, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::EWrongEscrowTenantCap, location = usufruct::engine)]
 fun borrow_asset_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1382,7 +1382,7 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::EStaleTenantCap, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::EStaleTenantCap, location = usufruct::engine)]
 fun borrow_asset_from_idle_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1433,7 +1433,7 @@ fun borrow_asset_with_pending_cap_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::EReceiptEscrowMismatch, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::EReceiptEscrowMismatch, location = usufruct::engine)]
 fun return_asset_with_foreign_receipt_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1510,7 +1510,7 @@ fun burn_tenant_cap_on_live_current_cap_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::EWrongEscrowTenantCap, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::EWrongEscrowTenantCap, location = usufruct::engine)]
 fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1554,7 +1554,7 @@ fun withdraw_earnings_drains_owner_balance() {
 
     let withdrawn = event::events_by_type<EarningsWithdrawn>();
     assert_eq!(withdrawn.length(), 1);
-    assert_eq!(engine_state::earnings_withdrawn_amount(&withdrawn[0]), owner_share_expected);
+    assert_eq!(engine::earnings_withdrawn_amount(&withdrawn[0]), owner_share_expected);
 
     coin::burn_for_testing(coin);
     transfer::public_transfer(cap_t1, OWNER);
@@ -1565,7 +1565,7 @@ fun withdraw_earnings_drains_owner_balance() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::ENoEarnings, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine::ENoEarnings, location = usufruct::engine)]
 fun withdraw_earnings_with_zero_balance_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -2057,8 +2057,8 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 /// Config: c=0, d=0, e=0, h=0, f=1 (Deferred).
 #[test]
 #[expected_failure(
-    abort_code = engine_state::ERetireFloorNotElapsed,
-    location   = usufruct::engine_state,
+    abort_code = engine::ERetireFloorNotElapsed,
+    location   = usufruct::engine,
 )]
 fun e2e_deferred_retire_aborts_before_floor() {
     let mut sc  = setup();
@@ -3003,8 +3003,8 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     let price_t1 = 2 * min_price;
     let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &clk, sc.ctx());
     let rs       = event::events_by_type<RentStarted>();
-    assert_eq!(engine_state::rent_started_price_paid(rs.borrow(0)), price_t1);
-    assert!(price_t1 >= engine_state::rent_started_floor_price(rs.borrow(0)), tag);
+    assert_eq!(engine::rent_started_price_paid(rs.borrow(0)), price_t1);
+    assert!(price_t1 >= engine::rent_started_floor_price(rs.borrow(0)), tag);
     assert_eq!(escrow::compute_floor_price(&escrow, &clk), price_t1 + delta);
 
     // HandoverOpen: bid at 2×floor_ho at t=1_000. Floor after reflects full bid.
@@ -3050,8 +3050,8 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     let cap_t4        = escrow::rent(&mut escrow, mk_payment(price_t4, sc.ctx()), &clk, sc.ctx());
     let rs_all        = event::events_by_type<RentStarted>();
     assert_eq!(rs_all.length(), 2); // Idle + AtDutch
-    assert_eq!(engine_state::rent_started_price_paid(rs_all.borrow(1)), price_t4);
-    assert!(price_t4 >= engine_state::rent_started_floor_price(rs_all.borrow(1)), tag);
+    assert_eq!(engine::rent_started_price_paid(rs_all.borrow(1)), price_t4);
+    assert!(price_t4 >= engine::rent_started_floor_price(rs_all.borrow(1)), tag);
     assert!(escrow::is_handover_open(&escrow), tag);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -3856,8 +3856,8 @@ fun e2e_retire6_from_handover_confirmed_while_borrowed() {
 // RETIRE-7: Retired → retire() aborts EAlreadyRetired ─────────────────────
 #[test]
 #[expected_failure(
-    abort_code = engine_state::EAlreadyRetired,
-    location   = usufruct::engine_state,
+    abort_code = engine::EAlreadyRetired,
+    location   = usufruct::engine,
 )]
 fun e2e_retire7_already_retired_aborts() {
     let mut sc  = setup();

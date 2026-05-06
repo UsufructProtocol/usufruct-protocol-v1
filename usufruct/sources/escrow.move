@@ -17,7 +17,7 @@ use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape_state::CurveShapeState,
     descent_policy_state,
-    engine_state::{Self, Engine},
+    engine::{Self, Engine},
     handover_policy_state,
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
@@ -85,7 +85,7 @@ public fun integrate<Asset: key + store, CoinType>(
     let integrated_at_ms = clock::timestamp_ms(clock);
 
     config::emit_registration(&cfg, escrow_id);
-    let engine = engine_state::new<Asset, CoinType>(
+    let engine = engine::new<Asset, CoinType>(
         asset, owner_cap_id, cfg, fee_inbox_id, integrated_at_ms, escrow_id,
     );
     transfer::share_object(Escrow<Asset, CoinType> {
@@ -107,7 +107,7 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
 ): Coin<CoinType> {
     assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     let engine = escrow.engine.extract();
-    let (engine, coin) = engine_state::execute_withdraw_earnings(engine, owner_cap, clock, ctx);
+    let (engine, coin) = engine::execute_withdraw_earnings(engine, owner_cap, clock, ctx);
     escrow.engine.fill(engine);
     coin
 }
@@ -126,10 +126,10 @@ public fun claim_asset<Asset: key + store, CoinType>(
 
     let Escrow { id, engine } = escrow;
     let engine = option::destroy_some(engine);
-    let engine = engine_state::apply_pending_transition_states(engine, clock, ctx);
-    assert!(engine_state::is_inactive(&engine), ENotRetired);
+    let engine = engine::apply_pending_transition_states(engine, clock, ctx);
+    assert!(engine::is_inactive(&engine), ENotRetired);
 
-    let (asset, earnings) = engine_state::unwrap_for_claim(engine, &owner_cap, ctx);
+    let (asset, earnings) = engine::unwrap_for_claim(engine, &owner_cap, ctx);
     let swept_earnings    = coin::value(&earnings);
     owner_cap::burn(owner_cap, owner_addr);
     object::delete(id);
@@ -150,7 +150,7 @@ public fun retire<Asset: key + store, CoinType>(
 ) {
     assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     let engine = escrow.engine.extract();
-    let engine = engine_state::execute_retire(engine, clock, ctx);
+    let engine = engine::execute_retire(engine, clock, ctx);
     escrow.engine.fill(engine);
 }
 
@@ -162,7 +162,7 @@ public fun rent<Asset: key + store, CoinType>(
     ctx:     &mut TxContext,
 ): TenantCap {
     let engine = escrow.engine.extract();
-    let (engine, cap) = engine_state::execute_rent(engine, payment, clock, ctx);
+    let (engine, cap) = engine::execute_rent(engine, payment, clock, ctx);
     escrow.engine.fill(engine);
     cap
 }
@@ -175,7 +175,7 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt) {
     let engine = escrow.engine.extract();
-    let (engine, asset, receipt) = engine_state::execute_borrow(engine, tenant_cap, clock, ctx);
+    let (engine, asset, receipt) = engine::execute_borrow(engine, tenant_cap, clock, ctx);
     escrow.engine.fill(engine);
     (asset, receipt)
 }
@@ -187,7 +187,7 @@ public fun return_asset<Asset: key + store, CoinType>(
     receipt_in: AssetReceipt,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::execute_return(engine, asset, receipt_in);
+    let engine = engine::execute_return(engine, asset, receipt_in);
     escrow.engine.fill(engine);
 }
 
@@ -199,7 +199,7 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::execute_burn_tenant_cap(engine, cap, clock, ctx);
+    let engine = engine::execute_burn_tenant_cap(engine, cap, clock, ctx);
     escrow.engine.fill(engine);
 }
 
@@ -210,7 +210,7 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::apply_pending_transition_states(engine, clock, ctx);
+    let engine = engine::apply_pending_transition_states(engine, clock, ctx);
     escrow.engine.fill(engine);
 }
 
@@ -219,7 +219,7 @@ public fun next_pending<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): Option<PendingTransitionState> {
-    engine_state::next_pending(read_engine(escrow), clock)
+    engine::next_pending(read_engine(escrow), clock)
 }
 
 // === View Functions ===
@@ -229,37 +229,37 @@ public fun next_pending<Asset: key + store, CoinType>(
 public fun is_idle<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    engine_state::is_idle_state(read_engine(escrow))
+    engine::is_idle_state(read_engine(escrow))
 }
 
 public fun is_at_dutch_auction<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    engine_state::is_at_dutch_state(read_engine(escrow))
+    engine::is_at_dutch_state(read_engine(escrow))
 }
 
 public fun is_handover_open<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    engine_state::is_handover_open_state(read_engine(escrow))
+    engine::is_handover_open_state(read_engine(escrow))
 }
 
 public fun is_handover_confirmed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    engine_state::is_handover_confirmed_state(read_engine(escrow))
+    engine::is_handover_confirmed_state(read_engine(escrow))
 }
 
 public fun is_retired<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    engine_state::is_inactive(read_engine(escrow))
+    engine::is_inactive(read_engine(escrow))
 }
 
 public fun is_rented<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    engine_state::is_rented_state(read_engine(escrow))
+    engine::is_rented_state(read_engine(escrow))
 }
 
 public fun is_descent_skipped<Asset: key + store, CoinType>(
@@ -289,7 +289,7 @@ public fun is_handover_fixed_time<Asset: key + store, CoinType>(
 public fun is_retiring<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    engine_state::is_retiring_state(read_engine(escrow))
+    engine::is_retiring_state(read_engine(escrow))
 }
 
 // ─── Identity views ──────────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ public fun is_retiring<Asset: key + store, CoinType>(
 public fun asset_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
-    engine_state::asset_id(read_engine(escrow))
+    engine::asset_id(read_engine(escrow))
 }
 
 public fun asset_type_name<Asset: key + store, CoinType>(
@@ -315,31 +315,31 @@ public fun coin_type_name<Asset: key + store, CoinType>(
 public fun owner_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
-    engine_state::owner_cap_id(read_engine(escrow))
+    engine::owner_cap_id(read_engine(escrow))
 }
 
 public fun current_tenant_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
-    engine_state::current_addr_opt(read_engine(escrow))
+    engine::current_addr_opt(read_engine(escrow))
 }
 
 public fun current_tenant_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
-    engine_state::current_cap_id_opt(read_engine(escrow))
+    engine::current_cap_id_opt(read_engine(escrow))
 }
 
 public fun pending_tenant_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
-    engine_state::pending_addr_opt(read_engine(escrow))
+    engine::pending_addr_opt(read_engine(escrow))
 }
 
 public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
-    engine_state::pending_cap_id_opt(read_engine(escrow))
+    engine::pending_cap_id_opt(read_engine(escrow))
 }
 
 // ─── Stake views ─────────────────────────────────────────────────────────────
@@ -347,13 +347,13 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
 public fun current_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    engine_state::current_stake_opt(read_engine(escrow))
+    engine::current_stake_opt(read_engine(escrow))
 }
 
 public fun pending_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    engine_state::pending_stake_opt(read_engine(escrow))
+    engine::pending_stake_opt(read_engine(escrow))
 }
 
 // ─── Temporal views ───────────────────────────────────────────────────────────
@@ -361,22 +361,22 @@ public fun pending_stake<Asset: key + store, CoinType>(
 public fun phase_start_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    engine_state::phase_start_ms_opt(read_engine(escrow))
+    engine::phase_start_ms_opt(read_engine(escrow))
 }
 
 public fun tenure_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     let e = read_engine(escrow);
-    if (!engine_state::is_rented_state(e)) return option::none();
-    let ps = *option::borrow(&engine_state::phase_start_ms_opt(e));
-    option::some(phases::boundary_at(ps, config::tenure_ceiling(engine_state::config(e))))
+    if (!engine::is_rented_state(e)) return option::none();
+    let ps = *option::borrow(&engine::phase_start_ms_opt(e));
+    option::some(phases::boundary_at(ps, config::tenure_ceiling(engine::config(e))))
 }
 
 public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    engine_state::handover_expiry_opt(read_engine(escrow))
+    engine::handover_expiry_opt(read_engine(escrow))
 }
 
 public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
@@ -384,9 +384,9 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     bid_time_ms: u64,
 ): Option<u64> {
     let e = read_engine(escrow);
-    if (!engine_state::is_handover_open_state(e)) return option::none();
-    let phase_start = *option::borrow(&engine_state::phase_start_ms_opt(e));
-    let c           = engine_state::config(e);
+    if (!engine::is_handover_open_state(e)) return option::none();
+    let phase_start = *option::borrow(&engine::phase_start_ms_opt(e));
+    let c           = engine::config(e);
     let tenure      = config::tenure_ceiling(c);
     option::some(handover_policy_state::expiry_at(config::handover(c), bid_time_ms, phase_start, tenure))
 }
@@ -400,14 +400,14 @@ public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
 public fun integrated_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    engine_state::integrated_at_ms(read_engine(escrow))
+    engine::integrated_at_ms(read_engine(escrow))
 }
 
 public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     let e = read_engine(escrow);
-    retire_policy_state::unlock_at_ms(config::retire(engine_state::config(e)), engine_state::integrated_at_ms(e))
+    retire_policy_state::unlock_at_ms(config::retire(engine::config(e)), engine::integrated_at_ms(e))
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────
@@ -416,7 +416,7 @@ public fun tenant_cap_status<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
 ): CapAuthorizationState {
-    engine_state::cap_authorization_state(read_engine(escrow), cap_id)
+    engine::cap_authorization_state(read_engine(escrow), cap_id)
 }
 
 // ─── Timing views ────────────────────────────────────────────────────────────
@@ -446,28 +446,28 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): u64 {
-    engine_state::used_credit_at(read_engine(escrow), clock::timestamp_ms(clock))
+    engine::used_credit_at(read_engine(escrow), clock::timestamp_ms(clock))
 }
 
 public fun compute_used_credit_at_ms<Asset: key + store, CoinType>(
     escrow:       &Escrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    engine_state::used_credit_at(read_engine(escrow), timestamp_ms)
+    engine::used_credit_at(read_engine(escrow), timestamp_ms)
 }
 
 public fun compute_floor_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): u64 {
-    engine_state::floor_price_at(read_engine(escrow), clock::timestamp_ms(clock))
+    engine::floor_price_at(read_engine(escrow), clock::timestamp_ms(clock))
 }
 
 public fun compute_floor_price_at_ms<Asset: key + store, CoinType>(
     escrow:       &Escrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    engine_state::floor_price_at(read_engine(escrow), timestamp_ms)
+    engine::floor_price_at(read_engine(escrow), timestamp_ms)
 }
 
 public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
@@ -480,7 +480,7 @@ public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
 public fun last_acq_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    engine_state::last_acq_price_opt(read_engine(escrow))
+    engine::last_acq_price_opt(read_engine(escrow))
 }
 
 // ─── Settlement views ────────────────────────────────────────────────────────
@@ -490,9 +490,9 @@ public fun compute_handover_settlement<Asset: key + store, CoinType>(
     boundary_ms: u64,
 ): (u64, u64, u64) {
     let e     = read_engine(escrow);
-    let stake = engine_state::current_stake_value(e);
-    let used  = engine_state::used_credit_at(e, boundary_ms);
-    let (owner_share, protocol_fee) = engine_state::split_fee(used);
+    let stake = engine::current_stake_value(e);
+    let used  = engine::used_credit_at(e, boundary_ms);
+    let (owner_share, protocol_fee) = engine::split_fee(used);
     (stake - used, owner_share, protocol_fee)
 }
 
@@ -500,8 +500,8 @@ public fun compute_tenure_settlement<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): (u64, u64) {
     let e = read_engine(escrow);
-    assert!(engine_state::is_rented_state(e), ENotRented);
-    engine_state::split_fee(engine_state::current_stake_value(e))
+    assert!(engine::is_rented_state(e), ENotRented);
+    engine::split_fee(engine::current_stake_value(e))
 }
 
 // ─── Earnings views ──────────────────────────────────────────────────────────
@@ -509,7 +509,7 @@ public fun compute_tenure_settlement<Asset: key + store, CoinType>(
 public fun owner_balance<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    engine_state::owner_balance(read_engine(escrow))
+    engine::owner_balance(read_engine(escrow))
 }
 
 // ─── Config views ────────────────────────────────────────────────────────────
@@ -523,11 +523,11 @@ public fun integration_config<Asset: key + store, CoinType>(
 public fun fee_inbox_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
-    engine_state::fee_inbox_id(read_engine(escrow))
+    engine::fee_inbox_id(read_engine(escrow))
 }
 
-public fun protocol_fee_bps(): u64 { engine_state::protocol_fee_bps() }
-public fun bps_denominator():  u64 { engine_state::bps_denominator() }
+public fun protocol_fee_bps(): u64 { engine::protocol_fee_bps() }
+public fun bps_denominator():  u64 { engine::bps_denominator() }
 
 public fun min_rent_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
@@ -582,7 +582,7 @@ fun read_engine<Asset: key + store, CoinType>(
 fun cfg<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &IntegrationConfig {
-    engine_state::config(read_engine(escrow))
+    engine::config(read_engine(escrow))
 }
 
 // === Test Functions ===
@@ -590,7 +590,7 @@ fun cfg<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun read_engine_for_testing<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-): &engine_state::Engine<Asset, CoinType> {
+): &engine::Engine<Asset, CoinType> {
     read_engine(escrow)
 }
 
@@ -598,12 +598,12 @@ public(package) fun read_engine_for_testing<Asset: key + store, CoinType>(
 public(package) fun owner_value_for_testing<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    engine_state::owner_balance(read_engine(escrow))
+    engine::owner_balance(read_engine(escrow))
 }
 
 #[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
-    engine_state::split_fee_for_testing(amount)
+    engine::split_fee_for_testing(amount)
 }
 
 #[test_only]
@@ -613,7 +613,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     phase_start_ms: u64,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::drive_to_rented_for_testing(engine, tenant, phase_start_ms);
+    let engine = engine::drive_to_rented_for_testing(engine, tenant, phase_start_ms);
     escrow.engine.fill(engine);
 }
 
@@ -624,7 +624,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     handover_countdown_expiry: u64,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::drive_to_demand_for_testing(engine, tenant, handover_countdown_expiry);
+    let engine = engine::drive_to_demand_for_testing(engine, tenant, handover_countdown_expiry);
     escrow.engine.fill(engine);
 }
 
@@ -637,7 +637,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     new_phase_start_ms: u64,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::drive_to_at_dutch_for_testing(
+    let engine = engine::drive_to_at_dutch_for_testing(
         engine, owner_amount, fee_amount, last_acq_price, new_phase_start_ms,
     );
     escrow.engine.fill(engine);
@@ -648,7 +648,7 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::drive_to_retired_for_testing(engine);
+    let engine = engine::drive_to_retired_for_testing(engine);
     escrow.engine.fill(engine);
 }
 
@@ -657,7 +657,7 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     escrow: &mut Escrow<Asset, CoinType>,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::drive_to_retiring_flag_for_testing(engine);
+    let engine = engine::drive_to_retiring_flag_for_testing(engine);
     escrow.engine.fill(engine);
 }
 
@@ -668,7 +668,7 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     ctx:         &mut TxContext,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::fire_do_handover_for_testing(engine, boundary_ms, ctx);
+    let engine = engine::fire_do_handover_for_testing(engine, boundary_ms, ctx);
     escrow.engine.fill(engine);
 }
 
@@ -679,7 +679,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     ctx:         &mut TxContext,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::fire_do_tenure_expiry_for_testing(engine, boundary_ms, ctx);
+    let engine = engine::fire_do_tenure_expiry_for_testing(engine, boundary_ms, ctx);
     escrow.engine.fill(engine);
 }
 
@@ -689,7 +689,7 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     boundary_ms: u64,
 ) {
     let engine = escrow.engine.extract();
-    let engine = engine_state::fire_do_auction_expiry_for_testing(engine, boundary_ms);
+    let engine = engine::fire_do_auction_expiry_for_testing(engine, boundary_ms);
     escrow.engine.fill(engine);
 }
 

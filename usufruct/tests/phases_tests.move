@@ -195,7 +195,7 @@ public struct SisterIdentityCase has drop {
 // Architectural invariant: the bool view (has_passed) and the u64 view
 // (boundary_at) must agree on every input. If anyone changes one without
 // updating the other — or introduces a comparator drift — this test
-// catches it. This is the time-layer analogue of curve_shape_tests'
+// catches it. This is the time-layer analogue of curve_shape_state_tests'
 // "P-D1 dispatch equivalence" (lines 178-256): the layer promises
 // two views of the same concept; the test pins them to one truth.
 #[test]

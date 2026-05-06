@@ -7,11 +7,11 @@ module usufruct::price_state;
 
 use usufruct::{
     config::{Self, IntegrationConfig},
-    curve_shape,
-    descent_policy,
+    curve_shape_state,
+    descent_policy_state,
     math,
     phases,
-    price_function,
+    price_function_state,
 };
 
 // === Errors ===
@@ -25,7 +25,7 @@ use usufruct::{
 ///
 ///   · `Rest`       — asset idle; any renter pays `min_rent_price`.
 ///   · `Ascending`  — asset rented; next bidder pays
-///                    `price_function(current_stake)` (or pending stake
+///                    `price_function_state(current_stake)` (or pending stake
 ///                    when a handover is already in progress).
 ///   · `Descending` — asset in Dutch auction; price falls from
 ///                    `last_acq_price` toward `min_rent_price` along
@@ -71,7 +71,7 @@ public(package) fun descending(last_acq_price: u64, phase_start_ms: u64): PriceS
 /// Floor price a bidder must meet given the current pricing regime.
 ///
 ///   · Rest       — `min_rent_price` (config scalar, time-independent)
-///   · Ascending  — `price_function(stake)` (time-independent)
+///   · Ascending  — `price_function_state(stake)` (time-independent)
 ///   · Descending — price falls from `last_acq_price` to `min_rent_price`
 ///                  along `descent_curve` over the descent window;
 ///                  saturates at `min_rent_price` when window elapses.
@@ -85,13 +85,13 @@ public(package) fun floor_price(
     match (state) {
         PriceState::Rest => config::min_rent_price(cfg),
         PriceState::Ascending { stake } =>
-            price_function::evaluate_price_fn(config::price_function(cfg), *stake),
+            price_function_state::evaluate_price_fn(config::price_function_state(cfg), *stake),
         PriceState::Descending { last_acq_price, phase_start_ms } => {
             let elapsed  = phases::elapsed_since(*phase_start_ms, timestamp_ms);
-            let t_max    = descent_policy::window_ceiling(config::descent(cfg));
-            let h        = curve_shape::evaluate_curve(config::descent_curve(cfg), elapsed, t_max);
+            let t_max    = descent_policy_state::window_ceiling(config::descent(cfg));
+            let h        = curve_shape_state::evaluate_curve(config::descent_curve(cfg), elapsed, t_max);
             let spread   = *last_acq_price - config::min_rent_price(cfg);
-            let consumed = math::mul_div(spread, h, curve_shape::scale());
+            let consumed = math::mul_div(spread, h, curve_shape_state::scale());
             *last_acq_price - consumed
         },
     }

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::cap_authorization;
+module usufruct::cap_authorization_state;
 
 // === Imports ===
 
@@ -12,7 +12,7 @@ module usufruct::cap_authorization;
 // === Structs ===
 
 /// Role a `TenantCap` plays relative to the current lifecycle state.
-/// Produced by `lifecycle_state::cap_authorization`; consumed by
+/// Produced by `lifecycle_state::cap_authorization_state`; consumed by
 /// `escrow_coordinator::borrow_asset` and `burn_tenant_cap`.
 ///
 ///   · `Current` — cap belongs to the active tenant (t1). May borrow.
@@ -22,7 +22,7 @@ module usufruct::cap_authorization;
 ///                 former tenant, or no active rental at all.
 ///
 /// `copy, drop, store` so callers can pass it freely without consuming.
-public enum CapAuthorization has copy, drop, store {
+public enum CapAuthorizationState has copy, drop, store {
     Current,
     Pending,
     Stale,
@@ -37,18 +37,18 @@ public enum CapAuthorization has copy, drop, store {
 // === View Functions ===
 
 /// True iff this authorization is `Current`.
-public fun is_current(a: &CapAuthorization): bool {
-    match (a) { CapAuthorization::Current => true, _ => false }
+public fun is_current(a: &CapAuthorizationState): bool {
+    match (a) { CapAuthorizationState::Current => true, _ => false }
 }
 
 /// True iff this authorization is `Pending`.
-public fun is_pending(a: &CapAuthorization): bool {
-    match (a) { CapAuthorization::Pending => true, _ => false }
+public fun is_pending(a: &CapAuthorizationState): bool {
+    match (a) { CapAuthorizationState::Pending => true, _ => false }
 }
 
 /// True iff this authorization is `Stale`.
-public fun is_stale(a: &CapAuthorization): bool {
-    match (a) { CapAuthorization::Stale => true, _ => false }
+public fun is_stale(a: &CapAuthorizationState): bool {
+    match (a) { CapAuthorizationState::Stale => true, _ => false }
 }
 
 // === Admin Functions ===
@@ -56,13 +56,13 @@ public fun is_stale(a: &CapAuthorization): bool {
 // === Package Functions ===
 
 /// Construct a `Current` authorization.
-public(package) fun current(): CapAuthorization { CapAuthorization::Current }
+public(package) fun current(): CapAuthorizationState { CapAuthorizationState::Current }
 
 /// Construct a `Pending` authorization.
-public(package) fun pending(): CapAuthorization { CapAuthorization::Pending }
+public(package) fun pending(): CapAuthorizationState { CapAuthorizationState::Pending }
 
 /// Construct a `Stale` authorization.
-public(package) fun stale(): CapAuthorization { CapAuthorization::Stale }
+public(package) fun stale(): CapAuthorizationState { CapAuthorizationState::Stale }
 
 // === Private Functions ===
 

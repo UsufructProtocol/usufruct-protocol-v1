@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::pending_transition;
+module usufruct::pending_transition_state;
 
 // === Imports ===
 
@@ -22,14 +22,14 @@ module usufruct::pending_transition;
 ///   · `Tenure`   — tenure ceiling elapsed in HandoverOpen.
 ///                  `boundary_ms` is `phase_start_ms + tenure_ceiling`.
 ///   · `Auction`  — descent window elapsed in AtDutch.
-///                  `boundary_ms` is `descent_policy::expiry_at`.
+///                  `boundary_ms` is `descent_policy_state::expiry_at`.
 ///
 /// Constructed by `escrow_coordinator::next_pending` and consumed by
 /// `escrow_coordinator::fire`. Not stored anywhere — derived from
 /// `LifecycleState` accessors on demand. `copy, drop, store` so it can
 /// be queried freely (e.g. from `devInspectTransactionBlock` for
 /// keeper bots probing pending boundaries without firing).
-public enum PendingTransition has copy, drop, store {
+public enum PendingTransitionState has copy, drop, store {
     Handover { boundary_ms: u64 },
     Tenure   { boundary_ms: u64 },
     Auction  { boundary_ms: u64 },
@@ -44,28 +44,28 @@ public enum PendingTransition has copy, drop, store {
 // === View Functions ===
 
 /// True iff this transition is the handover variant.
-public fun is_handover(t: &PendingTransition): bool {
-    match (t) { PendingTransition::Handover { .. } => true, _ => false }
+public fun is_handover(t: &PendingTransitionState): bool {
+    match (t) { PendingTransitionState::Handover { .. } => true, _ => false }
 }
 
 /// True iff this transition is the tenure-expiry variant.
-public fun is_tenure(t: &PendingTransition): bool {
-    match (t) { PendingTransition::Tenure { .. } => true, _ => false }
+public fun is_tenure(t: &PendingTransitionState): bool {
+    match (t) { PendingTransitionState::Tenure { .. } => true, _ => false }
 }
 
 /// True iff this transition is the auction-expiry variant.
-public fun is_auction(t: &PendingTransition): bool {
-    match (t) { PendingTransition::Auction { .. } => true, _ => false }
+public fun is_auction(t: &PendingTransitionState): bool {
+    match (t) { PendingTransitionState::Auction { .. } => true, _ => false }
 }
 
 /// Boundary timestamp the firing handler will stamp on the resulting
 /// state and on its emitted event. The same field exists in every
 /// variant — the accessor reads it uniformly.
-public fun boundary_ms(t: &PendingTransition): u64 {
+public fun boundary_ms(t: &PendingTransitionState): u64 {
     match (t) {
-        PendingTransition::Handover { boundary_ms } => *boundary_ms,
-        PendingTransition::Tenure   { boundary_ms } => *boundary_ms,
-        PendingTransition::Auction  { boundary_ms } => *boundary_ms,
+        PendingTransitionState::Handover { boundary_ms } => *boundary_ms,
+        PendingTransitionState::Tenure   { boundary_ms } => *boundary_ms,
+        PendingTransitionState::Auction  { boundary_ms } => *boundary_ms,
     }
 }
 
@@ -77,18 +77,18 @@ public fun boundary_ms(t: &PendingTransition): u64 {
 /// construction site is `escrow_coordinator::next_pending`; the
 /// `public(package)` modifier reflects that the regime is detected
 /// from coordinator-internal state, not synthesised externally.
-public(package) fun handover(boundary_ms: u64): PendingTransition {
-    PendingTransition::Handover { boundary_ms }
+public(package) fun handover(boundary_ms: u64): PendingTransitionState {
+    PendingTransitionState::Handover { boundary_ms }
 }
 
 /// Construct a `Tenure` pending transition at `boundary_ms`.
-public(package) fun tenure(boundary_ms: u64): PendingTransition {
-    PendingTransition::Tenure { boundary_ms }
+public(package) fun tenure(boundary_ms: u64): PendingTransitionState {
+    PendingTransitionState::Tenure { boundary_ms }
 }
 
 /// Construct an `Auction` pending transition at `boundary_ms`.
-public(package) fun auction(boundary_ms: u64): PendingTransition {
-    PendingTransition::Auction { boundary_ms }
+public(package) fun auction(boundary_ms: u64): PendingTransitionState {
+    PendingTransitionState::Auction { boundary_ms }
 }
 
 // === Private Functions ===

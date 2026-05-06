@@ -7,11 +7,11 @@ module usufruct::credit_state_tests;
 use usufruct::{
     config,
     credit_state,
-    curve_shape,
-    descent_policy,
-    handover_policy,
-    price_function,
-    retire_policy,
+    curve_shape_state,
+    descent_policy_state,
+    handover_policy_state,
+    price_function_state,
+    retire_policy_state,
 };
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -25,12 +25,12 @@ const EXPIRY: u64 = T0 + 25_000;    // handover countdown expiry
 fun base_cfg(): config::IntegrationConfig {
     config::new_config(
         MIN, TENURE,
-        handover_policy::new_handover_instant(),
-        descent_policy::new_descent_skipped(),
-        retire_policy::new_retire_immediate(),
-        curve_shape::new_linear(),
-        curve_shape::new_linear(),
-        price_function::new_fixed_delta(MIN),
+        handover_policy_state::new_handover_instant(),
+        descent_policy_state::new_descent_skipped(),
+        retire_policy_state::new_retire_immediate(),
+        curve_shape_state::new_linear(),
+        curve_shape_state::new_linear(),
+        price_function_state::new_fixed_delta(MIN),
     )
 }
 
@@ -90,13 +90,13 @@ fun accruing_is_monotone_non_decreasing() {
 fun accruing_various_curves_stay_in_bounds() {
     // Sweep all curve shapes: used_credit ∈ [0, STAKE] at mid-tenure.
     let curves = vector[
-        curve_shape::new_linear(),
-        curve_shape::new_smoothstep(),
-        curve_shape::new_logistic(),
-        curve_shape::new_power_law(1, 2),
-        curve_shape::new_power_law(2, 1),
-        curve_shape::new_exponential(2, true),
-        curve_shape::new_exponential(2, false),
+        curve_shape_state::new_linear(),
+        curve_shape_state::new_smoothstep(),
+        curve_shape_state::new_logistic(),
+        curve_shape_state::new_power_law(1, 2),
+        curve_shape_state::new_power_law(2, 1),
+        curve_shape_state::new_exponential(2, true),
+        curve_shape_state::new_exponential(2, false),
     ];
     let mid = T0 + TENURE / 2;
     let mut i = 0;
@@ -104,12 +104,12 @@ fun accruing_various_curves_stay_in_bounds() {
         let curve = *curves.borrow(i);
         let cfg = config::new_config(
             MIN, TENURE,
-            handover_policy::new_handover_instant(),
-            descent_policy::new_descent_skipped(),
-            retire_policy::new_retire_immediate(),
+            handover_policy_state::new_handover_instant(),
+            descent_policy_state::new_descent_skipped(),
+            retire_policy_state::new_retire_immediate(),
             curve,
-            curve_shape::new_linear(), // descent_curve unused here
-            price_function::new_fixed_delta(MIN),
+            curve_shape_state::new_linear(), // descent_curve unused here
+            price_function_state::new_fixed_delta(MIN),
         );
         let cs = credit_state::accruing(STAKE, T0);
         let c  = credit_state::used_credit(&cs, &cfg, mid);

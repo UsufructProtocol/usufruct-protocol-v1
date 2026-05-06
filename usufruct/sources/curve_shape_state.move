@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::curve_shape;
+module usufruct::curve_shape_state;
 
 // === Imports ===
 
@@ -26,7 +26,7 @@ const SCALE_CB:   u128 = 1_000_000_000_000_000_000_000_000_000;
 
 const LOGISTIC_K: u64 = 12;
 // Algorithm-derived (§9). Pinned via the bootstrap procedure documented in the
-// `bootstrap_constants_match_pinned` regression test in `curve_shape_tests`:
+// `bootstrap_constants_match_pinned` regression test in `curve_shape_state_tests`:
 // run `exp_scaled_pos` over the inputs the spec specifies, fix the outputs as
 // these literals. Re-derive whenever §7 (Taylor K, rounding) changes.
 const LOGISTIC_DENOM: u64 = 995_054_753;
@@ -35,7 +35,7 @@ const LOGISTIC_SIGMA_FLOOR: u128 = (SCALE_U128 - (LOGISTIC_DENOM as u128)) / 2;
 // Algorithm-derived (§8). Pinned via the same bootstrap as LOGISTIC_DENOM:
 // EXP_A_NORM_{a}_POS = exp_scaled(a, 1, false) − TAYLOR_SCALE
 // EXP_A_NORM_{a}_NEG = TAYLOR_SCALE − exp_scaled(a, 1, true)
-// Re-derive whenever §7 changes; the regression test in curve_shape_tests
+// Re-derive whenever §7 changes; the regression test in curve_shape_state_tests
 // guards against silent drift.
 const EXP_A_NORM_1_POS: u128 =     1_718_281_828_459_045_226;
 const EXP_A_NORM_2_POS: u128 =     6_389_056_098_930_650_216;
@@ -56,7 +56,7 @@ const EXP_A_NORM_8_NEG: u128 = 999_664_537_372_086_775;
 
 // === Structs ===
 
-public enum CurveShape has copy, drop, store {
+public enum CurveShapeState has copy, drop, store {
     Linear,
     Smoothstep,
     PowerLaw {
@@ -76,26 +76,26 @@ public enum CurveShape has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_linear(): CurveShape { CurveShape::Linear }
+public fun new_linear(): CurveShapeState { CurveShapeState::Linear }
 
-public fun new_smoothstep(): CurveShape { CurveShape::Smoothstep }
+public fun new_smoothstep(): CurveShapeState { CurveShapeState::Smoothstep }
 
-public fun new_logistic(): CurveShape { CurveShape::Logistic }
+public fun new_logistic(): CurveShapeState { CurveShapeState::Logistic }
 
-public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShape {
+public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShapeState {
     assert!(alpha_num >= 1 && alpha_num <= 8, EAlphaNumRange);
     assert!(alpha_den >= 1 && alpha_den <= 4, EAlphaDenRange);
     assert!(alpha_num != alpha_den,           EDegenerateLinear);
     let g = gcd_u8(alpha_num, alpha_den);
-    CurveShape::PowerLaw {
+    CurveShapeState::PowerLaw {
         alpha_num: alpha_num / g,
         alpha_den: alpha_den / g,
     }
 }
 
-public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShape {
+public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapeState {
     assert!(alpha_abs >= 1 && alpha_abs <= 8, EAlphaAbsRange);
-    CurveShape::Exponential { alpha_abs, alpha_neg }
+    CurveShapeState::Exponential { alpha_abs, alpha_neg }
 }
 
 // === View Functions ===
@@ -109,16 +109,16 @@ public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShape {
 /// the curve output (e.g., `compute_used_credit`) divide by this.
 public(package) fun scale(): u64 { SCALE }
 
-public(package) fun evaluate_curve(shape: &CurveShape, t: u64, t_max: u64): u64 {
+public(package) fun evaluate_curve(shape: &CurveShapeState, t: u64, t_max: u64): u64 {
     if (t == 0)     return 0;
     if (t >= t_max) return SCALE;
 
     match (shape) {
-        CurveShape::Linear                                => eval_linear(t, t_max),
-        CurveShape::Smoothstep                            => eval_smoothstep(t, t_max),
-        CurveShape::PowerLaw { alpha_num, alpha_den }     => eval_power_law(t, t_max, *alpha_num, *alpha_den),
-        CurveShape::Exponential { alpha_abs, alpha_neg }  => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
-        CurveShape::Logistic                              => eval_logistic(t, t_max),
+        CurveShapeState::Linear                                => eval_linear(t, t_max),
+        CurveShapeState::Smoothstep                            => eval_smoothstep(t, t_max),
+        CurveShapeState::PowerLaw { alpha_num, alpha_den }     => eval_power_law(t, t_max, *alpha_num, *alpha_den),
+        CurveShapeState::Exponential { alpha_abs, alpha_neg }  => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
+        CurveShapeState::Logistic                              => eval_logistic(t, t_max),
     }
 }
 
@@ -302,9 +302,9 @@ public fun scale_for_testing(): u64 { SCALE }
 // Destructure helper for new_power_law tests — only way to verify gcd
 // normalization without leaking enum field access publicly.
 #[test_only]
-public fun power_law_fields_for_testing(shape: &CurveShape): (u8, u8) {
+public fun power_law_fields_for_testing(shape: &CurveShapeState): (u8, u8) {
     match (shape) {
-        CurveShape::PowerLaw { alpha_num, alpha_den } => (*alpha_num, *alpha_den),
+        CurveShapeState::PowerLaw { alpha_num, alpha_den } => (*alpha_num, *alpha_den),
         _ => abort 0,
     }
 }

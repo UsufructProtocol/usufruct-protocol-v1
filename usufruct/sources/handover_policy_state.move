@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::handover_policy;
+module usufruct::handover_policy_state;
 
 // === Imports ===
 
@@ -13,7 +13,7 @@ const EHandoverFloorZero: u64 = 0;
 
 // === Structs ===
 
-public enum HandoverPolicy has copy, drop, store {
+public enum HandoverPolicyState has copy, drop, store {
     Instant,
     Countdown { floor_ms: u64 },
     FixedTime,
@@ -21,12 +21,12 @@ public enum HandoverPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_handover_instant():    HandoverPolicy { HandoverPolicy::Instant }
-public fun new_handover_fixed_time(): HandoverPolicy { HandoverPolicy::FixedTime }
+public fun new_handover_instant():    HandoverPolicyState { HandoverPolicyState::Instant }
+public fun new_handover_fixed_time(): HandoverPolicyState { HandoverPolicyState::FixedTime }
 
-public fun new_handover_countdown(floor_ms: u64): HandoverPolicy {
+public fun new_handover_countdown(floor_ms: u64): HandoverPolicyState {
     assert!(floor_ms > 0, EHandoverFloorZero);
-    HandoverPolicy::Countdown { floor_ms }
+    HandoverPolicyState::Countdown { floor_ms }
 }
 
 // === Package Functions ===
@@ -42,7 +42,7 @@ public fun new_handover_countdown(floor_ms: u64): HandoverPolicy {
 ///               rule of spec §5.1, expressed as a disjunction:
 ///               `clock >= min(A, B)  ⇔  clock >= A  ∨  clock >= B`.
 public(package) fun has_expired(
-    policy:         &HandoverPolicy,
+    policy:         &HandoverPolicyState,
     bid_time_ms:    u64,
     phase_start_ms: u64,
     tenure_ceiling: u64,
@@ -55,9 +55,9 @@ public(package) fun has_expired(
         // `has_expired ⇔ now >= expiry_at` unconditionally (Instant's
         // expiry_at is bid_time_ms). In production, clock-monotone makes
         // this equivalent to `=> true`.
-        HandoverPolicy::Instant   => phases::has_passed(bid_time_ms,    0,              now_ms),
-        HandoverPolicy::FixedTime => phases::has_passed(phase_start_ms, tenure_ceiling, now_ms),
-        HandoverPolicy::Countdown { floor_ms } =>
+        HandoverPolicyState::Instant   => phases::has_passed(bid_time_ms,    0,              now_ms),
+        HandoverPolicyState::FixedTime => phases::has_passed(phase_start_ms, tenure_ceiling, now_ms),
+        HandoverPolicyState::Countdown { floor_ms } =>
             phases::has_passed(bid_time_ms,    *floor_ms,      now_ms) ||
             phases::has_passed(phase_start_ms, tenure_ceiling, now_ms),
     }
@@ -68,37 +68,37 @@ public(package) fun has_expired(
 /// satisfy the predicate vacuously. Used by `config::new_config` to
 /// enforce the cross-field constraint `Countdown.floor_ms <
 /// tenure_ceiling` (equality is the FixedTime variant).
-public(package) fun countdown_floor_lt(policy: &HandoverPolicy, ceiling: u64): bool {
+public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: u64): bool {
     match (policy) {
-        HandoverPolicy::Countdown { floor_ms }            => *floor_ms < ceiling,
-        HandoverPolicy::Instant | HandoverPolicy::FixedTime => true,
+        HandoverPolicyState::Countdown { floor_ms }            => *floor_ms < ceiling,
+        HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => true,
     }
 }
 
 /// Optional countdown floor for display purposes.
 ///   Countdown { floor_ms } → Some(floor_ms)
 ///   Instant | FixedTime    → None (no configurable countdown floor)
-public(package) fun countdown_floor_ms_opt(policy: &HandoverPolicy): Option<u64> {
+public(package) fun countdown_floor_ms_opt(policy: &HandoverPolicyState): Option<u64> {
     match (policy) {
-        HandoverPolicy::Countdown { floor_ms }               => option::some(*floor_ms),
-        HandoverPolicy::Instant | HandoverPolicy::FixedTime  => option::none(),
+        HandoverPolicyState::Countdown { floor_ms }               => option::some(*floor_ms),
+        HandoverPolicyState::Instant | HandoverPolicyState::FixedTime  => option::none(),
     }
 }
 
 /// True iff the policy is `Instant` — a bid immediately triggers handover
 /// with no protection window for the current tenant.
-public(package) fun is_instant(policy: &HandoverPolicy): bool {
+public(package) fun is_instant(policy: &HandoverPolicyState): bool {
     match (policy) {
-        HandoverPolicy::Instant => true,
+        HandoverPolicyState::Instant => true,
         _                       => false,
     }
 }
 
 /// True iff the policy is `FixedTime` — the handover fires at the end of
 /// the current tenure regardless of when the bid was placed.
-public(package) fun is_fixed_time(policy: &HandoverPolicy): bool {
+public(package) fun is_fixed_time(policy: &HandoverPolicyState): bool {
     match (policy) {
-        HandoverPolicy::FixedTime => true,
+        HandoverPolicyState::FixedTime => true,
         _                         => false,
     }
 }
@@ -114,15 +114,15 @@ public(package) fun is_fixed_time(policy: &HandoverPolicy): bool {
 /// collapses to `bid_time_ms` (boundary trivially reached, gate fires
 /// on the next APT iteration).
 public(package) fun expiry_at(
-    policy:         &HandoverPolicy,
+    policy:         &HandoverPolicyState,
     bid_time_ms:    u64,
     phase_start_ms: u64,
     tenure_ceiling: u64,
 ): u64 {
     match (policy) {
-        HandoverPolicy::Instant   => bid_time_ms,
-        HandoverPolicy::FixedTime => phases::boundary_at(phase_start_ms, tenure_ceiling),
-        HandoverPolicy::Countdown { floor_ms } =>
+        HandoverPolicyState::Instant   => bid_time_ms,
+        HandoverPolicyState::FixedTime => phases::boundary_at(phase_start_ms, tenure_ceiling),
+        HandoverPolicyState::Countdown { floor_ms } =>
             phases::earliest(
                 phases::boundary_at(bid_time_ms,    *floor_ms),
                 phases::boundary_at(phase_start_ms, tenure_ceiling),

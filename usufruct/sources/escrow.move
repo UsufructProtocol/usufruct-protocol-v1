@@ -13,18 +13,18 @@ use sui::{
 };
 use usufruct::{
     asset::AssetReceipt,
-    cap_authorization::CapAuthorization,
+    cap_authorization_state::CapAuthorizationState,
     config::{Self, IntegrationConfig},
-    curve_shape::CurveShape,
-    descent_policy,
+    curve_shape_state::CurveShapeState,
+    descent_policy_state,
     engine_state::{Self, EngineState},
-    handover_policy,
+    handover_policy_state,
     owner_cap::{Self, OwnerCap},
-    pending_transition::{Self, PendingTransition},
+    pending_transition_state::{Self, PendingTransitionState},
     phases,
-    price_function::{Self, PriceFunction},
+    price_function_state::{Self, PriceFunctionState},
     protocol_fee_inbox::{Self, ProtocolFeeRef},
-    retire_policy,
+    retire_policy_state,
     tenant_cap::TenantCap,
 };
 
@@ -140,7 +140,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
 
     let Escrow { id, config: _, fee_inbox_id: _, integrated_at_ms: _, state } = escrow;
     let engine = option::destroy_some(state);
-    let engine = engine_state::apply_pending_transitions(engine, &config, escrow_id, fee_inbox_id, clock, ctx);
+    let engine = engine_state::apply_pending_transition_states(engine, &config, escrow_id, fee_inbox_id, clock, ctx);
     assert!(engine_state::is_inactive(&engine), ENotRetired);
 
     let (asset, earnings) = engine_state::unwrap_for_claim(engine, &owner_cap, ctx);
@@ -236,7 +236,7 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
 }
 
 /// Permissionless settler.
-public fun apply_pending_transitions<Asset: key + store, CoinType>(
+public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
     clock:  &Clock,
     ctx:    &mut TxContext,
@@ -244,7 +244,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
     let escrow_id    = object::id(escrow);
     let fee_inbox_id = escrow.fee_inbox_id;
     let state = escrow.state.extract();
-    let new_state = engine_state::apply_pending_transitions(
+    let new_state = engine_state::apply_pending_transition_states(
         state, &escrow.config, escrow_id, fee_inbox_id, clock, ctx,
     );
     escrow.state.fill(new_state);
@@ -254,7 +254,7 @@ public fun apply_pending_transitions<Asset: key + store, CoinType>(
 public fun next_pending<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
-): Option<PendingTransition> {
+): Option<PendingTransitionState> {
     engine_state::next_pending(read_engine(escrow), &escrow.config, clock)
 }
 
@@ -301,25 +301,25 @@ public fun is_rented<Asset: key + store, CoinType>(
 public fun is_descent_skipped<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    descent_policy::is_skipped(config::descent(&escrow.config))
+    descent_policy_state::is_skipped(config::descent(&escrow.config))
 }
 
 public fun is_retire_immediate<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    retire_policy::is_immediate(config::retire(&escrow.config))
+    retire_policy_state::is_immediate(config::retire(&escrow.config))
 }
 
 public fun is_handover_instant<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy::is_instant(config::handover(&escrow.config))
+    handover_policy_state::is_instant(config::handover(&escrow.config))
 }
 
 public fun is_handover_fixed_time<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy::is_fixed_time(config::handover(&escrow.config))
+    handover_policy_state::is_fixed_time(config::handover(&escrow.config))
 }
 
 public fun is_retiring<Asset: key + store, CoinType>(
@@ -426,7 +426,7 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     if (!engine_state::is_handover_open_state(s)) return option::none();
     let phase_start = *option::borrow(&engine_state::phase_start_ms_opt(s));
     let tenure      = config::tenure_ceiling(&escrow.config);
-    option::some(handover_policy::expiry_at(config::handover(&escrow.config), bid_time_ms, phase_start, tenure))
+    option::some(handover_policy_state::expiry_at(config::handover(&escrow.config), bid_time_ms, phase_start, tenure))
 }
 
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
@@ -444,7 +444,7 @@ public fun integrated_at_ms<Asset: key + store, CoinType>(
 public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    retire_policy::unlock_at_ms(config::retire(&escrow.config), escrow.integrated_at_ms)
+    retire_policy_state::unlock_at_ms(config::retire(&escrow.config), escrow.integrated_at_ms)
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────
@@ -452,13 +452,13 @@ public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
 public fun tenant_cap_status<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
-): CapAuthorization {
-    engine_state::cap_authorization(read_engine(escrow), cap_id)
+): CapAuthorizationState {
+    engine_state::cap_authorization_state(read_engine(escrow), cap_id)
 }
 
 // ─── Timing views ────────────────────────────────────────────────────────────
 
-public fun has_pending_transitions<Asset: key + store, CoinType>(
+public fun has_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): bool {
@@ -471,7 +471,7 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
 ): Option<u64> {
     let pending = next_pending(escrow, clock);
     if (option::is_some(&pending)) {
-        option::some(pending_transition::boundary_ms(option::borrow(&pending)))
+        option::some(pending_transition_state::boundary_ms(option::borrow(&pending)))
     } else {
         option::none()
     }
@@ -511,7 +511,7 @@ public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
     escrow:     &Escrow<Asset, CoinType>,
     bid_amount: u64,
 ): u64 {
-    price_function::evaluate_price_fn(config::price_function(&escrow.config), bid_amount)
+    price_function_state::evaluate_price_fn(config::price_function_state(&escrow.config), bid_amount)
 }
 
 public fun last_acq_price<Asset: key + store, CoinType>(
@@ -575,37 +575,37 @@ public fun min_rent_price<Asset: key + store, CoinType>(
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    descent_policy::window_ceiling_opt(config::descent(&escrow.config))
+    descent_policy_state::window_ceiling_opt(config::descent(&escrow.config))
 }
 
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    handover_policy::countdown_floor_ms_opt(config::handover(&escrow.config))
+    handover_policy_state::countdown_floor_ms_opt(config::handover(&escrow.config))
 }
 
 public fun retire_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    retire_policy::floor_ms_opt(config::retire(&escrow.config))
+    retire_policy_state::floor_ms_opt(config::retire(&escrow.config))
 }
 
 public fun credit_curve<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-): CurveShape {
+): CurveShapeState {
     *config::credit_curve(&escrow.config)
 }
 
 public fun descent_curve<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-): CurveShape {
+): CurveShapeState {
     *config::descent_curve(&escrow.config)
 }
 
-public fun ascending_price_function<Asset: key + store, CoinType>(
+public fun ascending_price_function_state<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-): PriceFunction {
-    *config::price_function(&escrow.config)
+): PriceFunctionState {
+    *config::price_function_state(&escrow.config)
 }
 
 // === Private Functions ===

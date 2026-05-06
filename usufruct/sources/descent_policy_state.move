@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::descent_policy;
+module usufruct::descent_policy_state;
 
 // === Imports ===
 
@@ -14,27 +14,27 @@ const EDescentSkippedNoWindow: u64 = 1;
 
 // === Structs ===
 
-public enum DescentPolicy has copy, drop, store {
+public enum DescentPolicyState has copy, drop, store {
     Skipped,
     Window { ceiling_ms: u64 },
 }
 
 // === Public Functions ===
 
-public fun new_descent_skipped(): DescentPolicy { DescentPolicy::Skipped }
+public fun new_descent_skipped(): DescentPolicyState { DescentPolicyState::Skipped }
 
-public fun new_descent_window(ceiling_ms: u64): DescentPolicy {
+public fun new_descent_window(ceiling_ms: u64): DescentPolicyState {
     assert!(ceiling_ms > 0, EDescentCeilingZero);
-    DescentPolicy::Window { ceiling_ms }
+    DescentPolicyState::Window { ceiling_ms }
 }
 
 // === Package Functions ===
 
 /// True iff the policy is `Skipped` — no Dutch-auction phase exists;
 /// tenure expiry collapses directly to `Idle`.
-public(package) fun is_skipped(policy: &DescentPolicy): bool {
+public(package) fun is_skipped(policy: &DescentPolicyState): bool {
     match (policy) {
-        DescentPolicy::Skipped => true,
+        DescentPolicyState::Skipped => true,
         _                      => false,
     }
 }
@@ -46,7 +46,7 @@ public(package) fun is_skipped(policy: &DescentPolicy): bool {
 ///     this policy — spec M6b / Q11).
 ///   - Window expires when the ceiling elapses since `phase_start_ms`.
 public(package) fun has_expired(
-    policy:         &DescentPolicy,
+    policy:         &DescentPolicyState,
     phase_start_ms: u64,
     now_ms:         u64,
 ): bool {
@@ -57,9 +57,9 @@ public(package) fun has_expired(
         // sister identity `has_expired ⇔ now >= expiry_at`
         // unconditionally (Skipped's expiry_at is phase_start_ms). In
         // production, clock-monotone makes this equivalent to `=> true`.
-        DescentPolicy::Skipped               =>
+        DescentPolicyState::Skipped               =>
             phases::has_passed(phase_start_ms, 0, now_ms),
-        DescentPolicy::Window { ceiling_ms } =>
+        DescentPolicyState::Window { ceiling_ms } =>
             phases::has_passed(phase_start_ms, *ceiling_ms, now_ms),
     }
 }
@@ -74,12 +74,12 @@ public(package) fun has_expired(
 /// `AtDutchAuction` — the cascade collapses to `Idle` in one APT step
 /// (spec M6b / Q11).
 public(package) fun expiry_at(
-    policy:         &DescentPolicy,
+    policy:         &DescentPolicyState,
     phase_start_ms: u64,
 ): u64 {
     match (policy) {
-        DescentPolicy::Skipped               => phase_start_ms,
-        DescentPolicy::Window { ceiling_ms } => phases::boundary_at(phase_start_ms, *ceiling_ms),
+        DescentPolicyState::Skipped               => phase_start_ms,
+        DescentPolicyState::Window { ceiling_ms } => phases::boundary_at(phase_start_ms, *ceiling_ms),
     }
 }
 
@@ -88,19 +88,19 @@ public(package) fun expiry_at(
 /// asking for the window width when no auction exists has reached an
 /// unreachable state — `compute_price_descent` is only called from
 /// `AtDutchAuction`, and that variant is unobservable under `Skipped`.
-public(package) fun window_ceiling(policy: &DescentPolicy): u64 {
+public(package) fun window_ceiling(policy: &DescentPolicyState): u64 {
     match (policy) {
-        DescentPolicy::Window { ceiling_ms } => *ceiling_ms,
-        DescentPolicy::Skipped               => abort EDescentSkippedNoWindow,
+        DescentPolicyState::Window { ceiling_ms } => *ceiling_ms,
+        DescentPolicyState::Skipped               => abort EDescentSkippedNoWindow,
     }
 }
 
 /// Optional window duration for display purposes.
 ///   Window { ceiling_ms } → Some(ceiling_ms)
 ///   Skipped               → None (no auction phase exists under this policy)
-public(package) fun window_ceiling_opt(policy: &DescentPolicy): Option<u64> {
+public(package) fun window_ceiling_opt(policy: &DescentPolicyState): Option<u64> {
     match (policy) {
-        DescentPolicy::Window { ceiling_ms } => option::some(*ceiling_ms),
-        DescentPolicy::Skipped               => option::none(),
+        DescentPolicyState::Window { ceiling_ms } => option::some(*ceiling_ms),
+        DescentPolicyState::Skipped               => option::none(),
     }
 }

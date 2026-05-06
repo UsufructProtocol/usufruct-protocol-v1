@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::price_function;
+module usufruct::price_function_state;
 
 // === Imports ===
 
@@ -19,7 +19,7 @@ const BPS_UPPER:    u64 = 18_446_744_073_709_551_615 - BPS_PER_UNIT; // u64::MAX
 
 // === Structs ===
 
-public enum PriceFunction has copy, drop, store {
+public enum PriceFunctionState has copy, drop, store {
     FixedDelta {
         delta: u64,
     },
@@ -35,15 +35,15 @@ public enum PriceFunction has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_fixed_delta(delta: u64): PriceFunction {
+public fun new_fixed_delta(delta: u64): PriceFunctionState {
     assert!(delta > 0, EDeltaZero);
-    PriceFunction::FixedDelta { delta }
+    PriceFunctionState::FixedDelta { delta }
 }
 
-public fun new_compound_delta(bps: u64, delta: u64): PriceFunction {
+public fun new_compound_delta(bps: u64, delta: u64): PriceFunctionState {
     assert!(bps >= 1 && bps <= BPS_UPPER, EBpsRange);
     assert!(delta > 0, EDeltaZero);
-    PriceFunction::CompoundDelta { bps, delta }
+    PriceFunctionState::CompoundDelta { bps, delta }
 }
 
 // === View Functions ===
@@ -53,12 +53,12 @@ public fun new_compound_delta(bps: u64, delta: u64): PriceFunction {
 // === Package Functions ===
 
 public(package) fun evaluate_price_fn(
-    price_fn:        &PriceFunction,
+    price_fn:        &PriceFunctionState,
     price: u64,
 ): u64 {
     match (price_fn) {
-        PriceFunction::FixedDelta    { delta }      => eval_fixed_delta(price, *delta),
-        PriceFunction::CompoundDelta { bps, delta } => eval_compound_delta(price, *bps, *delta),
+        PriceFunctionState::FixedDelta    { delta }      => eval_fixed_delta(price, *delta),
+        PriceFunctionState::CompoundDelta { bps, delta } => eval_compound_delta(price, *bps, *delta),
     }
 }
 
@@ -88,17 +88,17 @@ public fun eval_compound_delta_for_testing(price: u64, bps: u64, delta: u64): u6
 public fun bps_per_unit_for_testing(): u64 { BPS_PER_UNIT }
 
 #[test_only]
-public fun fixed_delta_fields_for_testing(price_fn: &PriceFunction): u64 {
+public fun fixed_delta_fields_for_testing(price_fn: &PriceFunctionState): u64 {
     match (price_fn) {
-        PriceFunction::FixedDelta { delta } => *delta,
+        PriceFunctionState::FixedDelta { delta } => *delta,
         _ => abort 0,
     }
 }
 
 #[test_only]
-public fun compound_delta_fields_for_testing(price_fn: &PriceFunction): (u64, u64) {
+public fun compound_delta_fields_for_testing(price_fn: &PriceFunctionState): (u64, u64) {
     match (price_fn) {
-        PriceFunction::CompoundDelta { bps, delta } => (*bps, *delta),
+        PriceFunctionState::CompoundDelta { bps, delta } => (*bps, *delta),
         _ => abort 0,
     }
 }

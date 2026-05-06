@@ -8,11 +8,11 @@ module usufruct::rental_escrow_corpus;
 
 use usufruct::{
     config::{Self, IntegrationConfig},
-    curve_shape::{Self, CurveShape},
-    descent_policy::{Self, DescentPolicy},
-    handover_policy::{Self, HandoverPolicy},
-    price_function::{Self, PriceFunction},
-    retire_policy::{Self, RetirePolicy},
+    curve_shape_state::{Self, CurveShapeState},
+    descent_policy_state::{Self, DescentPolicyState},
+    handover_policy_state::{Self, HandoverPolicyState},
+    price_function_state::{Self, PriceFunctionState},
+    retire_policy_state::{Self, RetirePolicyState},
 };
 
 // === Errors ===
@@ -38,11 +38,11 @@ const COMPOUND_DELTA_VALUE:  u64 = 1;
 
 public struct CorpusEntry has copy, drop, store {
     cfg: IntegrationConfig,
-    c:   u8,   // 0..2  HandoverPolicy
-    d:   u8,   // 0..1  PriceFunction
-    e:   u8,   // 0..6  CurveShape pair
-    h:   u8,   // 0..1  DescentPolicy
-    f:   u8,   // 0..1  RetirePolicy
+    c:   u8,   // 0..2  HandoverPolicyState
+    d:   u8,   // 0..1  PriceFunctionState
+    e:   u8,   // 0..6  CurveShapeState pair
+    h:   u8,   // 0..1  DescentPolicyState
+    f:   u8,   // 0..1  RetirePolicyState
     tag: u64,  // c·10_000 + d·1_000 + e·100 + h·10 + f
 }
 
@@ -201,7 +201,7 @@ fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8): IntegrationConfig {
         make_retire(f),
         curve,
         curve,
-        make_price_function(d),
+        make_price_function_state(d),
     )
 }
 
@@ -213,35 +213,35 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64 {
     (f as u64)
 }
 
-fun make_handover(c: u8): HandoverPolicy {
-    if (c == 0)      { handover_policy::new_handover_instant() }
-    else if (c == 1) { handover_policy::new_handover_countdown(HANDOVER_COUNTDOWN_C1) }
-    else             { handover_policy::new_handover_fixed_time() }
+fun make_handover(c: u8): HandoverPolicyState {
+    if (c == 0)      { handover_policy_state::new_handover_instant() }
+    else if (c == 1) { handover_policy_state::new_handover_countdown(HANDOVER_COUNTDOWN_C1) }
+    else             { handover_policy_state::new_handover_fixed_time() }
 }
 
-fun make_price_function(d: u8): PriceFunction {
-    if (d == 0) { price_function::new_fixed_delta(FIXED_DELTA_VALUE) }
-    else        { price_function::new_compound_delta(COMPOUND_DELTA_BPS, COMPOUND_DELTA_VALUE) }
+fun make_price_function_state(d: u8): PriceFunctionState {
+    if (d == 0) { price_function_state::new_fixed_delta(FIXED_DELTA_VALUE) }
+    else        { price_function_state::new_compound_delta(COMPOUND_DELTA_BPS, COMPOUND_DELTA_VALUE) }
 }
 
-fun make_curve(e: u8): CurveShape {
-    if (e == 0)      { curve_shape::new_linear() }
-    else if (e == 1) { curve_shape::new_smoothstep() }
-    else if (e == 2) { curve_shape::new_logistic() }
-    else if (e == 3) { curve_shape::new_power_law(1, 2) }
-    else if (e == 4) { curve_shape::new_power_law(2, 1) }
-    else if (e == 5) { curve_shape::new_exponential(2, true) }
-    else             { curve_shape::new_exponential(2, false) }
+fun make_curve(e: u8): CurveShapeState {
+    if (e == 0)      { curve_shape_state::new_linear() }
+    else if (e == 1) { curve_shape_state::new_smoothstep() }
+    else if (e == 2) { curve_shape_state::new_logistic() }
+    else if (e == 3) { curve_shape_state::new_power_law(1, 2) }
+    else if (e == 4) { curve_shape_state::new_power_law(2, 1) }
+    else if (e == 5) { curve_shape_state::new_exponential(2, true) }
+    else             { curve_shape_state::new_exponential(2, false) }
 }
 
-fun make_descent(h: u8): DescentPolicy {
-    if (h == 0) { descent_policy::new_descent_skipped() }
-    else        { descent_policy::new_descent_window(DESCENT_WINDOW_H1) }
+fun make_descent(h: u8): DescentPolicyState {
+    if (h == 0) { descent_policy_state::new_descent_skipped() }
+    else        { descent_policy_state::new_descent_window(DESCENT_WINDOW_H1) }
 }
 
-fun make_retire(f: u8): RetirePolicy {
-    if (f == 0) { retire_policy::new_retire_immediate() }
-    else        { retire_policy::new_retire_deferred(RETIRE_DEFERRED_F1) }
+fun make_retire(f: u8): RetirePolicyState {
+    if (f == 0) { retire_policy_state::new_retire_immediate() }
+    else        { retire_policy_state::new_retire_deferred(RETIRE_DEFERRED_F1) }
 }
 
 // --- Filter helpers (called after axis validation in filter_*) ---

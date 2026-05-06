@@ -7,7 +7,7 @@ module usufruct::credit_state;
 
 use usufruct::{
     config::{Self, IntegrationConfig},
-    curve_shape,
+    curve_shape_state,
     math,
     phases,
 };
@@ -84,12 +84,12 @@ public(package) fun used_credit(
             (*stake, *phase_start_ms, phases::earliest(timestamp_ms, *expiry_ms)),
     };
     let elapsed = phases::elapsed_since(phase_start_ms, effective_ms);
-    let g = curve_shape::evaluate_curve(
+    let g = curve_shape_state::evaluate_curve(
         config::credit_curve(cfg),
         elapsed,
         config::tenure_ceiling(cfg),
     );
-    math::mul_div(stake, g, curve_shape::scale())
+    math::mul_div(stake, g, curve_shape_state::scale())
 }
 
 // === Private Functions ===

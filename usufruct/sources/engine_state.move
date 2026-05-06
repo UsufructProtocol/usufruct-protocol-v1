@@ -24,19 +24,19 @@ use sui::{
 };
 use usufruct::{
     asset::{Self, AssetReceipt},
-    cap_authorization::{Self, CapAuthorization},
+    cap_authorization_state::{Self, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     credit_state,
-    descent_policy,
-    handover_policy,
+    descent_policy_state,
+    handover_policy_state,
     math,
     owner::{Self, Owner},
     owner_cap::OwnerCap,
-    pending_transition::{Self, PendingTransition},
+    pending_transition_state::{Self, PendingTransitionState},
     phases,
     price_state,
     refund_state,
-    retire_policy,
+    retire_policy_state,
     tenant::{Self, Tenant},
     tenant_cap::{Self, TenantCap},
 };
@@ -494,21 +494,21 @@ public(package) fun bps_denominator(): u64  { BPS_PER_UNIT }
 
 // ─── Cap-authorization view ───────────────────────────────────────────────────
 
-public(package) fun cap_authorization<Asset: key + store, CoinType>(
+public(package) fun cap_authorization_state<Asset: key + store, CoinType>(
     s:      &EngineState<Asset, CoinType>,
     cap_id: ID,
-): CapAuthorization {
+): CapAuthorizationState {
     match (s) {
         EngineState::Rented { tenant, .. } => {
-            if (cap_id == tenant::id_cap_id(tenant::identity(tenant))) cap_authorization::current()
-            else cap_authorization::stale()
+            if (cap_id == tenant::id_cap_id(tenant::identity(tenant))) cap_authorization_state::current()
+            else cap_authorization_state::stale()
         },
         EngineState::HandoverPending { current, pending, .. } => {
-            if (cap_id == tenant::id_cap_id(tenant::identity(current))) cap_authorization::current()
-            else if (cap_id == tenant::id_cap_id(tenant::identity(pending))) cap_authorization::pending()
-            else cap_authorization::stale()
+            if (cap_id == tenant::id_cap_id(tenant::identity(current))) cap_authorization_state::current()
+            else if (cap_id == tenant::id_cap_id(tenant::identity(pending))) cap_authorization_state::pending()
+            else cap_authorization_state::stale()
         },
-        _ => cap_authorization::stale(),
+        _ => cap_authorization_state::stale(),
     }
 }
 
@@ -518,12 +518,12 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
     s:      &EngineState<Asset, CoinType>,
     config: &IntegrationConfig,
     clock:  &Clock,
-): Option<PendingTransition> {
+): Option<PendingTransitionState> {
     let now = clock::timestamp_ms(clock);
     match (s) {
         EngineState::HandoverPending { handover_expiry, .. } => {
             if (phases::has_passed(*handover_expiry, 0, now)) {
-                return option::some(pending_transition::handover(*handover_expiry))
+                return option::some(pending_transition_state::handover(*handover_expiry))
             };
             option::none()
         },
@@ -531,16 +531,16 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
             let tenure = config::tenure_ceiling(config);
             if (phases::has_passed(*phase_start_ms, tenure, now)) {
                 return option::some(
-                    pending_transition::tenure(phases::boundary_at(*phase_start_ms, tenure))
+                    pending_transition_state::tenure(phases::boundary_at(*phase_start_ms, tenure))
                 )
             };
             option::none()
         },
         EngineState::AtDutch { phase_start_ms, .. } => {
             let policy = config::descent(config);
-            if (descent_policy::has_expired(policy, *phase_start_ms, now)) {
+            if (descent_policy_state::has_expired(policy, *phase_start_ms, now)) {
                 return option::some(
-                    pending_transition::auction(descent_policy::expiry_at(policy, *phase_start_ms))
+                    pending_transition_state::auction(descent_policy_state::expiry_at(policy, *phase_start_ms))
                 )
             };
             option::none()
@@ -549,7 +549,7 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun apply_pending_transitions<Asset: key + store, CoinType>(
+public(package) fun apply_pending_transition_states<Asset: key + store, CoinType>(
     state:        EngineState<Asset, CoinType>,
     config:       &IntegrationConfig,
     escrow_id:    ID,
@@ -577,13 +577,13 @@ fun fire<Asset: key + store, CoinType>(
     config:       &IntegrationConfig,
     escrow_id:    ID,
     fee_inbox_id: ID,
-    t:            PendingTransition,
+    t:            PendingTransitionState,
     ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
     // `next_pending` guarantees state↔transition pairing:
     //   HandoverPending → Handover, Rented → Tenure, AtDutch → Auction.
     // Match on state directly; boundary_ms from `t` is the only payload needed.
-    let boundary_ms = pending_transition::boundary_ms(&t);
+    let boundary_ms = pending_transition_state::boundary_ms(&t);
     match (state) {
         EngineState::HandoverPending {
             asset, current, pending, handover_expiry: _, phase_start_ms, retiring, owner
@@ -614,7 +614,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     clock:        &Clock,
     ctx:          &mut TxContext,
 ): (EngineState<Asset, CoinType>, TenantCap) {
-    let state = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
+    let state = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
     let now   = clock::timestamp_ms(clock);
     let floor = floor_price_at(&state, config, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
@@ -646,10 +646,10 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     clock:            &Clock,
     ctx:              &mut TxContext,
 ): EngineState<Asset, CoinType> {
-    let state  = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
+    let state  = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
     let now_ms = clock::timestamp_ms(clock);
     assert!(
-        retire_policy::is_unlocked(config::retire(config), integrated_at_ms, now_ms),
+        retire_policy_state::is_unlocked(config::retire(config), integrated_at_ms, now_ms),
         ERetireFloorNotElapsed,
     );
     match (state) {
@@ -681,7 +681,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     clock:        &Clock,
     ctx:          &mut TxContext,
 ): (EngineState<Asset, CoinType>, Asset, AssetReceipt) {
-    let state = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
+    let state = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
     assert!(tenant_cap::escrow_id(tenant_cap) == escrow_id, EWrongEscrowTenantCap);
     let cap_id = object::id(tenant_cap);
     match (state) {
@@ -756,7 +756,7 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
     clock:        &Clock,
     ctx:          &mut TxContext,
 ): EngineState<Asset, CoinType> {
-    let state = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
+    let state = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
     match (state) {
         EngineState::Retired { asset, owner } => {
             tenant_cap::burn(cap, ctx);
@@ -802,7 +802,7 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     clock:        &Clock,
     ctx:          &mut TxContext,
 ): (EngineState<Asset, CoinType>, Coin<CoinType>) {
-    let state        = apply_pending_transitions(state, config, escrow_id, fee_inbox_id, clock, ctx);
+    let state        = apply_pending_transition_states(state, config, escrow_id, fee_inbox_id, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
@@ -920,7 +920,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let current_addr   = tenant::id_address(tenant::identity(&tenant));
     let current_stake  = tenant::stake_value(&tenant);
     let tenure         = config::tenure_ceiling(config);
-    let expiry         = handover_policy::expiry_at(
+    let expiry         = handover_policy_state::expiry_at(
         config::handover(config), now, phase_start_ms, tenure,
     );
     let pending_addr = ctx.sender();

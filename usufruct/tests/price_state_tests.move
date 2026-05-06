@@ -6,12 +6,12 @@ module usufruct::price_state_tests;
 
 use usufruct::{
     config,
-    curve_shape,
-    descent_policy,
-    handover_policy,
-    price_function,
+    curve_shape_state,
+    descent_policy_state,
+    handover_policy_state,
+    price_function_state,
     price_state,
-    retire_policy,
+    retire_policy_state,
 };
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -25,13 +25,13 @@ const T0:     u64 = 1_000_000;      // arbitrary phase_start_ms
 fun base_cfg(descent: bool): config::IntegrationConfig {
     config::new_config(
         MIN, TENURE,
-        handover_policy::new_handover_instant(),
-        if (descent) { descent_policy::new_descent_window(TENURE) }
-        else         { descent_policy::new_descent_skipped()       },
-        retire_policy::new_retire_immediate(),
-        curve_shape::new_linear(),
-        curve_shape::new_linear(),
-        price_function::new_fixed_delta(MIN),
+        handover_policy_state::new_handover_instant(),
+        if (descent) { descent_policy_state::new_descent_window(TENURE) }
+        else         { descent_policy_state::new_descent_skipped()       },
+        retire_policy_state::new_retire_immediate(),
+        curve_shape_state::new_linear(),
+        curve_shape_state::new_linear(),
+        price_function_state::new_fixed_delta(MIN),
     )
 }
 
@@ -68,12 +68,12 @@ fun ascending_is_time_independent() {
 }
 
 #[test]
-fun ascending_agrees_with_price_function() {
+fun ascending_agrees_with_price_function_state() {
     // floor_price(Ascending { stake }, cfg, _) == evaluate_price_fn(pf, stake)
     // Spec-derived relation, not impl-mirroring.
     let cfg      = base_cfg(false);
     let ps       = price_state::ascending(STAKE);
-    let expected = price_function::evaluate_price_fn(config::price_function(&cfg), STAKE);
+    let expected = price_function_state::evaluate_price_fn(config::price_function_state(&cfg), STAKE);
     assert!(price_state::floor_price(&ps, &cfg, 0) == expected, 0);
 }
 
@@ -84,12 +84,12 @@ fun ascending_fixed_delta_adds_delta() {
     let delta = MIN;
     let cfg   = config::new_config(
         MIN, TENURE,
-        handover_policy::new_handover_instant(),
-        descent_policy::new_descent_skipped(),
-        retire_policy::new_retire_immediate(),
-        curve_shape::new_linear(),
-        curve_shape::new_linear(),
-        price_function::new_fixed_delta(delta),
+        handover_policy_state::new_handover_instant(),
+        descent_policy_state::new_descent_skipped(),
+        retire_policy_state::new_retire_immediate(),
+        curve_shape_state::new_linear(),
+        curve_shape_state::new_linear(),
+        price_function_state::new_fixed_delta(delta),
     );
     let ps = price_state::ascending(STAKE);
     let floor = price_state::floor_price(&ps, &cfg, 0);
@@ -102,12 +102,12 @@ fun ascending_compound_delta_raises_price() {
     // CompoundDelta(bps, δ): next_price = stake + bps*stake/10000 + δ > stake.
     let cfg = config::new_config(
         MIN, TENURE,
-        handover_policy::new_handover_instant(),
-        descent_policy::new_descent_skipped(),
-        retire_policy::new_retire_immediate(),
-        curve_shape::new_linear(),
-        curve_shape::new_linear(),
-        price_function::new_compound_delta(1_000, 1), // 10% + 1 mist
+        handover_policy_state::new_handover_instant(),
+        descent_policy_state::new_descent_skipped(),
+        retire_policy_state::new_retire_immediate(),
+        curve_shape_state::new_linear(),
+        curve_shape_state::new_linear(),
+        price_function_state::new_compound_delta(1_000, 1), // 10% + 1 mist
     );
     let ps = price_state::ascending(STAKE);
     let floor = price_state::floor_price(&ps, &cfg, 0);
@@ -182,13 +182,13 @@ fun descending_saturates_past_window() {
 fun descending_various_curves_respect_bounds() {
     // Sweep curve shapes: for all e in [0..6], floor_price is in [MIN, LAST].
     let curves = vector[
-        curve_shape::new_linear(),
-        curve_shape::new_smoothstep(),
-        curve_shape::new_logistic(),
-        curve_shape::new_power_law(1, 2),
-        curve_shape::new_power_law(2, 1),
-        curve_shape::new_exponential(2, true),
-        curve_shape::new_exponential(2, false),
+        curve_shape_state::new_linear(),
+        curve_shape_state::new_smoothstep(),
+        curve_shape_state::new_logistic(),
+        curve_shape_state::new_power_law(1, 2),
+        curve_shape_state::new_power_law(2, 1),
+        curve_shape_state::new_exponential(2, true),
+        curve_shape_state::new_exponential(2, false),
     ];
     let mid = T0 + TENURE / 2;
     let mut i = 0;
@@ -196,12 +196,12 @@ fun descending_various_curves_respect_bounds() {
         let curve = *curves.borrow(i);
         let cfg = config::new_config(
             MIN, TENURE,
-            handover_policy::new_handover_instant(),
-            descent_policy::new_descent_window(TENURE),
-            retire_policy::new_retire_immediate(),
-            curve_shape::new_linear(), // credit_curve unused here
+            handover_policy_state::new_handover_instant(),
+            descent_policy_state::new_descent_window(TENURE),
+            retire_policy_state::new_retire_immediate(),
+            curve_shape_state::new_linear(), // credit_curve unused here
             curve,
-            price_function::new_fixed_delta(MIN),
+            price_function_state::new_fixed_delta(MIN),
         );
         let ps = price_state::descending(LAST, T0);
         let p  = price_state::floor_price(&ps, &cfg, mid);

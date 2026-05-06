@@ -29,7 +29,7 @@ use usufruct::{
         AssetBorrowed,
         AssetReturned,
     },
-    pending_transition,
+    pending_transition_state,
     escrow::{
         Self,
         Escrow,
@@ -143,7 +143,7 @@ fun integrate_creates_idle_escrow_smoke() {
 // ─── §2. integrate — corpus projection ───────────────────────────────────────
 
 /// §10.1 — integrate is universally applicable. Sweeps the C axis
-/// (HandoverPolicy ∈ {Instant, Countdown, FixedTime}) — three
+/// (HandoverPolicyState ∈ {Instant, Countdown, FixedTime}) — three
 /// behaviorally distinct handover modes — at fixed (d=0, e=0, h=0, f=0).
 /// Verifies the post-condition `state_tag == Idle` for each.
 ///
@@ -270,7 +270,7 @@ fun floor_price_idle_returns_min_rent_price() {
 }
 
 /// HandoverOpen returns `f_next_rent_price(current_stake)`. Sweeps
-/// the D axis (PriceFunction): d=0 (FixedDelta) and d=1 (CompoundDelta)
+/// the D axis (PriceFunctionState): d=0 (FixedDelta) and d=1 (CompoundDelta)
 /// — the only axis compute_next_rent_price actually consumes.
 #[test]
 fun floor_price_handover_open_escalates_current_stake() {
@@ -657,7 +657,7 @@ fun rent_from_at_dutch_installs_new_tenant() {
 
 /// HandoverOpen → HandoverConfirmed via rent. BidPlaced carries
 /// the pre-computed handover_countdown_expiry. Sweeps the C axis
-/// (HandoverPolicy) since handover_policy::expiry_at depends on it.
+/// (HandoverPolicyState) since handover_policy_state::expiry_at depends on it.
 #[test]
 fun rent_from_handover_open_places_bid() {
     let mut sc = setup();
@@ -1195,9 +1195,9 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     let pending = escrow::next_pending(&escrow, &clk);
     assert!(pending.is_some(), 0);
     let t = pending.destroy_some();
-    assert!(pending_transition::is_tenure(&t), 1);
+    assert!(pending_transition_state::is_tenure(&t), 1);
     // boundary_ms is exactly tenure_ceiling (phase_start was 0).
-    assert_eq!(pending_transition::boundary_ms(&t), escrow_corpus::tenure_ceiling_const());
+    assert_eq!(pending_transition_state::boundary_ms(&t), escrow_corpus::tenure_ceiling_const());
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -1206,7 +1206,7 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     sc.end();
 }
 
-// ─── §15. apply_pending_transitions ──────────────────────────────────────────
+// ─── §15. apply_pending_transition_states ──────────────────────────────────────────
 
 /// APT no-ops when nothing is due. Tag unchanged after the call.
 #[test]
@@ -1217,7 +1217,7 @@ fun apt_noop_when_nothing_due() {
     let clk = clock::create_for_testing(sc.ctx());
 
     // Idle escrow at clock=0; no transitions are due.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 0);
 
     test_scenario::return_shared(escrow);
@@ -1249,7 +1249,7 @@ fun apt_fires_handover_when_countdown_expires() {
     // Jump clock past the countdown expiry.
     let countdown_expiry = now2 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // Handover fired: HandoverConfirmed → HandoverOpen (t2 now t1).
     assert!(escrow::is_handover_open(&escrow), 1);
 
@@ -1278,7 +1278,7 @@ fun apt_fires_tenure_expiry_when_elapsed() {
 
     // Jump clock past the tenure boundary.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // Tenure expired: HandoverOpen → AtDutch (h=1 window).
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
 
@@ -1309,7 +1309,7 @@ fun apt_cascade_tenure_then_auction_skipped() {
     let cap_t1 = escrow::rent(&mut escrow, p1, &clk, sc.ctx());
 
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // Cascade: HandoverOpen → AtDutch (tenure_expiry) → Idle (auction_expiry under h=0 collapses to phase_start, immediately expired).
     assert!(escrow::is_idle(&escrow), 0);
 
@@ -1728,7 +1728,7 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     //   due at 2 × tenure_ceiling; auction fires immediately under
     //   h=0 Skipped.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() * 3);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // Cascade: HandoverConfirmed → HandoverOpen → AtDutch → Idle.
     assert!(escrow::is_idle(&escrow), 1);
 
@@ -1772,19 +1772,19 @@ fun e2e_full_rental_cycle_with_bid_and_handover() {
     // with t2 promoted).
     let countdown_expiry = now2 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry);
-    escrow::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow_handle), 0);
 
     // APT past tenure: tenure expiry fires (HO → AtDutch).
     let tenure_boundary = countdown_expiry + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary);
-    escrow::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow_handle), 1);
 
     // APT past auction: auction expiry fires (AtDutch → Idle).
     let auction_boundary = tenure_boundary + escrow_corpus::descent_window_h1_const();
     clock::set_for_testing(&mut clk, auction_boundary);
-    escrow::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow_handle), 2);
 
     // Event count sanity — boundary events from the cycle so far.
@@ -1836,7 +1836,7 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
 
         // APT past tenure → AtDutch.
         clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-        escrow::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+        escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
         assert!(escrow::is_at_dutch_auction(&escrow_handle), cfg_tag);
 
         // APT past descent → Idle.
@@ -1844,7 +1844,7 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
             &mut clk,
             escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1,
         );
-        escrow::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+        escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
         assert!(escrow::is_idle(&escrow_handle), cfg_tag);
 
         // Owner accumulated 90 % of the principal (g(t_max)=SCALE
@@ -1880,7 +1880,7 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
 
     // APT past tenure: state collapses to Retired (skipping AtDutch).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-    escrow::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow_handle), 1);
 
     // AssetRetired co-emitted with TenureExpired (do_tenure_expiry's
@@ -1936,7 +1936,7 @@ fun e2e_two_tenant_successions_price_escalates() {
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // APT: Instant handover fires at bid_time_ms=1000 → HandoverOpen (T2 current).
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
@@ -1948,14 +1948,14 @@ fun e2e_two_tenant_successions_price_escalates() {
     let cap_t3    = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &clk, sc.ctx());
 
     // APT: second Instant handover → HandoverOpen (T3 current).
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 2);
 
     // Advance past T3's tenure ceiling (phase_start_T3 = now_t3 = 2_000).
     let tenure_boundary = now_t3 + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // h=0 Skipped: TenureExpired + AuctionExpired co-fire → Idle.
     assert!(escrow::is_idle(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
@@ -2014,14 +2014,14 @@ fun e2e_auction_winner_rents_at_mid_descent() {
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &clk, sc.ctx());
 
     // APT: Instant handover → HandoverOpen (T2 current, phase_start = now_t2).
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // APT past T2's tenure ceiling → AtDutchAuction.
     // last_acquisition_price = price_t2 > min_rent_price → non-zero spread.
     let tenure_boundary = now_t2 + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
 
@@ -2047,7 +2047,7 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 
 // ─── §3. Deferred retire floor gate ───────────────────────────────────────────
 
-/// With RetirePolicy::Deferred, retire() aborts if the clock has not
+/// With RetirePolicyState::Deferred, retire() aborts if the clock has not
 /// reached integrated_at_ms + retire_floor. integrated_at_ms = 0
 /// (clock at integration time), retire_floor = 10_000_000.
 ///
@@ -2154,7 +2154,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     // APT past T3's countdown expiry → HandoverOpen (T3 is current, not T2).
     let t3_countdown_expiry = now_t3 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, t3_countdown_expiry);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
@@ -2205,7 +2205,7 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
         // last_acquisition_price = min_rent_price → zero spread.
         let tenure_boundary = escrow_corpus::tenure_ceiling_const();
         clock::set_for_testing(&mut clk, tenure_boundary + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
         // floor at t=0 of descent window: must equal min_rent_price.
@@ -2280,7 +2280,7 @@ fun e2e_b1_five_ptbs_borrow_chain() {
         clock::set_for_testing(&mut clk, t);
         let floor = escrow::compute_floor_price(&escrow, &clk);
         let cap = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), &clk, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap, &clk, sc.ctx());
         escrow::return_asset(&mut escrow, asset, receipt);
         assert!(escrow::is_handover_open(&escrow), tag);
@@ -2310,7 +2310,7 @@ fun e2e_b1_five_ptbs_borrow_chain() {
 /// e2e_b1_five_ptbs_borrow_chain at one config; that test's per-PTB boundary
 /// overhead prevents sweeping all 56 configs within the gas budget.
 #[test]
-fun e2e_b1_instant_borrow_across_curve_shapes() {
+fun e2e_b1_instant_borrow_across_curve_shape_states() {
     let mut sc    = setup();
     // c=0, d=0, h=0, f=0 — vary e: 7 configs (one per curve shape).
     let entries   = escrow_corpus::filter_d(
@@ -2362,7 +2362,7 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
     clock::set_for_testing(&mut clk, 1_000);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     // T1's cap is now stale — borrow must abort.
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
@@ -2397,11 +2397,11 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     clock::set_for_testing(&mut clk, 1_000);
     let floor_b4  = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2_temp = escrow::rent(&mut escrow, mk_payment(floor_b4, sc.ctx()), &clk, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // Now T2 holds tenure; advance past T2's tenure ceiling.
     let tenure_boundary = 1_000 + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
     // T3 rents from AtDutchAuction at mid-descent price — immediately current.
@@ -2479,7 +2479,7 @@ fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
     let price_t2 = escrow::compute_floor_price(&escrow, &clk);
     assert!(price_t2 > price_t1, tag);
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &clk, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     let price_t3 = escrow::compute_floor_price(&escrow, &clk);
     assert!(price_t3 > price_t2, tag);
@@ -2490,7 +2490,7 @@ fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
     assert!(gap_3_2 > gap_2_1, tag);
 
     let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &clk, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -2522,13 +2522,13 @@ fun e2e_p2_fixed_delta_gap_is_constant_across_re_prices() {
     let price_t2 = escrow::compute_floor_price(&escrow, &clk);
     assert_eq!(price_t2 - price_t1, delta);
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &clk, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     let price_t3 = escrow::compute_floor_price(&escrow, &clk);
     assert_eq!(price_t3 - price_t2, delta); // constant gap
 
     let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &clk, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -2565,7 +2565,7 @@ fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
     clock::set_for_testing(&mut clk, t_mid);
     let floor_e1 = escrow::compute_floor_price(&escrow_handle, &clk);
     let cap_t2   = escrow::rent(&mut escrow_handle, mk_payment(floor_e1, sc.ctx()), &clk, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow_handle), tag);
 
     // First withdrawal — T1's used_credit share.
@@ -2579,7 +2579,7 @@ fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
     // T2's tenure expires → Idle (Skipped). T2's full credit → owner earnings.
     let tenure_boundary = t_mid + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
-    escrow::apply_pending_transitions(&mut escrow_handle, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow_handle), tag);
 
     // Second withdrawal — T2's earnings (fresh, first was drained to zero).
@@ -2633,14 +2633,14 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
     // APT past T2's countdown expiry → APT honors the bid: T2 gets HandoverOpen.
     let countdown_expiry = 1_000 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
     // APT past T2's tenure ceiling → collapses to Retired (not AtDutch).
     let tenure_boundary = countdown_expiry + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
 
@@ -2660,7 +2660,7 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
 
 // ─── §A1. APT fires at exact tenure boundary (>= inclusivity) ────────────────
 
-/// apply_pending_transitions with clock == tenure_boundary_ms fires the
+/// apply_pending_transition_states with clock == tenure_boundary_ms fires the
 /// tenure expiry transition. Verifies the >= guard in phases::has_passed.
 #[test]
 fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
@@ -2676,7 +2676,7 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
     // Exact boundary: clock == phase_start(0) + tenure_ceiling.
     let boundary = escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, boundary);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // h=0 Skipped: tenure → AtDutch → Idle in one APT step.
     assert!(escrow::is_idle(&escrow), tag);
 
@@ -2689,7 +2689,7 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
 
 // ─── §A2. APT does not fire one ms before tenure boundary ────────────────────
 
-/// apply_pending_transitions with clock == tenure_boundary_ms - 1 does not
+/// apply_pending_transition_states with clock == tenure_boundary_ms - 1 does not
 /// fire — state stays HandoverOpen. Verifies the >= guard is not >.
 #[test]
 fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
@@ -2704,7 +2704,7 @@ fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
 
     // One ms before the boundary — nothing should fire.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() - 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -2751,7 +2751,7 @@ fun e2e_f2_fixed_time_T3_supersedes_T2_wins_at_tenure_boundary() {
     // Handover fires → T3 wins → HandoverOpen (T3 current, new phase_start=100_000).
     // T3's tenure ceiling = 100_000 + 100_000 = 200_000 > 100_000 → no tenure expiry yet.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
@@ -2809,7 +2809,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     let floor2  = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // Countdown has not elapsed — T2 is still pending, state unchanged.
     assert!(escrow::is_handover_confirmed(&escrow), tag);
     clock::destroy_for_testing(clk);
@@ -2822,7 +2822,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let countdown_expiry = 1_000 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t2, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
@@ -2888,7 +2888,7 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     // APT past countdown (1_000+25_000=26_000) → cap_t1_bid2 current.
     // cap_t1_current (original stake, held ~26s) is displaced: remain_credit > 0.
     clock::set_for_testing(&mut clk, 1_000 + escrow_corpus::handover_countdown_c1_const());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     let hc = event::events_by_type<HandoverCompleted>();
     assert_eq!(hc.length(), 1);
     let he = hc.borrow(0);
@@ -2954,7 +2954,7 @@ fun e2e_current_tenant_defends_against_challenger() {
 
     // APT past T1_new's countdown → T1 defends tenure at floor_3.
     clock::set_for_testing(&mut clk, 2_000 + escrow_corpus::handover_countdown_c1_const());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     let hc = event::events_by_type<HandoverCompleted>();
     assert_eq!(hc.length(), 1);
@@ -3028,7 +3028,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     // T3 tenure expires at 27_000+100_000 = 127_000.
     let t3_expiry = 1_000 + countdown; // = 26_000 (T2's countdown, T3 superseded it)
     clock::set_for_testing(&mut clk, t3_expiry);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     // AtDutchAuction: T3's phase_start = t3_expiry=26_000 (handover boundary for Countdown).
     // Actually: expiry_at(bid_time=2_000, phase_start=0, tenure_ceiling=100_000)
@@ -3036,7 +3036,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     let t3_phase_start = 27_000u64;
     let tenure_boundary = t3_phase_start + escrow_corpus::tenure_ceiling_const(); // 127_000
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
     // Pay 2× mid-descent price. RentStarted events: [Idle, AtDutch].
@@ -3150,7 +3150,7 @@ fun e2e_fin1_handover_financial_conservation() {
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
 
     // Instant handover fires at bid_time = t_mid.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     let hc_events = event::events_by_type<HandoverCompleted>();
@@ -3216,13 +3216,13 @@ fun e2e_fin2_tenure_expiry_financial_conservation() {
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &clk, sc.ctx());
 
     // Instant handover fires: T2 is now current, T2.phase_start = now_t2.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // T2's tenure boundary = now_t2 + tenure_ceiling = 1_000 + 100_000 = 101_000.
     let t2_tenure_boundary = now_t2 + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, t2_tenure_boundary);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     // h=1 Window → TenureExpired fires but AtDutchAuction (not Idle).
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
@@ -3285,7 +3285,7 @@ fun e2e_fin3_90_10_split_exact() {
     let cap_a1    = escrow::rent(
         &mut escrow_a, mk_payment(min_price, sc.ctx()), &clk_a, sc.ctx());
     clock::set_for_testing(&mut clk_a, escrow_corpus::tenure_ceiling_const());
-    escrow::apply_pending_transitions(&mut escrow_a, &clk_a, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow_a, &clk_a, sc.ctx());
     {
         let te_events = event::events_by_type<TenureExpired>();
         let te       = te_events.borrow(0);
@@ -3317,7 +3317,7 @@ fun e2e_fin3_90_10_split_exact() {
     let floor_b   = escrow::compute_floor_price(&escrow_b, &clk_b);
     let cap_b2    = escrow::rent(
         &mut escrow_b, mk_payment(floor_b, sc.ctx()), &clk_b, sc.ctx());
-    escrow::apply_pending_transitions(&mut escrow_b, &clk_b, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow_b, &clk_b, sc.ctx());
     assert!(escrow::is_handover_open(&escrow_b), tag);
     {
         let hc_events = event::events_by_type<HandoverCompleted>();
@@ -3377,7 +3377,7 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
 
         // APT at exact tenure boundary → AtDutchAuction (last_acq_price = stake).
         clock::set_for_testing(&mut clk, tenure_boundary);
-        escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
         // DESC-1: elapsed_descent = 0 → evaluate_curve = 0 → no descent yet.
@@ -3452,7 +3452,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 
 // ─── §Skipped descent — price resets to min_rent_price at tenure boundary ────
 
-/// With DescentPolicy::Skipped (h=0), tenure expiry triggers the M6b cascade:
+/// With DescentPolicyState::Skipped (h=0), tenure expiry triggers the M6b cascade:
 /// HandoverOpen → AtDutchAuction → Idle fires in a single APT step because
 /// the descent window is zero. The entry price resets to min_rent_price at
 /// the exact tenure boundary, regardless of what the departing tenant paid.
@@ -3481,7 +3481,7 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
     // M6b: HandoverOpen → AtDutchAuction → Idle in one step (Skipped descent).
     let tenure_boundary = escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
@@ -3504,7 +3504,7 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
 
 // ─── §APT-1. APT idempotency — double call at same clock is a no-op ──────────
 
-/// apply_pending_transitions is permissionless and may be called many times.
+/// apply_pending_transition_states is permissionless and may be called many times.
 /// The protocol guarantees it is idempotent: once the state has settled at
 /// a given timestamp, a second call emits no additional events and leaves
 /// the state unchanged.
@@ -3544,12 +3544,12 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     clock::set_for_testing(&mut clk, countdown_expiry);
 
     // First APT: handover fires → HandoverOpen, 1 HandoverCompleted event.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
     // Second APT at same clock: no-op — state and event count unchanged.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
@@ -3559,12 +3559,12 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     clock::set_for_testing(&mut clk, tenure_boundary);
 
     // First APT: tenure fires → AtDutchAuction, 1 TenureExpired event.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
 
     // Second APT at same clock: no-op.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
 
@@ -3574,12 +3574,12 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     clock::set_for_testing(&mut clk, descent_boundary);
 
     // First APT: auction fires → Idle, 1 AuctionExpired event.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), tag);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
     // Second APT at same clock: no-op — Idle has no pending transitions.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), tag);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
@@ -3594,7 +3594,7 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
 // ─── §RETIRE. All paths to Retired — asset always recoverable (f=0) ──────────
 //
 // For every reachable lifecycle state, the owner can retire the escrow when
-// retire_policy = Immediate (f=0, retire_floor = 0, always unlocked) and
+// retire_policy_state = Immediate (f=0, retire_floor = 0, always unlocked) and
 // subsequently recover the asset via claim_asset. The Deferred-policy gate
 // (f=1, ERetireFloorNotElapsed) is covered separately in §3.
 //
@@ -3670,7 +3670,7 @@ fun e2e_retire2_from_at_dutch() {
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
     // do_retire_immediately from AtDutch → Retired.
@@ -3706,7 +3706,7 @@ fun e2e_retire3_from_handover_open() {
 
     // APT at tenure boundary: tenure fires; flag → Retired (not AtDutch).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
@@ -3743,12 +3743,12 @@ fun e2e_retire4_from_handover_confirmed() {
     // APT at countdown expiry: handover fires; T2 current, flag inherited → HO.
     let countdown_expiry = 1_000 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // APT at T2 tenure boundary: tenure fires; flag → Retired.
     clock::set_for_testing(&mut clk, countdown_expiry + escrow_corpus::tenure_ceiling_const());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
@@ -3787,7 +3787,7 @@ fun e2e_retire5_from_handover_open_while_borrowed() {
 
     // APT at tenure boundary: tenure fires; flag → Retired.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
@@ -3830,12 +3830,12 @@ fun e2e_retire6_from_handover_confirmed_while_borrowed() {
     // APT at countdown expiry: handover fires; T2 current, retiring flag inherited → HO.
     let countdown_expiry = 1_000 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // APT at T2 tenure boundary: tenure fires; flag → Retired.
     clock::set_for_testing(&mut clk, countdown_expiry + escrow_corpus::tenure_ceiling_const());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
@@ -3939,7 +3939,7 @@ fun e2e_cred1_used_credit_clamped_at_handover_confirmed_expiry_across_curves() {
 
         // APT fires handover; event.used_credit must match the clamped view value.
         // Clock is at ceiling (>= expiry) — APT fires based on handover_countdown_expiry=expiry.
-        escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         assert!(escrow::is_handover_open(&escrow), tag);
 
         let hc = event::events_by_type<HandoverCompleted>();
@@ -4004,7 +4004,7 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
         let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
         let cap_t2   = escrow::rent(
             &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx());
-        escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         assert!(escrow::is_handover_open(&escrow), tag);
 
         // Read T1's owner share from HandoverCompleted (curve-specific value).
@@ -4016,7 +4016,7 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
         // T2's tenure expires → Skipped → AuctionExpired → Idle.
         let t2_tenure_boundary = t_mid + escrow_corpus::tenure_ceiling_const();
         clock::set_for_testing(&mut clk, t2_tenure_boundary);
-        escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         assert!(escrow::is_idle(&escrow), tag);
 
         // Read T2's owner share from TenureExpired.
@@ -4060,7 +4060,7 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
 
 // ── Gap 1: c=2 (FixedTime) — handover fires at tenure boundary, full credit ──
 
-/// With HandoverPolicy::FixedTime, the handover countdown expiry is always
+/// With HandoverPolicyState::FixedTime, the handover countdown expiry is always
 /// phase_start + tenure_ceiling — the handover fires exactly at the tenure
 /// boundary. At that moment elapsed == tenure_ceiling, so evaluate_curve
 /// short-circuits to SCALE for every curve shape. This means:
@@ -4093,7 +4093,7 @@ fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
 
         // APT at tenure boundary: FixedTime expiry fires → handover.
         clock::set_for_testing(&mut clk, boundary);
-        escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+        escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         assert!(escrow::is_handover_open(&escrow), tag);
 
         // used_credit = stake for all curves (elapsed = tenure_ceiling → SCALE saturation).
@@ -4121,7 +4121,7 @@ fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
 
 // ── Gap 2: d=1 (CompoundDelta) — financial conservation holds ────────────────
 
-/// The FIN-1/2 conservation invariants hold regardless of the PriceFunction
+/// The FIN-1/2 conservation invariants hold regardless of the PriceFunctionState
 /// axis. CompoundDelta changes the floor price calculation (multiplicative
 /// escalation) but not the stake value stored after rent(), so the conservation
 /// identities are independent of D.
@@ -4148,7 +4148,7 @@ fun e2e_corpus_gap_compound_delta_financial_conservation() {
         &mut escrow, mk_payment(stake_t2, sc.ctx()), &clk, sc.ctx());
 
     // Instant handover fires → T2 current.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // FIN-1: T1's stake partitioned into three outputs exactly.
@@ -4166,7 +4166,7 @@ fun e2e_corpus_gap_compound_delta_financial_conservation() {
     // T2's tenure expires → AtDutchAuction (h=1 Window).
     let t2_boundary = t_mid + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, t2_boundary);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
     // FIN-2: T2's full stake distributed (no remainder at expiry).
@@ -4228,7 +4228,7 @@ fun e2e_corpus_gap_deferred_retire_from_handover_open_after_floor() {
 
     // APT at tenure boundary → retiring flag → Retired (not AtDutch).
     clock::set_for_testing(&mut clk, tenure_boundary);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
@@ -4246,7 +4246,7 @@ fun e2e_corpus_gap_deferred_retire_from_handover_open_after_floor() {
 
 /// §RETIRE tests (RETIRE-3/4/5/6) all use h=0 (Skipped). This verifies
 /// that the retiring flag correctly bypasses AtDutchAuction even when
-/// DescentPolicy is Window (h=1): tenure expiry → Retired directly,
+/// DescentPolicyState is Window (h=1): tenure expiry → Retired directly,
 /// NOT AtDutch. The Window policy only affects the descent duration when
 /// there is NO retiring flag; the flag unconditionally collapses to Retired.
 #[test]
@@ -4266,7 +4266,7 @@ fun e2e_corpus_gap_retiring_flag_bypasses_at_dutch_with_window_policy() {
 
     // APT at tenure boundary: retiring flag → Retired (NOT AtDutch despite h=1).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);     // flag bypassed AtDutch
     assert!(!escrow::is_at_dutch_auction(&escrow), tag);
 
@@ -4339,14 +4339,14 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 
     // SUP-1a: one ms before original expiry → APT is a no-op.
     clock::set_for_testing(&mut clk, original_expiry - 1);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 0);
 
     // SUP-1b: at original expiry → handover fires. T3 wins.
     // If expiry had reset to 27_000, this APT would be a no-op (bug caught).
     clock::set_for_testing(&mut clk, original_expiry);
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
@@ -4404,7 +4404,7 @@ fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
     );
 
     // APT fires Instant handover → T2 current.
-    escrow::apply_pending_transitions(&mut escrow, &clk, sc.ctx());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // EV-2: HandoverCompleted.new_tenant_cap_id == the same cap (promoted, not re-minted).
@@ -4466,7 +4466,7 @@ fun e2e_ev3_borrow_return_cap_id_consistency() {
 // ── EV-4: BidPlaced.handover_countdown_expiry accuracy per policy ─────────────
 
 /// The handover_countdown_expiry stamped in BidPlaced must match the value
-/// computed by handover_policy::expiry_at for each HandoverPolicy variant.
+/// computed by handover_policy_state::expiry_at for each HandoverPolicyState variant.
 ///
 /// With phase_start=0, tenure_ceiling=100_000, bid at t=1_000:
 ///   c=0 Instant:  expiry = bid_time                              = 1_000

@@ -19,7 +19,6 @@ use usufruct::{
     descent_policy,
     engine_state::{Self, EngineState},
     handover_policy,
-    lifecycle_state,
     owner_cap::{Self, OwnerCap},
     pending_transition::{Self, PendingTransition},
     phases,
@@ -268,29 +267,25 @@ public fun next_pending<Asset: key + store, CoinType>(
 public fun is_idle<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    let s = read_engine(escrow);
-    engine_state::is_active(s) && lifecycle_state::is_a_state_idle(engine_state::lifecycle(s))
+    engine_state::is_idle_state(read_engine(escrow))
 }
 
 public fun is_at_dutch_auction<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    let s = read_engine(escrow);
-    engine_state::is_active(s) && lifecycle_state::is_a_state_at_dutch(engine_state::lifecycle(s))
+    engine_state::is_at_dutch_state(read_engine(escrow))
 }
 
 public fun is_handover_open<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    let s = read_engine(escrow);
-    engine_state::is_active(s) && lifecycle_state::is_a_state_handover_open(engine_state::lifecycle(s))
+    engine_state::is_handover_open_state(read_engine(escrow))
 }
 
 public fun is_handover_confirmed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    let s = read_engine(escrow);
-    engine_state::is_active(s) && lifecycle_state::is_a_state_handover_confirmed(engine_state::lifecycle(s))
+    engine_state::is_handover_confirmed_state(read_engine(escrow))
 }
 
 public fun is_retired<Asset: key + store, CoinType>(
@@ -302,8 +297,7 @@ public fun is_retired<Asset: key + store, CoinType>(
 public fun is_rented<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    let s = read_engine(escrow);
-    engine_state::is_active(s) && lifecycle_state::is_rented(engine_state::lifecycle(s))
+    engine_state::is_rented_state(read_engine(escrow))
 }
 
 public fun is_descent_skipped<Asset: key + store, CoinType>(
@@ -333,8 +327,7 @@ public fun is_handover_fixed_time<Asset: key + store, CoinType>(
 public fun is_retiring<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    let s = read_engine(escrow);
-    engine_state::is_active(s) && lifecycle_state::is_retiring(engine_state::lifecycle(s))
+    engine_state::is_retiring_state(read_engine(escrow))
 }
 
 // ─── Action classification ───────────────────────────────────────────────────
@@ -342,13 +335,23 @@ public fun is_retiring<Asset: key + store, CoinType>(
 public fun retire_route<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): RetireRoute {
-    lifecycle_state::retire_route(engine_state::lifecycle(read_engine(escrow)))
+    use usufruct::retire_route;
+    let s = read_engine(escrow);
+    if (engine_state::is_inactive(s))              retire_route::already_retired()
+    else if (engine_state::is_rented_state(s))     retire_route::deferred()
+    else                                           retire_route::immediate()
 }
 
 public fun rent_action<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): RentAction {
-    lifecycle_state::rent_action(engine_state::lifecycle(read_engine(escrow)))
+    use usufruct::rent_action;
+    let s = read_engine(escrow);
+    if (engine_state::is_inactive(s))                    rent_action::retired()
+    else if (engine_state::is_idle_state(s))             rent_action::install()
+    else if (engine_state::is_at_dutch_state(s))         rent_action::install()
+    else if (engine_state::is_handover_open_state(s))    rent_action::place_bid()
+    else                                                 rent_action::supersede_bid()
 }
 
 // ─── Identity views ──────────────────────────────────────────────────────────
@@ -380,41 +383,25 @@ public fun owner_cap_id<Asset: key + store, CoinType>(
 public fun current_tenant_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_rented(l)) option::some(lifecycle_state::current_addr(l))
-    else option::none()
+    engine_state::current_addr_opt(read_engine(escrow))
 }
 
 public fun current_tenant_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_rented(l)) option::some(lifecycle_state::current_cap_id(l))
-    else option::none()
+    engine_state::current_cap_id_opt(read_engine(escrow))
 }
 
 public fun pending_tenant_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_a_state_handover_confirmed(l)) option::some(lifecycle_state::pending_addr(l))
-    else option::none()
+    engine_state::pending_addr_opt(read_engine(escrow))
 }
 
 public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_a_state_handover_confirmed(l)) option::some(lifecycle_state::pending_cap_id(l))
-    else option::none()
+    engine_state::pending_cap_id_opt(read_engine(escrow))
 }
 
 // ─── Stake views ─────────────────────────────────────────────────────────────
@@ -422,21 +409,13 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
 public fun current_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_rented(l)) option::some(lifecycle_state::current_stake_value(l))
-    else option::none()
+    engine_state::current_stake_opt(read_engine(escrow))
 }
 
 public fun pending_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_a_state_handover_confirmed(l)) option::some(lifecycle_state::pending_stake_value(l))
-    else option::none()
+    engine_state::pending_stake_opt(read_engine(escrow))
 }
 
 // ─── Temporal views ───────────────────────────────────────────────────────────
@@ -444,43 +423,22 @@ public fun pending_stake<Asset: key + store, CoinType>(
 public fun phase_start_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_rented(l) || lifecycle_state::is_a_state_at_dutch(l)) {
-        option::some(lifecycle_state::phase_start_ms(l))
-    } else {
-        option::none()
-    }
+    engine_state::phase_start_ms_opt(read_engine(escrow))
 }
 
 public fun tenure_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_rented(l)) {
-        option::some(phases::boundary_at(
-            lifecycle_state::phase_start_ms(l),
-            config::tenure_ceiling(&escrow.config),
-        ))
-    } else {
-        option::none()
-    }
+    if (!engine_state::is_rented_state(s)) return option::none();
+    let ps = *option::borrow(&engine_state::phase_start_ms_opt(s));
+    option::some(phases::boundary_at(ps, config::tenure_ceiling(&escrow.config)))
 }
 
 public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_a_state_handover_confirmed(l)) {
-        option::some(lifecycle_state::handover_countdown_expiry_ms(l))
-    } else {
-        option::none()
-    }
+    engine_state::handover_expiry_opt(read_engine(escrow))
 }
 
 public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
@@ -488,10 +446,8 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     bid_time_ms: u64,
 ): Option<u64> {
     let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (!lifecycle_state::is_a_state_handover_open(l)) return option::none();
-    let phase_start = lifecycle_state::phase_start_ms(l);
+    if (!engine_state::is_handover_open_state(s)) return option::none();
+    let phase_start = *option::borrow(&engine_state::phase_start_ms_opt(s));
     let tenure      = config::tenure_ceiling(&escrow.config);
     option::some(handover_policy::expiry_at(config::handover(&escrow.config), bid_time_ms, phase_start, tenure))
 }
@@ -584,14 +540,7 @@ public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
 public fun last_acq_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) return option::none();
-    let l = engine_state::lifecycle(s);
-    if (lifecycle_state::is_a_state_at_dutch(l)) {
-        option::some(lifecycle_state::last_acq_price_of_at_dutch(l))
-    } else {
-        option::none()
-    }
+    engine_state::last_acq_price_opt(read_engine(escrow))
 }
 
 // ─── Settlement views ────────────────────────────────────────────────────────
@@ -601,7 +550,7 @@ public fun compute_handover_settlement<Asset: key + store, CoinType>(
     boundary_ms: u64,
 ): (u64, u64, u64) {
     let s     = read_engine(escrow);
-    let stake = lifecycle_state::current_stake_value(engine_state::lifecycle(s));
+    let stake = engine_state::current_stake_value(s);
     let used  = engine_state::used_credit_at(s, &escrow.config, boundary_ms);
     let (owner_share, protocol_fee) = engine_state::split_fee(used);
     (stake - used, owner_share, protocol_fee)
@@ -611,10 +560,8 @@ public fun compute_tenure_settlement<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): (u64, u64) {
     let s = read_engine(escrow);
-    if (engine_state::is_inactive(s)) abort ENotRented;
-    let l = engine_state::lifecycle(s);
-    assert!(lifecycle_state::is_rented(l), ENotRented);
-    engine_state::split_fee(lifecycle_state::current_stake_value(l))
+    assert!(engine_state::is_rented_state(s), ENotRented);
+    engine_state::split_fee(engine_state::current_stake_value(s))
 }
 
 // ─── Earnings views ──────────────────────────────────────────────────────────
@@ -695,10 +642,10 @@ fun read_engine<Asset: key + store, CoinType>(
 // === Test Functions ===
 
 #[test_only]
-public(package) fun read_state_for_testing<Asset: key + store, CoinType>(
+public(package) fun read_engine_for_testing<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-): &lifecycle_state::LifecycleState<Asset, CoinType> {
-    engine_state::lifecycle(read_engine(escrow))
+): &engine_state::EngineState<Asset, CoinType> {
+    read_engine(escrow)
 }
 
 #[test_only]

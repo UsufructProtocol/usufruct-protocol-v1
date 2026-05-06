@@ -24,9 +24,7 @@ use usufruct::{
     phases,
     price_function::{Self, PriceFunction},
     protocol_fee_inbox::{Self, ProtocolFeeRef},
-    rent_action::RentAction,
     retire_policy,
-    retire_route::RetireRoute,
     tenant_cap::TenantCap,
 };
 
@@ -331,28 +329,7 @@ public fun is_retiring<Asset: key + store, CoinType>(
 }
 
 // ─── Action classification ───────────────────────────────────────────────────
-
-public fun retire_route<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): RetireRoute {
-    use usufruct::retire_route;
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s))              retire_route::already_retired()
-    else if (engine_state::is_rented_state(s))     retire_route::deferred()
-    else                                           retire_route::immediate()
-}
-
-public fun rent_action<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): RentAction {
-    use usufruct::rent_action;
-    let s = read_engine(escrow);
-    if (engine_state::is_inactive(s))                    rent_action::retired()
-    else if (engine_state::is_idle_state(s))             rent_action::install()
-    else if (engine_state::is_at_dutch_state(s))         rent_action::install()
-    else if (engine_state::is_handover_open_state(s))    rent_action::place_bid()
-    else                                                 rent_action::supersede_bid()
-}
+// Callers use the is_* predicates on the engine state directly.
 
 // ─── Identity views ──────────────────────────────────────────────────────────
 

@@ -22,7 +22,7 @@ module usufruct::cap_authorization_state;
 ///                 former tenant, or no active rental at all.
 ///
 /// `copy, drop, store` so callers can pass it freely without consuming.
-public enum CapAuthorizationState has copy, drop, store {
+public enum CapAuthorizationState has drop {
     Current,
     Pending,
     Stale,

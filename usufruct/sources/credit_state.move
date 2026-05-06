@@ -34,7 +34,7 @@ use usufruct::{
 ///
 /// Derived by the coordinator from `LifecycleState` accessors; never
 /// stored inside `TenantState` or `LifecycleState`.
-public enum CreditState has copy, drop, store {
+public enum CreditState has drop {
     Accruing { stake: u64, phase_start_ms: u64 },
     Capped   { stake: u64, phase_start_ms: u64, expiry_ms: u64 },
 }

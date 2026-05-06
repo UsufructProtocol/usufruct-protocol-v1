@@ -33,7 +33,7 @@ use usufruct::{
 ///
 /// Derived by the coordinator from `LifecycleState` accessors; never
 /// stored inside `AssetState` or `LifecycleState`.
-public enum PriceState has copy, drop, store {
+public enum PriceState has drop {
     Rest,
     Ascending  { stake: u64 },
     Descending { last_acq_price: u64, phase_start_ms: u64 },

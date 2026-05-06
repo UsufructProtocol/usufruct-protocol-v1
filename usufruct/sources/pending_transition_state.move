@@ -29,7 +29,7 @@ module usufruct::pending_transition_state;
 /// `LifecycleState` accessors on demand. `copy, drop, store` so it can
 /// be queried freely (e.g. from `devInspectTransactionBlock` for
 /// keeper bots probing pending boundaries without firing).
-public enum PendingTransitionState has copy, drop, store {
+public enum PendingTransitionState has drop {
     Handover { boundary_ms: u64 },
     Tenure   { boundary_ms: u64 },
     Auction  { boundary_ms: u64 },

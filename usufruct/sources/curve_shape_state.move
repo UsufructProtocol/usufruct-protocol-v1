@@ -13,6 +13,7 @@ const EAlphaNumRange:    u64 = 0;
 const EAlphaDenRange:    u64 = 1;
 const EDegenerateLinear: u64 = 2;
 const EAlphaAbsRange:    u64 = 3;
+const ENotPowerLaw:      u64 = 4;
 
 // === Constants ===
 
@@ -305,6 +306,6 @@ public fun scale_for_testing(): u64 { SCALE }
 public fun power_law_fields_for_testing(shape: &CurveShapeState): (u8, u8) {
     match (shape) {
         CurveShapeState::PowerLaw { alpha_num, alpha_den } => (*alpha_num, *alpha_den),
-        _ => abort 0,
+        _ => abort ENotPowerLaw,
     }
 }

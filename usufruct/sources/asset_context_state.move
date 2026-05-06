@@ -1311,45 +1311,38 @@ public(package) fun set_retiring_flag_for_testing<Asset: key + store, CoinType>(
 
 /// Drive Occupied → Demand for testing (without full bid mechanics).
 #[test_only]
-public(package) fun tenancy_drive_to_demand_for_testing<Asset: key + store, CoinType>(
-    tenancy:                   TenancyState<Asset, CoinType>,
+fun tenancy_drive_to_demand_for_testing<Asset: key + store, CoinType>(
+    asset:                     asset::Asset<Asset>,
+    tenant:                    Tenant<CoinType>,
+    phase_start_ms:            u64,
+    retiring:                  bool,
     tenant_in:                 Tenant<CoinType>,
     handover_countdown_expiry: u64,
 ): TenancyState<Asset, CoinType> {
-    match (tenancy) {
-        TenancyState::Occupied { asset, tenant, phase_start_ms, retiring } =>
-            TenancyState::Demand {
-                asset,
-                current:         tenant,
-                pending:         tenant_in,
-                handover_expiry: handover_countdown_expiry,
-                phase_start_ms,
-                retiring,
-            },
-        TenancyState::Demand { asset: _a, current: _c, pending: _p, handover_expiry: _e, phase_start_ms: _s, retiring: _r } =>
-            abort 0,
+    TenancyState::Demand {
+        asset,
+        current:         tenant,
+        pending:         tenant_in,
+        handover_expiry: handover_countdown_expiry,
+        phase_start_ms,
+        retiring,
     }
 }
 
 /// Consume an Occupied tenancy for test state driving. Discards tenant funds.
 #[test_only]
-public(package) fun unbundle_occupied_for_testing<Asset: key + store, CoinType>(
-    tenancy:      TenancyState<Asset, CoinType>,
+fun unbundle_occupied_for_testing<Asset: key + store, CoinType>(
+    asset:        asset::Asset<Asset>,
+    mut tenant:   Tenant<CoinType>,
     owner_amount: u64,
     fee_amount:   u64,
     escrow_id:    ID,
 ): asset::Asset<Asset> {
-    match (tenancy) {
-        TenancyState::Occupied { asset, mut tenant, phase_start_ms: _, retiring: _ } => {
-            let owner_earnings = tenant::take_owner_earnings(&mut tenant, owner_amount);
-            let fee_share      = tenant::take_fee_share(&mut tenant, fee_amount, escrow_id);
-            let refund = refund_state::from_departing(tenant, fee_share, owner_earnings);
-            refund_state::destroy_for_testing(refund);
-            asset
-        },
-        TenancyState::Demand { asset: _a, current: _c, pending: _p, handover_expiry: _e, phase_start_ms: _s, retiring: _r } =>
-            abort 0,
-    }
+    let owner_earnings = tenant::take_owner_earnings(&mut tenant, owner_amount);
+    let fee_share      = tenant::take_fee_share(&mut tenant, fee_amount, escrow_id);
+    let refund = refund_state::from_departing(tenant, fee_share, owner_earnings);
+    refund_state::destroy_for_testing(refund);
+    asset
 }
 
 // ─── Test-only event accessors ────────────────────────────────────────────────
@@ -1649,12 +1642,13 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     handover_countdown_expiry: u64,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyState::Occupied { asset, tenant, phase_start_ms, retiring } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = tenancy_drive_to_demand_for_testing(
-                tenancy, tenant_in, handover_countdown_expiry,
+                asset, tenant, phase_start_ms, retiring, tenant_in, handover_countdown_expiry,
             );
             AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyState::Demand { asset: _a, current: _c, pending: _p, handover_expiry: _e, phase_start_ms: _s, retiring: _r } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,
@@ -1670,13 +1664,14 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     new_phase_start_ms: u64,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyState::Occupied { asset, tenant, phase_start_ms: _, retiring: _ } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let wrapped = unbundle_occupied_for_testing(
-                tenancy, owner_amount, fee_amount, escrow_id,
+                asset, tenant, owner_amount, fee_amount, escrow_id,
             );
             let raw_asset = asset::unbundle(wrapped);
             AssetContext { asset_state: AssetState::AtDutch { asset: raw_asset, last_acq_price, phase_start_ms: new_phase_start_ms }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyState::Demand { asset: _a, current: _c, pending: _p, handover_expiry: _e, phase_start_ms: _s, retiring: _r } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Idle    { asset: _a }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::AtDutch { asset: _a, .. }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Retired { asset: _a }, owner: _o, .. } => abort ENotRented,

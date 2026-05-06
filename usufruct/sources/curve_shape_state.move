@@ -13,7 +13,7 @@ const EAlphaNumRange:    u64 = 0;
 const EAlphaDenRange:    u64 = 1;
 const EDegenerateLinear: u64 = 2;
 const EAlphaAbsRange:    u64 = 3;
-const ENotPowerLaw:      u64 = 4;
+#[test_only] const ENotPowerLaw:      u64 = 4;
 
 // === Constants ===
 

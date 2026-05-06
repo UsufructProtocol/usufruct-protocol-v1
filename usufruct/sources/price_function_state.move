@@ -11,8 +11,8 @@ use usufruct::math;
 
 const EDeltaZero:        u64 = 0;
 const EBpsRange:         u64 = 1;
-const ENotFixedDelta:    u64 = 2;
-const ENotCompoundDelta: u64 = 3;
+#[test_only] const ENotFixedDelta:    u64 = 2;
+#[test_only] const ENotCompoundDelta: u64 = 3;
 
 // === Constants ===
 

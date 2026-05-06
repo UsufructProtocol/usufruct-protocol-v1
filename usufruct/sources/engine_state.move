@@ -426,26 +426,20 @@ fun fire<Asset: key + store, CoinType>(
 ): EngineState<Asset, CoinType> {
     let boundary_ms = pending_transition_state::boundary_ms(&t);
     match (state) {
-        EngineState::Renting { tenancy, mut owner } => {
-            if (tenancy_state::is_demand(&tenancy)) {
-                // Demand → Occupied (handover)
-                let new_tenancy = tenancy_state::do_handover(
-                    tenancy, &mut owner, config, escrow_id, fee_inbox_id, boundary_ms, ctx,
-                );
-                EngineState::Renting { tenancy: new_tenancy, owner }
+        EngineState::Renting { tenancy, owner } => {
+            let (tenancy_opt, asset_opt, last_acq_price, retiring, owner) =
+                tenancy_state::do_apt_transition(tenancy, owner, config, escrow_id, fee_inbox_id, boundary_ms, ctx);
+            if (option::is_some(&tenancy_opt)) {
+                option::destroy_none(asset_opt);
+                EngineState::Renting { tenancy: option::destroy_some(tenancy_opt), owner }
             } else {
-                // Occupied → AtDutch or Retired (tenure expiry)
-                let (wrapped, last_acq_price, retiring) = tenancy_state::do_tenure_expiry(
-                    tenancy, &mut owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
-                );
-                let raw_asset = asset::unbundle(wrapped);
+                option::destroy_none(tenancy_opt);
+                let raw_asset = option::destroy_some(asset_opt);
                 if (retiring) {
                     event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                     EngineState::Retired { asset: raw_asset, owner }
                 } else {
-                    EngineState::AtDutch {
-                        asset: raw_asset, last_acq_price, phase_start_ms: boundary_ms, owner,
-                    }
+                    EngineState::AtDutch { asset: raw_asset, last_acq_price, phase_start_ms: boundary_ms, owner }
                 }
             }
         },

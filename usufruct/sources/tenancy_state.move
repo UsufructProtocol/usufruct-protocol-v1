@@ -383,6 +383,41 @@ public(package) fun accept_rent_payment<Asset: key + store, CoinType>(
     }
 }
 
+/// Dispatch the pending APT transition — same pattern as accept_rent_payment.
+/// Match lives here; engine_state::fire calls this without inspecting tenancy.
+///
+/// Returns (tenancy_opt, asset_opt, last_acq_price, retiring, owner):
+///   Demand   path → (Some(new_tenancy), None,         0,    false, owner)
+///   Occupied path → (None,             Some(raw_asset), price, flag, owner)
+public(package) fun do_apt_transition<Asset: key + store, CoinType>(
+    tenancy:      TenancyState<Asset, CoinType>,
+    owner:        Owner<CoinType>,
+    config:       &IntegrationConfig,
+    escrow_id:    ID,
+    fee_inbox_id: ID,
+    boundary_ms:  u64,
+    ctx:          &mut TxContext,
+): (Option<TenancyState<Asset, CoinType>>, Option<Asset>, u64, bool, Owner<CoinType>) {
+    let mut owner = owner;
+    match (tenancy) {
+        TenancyState::Demand { asset, current, pending, handover_expiry, phase_start_ms, retiring } => {
+            let new_tenancy = do_handover(
+                TenancyState::Demand { asset, current, pending, handover_expiry, phase_start_ms, retiring },
+                &mut owner, config, escrow_id, fee_inbox_id, boundary_ms, ctx,
+            );
+            (option::some(new_tenancy), option::none(), 0, false, owner)
+        },
+        TenancyState::Occupied { asset, tenant, phase_start_ms, retiring } => {
+            let (wrapped, last_acq_price, retiring_flag) = do_tenure_expiry(
+                TenancyState::Occupied { asset, tenant, phase_start_ms, retiring },
+                &mut owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
+            );
+            let raw_asset = asset::unbundle(wrapped);
+            (option::none(), option::some(raw_asset), last_acq_price, retiring_flag, owner)
+        },
+    }
+}
+
 /// Demand → Occupied: fire the handover transition at `boundary_ms`.
 /// Distributes used credit to owner; retiring flag propagates to new Occupied.
 public(package) fun do_handover<Asset: key + store, CoinType>(

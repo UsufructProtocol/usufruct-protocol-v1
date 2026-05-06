@@ -9,8 +9,10 @@ use usufruct::math;
 
 // === Errors ===
 
-const EDeltaZero: u64 = 0;
-const EBpsRange:  u64 = 1;
+const EDeltaZero:        u64 = 0;
+const EBpsRange:         u64 = 1;
+#[test_only] const ENotFixedDelta:    u64 = 2;
+#[test_only] const ENotCompoundDelta: u64 = 3;
 
 // === Constants ===
 
@@ -91,7 +93,7 @@ public fun bps_per_unit_for_testing(): u64 { BPS_PER_UNIT }
 public fun fixed_delta_fields_for_testing(price_fn: &PriceFunctionState): u64 {
     match (price_fn) {
         PriceFunctionState::FixedDelta { delta } => *delta,
-        _ => abort 0,
+        _ => abort ENotFixedDelta,
     }
 }
 
@@ -99,6 +101,6 @@ public fun fixed_delta_fields_for_testing(price_fn: &PriceFunctionState): u64 {
 public fun compound_delta_fields_for_testing(price_fn: &PriceFunctionState): (u64, u64) {
     match (price_fn) {
         PriceFunctionState::CompoundDelta { bps, delta } => (*bps, *delta),
-        _ => abort 0,
+        _ => abort ENotCompoundDelta,
     }
 }

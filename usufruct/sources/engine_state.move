@@ -811,7 +811,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
             let (owner_amount, fee_amount) = split_fee(principal);
             let last_acquisition_price = principal;
 
-            let (new_l, refund) = lifecycle_state::expire_tenure<Asset, CoinType>(
+            let (expiry, refund) = lifecycle_state::expire_tenure<Asset, CoinType>(
                 l_state, owner_amount, fee_amount, last_acquisition_price, boundary_ms, escrow_id,
             );
             refund_state::distribute(refund, &mut owner, fee_inbox_id, ctx);
@@ -825,12 +825,13 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
                 timestamp_ms:           boundary_ms,
             });
 
-            if (lifecycle_state::is_a_state_retired(&new_l)) {
-                let asset = lifecycle_state::take_asset(new_l);
+            if (lifecycle_state::tenure_expiry_is_at_dutch(&expiry)) {
+                let new_l = lifecycle_state::tenure_expiry_unwrap_at_dutch(expiry);
+                EngineState::Active { l_state: new_l, owner }
+            } else {
+                let asset = lifecycle_state::tenure_expiry_unwrap_retired(expiry);
                 event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                 EngineState::Inactive { asset, owner }
-            } else {
-                EngineState::Active { l_state: new_l, owner }
             }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
@@ -862,8 +863,7 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
 ): EngineState<Asset, CoinType> {
     match (state) {
         EngineState::Active { l_state, owner } => {
-            let retired_l = lifecycle_state::retire_now(l_state);
-            let asset     = lifecycle_state::take_asset(retired_l);
+            let asset = lifecycle_state::retire_and_extract(l_state);
             event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), timestamp_ms });
             event::emit(AssetRetired  { escrow_id, timestamp_ms });
             EngineState::Inactive { asset, owner }
@@ -970,10 +970,11 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
 ): EngineState<Asset, CoinType> {
     match (state) {
         EngineState::Active { l_state, owner } => {
-            let (new_l, refund) = lifecycle_state::expire_tenure(
+            let (expiry, refund) = lifecycle_state::expire_tenure(
                 l_state, owner_amount, fee_amount, last_acq_price, new_phase_start_ms, escrow_id,
             );
             refund_state::destroy_for_testing(refund);
+            let new_l = lifecycle_state::tenure_expiry_unwrap_at_dutch(expiry);
             EngineState::Active { l_state: new_l, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),
@@ -986,8 +987,7 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
 ): EngineState<Asset, CoinType> {
     match (state) {
         EngineState::Active { l_state, owner } => {
-            let retired_l = lifecycle_state::retire_now(l_state);
-            let asset = lifecycle_state::take_asset(retired_l);
+            let asset = lifecycle_state::retire_and_extract(l_state);
             EngineState::Inactive { asset, owner }
         },
         EngineState::Inactive { asset: _a, owner: _o } => abort unreachable::unreachable(),

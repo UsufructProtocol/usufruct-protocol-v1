@@ -51,6 +51,74 @@ public enum LifecycleState<Asset: key + store, phantom CoinType> has store {
     },
 }
 
+/// Result of `expire_tenure`. Encodes the two structural outcomes so
+/// the caller can `match` without a runtime predicate:
+///
+///   AtDutch — tenure expired normally; asset enters Dutch-auction phase.
+///   Retired  — retiring flag was set; asset extracted, ready for claim.
+///
+/// Lives in `lifecycle_state` rather than a separate module because
+/// `AtDutch` embeds `LifecycleState` — a standalone module would create
+/// a dependency cycle.
+public enum TenureExpiryState<Asset: key + store, phantom CoinType> {
+    AtDutch { l_state: LifecycleState<Asset, CoinType> },
+    Retired  { asset: Asset },
+}
+
+// ─── TenureExpiryState constructors / predicates ────────────────────────────
+
+public(package) fun tenure_expiry_at_dutch<Asset: key + store, CoinType>(
+    l_state: LifecycleState<Asset, CoinType>,
+): TenureExpiryState<Asset, CoinType> {
+    TenureExpiryState::AtDutch { l_state }
+}
+
+public(package) fun tenure_expiry_retired<Asset: key + store, CoinType>(
+    asset: Asset,
+): TenureExpiryState<Asset, CoinType> {
+    TenureExpiryState::Retired { asset }
+}
+
+public(package) fun tenure_expiry_is_at_dutch<Asset: key + store, CoinType>(
+    t: &TenureExpiryState<Asset, CoinType>,
+): bool {
+    match (t) {
+        TenureExpiryState::AtDutch { .. } => true,
+        TenureExpiryState::Retired { .. } => false,
+    }
+}
+
+public(package) fun tenure_expiry_is_retired<Asset: key + store, CoinType>(
+    t: &TenureExpiryState<Asset, CoinType>,
+): bool {
+    match (t) {
+        TenureExpiryState::AtDutch { .. } => false,
+        TenureExpiryState::Retired { .. } => true,
+    }
+}
+
+/// Consume an AtDutch expiry and return the inner LifecycleState.
+/// Aborts with EInvariantViolation if the expiry is Retired.
+public(package) fun tenure_expiry_unwrap_at_dutch<Asset: key + store, CoinType>(
+    t: TenureExpiryState<Asset, CoinType>,
+): LifecycleState<Asset, CoinType> {
+    match (t) {
+        TenureExpiryState::AtDutch { l_state }   => l_state,
+        TenureExpiryState::Retired { asset: _a } => abort unreachable::unreachable(),
+    }
+}
+
+/// Consume a Retired expiry and return the extracted asset.
+/// Aborts with EInvariantViolation if the expiry is AtDutch.
+public(package) fun tenure_expiry_unwrap_retired<Asset: key + store, CoinType>(
+    t: TenureExpiryState<Asset, CoinType>,
+): Asset {
+    match (t) {
+        TenureExpiryState::Retired { asset }     => asset,
+        TenureExpiryState::AtDutch { l_state: _l } => abort unreachable::unreachable(),
+    }
+}
+
 // === Events ===
 
 // === Method Aliases ===
@@ -360,20 +428,28 @@ public(package) fun expire_tenure<Asset: key + store, CoinType>(
     last_acq_price:     u64,
     new_phase_start_ms: u64,
     escrow_id:          ID,
-): (LifecycleState<Asset, CoinType>, RefundState<CoinType>) {
+): (TenureExpiryState<Asset, CoinType>, RefundState<CoinType>) {
     match (s) {
         LifecycleState::Rented { a_state, t_state, phase_start_ms: _, retiring } => {
             let (new_t_state, mut departing) = tenant_state::vacate(t_state);
-            let owner_earnings    = tenant::take_owner_earnings(&mut departing, owner_amount);
-            let fee_share         = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
-            let (_, stake) = tenant::unbundle(departing);
+            let owner_earnings = tenant::take_owner_earnings(&mut departing, owner_amount);
+            let fee_share      = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
+            let (_, stake)     = tenant::unbundle(departing);
             tenant::destroy_empty_stake(stake);
             let expired = asset_state::expire(a_state, last_acq_price, new_phase_start_ms);
-            let final_a = if (retiring) { asset_state::retire(expired) } else { expired };
-            (
-                LifecycleState::NotRented { a_state: final_a, t_state: new_t_state },
-                refund_state::nothing(fee_share, owner_earnings),
-            )
+            let refund  = refund_state::nothing(fee_share, owner_earnings);
+            if (retiring) {
+                tenant_state::consume_absence(new_t_state);
+                let asset = asset_state::claim(asset_state::retire(expired));
+                (TenureExpiryState::Retired { asset }, refund)
+            } else {
+                (
+                    TenureExpiryState::AtDutch {
+                        l_state: LifecycleState::NotRented { a_state: expired, t_state: new_t_state }
+                    },
+                    refund,
+                )
+            }
         },
         LifecycleState::NotRented { a_state: _a, t_state: _t } => abort unreachable::unreachable(),
     }
@@ -397,17 +473,16 @@ public(package) fun expire_auction<Asset: key + store, CoinType>(
     }
 }
 
-/// NotRented: Idle | AtDutch → Retired (via asset_state::retire).
-/// Variant stays NotRented.
-public(package) fun retire_now<Asset: key + store, CoinType>(
+/// NotRented: Idle | AtDutch → asset extracted. Retires the asset and
+/// consumes the lifecycle in one step — no intermediate Retired state
+/// escapes this module.
+public(package) fun retire_and_extract<Asset: key + store, CoinType>(
     s: LifecycleState<Asset, CoinType>,
-): LifecycleState<Asset, CoinType> {
+): Asset {
     match (s) {
         LifecycleState::NotRented { a_state, t_state } => {
-            LifecycleState::NotRented {
-                a_state: asset_state::retire(a_state),
-                t_state,
-            }
+            tenant_state::consume_absence(t_state);
+            asset_state::claim(asset_state::retire(a_state))
         },
         LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort unreachable::unreachable(),
     }
@@ -489,30 +564,6 @@ public(package) fun accept_bid<Asset: key + store, CoinType>(
     }
 }
 
-/// Retired → (AssetState, TenantState). Decomposes the terminal
-/// `NotRented` (Retired inner asset) into its two sub-states for the
-/// caller: `asset_state::claim` for the asset, and the absent tenant
-/// state for sanity checks. The owner's earnings live separately at
-/// the rental-escrow layer and are drained via `owner::withdraw`.
-public(package) fun decompose_retired<Asset: key + store, CoinType>(
-    s: LifecycleState<Asset, CoinType>,
-): (AssetState<Asset>, TenantState<CoinType>) {
-    match (s) {
-        LifecycleState::NotRented { a_state, t_state } => (a_state, t_state),
-        LifecycleState::Rented { a_state: _a, t_state: _t, phase_start_ms: _, retiring: _ } => abort unreachable::unreachable(),
-    }
-}
-
-/// Consume a retired `LifecycleState` and return the wrapped asset.
-/// Calls `asset_state::claim` and `tenant_state::consume_absence`
-/// internally — the coordinator does not need to see either sub-state.
-public(package) fun take_asset<Asset: key + store, CoinType>(
-    s: LifecycleState<Asset, CoinType>,
-): Asset {
-    let (a_state, t_state) = decompose_retired(s);
-    tenant_state::consume_absence(t_state);
-    asset_state::claim(a_state)
-}
 
 // ─── Retire flag mutator ─────────────────────────────────────────────────────
 

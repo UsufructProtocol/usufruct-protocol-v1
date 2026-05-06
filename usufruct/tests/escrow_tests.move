@@ -1070,7 +1070,7 @@ fun retire_when_already_retired_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = engine_state::EAlreadyRetired, location = usufruct::engine_state)]
+#[expected_failure(abort_code = engine_state::EAlreadyRetiring, location = usufruct::engine_state)]
 fun retire_when_already_retiring_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);

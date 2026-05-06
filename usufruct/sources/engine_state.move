@@ -57,6 +57,7 @@ const EReceiptEscrowMismatch: u64 = 10;
 const EReceiptAssetMismatch:  u64 = 11;
 const ENotRetired:            u64 = 12;
 const ENoEarnings:            u64 = 13;
+const EAlreadyRetiring:       u64 = 14;
 
 // === Constants ===
 
@@ -653,11 +654,11 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
         EngineState::AtDutch { asset, owner, .. } =>
             do_retire_immediately(asset, owner, escrow_id, now_ms, ctx),
         EngineState::Rented { asset, tenant, phase_start_ms, retiring, owner } => {
-            assert!(!retiring, EAlreadyRetired);
+            assert!(!retiring, EAlreadyRetiring);
             do_set_retiring_flag(asset, tenant, phase_start_ms, owner, escrow_id, now_ms, ctx)
         },
         EngineState::HandoverPending { asset, current, pending, handover_expiry, phase_start_ms, retiring, owner } => {
-            assert!(!retiring, EAlreadyRetired);
+            assert!(!retiring, EAlreadyRetiring);
             do_set_retiring_flag_hp(
                 asset, current, pending, handover_expiry, phase_start_ms, owner,
                 escrow_id, now_ms, ctx,

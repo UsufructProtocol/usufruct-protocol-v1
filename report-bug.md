@@ -277,6 +277,93 @@ This is the minimal change: one helper, one new `MatchTree` variant, one new gua
 `build_match_tree`, one new arm in `match_tree_to_exp`. No existing paths are modified.
 The `Anything` / dead-code path (`ice_assert!`) is intentionally preserved unchanged.
 
+### Fix verification — full execution trace
+
+Tracing `build_match_tree` for the reproducer pattern step by step:
+
+**Steps 1–6 (unaffected):**
+`AssetContext` → `compile_match_struct` → fringe grows to include `&AssetState<Asset,C>` →
+`compile_variant_switch` for `AssetState::Waiting` → `compile_match_struct` for
+`WaitingContext<Asset>`.
+
+`WaitingContext<Asset>` has type `TypeInner::Apply(_, WaitingContext, [Asset])`.
+`type_arguments()` returns `Some([Asset])` → enters the `else if` branch correctly.
+`compile_match_struct` calls `make_imm_ref_match_binders` which creates **immutable
+reference fringe entries** for each field:
+
+```
+fringe ← [&Asset, &WaitingState, ...]
+         ^^^
+         TypeInner::Ref(false, TypeInner::Param(TParam{key+store}))
+```
+
+**Step 7 — the panic site (pre-fix) / fix intercept (post-fix):**
+
+```
+subject = FringeEntry { var: asset_ref, ty: &Asset }
+subject.ty.value = TypeInner::Ref(false, TypeInner::Param(TParam{key+store}))
+```
+
+- `unfold_to_builtin_type_name()` → recurses through `Ref` → `Param` → `None`
+- `type_arguments()` → recurses through `Ref` → `Param` → `None`  ← falls to `else`
+- **Pre-fix:** `ice_assert!` with no prior error → `unwrap()` panic ✗
+- **Post-fix (#25475 only):** `MatchTree::Failure` → arm silently never matches ✗
+- **With our fix:** `is_type_param` → `true` → `specialize_default` ✓
+
+**`specialize_default` for `TP::Binder(Imm, asset_var)` (from `shared/matching.rs`):**
+
+```rust
+fn specialize_default(...) -> Option<(Binders, PatternArm)> {
+    match first_pattern.pat.value {
+        TP::Binder(mut_, x) => Some((vec![(mut_, x)], output)),  // ← captures binding
+        TP::Wildcard        => Some((vec![], output)),
+        TP::Struct(..) | TP::Variant(..) => None,  // would not be reachable here
+        // ...
+    }
+}
+```
+
+Returns `Some([(Imm, asset_var)], remaining_arm)`.
+
+Matrix-level `specialize_default` collects this across all rows:
+```
+subject_binders  = [(Imm, asset_var)]
+default_matrix   = original matrix with &Asset column removed
+```
+
+**Step 8 — recursive call with remaining fringe:**
+
+```
+build_match_tree([&WaitingState, ...], default_matrix)
+```
+
+`&WaitingState` = `TypeInner::Ref(false, TypeInner::Apply(_, WaitingState, []))`.
+`type_arguments()` recurses through `Ref` → `Some([])` → enters `else if` branch →
+`compile_variant_switch` for `WaitingState::AtDutch { last_acq_price, phase_start_ms }`.
+Compiles normally. ✓
+
+**`match_tree_to_exp` for `TypeParamBind`:**
+
+```rust
+bindings = [(asset_var, (Imm, FringeEntry{ var: asset_ref, ty: &Asset }))]
+// → emits: let asset = asset_ref
+next_exp = <tree for WaitingState::AtDutch { ... }>
+make_copy_bindings(context, bindings, next_exp)
+// → let asset = asset_ref; <AtDutch arm body>
+```
+
+The `asset` pattern variable is correctly bound to the immutable reference to the
+`WaitingContext.asset` field, exactly as the programmer intended. ✓
+
+**All three trigger types handled correctly:**
+
+| Subject type | `is_type_param` | Outcome |
+|---|---|---|
+| `TypeInner::Param(_)` (bare type param) | `true` | `TypeParamBind` — bind and continue ✓ |
+| `TypeInner::Ref(false, Param(_))` (fringe ref to type param — our case) | `true` | `TypeParamBind` — bind and continue ✓ |
+| `TypeInner::Anything` (abort — #25457 case) | `false` | `ice_assert!` + `Failure` — preserved ✓ |
+| `TypeInner::Apply(...)` (concrete type) | `false` | existing `else if` branch — unchanged ✓ |
+
 ## Workaround
 
 Extract the inner struct before matching on its state:

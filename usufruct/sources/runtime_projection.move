@@ -9,12 +9,21 @@ use usufruct::{
     asset::{Self, Asset},
     cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
     config::{Self, IntegrationConfig},
+    credit_context_state::{Self as credit, CreditContext},
     curve_shape_state::CurveShapeState,
     descent_policy_state::DescentPolicyState,
     handover_policy_state::HandoverPolicyState,
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
+
+// === credit_context_state ===
+
+public fun credit_stake(ctx: &CreditContext): u64          { credit::proj_stake(ctx) }
+public fun credit_phase_start_ms(ctx: &CreditContext): u64 { credit::proj_phase_start_ms(ctx) }
+public fun credit_is_accruing(ctx: &CreditContext): bool   { credit::proj_is_accruing(ctx) }
+public fun credit_is_capped(ctx: &CreditContext): bool     { credit::proj_is_capped(ctx) }
+public fun credit_expiry_ms(ctx: &CreditContext): Option<u64> { credit::proj_expiry_ms(ctx) }
 
 // === config ===
 

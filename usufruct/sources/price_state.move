@@ -83,14 +83,14 @@ public(package) fun floor_price(
     timestamp_ms: u64,
 ): u64 {
     match (state) {
-        PriceState::Rest => config::min_rent_price(cfg),
+        PriceState::Rest => config::proj_min_rent_price(cfg),
         PriceState::Ascending { stake } =>
-            price_function_state::evaluate_price_fn(config::price_function_state(cfg), *stake),
+            price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg), *stake),
         PriceState::Descending { last_acq_price, phase_start_ms } => {
             let elapsed  = phases::elapsed_since(*phase_start_ms, timestamp_ms);
-            let t_max    = descent_policy_state::window_ceiling(config::descent(cfg));
-            let h        = curve_shape_state::evaluate_curve(config::descent_curve(cfg), elapsed, t_max);
-            let spread   = *last_acq_price - config::min_rent_price(cfg);
+            let t_max    = descent_policy_state::window_ceiling(config::proj_descent(cfg));
+            let h        = curve_shape_state::evaluate_curve(config::proj_descent_curve(cfg), elapsed, t_max);
+            let spread   = *last_acq_price - config::proj_min_rent_price(cfg);
             let consumed = math::mul_div(spread, h, curve_shape_state::scale());
             *last_acq_price - consumed
         },

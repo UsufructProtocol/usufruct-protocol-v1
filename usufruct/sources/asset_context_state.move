@@ -30,7 +30,7 @@ use usufruct::{
     pending_transition_state::{Self, PendingTransitionState},
     price_state,
     retire_policy_state,
-    credit_state,
+    credit_context_state::{Self as credit_state},
     handover_policy_state,
     math,
     phases,
@@ -378,7 +378,7 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
 ): u64 {
     match (&e.asset_state) {
         AssetState::Idle { .. } =>
-            config::min_rent_price(&e.config),
+            config::proj_min_rent_price(&e.config),
         AssetState::Renting { tenancy } =>
             floor_price_at_for_tenancy(tenancy, &e.config, timestamp_ms),
         AssetState::AtDutch { last_acq_price, phase_start_ms, .. } => {
@@ -425,7 +425,7 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
         AssetState::Renting { tenancy } =>
             next_pending_from_tenancy(tenancy, &e.config, now),
         AssetState::AtDutch { phase_start_ms, .. } => {
-            let policy = config::descent(&e.config);
+            let policy = config::proj_descent(&e.config);
             if (descent_policy_state::has_expired(policy, *phase_start_ms, now)) {
                 return option::some(
                     pending_transition_state::auction(descent_policy_state::expiry_at(policy, *phase_start_ms))
@@ -490,7 +490,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let context = apply_pending_transition_states(context, clock, ctx);
     let now_ms = clock::timestamp_ms(clock);
     assert!(
-        retire_policy_state::is_unlocked(config::retire(&context.config), context.integrated_at_ms, now_ms),
+        retire_policy_state::is_unlocked(config::proj_retire(&context.config), context.integrated_at_ms, now_ms),
         ERetireFloorNotElapsed,
     );
     match (context) {
@@ -882,7 +882,7 @@ public(package) fun next_pending_from_tenancy<Asset: key + store, CoinType>(
             option::none()
         },
         TenancyVariantState::Occupied { .. } => {
-            let tenure = config::tenure_ceiling(config);
+            let tenure = config::proj_tenure_ceiling(config);
             if (phases::has_passed(t.phase_start_ms, tenure, now)) {
                 return option::some(
                     pending_transition_state::tenure(phases::boundary_at(t.phase_start_ms, tenure))
@@ -1160,9 +1160,9 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let current_cap_id = tenant::id_cap_id(tenant::identity(&tenant));
     let current_addr   = tenant::id_address(tenant::identity(&tenant));
     let current_stake  = tenant::stake_value(&tenant);
-    let tenure         = config::tenure_ceiling(config);
+    let tenure         = config::proj_tenure_ceiling(config);
     let expiry         = handover_policy_state::expiry_at(
-        config::handover(config), now, phase_start_ms, tenure,
+        config::proj_handover(config), now, phase_start_ms, tenure,
     );
     let pending_addr = ctx.sender();
     let bid_amount   = coin::value(&payment);

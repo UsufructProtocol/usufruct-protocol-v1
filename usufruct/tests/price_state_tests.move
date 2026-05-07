@@ -73,7 +73,7 @@ fun ascending_agrees_with_price_function_state() {
     // Spec-derived relation, not impl-mirroring.
     let cfg      = base_cfg(false);
     let ps       = price_state::ascending(STAKE);
-    let expected = price_function_state::evaluate_price_fn(config::price_function_state(&cfg), STAKE);
+    let expected = price_function_state::evaluate_price_fn(config::proj_price_function_state(&cfg), STAKE);
     assert!(price_state::floor_price(&ps, &cfg, 0) == expected, 0);
 }
 

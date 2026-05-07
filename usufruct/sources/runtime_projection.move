@@ -8,7 +8,24 @@ module usufruct::runtime_projection;
 use usufruct::{
     asset::{Self, Asset},
     cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
+    config::{Self, IntegrationConfig},
+    curve_shape_state::CurveShapeState,
+    descent_policy_state::DescentPolicyState,
+    handover_policy_state::HandoverPolicyState,
+    price_function_state::PriceFunctionState,
+    retire_policy_state::RetirePolicyState,
 };
+
+// === config ===
+
+public fun config_min_rent_price(cfg: &IntegrationConfig): u64                 { config::proj_min_rent_price(cfg) }
+public fun config_tenure_ceiling(cfg: &IntegrationConfig): u64                 { config::proj_tenure_ceiling(cfg) }
+public fun config_handover(cfg: &IntegrationConfig):       &HandoverPolicyState { config::proj_handover(cfg) }
+public fun config_descent(cfg: &IntegrationConfig):        &DescentPolicyState  { config::proj_descent(cfg) }
+public fun config_retire(cfg: &IntegrationConfig):         &RetirePolicyState   { config::proj_retire(cfg) }
+public fun config_credit_curve(cfg: &IntegrationConfig):   &CurveShapeState     { config::proj_credit_curve(cfg) }
+public fun config_descent_curve(cfg: &IntegrationConfig):  &CurveShapeState     { config::proj_descent_curve(cfg) }
+public fun config_price_fn(cfg: &IntegrationConfig):       &PriceFunctionState  { config::proj_price_function_state(cfg) }
 
 // === cap_authorization_state ===
 

@@ -6,7 +6,7 @@ module usufruct::asset_tests;
 
 use std::unit_test::assert_eq;
 use sui::test_scenario;
-use usufruct::asset::{Self, Asset};
+use usufruct::asset::{Self, AssetCustodyOpen};
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ fun new_test_asset(ctx: &mut TxContext): TestAsset { TestAsset { id: object::new
 
 /// Compose new + unwrap-via-unbundle to dispose a wrapped Asset in
 /// the success path of a test. Aborts if `available == None`.
-fun dispose_wrapper(w: Asset<TestAsset>) {
+fun dispose_wrapper(w: AssetCustodyOpen<TestAsset>) {
     let u = asset::unbundle(w);
     transfer::public_transfer(u, SINK);
 }

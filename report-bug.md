@@ -161,6 +161,80 @@ AssetContext {
 } => { ... },
 ```
 
+## Proposed Fix (Rust patch to `match_compilation.rs`)
+
+The fix requires three changes to `hlir/match_compilation.rs`.
+
+**1. Add a new `MatchTree` variant** for opaque type parameter bindings:
+
+```rust
+enum MatchTree {
+    Leaf(Vec<ArmResult>),
+    Failure,
+    // ... existing variants ...
+    /// A generic type parameter in fringe position — opaque, treated as a wildcard binding.
+    TypeParamBind {
+        subject:         FringeEntry,
+        subject_binders: Vec<(Mutability, Var)>,
+        next:            Box<MatchTree>,
+    },
+}
+```
+
+**2. In `build_match_tree`**, add a guard for `BaseType_::Param` before the `ice_assert!`
+catch-all in the `else` branch:
+
+```rust
+// existing:
+} else if let Some(tyargs) = subject.ty.value.type_arguments() {
+    // ... resolve concrete struct/enum, compile ...
+
+// new guard — insert before the existing else:
+} else if matches!(
+    subject.ty.value,
+    Type_::Single(sp!(_, SingleType_::Base(sp!(_, BaseType_::Param(_)))))
+) {
+    // Generic type parameter (`T: key + store`, etc.) in fringe position.
+    // The compiler cannot inspect its internal structure; any pattern on it
+    // must be a Binder or Wildcard. Specialize as default and recurse.
+    let (subject_binders, default_matrix) = matrix.specialize_default(context);
+    let next = build_match_tree(context, fringe, default_matrix);
+    MatchTree::TypeParamBind {
+        subject,
+        subject_binders,
+        next: Box::new(next),
+    }
+
+// existing else (Unreachable / abort case, already fixed by #25475):
+} else {
+    ice_assert!(
+        context.reporter,
+        context.env.has_errors(),
+        subject.var.loc,
+        "Non-datatype and non-builtin type reached match compilation without a prior error"
+    );
+    MatchTree::Failure
+}
+```
+
+**3. In `match_tree_to_exp`**, handle the new variant — bind the subject to any
+pattern variables, then evaluate the rest of the tree:
+
+```rust
+MatchTree::TypeParamBind { subject, subject_binders, next } => {
+    // Bind the opaque value to any Binder-pattern variables, then proceed.
+    let bindings = subject_binders
+        .into_iter()
+        .map(|(_, binder)| (binder, (Mutability::Imm, subject.clone())))
+        .collect();
+    let next_exp = match_tree_to_exp(context, init_subject, *next);
+    make_copy_bindings(context, bindings, next_exp)
+}
+```
+
+This is the minimal change: one new variant, one new guard in `build_match_tree`,
+one new arm in `match_tree_to_exp`. No existing paths are modified.
+
 ## Workaround
 
 Extract the inner struct before matching on its state:

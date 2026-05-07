@@ -1,5 +1,30 @@
 # Bug Report: Move Compiler — Generic `key` Type Parameter in Fringe Position During Deep Match Compilation
 
+## Reproducing the panic
+
+A self-contained reproducer lives on the `bug-panic-proof` branch of this repository.
+Checking it out and building is sufficient to trigger the panic:
+
+```bash
+git clone https://github.com/0xkurious/usufruct-protocol
+cd usufruct-protocol
+git checkout bug-panic-proof
+cd usufruct
+sui move build
+```
+
+Expected output:
+
+```
+thread 'main' panicked at
+external-crates/move/crates/move-compiler/src/hlir/match_compilation.rs:173:56:
+called `Option::unwrap()` on a `None` value
+```
+
+The triggering pattern is in `usufruct/sources/asset_context_state.move` — look for
+the comment marked `BUG REPRODUCER`. The same file on `continue-context-state-pattern`
+shows the working two-level workaround for comparison.
+
 ## Summary
 
 The `sui move build` compiler crashes with an internal Rust panic when a match arm
@@ -381,9 +406,48 @@ The `asset` pattern variable is correctly bound to the immutable reference to th
 | `TypeInner::Anything` (abort — #25457 case) | `false` | `ice_assert!` + `Failure` — preserved ✓ |
 | `TypeInner::Apply(...)` (concrete type) | `false` | existing `else if` branch — unchanged ✓ |
 
-## Workaround
+## How the codebase resolved this
 
-Extract the inner struct before matching on its state:
+Rather than living with the two-level match workaround indefinitely, the codebase took
+a semantic approach: `Asset<U>` was split into two types that earn their existence
+independently.
+
+```move
+/// Borrow-capable custody — used in TenancyContext (active tenancy).
+/// The take/put/receipt protocol lives here; available: Option<U> tracks
+/// whether the asset is in escrow or on loan to the tenant.
+public struct AssetCustodyOpen<U: key + store> has store {
+    identity:  AssetIdentity,
+    available: Option<U>,
+}
+
+/// Inert custody — used in WaitingContext (Idle, AtDutch, Retired).
+/// No borrow protocol, no Option — the asset simply exists in custody.
+/// Being a concrete named type (TypeInner::Apply) rather than a raw type
+/// parameter, deep nested match patterns compile without any workaround.
+public struct AssetCustodyLocked<U: key + store> has store {
+    asset: U,
+}
+```
+
+`AssetCustodyLocked<U>` is `TypeInner::Apply` to the compiler — `type_arguments()`
+returns `Some([U])`, enters Path 2, and compiles correctly. The distinction is not a
+workaround: `WaitingContext` genuinely holds an asset with no borrow semantics, and
+`TenancyContext` genuinely holds one with borrow semantics. The types reflect what
+was already true in the domain.
+
+The result: every two-level split, every explanatory comment, and this report's
+workaround section disappeared from the production branch — not as cleanup, but because
+the correct types made them impossible to need.
+
+See commit `5643c74` on branch `continue-context-state-pattern`:
+`refactor(asset): AssetCustodyOpen + AssetCustodyLocked — 579 lines deleted, full
+expressiveness restored`
+
+## Workaround (historical — superseded by the above)
+
+The temporary workaround used while the semantic fix was being developed was to extract
+the inner struct before matching on its state:
 
 ```move
 AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, .. } => {
@@ -395,36 +459,7 @@ AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, .. }
 },
 ```
 
-This pattern is used throughout `usufruct/sources/asset_context_state.move`; each
-workaround site is annotated with a comment referencing this report.
-
-### Why a wrapper struct was not used instead
-
-An alternative workaround would be to wrap `Asset` in a thin concrete struct so the
-compiler sees `TypeInner::Apply` instead of `TypeInner::Param`:
-
-```move
-public struct WaitingAsset<Asset: key + store> has store { inner: Asset }
-
-public struct WaitingContext<Asset: key + store> has store {
-    asset: WaitingAsset<Asset>,  // ← Apply type, compiles through Path 2
-    state: WaitingState,
-}
-```
-
-This would restore deep nested pattern matching today. It was deliberately rejected
-because `WaitingAsset<U>` would have no semantic justification — no invariant, no
-behavior, no domain meaning. Its sole purpose would be to appease a compiler bug.
-
-By contrast, `asset::Asset<U>` (used in `TenancyContext`) carries real semantics:
-`available: Option<U>` tracks whether the asset is in escrow custody or on loan to the
-tenant. That wrapper earns its existence.
-
-A type that exists only to work around a bug accumulates as permanent noise: it requires
-a comment explaining why it exists, forces every reader to reason about whether it has
-real semantics, and cannot be removed without a coordinated refactor when the bug is
-eventually fixed. The two-level match workaround is explicit about its reason for
-existing and disappears cleanly once the compiler is fixed.
+This is no longer present in the codebase.
 
 ## Why This Matters for Functional Programming in Move
 

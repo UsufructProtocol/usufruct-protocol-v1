@@ -492,18 +492,14 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     let floor  = floor_price_at(&context, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
     match (context) {
-        // Compiler bug (not a language restriction): deeply nested struct-in-enum patterns
-        // cause an internal panic in match_compilation.rs instead of compiling or producing
-        // a proper diagnostic. Two-level match is the workaround.
-        AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
-            let WaitingContext { asset, state } = waiting;
-            match (state) {
-                WaitingState::Retired => abort ERetiredNoBid,
-                _ => {
-                    let (new_state, cap) = do_install(asset, escrow_id, payment, floor, now, ctx);
-                    (AssetContext { asset_state: new_state, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }, cap)
-                },
-            }
+        // BUG REPRODUCER: this single-arm deep nested pattern triggers an internal
+        // compiler panic in match_compilation.rs:173 (unwrap() on None).
+        // See BUG_REPORT.md for root cause analysis and proposed fix.
+        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }, owner: _o, .. } =>
+            abort ERetiredNoBid,
+        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: _ } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+            let (new_state, cap) = do_install(asset, escrow_id, payment, floor, now, ctx);
+            (AssetContext { asset_state: new_state, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }, cap)
         },
         AssetContext { asset_state: AssetState::Renting { tenancy }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let (new_tenancy, cap) = accept_rent_payment(

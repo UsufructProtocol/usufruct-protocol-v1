@@ -163,16 +163,61 @@ AssetContext {
 
 ## Proposed Fix (Rust patch to `match_compilation.rs`)
 
-The fix requires three changes to `hlir/match_compilation.rs`.
+### Type system background
 
-**1. Add a new `MatchTree` variant** for opaque type parameter bindings:
+`match_compilation.rs` imports `Type` from `naming::ast`, where the inner type enum is:
+
+```rust
+// naming/ast.rs
+pub enum TypeInner {
+    Param(TParam),                              // generic type parameter
+    Apply(Option<AbilitySet>, TypeName, Vec<Type>), // concrete named type
+    Ref(bool, Type),                            // reference
+    Anything,                                   // "Nothing" — type of abort
+    Void, UnresolvedError, Unit, Var(TVar), Fun(..),
+}
+```
+
+The three dispatch methods all **recurse through `Ref`**:
+
+```rust
+pub fn type_arguments(&self) -> Option<&Vec<Type>> {
+    match &*self.0 {
+        TypeInner::Apply(_, _, tyargs) => Some(tyargs),
+        TypeInner::Ref(_, inner) => inner.value.type_arguments(), // recurse
+        _ => None,
+    }
+}
+```
+
+Consequently, both `TypeInner::Param(_)` and `TypeInner::Ref(_, <Param>)` return
+`None` from `type_arguments()` and fall to the `else` branch where the panic lives.
+Fringe entries for struct fields are typically immutable references
+(`make_imm_ref_match_binders`), so the concrete trigger in our case is
+`TypeInner::Ref(false, <Asset: key+store>)`.
+
+### The fix — three changes to `hlir/match_compilation.rs`
+
+**1. Add a helper to detect type-parameter types (through Ref):**
+
+```rust
+fn is_type_param(ty: &N::Type_) -> bool {
+    match &*ty.0 {
+        N::TypeInner::Param(_) => true,
+        N::TypeInner::Ref(_, inner) => matches!(&*inner.value.0, N::TypeInner::Param(_)),
+        _ => false,
+    }
+}
+```
+
+**2. Add a new `MatchTree` variant for opaque type-parameter bindings:**
 
 ```rust
 enum MatchTree {
     Leaf(Vec<ArmResult>),
     Failure,
-    // ... existing variants ...
-    /// A generic type parameter in fringe position — opaque, treated as a wildcard binding.
+    // ... existing variants unchanged ...
+    /// Generic type parameter in fringe position — opaque, bind as wildcard.
     TypeParamBind {
         subject:         FringeEntry,
         subject_binders: Vec<(Mutability, Var)>,
@@ -181,22 +226,18 @@ enum MatchTree {
 }
 ```
 
-**2. In `build_match_tree`**, add a guard for `BaseType_::Param` before the `ice_assert!`
-catch-all in the `else` branch:
+**3. In `build_match_tree`**, add the guard before the existing `ice_assert!` catch-all:
 
 ```rust
-// existing:
 } else if let Some(tyargs) = subject.ty.value.type_arguments() {
-    // ... resolve concrete struct/enum, compile ...
+    // ... existing: resolve concrete struct/enum and compile ...
 
-// new guard — insert before the existing else:
-} else if matches!(
-    subject.ty.value,
-    Type_::Single(sp!(_, SingleType_::Base(sp!(_, BaseType_::Param(_)))))
-) {
-    // Generic type parameter (`T: key + store`, etc.) in fringe position.
-    // The compiler cannot inspect its internal structure; any pattern on it
-    // must be a Binder or Wildcard. Specialize as default and recurse.
+// NEW: insert this arm before the existing else
+} else if is_type_param(&subject.ty.value) {
+    // TypeInner::Param or Ref(_, Param) in fringe position.
+    // The compiler cannot inspect the internal structure of a generic type
+    // parameter — any pattern on it must be a Binder or Wildcard.
+    // Specialize as default (wildcard) and recurse on the remaining fringe.
     let (subject_binders, default_matrix) = matrix.specialize_default(context);
     let next = build_match_tree(context, fringe, default_matrix);
     MatchTree::TypeParamBind {
@@ -205,8 +246,9 @@ catch-all in the `else` branch:
         next: Box::new(next),
     }
 
-// existing else (Unreachable / abort case, already fixed by #25475):
 } else {
+    // Existing catch-all: Anything (abort), Void, UnresolvedError etc.
+    // These are unreachable dead-code paths — a prior error should exist.
     ice_assert!(
         context.reporter,
         context.env.has_errors(),
@@ -217,12 +259,11 @@ catch-all in the `else` branch:
 }
 ```
 
-**3. In `match_tree_to_exp`**, handle the new variant — bind the subject to any
-pattern variables, then evaluate the rest of the tree:
+**4. In `match_tree_to_exp`**, handle the new variant:
 
 ```rust
 MatchTree::TypeParamBind { subject, subject_binders, next } => {
-    // Bind the opaque value to any Binder-pattern variables, then proceed.
+    // Bind the opaque value to any Binder-pattern variables, then continue.
     let bindings = subject_binders
         .into_iter()
         .map(|(_, binder)| (binder, (Mutability::Imm, subject.clone())))
@@ -232,8 +273,9 @@ MatchTree::TypeParamBind { subject, subject_binders, next } => {
 }
 ```
 
-This is the minimal change: one new variant, one new guard in `build_match_tree`,
-one new arm in `match_tree_to_exp`. No existing paths are modified.
+This is the minimal change: one helper, one new `MatchTree` variant, one new guard in
+`build_match_tree`, one new arm in `match_tree_to_exp`. No existing paths are modified.
+The `Anything` / dead-code path (`ice_assert!`) is intentionally preserved unchanged.
 
 ## Workaround
 

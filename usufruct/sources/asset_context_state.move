@@ -492,8 +492,9 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     let floor  = floor_price_at(&context, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
     match (context) {
-        // Compiler bug: patterns deeper than enum→struct→enum→struct→enum cause an
-        // internal unwrap() panic in match_compilation.rs. Two-level match is the workaround.
+        // Compiler bug (not a language restriction): deeply nested struct-in-enum patterns
+        // cause an internal panic in match_compilation.rs instead of compiling or producing
+        // a proper diagnostic. Two-level match is the workaround.
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {

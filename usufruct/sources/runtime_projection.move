@@ -10,12 +10,24 @@ use usufruct::{
     cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     credit_context_state::{Self as credit, CreditContext},
-    curve_shape_state::CurveShapeState,
+    curve_shape_state::{Self as curve, CurveShapeState},
     descent_policy_state::DescentPolicyState,
     handover_policy_state::HandoverPolicyState,
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
+
+// === curve_shape_state ===
+
+public fun curve_is_linear(s: &CurveShapeState):      bool         { curve::proj_is_linear(s) }
+public fun curve_is_smoothstep(s: &CurveShapeState):  bool         { curve::proj_is_smoothstep(s) }
+public fun curve_is_logistic(s: &CurveShapeState):    bool         { curve::proj_is_logistic(s) }
+public fun curve_is_power_law(s: &CurveShapeState):   bool         { curve::proj_is_power_law(s) }
+public fun curve_is_exponential(s: &CurveShapeState): bool         { curve::proj_is_exponential(s) }
+public fun curve_power_law_alpha_num(s: &CurveShapeState): Option<u8>   { curve::proj_power_law_alpha_num(s) }
+public fun curve_power_law_alpha_den(s: &CurveShapeState): Option<u8>   { curve::proj_power_law_alpha_den(s) }
+public fun curve_exponential_alpha_abs(s: &CurveShapeState): Option<u8>   { curve::proj_exponential_alpha_abs(s) }
+public fun curve_exponential_alpha_neg(s: &CurveShapeState): Option<bool> { curve::proj_exponential_alpha_neg(s) }
 
 // === credit_context_state ===
 

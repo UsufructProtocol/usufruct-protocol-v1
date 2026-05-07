@@ -101,6 +101,27 @@ public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapeState {
 
 // === View Functions ===
 
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_linear(s: &CurveShapeState):     bool { match (s) { CurveShapeState::Linear      => true, _ => false } }
+public(package) fun proj_is_smoothstep(s: &CurveShapeState): bool { match (s) { CurveShapeState::Smoothstep  => true, _ => false } }
+public(package) fun proj_is_logistic(s: &CurveShapeState):   bool { match (s) { CurveShapeState::Logistic    => true, _ => false } }
+public(package) fun proj_is_power_law(s: &CurveShapeState):  bool { match (s) { CurveShapeState::PowerLaw    { .. } => true, _ => false } }
+public(package) fun proj_is_exponential(s: &CurveShapeState): bool { match (s) { CurveShapeState::Exponential { .. } => true, _ => false } }
+
+public(package) fun proj_power_law_alpha_num(s: &CurveShapeState): Option<u8> {
+    match (s) { CurveShapeState::PowerLaw { alpha_num, .. } => option::some(*alpha_num), _ => option::none() }
+}
+public(package) fun proj_power_law_alpha_den(s: &CurveShapeState): Option<u8> {
+    match (s) { CurveShapeState::PowerLaw { alpha_den, .. } => option::some(*alpha_den), _ => option::none() }
+}
+public(package) fun proj_exponential_alpha_abs(s: &CurveShapeState): Option<u8> {
+    match (s) { CurveShapeState::Exponential { alpha_abs, .. } => option::some(*alpha_abs), _ => option::none() }
+}
+public(package) fun proj_exponential_alpha_neg(s: &CurveShapeState): Option<bool> {
+    match (s) { CurveShapeState::Exponential { alpha_neg, .. } => option::some(*alpha_neg), _ => option::none() }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===

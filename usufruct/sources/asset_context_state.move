@@ -49,7 +49,6 @@ const EAlreadyRetired:        u64 = 5;
 const EWrongEscrowTenantCap:  u64 = 6;
 const EStaleTenantCap:        u64 = 8;
 const EReceiptEscrowMismatch: u64 = 10;
-const EReceiptAssetMismatch:  u64 = 11;
 const ENotRetired:            u64 = 12;
 const ENoEarnings:            u64 = 13;
 
@@ -532,8 +531,6 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     asset_in:   Asset,
     receipt_in: AssetReceipt,
 ): AssetContext<Asset, CoinType> {
-    assert!(asset::receipt_escrow_id(&receipt_in)  == context.escrow_id,             EReceiptEscrowMismatch);
-    assert!(asset::receipt_asset_id(&receipt_in)   == object::id(&asset_in),        EReceiptAssetMismatch);
     match (context) {
         AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = put_asset(tenancy, escrow_id, asset_in, receipt_in);
@@ -750,7 +747,7 @@ public(package) fun is_retiring<Asset: key + store, CoinType>(
 public(package) fun asset_id_for_tenancy<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
 ): ID {
-    asset::id_asset_id(asset::identity(&t.asset))
+    asset::proj_asset_id(&t.asset)
 }
 
 public(package) fun current_addr<Asset: key + store, CoinType>(

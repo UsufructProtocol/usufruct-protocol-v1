@@ -69,17 +69,13 @@ public struct AssetReceipt {
 
 // === View Functions ===
 
-public(package) fun identity<U: key + store>(self: &Asset<U>): &AssetIdentity { &self.identity }
+// ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun is_available<U: key + store>(self: &Asset<U>): bool {
+public(package) fun proj_asset_id<U: key + store>(self: &Asset<U>): ID { self.identity.asset_id }
+public(package) fun proj_escrow_id<U: key + store>(self: &Asset<U>): ID { self.identity.escrow_id }
+public(package) fun proj_is_available<U: key + store>(self: &Asset<U>): bool {
     option::is_some(&self.available)
 }
-
-public(package) fun id_asset_id(id: &AssetIdentity):  ID { id.asset_id }
-public(package) fun id_escrow_id(id: &AssetIdentity): ID { id.escrow_id }
-
-public(package) fun receipt_asset_id(r: &AssetReceipt):  ID { r.asset_id }
-public(package) fun receipt_escrow_id(r: &AssetReceipt): ID { r.escrow_id }
 
 // === Admin Functions ===
 
@@ -157,3 +153,12 @@ public fun forge_receipt_for_testing(asset_id: ID, escrow_id: ID): AssetReceipt 
 public fun destroy_receipt_for_testing(r: AssetReceipt) {
     let AssetReceipt { asset_id: _, escrow_id: _ } = r;
 }
+
+/// Inspect the asset_id stamped on a receipt. Test-only — production
+/// code never needs to read receipt fields; `put` validates them internally.
+#[test_only]
+public fun receipt_asset_id_for_testing(r: &AssetReceipt): ID { r.asset_id }
+
+/// Inspect the escrow_id stamped on a receipt. Test-only — same reason.
+#[test_only]
+public fun receipt_escrow_id_for_testing(r: &AssetReceipt): ID { r.escrow_id }

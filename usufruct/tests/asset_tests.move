@@ -38,10 +38,9 @@ fun new_stamps_identity_with_asset_and_escrow_ids() {
         let u   = new_test_asset(sc.ctx());
         let uid = object::id(&u);
         let w   = asset::new(u, escrow_x());
-        let id  = asset::identity(&w);
-        assert_eq!(asset::id_asset_id(id),  uid);
-        assert_eq!(asset::id_escrow_id(id), escrow_x());
-        assert!(asset::is_available(&w));
+        assert_eq!(asset::proj_asset_id(&w),  uid);
+        assert_eq!(asset::proj_escrow_id(&w), escrow_x());
+        assert!(asset::proj_is_available(&w));
         dispose_wrapper(w);
     };
     sc.end();
@@ -59,9 +58,9 @@ fun take_returns_u_and_receipt_carrying_both_ids() {
         let mut w = asset::new(u, escrow_x());
 
         let (out, receipt) = asset::take(&mut w);
-        assert_eq!(asset::receipt_asset_id(&receipt),  uid);
-        assert_eq!(asset::receipt_escrow_id(&receipt), escrow_x());
-        assert!(!asset::is_available(&w));
+        assert_eq!(asset::receipt_asset_id_for_testing(&receipt),  uid);
+        assert_eq!(asset::receipt_escrow_id_for_testing(&receipt), escrow_x());
+        assert!(!asset::proj_is_available(&w));
 
         // Restore so the wrapper can be disposed via unbundle.
         asset::put(&mut w, out, receipt);
@@ -81,9 +80,9 @@ fun put_with_authentic_receipt_restores_availability() {
         let mut w = asset::new(u, escrow_x());
 
         let (out, receipt) = asset::take(&mut w);
-        assert!(!asset::is_available(&w));
+        assert!(!asset::proj_is_available(&w));
         asset::put(&mut w, out, receipt);
-        assert!(asset::is_available(&w));
+        assert!(asset::proj_is_available(&w));
 
         dispose_wrapper(w);
     };

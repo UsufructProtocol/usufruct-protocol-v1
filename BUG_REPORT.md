@@ -105,6 +105,23 @@ A generic type parameter `Asset: key + store` is:
 - Not a type *with* type arguments (it IS a type argument itself) → `type_arguments()` returns `None` → skips Path 2
 - Falls into Path 3
 
+**Why the same nesting depth works with `TenancyContext`.**
+`TenancyContext` stores `asset: asset::Asset<Asset>` — a concrete named wrapper type
+defined as `public struct Asset<U: key + store> has store`. Its HLIR representation is
+`TypeInner::Apply(abilities, asset::Asset, [U])`. `type_arguments()` returns
+`Some([U])` → enters Path 2 → resolves to a struct → `compile_match_struct` →
+compiles correctly.
+
+`WaitingContext` stores `asset: Asset` — the raw type parameter directly. Its HLIR
+representation is `TypeInner::Param(TParam{...})` (or `TypeInner::Ref(false, Param(...))`
+as a fringe entry). `type_arguments()` returns `None` → skips Path 2 → falls to
+Path 3 → panic.
+
+The wrapper `asset::Asset<U>` acts as a concrete type boundary: the compiler sees a
+named struct and handles it normally. The raw `Asset` type parameter has no named
+structure from the compiler's perspective — it is opaque — and that is the case Path 3
+does not handle.
+
 **Pre-fix (#25475):** Path 3 called `.unwrap()` on `None` → panic.
 
 **Post-fix (#25475):** Path 3 returns `MatchTree::Failure`. This was the correct fix
@@ -380,3 +397,104 @@ AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, .. }
 
 This pattern is used throughout `usufruct/sources/asset_context_state.move`; each
 workaround site is annotated with a comment referencing this report.
+
+### Why a wrapper struct was not used instead
+
+An alternative workaround would be to wrap `Asset` in a thin concrete struct so the
+compiler sees `TypeInner::Apply` instead of `TypeInner::Param`:
+
+```move
+public struct WaitingAsset<Asset: key + store> has store { inner: Asset }
+
+public struct WaitingContext<Asset: key + store> has store {
+    asset: WaitingAsset<Asset>,  // ← Apply type, compiles through Path 2
+    state: WaitingState,
+}
+```
+
+This would restore deep nested pattern matching today. It was deliberately rejected
+because `WaitingAsset<U>` would have no semantic justification — no invariant, no
+behavior, no domain meaning. Its sole purpose would be to appease a compiler bug.
+
+By contrast, `asset::Asset<U>` (used in `TenancyContext`) carries real semantics:
+`available: Option<U>` tracks whether the asset is in escrow custody or on loan to the
+tenant. That wrapper earns its existence.
+
+A type that exists only to work around a bug accumulates as permanent noise: it requires
+a comment explaining why it exists, forces every reader to reason about whether it has
+real semantics, and cannot be removed without a coordinated refactor when the bug is
+eventually fixed. The two-level match workaround is explicit about its reason for
+existing and disappears cleanly once the compiler is fixed.
+
+## Why This Matters for Functional Programming in Move
+
+The Context-State pattern used in this codebase — nested enums carrying shared context
+in structs — is the Move expression of a core functional programming principle: **making
+illegal states unrepresentable**. Every impossible combination of state becomes a
+compile-time type error rather than a runtime `abort`.
+
+The bug blocks exactly the point where that expressiveness peaks: exhaustive pattern
+matching over nested algebraic data types. Today the workaround forces a two-step
+indirection that obscures the intent:
+
+```move
+// What you want to write — intent is direct:
+AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { .. } } }
+
+// What you have to write — the workaround hides the intent:
+AssetState::Waiting { waiting } => {
+    let WaitingContext { asset, state } = waiting;
+    match (state) { WaitingState::AtDutch { .. } => ... }
+}
+```
+
+The second form requires the reader to mentally reconstruct what the first states
+directly. At scale — across dozens of match arms — that cognitive overhead accumulates.
+
+Move has a property that makes this especially consequential. Unlike other functional
+languages, the ability system (`key`, `store`, `drop`, `copy`) is part of the type system
+itself, not an external annotation. A protocol invariant like "an asset in custody has
+`store` but not `key` at the point of loan" can be verified by the compiler, not just by
+convention. When this bug is fixed, those distinctions can be expressed directly in match
+arm patterns, and the compiler will verify that all cases are covered.
+
+This makes Move potentially more expressive than Rust for protocol contracts — not less.
+The bug is a temporary friction, not a language limit.
+
+### Why functional programming matters specifically in Sui Move
+
+Sui Move 2024 made a deliberate architectural bet: enums with pattern matching, the
+Context-State pattern, and by-value consumption of objects. These are not surface
+conveniences — they are the foundation for a class of correctness guarantees that
+traditional object-oriented smart contract languages cannot provide.
+
+**State machines without invalid states.** A DeFi protocol has lifecycle: an asset is
+idle, being auctioned, rented, or retired. In Solidity that lifecycle lives in an integer
+flag — the compiler cannot tell you which combinations are impossible. In Move 2024 with
+nested enums, the type system encodes the lifecycle directly. The `Renting | Waiting`
+split in this codebase means the compiler rejects code that tries to bid on a retired
+asset at the type level, not at the `require()` level. The programmer expresses what is
+true; the compiler enforces it.
+
+**The ability system as a protocol contract.** No other smart contract language has a
+type-level capability system equivalent to `key`, `store`, `drop`, `copy`. These are not
+documentation — they are constraints verified by the compiler for every call site. A type
+with `key` cannot be silently duplicated. A type without `drop` cannot be discarded
+without an explicit decision. When pattern matching over these types works completely,
+programmers can write match arms that branch on ability-carrying types and have the
+compiler verify exhaustiveness. The bug today prevents exactly this: a `key` type in a
+nested match position causes a compiler crash rather than a verified exhaustive dispatch.
+
+**Fixing this bug completes what Move 2024 started.** Move 2024 introduced enums,
+pattern matching, and by-value semantics. Those features opened the door to algebraic
+data type programming — the same style that makes Haskell and Rust programs so amenable
+to formal reasoning. But the feature is only as powerful as the depth of nesting the
+compiler can handle. Right now there is an invisible wall: nest a `key` type one level
+too deep and the compiler crashes. Fixing this removes that wall and lets the language
+deliver on its design intent.
+
+**In practice, fixing this bug improves expressiveness.** The concrete gain is the
+ability to write single-level exhaustive match arms over generic `key` types nested
+inside structs — the workaround today forces a two-level split that obscures intent.
+The broader implications for formal verification and protocol composition are open
+directions, not immediate consequences.

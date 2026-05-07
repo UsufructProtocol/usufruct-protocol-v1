@@ -492,6 +492,8 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     let floor  = floor_price_at(&context, now);
     assert!(coin::value(&payment) >= floor, EInsufficientPayment);
     match (context) {
+        // Compiler bug: patterns deeper than enum→struct→enum→struct→enum cause an
+        // internal unwrap() panic in match_compilation.rs. Two-level match is the workaround.
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {
@@ -524,7 +526,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     );
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
-            let WaitingContext { asset, state } = waiting;
+            let WaitingContext { asset, state } = waiting; // two-level match: see compiler-bug note in execute_rent
             match (state) {
                 WaitingState::Retired => abort EAlreadyRetired,
                 _ => AssetContext { asset_state: do_retire_immediately(asset, escrow_id, now_ms, ctx), owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
@@ -616,7 +618,7 @@ public(package) fun unwrap_for_claim<Asset: key + store, CoinType>(
 ): (Asset, Coin<CoinType>) {
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting }, mut owner, .. } => {
-            let WaitingContext { asset, state } = waiting;
+            let WaitingContext { asset, state } = waiting; // two-level match: see compiler-bug note in execute_rent
             match (state) {
                 WaitingState::Retired => {
                     let coin = owner::withdraw(&mut owner, owner_cap, ctx);
@@ -1472,7 +1474,7 @@ fun fire<Asset: key + store, CoinType>(
             }
         },
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
-            let WaitingContext { asset, state } = waiting;
+            let WaitingContext { asset, state } = waiting; // two-level match: see compiler-bug note in execute_rent
             match (state) {
                 WaitingState::AtDutch { last_acq_price, phase_start_ms } => {
                     let new_state = do_auction_expiry(asset, last_acq_price, phase_start_ms, escrow_id, boundary_ms);

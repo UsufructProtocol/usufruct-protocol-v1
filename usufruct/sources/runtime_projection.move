@@ -7,7 +7,14 @@ module usufruct::runtime_projection;
 
 use usufruct::{
     asset::{Self, Asset},
+    cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
 };
+
+// === cap_authorization_state ===
+
+public fun cap_auth_is_current(a: &CapAuthorizationState): bool { cap_auth::proj_is_current(a) }
+public fun cap_auth_is_pending(a: &CapAuthorizationState): bool { cap_auth::proj_is_pending(a) }
+public fun cap_auth_is_stale(a: &CapAuthorizationState):   bool { cap_auth::proj_is_stale(a)   }
 
 // === asset ===
 

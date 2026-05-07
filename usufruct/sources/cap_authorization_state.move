@@ -36,18 +36,17 @@ public enum CapAuthorizationState has drop {
 
 // === View Functions ===
 
-/// True iff this authorization is `Current`.
-public fun is_current(a: &CapAuthorizationState): bool {
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_current(a: &CapAuthorizationState): bool {
     match (a) { CapAuthorizationState::Current => true, _ => false }
 }
 
-/// True iff this authorization is `Pending`.
-public fun is_pending(a: &CapAuthorizationState): bool {
+public(package) fun proj_is_pending(a: &CapAuthorizationState): bool {
     match (a) { CapAuthorizationState::Pending => true, _ => false }
 }
 
-/// True iff this authorization is `Stale`.
-public fun is_stale(a: &CapAuthorizationState): bool {
+public(package) fun proj_is_stale(a: &CapAuthorizationState): bool {
     match (a) { CapAuthorizationState::Stale => true, _ => false }
 }
 

@@ -265,7 +265,7 @@ public fun is_rented<Asset: key + store, CoinType>(
 public fun is_descent_skipped<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    descent_policy_state::is_skipped(config::proj_descent(cfg(escrow)))
+    descent_policy_state::proj_is_skipped(config::proj_descent(cfg(escrow)))
 }
 
 public fun is_retire_immediate<Asset: key + store, CoinType>(
@@ -538,7 +538,7 @@ public fun min_rent_price<Asset: key + store, CoinType>(
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    descent_policy_state::window_ceiling_opt(config::proj_descent(cfg(escrow)))
+    descent_policy_state::proj_window_ceiling(config::proj_descent(cfg(escrow)))
 }
 
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(

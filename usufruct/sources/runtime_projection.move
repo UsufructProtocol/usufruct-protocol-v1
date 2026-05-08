@@ -11,11 +11,17 @@ use usufruct::{
     config::{Self, IntegrationConfig},
     credit_context_state::{Self as credit, CreditContext},
     curve_shape_state::{Self as curve, CurveShapeState},
-    descent_policy_state::DescentPolicyState,
+    descent_policy_state::{Self as descent, DescentPolicyState},
     handover_policy_state::HandoverPolicyState,
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
+
+// === descent_policy_state ===
+
+public fun descent_is_skipped(p: &DescentPolicyState): bool       { descent::proj_is_skipped(p) }
+public fun descent_is_window(p: &DescentPolicyState):  bool       { descent::proj_is_window(p) }
+public fun descent_window_ceiling(p: &DescentPolicyState): Option<u64> { descent::proj_window_ceiling(p) }
 
 // === curve_shape_state ===
 

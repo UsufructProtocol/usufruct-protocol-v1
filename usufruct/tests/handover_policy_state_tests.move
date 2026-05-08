@@ -6,6 +6,7 @@ module usufruct::handover_policy_state_tests;
 
 use std::unit_test::assert_eq;
 use usufruct::handover_policy_state::{Self, HandoverPolicyState};
+use usufruct::phases;
 
 // ─── new_handover_countdown — abort ───────────────────────────────────────────
 
@@ -103,7 +104,13 @@ fun has_expired_table() {
     while (i < len) {
         let c = &cases[i];
         assert_eq!(
-            handover_policy_state::has_expired(&c.policy, c.bid_time, c.phase_start, c.tenure_ceiling, c.now),
+            handover_policy_state::has_expired(
+                &c.policy,
+                phases::timestamp(c.bid_time),
+                phases::timestamp(c.phase_start),
+                phases::duration(c.tenure_ceiling),
+                phases::timestamp(c.now),
+            ).is_crossed(),
             c.expected,
         );
         i = i + 1;
@@ -146,7 +153,12 @@ fun expiry_at_table() {
     while (i < len) {
         let c = &cases[i];
         assert_eq!(
-            handover_policy_state::expiry_at(&c.policy, c.bid_time, c.phase_start, c.tenure_ceiling),
+            phases::timestamp_ms(handover_policy_state::expiry_at(
+                &c.policy,
+                phases::timestamp(c.bid_time),
+                phases::timestamp(c.phase_start),
+                phases::duration(c.tenure_ceiling),
+            )),
             c.expected,
         );
         i = i + 1;
@@ -201,11 +213,18 @@ fun has_expired_iff_now_ge_expiry_at() {
     while (i < len) {
         let c = &cases[i];
         let bool_view = handover_policy_state::has_expired(
-            &c.policy, c.bid_time, c.phase_start, c.tenure_ceiling, c.now,
-        );
-        let u64_view  = c.now >= handover_policy_state::expiry_at(
-            &c.policy, c.bid_time, c.phase_start, c.tenure_ceiling,
-        );
+            &c.policy,
+            phases::timestamp(c.bid_time),
+            phases::timestamp(c.phase_start),
+            phases::duration(c.tenure_ceiling),
+            phases::timestamp(c.now),
+        ).is_crossed();
+        let u64_view  = c.now >= phases::timestamp_ms(handover_policy_state::expiry_at(
+            &c.policy,
+            phases::timestamp(c.bid_time),
+            phases::timestamp(c.phase_start),
+            phases::duration(c.tenure_ceiling),
+        ));
         assert_eq!(bool_view, u64_view);
         i = i + 1;
     };
@@ -228,7 +247,13 @@ fun has_expired_monotone_in_now_under_countdown() {
     let mut n: u64 = 0;
     let mut crossed = false;
     while (n <= 200) {
-        let cur = handover_policy_state::has_expired(&p, bid_time, phase_start, tenure, n);
+        let cur = handover_policy_state::has_expired(
+            &p,
+            phases::timestamp(bid_time),
+            phases::timestamp(phase_start),
+            phases::duration(tenure),
+            phases::timestamp(n),
+        ).is_crossed();
         if (crossed) assert!(cur, 0);
         if (cur) crossed = true;
         n = n + 1;

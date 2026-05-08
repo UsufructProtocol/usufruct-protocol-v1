@@ -6,6 +6,7 @@ module usufruct::retire_policy_state_tests;
 
 use std::unit_test::assert_eq;
 use usufruct::retire_policy_state::{Self, RetirePolicyState};
+use usufruct::phases;
 
 // ─── new_retire_deferred — abort ──────────────────────────────────────────────
 
@@ -55,7 +56,7 @@ fun is_unlocked_table() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(retire_policy_state::is_unlocked(&c.policy, c.integrated_at, c.now), c.expected);
+        assert_eq!(retire_policy_state::is_unlocked(&c.policy, phases::timestamp(c.integrated_at), phases::timestamp(c.now)).is_crossed(), c.expected);
         i = i + 1;
     };
 }
@@ -74,7 +75,7 @@ fun is_unlocked_monotone_in_now_under_deferred() {
     let mut n: u64 = 0;
     let mut crossed = false;
     while (n <= 200) {
-        let cur = retire_policy_state::is_unlocked(&p, integrated_at, n);
+        let cur = retire_policy_state::is_unlocked(&p, phases::timestamp(integrated_at), phases::timestamp(n)).is_crossed();
         if (crossed) assert!(cur, 0);
         if (cur) crossed = true;
         n = n + 1;

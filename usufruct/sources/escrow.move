@@ -663,33 +663,33 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
 
 #[test_only]
 public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
-    escrow:      &mut Escrow<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    escrow:   &mut Escrow<Asset, CoinType>,
+    boundary: phases::Timestamp,
+    ctx:      &mut TxContext,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_handover_for_testing(context, boundary_ms, ctx);
+    let context = asset_context_state::fire_do_handover_for_testing(context, boundary, ctx);
     escrow.asset_context.fill(context);
 }
 
 #[test_only]
 public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinType>(
-    escrow:      &mut Escrow<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    escrow:   &mut Escrow<Asset, CoinType>,
+    boundary: phases::Timestamp,
+    ctx:      &mut TxContext,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_tenure_expiry_for_testing(context, boundary_ms, ctx);
+    let context = asset_context_state::fire_do_tenure_expiry_for_testing(context, boundary, ctx);
     escrow.asset_context.fill(context);
 }
 
 #[test_only]
 public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
-    escrow:      &mut Escrow<Asset, CoinType>,
-    boundary_ms: u64,
+    escrow:   &mut Escrow<Asset, CoinType>,
+    boundary: phases::Timestamp,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_auction_expiry_for_testing(context, boundary_ms);
+    let context = asset_context_state::fire_do_auction_expiry_for_testing(context, boundary);
     escrow.asset_context.fill(context);
 }
 

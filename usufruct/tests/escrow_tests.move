@@ -38,6 +38,7 @@ use usufruct::{
     escrow_corpus,
     fee_message::FeeMessageSent,
     owner_cap::{Self, OwnerCap},
+    phases,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
     tenant::{Self, Tenant},
@@ -849,7 +850,7 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     // Ensure boundary < tenure: 25_000 + 5_000 = 30_000 < 100_000.
     clock::set_for_testing(&mut clk, boundary_ms);
     let used_credit_expected = escrow::compute_used_credit(&escrow, &clk);
-    escrow::fire_do_handover_for_testing(&mut escrow, boundary_ms, sc.ctx());
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
     // Post-condition: HandoverOpen, current is t2.
     assert!(escrow::is_handover_open(&escrow), 0);
@@ -900,7 +901,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
 
     let owner_before = escrow::owner_value_for_testing(&escrow);
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
-    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, boundary_ms, sc.ctx());
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
     // Post-condition: NotRented + AtDutch.
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
@@ -949,7 +950,7 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     escrow::drive_to_retiring_flag_for_testing(&mut escrow);
 
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
-    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, boundary_ms, sc.ctx());
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
     // Post-condition: NotRented + Retired (not AtDutch).
     assert!(escrow::is_retired(&escrow), 0);
@@ -1147,7 +1148,7 @@ fun do_auction_expiry_returns_to_idle() {
     );
 
     let boundary_ms = 100_000 + escrow_corpus::descent_window_h1_const();
-    escrow::fire_do_auction_expiry_for_testing(&mut escrow, boundary_ms);
+    escrow::fire_do_auction_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms));
 
     assert!(escrow::is_idle(&escrow), 0);
 
@@ -1541,7 +1542,7 @@ fun withdraw_earnings_drains_owner_balance() {
 
     // Tenure expiry routes 90% to owner.
     escrow::fire_do_tenure_expiry_for_testing(
-        &mut escrow, escrow_corpus::tenure_ceiling_const(), sc.ctx(),
+        &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
     );
     let owner_share_expected = principal - principal / 10;
     assert_eq!(escrow::owner_value_for_testing(&escrow), owner_share_expected);
@@ -1641,11 +1642,11 @@ fun claim_asset_sweeps_owner_earnings() {
     let cap_t1 = escrow::rent(&mut escrow_handle, p1, &clk, sc.ctx());
 
     escrow::fire_do_tenure_expiry_for_testing(
-        &mut escrow_handle, escrow_corpus::tenure_ceiling_const(), sc.ctx(),
+        &mut escrow_handle, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
     );
     // Drive auction → idle → retired so claim can run.
     escrow::fire_do_auction_expiry_for_testing(
-        &mut escrow_handle, escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const(),
+        &mut escrow_handle, phases::timestamp(escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const()),
     );
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
 

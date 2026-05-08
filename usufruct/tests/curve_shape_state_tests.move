@@ -145,7 +145,7 @@ fun evaluate_curve_edge_cases_apply_to_every_variant() {
         while (i < len) {
             let case = &cases[i];
             assert_eq!(
-                curve_shape_state::evaluate_curve(shape, case.t, case.t_max),
+                curve_shape_state::height_value(curve_shape_state::evaluate_curve(shape, case.t, case.t_max)),
                 case.expected,
             );
             i = i + 1;
@@ -184,7 +184,7 @@ fun evaluate_curve_dispatch_equivalence_linear() {
     while (i < len) {
         let p = &pairs[i];
         assert_eq!(
-            curve_shape_state::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_linear_for_testing(p.t, p.t_max),
         );
         i = i + 1;
@@ -200,7 +200,7 @@ fun evaluate_curve_dispatch_equivalence_smoothstep() {
     while (i < len) {
         let p = &pairs[i];
         assert_eq!(
-            curve_shape_state::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_smoothstep_for_testing(p.t, p.t_max),
         );
         i = i + 1;
@@ -216,7 +216,7 @@ fun evaluate_curve_dispatch_equivalence_logistic() {
     while (i < len) {
         let p = &pairs[i];
         assert_eq!(
-            curve_shape_state::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_logistic_for_testing(p.t, p.t_max),
         );
         i = i + 1;
@@ -232,7 +232,7 @@ fun evaluate_curve_dispatch_equivalence_power_law() {
     while (i < len) {
         let p = &pairs[i];
         assert_eq!(
-            curve_shape_state::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_power_law_for_testing(p.t, p.t_max, 2, 1),
         );
         i = i + 1;
@@ -248,7 +248,7 @@ fun evaluate_curve_dispatch_equivalence_exponential() {
     while (i < len) {
         let p = &pairs[i];
         assert_eq!(
-            curve_shape_state::evaluate_curve(&shape, p.t, p.t_max),
+            curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_exponential_for_testing(p.t, p.t_max, 2, false),
         );
         i = i + 1;

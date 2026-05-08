@@ -643,7 +643,6 @@ const ETenantCapNotStale:   u64 = 9;
 // === Constants ===
 
 const PROTOCOL_FEE_BPS: u64 = 1_000;
-const BPS_PER_UNIT:     u64 = 10_000;
 
 // === Events ===
 
@@ -728,13 +727,13 @@ public struct AssetReturned has copy, drop {
 // ─── Fee helpers ──────────────────────────────────────────────────────────────
 
 public(package) fun split_fee(amount: u64): (u64, u64) {
-    let fee   = math::mul_div(amount, PROTOCOL_FEE_BPS, BPS_PER_UNIT);
+    let fee   = math::apply_bps(amount, math::bps(PROTOCOL_FEE_BPS));
     let owner = amount - fee;
     (owner, fee)
 }
 
 public(package) fun protocol_fee_bps(): u64 { PROTOCOL_FEE_BPS }
-public(package) fun bps_denominator():  u64 { BPS_PER_UNIT }
+public(package) fun bps_denominator():  u64 { math::bps_denominator() }
 
 // ─── Constructor ──────────────────────────────────────────────────────────────
 
@@ -1558,14 +1557,14 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    boundary: Timestamp,
+    ctx:      &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     match (context) {
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start_ms, retiring, state: TenancyState::Demand { current, pending, handover_expiry: _ } } }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = do_handover(
                 asset, current, pending, phase_start_ms, retiring,
-                &mut owner, &config, escrow_id, fee_inbox_id, boundary_ms, ctx,
+                &mut owner, &config, escrow_id, fee_inbox_id, boundary, ctx,
             );
             AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
@@ -1577,17 +1576,18 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    boundary: Timestamp,
+    ctx:      &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     match (context) {
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start_ms, retiring, state: TenancyState::Occupied { tenant } } }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let (wrapped, last_acq_price, retiring) = do_tenure_expiry(
                 asset, tenant, phase_start_ms, retiring,
-                &mut owner, escrow_id, fee_inbox_id, boundary_ms, ctx,
+                &mut owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
             let raw_asset = asset::unbundle(wrapped);
             let locked = asset::lock(raw_asset);
+            let boundary_ms = phases::timestamp_ms(boundary);
             if (retiring) {
                 event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                 AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
@@ -1603,14 +1603,14 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
 #[test_only]
 public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
-    boundary_ms: u64,
+    boundary: Timestamp,
 ): AssetContext<Asset, CoinType> {
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {
                 WaitingState::AtDutch { last_acq_price, phase_start_ms } =>
-                    AssetContext { asset_state: do_auction_expiry(asset, last_acq_price, phase_start_ms, escrow_id, boundary_ms), owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
+                    AssetContext { asset_state: do_auction_expiry(asset, last_acq_price, phase_start_ms, escrow_id, boundary), owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
                 _ => abort ENotRented,
             }
         },

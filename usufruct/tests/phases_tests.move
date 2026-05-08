@@ -6,7 +6,7 @@ module usufruct::phases_tests;
 
 use std::u64;
 use std::unit_test::assert_eq;
-use usufruct::phases;
+use usufruct::phases::{Self, Timestamp, Duration};
 
 // ─── has_passed ───────────────────────────────────────────────────────────────
 
@@ -42,7 +42,12 @@ fun has_passed_table_and_monotone_in_now() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(phases::has_passed(c.anchor, c.duration, c.now), c.expected);
+        let result = phases::check_boundary(
+            phases::timestamp(c.anchor),
+            phases::duration(c.duration),
+            phases::timestamp(c.now),
+        ).is_crossed();
+        assert_eq!(result, c.expected);
         i = i + 1;
     };
 
@@ -53,7 +58,11 @@ fun has_passed_table_and_monotone_in_now() {
     let mut n: u64 = 100;
     let mut crossed = false;
     while (n <= 200) {
-        let cur = phases::has_passed(100, 50, n);
+        let cur = phases::check_boundary(
+            phases::timestamp(100),
+            phases::duration(50),
+            phases::timestamp(n),
+        ).is_crossed();
         if (crossed) assert!(cur, 0);
         if (cur) crossed = true;
         n = n + 1;
@@ -64,7 +73,11 @@ fun has_passed_table_and_monotone_in_now() {
 #[expected_failure(arithmetic_error, location = usufruct::phases)]
 fun has_passed_overflow_in_anchor_plus_duration_aborts() {
     // anchor + duration overflows u64 → Move aborts arithmetic.
-    phases::has_passed(u64::max_value!(), 1, u64::max_value!());
+    phases::check_boundary(
+        phases::timestamp(u64::max_value!()),
+        phases::duration(1),
+        phases::timestamp(u64::max_value!()),
+    );
 }
 
 // ─── elapsed_since ────────────────────────────────────────────────────────────
@@ -99,7 +112,10 @@ fun elapsed_since_table_and_reciprocal_when_after_start() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        let r = phases::elapsed_since(c.start, c.now);
+        let r = phases::duration_ms(phases::elapsed_since(
+            phases::timestamp(c.start),
+            phases::timestamp(c.now),
+        ));
         assert_eq!(r, c.expected);
         // Reciprocal invariant: when no saturation occurs (now >= start),
         // r + start == now — elapsed_since is information-preserving in
@@ -136,7 +152,11 @@ fun boundary_at_table() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(phases::boundary_at(c.anchor, c.duration), c.expected);
+        let result = phases::timestamp_ms(phases::boundary_at(
+            phases::timestamp(c.anchor),
+            phases::duration(c.duration),
+        ));
+        assert_eq!(result, c.expected);
         i = i + 1;
     };
 }
@@ -146,7 +166,7 @@ fun boundary_at_table() {
 fun boundary_at_overflow_aborts() {
     // u64::MAX + 1 overflows. Pinned: Move's `+` aborts on overflow rather
     // than wrapping; this is the contract `boundary_at` inherits.
-    phases::boundary_at(u64::max_value!(), 1);
+    phases::boundary_at(phases::timestamp(u64::max_value!()), phases::duration(1));
 }
 
 // ─── earliest ─────────────────────────────────────────────────────────────────
@@ -175,10 +195,12 @@ fun earliest_table_and_commutative() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(phases::earliest(c.a, c.b), c.expected);
+        let result   = phases::timestamp_ms(phases::earliest(phases::timestamp(c.a), phases::timestamp(c.b)));
+        let result_r = phases::timestamp_ms(phases::earliest(phases::timestamp(c.b), phases::timestamp(c.a)));
+        assert_eq!(result, c.expected);
         // Commutativity invariant: earliest is symmetric in its arguments.
         // Catches accidentally swapping `min` for a non-symmetric op.
-        assert_eq!(phases::earliest(c.b, c.a), c.expected);
+        assert_eq!(result_r, c.expected);
         i = i + 1;
     };
 }
@@ -220,8 +242,15 @@ fun has_passed_iff_now_ge_boundary_at() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        let bool_view = phases::has_passed(c.anchor, c.duration, c.now);
-        let u64_view  = c.now >= phases::boundary_at(c.anchor, c.duration);
+        let bool_view = phases::check_boundary(
+            phases::timestamp(c.anchor),
+            phases::duration(c.duration),
+            phases::timestamp(c.now),
+        ).is_crossed();
+        let u64_view  = c.now >= phases::timestamp_ms(phases::boundary_at(
+            phases::timestamp(c.anchor),
+            phases::duration(c.duration),
+        ));
         assert_eq!(bool_view, u64_view);
         i = i + 1;
     };

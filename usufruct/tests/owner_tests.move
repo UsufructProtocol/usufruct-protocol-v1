@@ -7,6 +7,7 @@ module usufruct::owner_tests;
 use std::unit_test::assert_eq;
 use sui::{balance, coin, test_scenario};
 use usufruct::{
+    monetary,
     owner,
     owner_cap::{Self, OwnerCap},
 };
@@ -212,7 +213,7 @@ fun take_owner_earnings_then_deposit_round_trip() {
             @0xA1,
             balance::create_for_testing<TEST_COIN>(1_000),
         );
-        let earn = tenant::take_owner_earnings(&mut t, 250);
+        let earn = tenant::take_owner_earnings(&mut t, monetary::stake(250));
         assert_eq!(owner::proj_earnings_value(&earn), 250);
         owner::deposit(&mut o, earn);
         assert_eq!(owner::proj_value(&o), 250);

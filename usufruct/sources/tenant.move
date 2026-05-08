@@ -8,6 +8,7 @@ module usufruct::tenant;
 use sui::{balance::{Self, Balance}, coin};
 use usufruct::{
     fee_message::{Self, FeeShare},
+    monetary::{Self, Stake},
     owner::{Self, OwnerEarnings},
 };
 
@@ -96,10 +97,10 @@ public(package) fun destroy_empty_stake<C>(s: TenantStake<C>) {
 /// for `escrow_id`. Aborts via `balance::split` if `amount > stake`.
 public(package) fun take_fee_share<C>(
     t:         &mut Tenant<C>,
-    amount:    u64,
+    amount:    Stake,
     escrow_id: ID,
 ): FeeShare<C> {
-    let part = balance::split(&mut t.stake.balance, amount);
+    let part = balance::split(&mut t.stake.balance, monetary::stake_mist(amount));
     fee_message::new_share(part, escrow_id)
 }
 
@@ -108,9 +109,9 @@ public(package) fun take_fee_share<C>(
 /// if `amount > stake`.
 public(package) fun take_owner_earnings<C>(
     t:      &mut Tenant<C>,
-    amount: u64,
+    amount: Stake,
 ): OwnerEarnings<C> {
-    let part = balance::split(&mut t.stake.balance, amount);
+    let part = balance::split(&mut t.stake.balance, monetary::stake_mist(amount));
     owner::new_earnings(part)
 }
 

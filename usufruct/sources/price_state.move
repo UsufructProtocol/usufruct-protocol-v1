@@ -9,7 +9,6 @@ use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape_state,
     descent_policy_state,
-    math,
     phases::{Self, Timestamp},
     price_function_state,
 };
@@ -105,11 +104,11 @@ public(package) fun floor_price(
             let t_max    = descent_policy_state::window_ceiling(config::proj_descent(cfg));
             let h        = curve_shape_state::evaluate_curve(
                 config::proj_descent_curve(cfg),
-                phases::duration_ms(elapsed),       // ← temporal → math domain
-                phases::duration_ms(t_max),         // ← temporal → math domain
+                phases::duration_ms(elapsed),   // ← temporal → math domain
+                phases::duration_ms(t_max),     // ← temporal → math domain
             );
             let spread   = *last_acq_price - config::proj_min_rent_price(cfg);
-            let consumed = math::mul_div(spread, h, curve_shape_state::scale());
+            let consumed = curve_shape_state::apply(spread, h);
             *last_acq_price - consumed
         },
     }

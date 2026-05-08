@@ -57,6 +57,11 @@ const EXP_A_NORM_8_NEG: u128 = 999_664_537_372_086_775;
 
 // === Structs ===
 
+/// A normalized curve output in `[0, SCALE]`.
+/// Only constructable by `evaluate_curve` — callers receive it and apply
+/// it to an amount via `apply`, never manipulate the raw value directly.
+public struct CurveHeight has copy, drop { h: u64 }
+
 public enum CurveShapeState has copy, drop, store {
     Linear,
     Smoothstep,
@@ -126,22 +131,36 @@ public(package) fun proj_exponential_alpha_neg(s: &CurveShapeState): Option<bool
 
 // === Package Functions ===
 
-/// Denominator that `evaluate_curve` is normalized to. The result of
-/// `evaluate_curve` is in `[0, SCALE]`; callers that scale a principal by
-/// the curve output (e.g., `compute_used_credit`) divide by this.
+/// Denominator that `CurveHeight` is normalized to. Exposed for SDK
+/// projection and tests; primary usage is through `apply`.
 public(package) fun scale(): u64 { SCALE }
 
-public(package) fun evaluate_curve(shape: &CurveShapeState, t: u64, t_max: u64): u64 {
-    if (t == 0)     return 0;
-    if (t >= t_max) return SCALE;
+/// Raw `u64` value of a `CurveHeight`. For SDK projection and test
+/// assertions — domain code should use `apply` instead.
+public(package) fun height_value(h: CurveHeight): u64 { h.h }
 
-    match (shape) {
-        CurveShapeState::Linear                                => eval_linear(t, t_max),
-        CurveShapeState::Smoothstep                            => eval_smoothstep(t, t_max),
-        CurveShapeState::PowerLaw { alpha_num, alpha_den }     => eval_power_law(t, t_max, *alpha_num, *alpha_den),
-        CurveShapeState::Exponential { alpha_abs, alpha_neg }  => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
-        CurveShapeState::Logistic                              => eval_logistic(t, t_max),
-    }
+/// Evaluate the curve at progress `t` out of `t_max`.
+/// Returns a `CurveHeight` in `[0, SCALE]`.
+/// `t` and `t_max` are generic progress values (e.g. elapsed ms and
+/// window ceiling ms) — this module does not know their domain.
+public(package) fun evaluate_curve(shape: &CurveShapeState, t: u64, t_max: u64): CurveHeight {
+    let h = if (t == 0)     { 0 }
+            else if (t >= t_max) { SCALE }
+            else match (shape) {
+                CurveShapeState::Linear                               => eval_linear(t, t_max),
+                CurveShapeState::Smoothstep                           => eval_smoothstep(t, t_max),
+                CurveShapeState::PowerLaw { alpha_num, alpha_den }    => eval_power_law(t, t_max, *alpha_num, *alpha_den),
+                CurveShapeState::Exponential { alpha_abs, alpha_neg } => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
+                CurveShapeState::Logistic                             => eval_logistic(t, t_max),
+            };
+    CurveHeight { h }
+}
+
+/// Apply a curve height to an amount: `amount × h / SCALE`.
+/// This is the only correct way to use a `CurveHeight` against a value —
+/// it keeps the SCALE denominator encapsulated here where it belongs.
+public(package) fun apply(amount: u64, height: CurveHeight): u64 {
+    math::mul_div(amount, height.h, SCALE)
 }
 
 // === Private Functions ===

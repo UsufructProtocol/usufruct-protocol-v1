@@ -6,7 +6,7 @@ module usufruct::runtime_projection;
 // === Imports ===
 
 use usufruct::{
-    asset::{Self, AssetCustodyOpen},
+    asset::{Self, AssetCustodyOpen, AssetCustodyLocked},
     asset_context_state::{Self as acs, AssetContext},
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
@@ -152,6 +152,11 @@ public fun cap_auth_is_pending(a: &CapAuthorizationState): bool { cap_auth::proj
 public fun cap_auth_is_stale(a: &CapAuthorizationState):   bool { cap_auth::proj_is_stale(a)   }
 
 // === asset ===
+
+// NOTE: AssetCustodyLocked has store only — not directly observable as object
+public fun asset_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID {
+    asset::proj_locked_id(self)
+}
 
 public fun asset_asset_id<U: key + store>(self: &AssetCustodyOpen<U>): ID {
     asset::proj_asset_id(self)

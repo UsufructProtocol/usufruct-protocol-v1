@@ -80,7 +80,7 @@ public struct AssetReceipt {
 
 // ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID { object::id(&self.asset) }
+public(package) fun proj_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID { object::id(&self.asset) }
 
 public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.identity.asset_id }
 public(package) fun proj_escrow_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.identity.escrow_id }

@@ -229,7 +229,7 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): ID {
     match (&e.asset_state) {
-        AssetState::Waiting { waiting }  => asset::locked_id(&waiting.asset),
+        AssetState::Waiting { waiting }  => asset::proj_locked_id(&waiting.asset),
         AssetState::Renting { tenancy }  => asset_id_for_tenancy(tenancy),
     }
 }

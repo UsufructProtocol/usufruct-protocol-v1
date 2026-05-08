@@ -50,9 +50,9 @@ fun rest_returns_min_rent_price_regardless_of_time() {
 #[test]
 fun rest_predicate() {
     let ps = price_state::rest();
-    assert!(price_state::is_rest(&ps),      0);
-    assert!(!price_state::is_ascending(&ps), 1);
-    assert!(!price_state::is_descending(&ps), 2);
+    assert!(price_state::proj_is_rest(&ps),      0);
+    assert!(!price_state::proj_is_ascending(&ps), 1);
+    assert!(!price_state::proj_is_descending(&ps), 2);
 }
 
 // ─── §2. Ascending ────────────────────────────────────────────────────────────
@@ -117,9 +117,9 @@ fun ascending_compound_delta_raises_price() {
 #[test]
 fun ascending_predicate() {
     let ps = price_state::ascending(STAKE);
-    assert!(!price_state::is_rest(&ps),      0);
-    assert!(price_state::is_ascending(&ps),  1);
-    assert!(!price_state::is_descending(&ps), 2);
+    assert!(!price_state::proj_is_rest(&ps),      0);
+    assert!(price_state::proj_is_ascending(&ps),  1);
+    assert!(!price_state::proj_is_descending(&ps), 2);
 }
 
 // ─── §3. Descending ───────────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ fun descending_various_curves_respect_bounds() {
 #[test]
 fun descending_predicate() {
     let ps = price_state::descending(LAST, T0);
-    assert!(!price_state::is_rest(&ps),       0);
-    assert!(!price_state::is_ascending(&ps),  1);
-    assert!(price_state::is_descending(&ps),  2);
+    assert!(!price_state::proj_is_rest(&ps),       0);
+    assert!(!price_state::proj_is_ascending(&ps),  1);
+    assert!(price_state::proj_is_descending(&ps),  2);
 }

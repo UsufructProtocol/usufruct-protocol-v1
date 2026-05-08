@@ -8,6 +8,7 @@ module usufruct::runtime_projection;
 use usufruct::{
     asset::{Self, AssetCustodyOpen},
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
+    price_state::{Self as ps, PriceState},
     cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     credit_context_state::{Self as credit, CreditContext},
@@ -24,6 +25,15 @@ use usufruct::{
 public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
 public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+
+// === price_state ===
+
+public fun price_state_is_rest(s: &PriceState):      bool       { ps::proj_is_rest(s) }
+public fun price_state_is_ascending(s: &PriceState): bool       { ps::proj_is_ascending(s) }
+public fun price_state_is_descending(s: &PriceState): bool      { ps::proj_is_descending(s) }
+public fun price_state_ascending_stake(s: &PriceState): Option<u64>           { ps::proj_ascending_stake(s) }
+public fun price_state_descending_last_acq_price(s: &PriceState): Option<u64> { ps::proj_descending_last_acq_price(s) }
+public fun price_state_descending_phase_start_ms(s: &PriceState): Option<u64> { ps::proj_descending_phase_start_ms(s) }
 
 // === price_function_state ===
 

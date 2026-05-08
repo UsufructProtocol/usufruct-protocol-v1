@@ -47,6 +47,21 @@ public enum PriceState has drop {
 
 // === View Functions ===
 
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_rest(s: &PriceState):      bool { match (s) { PriceState::Rest => true, _ => false } }
+public(package) fun proj_is_ascending(s: &PriceState): bool { match (s) { PriceState::Ascending { .. } => true, _ => false } }
+public(package) fun proj_is_descending(s: &PriceState): bool { match (s) { PriceState::Descending { .. } => true, _ => false } }
+public(package) fun proj_ascending_stake(s: &PriceState): Option<u64> {
+    match (s) { PriceState::Ascending { stake } => option::some(*stake), _ => option::none() }
+}
+public(package) fun proj_descending_last_acq_price(s: &PriceState): Option<u64> {
+    match (s) { PriceState::Descending { last_acq_price, .. } => option::some(*last_acq_price), _ => option::none() }
+}
+public(package) fun proj_descending_phase_start_ms(s: &PriceState): Option<u64> {
+    match (s) { PriceState::Descending { phase_start_ms, .. } => option::some(*phase_start_ms), _ => option::none() }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
@@ -100,10 +115,3 @@ public(package) fun floor_price(
 // === Private Functions ===
 
 // === Test Functions ===
-
-#[test_only]
-public fun is_rest(s: &PriceState):       bool { match (s) { PriceState::Rest       => true, _ => false } }
-#[test_only]
-public fun is_ascending(s: &PriceState):  bool { match (s) { PriceState::Ascending  { .. } => true, _ => false } }
-#[test_only]
-public fun is_descending(s: &PriceState): bool { match (s) { PriceState::Descending { .. } => true, _ => false } }

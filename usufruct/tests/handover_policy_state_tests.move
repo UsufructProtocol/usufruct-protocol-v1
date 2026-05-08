@@ -47,7 +47,7 @@ fun countdown_floor_lt_table() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(handover_policy_state::countdown_floor_lt(&c.policy, c.ceiling), c.expected);
+        assert_eq!(handover_policy_state::countdown_floor_lt(&c.policy, phases::duration(c.ceiling)), c.expected);
         i = i + 1;
     };
 }

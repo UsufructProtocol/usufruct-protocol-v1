@@ -910,7 +910,7 @@ public(package) fun next_pending_from_tenancy<Asset: key + store, CoinType>(
         },
         TenancyState::Occupied { .. } => {
             let start  = t.phase_start;
-            let tenure = phases::duration(config::proj_tenure_ceiling(config));
+            let tenure = config::proj_tenure_ceiling(config);
             if (phases::check_boundary(start, tenure, now).is_crossed()) {
                 return option::some(
                     pending_transition_state::tenure(phases::boundary_at(start, tenure))
@@ -1189,7 +1189,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let current_cap_id = tenant::proj_cap_id(tenant::proj_identity(&tenant));
     let current_addr   = tenant::proj_address(tenant::proj_identity(&tenant));
     let current_stake  = tenant::proj_stake_value(&tenant);
-    let tenure         = phases::duration(config::proj_tenure_ceiling(config));
+    let tenure         = config::proj_tenure_ceiling(config);
     let expiry       = handover_policy_state::expiry_at(
         config::proj_handover(config),
         now,

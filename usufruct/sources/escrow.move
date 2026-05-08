@@ -21,7 +21,7 @@ use usufruct::{
     handover_policy_state,
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
-    phases::{Self, Timestamp},
+    phases,
     price_function_state::{Self, PriceFunctionState},
     protocol_fee_ref::{Self, ProtocolFeeRef},
     retire_policy_state,
@@ -370,7 +370,7 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
     let e = read_context(escrow);
     if (!asset_context_state::proj_is_rented(e)) return option::none();
     let ps = *option::borrow(&asset_context_state::proj_phase_start_ms(e));
-    option::some(phases::timestamp_ms(phases::boundary_at(phases::timestamp(ps), phases::duration(config::proj_tenure_ceiling(asset_context_state::proj_config(e))))))
+    option::some(phases::timestamp_ms(phases::boundary_at(phases::timestamp(ps), config::proj_tenure_ceiling(asset_context_state::proj_config(e)))))
 }
 
 public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
@@ -387,14 +387,14 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     if (!asset_context_state::proj_is_handover_open(e)) return option::none();
     let phase_start = *option::borrow(&asset_context_state::proj_phase_start_ms(e));
     let c           = asset_context_state::proj_config(e);
-    let tenure      = phases::duration(config::proj_tenure_ceiling(c));
+    let tenure      = config::proj_tenure_ceiling(c);
     option::some(phases::timestamp_ms(handover_policy_state::expiry_at(config::proj_handover(c), phases::timestamp(bid_time_ms), phases::timestamp(phase_start), tenure)))
 }
 
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    config::proj_tenure_ceiling(cfg(escrow))
+    phases::duration_ms(config::proj_tenure_ceiling(cfg(escrow)))
 }
 
 public fun integrated_at_ms<Asset: key + store, CoinType>(

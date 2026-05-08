@@ -103,7 +103,7 @@ public(package) fun used_credit(
     let g = curve_shape_state::evaluate_curve(
         config::proj_credit_curve(cfg),
         phases::duration_ms(elapsed),        // ← temporal → math domain
-        config::proj_tenure_ceiling(cfg),
+        phases::duration_ms(config::proj_tenure_ceiling(cfg)),  // ← temporal → math domain
     );
     curve_shape_state::apply(ctx.stake, g)
 }

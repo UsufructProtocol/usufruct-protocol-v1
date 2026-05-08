@@ -25,7 +25,7 @@ const T0:     u64 = 1_000_000;      // arbitrary phase_start_ms
 
 fun base_cfg(descent: bool): config::IntegrationConfig {
     config::new_config(
-        MIN, TENURE,
+        MIN, phases::duration(TENURE),
         handover_policy_state::new_handover_instant(),
         if (descent) { descent_policy_state::new_descent_window(TENURE) }
         else         { descent_policy_state::new_descent_skipped()       },
@@ -84,7 +84,7 @@ fun ascending_fixed_delta_adds_delta() {
     // P: floor > stake (price escalates).
     let delta = MIN;
     let cfg   = config::new_config(
-        MIN, TENURE,
+        MIN, phases::duration(TENURE),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
         retire_policy_state::new_retire_immediate(),
@@ -102,7 +102,7 @@ fun ascending_fixed_delta_adds_delta() {
 fun ascending_compound_delta_raises_price() {
     // CompoundDelta(bps, δ): next_price = stake + bps*stake/10000 + δ > stake.
     let cfg = config::new_config(
-        MIN, TENURE,
+        MIN, phases::duration(TENURE),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
         retire_policy_state::new_retire_immediate(),
@@ -196,7 +196,7 @@ fun descending_various_curves_respect_bounds() {
     while (i < curves.length()) {
         let curve = *curves.borrow(i);
         let cfg = config::new_config(
-            MIN, TENURE,
+            MIN, phases::duration(TENURE),
             handover_policy_state::new_handover_instant(),
             descent_policy_state::new_descent_window(TENURE),
             retire_policy_state::new_retire_immediate(),

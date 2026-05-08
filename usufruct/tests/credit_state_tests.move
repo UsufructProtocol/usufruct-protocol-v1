@@ -25,7 +25,7 @@ const EXPIRY: u64 = T0 + 25_000;    // handover countdown expiry
 
 fun base_cfg(): config::IntegrationConfig {
     config::new_config(
-        MIN, TENURE,
+        MIN, phases::duration(TENURE),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
         retire_policy_state::new_retire_immediate(),
@@ -104,7 +104,7 @@ fun accruing_various_curves_stay_in_bounds() {
     while (i < curves.length()) {
         let curve = *curves.borrow(i);
         let cfg = config::new_config(
-            MIN, TENURE,
+            MIN, phases::duration(TENURE),
             handover_policy_state::new_handover_instant(),
             descent_policy_state::new_descent_skipped(),
             retire_policy_state::new_retire_immediate(),

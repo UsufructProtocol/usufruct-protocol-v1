@@ -150,7 +150,7 @@ public fun credit_expiry_ms(ctx: &CreditContext): Option<u64> { credit::proj_exp
 // === config ===
 
 public fun config_min_rent_price(cfg: &IntegrationConfig): u64                 { config::proj_min_rent_price(cfg) }
-public fun config_tenure_ceiling(cfg: &IntegrationConfig): u64                 { config::proj_tenure_ceiling(cfg) }
+public fun config_tenure_ceiling(cfg: &IntegrationConfig): u64                 { phases::duration_ms(config::proj_tenure_ceiling(cfg)) }
 public fun config_handover(cfg: &IntegrationConfig):       &HandoverPolicyState { config::proj_handover(cfg) }
 public fun config_descent(cfg: &IntegrationConfig):        &DescentPolicyState  { config::proj_descent(cfg) }
 public fun config_retire(cfg: &IntegrationConfig):         &RetirePolicyState   { config::proj_retire(cfg) }

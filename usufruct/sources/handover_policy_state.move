@@ -93,9 +93,9 @@ public(package) fun has_expired(
 /// True iff a `Countdown` variant's `floor_ms` is strictly less than the
 /// given ceiling. Used by `config::new_config` to enforce the cross-field
 /// constraint `Countdown.floor_ms < tenure_ceiling`.
-public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: u64): bool {
+public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: Duration): bool {
     match (policy) {
-        HandoverPolicyState::Countdown { floor_ms }            => *floor_ms < ceiling,
+        HandoverPolicyState::Countdown { floor_ms }            => *floor_ms < phases::duration_ms(ceiling),
         HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => true,
     }
 }

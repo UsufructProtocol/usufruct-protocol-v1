@@ -5,7 +5,11 @@ module usufruct::monetary;
 
 // === Imports ===
 
+use std::u64;
+
 // === Errors ===
+
+const EPriceAddOverflow: u64 = 0;
 
 // === Constants ===
 
@@ -43,7 +47,11 @@ public(package) fun pay(p: Price): Stake { Stake { mist: p.mist } }
 /// reference price for the Dutch auction descent.
 public(package) fun as_reference_price(s: Stake): Price { Price { mist: s.mist } }
 
-public(package) fun price_add(a: Price, b: Price): Price { Price { mist: a.mist + b.mist } }
+public(package) fun price_add(a: Price, b: Price): Price {
+    let sum: u128 = (a.mist as u128) + (b.mist as u128);
+    assert!(sum <= (u64::max_value!() as u128), EPriceAddOverflow);
+    Price { mist: sum as u64 }
+}
 public(package) fun price_sub(a: Price, b: Price): Price { Price { mist: a.mist - b.mist } }
 
 // === Private Functions ===

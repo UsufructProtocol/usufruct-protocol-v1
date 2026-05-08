@@ -122,13 +122,13 @@ fun eval_fixed_delta_golden_vectors_and_strict_increase() {
 }
 
 #[test]
-#[expected_failure(arithmetic_error, location = usufruct::monetary)]
+#[expected_failure(abort_code = monetary::EPriceAddOverflow, location = usufruct::monetary)]
 fun eval_fixed_delta_overflow_max_plus_one_aborts() {
     price_function_state::eval_fixed_delta_for_testing(18_446_744_073_709_551_615, 1); // u64::MAX + 1
 }
 
 #[test]
-#[expected_failure(arithmetic_error, location = usufruct::monetary)]
+#[expected_failure(abort_code = monetary::EPriceAddOverflow, location = usufruct::monetary)]
 fun eval_fixed_delta_overflow_half_each_aborts() {
     // (u64::MAX/2 + 1) + (u64::MAX/2 + 1) = u64::MAX + 1
     price_function_state::eval_fixed_delta_for_testing(9_223_372_036_854_775_808, 9_223_372_036_854_775_808);

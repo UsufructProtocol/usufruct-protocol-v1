@@ -14,7 +14,7 @@ use usufruct::phases;
 #[expected_failure(abort_code = handover_policy_state::EHandoverFloorZero, location = usufruct::handover_policy_state)]
 fun new_handover_countdown_rejects_zero() {
     // Countdown(0) is not allowed; the zero-countdown mode is Instant.
-    handover_policy_state::new_handover_countdown(0);
+    handover_policy_state::new_handover_countdown(phases::duration(0));
 }
 
 // ─── countdown_floor_lt ───────────────────────────────────────────────────────
@@ -35,13 +35,13 @@ fun countdown_floor_lt_table() {
         CountdownFloorLtCase { policy: handover_policy_state::new_handover_fixed_time(),  ceiling: 100, expected: true  },
         CountdownFloorLtCase { policy: handover_policy_state::new_handover_fixed_time(),  ceiling: 0,   expected: true  },
         // Countdown — strict less-than triple at ceiling=100
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(50),  ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(99),  ceiling: 100, expected: true  }, // one below
+        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(50)),  ceiling: 100, expected: true  },
+        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(99)),  ceiling: 100, expected: true  }, // one below
         // Countdown — equality is FixedTime, not the upper edge of Countdown:
         // countdown_floor_lt is strict, so floor==ceiling returns false.
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(100), ceiling: 100, expected: false },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(101), ceiling: 100, expected: false }, // one above
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(150), ceiling: 100, expected: false },
+        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(100)), ceiling: 100, expected: false },
+        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(101)), ceiling: 100, expected: false }, // one above
+        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(150)), ceiling: 100, expected: false },
     ];
     let mut i = 0;
     let len = cases.length();
@@ -85,19 +85,19 @@ fun has_expired_table() {
 
         // Countdown — countdown branch wins: bid=10, floor=20 → countdown boundary=30
         // (phase+tenure=150 is later, so the saturation never engages)
-        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(20), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 29, expected: false },
-        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(20), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 30, expected: true  },
-        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(20), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 31, expected: true  },
+        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(phases::duration(20)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 29, expected: false },
+        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(phases::duration(20)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 30, expected: true  },
+        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(phases::duration(20)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 31, expected: true  },
 
         // Countdown — tenure branch wins: bid=10, floor=200 → countdown=210
         // (phase+tenure=150 is earlier, saturation engages)
-        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(200), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 149, expected: false },
-        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(200), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 150, expected: true  },
+        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(phases::duration(200)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 149, expected: false },
+        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(phases::duration(200)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 150, expected: true  },
 
         // Countdown — both branches collide at the same instant: bid=100, floor=50 → 150
         // = phase+tenure → either branch fires
-        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(50), bid_time: 100, phase_start: 100, tenure_ceiling: 50, now: 149, expected: false },
-        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(50), bid_time: 100, phase_start: 100, tenure_ceiling: 50, now: 150, expected: true  },
+        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(phases::duration(50)), bid_time: 100, phase_start: 100, tenure_ceiling: 50, now: 149, expected: false },
+        HasExpiredCase { policy: handover_policy_state::new_handover_countdown(phases::duration(50)), bid_time: 100, phase_start: 100, tenure_ceiling: 50, now: 150, expected: true  },
     ];
     let mut i = 0;
     let len = cases.length();
@@ -142,11 +142,11 @@ fun expiry_at_table() {
         ExpiryAtCase { policy: handover_policy_state::new_handover_fixed_time(), bid_time: 99999, phase_start: 100, tenure_ceiling: 50, expected: 150 }, // bid_time irrelevant
 
         // Countdown — countdown wins: min(bid+floor=30, phase+tenure=150) = 30
-        ExpiryAtCase { policy: handover_policy_state::new_handover_countdown(20),  bid_time: 10,  phase_start: 100, tenure_ceiling: 50, expected: 30  },
+        ExpiryAtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(20)),  bid_time: 10,  phase_start: 100, tenure_ceiling: 50, expected: 30  },
         // Countdown — tenure wins: min(bid+floor=210, phase+tenure=150) = 150
-        ExpiryAtCase { policy: handover_policy_state::new_handover_countdown(200), bid_time: 10,  phase_start: 100, tenure_ceiling: 50, expected: 150 },
+        ExpiryAtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(200)), bid_time: 10,  phase_start: 100, tenure_ceiling: 50, expected: 150 },
         // Countdown — equality: min(150, 150) = 150 (both branches resolve identically)
-        ExpiryAtCase { policy: handover_policy_state::new_handover_countdown(50),  bid_time: 100, phase_start: 100, tenure_ceiling: 50, expected: 150 },
+        ExpiryAtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(50)),  bid_time: 100, phase_start: 100, tenure_ceiling: 50, expected: 150 },
     ];
     let mut i = 0;
     let len = cases.length();
@@ -195,18 +195,18 @@ fun has_expired_iff_now_ge_expiry_at() {
         HoSisterCase { policy: handover_policy_state::new_handover_fixed_time(), bid_time: 0, phase_start: 100, tenure_ceiling: 50, now: 151 },
 
         // Countdown countdown-wins — boundary triple at 30
-        HoSisterCase { policy: handover_policy_state::new_handover_countdown(20), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 29 },
-        HoSisterCase { policy: handover_policy_state::new_handover_countdown(20), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 30 },
-        HoSisterCase { policy: handover_policy_state::new_handover_countdown(20), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 31 },
+        HoSisterCase { policy: handover_policy_state::new_handover_countdown(phases::duration(20)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 29 },
+        HoSisterCase { policy: handover_policy_state::new_handover_countdown(phases::duration(20)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 30 },
+        HoSisterCase { policy: handover_policy_state::new_handover_countdown(phases::duration(20)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 31 },
 
         // Countdown tenure-wins — boundary triple at 150
-        HoSisterCase { policy: handover_policy_state::new_handover_countdown(200), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 149 },
-        HoSisterCase { policy: handover_policy_state::new_handover_countdown(200), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 150 },
-        HoSisterCase { policy: handover_policy_state::new_handover_countdown(200), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 151 },
+        HoSisterCase { policy: handover_policy_state::new_handover_countdown(phases::duration(200)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 149 },
+        HoSisterCase { policy: handover_policy_state::new_handover_countdown(phases::duration(200)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 150 },
+        HoSisterCase { policy: handover_policy_state::new_handover_countdown(phases::duration(200)), bid_time: 10, phase_start: 100, tenure_ceiling: 50, now: 151 },
 
         // Countdown equality — boundary at 150 (both sub-boundaries collide)
-        HoSisterCase { policy: handover_policy_state::new_handover_countdown(50), bid_time: 100, phase_start: 100, tenure_ceiling: 50, now: 149 },
-        HoSisterCase { policy: handover_policy_state::new_handover_countdown(50), bid_time: 100, phase_start: 100, tenure_ceiling: 50, now: 150 },
+        HoSisterCase { policy: handover_policy_state::new_handover_countdown(phases::duration(50)), bid_time: 100, phase_start: 100, tenure_ceiling: 50, now: 149 },
+        HoSisterCase { policy: handover_policy_state::new_handover_countdown(phases::duration(50)), bid_time: 100, phase_start: 100, tenure_ceiling: 50, now: 150 },
     ];
     let mut i = 0;
     let len = cases.length();
@@ -240,7 +240,7 @@ fun has_expired_monotone_in_now_under_countdown() {
     // both sub-boundaries (countdown=30, tenure=150). Catches comparator
     // inversion and the rare bug where the disjunction is mis-encoded
     // (e.g., `&&` instead of `||`).
-    let p = handover_policy_state::new_handover_countdown(20);
+    let p = handover_policy_state::new_handover_countdown(phases::duration(20));
     let bid_time:    u64 = 10;
     let phase_start: u64 = 100;
     let tenure:      u64 = 50;

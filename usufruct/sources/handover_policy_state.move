@@ -17,7 +17,7 @@ const EHandoverFloorZero: u64 = 0;
 
 public enum HandoverPolicyState has copy, drop, store {
     Instant,
-    Countdown { floor_ms: u64 },
+    Countdown { floor: Duration },
     FixedTime,
 }
 
@@ -30,9 +30,9 @@ public enum HandoverPolicyState has copy, drop, store {
 public fun new_handover_instant():    HandoverPolicyState { HandoverPolicyState::Instant }
 public fun new_handover_fixed_time(): HandoverPolicyState { HandoverPolicyState::FixedTime }
 
-public fun new_handover_countdown(floor_ms: u64): HandoverPolicyState {
-    assert!(floor_ms > 0, EHandoverFloorZero);
-    HandoverPolicyState::Countdown { floor_ms }
+public fun new_handover_countdown(floor: Duration): HandoverPolicyState {
+    assert!(phases::duration_ms(floor) > 0, EHandoverFloorZero);
+    HandoverPolicyState::Countdown { floor }
 }
 
 // === View Functions ===
@@ -50,7 +50,7 @@ public(package) fun proj_is_countdown(policy: &HandoverPolicyState): bool {
 }
 public(package) fun proj_countdown_floor_ms(policy: &HandoverPolicyState): Option<Duration> {
     match (policy) {
-        HandoverPolicyState::Countdown { floor_ms } => option::some(phases::duration(*floor_ms)),
+        HandoverPolicyState::Countdown { floor } => option::some(*floor),
         HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => option::none(),
     }
 }
@@ -78,10 +78,10 @@ public(package) fun has_expired(
             phases::check_boundary(phase_start, tenure_ceiling, now),
         // Crosses when either boundary is reached; equivalent to
         // `check_boundary(min(A,B), zero(), now)` by min identity.
-        HandoverPolicyState::Countdown { floor_ms } =>
+        HandoverPolicyState::Countdown { floor } =>
             phases::check_boundary(
                 phases::earliest(
-                    phases::boundary_at(bid_time,    phases::duration(*floor_ms)),
+                    phases::boundary_at(bid_time,    *floor),
                     phases::boundary_at(phase_start, tenure_ceiling),
                 ),
                 phases::zero(),
@@ -95,7 +95,7 @@ public(package) fun has_expired(
 /// constraint `Countdown.floor_ms < tenure_ceiling`.
 public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: Duration): bool {
     match (policy) {
-        HandoverPolicyState::Countdown { floor_ms }            => *floor_ms < phases::duration_ms(ceiling),
+        HandoverPolicyState::Countdown { floor }            => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
         HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => true,
     }
 }
@@ -110,9 +110,9 @@ public(package) fun expiry_at(
     match (policy) {
         HandoverPolicyState::Instant   => bid_time,
         HandoverPolicyState::FixedTime => phases::boundary_at(phase_start, tenure_ceiling),
-        HandoverPolicyState::Countdown { floor_ms } =>
+        HandoverPolicyState::Countdown { floor } =>
             phases::earliest(
-                phases::boundary_at(bid_time,    phases::duration(*floor_ms)),
+                phases::boundary_at(bid_time,    *floor),
                 phases::boundary_at(phase_start, tenure_ceiling),
             ),
     }

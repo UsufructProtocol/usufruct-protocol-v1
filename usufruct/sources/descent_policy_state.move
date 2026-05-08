@@ -18,7 +18,7 @@ const EDescentSkippedNoWindow: u64 = 1;
 
 public enum DescentPolicyState has copy, drop, store {
     Skipped,
-    Window { ceiling_ms: u64 },
+    Window { ceiling: Duration },
 }
 
 // === Events ===
@@ -29,9 +29,9 @@ public enum DescentPolicyState has copy, drop, store {
 
 public fun new_descent_skipped(): DescentPolicyState { DescentPolicyState::Skipped }
 
-public fun new_descent_window(ceiling_ms: u64): DescentPolicyState {
-    assert!(ceiling_ms > 0, EDescentCeilingZero);
-    DescentPolicyState::Window { ceiling_ms }
+public fun new_descent_window(ceiling: Duration): DescentPolicyState {
+    assert!(phases::duration_ms(ceiling) > 0, EDescentCeilingZero);
+    DescentPolicyState::Window { ceiling }
 }
 
 // === View Functions ===
@@ -46,7 +46,7 @@ public(package) fun proj_is_window(policy: &DescentPolicyState): bool {
 }
 public(package) fun proj_window_ceiling(policy: &DescentPolicyState): Option<Duration> {
     match (policy) {
-        DescentPolicyState::Window { ceiling_ms } => option::some(phases::duration(*ceiling_ms)),
+        DescentPolicyState::Window { ceiling } => option::some(*ceiling),
         DescentPolicyState::Skipped               => option::none(),
     }
 }
@@ -66,8 +66,8 @@ public(package) fun has_expired(
     match (policy) {
         DescentPolicyState::Skipped =>
             phases::check_boundary(phase_start, phases::zero(), now),
-        DescentPolicyState::Window { ceiling_ms } =>
-            phases::check_boundary(phase_start, phases::duration(*ceiling_ms), now),
+        DescentPolicyState::Window { ceiling } =>
+            phases::check_boundary(phase_start, *ceiling, now),
     }
 }
 
@@ -79,8 +79,8 @@ public(package) fun expiry_at(
 ): Timestamp {
     match (policy) {
         DescentPolicyState::Skipped               => phase_start,
-        DescentPolicyState::Window { ceiling_ms } =>
-            phases::boundary_at(phase_start, phases::duration(*ceiling_ms)),
+        DescentPolicyState::Window { ceiling } =>
+            phases::boundary_at(phase_start, *ceiling),
     }
 }
 
@@ -88,7 +88,7 @@ public(package) fun expiry_at(
 /// ask for this are only reachable under `Window`.
 public(package) fun window_ceiling(policy: &DescentPolicyState): Duration {
     match (policy) {
-        DescentPolicyState::Window { ceiling_ms } => phases::duration(*ceiling_ms),
+        DescentPolicyState::Window { ceiling } => *ceiling,
         DescentPolicyState::Skipped               => abort EDescentSkippedNoWindow,
     }
 }

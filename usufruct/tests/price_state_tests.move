@@ -27,7 +27,7 @@ fun base_cfg(descent: bool): config::IntegrationConfig {
     config::new_config(
         MIN, phases::duration(TENURE),
         handover_policy_state::new_handover_instant(),
-        if (descent) { descent_policy_state::new_descent_window(TENURE) }
+        if (descent) { descent_policy_state::new_descent_window(phases::duration(TENURE)) }
         else         { descent_policy_state::new_descent_skipped()       },
         retire_policy_state::new_retire_immediate(),
         curve_shape_state::new_linear(),
@@ -198,7 +198,7 @@ fun descending_various_curves_respect_bounds() {
         let cfg = config::new_config(
             MIN, phases::duration(TENURE),
             handover_policy_state::new_handover_instant(),
-            descent_policy_state::new_descent_window(TENURE),
+            descent_policy_state::new_descent_window(phases::duration(TENURE)),
             retire_policy_state::new_retire_immediate(),
             curve_shape_state::new_linear(), // credit_curve unused here
             curve,

@@ -216,7 +216,7 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64 {
 
 fun make_handover(c: u8): HandoverPolicyState {
     if (c == 0)      { handover_policy_state::new_handover_instant() }
-    else if (c == 1) { handover_policy_state::new_handover_countdown(HANDOVER_COUNTDOWN_C1) }
+    else if (c == 1) { handover_policy_state::new_handover_countdown(phases::duration(HANDOVER_COUNTDOWN_C1)) }
     else             { handover_policy_state::new_handover_fixed_time() }
 }
 
@@ -237,12 +237,12 @@ fun make_curve(e: u8): CurveShapeState {
 
 fun make_descent(h: u8): DescentPolicyState {
     if (h == 0) { descent_policy_state::new_descent_skipped() }
-    else        { descent_policy_state::new_descent_window(DESCENT_WINDOW_H1) }
+    else        { descent_policy_state::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
 }
 
 fun make_retire(f: u8): RetirePolicyState {
     if (f == 0) { retire_policy_state::new_retire_immediate() }
-    else        { retire_policy_state::new_retire_deferred(RETIRE_DEFERRED_F1) }
+    else        { retire_policy_state::new_retire_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
 }
 
 // --- Filter helpers (called after axis validation in filter_*) ---

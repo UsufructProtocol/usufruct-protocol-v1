@@ -32,8 +32,8 @@ const V2_HANDOVER_FLOOR:  u64 = 3_600_000;       // → Countdown
 const V2_DESCENT_CEILING: u64 = 43_200_000;      // → Window
 // V2_RETIRE_FLOOR == 0 (Immediate) inlined below where used.
 
-fun v2_handover(): HandoverPolicyState { handover_policy_state::new_handover_countdown(V2_HANDOVER_FLOOR) }
-fun v2_descent():  DescentPolicyState  { descent_policy_state::new_descent_window(V2_DESCENT_CEILING) }
+fun v2_handover(): HandoverPolicyState { handover_policy_state::new_handover_countdown(phases::duration(V2_HANDOVER_FLOOR)) }
+fun v2_descent():  DescentPolicyState  { descent_policy_state::new_descent_window(phases::duration(V2_DESCENT_CEILING)) }
 fun v2_retire():   RetirePolicyState   { retire_policy_state::new_retire_immediate() }
 
 fun v2_config(): IntegrationConfig {
@@ -74,7 +74,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             min_rent_price: 1,
             tenure_ceiling: 1,
             handover:       handover_policy_state::new_handover_instant(),
-            descent:        descent_policy_state::new_descent_window(1),
+            descent:        descent_policy_state::new_descent_window(phases::duration(1)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
@@ -84,8 +84,8 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1_000_000,
             tenure_ceiling: 86_400_000,
-            handover:       handover_policy_state::new_handover_countdown(3_600_000),
-            descent:        descent_policy_state::new_descent_window(43_200_000),
+            handover:       handover_policy_state::new_handover_countdown(phases::duration(3_600_000)),
+            descent:        descent_policy_state::new_descent_window(phases::duration(43_200_000)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
@@ -95,9 +95,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 100,
             tenure_ceiling: 10_000,
-            handover:       handover_policy_state::new_handover_countdown(5_000),
-            descent:        descent_policy_state::new_descent_window(10_000),
-            retire:         retire_policy_state::new_retire_deferred(7_200_000),
+            handover:       handover_policy_state::new_handover_countdown(phases::duration(5_000)),
+            descent:        descent_policy_state::new_descent_window(phases::duration(10_000)),
+            retire:         retire_policy_state::new_retire_deferred(phases::duration(7_200_000)),
             credit_curve:   curve_shape_state::new_smoothstep(),
             descent_curve:  curve_shape_state::new_smoothstep(),
             price_function_state: price_function_state::new_fixed_delta(10),
@@ -107,7 +107,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             min_rent_price: 50,
             tenure_ceiling: 100_000,
             handover:       handover_policy_state::new_handover_instant(),
-            descent:        descent_policy_state::new_descent_window(50_000),
+            descent:        descent_policy_state::new_descent_window(phases::duration(50_000)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_power_law(1, 2),
             descent_curve:  curve_shape_state::new_linear(),
@@ -117,8 +117,8 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 18_446_744_073_709_551_615,
             tenure_ceiling: 1_000,
-            handover:       handover_policy_state::new_handover_countdown(500),
-            descent:        descent_policy_state::new_descent_window(1_000),
+            handover:       handover_policy_state::new_handover_countdown(phases::duration(500)),
+            descent:        descent_policy_state::new_descent_window(phases::duration(1_000)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_exponential(3, false),
             descent_curve:  curve_shape_state::new_exponential(3, true),
@@ -128,9 +128,9 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 18_446_744_073_709_551_615,
-            handover:       handover_policy_state::new_handover_countdown(1),
-            descent:        descent_policy_state::new_descent_window(18_446_744_073_709_551_615),
-            retire:         retire_policy_state::new_retire_deferred(18_446_744_073_709_551_615),
+            handover:       handover_policy_state::new_handover_countdown(phases::duration(1)),
+            descent:        descent_policy_state::new_descent_window(phases::duration(18_446_744_073_709_551_615)),
+            retire:         retire_policy_state::new_retire_deferred(phases::duration(18_446_744_073_709_551_615)),
             credit_curve:   curve_shape_state::new_logistic(),
             descent_curve:  curve_shape_state::new_logistic(),
             price_function_state: price_function_state::new_fixed_delta(1),
@@ -139,8 +139,8 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1_000,
             tenure_ceiling: 86_400_000,
-            handover:       handover_policy_state::new_handover_countdown(3_600_000),
-            descent:        descent_policy_state::new_descent_window(43_200_000),
+            handover:       handover_policy_state::new_handover_countdown(phases::duration(3_600_000)),
+            descent:        descent_policy_state::new_descent_window(phases::duration(43_200_000)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
@@ -152,7 +152,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             min_rent_price: 1,
             tenure_ceiling: 1_000,
             handover:       handover_policy_state::new_handover_fixed_time(),
-            descent:        descent_policy_state::new_descent_window(1),
+            descent:        descent_policy_state::new_descent_window(phases::duration(1)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
@@ -163,7 +163,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             min_rent_price: 1,
             tenure_ceiling: 18_446_744_073_709_551_615,
             handover:       handover_policy_state::new_handover_fixed_time(),
-            descent:        descent_policy_state::new_descent_window(1),
+            descent:        descent_policy_state::new_descent_window(phases::duration(1)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
@@ -176,7 +176,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             min_rent_price: 1,
             tenure_ceiling: 1_000,
             handover:       handover_policy_state::new_handover_instant(),
-            descent:        descent_policy_state::new_descent_window(1),
+            descent:        descent_policy_state::new_descent_window(phases::duration(1)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_power_law(2, 4),
             descent_curve:  curve_shape_state::new_power_law(6, 3),
@@ -186,8 +186,8 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: 1_000,
-            handover:       handover_policy_state::new_handover_countdown(500),
-            descent:        descent_policy_state::new_descent_window(1),
+            handover:       handover_policy_state::new_handover_countdown(phases::duration(500)),
+            descent:        descent_policy_state::new_descent_window(phases::duration(1)),
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_exponential(1, false),
             descent_curve:  curve_shape_state::new_exponential(8, true),
@@ -288,7 +288,7 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
 
 #[test]
 fun getter_roundtrip_r4_descent_window_one() {
-    let d   = descent_policy_state::new_descent_window(1);
+    let d   = descent_policy_state::new_descent_window(phases::duration(1));
     let cfg = config::new_config(
         V2_MIN_RENT_PRICE, phases::duration(V2_TENURE_CEILING), v2_handover(),
         d,
@@ -315,7 +315,7 @@ fun getter_roundtrip_r4b_descent_skipped() {
 
 #[test]
 fun getter_roundtrip_r5_retire_deferred_max() {
-    let r   = retire_policy_state::new_retire_deferred(18_446_744_073_709_551_615);
+    let r   = retire_policy_state::new_retire_deferred(phases::duration(18_446_744_073_709_551_615));
     let cfg = config::new_config(
         V2_MIN_RENT_PRICE, phases::duration(V2_TENURE_CEILING), v2_handover(), v2_descent(),
         r,
@@ -394,7 +394,7 @@ fun new_config_rejects_countdown_floor_gt_tenure_ceiling() {
     config::new_config(
         V2_MIN_RENT_PRICE,
         phases::duration(50),
-        handover_policy_state::new_handover_countdown(100),
+        handover_policy_state::new_handover_countdown(phases::duration(100)),
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
@@ -408,7 +408,7 @@ fun new_config_rejects_countdown_floor_tenure_ceiling_plus_one() {
     config::new_config(
         V2_MIN_RENT_PRICE,
         phases::duration(1_000),
-        handover_policy_state::new_handover_countdown(1_001),
+        handover_policy_state::new_handover_countdown(phases::duration(1_001)),
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
@@ -422,7 +422,7 @@ fun new_config_rejects_countdown_floor_u64_max_tenure_ceiling_max_minus_one() {
     config::new_config(
         V2_MIN_RENT_PRICE,
         phases::duration(18_446_744_073_709_551_614), // u64::MAX - 1
-        handover_policy_state::new_handover_countdown(18_446_744_073_709_551_615), // u64::MAX
+        handover_policy_state::new_handover_countdown(phases::duration(18_446_744_073_709_551_615)), // u64::MAX
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
@@ -438,7 +438,7 @@ fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
     config::new_config(
         V2_MIN_RENT_PRICE,
         phases::duration(1_000),
-        handover_policy_state::new_handover_countdown(1_000),
+        handover_policy_state::new_handover_countdown(phases::duration(1_000)),
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),

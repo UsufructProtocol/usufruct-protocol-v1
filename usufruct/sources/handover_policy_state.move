@@ -5,11 +5,13 @@ module usufruct::handover_policy_state;
 
 // === Imports ===
 
-use usufruct::phases;
+use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 // === Errors ===
 
 const EHandoverFloorZero: u64 = 0;
+
+// === Constants ===
 
 // === Structs ===
 
@@ -18,6 +20,10 @@ public enum HandoverPolicyState has copy, drop, store {
     Countdown { floor_ms: u64 },
     FixedTime,
 }
+
+// === Events ===
+
+// === Method Aliases ===
 
 // === Public Functions ===
 
@@ -49,45 +55,44 @@ public(package) fun proj_countdown_floor_ms(policy: &HandoverPolicyState): Optio
     }
 }
 
+// === Admin Functions ===
+
 // === Package Functions ===
 
-/// True iff the handover countdown has expired — the protocol should
-/// finalize the pending bid.
-///   - Instant   collapses to true (no countdown to wait).
-///   - FixedTime expires when `phase_start_ms + tenure_ceiling` is
-///               reached.
-///   - Countdown expires when either the countdown floor elapses
-///               since `bid_time_ms`, or the tenure ceiling is
-///               reached — whichever comes first. The saturation
-///               rule of spec §5.1, expressed as a disjunction:
-///               `clock >= min(A, B)  ⇔  clock >= A  ∨  clock >= B`.
+/// Whether the handover countdown has expired — the pending bid should finalize.
+///   - Instant   fires at `bid_time` (zero countdown).
+///   - FixedTime fires at `phase_start + tenure_ceiling`.
+///   - Countdown fires at `min(bid_time + floor, phase_start + tenure_ceiling)` —
+///               whichever of the two boundaries is crossed first.
 public(package) fun has_expired(
     policy:         &HandoverPolicyState,
-    bid_time_ms:    u64,
-    phase_start_ms: u64,
-    tenure_ceiling: u64,
-    now_ms:         u64,
-): bool {
+    bid_time:       Timestamp,
+    phase_start:    Timestamp,
+    tenure_ceiling: Duration,
+    now:            Timestamp,
+): Boundary {
     match (policy) {
-        // Instant fires from `bid_time_ms` onward: zero countdown means
-        // the gate opens at the moment of the bid, not vacuously before.
-        // Defensive monotonicity — preserves the sister identity
-        // `has_expired ⇔ now >= expiry_at` unconditionally (Instant's
-        // expiry_at is bid_time_ms). In production, clock-monotone makes
-        // this equivalent to `=> true`.
-        HandoverPolicyState::Instant   => phases::has_passed(bid_time_ms,    0,              now_ms),
-        HandoverPolicyState::FixedTime => phases::has_passed(phase_start_ms, tenure_ceiling, now_ms),
+        HandoverPolicyState::Instant   =>
+            phases::check_boundary(bid_time, phases::zero(), now),
+        HandoverPolicyState::FixedTime =>
+            phases::check_boundary(phase_start, tenure_ceiling, now),
+        // Crosses when either boundary is reached; equivalent to
+        // `check_boundary(min(A,B), zero(), now)` by min identity.
         HandoverPolicyState::Countdown { floor_ms } =>
-            phases::has_passed(bid_time_ms,    *floor_ms,      now_ms) ||
-            phases::has_passed(phase_start_ms, tenure_ceiling, now_ms),
+            phases::check_boundary(
+                phases::earliest(
+                    phases::boundary_at(bid_time,    phases::duration(*floor_ms)),
+                    phases::boundary_at(phase_start, tenure_ceiling),
+                ),
+                phases::zero(),
+                now,
+            ),
     }
 }
 
-/// True iff a `Countdown` variant's `floor_ms` is strictly less than
-/// the given ceiling. `Instant` and `FixedTime` carry no floor and
-/// satisfy the predicate vacuously. Used by `config::new_config` to
-/// enforce the cross-field constraint `Countdown.floor_ms <
-/// tenure_ceiling` (equality is the FixedTime variant).
+/// True iff a `Countdown` variant's `floor_ms` is strictly less than the
+/// given ceiling. Used by `config::new_config` to enforce the cross-field
+/// constraint `Countdown.floor_ms < tenure_ceiling`.
 public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: u64): bool {
     match (policy) {
         HandoverPolicyState::Countdown { floor_ms }            => *floor_ms < ceiling,
@@ -95,29 +100,24 @@ public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: u6
     }
 }
 
-/// Canonical handover boundary timestamp — the moment at which the
-/// pending bid finalizes. Sister view of `has_expired`: the bool
-/// dispatcher answers "did we cross the boundary?", this one names
-/// the boundary itself for downstream consumers (credit clamp, event
-/// payload, `do_handover` cascade).
-///
-/// Saturation rule (spec §5.1): Countdown clamps to the tenure
-/// boundary via `min`; FixedTime is the boundary itself; Instant
-/// collapses to `bid_time_ms` (boundary trivially reached, gate fires
-/// on the next APT iteration).
+/// Canonical handover boundary timestamp — the moment the pending bid finalizes.
 public(package) fun expiry_at(
     policy:         &HandoverPolicyState,
-    bid_time_ms:    u64,
-    phase_start_ms: u64,
-    tenure_ceiling: u64,
-): u64 {
+    bid_time:       Timestamp,
+    phase_start:    Timestamp,
+    tenure_ceiling: Duration,
+): Timestamp {
     match (policy) {
-        HandoverPolicyState::Instant   => bid_time_ms,
-        HandoverPolicyState::FixedTime => phases::boundary_at(phase_start_ms, tenure_ceiling),
+        HandoverPolicyState::Instant   => bid_time,
+        HandoverPolicyState::FixedTime => phases::boundary_at(phase_start, tenure_ceiling),
         HandoverPolicyState::Countdown { floor_ms } =>
             phases::earliest(
-                phases::boundary_at(bid_time_ms,    *floor_ms),
-                phases::boundary_at(phase_start_ms, tenure_ceiling),
+                phases::boundary_at(bid_time,    phases::duration(*floor_ms)),
+                phases::boundary_at(phase_start, tenure_ceiling),
             ),
     }
 }
+
+// === Private Functions ===
+
+// === Test Functions ===

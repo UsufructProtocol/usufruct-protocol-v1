@@ -5,11 +5,13 @@ module usufruct::retire_policy_state;
 
 // === Imports ===
 
-use usufruct::phases;
+use usufruct::phases::{Self, Timestamp, Boundary};
 
 // === Errors ===
 
 const ERetireFloorZero: u64 = 0;
+
+// === Constants ===
 
 // === Structs ===
 
@@ -17,6 +19,10 @@ public enum RetirePolicyState has copy, drop, store {
     Immediate,
     Deferred { floor_ms: u64 },
 }
+
+// === Events ===
+
+// === Method Aliases ===
 
 // === Public Functions ===
 
@@ -44,39 +50,35 @@ public(package) fun proj_floor_ms(policy: &RetirePolicyState): Option<u64> {
     }
 }
 
+// === Admin Functions ===
+
 // === Package Functions ===
 
 /// Absolute timestamp at which `retire()` becomes available.
-///   Immediate             → integrated_at_ms (unlocked from creation)
-///   Deferred { floor_ms } → integrated_at_ms + floor_ms
-public(package) fun unlock_at_ms(
-    policy:           &RetirePolicyState,
-    integrated_at_ms: u64,
-): u64 {
+public(package) fun unlock_at(
+    policy: &RetirePolicyState,
+    at:     Timestamp,
+): Timestamp {
     match (policy) {
-        RetirePolicyState::Immediate             => phases::boundary_at(integrated_at_ms, 0),
-        RetirePolicyState::Deferred { floor_ms } => phases::boundary_at(integrated_at_ms, *floor_ms),
+        RetirePolicyState::Immediate             => phases::boundary_at(at, phases::zero()),
+        RetirePolicyState::Deferred { floor_ms } => phases::boundary_at(at, phases::duration(*floor_ms)),
     }
 }
 
-/// True iff `retire()` may proceed.
-///   - Immediate is always unlocked.
-///   - Deferred unlocks when `floor_ms` elapses since
-///     `integrated_at_ms`.
+/// Whether `retire()` may proceed.
 public(package) fun is_unlocked(
-    policy:           &RetirePolicyState,
-    integrated_at_ms: u64,
-    now_ms:           u64,
-): bool {
+    policy: &RetirePolicyState,
+    at:     Timestamp,
+    now:    Timestamp,
+): Boundary {
     match (policy) {
-        // Immediate unlocks from `integrated_at_ms` onward: zero floor
-        // means the gate opens at integration, not vacuously before.
-        // Defensive monotonicity — every variant gates through the time
-        // layer (`phases::has_passed`); none are vacuous. In production,
-        // clock-monotone makes this equivalent to `=> true`.
         RetirePolicyState::Immediate             =>
-            phases::has_passed(integrated_at_ms, 0, now_ms),
+            phases::check_boundary(at, phases::zero(), now),
         RetirePolicyState::Deferred { floor_ms } =>
-            phases::has_passed(integrated_at_ms, *floor_ms, now_ms),
+            phases::check_boundary(at, phases::duration(*floor_ms), now),
     }
 }
+
+// === Private Functions ===
+
+// === Test Functions ===

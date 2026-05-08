@@ -10,7 +10,7 @@ use usufruct::{
     curve_shape_state,
     descent_policy_state,
     math,
-    phases,
+    phases::{Self, Timestamp},
     price_function_state,
 };
 
@@ -36,7 +36,7 @@ use usufruct::{
 public enum PriceState has drop {
     Rest,
     Ascending  { stake: u64 },
-    Descending { last_acq_price: u64, phase_start_ms: u64 },
+    Descending { last_acq_price: u64, phase_start: Timestamp },
 }
 
 // === Events ===
@@ -59,7 +59,7 @@ public(package) fun proj_descending_last_acq_price(s: &PriceState): Option<u64> 
     match (s) { PriceState::Descending { last_acq_price, .. } => option::some(*last_acq_price), _ => option::none() }
 }
 public(package) fun proj_descending_phase_start_ms(s: &PriceState): Option<u64> {
-    match (s) { PriceState::Descending { phase_start_ms, .. } => option::some(*phase_start_ms), _ => option::none() }
+    match (s) { PriceState::Descending { phase_start, .. } => option::some(phases::timestamp_ms(*phase_start)), _ => option::none() }
 }
 
 // === Admin Functions ===
@@ -77,10 +77,9 @@ public(package) fun ascending(stake: u64): PriceState {
 }
 
 /// Construct `Descending` — Dutch auction in progress.
-/// `last_acq_price` seeds the descent; `phase_start_ms` anchors the
-/// temporal decay.
-public(package) fun descending(last_acq_price: u64, phase_start_ms: u64): PriceState {
-    PriceState::Descending { last_acq_price, phase_start_ms }
+/// `last_acq_price` seeds the descent; `phase_start` anchors the temporal decay.
+public(package) fun descending(last_acq_price: u64, phase_start: Timestamp): PriceState {
+    PriceState::Descending { last_acq_price, phase_start }
 }
 
 /// Floor price a bidder must meet given the current pricing regime.
@@ -91,20 +90,24 @@ public(package) fun descending(last_acq_price: u64, phase_start_ms: u64): PriceS
 ///                  along `descent_curve` over the descent window;
 ///                  saturates at `min_rent_price` when window elapses.
 ///
-/// `timestamp_ms` is consumed only in the `Descending` branch.
+/// `now` is consumed only in the `Descending` branch.
 public(package) fun floor_price(
-    state:        &PriceState,
-    cfg:          &IntegrationConfig,
-    timestamp_ms: u64,
+    state: &PriceState,
+    cfg:   &IntegrationConfig,
+    now:   Timestamp,
 ): u64 {
     match (state) {
         PriceState::Rest => config::proj_min_rent_price(cfg),
         PriceState::Ascending { stake } =>
             price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg), *stake),
-        PriceState::Descending { last_acq_price, phase_start_ms } => {
-            let elapsed  = phases::elapsed_since(*phase_start_ms, timestamp_ms);
+        PriceState::Descending { last_acq_price, phase_start } => {
+            let elapsed  = phases::elapsed_since(*phase_start, now);
             let t_max    = descent_policy_state::window_ceiling(config::proj_descent(cfg));
-            let h        = curve_shape_state::evaluate_curve(config::proj_descent_curve(cfg), elapsed, t_max);
+            let h        = curve_shape_state::evaluate_curve(
+                config::proj_descent_curve(cfg),
+                phases::duration_ms(elapsed),       // ← temporal → math domain
+                phases::duration_ms(t_max),         // ← temporal → math domain
+            );
             let spread   = *last_acq_price - config::proj_min_rent_price(cfg);
             let consumed = math::mul_div(spread, h, curve_shape_state::scale());
             *last_acq_price - consumed

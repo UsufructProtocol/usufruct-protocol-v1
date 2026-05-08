@@ -21,7 +21,7 @@ use usufruct::{
     handover_policy_state,
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
-    phases,
+    phases::{Self, Timestamp},
     price_function_state::{Self, PriceFunctionState},
     protocol_fee_ref::{Self, ProtocolFeeRef},
     retire_policy_state,
@@ -619,7 +619,9 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     phase_start_ms: u64,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_rented_for_testing(context, tenant, phase_start_ms);
+    let context = asset_context_state::drive_to_rented_for_testing(
+        context, tenant, phases::timestamp(phase_start_ms),
+    );
     escrow.asset_context.fill(context);
 }
 
@@ -630,7 +632,9 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     handover_countdown_expiry: u64,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_demand_for_testing(context, tenant, handover_countdown_expiry);
+    let context = asset_context_state::drive_to_demand_for_testing(
+        context, tenant, phases::timestamp(handover_countdown_expiry),
+    );
     escrow.asset_context.fill(context);
 }
 
@@ -644,7 +648,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
 ) {
     let context = escrow.asset_context.extract();
     let context = asset_context_state::drive_to_at_dutch_for_testing(
-        context, owner_amount, fee_amount, last_acq_price, new_phase_start_ms,
+        context, owner_amount, fee_amount, last_acq_price, phases::timestamp(new_phase_start_ms),
     );
     escrow.asset_context.fill(context);
 }

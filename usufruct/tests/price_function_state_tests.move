@@ -4,7 +4,7 @@
 #[test_only]
 module usufruct::price_function_state_tests;
 
-use std::{u64, unit_test::assert_eq};
+use std::unit_test::assert_eq;
 use usufruct::{math, price_function_state};
 
 // ─── §5.0.1 Constructor success ────────────────────────────────────────────

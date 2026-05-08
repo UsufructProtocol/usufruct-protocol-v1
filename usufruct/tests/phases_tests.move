@@ -6,7 +6,7 @@ module usufruct::phases_tests;
 
 use std::u64;
 use std::unit_test::assert_eq;
-use usufruct::phases::{Self, Timestamp, Duration};
+use usufruct::phases;
 
 // ─── has_passed ───────────────────────────────────────────────────────────────
 

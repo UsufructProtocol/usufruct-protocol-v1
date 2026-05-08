@@ -64,7 +64,7 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 /// Sub-machine state for waiting (no-tenant) lifecycle phases.
 public enum WaitingState has store, drop {
     Idle,
-    AtDutch { last_acq_price: u64, phase_start_ms: u64 },
+    AtDutch { last_acq_price: u64, phase_start: Timestamp },
     Retired,
 }
 
@@ -81,7 +81,7 @@ public struct WaitingContext<Asset: key + store> has store {
 /// Sub-machine state for the active tenancy. Shared fields live in TenancyContext.
 public enum TenancyState<phantom Asset: key + store, phantom CoinType> has store {
     Occupied { tenant: Tenant<CoinType> },
-    Demand   { current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: u64 },
+    Demand   { current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: Timestamp },
 }
 
 /// Context-State carrier for the active tenancy sub-machine embedded in
@@ -91,10 +91,10 @@ public enum TenancyState<phantom Asset: key + store, phantom CoinType> has store
 ///     extracted here so match arms never repeat them.
 ///   · state — Occupied (single tenant) or Demand (tenant + pending bidder).
 public struct TenancyContext<Asset: key + store, phantom CoinType> has store {
-    asset:          asset::AssetCustodyOpen<Asset>,
-    phase_start_ms: u64,
-    retiring:       bool,
-    state:          TenancyState<Asset, CoinType>,
+    asset:       asset::AssetCustodyOpen<Asset>,
+    phase_start: Timestamp,
+    retiring:    bool,
+    state:       TenancyState<Asset, CoinType>,
 }
 
 /// Result of do_apt_transition. Co-resident with fire — matched directly
@@ -373,7 +373,7 @@ public(package) fun proj_phase_start_ms<Asset: key + store, CoinType>(
     match (&e.asset_state) {
         AssetState::Renting { tenancy } => option::some(phase_start_ms(tenancy)),
         AssetState::Waiting { waiting } => match (&waiting.state) {
-            WaitingState::AtDutch { phase_start_ms, .. } => option::some(*phase_start_ms),
+            WaitingState::AtDutch { phase_start, .. } => option::some(phases::timestamp_ms(*phase_start)),
             _ => option::none(),
         },
     }
@@ -411,8 +411,8 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
             floor_price_at_for_tenancy(tenancy, &e.config, now),
         AssetState::Waiting { waiting } => match (&waiting.state) {
             WaitingState::Idle => config::proj_min_rent_price(&e.config),
-            WaitingState::AtDutch { last_acq_price, phase_start_ms } => {
-                let ps = price_state::descending(*last_acq_price, phases::timestamp(*phase_start_ms));
+            WaitingState::AtDutch { last_acq_price, phase_start } => {
+                let ps = price_state::descending(*last_acq_price, *phase_start);
                 price_state::floor_price(&ps, &e.config, now)
             },
             WaitingState::Retired => abort ERetiredNoBid,
@@ -456,9 +456,9 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
         AssetState::Renting { tenancy } =>
             next_pending_from_tenancy(tenancy, &e.config, now),
         AssetState::Waiting { waiting } => match (&waiting.state) {
-            WaitingState::AtDutch { phase_start_ms, .. } => {
+            WaitingState::AtDutch { phase_start, .. } => {
                 let policy = config::proj_descent(&e.config);
-                let start  = phases::timestamp(*phase_start_ms);
+                let start  = *phase_start;
                 if (descent_policy_state::has_expired(policy, start, now).is_crossed()) {
                     return option::some(
                         pending_transition_state::auction(descent_policy_state::expiry_at(policy, start))
@@ -738,11 +738,11 @@ public(package) fun bps_denominator():  u64 { math::bps_denominator() }
 // ─── Constructor ──────────────────────────────────────────────────────────────
 
 public(package) fun new_occupied<Asset: key + store, CoinType>(
-    asset:          asset::AssetCustodyOpen<Asset>,
-    tenant:         Tenant<CoinType>,
-    phase_start_ms: u64,
+    asset:        asset::AssetCustodyOpen<Asset>,
+    tenant:       Tenant<CoinType>,
+    phase_start:  Timestamp,
 ): TenancyContext<Asset, CoinType> {
-    TenancyContext { asset, phase_start_ms, retiring: false, state: TenancyState::Occupied { tenant } }
+    TenancyContext { asset, phase_start, retiring: false, state: TenancyState::Occupied { tenant } }
 }
 
 // ─── Variant predicates ───────────────────────────────────────────────────────
@@ -830,14 +830,14 @@ public(package) fun pending_stake_for_tenancy<Asset: key + store, CoinType>(
 public(package) fun phase_start_ms<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
 ): u64 {
-    t.phase_start_ms
+    phases::timestamp_ms(t.phase_start)
 }
 
 public(package) fun handover_expiry_for_tenancy<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
 ): Option<u64> {
     match (&t.state) {
-        TenancyState::Demand   { handover_expiry, .. } => option::some(*handover_expiry),
+        TenancyState::Demand   { handover_expiry, .. } => option::some(phases::timestamp_ms(*handover_expiry)),
         TenancyState::Occupied { .. }                  => option::none(),
     }
 }
@@ -864,12 +864,12 @@ public(package) fun used_credit_at_for_tenancy<Asset: key + store, CoinType>(
 ): u64 {
     let cs = match (&t.state) {
         TenancyState::Occupied { tenant } =>
-            credit_state::accruing(tenant::proj_stake_value(tenant), phases::timestamp(t.phase_start_ms)),
+            credit_state::accruing(tenant::proj_stake_value(tenant), t.phase_start),
         TenancyState::Demand { current, handover_expiry, .. } =>
             credit_state::capped(
                 tenant::proj_stake_value(current),
-                phases::timestamp(t.phase_start_ms),
-                phases::timestamp(*handover_expiry),
+                t.phase_start,
+                *handover_expiry,
             ),
     };
     credit_state::used_credit(&cs, config, now)
@@ -903,14 +903,13 @@ public(package) fun next_pending_from_tenancy<Asset: key + store, CoinType>(
 ): Option<PendingTransitionState> {
     match (&t.state) {
         TenancyState::Demand { handover_expiry, .. } => {
-            let expiry = phases::timestamp(*handover_expiry);
-            if (phases::check_boundary(expiry, phases::zero(), now).is_crossed()) {
-                return option::some(pending_transition_state::handover(expiry))
+            if (phases::check_boundary(*handover_expiry, phases::zero(), now).is_crossed()) {
+                return option::some(pending_transition_state::handover(*handover_expiry))
             };
             option::none()
         },
         TenancyState::Occupied { .. } => {
-            let start  = phases::timestamp(t.phase_start_ms);
+            let start  = t.phase_start;
             let tenure = phases::duration(config::proj_tenure_ceiling(config));
             if (phases::check_boundary(start, tenure, now).is_crossed()) {
                 return option::some(
@@ -938,13 +937,13 @@ public(package) fun accept_rent_payment<Asset: key + store, CoinType>(
     now:          Timestamp,
     ctx:          &mut TxContext,
 ): (TenancyContext<Asset, CoinType>, TenantCap) {
-    let TenancyContext { asset, phase_start_ms, retiring, state } = tenancy;
+    let TenancyContext { asset, phase_start, retiring, state } = tenancy;
     match (state) {
         TenancyState::Occupied { tenant } =>
-            do_place_bid(asset, tenant, phase_start_ms, retiring, config, escrow_id, payment, floor, now, ctx),
+            do_place_bid(asset, tenant, phase_start, retiring, config, escrow_id, payment, floor, now, ctx),
         TenancyState::Demand { current, pending, handover_expiry } =>
             do_supersede_bid(
-                asset, current, pending, handover_expiry, phase_start_ms, retiring,
+                asset, current, pending, handover_expiry, phase_start, retiring,
                 owner, escrow_id, fee_inbox_id, payment, floor, now, ctx,
             ),
     }
@@ -962,18 +961,18 @@ public(package) fun do_apt_transition<Asset: key + store, CoinType>(
     boundary:     Timestamp,
     ctx:          &mut TxContext,
 ): RentingFireResultState<Asset, CoinType> {
-    let TenancyContext { asset, phase_start_ms, retiring, state } = tenancy;
+    let TenancyContext { asset, phase_start, retiring, state } = tenancy;
     match (state) {
         TenancyState::Demand { current, pending, handover_expiry: _ } => {
             let new_tenancy = do_handover(
-                asset, current, pending, phase_start_ms, retiring,
+                asset, current, pending, phase_start, retiring,
                 owner, config, escrow_id, fee_inbox_id, boundary, ctx,
             );
             RentingFireResultState::Handover { tenancy: new_tenancy }
         },
         TenancyState::Occupied { tenant } => {
             let (wrapped, last_acq_price, retiring) = do_tenure_expiry(
-                asset, tenant, phase_start_ms, retiring,
+                asset, tenant, phase_start, retiring,
                 owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
             RentingFireResultState::TenureExpired { asset: asset::unbundle(wrapped), last_acq_price, retiring }
@@ -996,25 +995,21 @@ public(package) fun set_retiring_flag_checked<Asset: key + store, CoinType>(
 /// Demand → Occupied: fire the handover transition at `boundary_ms`.
 /// Distributes used credit to owner; retiring flag propagates to new Occupied.
 fun do_handover<Asset: key + store, CoinType>(
-    asset:          asset::AssetCustodyOpen<Asset>,
-    current:        Tenant<CoinType>,
-    pending:        Tenant<CoinType>,
-    phase_start_ms: u64,
-    retiring:       bool,
-    owner:          &mut Owner<CoinType>,
-    config:         &IntegrationConfig,
-    escrow_id:      ID,
-    fee_inbox_id:   ID,
-    boundary:       Timestamp,
-    ctx:            &mut TxContext,
+    asset:       asset::AssetCustodyOpen<Asset>,
+    current:     Tenant<CoinType>,
+    pending:     Tenant<CoinType>,
+    phase_start: Timestamp,
+    retiring:    bool,
+    owner:       &mut Owner<CoinType>,
+    config:      &IntegrationConfig,
+    escrow_id:   ID,
+    fee_inbox_id: ID,
+    boundary:    Timestamp,
+    ctx:         &mut TxContext,
 ): TenancyContext<Asset, CoinType> {
     let principal   = tenant::proj_stake_value(&current);
     let used_credit = {
-        let cs = credit_state::capped(
-            principal,
-            phases::timestamp(phase_start_ms),
-            boundary,
-        );
+        let cs = credit_state::capped(principal, phase_start, boundary);
         credit_state::used_credit(&cs, config, boundary)
     };
     let (owner_amount, fee_amount) = split_fee(used_credit);
@@ -1042,7 +1037,7 @@ fun do_handover<Asset: key + store, CoinType>(
         escrow_id,
         displaced_tenant_cap_id:  displaced_cap_id,
         displaced_tenant:         displaced_addr,
-        displaced_phase_start_ms: phase_start_ms,
+        displaced_phase_start_ms: phases::timestamp_ms(phase_start),
         new_tenant_cap_id:        new_cap_id,
         new_tenant_addr:          new_addr,
         new_tenant_stake:         new_stake,
@@ -1056,7 +1051,7 @@ fun do_handover<Asset: key + store, CoinType>(
 
     TenancyContext {
         asset,
-        phase_start_ms: boundary_ms,
+        phase_start: boundary,
         retiring,
         state: TenancyState::Occupied { tenant: pending },
     }
@@ -1065,10 +1060,10 @@ fun do_handover<Asset: key + store, CoinType>(
 /// Consume an Occupied tenancy at tenure expiry. Distributes full stake to
 /// owner/protocol. Returns (wrapped_asset, last_acq_price, retiring_flag).
 fun do_tenure_expiry<Asset: key + store, CoinType>(
-    asset:          asset::AssetCustodyOpen<Asset>,
-    tenant:         Tenant<CoinType>,
-    phase_start_ms: u64,
-    retiring:       bool,
+    asset:       asset::AssetCustodyOpen<Asset>,
+    tenant:      Tenant<CoinType>,
+    phase_start: Timestamp,
+    retiring:    bool,
     owner:          &mut Owner<CoinType>,
     escrow_id:      ID,
     fee_inbox_id:   ID,
@@ -1090,7 +1085,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         escrow_id,
         tenant_cap_id,
         tenant:                 tenant_addr,
-        phase_start_ms,
+        phase_start_ms:         phases::timestamp_ms(phase_start),
         owner_share:            owner_amount,
         protocol_fee:           fee_amount,
         last_acquisition_price: principal,
@@ -1109,8 +1104,8 @@ public(package) fun set_retiring_flag<Asset: key + store, CoinType>(
     ctx:       &TxContext,
 ): TenancyContext<Asset, CoinType> {
     event::emit(RetireFlagSet { escrow_id, owner: ctx.sender(), timestamp_ms: phases::timestamp_ms(now) });
-    let TenancyContext { asset, phase_start_ms, retiring: _, state } = tenancy;
-    TenancyContext { asset, phase_start_ms, retiring: true, state }
+    let TenancyContext { asset, phase_start, retiring: _, state } = tenancy;
+    TenancyContext { asset, phase_start, retiring: true, state }
 }
 
 /// Borrow the underlying asset. Aborts if `cap_id` is stale or pending.
@@ -1119,7 +1114,7 @@ public(package) fun take_asset<Asset: key + store, CoinType>(
     escrow_id: ID,
     cap_id:    ID,
 ): (TenancyContext<Asset, CoinType>, Asset, AssetReceipt) {
-    let TenancyContext { mut asset, phase_start_ms, retiring, state } = tenancy;
+    let TenancyContext { mut asset, phase_start, retiring, state } = tenancy;
     let (tenant_addr, state) = match (state) {
         TenancyState::Occupied { tenant } => {
             assert!(cap_id == tenant::proj_cap_id(tenant::proj_identity(&tenant)), EStaleTenantCap);
@@ -1134,7 +1129,7 @@ public(package) fun take_asset<Asset: key + store, CoinType>(
     };
     let (u, receipt) = asset::take(&mut asset);
     event::emit(AssetBorrowed { escrow_id, tenant_cap_id: cap_id, tenant: tenant_addr });
-    (TenancyContext { asset, phase_start_ms, retiring, state }, u, receipt)
+    (TenancyContext { asset, phase_start, retiring, state }, u, receipt)
 }
 
 /// Return the borrowed asset.
@@ -1144,7 +1139,7 @@ public(package) fun put_asset<Asset: key + store, CoinType>(
     asset_in:   Asset,
     receipt_in: AssetReceipt,
 ): TenancyContext<Asset, CoinType> {
-    let TenancyContext { mut asset, phase_start_ms, retiring, state } = tenancy;
+    let TenancyContext { mut asset, phase_start, retiring, state } = tenancy;
     let (tenant_cap_id, tenant_addr) = match (&state) {
         TenancyState::Occupied { tenant } => (
             tenant::proj_cap_id(tenant::proj_identity(tenant)),
@@ -1157,7 +1152,7 @@ public(package) fun put_asset<Asset: key + store, CoinType>(
     };
     asset::put(&mut asset, asset_in, receipt_in);
     event::emit(AssetReturned { escrow_id, tenant_cap_id, tenant: tenant_addr });
-    TenancyContext { asset, phase_start_ms, retiring, state }
+    TenancyContext { asset, phase_start, retiring, state }
 }
 
 /// Assert that `cap_id` is neither the current nor pending cap (safe to burn).
@@ -1179,10 +1174,10 @@ public(package) fun assert_cap_stale<Asset: key + store, CoinType>(
 
 /// Occupied → Demand.
 fun do_place_bid<Asset: key + store, CoinType>(
-    asset:          asset::AssetCustodyOpen<Asset>,
-    tenant:         Tenant<CoinType>,
-    phase_start_ms: u64,
-    retiring:       bool,
+    asset:       asset::AssetCustodyOpen<Asset>,
+    tenant:      Tenant<CoinType>,
+    phase_start: Timestamp,
+    retiring:    bool,
     config:         &IntegrationConfig,
     escrow_id:      ID,
     payment:        Coin<CoinType>,
@@ -1195,13 +1190,12 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let current_addr   = tenant::proj_address(tenant::proj_identity(&tenant));
     let current_stake  = tenant::proj_stake_value(&tenant);
     let tenure         = phases::duration(config::proj_tenure_ceiling(config));
-    let expiry         = handover_policy_state::expiry_at(
+    let expiry       = handover_policy_state::expiry_at(
         config::proj_handover(config),
         now,
-        phases::timestamp(phase_start_ms),
+        phase_start,
         tenure,
     );
-    let expiry_ms    = phases::timestamp_ms(expiry);
     let pending_addr = ctx.sender();
     let bid_amount   = coin::value(&payment);
     let (cap, cap_id) = tenant_cap::new(escrow_id, pending_addr, ctx);
@@ -1211,20 +1205,20 @@ fun do_place_bid<Asset: key + store, CoinType>(
         current_tenant_cap_id:     current_cap_id,
         current_tenant_addr:       current_addr,
         current_tenant_stake:      current_stake,
-        current_phase_start_ms:    phase_start_ms,
+        current_phase_start_ms:    phases::timestamp_ms(phase_start),
         tenant_cap_id:             cap_id,
         pending_tenant:            pending_addr,
         bid_amount,
         floor_price:               floor,
-        handover_countdown_expiry: expiry_ms,
+        handover_countdown_expiry: phases::timestamp_ms(expiry),
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
         TenancyContext {
             asset,
-            phase_start_ms,
+            phase_start,
             retiring,
-            state: TenancyState::Demand { current: tenant, pending: t, handover_expiry: expiry_ms },
+            state: TenancyState::Demand { current: tenant, pending: t, handover_expiry: expiry },
         },
         cap,
     )
@@ -1235,8 +1229,8 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     asset:           asset::AssetCustodyOpen<Asset>,
     current:         Tenant<CoinType>,
     pending:         Tenant<CoinType>,
-    handover_expiry: u64,
-    phase_start_ms:  u64,
+    handover_expiry: Timestamp,
+    phase_start:     Timestamp,
     retiring:        bool,
     owner:           &mut Owner<CoinType>,
     escrow_id:       ID,
@@ -1267,7 +1261,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         protected_tenant_cap_id:   protected_cap_id,
         protected_tenant_addr:     protected_addr,
         protected_tenant_stake:    protected_stake,
-        protected_phase_start_ms:  phase_start_ms,
+        protected_phase_start_ms:  phases::timestamp_ms(phase_start),
         displaced_tenant_cap_id:   displaced_cap_id,
         new_tenant_cap_id:         cap_id,
         displaced_bidder:          displaced_addr,
@@ -1275,13 +1269,13 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         new_bidder,
         new_bid_amount,
         floor_price:               floor,
-        handover_countdown_expiry: handover_expiry,
+        handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
         TenancyContext {
             asset,
-            phase_start_ms,
+            phase_start,
             retiring,
             state: TenancyState::Demand { current, pending: t, handover_expiry },
         },
@@ -1304,8 +1298,8 @@ public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
 public(package) fun set_retiring_flag_for_testing<Asset: key + store, CoinType>(
     tenancy: TenancyContext<Asset, CoinType>,
 ): TenancyContext<Asset, CoinType> {
-    let TenancyContext { asset, phase_start_ms, retiring: _, state } = tenancy;
-    TenancyContext { asset, phase_start_ms, retiring: true, state }
+    let TenancyContext { asset, phase_start, retiring: _, state } = tenancy;
+    TenancyContext { asset, phase_start, retiring: true, state }
 }
 
 /// Drive Occupied → Demand for testing (without full bid mechanics).
@@ -1313,14 +1307,14 @@ public(package) fun set_retiring_flag_for_testing<Asset: key + store, CoinType>(
 fun tenancy_drive_to_demand_for_testing<Asset: key + store, CoinType>(
     asset:                     asset::AssetCustodyOpen<Asset>,
     tenant:                    Tenant<CoinType>,
-    phase_start_ms:            u64,
+    phase_start:               Timestamp,
     retiring:                  bool,
     tenant_in:                 Tenant<CoinType>,
-    handover_countdown_expiry: u64,
+    handover_countdown_expiry: Timestamp,
 ): TenancyContext<Asset, CoinType> {
     TenancyContext {
         asset,
-        phase_start_ms,
+        phase_start,
         retiring,
         state: TenancyState::Demand { current: tenant, pending: tenant_in, handover_expiry: handover_countdown_expiry },
     }
@@ -1483,13 +1477,13 @@ fun fire<Asset: key + store, CoinType>(
                         event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
                     } else {
-                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start_ms: boundary_ms } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
+                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
                     }
                 },
             }
         },
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start_ms } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
-            let new_state = do_auction_expiry(asset, last_acq_price, phase_start_ms, escrow_id, boundary);
+        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+            let new_state = do_auction_expiry(asset, last_acq_price, phase_start, escrow_id, boundary);
             AssetContext { asset_state: new_state, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
         AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
@@ -1525,17 +1519,17 @@ fun do_install<Asset: key + store, CoinType>(
         escrow_id, tenant_cap_id: cap_id, tenant: tenant_addr,
         phase_start_ms: now_ms, price_paid, floor_price: floor,
     });
-    (AssetState::Renting { tenancy: new_occupied(wrapped, t, now_ms) }, cap)
+    (AssetState::Renting { tenancy: new_occupied(wrapped, t, now) }, cap)
 }
 
 fun do_auction_expiry<Asset: key + store, CoinType>(
     asset:          asset::AssetCustodyLocked<Asset>,
     last_acq_price: u64,
-    phase_start_ms: u64,
+    phase_start:    Timestamp,
     escrow_id:      ID,
     boundary:       Timestamp,
 ): AssetState<Asset, CoinType> {
-    event::emit(AuctionExpired { escrow_id, phase_start_ms, last_acq_price, timestamp_ms: phases::timestamp_ms(boundary) });
+    event::emit(AuctionExpired { escrow_id, phase_start_ms: phases::timestamp_ms(phase_start), last_acq_price, timestamp_ms: phases::timestamp_ms(boundary) });
     AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle } }
 }
 
@@ -1561,14 +1555,14 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     ctx:      &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start_ms, retiring, state: TenancyState::Demand { current, pending, handover_expiry: _ } } }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start, retiring, state: TenancyState::Demand { current, pending, handover_expiry: _ } } }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = do_handover(
-                asset, current, pending, phase_start_ms, retiring,
+                asset, current, pending, phase_start, retiring,
                 &mut owner, &config, escrow_id, fee_inbox_id, boundary, ctx,
             );
             AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start_ms: _p, retiring: _r, state: TenancyState::Occupied { tenant: _t } } }, owner: _o, .. } => abort ENotRented,
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start: _p, retiring: _r, state: TenancyState::Occupied { tenant: _t } } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
     }
 }
@@ -1580,9 +1574,9 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     ctx:      &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start_ms, retiring, state: TenancyState::Occupied { tenant } } }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start, retiring, state: TenancyState::Occupied { tenant } } }, mut owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let (wrapped, last_acq_price, retiring) = do_tenure_expiry(
-                asset, tenant, phase_start_ms, retiring,
+                asset, tenant, phase_start, retiring,
                 &mut owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
             let raw_asset = asset::unbundle(wrapped);
@@ -1592,10 +1586,10 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
                 event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                 AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
             } else {
-                AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start_ms: boundary_ms } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
+                AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
             }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start_ms: _p, retiring: _r, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start: _p, retiring: _r, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
     }
 }
@@ -1609,8 +1603,8 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {
-                WaitingState::AtDutch { last_acq_price, phase_start_ms } =>
-                    AssetContext { asset_state: do_auction_expiry(asset, last_acq_price, phase_start_ms, escrow_id, boundary), owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
+                WaitingState::AtDutch { last_acq_price, phase_start } =>
+                    AssetContext { asset_state: do_auction_expiry(asset, last_acq_price, phase_start, escrow_id, boundary), owner, config, fee_inbox_id, integrated_at_ms, escrow_id },
                 _ => abort ENotRented,
             }
         },
@@ -1620,16 +1614,16 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
 
 #[test_only]
 public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
-    tenant_in:      tenant::Tenant<CoinType>,
-    phase_start_ms: u64,
+    context:     AssetContext<Asset, CoinType>,
+    tenant_in:   tenant::Tenant<CoinType>,
+    phase_start: Timestamp,
 ): AssetContext<Asset, CoinType> {
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {
                 WaitingState::Idle => {
-                    let tenancy = new_occupied(asset::new(asset::unlock(asset), escrow_id), tenant_in, phase_start_ms);
+                    let tenancy = new_occupied(asset::new(asset::unlock(asset), escrow_id), tenant_in, phase_start);
                     AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
                 },
                 _ => abort ENotRented,
@@ -1643,16 +1637,16 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
 public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
     tenant_in:                 usufruct::tenant::Tenant<CoinType>,
-    handover_countdown_expiry: u64,
+    handover_countdown_expiry: Timestamp,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start_ms, retiring, state: TenancyState::Occupied { tenant } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start, retiring, state: TenancyState::Occupied { tenant } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let new_tenancy = tenancy_drive_to_demand_for_testing(
-                asset, tenant, phase_start_ms, retiring, tenant_in, handover_countdown_expiry,
+                asset, tenant, phase_start, retiring, tenant_in, handover_countdown_expiry,
             );
             AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start_ms: _p, retiring: _r, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start: _p, retiring: _r, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
     }
 }
@@ -1660,20 +1654,20 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
-    owner_amount:       u64,
-    fee_amount:         u64,
-    last_acq_price:     u64,
-    new_phase_start_ms: u64,
+    owner_amount:    u64,
+    fee_amount:      u64,
+    last_acq_price:  u64,
+    new_phase_start: Timestamp,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start_ms: _, retiring: _, state: TenancyState::Occupied { tenant } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start: _, retiring: _, state: TenancyState::Occupied { tenant } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
             let wrapped = unbundle_occupied_for_testing(
                 asset, tenant, owner_amount, fee_amount, escrow_id,
             );
             let raw_asset = asset::unbundle(wrapped);
-            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: asset::lock(raw_asset), state: WaitingState::AtDutch { last_acq_price, phase_start_ms: new_phase_start_ms } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
+            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: asset::lock(raw_asset), state: WaitingState::AtDutch { last_acq_price, phase_start: new_phase_start } } }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start_ms: _p, retiring: _r, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start: _p, retiring: _r, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
     }
 }
@@ -1701,6 +1695,7 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
 ): AssetContext<Asset, CoinType> {
     match (context) {
         AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id } => {
+
             let new_tenancy = set_retiring_flag_for_testing(tenancy);
             AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, fee_inbox_id, integrated_at_ms, escrow_id }
         },

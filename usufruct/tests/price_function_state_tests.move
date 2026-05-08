@@ -4,7 +4,7 @@
 #[test_only]
 module usufruct::price_function_state_tests;
 
-use std::unit_test::assert_eq;
+use std::{u64, unit_test::assert_eq};
 use usufruct::{math, price_function_state};
 
 // ─── §5.0.1 Constructor success ────────────────────────────────────────────
@@ -447,3 +447,4 @@ fun eval_compound_delta_monotone_in_price() {
         i = i + 1;
     };
 }
+

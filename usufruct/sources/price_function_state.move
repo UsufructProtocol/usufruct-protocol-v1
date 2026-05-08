@@ -5,6 +5,7 @@ module usufruct::price_function_state;
 
 // === Imports ===
 
+use std::u64;
 use usufruct::math::{Self, BasisPoints};
 
 // === Errors ===
@@ -16,17 +17,6 @@ const EBpsRange:  u64 = 1;
 
 // === Constants ===
 
-/// Maximum legal bps value: mul_div(price, 10_000 + bps, 10_000) must not overflow u64.
-/// Worst case: price = u64::MAX, bps = BPS_UPPER.
-/// 10_000 + BPS_UPPER must not cause mul_div to return > u64::MAX.
-/// With mul_div(u64::MAX, 10_000 + bps, 10_000):
-///   res = u64::MAX * (10_000 + bps) / 10_000 ≤ u64::MAX
-///   ⟺ 10_000 + bps ≤ 10_000
-///   ⟺ bps ≤ 0  (strict bound means any bps ≥ 1 can overflow with max price)
-/// In practice: the test contract pins BPS_UPPER = u64::MAX − 10_000,
-/// mirroring the original implementation constant. Values above this would also
-/// trigger the EBpsRange guard in new_compound_delta at construction time.
-const BPS_UPPER: u64 = 18_446_744_073_709_541_615; // u64::MAX − 10_000
 
 // === Structs ===
 
@@ -52,7 +42,7 @@ public fun new_fixed_delta(delta: u64): PriceFunctionState {
 }
 
 public fun new_compound_delta(bps: u64, delta: u64): PriceFunctionState {
-    assert!(bps >= 1 && bps <= BPS_UPPER, EBpsRange);
+    assert!(bps >= 1 && bps <= bps_upper(), EBpsRange);
     assert!(delta > 0, EDeltaZero);
     PriceFunctionState::CompoundDelta { bps: math::bps(bps), delta }
 }
@@ -95,6 +85,10 @@ public(package) fun evaluate_price_fn(
 }
 
 // === Private Functions ===
+
+/// Guards against EMulDivOverflow: mul_div(price, denom + bps, denom) overflows
+/// when price = u64::MAX and bps ≥ 1. Upper bound = u64::MAX − BPS_DENOMINATOR.
+fun bps_upper(): u64 { u64::max_value!() - math::bps_denominator() }
 
 fun eval_fixed_delta(price: u64, delta: u64): u64 {
     price + delta

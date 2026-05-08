@@ -18,7 +18,7 @@ use usufruct::{
     fee_message::{Self as fee_msg, FeeMessage, FeeShare},
     handover_policy_state::{Self as handover, HandoverPolicyState},
     price_function_state::{Self as price_fn, PriceFunctionState},
-    retire_policy_state::RetirePolicyState,
+    retire_policy_state::{Self as retire, RetirePolicyState},
 };
 
 // === fee_message ===
@@ -26,6 +26,12 @@ use usufruct::{
 public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
 public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+
+// === retire_policy_state ===
+
+public fun retire_is_immediate(p: &RetirePolicyState): bool       { retire::proj_is_immediate(p) }
+public fun retire_is_deferred(p: &RetirePolicyState):  bool       { retire::proj_is_deferred(p) }
+public fun retire_floor_ms(p: &RetirePolicyState):     Option<u64> { retire::proj_floor_ms(p) }
 
 // === refund_state ===
 

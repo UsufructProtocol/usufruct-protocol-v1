@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
+// Eager projection of what each module knows about the runtime. Wraps every
+// proj_* function as public for SDK/PTB access. Some types lack key+store and
+// won't be observable in practice — the type system handles that curation.
 module usufruct::runtime_projection;
 
 // === Imports ===
@@ -25,7 +28,6 @@ use usufruct::{
 
 // === asset_context_state ===
 
-// NOTE: AssetContext has store only — not directly observable as object; embedded in Escrow
 public fun asset_is_inactive<A: key + store, C>(e: &AssetContext<A, C>): bool  { acs::proj_is_inactive(e) }
 public fun asset_is_idle<A: key + store, C>(e: &AssetContext<A, C>):     bool  { acs::proj_is_idle(e) }
 public fun asset_is_at_dutch<A: key + store, C>(e: &AssetContext<A, C>): bool  { acs::proj_is_at_dutch(e) }
@@ -55,7 +57,6 @@ public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_am
 
 // === tenant ===
 
-// NOTE: Tenant/TenantStake have store only — not directly observable as objects
 public fun tenant_identity<C>(t: &Tenant<C>):          &TenantIdentity  { tenant_mod::proj_identity(t) }
 public fun tenant_stake<C>(t: &Tenant<C>):             &TenantStake<C>  { tenant_mod::proj_stake(t) }
 public fun tenant_stake_value<C>(t: &Tenant<C>):       u64              { tenant_mod::proj_stake_value(t) }
@@ -71,7 +72,6 @@ public fun retire_floor_ms(p: &RetirePolicyState):     Option<u64> { retire::pro
 
 // === refund_state ===
 
-// NOTE: RefundState has no abilities (hot potato) — not callable from PTB in practice
 public fun refund_is_nothing<C>(rs: &RefundState<C>): bool { refund::proj_is_nothing(rs) }
 public fun refund_is_parcial<C>(rs: &RefundState<C>): bool { refund::proj_is_parcial(rs) }
 public fun refund_is_total<C>(rs: &RefundState<C>):   bool { refund::proj_is_total(rs) }
@@ -153,7 +153,6 @@ public fun cap_auth_is_stale(a: &CapAuthorizationState):   bool { cap_auth::proj
 
 // === asset ===
 
-// NOTE: AssetCustodyLocked has store only — not directly observable as object
 public fun asset_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID {
     asset::proj_locked_id(self)
 }

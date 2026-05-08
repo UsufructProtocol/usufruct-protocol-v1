@@ -60,6 +60,18 @@ public enum RefundState<phantom CoinType> {
 
 // === View Functions ===
 
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_nothing<C>(rs: &RefundState<C>): bool {
+    match (rs) { RefundState::Nothing { .. } => true, _ => false }
+}
+public(package) fun proj_is_parcial<C>(rs: &RefundState<C>): bool {
+    match (rs) { RefundState::Parcial { .. } => true, _ => false }
+}
+public(package) fun proj_is_total<C>(rs: &RefundState<C>): bool {
+    match (rs) { RefundState::Total { .. } => true, _ => false }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
@@ -146,30 +158,6 @@ public(package) fun distribute<C>(
 // === Private Functions ===
 
 // === Test Functions ===
-
-#[test_only]
-public fun is_nothing<C>(rs: &RefundState<C>): bool {
-    match (rs) {
-        RefundState::Nothing { .. } => true,
-        _                           => false,
-    }
-}
-
-#[test_only]
-public fun is_parcial<C>(rs: &RefundState<C>): bool {
-    match (rs) {
-        RefundState::Parcial { .. } => true,
-        _                           => false,
-    }
-}
-
-#[test_only]
-public fun is_total<C>(rs: &RefundState<C>): bool {
-    match (rs) {
-        RefundState::Total { .. } => true,
-        _                         => false,
-    }
-}
 
 /// Consume a `RefundState` in tests, destroying any inner balance via
 /// the test_only destructors of each component module. State-agnostic.

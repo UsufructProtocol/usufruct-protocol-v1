@@ -44,9 +44,9 @@ fun nothing_constructs_nothing_variant() {
     let (_, stake) = id_and_stake(0);
     tenant::destroy_empty_stake(stake);
     let rs = refund_state::nothing<TEST_COIN>(fee_share(50), owner_earnings(450));
-    assert!(refund_state::is_nothing(&rs));
-    assert!(!refund_state::is_parcial(&rs));
-    assert!(!refund_state::is_total(&rs));
+    assert!(refund_state::proj_is_nothing(&rs));
+    assert!(!refund_state::proj_is_parcial(&rs));
+    assert!(!refund_state::proj_is_total(&rs));
     refund_state::destroy_for_testing(rs);
 }
 
@@ -54,9 +54,9 @@ fun nothing_constructs_nothing_variant() {
 fun parcial_constructs_parcial_variant() {
     let (id, stake) = id_and_stake(300);
     let rs = refund_state::parcial<TEST_COIN>(id, stake, fee_share(50), owner_earnings(450));
-    assert!(refund_state::is_parcial(&rs));
-    assert!(!refund_state::is_nothing(&rs));
-    assert!(!refund_state::is_total(&rs));
+    assert!(refund_state::proj_is_parcial(&rs));
+    assert!(!refund_state::proj_is_nothing(&rs));
+    assert!(!refund_state::proj_is_total(&rs));
     refund_state::destroy_for_testing(rs);
 }
 
@@ -64,9 +64,9 @@ fun parcial_constructs_parcial_variant() {
 fun total_constructs_total_variant() {
     let (id, stake) = id_and_stake(1_000);
     let rs = refund_state::total<TEST_COIN>(id, stake);
-    assert!(refund_state::is_total(&rs));
-    assert!(!refund_state::is_nothing(&rs));
-    assert!(!refund_state::is_parcial(&rs));
+    assert!(refund_state::proj_is_total(&rs));
+    assert!(!refund_state::proj_is_nothing(&rs));
+    assert!(!refund_state::proj_is_parcial(&rs));
     refund_state::destroy_for_testing(rs);
 }
 

@@ -9,6 +9,7 @@ use usufruct::{
     asset::{Self, AssetCustodyOpen},
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
+    refund_state::{Self as refund, RefundState},
     cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     credit_context_state::{Self as credit, CreditContext},
@@ -25,6 +26,13 @@ use usufruct::{
 public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
 public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+
+// === refund_state ===
+
+// NOTE: RefundState has no abilities (hot potato) — not callable from PTB in practice
+public fun refund_is_nothing<C>(rs: &RefundState<C>): bool { refund::proj_is_nothing(rs) }
+public fun refund_is_parcial<C>(rs: &RefundState<C>): bool { refund::proj_is_parcial(rs) }
+public fun refund_is_total<C>(rs: &RefundState<C>):   bool { refund::proj_is_total(rs) }
 
 // === price_state ===
 

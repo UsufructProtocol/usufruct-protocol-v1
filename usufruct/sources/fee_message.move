@@ -76,7 +76,12 @@ public fun collect_fee_messages<C>(
 
 // === View Functions ===
 
-public(package) fun share_value<C>(s: &FeeShare<C>): u64 { balance::value(&s.balance) }
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_share_value<C>(s: &FeeShare<C>): u64 { balance::value(&s.balance) }
+
+public(package) fun proj_escrow_id<C>(msg: &FeeMessage<C>): ID    { msg.escrow_id }
+public(package) fun proj_amount<C>(msg: &FeeMessage<C>):    u64   { balance::value(&msg.balance) }
 
 // === Admin Functions ===
 

@@ -12,10 +12,17 @@ use usufruct::{
     credit_context_state::{Self as credit, CreditContext},
     curve_shape_state::{Self as curve, CurveShapeState},
     descent_policy_state::{Self as descent, DescentPolicyState},
+    fee_message::{Self as fee_msg, FeeMessage, FeeShare},
     handover_policy_state::HandoverPolicyState,
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
+
+// === fee_message ===
+
+public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
+public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
+public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
 
 // === descent_policy_state ===
 

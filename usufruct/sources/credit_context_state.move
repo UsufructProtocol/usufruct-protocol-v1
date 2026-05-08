@@ -95,7 +95,7 @@ public(package) fun used_credit(
     ctx: &CreditContext,
     cfg: &IntegrationConfig,
     now: Timestamp,
-): u64 {
+): Stake {
     let effective = match (&ctx.variant) {
         CreditState::Accruing          => now,
         CreditState::Capped { expiry } => phases::earliest(now, *expiry),
@@ -106,7 +106,7 @@ public(package) fun used_credit(
         phases::duration_ms(elapsed),        // ← temporal → math domain
         phases::duration_ms(config::proj_tenure_ceiling(cfg)),  // ← temporal → math domain
     );
-    curve_shape_state::apply(monetary::stake_mist(ctx.stake), g)
+    monetary::stake(curve_shape_state::apply(monetary::stake_mist(ctx.stake), g))
 }
 
 // === Private Functions ===

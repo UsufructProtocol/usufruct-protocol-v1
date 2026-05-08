@@ -447,14 +447,14 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): u64 {
-    asset_context_state::used_credit_at(read_context(escrow), phases::now(clock))
+    monetary::stake_mist(asset_context_state::used_credit_at(read_context(escrow), phases::now(clock)))
 }
 
 public fun compute_used_credit_at_ms<Asset: key + store, CoinType>(
     escrow:       &Escrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    asset_context_state::used_credit_at(read_context(escrow), phases::timestamp(timestamp_ms))
+    monetary::stake_mist(asset_context_state::used_credit_at(read_context(escrow), phases::timestamp(timestamp_ms)))
 }
 
 public fun compute_floor_price<Asset: key + store, CoinType>(
@@ -490,19 +490,17 @@ public fun compute_handover_settlement<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     boundary_ms: u64,
 ): (u64, u64, u64) {
-    let e     = read_context(escrow);
-    let stake = asset_context_state::proj_current_stake_value(e);
-    let used  = asset_context_state::used_credit_at(e, phases::timestamp(boundary_ms));
-    let (owner_share, protocol_fee) = asset_context_state::split_fee(used);
-    (stake - used, owner_share, protocol_fee)
+    let (remaining, owner, fee) = asset_context_state::proj_handover_settlement(
+        read_context(escrow), phases::timestamp(boundary_ms),
+    );
+    (monetary::stake_mist(remaining), monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
 public fun compute_tenure_settlement<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): (u64, u64) {
-    let e = read_context(escrow);
-    assert!(asset_context_state::proj_is_rented(e), ENotRented);
-    asset_context_state::split_fee(asset_context_state::proj_current_stake_value(e))
+    let (owner, fee) = asset_context_state::proj_tenure_settlement(read_context(escrow));
+    (monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
 // ─── Earnings views ──────────────────────────────────────────────────────────

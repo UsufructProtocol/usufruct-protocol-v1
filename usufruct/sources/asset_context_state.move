@@ -23,7 +23,7 @@ use usufruct::{
     cap_authorization_state::{Self as cap_auth_module, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     descent_policy_state,
-    monetary::{Self, Price},
+    monetary::{Self, Price, Stake},
     owner::{Self, Owner},
     owner_cap::OwnerCap,
     pending_transition_state::{Self, PendingTransitionState},
@@ -52,6 +52,14 @@ const ENotRetired:            u64 = 12;
 const ENoEarnings:            u64 = 13;
 
 // === Structs ===
+
+/// Result of splitting a credit amount into owner earnings and protocol fee.
+/// Named fields prevent positional swap between the two semantically distinct
+/// monetary roles.
+public struct FeeAllocation has drop {
+    owner_share:  u64,
+    protocol_fee: u64,
+}
 
 /// Binary lifecycle split: active tenancy vs. no tenant.
 ///
@@ -424,12 +432,38 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
 public(package) fun used_credit_at<Asset: key + store, CoinType>(
     e:   &AssetContext<Asset, CoinType>,
     now: Timestamp,
-): u64 {
+): Stake {
     match (&e.asset_state) {
         AssetState::Renting { tenancy } =>
             used_credit_at_for_tenancy(tenancy, &e.config, now),
         _ => abort ENotRented,
     }
+}
+
+/// Typed settlement for a handover boundary: (remaining_credit, owner_share, protocol_fee).
+/// Extraction to u64 happens in escrow at the PTB boundary.
+public(package) fun proj_handover_settlement<Asset: key + store, CoinType>(
+    e:   &AssetContext<Asset, CoinType>,
+    now: Timestamp,
+): (Stake, Stake, Stake) {
+    let stake_mist = proj_current_stake_value(e);
+    let used       = used_credit_at(e, now);
+    let alloc      = split_fee(used);
+    (
+        monetary::stake(stake_mist - monetary::stake_mist(used)),
+        monetary::stake(alloc.owner_share),
+        monetary::stake(alloc.protocol_fee),
+    )
+}
+
+/// Typed settlement for a tenure expiry: (owner_share, protocol_fee).
+/// Extraction to u64 happens in escrow at the PTB boundary.
+public(package) fun proj_tenure_settlement<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): (Stake, Stake) {
+    assert!(proj_is_rented(e), ENotRented);
+    let alloc = split_fee(monetary::stake(proj_current_stake_value(e)));
+    (monetary::stake(alloc.owner_share), monetary::stake(alloc.protocol_fee))
 }
 
 
@@ -727,10 +761,10 @@ public struct AssetReturned has copy, drop {
 
 // ─── Fee helpers ──────────────────────────────────────────────────────────────
 
-public(package) fun split_fee(amount: u64): (u64, u64) {
-    let fee   = math::apply_bps(amount, math::bps(PROTOCOL_FEE_BPS));
-    let owner = amount - fee;
-    (owner, fee)
+fun split_fee(amount: Stake): FeeAllocation {
+    let mist         = monetary::stake_mist(amount);
+    let protocol_fee = math::apply_bps(mist, math::bps(PROTOCOL_FEE_BPS));
+    FeeAllocation { owner_share: mist - protocol_fee, protocol_fee }
 }
 
 public(package) fun protocol_fee_bps(): u64 { PROTOCOL_FEE_BPS }
@@ -862,7 +896,7 @@ public(package) fun used_credit_at_for_tenancy<Asset: key + store, CoinType>(
     t:      &TenancyContext<Asset, CoinType>,
     config: &IntegrationConfig,
     now:    Timestamp,
-): u64 {
+): Stake {
     let cs = match (&t.state) {
         TenancyState::Occupied { tenant } =>
             credit_state::accruing(monetary::stake(tenant::proj_stake_value(tenant)), t.phase_start),
@@ -1013,15 +1047,15 @@ fun do_handover<Asset: key + store, CoinType>(
         let cs = credit_state::capped(principal, phase_start, boundary);
         credit_state::used_credit(&cs, config, boundary)
     };
-    let (owner_amount, fee_amount) = split_fee(used_credit);
-    let remain_credit = monetary::stake_mist(principal) - used_credit;
+    let alloc         = split_fee(used_credit);
+    let remain_credit = monetary::stake_mist(principal) - monetary::stake_mist(used_credit);
 
     let displaced_cap_id = tenant::proj_cap_id(tenant::proj_identity(&current));
     let displaced_addr   = tenant::proj_address(tenant::proj_identity(&current));
 
     let mut departing  = current;
-    let owner_earnings = tenant::take_owner_earnings(&mut departing, owner_amount);
-    let fee_share      = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
+    let owner_earnings = tenant::take_owner_earnings(&mut departing, alloc.owner_share);
+    let fee_share      = tenant::take_fee_share(&mut departing, alloc.protocol_fee, escrow_id);
     let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
     refund_state::distribute(refund, owner, fee_inbox_id, ctx);
 
@@ -1042,9 +1076,9 @@ fun do_handover<Asset: key + store, CoinType>(
         new_tenant_cap_id:        new_cap_id,
         new_tenant_addr:          new_addr,
         new_tenant_stake:         new_stake,
-        used_credit,
-        owner_share:              owner_amount,
-        protocol_fee:             fee_amount,
+        used_credit:              monetary::stake_mist(used_credit),
+        owner_share:              alloc.owner_share,
+        protocol_fee:             alloc.protocol_fee,
         remain_credit,
         new_rent_price,
         timestamp_ms:             boundary_ms,
@@ -1071,14 +1105,14 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     boundary:     Timestamp,
     ctx:          &mut TxContext,
 ): (asset::AssetCustodyOpen<Asset>, Price, bool) {
-    let principal      = tenant::proj_stake_value(&tenant);
+    let principal      = monetary::stake(tenant::proj_stake_value(&tenant));
     let tenant_cap_id  = tenant::proj_cap_id(tenant::proj_identity(&tenant));
     let tenant_addr    = tenant::proj_address(tenant::proj_identity(&tenant));
-    let (owner_amount, fee_amount) = split_fee(principal);
+    let alloc = split_fee(principal);
 
     let mut departing  = tenant;
-    let owner_earnings = tenant::take_owner_earnings(&mut departing, owner_amount);
-    let fee_share      = tenant::take_fee_share(&mut departing, fee_amount, escrow_id);
+    let owner_earnings = tenant::take_owner_earnings(&mut departing, alloc.owner_share);
+    let fee_share      = tenant::take_fee_share(&mut departing, alloc.protocol_fee, escrow_id);
     let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
     refund_state::distribute(refund, owner, fee_inbox_id, ctx);
 
@@ -1087,13 +1121,13 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         tenant_cap_id,
         tenant:                 tenant_addr,
         phase_start_ms:         phases::timestamp_ms(phase_start),
-        owner_share:            owner_amount,
-        protocol_fee:           fee_amount,
-        last_acquisition_price: principal,
+        owner_share:            alloc.owner_share,
+        protocol_fee:           alloc.protocol_fee,
+        last_acquisition_price: monetary::stake_mist(principal),
         timestamp_ms:           phases::timestamp_ms(boundary),
     });
 
-    (asset, monetary::as_reference_price(monetary::stake(principal)), retiring)
+    (asset, monetary::as_reference_price(principal), retiring)
 }
 
 /// Set the retiring flag on the current tenancy (Occupied or Demand).
@@ -1292,7 +1326,8 @@ public(package) fun emit_retire_flag_set(escrow_id: ID, owner: address, timestam
 
 #[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
-    split_fee(amount)
+    let alloc = split_fee(monetary::stake(amount));
+    (alloc.owner_share, alloc.protocol_fee)
 }
 
 #[test_only]

@@ -24,7 +24,7 @@ fun new_fixed_delta_success() {
     let len = cases.length();
     while (i < len) {
         let case = &cases[i];
-        let pf = price_function_state::new_fixed_delta(case.delta);
+        let pf = price_function_state::new_fixed_delta(monetary::price(case.delta));
         assert_eq!(price_function_state::fixed_delta_fields_for_testing(&pf), case.delta);
         i = i + 1;
     };
@@ -48,7 +48,7 @@ fun new_compound_delta_success() {
     let len = cases.length();
     while (i < len) {
         let case = &cases[i];
-        let pf = price_function_state::new_compound_delta(case.bps, case.delta);
+        let pf = price_function_state::new_compound_delta(math::bps(case.bps), monetary::price(case.delta));
         let (stored_bps, stored_delta) = price_function_state::compound_delta_fields_for_testing(&pf);
         assert_eq!(stored_bps,   case.bps);
         assert_eq!(stored_delta, case.delta);
@@ -61,32 +61,32 @@ fun new_compound_delta_success() {
 #[test]
 #[expected_failure(abort_code = price_function_state::EDeltaZero, location = usufruct::price_function_state)]
 fun new_fixed_delta_delta_zero_aborts() {
-    price_function_state::new_fixed_delta(0);
+    price_function_state::new_fixed_delta(monetary::price(0));
 }
 
 #[test]
 #[expected_failure(abort_code = price_function_state::EDeltaZero, location = usufruct::price_function_state)]
 fun new_compound_delta_delta_zero_aborts() {
-    price_function_state::new_compound_delta(500, 0);
+    price_function_state::new_compound_delta(math::bps(500), monetary::price(0));
 }
 
 #[test]
 #[expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
 fun new_compound_delta_bps_zero_aborts() {
-    price_function_state::new_compound_delta(0, 1);
+    price_function_state::new_compound_delta(math::bps(0), monetary::price(1));
 }
 
 #[test]
 #[expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
 fun new_compound_delta_bps_one_above_upper_bound_aborts() {
     // u64::MAX - BPS_PER_UNIT + 1 = 18_446_744_073_709_541_616 — smallest value that overflows
-    price_function_state::new_compound_delta(18_446_744_073_709_541_616, 1);
+    price_function_state::new_compound_delta(math::bps(18_446_744_073_709_541_616), monetary::price(1));
 }
 
 #[test]
 #[expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
 fun new_compound_delta_bps_max_aborts() {
-    price_function_state::new_compound_delta(18_446_744_073_709_551_615, 1); // u64::MAX saturated
+    price_function_state::new_compound_delta(math::bps(18_446_744_073_709_551_615), monetary::price(1)); // u64::MAX saturated
 }
 
 // ─── §5.1 eval_fixed_delta ─────────────────────────────────────────────────
@@ -257,15 +257,15 @@ fun eval_compound_delta_strict_increase_seed_set_c_prime() {
 #[test]
 fun evaluate_price_fn_golden_vectors() {
     assert_eq!(
-        monetary::price_mist(price_function_state::evaluate_price_fn(&price_function_state::new_fixed_delta(50), monetary::price(100))),
+        monetary::price_mist(price_function_state::evaluate_price_fn(&price_function_state::new_fixed_delta(monetary::price(50)), monetary::price(100))),
         150,
     );
     assert_eq!(
-        monetary::price_mist(price_function_state::evaluate_price_fn(&price_function_state::new_compound_delta(500, 1), monetary::price(10_000))),
+        monetary::price_mist(price_function_state::evaluate_price_fn(&price_function_state::new_compound_delta(math::bps(500), monetary::price(1)), monetary::price(10_000))),
         10_501,
     );
     assert_eq!(
-        monetary::price_mist(price_function_state::evaluate_price_fn(&price_function_state::new_compound_delta(50, 1), monetary::price(200))),
+        monetary::price_mist(price_function_state::evaluate_price_fn(&price_function_state::new_compound_delta(math::bps(50), monetary::price(1)), monetary::price(200))),
         202,
     );
 }
@@ -280,7 +280,7 @@ fun evaluate_price_fn_dispatch_equivalence_fixed_delta() {
     let mut i = 0;
     let len = prices.length();
     while (i < len) {
-        let pf  = price_function_state::new_fixed_delta(deltas[i]);
+        let pf  = price_function_state::new_fixed_delta(monetary::price(deltas[i]));
         let price = prices[i];
         assert_eq!(
             monetary::price_mist(price_function_state::evaluate_price_fn(&pf, monetary::price(price))),
@@ -298,7 +298,7 @@ fun evaluate_price_fn_dispatch_equivalence_compound_delta() {
     let mut i = 0;
     let len = prices.length();
     while (i < len) {
-        let pf  = price_function_state::new_compound_delta(bpss[i], deltas[i]);
+        let pf  = price_function_state::new_compound_delta(math::bps(bpss[i]), monetary::price(deltas[i]));
         let price = prices[i];
         assert_eq!(
             monetary::price_mist(price_function_state::evaluate_price_fn(&pf, monetary::price(price))),

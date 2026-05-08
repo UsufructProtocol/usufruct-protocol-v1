@@ -38,15 +38,16 @@ public enum PriceFunctionState has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_fixed_delta(delta: u64): PriceFunctionState {
-    assert!(delta > 0, EDeltaZero);
-    PriceFunctionState::FixedDelta { delta: monetary::price(delta) }
+public fun new_fixed_delta(delta: Price): PriceFunctionState {
+    assert!(monetary::price_mist(delta) > 0, EDeltaZero);
+    PriceFunctionState::FixedDelta { delta }
 }
 
-public fun new_compound_delta(bps: u64, delta: u64): PriceFunctionState {
-    assert!(bps >= 1 && bps <= bps_upper(), EBpsRange);
-    assert!(delta > 0, EDeltaZero);
-    PriceFunctionState::CompoundDelta { bps: math::bps(bps), delta: monetary::price(delta) }
+public fun new_compound_delta(bps: BasisPoints, delta: Price): PriceFunctionState {
+    let bps_val = math::bps_value(bps);
+    assert!(bps_val >= 1 && bps_val <= bps_upper(), EBpsRange);
+    assert!(monetary::price_mist(delta) > 0, EDeltaZero);
+    PriceFunctionState::CompoundDelta { bps, delta }
 }
 
 // === View Functions ===

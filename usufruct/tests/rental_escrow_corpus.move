@@ -11,6 +11,7 @@ use usufruct::{
     curve_shape_state::{Self, CurveShapeState},
     descent_policy_state::{Self, DescentPolicyState},
     handover_policy_state::{Self, HandoverPolicyState},
+    math,
     monetary,
     phases,
     price_function_state::{Self, PriceFunctionState},
@@ -222,8 +223,8 @@ fun make_handover(c: u8): HandoverPolicyState {
 }
 
 fun make_price_function_state(d: u8): PriceFunctionState {
-    if (d == 0) { price_function_state::new_fixed_delta(FIXED_DELTA_VALUE) }
-    else        { price_function_state::new_compound_delta(COMPOUND_DELTA_BPS, COMPOUND_DELTA_VALUE) }
+    if (d == 0) { price_function_state::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
+    else        { price_function_state::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
 }
 
 fun make_curve(e: u8): CurveShapeState {

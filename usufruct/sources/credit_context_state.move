@@ -8,6 +8,7 @@ module usufruct::credit_context_state;
 use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape_state,
+    monetary::{Self, Stake},
     phases::{Self, Timestamp},
 };
 
@@ -34,7 +35,7 @@ public enum CreditState has drop {
 /// Derived by the coordinator from `LifecycleState` accessors; never
 /// stored inside `TenantState` or `LifecycleState`.
 public struct CreditContext has drop {
-    stake:       u64,
+    stake:       Stake,
     phase_start: Timestamp,
     variant:     CreditState,
 }
@@ -49,8 +50,8 @@ public struct CreditContext has drop {
 
 // ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun proj_stake(ctx: &CreditContext): u64 { ctx.stake }
-public(package) fun proj_phase_start_ms(ctx: &CreditContext): u64 { phases::timestamp_ms(ctx.phase_start) }
+public(package) fun proj_stake(ctx: &CreditContext): Stake     { ctx.stake }
+public(package) fun proj_phase_start(ctx: &CreditContext): Timestamp { ctx.phase_start }
 
 public(package) fun proj_is_accruing(ctx: &CreditContext): bool {
     match (&ctx.variant) { CreditState::Accruing => true, _ => false }
@@ -72,12 +73,12 @@ public(package) fun proj_expiry_ms(ctx: &CreditContext): Option<u64> {
 // === Package Functions ===
 
 /// Construct `Accruing` — HandoverOpen, no countdown in progress.
-public(package) fun accruing(stake: u64, phase_start: Timestamp): CreditContext {
+public(package) fun accruing(stake: Stake, phase_start: Timestamp): CreditContext {
     CreditContext { stake, phase_start, variant: CreditState::Accruing }
 }
 
 /// Construct `Capped` — HandoverConfirmed, credit freezes at `expiry`.
-public(package) fun capped(stake: u64, phase_start: Timestamp, expiry: Timestamp): CreditContext {
+public(package) fun capped(stake: Stake, phase_start: Timestamp, expiry: Timestamp): CreditContext {
     CreditContext { stake, phase_start, variant: CreditState::Capped { expiry } }
 }
 
@@ -105,7 +106,7 @@ public(package) fun used_credit(
         phases::duration_ms(elapsed),        // ← temporal → math domain
         phases::duration_ms(config::proj_tenure_ceiling(cfg)),  // ← temporal → math domain
     );
-    curve_shape_state::apply(ctx.stake, g)
+    curve_shape_state::apply(monetary::stake_mist(ctx.stake), g)
 }
 
 // === Private Functions ===

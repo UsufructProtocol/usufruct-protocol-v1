@@ -10,6 +10,7 @@ use usufruct::{
     curve_shape_state,
     descent_policy_state,
     handover_policy_state,
+    math,
     monetary,
     phases,
     price_function_state,
@@ -32,7 +33,7 @@ fun base_cfg(): config::IntegrationConfig {
         retire_policy_state::new_retire_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(MIN),
+        price_function_state::new_fixed_delta(monetary::price(MIN)),
     )
 }
 
@@ -42,7 +43,7 @@ fun base_cfg(): config::IntegrationConfig {
 fun accruing_at_phase_start_returns_zero() {
     // P1 — at t = phase_start_ms, elapsed = 0, g = 0 → no credit consumed yet.
     let cfg = base_cfg();
-    let cs  = credit_state::accruing(STAKE, phases::timestamp(T0));
+    let cs  = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
     assert!(credit_state::used_credit(&cs, &cfg, phases::timestamp(T0)) == 0, 0);
 }
 
@@ -51,7 +52,7 @@ fun accruing_at_tenure_ceiling_returns_full_stake() {
     // P2 — at t = phase_start_ms + tenure_ceiling, evaluate_curve
     // short-circuits to SCALE → credit = stake.
     let cfg      = base_cfg();
-    let cs       = credit_state::accruing(STAKE, phases::timestamp(T0));
+    let cs       = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
     let boundary = T0 + TENURE;
     assert!(credit_state::used_credit(&cs, &cfg, phases::timestamp(boundary)) == STAKE, 0);
 }
@@ -60,7 +61,7 @@ fun accruing_at_tenure_ceiling_returns_full_stake() {
 fun accruing_past_tenure_saturates_at_stake() {
     // P3 — credit never exceeds stake (evaluate_curve ≤ SCALE always).
     let cfg  = base_cfg();
-    let cs   = credit_state::accruing(STAKE, phases::timestamp(T0));
+    let cs   = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
     let past = T0 + TENURE * 3;
     assert!(credit_state::used_credit(&cs, &cfg, phases::timestamp(past)) == STAKE, 0);
 }
@@ -69,7 +70,7 @@ fun accruing_past_tenure_saturates_at_stake() {
 fun accruing_mid_tenure_is_between_zero_and_stake() {
     // P4 — strictly interior for linear curve.
     let cfg = base_cfg();
-    let cs  = credit_state::accruing(STAKE, phases::timestamp(T0));
+    let cs  = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
     let mid = T0 + TENURE / 2;
     let c   = credit_state::used_credit(&cs, &cfg, phases::timestamp(mid));
     assert!(c > 0,     0);
@@ -80,7 +81,7 @@ fun accruing_mid_tenure_is_between_zero_and_stake() {
 fun accruing_is_monotone_non_decreasing() {
     // P5 — credit at t1 <= credit at t2 when t1 <= t2.
     let cfg  = base_cfg();
-    let cs   = credit_state::accruing(STAKE, phases::timestamp(T0));
+    let cs   = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
     let early = T0 + TENURE / 4;
     let late  = T0 + TENURE * 3 / 4;
     let c_early = credit_state::used_credit(&cs, &cfg, phases::timestamp(early));
@@ -111,9 +112,9 @@ fun accruing_various_curves_stay_in_bounds() {
             retire_policy_state::new_retire_immediate(),
             curve,
             curve_shape_state::new_linear(), // descent_curve unused here
-            price_function_state::new_fixed_delta(MIN),
+            price_function_state::new_fixed_delta(monetary::price(MIN)),
         );
-        let cs = credit_state::accruing(STAKE, phases::timestamp(T0));
+        let cs = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
         let c  = credit_state::used_credit(&cs, &cfg, phases::timestamp(mid));
         assert!(c >= 0,     (i as u64));
         assert!(c <= STAKE, (i as u64) + 100);
@@ -123,7 +124,7 @@ fun accruing_various_curves_stay_in_bounds() {
 
 #[test]
 fun accruing_predicate() {
-    let cs = credit_state::accruing(STAKE, phases::timestamp(T0));
+    let cs = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
     assert!(credit_state::proj_is_accruing(&cs), 0);
     assert!(!credit_state::proj_is_capped(&cs),  1);
 }
@@ -133,7 +134,7 @@ fun accruing_predicate() {
 #[test]
 fun capped_at_phase_start_returns_zero() {
     let cfg = base_cfg();
-    let cs  = credit_state::capped(STAKE, phases::timestamp(T0), phases::timestamp(EXPIRY));
+    let cs  = credit_state::capped(monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY));
     assert!(credit_state::used_credit(&cs, &cfg, phases::timestamp(T0)) == 0, 0);
 }
 
@@ -141,8 +142,8 @@ fun capped_at_phase_start_returns_zero() {
 fun capped_before_expiry_matches_accruing() {
     // P6 — before the countdown fires, Capped ≡ Accruing.
     let cfg    = base_cfg();
-    let capped   = credit_state::capped(STAKE, phases::timestamp(T0), phases::timestamp(EXPIRY));
-    let accruing = credit_state::accruing(STAKE, phases::timestamp(T0));
+    let capped   = credit_state::capped(monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY));
+    let accruing = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
     let before   = EXPIRY - 1;
     assert!(
         credit_state::used_credit(&capped, &cfg, phases::timestamp(before)) ==
@@ -156,7 +157,7 @@ fun capped_saturates_past_expiry() {
     // P7 — used_credit(t > expiry) == used_credit(t = expiry).
     // After the countdown boundary, accrual is frozen.
     let cfg    = base_cfg();
-    let cs     = credit_state::capped(STAKE, phases::timestamp(T0), phases::timestamp(EXPIRY));
+    let cs     = credit_state::capped(monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY));
     let at_exp = credit_state::used_credit(&cs, &cfg, phases::timestamp(EXPIRY));
     let past   = credit_state::used_credit(&cs, &cfg, phases::timestamp(EXPIRY + 50_000));
     assert!(at_exp == past, 0);
@@ -167,7 +168,7 @@ fun capped_saturation_is_less_than_full_stake() {
     // P8 — expiry fires before tenure_ceiling, so credit at expiry < stake.
     // (expiry = T0 + 25_000; tenure_ceiling = 100_000 → expiry < boundary)
     let cfg    = base_cfg();
-    let cs     = credit_state::capped(STAKE, phases::timestamp(T0), phases::timestamp(EXPIRY));
+    let cs     = credit_state::capped(monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY));
     let at_exp = credit_state::used_credit(&cs, &cfg, phases::timestamp(EXPIRY));
     assert!(at_exp < STAKE, 0);
     assert!(at_exp > 0,     1); // some credit was consumed before expiry
@@ -179,14 +180,14 @@ fun capped_at_tenure_boundary_returns_full_stake_when_expiry_past_ceiling() {
     // Capped behaves identically to Accruing and saturates at STAKE.
     let late_expiry = T0 + TENURE + 10_000; // beyond tenure_ceiling
     let cfg = base_cfg();
-    let cs  = credit_state::capped(STAKE, phases::timestamp(T0), phases::timestamp(late_expiry));
+    let cs  = credit_state::capped(monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(late_expiry));
     let boundary = T0 + TENURE;
     assert!(credit_state::used_credit(&cs, &cfg, phases::timestamp(boundary)) == STAKE, 0);
 }
 
 #[test]
 fun capped_predicate() {
-    let cs = credit_state::capped(STAKE, phases::timestamp(T0), phases::timestamp(EXPIRY));
+    let cs = credit_state::capped(monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY));
     assert!(!credit_state::proj_is_accruing(&cs), 0);
     assert!(credit_state::proj_is_capped(&cs),    1);
 }

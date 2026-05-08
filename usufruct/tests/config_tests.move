@@ -18,6 +18,7 @@ use usufruct::{
     curve_shape_state,
     descent_policy_state::{Self, DescentPolicyState},
     handover_policy_state::{Self, HandoverPolicyState},
+    math,
     monetary,
     phases,
     price_function_state,
@@ -46,7 +47,7 @@ fun v2_config(): IntegrationConfig {
         v2_retire(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     )
 }
 
@@ -79,7 +80,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
         // V2 — typical: 1h handover countdown in 24h tenure, 12h auction window
         Case {
@@ -90,7 +91,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
         // V3 — Deferred(2h) retire policy; Smoothstep curves
         Case {
@@ -101,7 +102,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_deferred(phases::duration(7_200_000)),
             credit_curve:   curve_shape_state::new_smoothstep(),
             descent_curve:  curve_shape_state::new_smoothstep(),
-            price_function_state: price_function_state::new_fixed_delta(10),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(10)),
         },
         // V4 — Instant handover (no bidding window); PowerLaw credit
         Case {
@@ -112,7 +113,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_power_law(1, 2),
             descent_curve:  curve_shape_state::new_linear(),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
         // V5 — u64::MAX min_rent_price; mixed Exp curves
         Case {
@@ -123,7 +124,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_exponential(3, false),
             descent_curve:  curve_shape_state::new_exponential(3, true),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
         // V6 — no upper bound on time params; Deferred(u64::MAX); Window(u64::MAX)
         Case {
@@ -134,7 +135,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_deferred(phases::duration(18_446_744_073_709_551_615)),
             credit_curve:   curve_shape_state::new_logistic(),
             descent_curve:  curve_shape_state::new_logistic(),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
         // V7 — CompoundDelta price function: 5% + 100 base units per cycle
         Case {
@@ -145,7 +146,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
-            price_function_state: price_function_state::new_compound_delta(500, 100),
+            price_function_state: price_function_state::new_compound_delta(math::bps(500), monetary::price(100)),
         },
         // V8 — HandoverPolicyState::FixedTime (was: handover_floor == tenure_ceiling
         //      under the u64 representation; now its own variant)
@@ -157,7 +158,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
         // V9 — FixedTime at u64-extreme tenure_ceiling (independent of magnitude)
         Case {
@@ -168,7 +169,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
         // V10 — PowerLaw inputs requiring gcd normalization
         //        credit_curve: new_power_law(2,4) → stored as PowerLaw{1,2}
@@ -181,7 +182,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_power_law(2, 4),
             descent_curve:  curve_shape_state::new_power_law(6, 3),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
         // V11 — extreme α values (min convex, max concave) + minimum CompoundDelta
         Case {
@@ -192,7 +193,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_exponential(1, false),
             descent_curve:  curve_shape_state::new_exponential(8, true),
-            price_function_state: price_function_state::new_compound_delta(1, 1),
+            price_function_state: price_function_state::new_compound_delta(math::bps(1), monetary::price(1)),
         },
         // V12 — DescentPolicyState::Skipped ("AtDutchAuction unobservable" mode, M6b)
         Case {
@@ -203,7 +204,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             retire:         retire_policy_state::new_retire_immediate(),
             credit_curve:   curve_shape_state::new_linear(),
             descent_curve:  curve_shape_state::new_linear(),
-            price_function_state: price_function_state::new_fixed_delta(1),
+            price_function_state: price_function_state::new_fixed_delta(monetary::price(1)),
         },
     ];
 
@@ -243,7 +244,7 @@ fun getter_roundtrip_r1_min_rent_price_max() {
         monetary::price(18_446_744_073_709_551_615),
         phases::duration(V2_TENURE_CEILING), v2_handover(), v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(monetary::price_mist(config::proj_min_rent_price(&cfg)), 18_446_744_073_709_551_615);
 }
@@ -255,7 +256,7 @@ fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
         phases::duration(86_400_000),
         v2_handover(), v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(phases::duration_ms(config::proj_tenure_ceiling(&cfg)), 86_400_000);
 }
@@ -268,7 +269,7 @@ fun getter_roundtrip_r3_handover_instant() {
         h,
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(*config::proj_handover(&cfg), h);
 }
@@ -282,7 +283,7 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
         h,
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(*config::proj_handover(&cfg), h);
 }
@@ -295,7 +296,7 @@ fun getter_roundtrip_r4_descent_window_one() {
         d,
         v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(*config::proj_descent(&cfg), d);
 }
@@ -309,7 +310,7 @@ fun getter_roundtrip_r4b_descent_skipped() {
         d,
         v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(*config::proj_descent(&cfg), d);
 }
@@ -321,7 +322,7 @@ fun getter_roundtrip_r5_retire_deferred_max() {
         monetary::price(V2_MIN_RENT_PRICE), phases::duration(V2_TENURE_CEILING), v2_handover(), v2_descent(),
         r,
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(*config::proj_retire(&cfg), r);
 }
@@ -335,7 +336,7 @@ fun getter_roundtrip_r6_credit_curve_power_law_gcd_normalized() {
         monetary::price(V2_MIN_RENT_PRICE), phases::duration(V2_TENURE_CEILING), v2_handover(), v2_descent(), v2_retire(),
         raw,
         curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(*config::proj_credit_curve(&cfg), raw);
 }
@@ -347,14 +348,14 @@ fun getter_roundtrip_r7_descent_curve_logistic() {
         monetary::price(V2_MIN_RENT_PRICE), phases::duration(V2_TENURE_CEILING), v2_handover(), v2_descent(), v2_retire(),
         curve_shape_state::new_linear(),
         g,
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     assert_eq!(*config::proj_descent_curve(&cfg), g);
 }
 
 #[test]
 fun getter_roundtrip_r8_price_function_state_compound_delta() {
-    let pf = price_function_state::new_compound_delta(500, 100);
+    let pf = price_function_state::new_compound_delta(math::bps(500), monetary::price(100));
     let cfg = config::new_config(
         monetary::price(V2_MIN_RENT_PRICE), phases::duration(V2_TENURE_CEILING), v2_handover(), v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
@@ -372,7 +373,7 @@ fun new_config_rejects_min_rent_price_zero() {
         monetary::price(0),
         phases::duration(V2_TENURE_CEILING), v2_handover(), v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
 }
 
@@ -384,7 +385,7 @@ fun new_config_rejects_tenure_ceiling_zero() {
         phases::duration(0),
         v2_handover(), v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
 }
 
@@ -398,7 +399,7 @@ fun new_config_rejects_countdown_floor_gt_tenure_ceiling() {
         handover_policy_state::new_handover_countdown(phases::duration(100)),
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
 }
 
@@ -412,7 +413,7 @@ fun new_config_rejects_countdown_floor_tenure_ceiling_plus_one() {
         handover_policy_state::new_handover_countdown(phases::duration(1_001)),
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
 }
 
@@ -426,7 +427,7 @@ fun new_config_rejects_countdown_floor_u64_max_tenure_ceiling_max_minus_one() {
         handover_policy_state::new_handover_countdown(phases::duration(18_446_744_073_709_551_615)), // u64::MAX
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
 }
 
@@ -442,7 +443,7 @@ fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
         handover_policy_state::new_handover_countdown(phases::duration(1_000)),
         v2_descent(), v2_retire(),
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
 }
 
@@ -473,7 +474,7 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
         monetary::price(V2_MIN_RENT_PRICE), phases::duration(V2_TENURE_CEILING), v2_handover(), v2_descent(), v2_retire(),
         curve_shape_state::new_power_law(2, 4),
         curve_shape_state::new_power_law(6, 3),
-        price_function_state::new_fixed_delta(1),
+        price_function_state::new_fixed_delta(monetary::price(1)),
     );
     let escrow_id = object::id_from_address(@0xE5C1);
     let mut scenario = test_scenario::begin(@0xA);

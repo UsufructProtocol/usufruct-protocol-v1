@@ -9,6 +9,7 @@ use usufruct::{
     curve_shape_state,
     descent_policy_state,
     handover_policy_state,
+    math,
     monetary,
     phases,
     price_function_state,
@@ -33,7 +34,7 @@ fun base_cfg(descent: bool): config::IntegrationConfig {
         retire_policy_state::new_retire_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(MIN),
+        price_function_state::new_fixed_delta(monetary::price(MIN)),
     )
 }
 
@@ -91,7 +92,7 @@ fun ascending_fixed_delta_adds_delta() {
         retire_policy_state::new_retire_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(delta),
+        price_function_state::new_fixed_delta(monetary::price(delta)),
     );
     let ps = price_state::ascending(monetary::stake(STAKE));
     let floor = monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(0)));
@@ -109,7 +110,7 @@ fun ascending_compound_delta_raises_price() {
         retire_policy_state::new_retire_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
-        price_function_state::new_compound_delta(1_000, 1), // 10% + 1 mist
+        price_function_state::new_compound_delta(math::bps(1_000), monetary::price(1)), // 10% + 1 mist
     );
     let ps = price_state::ascending(monetary::stake(STAKE));
     let floor = monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(0)));
@@ -203,7 +204,7 @@ fun descending_various_curves_respect_bounds() {
             retire_policy_state::new_retire_immediate(),
             curve_shape_state::new_linear(), // credit_curve unused here
             curve,
-            price_function_state::new_fixed_delta(MIN),
+            price_function_state::new_fixed_delta(monetary::price(MIN)),
         );
         let ps = price_state::descending(monetary::price(LAST), phases::timestamp(T0));
         let p  = monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(mid)));

@@ -142,8 +142,8 @@ public fun curve_exponential_alpha_neg(s: &CurveShapeState): Option<bool> { curv
 
 // === credit_context_state ===
 
-public fun credit_stake(ctx: &CreditContext): u64          { credit::proj_stake(ctx) }
-public fun credit_phase_start_ms(ctx: &CreditContext): u64 { credit::proj_phase_start_ms(ctx) }
+public fun credit_stake(ctx: &CreditContext): u64          { monetary::stake_mist(credit::proj_stake(ctx)) }
+public fun credit_phase_start_ms(ctx: &CreditContext): u64 { phases::timestamp_ms(credit::proj_phase_start(ctx)) }
 public fun credit_is_accruing(ctx: &CreditContext): bool   { credit::proj_is_accruing(ctx) }
 public fun credit_is_capped(ctx: &CreditContext): bool     { credit::proj_is_capped(ctx) }
 public fun credit_expiry_ms(ctx: &CreditContext): Option<u64> { credit::proj_expiry_ms(ctx) }

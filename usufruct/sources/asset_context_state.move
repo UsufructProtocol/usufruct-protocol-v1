@@ -865,10 +865,10 @@ public(package) fun used_credit_at_for_tenancy<Asset: key + store, CoinType>(
 ): u64 {
     let cs = match (&t.state) {
         TenancyState::Occupied { tenant } =>
-            credit_state::accruing(tenant::proj_stake_value(tenant), t.phase_start),
+            credit_state::accruing(monetary::stake(tenant::proj_stake_value(tenant)), t.phase_start),
         TenancyState::Demand { current, handover_expiry, .. } =>
             credit_state::capped(
-                tenant::proj_stake_value(current),
+                monetary::stake(tenant::proj_stake_value(current)),
                 t.phase_start,
                 *handover_expiry,
             ),
@@ -1008,13 +1008,13 @@ fun do_handover<Asset: key + store, CoinType>(
     boundary:    Timestamp,
     ctx:         &mut TxContext,
 ): TenancyContext<Asset, CoinType> {
-    let principal   = tenant::proj_stake_value(&current);
+    let principal   = monetary::stake(tenant::proj_stake_value(&current));
     let used_credit = {
         let cs = credit_state::capped(principal, phase_start, boundary);
         credit_state::used_credit(&cs, config, boundary)
     };
     let (owner_amount, fee_amount) = split_fee(used_credit);
-    let remain_credit = principal - used_credit;
+    let remain_credit = monetary::stake_mist(principal) - used_credit;
 
     let displaced_cap_id = tenant::proj_cap_id(tenant::proj_identity(&current));
     let displaced_addr   = tenant::proj_address(tenant::proj_identity(&current));

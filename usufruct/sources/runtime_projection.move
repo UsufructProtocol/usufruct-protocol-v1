@@ -13,7 +13,7 @@ use usufruct::{
     curve_shape_state::{Self as curve, CurveShapeState},
     descent_policy_state::{Self as descent, DescentPolicyState},
     fee_message::{Self as fee_msg, FeeMessage, FeeShare},
-    handover_policy_state::HandoverPolicyState,
+    handover_policy_state::{Self as handover, HandoverPolicyState},
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
@@ -23,6 +23,13 @@ use usufruct::{
 public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
 public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+
+// === handover_policy_state ===
+
+public fun handover_is_instant(p: &HandoverPolicyState):    bool       { handover::proj_is_instant(p) }
+public fun handover_is_fixed_time(p: &HandoverPolicyState): bool       { handover::proj_is_fixed_time(p) }
+public fun handover_is_countdown(p: &HandoverPolicyState):  bool       { handover::proj_is_countdown(p) }
+public fun handover_countdown_floor_ms(p: &HandoverPolicyState): Option<u64> { handover::proj_countdown_floor_ms(p) }
 
 // === descent_policy_state ===
 

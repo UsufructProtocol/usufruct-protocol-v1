@@ -277,13 +277,13 @@ public fun is_retire_immediate<Asset: key + store, CoinType>(
 public fun is_handover_instant<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy_state::is_instant(config::proj_handover(cfg(escrow)))
+    handover_policy_state::proj_is_instant(config::proj_handover(cfg(escrow)))
 }
 
 public fun is_handover_fixed_time<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy_state::is_fixed_time(config::proj_handover(cfg(escrow)))
+    handover_policy_state::proj_is_fixed_time(config::proj_handover(cfg(escrow)))
 }
 
 public fun is_retiring<Asset: key + store, CoinType>(
@@ -544,7 +544,7 @@ public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    handover_policy_state::countdown_floor_ms_opt(config::proj_handover(cfg(escrow)))
+    handover_policy_state::proj_countdown_floor_ms(config::proj_handover(cfg(escrow)))
 }
 
 public fun retire_floor_ms<Asset: key + store, CoinType>(

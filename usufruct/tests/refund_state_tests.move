@@ -102,7 +102,7 @@ fun destroy_for_testing_handles_all_three_variants() {
 fun identity_passed_into_variant_is_independent_of_caller_copy() {
     let (id, stake) = id_and_stake(100);
     let id_copy_before = id;
-    let _ = tenant::id_cap_id(&id_copy_before);
+    let _ = tenant::proj_cap_id(&id_copy_before);
     let rs = refund_state::parcial<TEST_COIN>(id, stake, fee_share(10), owner_earnings(20));
     refund_state::destroy_for_testing(rs);
 }

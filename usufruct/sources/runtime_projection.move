@@ -10,6 +10,7 @@ use usufruct::{
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
     refund_state::{Self as refund, RefundState},
+    tenant::{Self as tenant_mod, Tenant, TenantIdentity, TenantStake},
     cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     credit_context_state::{Self as credit, CreditContext},
@@ -26,6 +27,16 @@ use usufruct::{
 public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
 public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+
+// === tenant ===
+
+// NOTE: Tenant/TenantStake have store only — not directly observable as objects
+public fun tenant_identity<C>(t: &Tenant<C>):          &TenantIdentity  { tenant_mod::proj_identity(t) }
+public fun tenant_stake<C>(t: &Tenant<C>):             &TenantStake<C>  { tenant_mod::proj_stake(t) }
+public fun tenant_stake_value<C>(t: &Tenant<C>):       u64              { tenant_mod::proj_stake_value(t) }
+public fun tenant_cap_id(id: &TenantIdentity):          ID               { tenant_mod::proj_cap_id(id) }
+public fun tenant_address(id: &TenantIdentity):         address          { tenant_mod::proj_address(id) }
+public fun tenant_stake_value_of<C>(s: &TenantStake<C>): u64            { tenant_mod::proj_stake_value_of(s) }
 
 // === retire_policy_state ===
 

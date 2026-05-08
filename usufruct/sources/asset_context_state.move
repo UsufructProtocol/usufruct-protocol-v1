@@ -157,6 +157,11 @@ public struct EarningsWithdrawn has copy, drop {
     timestamp_ms: u64,
 }
 
+// === View Functions ===
+
+// ### RUNTIME PROJECTION FOR SDK ###
+// (AssetContext has store only — not directly observable by SDK; wrappers in runtime_projection.move)
+
 // === Public Functions ===
 
 // ─── Constructor ──────────────────────────────────────────────────────────────
@@ -191,7 +196,7 @@ public(package) fun is_active<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun is_inactive<Asset: key + store, CoinType>(
+public(package) fun proj_is_inactive<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
@@ -202,25 +207,25 @@ public(package) fun is_inactive<Asset: key + store, CoinType>(
 
 // ─── Context accessors ────────────────────────────────────────────────────────
 
-public(package) fun config<Asset: key + store, CoinType>(
+public(package) fun proj_config<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): &IntegrationConfig { &e.config }
 
-public(package) fun fee_inbox_id<Asset: key + store, CoinType>(
+public(package) fun proj_fee_inbox_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): ID { e.fee_inbox_id }
 
-public(package) fun integrated_at_ms<Asset: key + store, CoinType>(
+public(package) fun proj_integrated_at_ms<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): u64 { e.integrated_at_ms }
 
-public(package) fun escrow_id<Asset: key + store, CoinType>(
+public(package) fun proj_escrow_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): ID { e.escrow_id }
 
 // ─── Identity views ───────────────────────────────────────────────────────────
 
-public(package) fun asset_id<Asset: key + store, CoinType>(
+public(package) fun proj_asset_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): ID {
     match (&e.asset_state) {
@@ -229,13 +234,13 @@ public(package) fun asset_id<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun owner_balance<Asset: key + store, CoinType>(
+public(package) fun proj_owner_balance<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): u64 {
     owner::proj_value(&e.owner)
 }
 
-public(package) fun owner_cap_id<Asset: key + store, CoinType>(
+public(package) fun proj_owner_cap_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): ID {
     owner::proj_cap_id(owner::proj_identity(&e.owner))
@@ -243,7 +248,7 @@ public(package) fun owner_cap_id<Asset: key + store, CoinType>(
 
 // ─── State predicate views (SDK surface via escrow.move) ──────────────────────
 
-public(package) fun is_idle_state<Asset: key + store, CoinType>(
+public(package) fun proj_is_idle<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
@@ -252,7 +257,7 @@ public(package) fun is_idle_state<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun is_at_dutch_state<Asset: key + store, CoinType>(
+public(package) fun proj_is_at_dutch<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
@@ -262,14 +267,14 @@ public(package) fun is_at_dutch_state<Asset: key + store, CoinType>(
 }
 
 /// True iff there is an active tenancy (Occupied or Demand).
-public(package) fun is_rented_state<Asset: key + store, CoinType>(
+public(package) fun proj_is_rented<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) { AssetState::Renting { .. } => true, _ => false }
 }
 
 /// True iff renting and tenancy is Occupied (no pending bid yet).
-public(package) fun is_handover_open_state<Asset: key + store, CoinType>(
+public(package) fun proj_is_handover_open<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
@@ -279,7 +284,7 @@ public(package) fun is_handover_open_state<Asset: key + store, CoinType>(
 }
 
 /// True iff renting and tenancy is Demand (pending bidder present).
-public(package) fun is_handover_confirmed_state<Asset: key + store, CoinType>(
+public(package) fun proj_is_handover_confirmed<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
@@ -288,7 +293,7 @@ public(package) fun is_handover_confirmed_state<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun is_retiring_state<Asset: key + store, CoinType>(
+public(package) fun proj_is_retiring<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
@@ -299,7 +304,7 @@ public(package) fun is_retiring_state<Asset: key + store, CoinType>(
 
 // ─── Tenant data views (Option variants — only present in Renting) ────────────
 
-public(package) fun current_addr_opt<Asset: key + store, CoinType>(
+public(package) fun proj_current_addr<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<address> {
     match (&e.asset_state) {
@@ -308,7 +313,7 @@ public(package) fun current_addr_opt<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun current_cap_id_opt<Asset: key + store, CoinType>(
+public(package) fun proj_current_cap_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<ID> {
     match (&e.asset_state) {
@@ -317,7 +322,7 @@ public(package) fun current_cap_id_opt<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun pending_addr_opt<Asset: key + store, CoinType>(
+public(package) fun proj_pending_addr<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<address> {
     match (&e.asset_state) {
@@ -326,7 +331,7 @@ public(package) fun pending_addr_opt<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun pending_cap_id_opt<Asset: key + store, CoinType>(
+public(package) fun proj_pending_cap_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<ID> {
     match (&e.asset_state) {
@@ -335,7 +340,7 @@ public(package) fun pending_cap_id_opt<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun current_stake_opt<Asset: key + store, CoinType>(
+public(package) fun proj_current_stake<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<u64> {
     match (&e.asset_state) {
@@ -344,7 +349,7 @@ public(package) fun current_stake_opt<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun current_stake_value<Asset: key + store, CoinType>(
+public(package) fun proj_current_stake_value<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): u64 {
     match (&e.asset_state) {
@@ -353,7 +358,7 @@ public(package) fun current_stake_value<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun pending_stake_opt<Asset: key + store, CoinType>(
+public(package) fun proj_pending_stake<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<u64> {
     match (&e.asset_state) {
@@ -362,7 +367,7 @@ public(package) fun pending_stake_opt<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun phase_start_ms_opt<Asset: key + store, CoinType>(
+public(package) fun proj_phase_start_ms<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<u64> {
     match (&e.asset_state) {
@@ -374,7 +379,7 @@ public(package) fun phase_start_ms_opt<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun handover_expiry_opt<Asset: key + store, CoinType>(
+public(package) fun proj_handover_expiry<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<u64> {
     match (&e.asset_state) {
@@ -383,7 +388,7 @@ public(package) fun handover_expiry_opt<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun last_acq_price_opt<Asset: key + store, CoinType>(
+public(package) fun proj_last_acq_price<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<u64> {
     match (&e.asset_state) {

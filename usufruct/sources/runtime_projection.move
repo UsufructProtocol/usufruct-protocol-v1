@@ -7,6 +7,7 @@ module usufruct::runtime_projection;
 
 use usufruct::{
     asset::{Self, AssetCustodyOpen},
+    asset_context_state::{Self as acs, AssetContext},
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
     refund_state::{Self as refund, RefundState},
@@ -21,6 +22,30 @@ use usufruct::{
     price_function_state::{Self as price_fn, PriceFunctionState},
     retire_policy_state::{Self as retire, RetirePolicyState},
 };
+
+// === asset_context_state ===
+
+// NOTE: AssetContext has store only — not directly observable as object; embedded in Escrow
+public fun asset_is_inactive<A: key + store, C>(e: &AssetContext<A, C>): bool  { acs::proj_is_inactive(e) }
+public fun asset_is_idle<A: key + store, C>(e: &AssetContext<A, C>):     bool  { acs::proj_is_idle(e) }
+public fun asset_is_at_dutch<A: key + store, C>(e: &AssetContext<A, C>): bool  { acs::proj_is_at_dutch(e) }
+public fun asset_is_rented<A: key + store, C>(e: &AssetContext<A, C>):   bool  { acs::proj_is_rented(e) }
+public fun asset_is_handover_open<A: key + store, C>(e: &AssetContext<A, C>):      bool { acs::proj_is_handover_open(e) }
+public fun asset_is_handover_confirmed<A: key + store, C>(e: &AssetContext<A, C>): bool { acs::proj_is_handover_confirmed(e) }
+public fun asset_is_retiring<A: key + store, C>(e: &AssetContext<A, C>):  bool  { acs::proj_is_retiring(e) }
+public fun asset_owner_balance<A: key + store, C>(e: &AssetContext<A, C>):   u64 { acs::proj_owner_balance(e) }
+public fun asset_owner_cap_id<A: key + store, C>(e: &AssetContext<A, C>):    ID  { acs::proj_owner_cap_id(e) }
+public fun asset_fee_inbox_id<A: key + store, C>(e: &AssetContext<A, C>):    ID  { acs::proj_fee_inbox_id(e) }
+public fun asset_integrated_at_ms<A: key + store, C>(e: &AssetContext<A, C>): u64 { acs::proj_integrated_at_ms(e) }
+public fun asset_current_addr<A: key + store, C>(e: &AssetContext<A, C>):  Option<address> { acs::proj_current_addr(e) }
+public fun asset_current_cap_id<A: key + store, C>(e: &AssetContext<A, C>): Option<ID>     { acs::proj_current_cap_id(e) }
+public fun asset_pending_addr<A: key + store, C>(e: &AssetContext<A, C>):  Option<address> { acs::proj_pending_addr(e) }
+public fun asset_pending_cap_id<A: key + store, C>(e: &AssetContext<A, C>): Option<ID>     { acs::proj_pending_cap_id(e) }
+public fun asset_current_stake<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>    { acs::proj_current_stake(e) }
+public fun asset_pending_stake<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>    { acs::proj_pending_stake(e) }
+public fun asset_phase_start_ms<A: key + store, C>(e: &AssetContext<A, C>): Option<u64>   { acs::proj_phase_start_ms(e) }
+public fun asset_handover_expiry<A: key + store, C>(e: &AssetContext<A, C>): Option<u64>  { acs::proj_handover_expiry(e) }
+public fun asset_last_acq_price<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>  { acs::proj_last_acq_price(e) }
 
 // === fee_message ===
 

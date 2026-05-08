@@ -50,6 +50,24 @@ public fun new_compound_delta(bps: u64, delta: u64): PriceFunctionState {
 
 // === View Functions ===
 
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_fixed_delta(p: &PriceFunctionState): bool {
+    match (p) { PriceFunctionState::FixedDelta { .. } => true, _ => false }
+}
+public(package) fun proj_is_compound_delta(p: &PriceFunctionState): bool {
+    match (p) { PriceFunctionState::CompoundDelta { .. } => true, _ => false }
+}
+public(package) fun proj_fixed_delta(p: &PriceFunctionState): Option<u64> {
+    match (p) { PriceFunctionState::FixedDelta { delta } => option::some(*delta), _ => option::none() }
+}
+public(package) fun proj_compound_delta_bps(p: &PriceFunctionState): Option<u64> {
+    match (p) { PriceFunctionState::CompoundDelta { bps, .. } => option::some(*bps), _ => option::none() }
+}
+public(package) fun proj_compound_delta_delta(p: &PriceFunctionState): Option<u64> {
+    match (p) { PriceFunctionState::CompoundDelta { delta, .. } => option::some(*delta), _ => option::none() }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===

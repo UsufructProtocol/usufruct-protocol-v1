@@ -15,7 +15,7 @@ use usufruct::{
     descent_policy_state::{Self as descent, DescentPolicyState},
     fee_message::{Self as fee_msg, FeeMessage, FeeShare},
     handover_policy_state::{Self as handover, HandoverPolicyState},
-    price_function_state::PriceFunctionState,
+    price_function_state::{Self as price_fn, PriceFunctionState},
     retire_policy_state::RetirePolicyState,
 };
 
@@ -24,6 +24,14 @@ use usufruct::{
 public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
 public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+
+// === price_function_state ===
+
+public fun price_fn_is_fixed_delta(p: &PriceFunctionState):     bool       { price_fn::proj_is_fixed_delta(p) }
+public fun price_fn_is_compound_delta(p: &PriceFunctionState):  bool       { price_fn::proj_is_compound_delta(p) }
+public fun price_fn_fixed_delta(p: &PriceFunctionState):        Option<u64> { price_fn::proj_fixed_delta(p) }
+public fun price_fn_compound_delta_bps(p: &PriceFunctionState): Option<u64> { price_fn::proj_compound_delta_bps(p) }
+public fun price_fn_compound_delta_delta(p: &PriceFunctionState): Option<u64> { price_fn::proj_compound_delta_delta(p) }
 
 // === owner ===
 

@@ -19,6 +19,7 @@ use usufruct::{
     descent_policy_state,
     asset_context_state::{Self, AssetContext},
     handover_policy_state,
+    monetary,
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
     phases,
@@ -460,21 +461,21 @@ public fun compute_floor_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): u64 {
-    asset_context_state::floor_price_at(read_context(escrow), phases::now(clock))
+    monetary::price_mist(asset_context_state::floor_price_at(read_context(escrow), phases::now(clock)))
 }
 
 public fun compute_floor_price_at_ms<Asset: key + store, CoinType>(
     escrow:       &Escrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    asset_context_state::floor_price_at(read_context(escrow), phases::timestamp(timestamp_ms))
+    monetary::price_mist(asset_context_state::floor_price_at(read_context(escrow), phases::timestamp(timestamp_ms)))
 }
 
 public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
     escrow:     &Escrow<Asset, CoinType>,
     bid_amount: u64,
 ): u64 {
-    price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg(escrow)), bid_amount)
+    monetary::price_mist(price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg(escrow)), monetary::price(bid_amount)))
 }
 
 public fun last_acq_price<Asset: key + store, CoinType>(
@@ -532,7 +533,7 @@ public fun bps_denominator():  u64 { asset_context_state::bps_denominator() }
 public fun min_rent_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    config::proj_min_rent_price(cfg(escrow))
+    monetary::price_mist(config::proj_min_rent_price(cfg(escrow)))
 }
 
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(

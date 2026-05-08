@@ -9,6 +9,7 @@ use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape_state,
     descent_policy_state,
+    monetary::{Self, Price, Stake},
     phases::{Self, Timestamp},
     price_function_state,
 };
@@ -34,8 +35,8 @@ use usufruct::{
 /// stored inside `AssetState` or `LifecycleState`.
 public enum PriceState has drop {
     Rest,
-    Ascending  { stake: u64 },
-    Descending { last_acq_price: u64, phase_start: Timestamp },
+    Ascending  { stake: Stake },
+    Descending { last_acq_price: Price, phase_start: Timestamp },
 }
 
 // === Events ===
@@ -52,10 +53,10 @@ public(package) fun proj_is_rest(s: &PriceState):      bool { match (s) { PriceS
 public(package) fun proj_is_ascending(s: &PriceState): bool { match (s) { PriceState::Ascending { .. } => true, _ => false } }
 public(package) fun proj_is_descending(s: &PriceState): bool { match (s) { PriceState::Descending { .. } => true, _ => false } }
 public(package) fun proj_ascending_stake(s: &PriceState): Option<u64> {
-    match (s) { PriceState::Ascending { stake } => option::some(*stake), _ => option::none() }
+    match (s) { PriceState::Ascending { stake } => option::some(monetary::stake_mist(*stake)), _ => option::none() }
 }
 public(package) fun proj_descending_last_acq_price(s: &PriceState): Option<u64> {
-    match (s) { PriceState::Descending { last_acq_price, .. } => option::some(*last_acq_price), _ => option::none() }
+    match (s) { PriceState::Descending { last_acq_price, .. } => option::some(monetary::price_mist(*last_acq_price)), _ => option::none() }
 }
 public(package) fun proj_descending_phase_start_ms(s: &PriceState): Option<u64> {
     match (s) { PriceState::Descending { phase_start, .. } => option::some(phases::timestamp_ms(*phase_start)), _ => option::none() }
@@ -71,13 +72,13 @@ public(package) fun rest(): PriceState { PriceState::Rest }
 /// Construct `Ascending` — asset rented; `stake` is the amount the
 /// current (or pending) tenant paid, used as the base for the next
 /// price step.
-public(package) fun ascending(stake: u64): PriceState {
+public(package) fun ascending(stake: Stake): PriceState {
     PriceState::Ascending { stake }
 }
 
 /// Construct `Descending` — Dutch auction in progress.
 /// `last_acq_price` seeds the descent; `phase_start` anchors the temporal decay.
-public(package) fun descending(last_acq_price: u64, phase_start: Timestamp): PriceState {
+public(package) fun descending(last_acq_price: Price, phase_start: Timestamp): PriceState {
     PriceState::Descending { last_acq_price, phase_start }
 }
 
@@ -94,11 +95,14 @@ public(package) fun floor_price(
     state: &PriceState,
     cfg:   &IntegrationConfig,
     now:   Timestamp,
-): u64 {
+): Price {
     match (state) {
         PriceState::Rest => config::proj_min_rent_price(cfg),
         PriceState::Ascending { stake } =>
-            price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg), *stake),
+            price_function_state::evaluate_price_fn(
+                config::proj_price_function_state(cfg),
+                monetary::as_reference_price(*stake),
+            ),
         PriceState::Descending { last_acq_price, phase_start } => {
             let elapsed  = phases::elapsed_since(*phase_start, now);
             let t_max    = descent_policy_state::window_ceiling(config::proj_descent(cfg));
@@ -107,9 +111,9 @@ public(package) fun floor_price(
                 phases::duration_ms(elapsed),   // ← temporal → math domain
                 phases::duration_ms(t_max),     // ← temporal → math domain
             );
-            let spread   = *last_acq_price - config::proj_min_rent_price(cfg);
-            let consumed = curve_shape_state::apply(spread, h);
-            *last_acq_price - consumed
+            let spread   = monetary::price_mist(monetary::price_sub(*last_acq_price, config::proj_min_rent_price(cfg)));
+            let consumed = curve_shape_state::apply(spread, h);    // ← monetary → math domain
+            monetary::price_sub(*last_acq_price, monetary::price(consumed))
         },
     }
 }

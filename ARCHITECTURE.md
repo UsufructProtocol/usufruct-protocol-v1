@@ -94,6 +94,22 @@ AssetContext
       └── PriceFunctionState   (FixedDelta | CompoundDelta)
 ```
 
+### Five logical states — preserved through abstraction
+
+The protocol has exactly five states as its conceptual backbone:
+
+| Logical state | Implementation |
+|---|---|
+| `Idle` | `Waiting(WaitingState::Idle)` |
+| `AtDutch` | `Waiting(WaitingState::AtDutch { .. })` |
+| `Retired` | `Waiting(WaitingState::Retired)` |
+| `HandoverOpen` | `Renting(TenancyState::Demand { .. })` |
+| `HandoverConfirmed` | `Renting(TenancyState::Occupied { .. })` |
+
+The nested tree (`Waiting × WaitingState`, `Renting × TenancyContext × TenancyState`) is the implementation of that abstraction, not an expansion of it. The cardinality is 5 before and after — the tree was shaped by successive abstraction passes that extracted shared fields into context structs, but never introduced a new reachable state.
+
+Preserving cardinality was deliberate. Each split in the tree corresponds to a real difference in what the asset holds: `Waiting` carries `AssetCustodyLocked` (no borrow protocol), `Renting` carries `AssetCustodyOpen` (take/put/receipt). A flat enum with five variants would allow illegal combinations — `Idle` with a borrowable asset, `HandoverConfirmed` with no tenant — that the nested structure makes unrepresentable by construction.
+
 **Context-State pattern**: shared fields live in the context struct; variant-specific fields live in the state enum. This avoids repeating fields across variants. Example: `phase_start_ms` is shared across `Occupied` and `Demand`, so it lives in `TenancyContext`, not in each `TenancyState` variant.
 
 **Binary split at the top**: `AssetState` is binary — `Renting` (active tenancy) or `Waiting` (no tenant). This split removes the compiler bug triggered by deeply nested generic type params in enum fringe positions (`TypeInner::Param` vs `TypeInner::Apply` in `hlir/match_compilation.rs`). See `BUG_REPORT.md`.

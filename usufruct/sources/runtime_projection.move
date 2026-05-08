@@ -7,6 +7,7 @@ module usufruct::runtime_projection;
 
 use usufruct::{
     asset::{Self, AssetCustodyOpen},
+    owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     credit_context_state::{Self as credit, CreditContext},
@@ -23,6 +24,14 @@ use usufruct::{
 public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
 public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+
+// === owner ===
+
+public fun owner_value<C>(o: &Owner<C>):                  u64             { owner_mod::proj_value(o) }
+public fun owner_cap_id(id: &OwnerIdentity):               ID              { owner_mod::proj_cap_id(id) }
+public fun owner_identity<C>(o: &Owner<C>):               &OwnerIdentity  { owner_mod::proj_identity(o) }
+public fun owner_earnings<C>(o: &Owner<C>):               &OwnerEarnings<C> { owner_mod::proj_earnings(o) }
+public fun owner_earnings_value<C>(e: &OwnerEarnings<C>): u64             { owner_mod::proj_earnings_value(e) }
 
 // === handover_policy_state ===
 

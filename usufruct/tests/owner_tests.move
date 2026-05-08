@@ -35,8 +35,8 @@ fun new_constructs_owner_with_zero_balance_and_bound_cap_id() {
     {
         let (cap, cap_id) = mk_cap(sc.ctx());
         let o = owner::new<TEST_COIN>(cap_id);
-        assert_eq!(owner::value(&o), 0);
-        assert_eq!(owner::id_cap_id(owner::identity(&o)), cap_id);
+        assert_eq!(owner::proj_value(&o), 0);
+        assert_eq!(owner::proj_cap_id(owner::proj_identity(&o)), cap_id);
         owner::destroy_for_testing(o);
         owner_cap::burn(cap, OWNER_ADDR);
     };
@@ -46,14 +46,14 @@ fun new_constructs_owner_with_zero_balance_and_bound_cap_id() {
 #[test]
 fun new_earnings_reflects_input_balance() {
     let e = owner::new_earnings<TEST_COIN>(balance::create_for_testing(123));
-    assert_eq!(owner::earnings_value(&e), 123);
+    assert_eq!(owner::proj_earnings_value(&e), 123);
     owner::destroy_earnings_for_testing(e);
 }
 
 #[test]
 fun new_earnings_zero_balance_has_zero_value() {
     let e = owner::new_earnings<TEST_COIN>(balance::zero<TEST_COIN>());
-    assert_eq!(owner::earnings_value(&e), 0);
+    assert_eq!(owner::proj_earnings_value(&e), 0);
     owner::destroy_earnings_for_testing(e);
 }
 
@@ -68,7 +68,7 @@ fun deposit_accumulates_into_owner() {
         let mut o = owner::new<TEST_COIN>(cap_id);
         owner::deposit(&mut o, owner::new_earnings(balance::create_for_testing<TEST_COIN>(100)));
         owner::deposit(&mut o, owner::new_earnings(balance::create_for_testing<TEST_COIN>(250)));
-        assert_eq!(owner::value(&o), 350);
+        assert_eq!(owner::proj_value(&o), 350);
         owner::destroy_for_testing(o);
         owner_cap::burn(cap, OWNER_ADDR);
     };
@@ -84,7 +84,7 @@ fun deposit_zero_leaves_value_unchanged() {
         let mut o = owner::new<TEST_COIN>(cap_id);
         owner::deposit(&mut o, owner::new_earnings(balance::create_for_testing<TEST_COIN>(50)));
         owner::deposit(&mut o, owner::new_earnings(balance::zero<TEST_COIN>()));
-        assert_eq!(owner::value(&o), 50);
+        assert_eq!(owner::proj_value(&o), 50);
         owner::destroy_for_testing(o);
         owner_cap::burn(cap, OWNER_ADDR);
     };
@@ -103,7 +103,7 @@ fun withdraw_with_correct_cap_drains_to_coin() {
         owner::deposit(&mut o, owner::new_earnings(balance::create_for_testing<TEST_COIN>(777)));
         let drained = owner::withdraw(&mut o, &cap, sc.ctx());
         assert_eq!(coin::value(&drained), 777);
-        assert_eq!(owner::value(&o), 0);
+        assert_eq!(owner::proj_value(&o), 0);
         coin::burn_for_testing(drained);
         owner::destroy_for_testing(o);
         owner_cap::burn(cap, OWNER_ADDR);
@@ -213,9 +213,9 @@ fun take_owner_earnings_then_deposit_round_trip() {
             balance::create_for_testing<TEST_COIN>(1_000),
         );
         let earn = tenant::take_owner_earnings(&mut t, 250);
-        assert_eq!(owner::earnings_value(&earn), 250);
+        assert_eq!(owner::proj_earnings_value(&earn), 250);
         owner::deposit(&mut o, earn);
-        assert_eq!(owner::value(&o), 250);
+        assert_eq!(owner::proj_value(&o), 250);
         assert_eq!(tenant::stake_value(&t), 750);
 
         tenant::destroy_for_testing(t);

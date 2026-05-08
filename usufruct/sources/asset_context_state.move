@@ -232,13 +232,13 @@ public(package) fun asset_id<Asset: key + store, CoinType>(
 public(package) fun owner_balance<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): u64 {
-    owner::value(&e.owner)
+    owner::proj_value(&e.owner)
 }
 
 public(package) fun owner_cap_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): ID {
-    owner::id_cap_id(owner::identity(&e.owner))
+    owner::proj_cap_id(owner::proj_identity(&e.owner))
 }
 
 // ─── State predicate views (SDK surface via escrow.move) ──────────────────────
@@ -1476,7 +1476,7 @@ fun do_withdraw<CoinType>(
     owner_cap: &OwnerCap,
     ctx:       &mut TxContext,
 ): (Coin<CoinType>, u64) {
-    let amount = owner::value(owner);
+    let amount = owner::proj_value(owner);
     assert!(amount > 0, ENoEarnings);
     let coin = owner::withdraw(owner, owner_cap, ctx);
     (coin, amount)

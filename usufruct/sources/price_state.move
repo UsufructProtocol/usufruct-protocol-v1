@@ -47,6 +47,21 @@ public enum PriceState has drop {
 
 // === View Functions ===
 
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_rest(s: &PriceState):      bool { match (s) { PriceState::Rest => true, _ => false } }
+public(package) fun proj_is_ascending(s: &PriceState): bool { match (s) { PriceState::Ascending { .. } => true, _ => false } }
+public(package) fun proj_is_descending(s: &PriceState): bool { match (s) { PriceState::Descending { .. } => true, _ => false } }
+public(package) fun proj_ascending_stake(s: &PriceState): Option<u64> {
+    match (s) { PriceState::Ascending { stake } => option::some(*stake), _ => option::none() }
+}
+public(package) fun proj_descending_last_acq_price(s: &PriceState): Option<u64> {
+    match (s) { PriceState::Descending { last_acq_price, .. } => option::some(*last_acq_price), _ => option::none() }
+}
+public(package) fun proj_descending_phase_start_ms(s: &PriceState): Option<u64> {
+    match (s) { PriceState::Descending { phase_start_ms, .. } => option::some(*phase_start_ms), _ => option::none() }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
@@ -83,14 +98,14 @@ public(package) fun floor_price(
     timestamp_ms: u64,
 ): u64 {
     match (state) {
-        PriceState::Rest => config::min_rent_price(cfg),
+        PriceState::Rest => config::proj_min_rent_price(cfg),
         PriceState::Ascending { stake } =>
-            price_function_state::evaluate_price_fn(config::price_function_state(cfg), *stake),
+            price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg), *stake),
         PriceState::Descending { last_acq_price, phase_start_ms } => {
             let elapsed  = phases::elapsed_since(*phase_start_ms, timestamp_ms);
-            let t_max    = descent_policy_state::window_ceiling(config::descent(cfg));
-            let h        = curve_shape_state::evaluate_curve(config::descent_curve(cfg), elapsed, t_max);
-            let spread   = *last_acq_price - config::min_rent_price(cfg);
+            let t_max    = descent_policy_state::window_ceiling(config::proj_descent(cfg));
+            let h        = curve_shape_state::evaluate_curve(config::proj_descent_curve(cfg), elapsed, t_max);
+            let spread   = *last_acq_price - config::proj_min_rent_price(cfg);
             let consumed = math::mul_div(spread, h, curve_shape_state::scale());
             *last_acq_price - consumed
         },
@@ -100,10 +115,3 @@ public(package) fun floor_price(
 // === Private Functions ===
 
 // === Test Functions ===
-
-#[test_only]
-public fun is_rest(s: &PriceState):       bool { match (s) { PriceState::Rest       => true, _ => false } }
-#[test_only]
-public fun is_ascending(s: &PriceState):  bool { match (s) { PriceState::Ascending  { .. } => true, _ => false } }
-#[test_only]
-public fun is_descending(s: &PriceState): bool { match (s) { PriceState::Descending { .. } => true, _ => false } }

@@ -60,7 +60,7 @@ fun n1_share_value_reflects_input_balance() {
         let s = fee_message::new_share<sui::sui::SUI>(
             balance::create_for_testing(1_234), fake_escrow_id(),
         );
-        assert_eq!(fee_message::share_value(&s), 1_234);
+        assert_eq!(fee_message::proj_share_value(&s), 1_234);
         fee_message::destroy_share_for_testing(s);
     };
     scenario.end();
@@ -91,7 +91,7 @@ fun n3_share_with_zero_balance_allowed() {
         let s = fee_message::new_share<sui::sui::SUI>(
             balance::create_for_testing(0), fake_escrow_id(),
         );
-        assert_eq!(fee_message::share_value(&s), 0);
+        assert_eq!(fee_message::proj_share_value(&s), 0);
         fee_message::destroy_share_for_testing(s);
     };
     scenario.end();

@@ -54,11 +54,13 @@ public struct Owner<phantom CoinType> has store {
 
 // === View Functions ===
 
-public(package) fun identity<C>(o: &Owner<C>):              &OwnerIdentity     { &o.identity }
-public(package) fun earnings<C>(o: &Owner<C>):              &OwnerEarnings<C>  { &o.earnings }
-public(package) fun value<C>(o: &Owner<C>):                 u64                { balance::value(&o.earnings.balance) }
-public(package) fun id_cap_id(id: &OwnerIdentity):          ID                 { id.cap_id }
-public(package) fun earnings_value<C>(e: &OwnerEarnings<C>): u64               { balance::value(&e.balance) }
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_identity<C>(o: &Owner<C>):              &OwnerIdentity     { &o.identity }
+public(package) fun proj_earnings<C>(o: &Owner<C>):              &OwnerEarnings<C>  { &o.earnings }
+public(package) fun proj_value<C>(o: &Owner<C>):                 u64                { balance::value(&o.earnings.balance) }
+public(package) fun proj_cap_id(id: &OwnerIdentity):             ID                 { id.cap_id }
+public(package) fun proj_earnings_value<C>(e: &OwnerEarnings<C>): u64               { balance::value(&e.balance) }
 
 // === Admin Functions ===
 

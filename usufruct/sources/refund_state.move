@@ -60,6 +60,18 @@ public enum RefundState<phantom CoinType> {
 
 // === View Functions ===
 
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_nothing<C>(rs: &RefundState<C>): bool {
+    match (rs) { RefundState::Nothing { .. } => true, _ => false }
+}
+public(package) fun proj_is_parcial<C>(rs: &RefundState<C>): bool {
+    match (rs) { RefundState::Parcial { .. } => true, _ => false }
+}
+public(package) fun proj_is_total<C>(rs: &RefundState<C>): bool {
+    match (rs) { RefundState::Total { .. } => true, _ => false }
+}
+
 // === Admin Functions ===
 
 // === Package Functions ===
@@ -104,7 +116,7 @@ public(package) fun from_departing<C>(
     fee_share:      FeeShare<C>,
     owner_earnings: OwnerEarnings<C>,
 ): RefundState<C> {
-    if (tenant::stake_value(&departing) > 0) {
+    if (tenant::proj_stake_value(&departing) > 0) {
         let (identity, stake) = tenant::unbundle(departing);
         parcial(identity, stake, fee_share, owner_earnings)
     } else {
@@ -135,10 +147,10 @@ public(package) fun distribute<C>(
         RefundState::Parcial { identity, stake, fee_share, owner_earnings } => {
             owner::deposit(owner, owner_earnings);
             fee_message::post(fee_share, fee_inbox_id, ctx);
-            tenant::liquidate(stake, tenant::id_address(&identity), ctx);
+            tenant::liquidate(stake, tenant::proj_address(&identity), ctx);
         },
         RefundState::Total { identity, stake } => {
-            tenant::liquidate(stake, tenant::id_address(&identity), ctx);
+            tenant::liquidate(stake, tenant::proj_address(&identity), ctx);
         },
     }
 }
@@ -146,30 +158,6 @@ public(package) fun distribute<C>(
 // === Private Functions ===
 
 // === Test Functions ===
-
-#[test_only]
-public fun is_nothing<C>(rs: &RefundState<C>): bool {
-    match (rs) {
-        RefundState::Nothing { .. } => true,
-        _                           => false,
-    }
-}
-
-#[test_only]
-public fun is_parcial<C>(rs: &RefundState<C>): bool {
-    match (rs) {
-        RefundState::Parcial { .. } => true,
-        _                           => false,
-    }
-}
-
-#[test_only]
-public fun is_total<C>(rs: &RefundState<C>): bool {
-    match (rs) {
-        RefundState::Total { .. } => true,
-        _                         => false,
-    }
-}
 
 /// Consume a `RefundState` in tests, destroying any inner balance via
 /// the test_only destructors of each component module. State-agnostic.

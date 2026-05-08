@@ -219,14 +219,14 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             c.price_function_state,
         );
         // §7.3 P5 predicate: getter(new_config(..., f, ...)) == f for each field
-        assert_eq!(config::min_rent_price(&cfg),  c.min_rent_price);
-        assert_eq!(config::tenure_ceiling(&cfg),  c.tenure_ceiling);
-        assert_eq!(*config::handover(&cfg),       c.handover);
-        assert_eq!(*config::descent(&cfg),        c.descent);
-        assert_eq!(*config::retire(&cfg),         c.retire);
-        assert_eq!(*config::credit_curve(&cfg),   c.credit_curve);
-        assert_eq!(*config::descent_curve(&cfg),  c.descent_curve);
-        assert_eq!(*config::price_function_state(&cfg), c.price_function_state);
+        assert_eq!(config::proj_min_rent_price(&cfg),  c.min_rent_price);
+        assert_eq!(config::proj_tenure_ceiling(&cfg),  c.tenure_ceiling);
+        assert_eq!(*config::proj_handover(&cfg),       c.handover);
+        assert_eq!(*config::proj_descent(&cfg),        c.descent);
+        assert_eq!(*config::proj_retire(&cfg),         c.retire);
+        assert_eq!(*config::proj_credit_curve(&cfg),   c.credit_curve);
+        assert_eq!(*config::proj_descent_curve(&cfg),  c.descent_curve);
+        assert_eq!(*config::proj_price_function_state(&cfg), c.price_function_state);
         i = i + 1;
     };
 }
@@ -243,7 +243,7 @@ fun getter_roundtrip_r1_min_rent_price_max() {
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(config::min_rent_price(&cfg), 18_446_744_073_709_551_615);
+    assert_eq!(config::proj_min_rent_price(&cfg), 18_446_744_073_709_551_615);
 }
 
 #[test]
@@ -255,7 +255,7 @@ fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(config::tenure_ceiling(&cfg), 86_400_000);
+    assert_eq!(config::proj_tenure_ceiling(&cfg), 86_400_000);
 }
 
 #[test]
@@ -268,7 +268,7 @@ fun getter_roundtrip_r3_handover_instant() {
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(*config::handover(&cfg), h);
+    assert_eq!(*config::proj_handover(&cfg), h);
 }
 
 #[test]
@@ -282,7 +282,7 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(*config::handover(&cfg), h);
+    assert_eq!(*config::proj_handover(&cfg), h);
 }
 
 #[test]
@@ -295,7 +295,7 @@ fun getter_roundtrip_r4_descent_window_one() {
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(*config::descent(&cfg), d);
+    assert_eq!(*config::proj_descent(&cfg), d);
 }
 
 #[test]
@@ -309,7 +309,7 @@ fun getter_roundtrip_r4b_descent_skipped() {
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(*config::descent(&cfg), d);
+    assert_eq!(*config::proj_descent(&cfg), d);
 }
 
 #[test]
@@ -321,7 +321,7 @@ fun getter_roundtrip_r5_retire_deferred_max() {
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(*config::retire(&cfg), r);
+    assert_eq!(*config::proj_retire(&cfg), r);
 }
 
 #[test]
@@ -335,7 +335,7 @@ fun getter_roundtrip_r6_credit_curve_power_law_gcd_normalized() {
         curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(*config::credit_curve(&cfg), raw);
+    assert_eq!(*config::proj_credit_curve(&cfg), raw);
 }
 
 #[test]
@@ -347,7 +347,7 @@ fun getter_roundtrip_r7_descent_curve_logistic() {
         g,
         price_function_state::new_fixed_delta(1),
     );
-    assert_eq!(*config::descent_curve(&cfg), g);
+    assert_eq!(*config::proj_descent_curve(&cfg), g);
 }
 
 #[test]
@@ -358,7 +358,7 @@ fun getter_roundtrip_r8_price_function_state_compound_delta() {
         curve_shape_state::new_linear(), curve_shape_state::new_linear(),
         pf,
     );
-    assert_eq!(*config::price_function_state(&cfg), pf);
+    assert_eq!(*config::proj_price_function_state(&cfg), pf);
 }
 
 // ─── §7.2 — Invalid inputs (one function each) ────────────────────────────────
@@ -481,8 +481,8 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
         let events  = event::events_by_type<IntegrationConfigRegistered>();
         let payload = config::registered_config(&events[0]);
         // stored values are the reduced (gcd-normalized) forms
-        assert_eq!(*config::credit_curve(&payload),  curve_shape_state::new_power_law(2, 4));
-        assert_eq!(*config::descent_curve(&payload), curve_shape_state::new_power_law(6, 3));
+        assert_eq!(*config::proj_credit_curve(&payload),  curve_shape_state::new_power_law(2, 4));
+        assert_eq!(*config::proj_descent_curve(&payload), curve_shape_state::new_power_law(6, 3));
     };
     scenario.end();
 }

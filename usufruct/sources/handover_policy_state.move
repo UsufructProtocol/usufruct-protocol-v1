@@ -29,6 +29,26 @@ public fun new_handover_countdown(floor_ms: u64): HandoverPolicyState {
     HandoverPolicyState::Countdown { floor_ms }
 }
 
+// === View Functions ===
+
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_instant(policy: &HandoverPolicyState): bool {
+    match (policy) { HandoverPolicyState::Instant => true, _ => false }
+}
+public(package) fun proj_is_fixed_time(policy: &HandoverPolicyState): bool {
+    match (policy) { HandoverPolicyState::FixedTime => true, _ => false }
+}
+public(package) fun proj_is_countdown(policy: &HandoverPolicyState): bool {
+    match (policy) { HandoverPolicyState::Countdown { .. } => true, _ => false }
+}
+public(package) fun proj_countdown_floor_ms(policy: &HandoverPolicyState): Option<u64> {
+    match (policy) {
+        HandoverPolicyState::Countdown { floor_ms } => option::some(*floor_ms),
+        HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => option::none(),
+    }
+}
+
 // === Package Functions ===
 
 /// True iff the handover countdown has expired — the protocol should
@@ -72,34 +92,6 @@ public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: u6
     match (policy) {
         HandoverPolicyState::Countdown { floor_ms }            => *floor_ms < ceiling,
         HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => true,
-    }
-}
-
-/// Optional countdown floor for display purposes.
-///   Countdown { floor_ms } → Some(floor_ms)
-///   Instant | FixedTime    → None (no configurable countdown floor)
-public(package) fun countdown_floor_ms_opt(policy: &HandoverPolicyState): Option<u64> {
-    match (policy) {
-        HandoverPolicyState::Countdown { floor_ms }               => option::some(*floor_ms),
-        HandoverPolicyState::Instant | HandoverPolicyState::FixedTime  => option::none(),
-    }
-}
-
-/// True iff the policy is `Instant` — a bid immediately triggers handover
-/// with no protection window for the current tenant.
-public(package) fun is_instant(policy: &HandoverPolicyState): bool {
-    match (policy) {
-        HandoverPolicyState::Instant => true,
-        _                       => false,
-    }
-}
-
-/// True iff the policy is `FixedTime` — the handover fires at the end of
-/// the current tenure regardless of when the bid was placed.
-public(package) fun is_fixed_time(policy: &HandoverPolicyState): bool {
-    match (policy) {
-        HandoverPolicyState::FixedTime => true,
-        _                         => false,
     }
 }
 

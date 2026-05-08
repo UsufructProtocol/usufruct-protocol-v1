@@ -127,7 +127,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
     let Escrow { id, asset_context } = escrow;
     let context = option::destroy_some(asset_context);
     let context = asset_context_state::apply_pending_transition_states(context, clock, ctx);
-    assert!(asset_context_state::is_inactive(&context), ENotRetired);
+    assert!(asset_context_state::proj_is_inactive(&context), ENotRetired);
 
     let (asset, earnings) = asset_context_state::unwrap_for_claim(context, &owner_cap, ctx);
     let swept_earnings    = coin::value(&earnings);
@@ -229,67 +229,67 @@ public fun next_pending<Asset: key + store, CoinType>(
 public fun is_idle<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::is_idle_state(read_context(escrow))
+    asset_context_state::proj_is_idle(read_context(escrow))
 }
 
 public fun is_at_dutch_auction<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::is_at_dutch_state(read_context(escrow))
+    asset_context_state::proj_is_at_dutch(read_context(escrow))
 }
 
 public fun is_handover_open<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::is_handover_open_state(read_context(escrow))
+    asset_context_state::proj_is_handover_open(read_context(escrow))
 }
 
 public fun is_handover_confirmed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::is_handover_confirmed_state(read_context(escrow))
+    asset_context_state::proj_is_handover_confirmed(read_context(escrow))
 }
 
 public fun is_retired<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::is_inactive(read_context(escrow))
+    asset_context_state::proj_is_inactive(read_context(escrow))
 }
 
 public fun is_rented<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::is_rented_state(read_context(escrow))
+    asset_context_state::proj_is_rented(read_context(escrow))
 }
 
 public fun is_descent_skipped<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    descent_policy_state::is_skipped(config::descent(cfg(escrow)))
+    descent_policy_state::proj_is_skipped(config::proj_descent(cfg(escrow)))
 }
 
 public fun is_retire_immediate<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    retire_policy_state::is_immediate(config::retire(cfg(escrow)))
+    retire_policy_state::proj_is_immediate(config::proj_retire(cfg(escrow)))
 }
 
 public fun is_handover_instant<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy_state::is_instant(config::handover(cfg(escrow)))
+    handover_policy_state::proj_is_instant(config::proj_handover(cfg(escrow)))
 }
 
 public fun is_handover_fixed_time<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy_state::is_fixed_time(config::handover(cfg(escrow)))
+    handover_policy_state::proj_is_fixed_time(config::proj_handover(cfg(escrow)))
 }
 
 public fun is_retiring<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::is_retiring_state(read_context(escrow))
+    asset_context_state::proj_is_retiring(read_context(escrow))
 }
 
 // ─── Identity views ──────────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ public fun is_retiring<Asset: key + store, CoinType>(
 public fun asset_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
-    asset_context_state::asset_id(read_context(escrow))
+    asset_context_state::proj_asset_id(read_context(escrow))
 }
 
 public fun asset_type_name<Asset: key + store, CoinType>(
@@ -315,31 +315,31 @@ public fun coin_type_name<Asset: key + store, CoinType>(
 public fun owner_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
-    asset_context_state::owner_cap_id(read_context(escrow))
+    asset_context_state::proj_owner_cap_id(read_context(escrow))
 }
 
 public fun current_tenant_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
-    asset_context_state::current_addr_opt(read_context(escrow))
+    asset_context_state::proj_current_addr(read_context(escrow))
 }
 
 public fun current_tenant_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
-    asset_context_state::current_cap_id_opt(read_context(escrow))
+    asset_context_state::proj_current_cap_id(read_context(escrow))
 }
 
 public fun pending_tenant_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
-    asset_context_state::pending_addr_opt(read_context(escrow))
+    asset_context_state::proj_pending_addr(read_context(escrow))
 }
 
 public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
-    asset_context_state::pending_cap_id_opt(read_context(escrow))
+    asset_context_state::proj_pending_cap_id(read_context(escrow))
 }
 
 // ─── Stake views ─────────────────────────────────────────────────────────────
@@ -347,13 +347,13 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
 public fun current_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::current_stake_opt(read_context(escrow))
+    asset_context_state::proj_current_stake(read_context(escrow))
 }
 
 public fun pending_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::pending_stake_opt(read_context(escrow))
+    asset_context_state::proj_pending_stake(read_context(escrow))
 }
 
 // ─── Temporal views ───────────────────────────────────────────────────────────
@@ -361,22 +361,22 @@ public fun pending_stake<Asset: key + store, CoinType>(
 public fun phase_start_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::phase_start_ms_opt(read_context(escrow))
+    asset_context_state::proj_phase_start_ms(read_context(escrow))
 }
 
 public fun tenure_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     let e = read_context(escrow);
-    if (!asset_context_state::is_rented_state(e)) return option::none();
-    let ps = *option::borrow(&asset_context_state::phase_start_ms_opt(e));
-    option::some(phases::boundary_at(ps, config::tenure_ceiling(asset_context_state::config(e))))
+    if (!asset_context_state::proj_is_rented(e)) return option::none();
+    let ps = *option::borrow(&asset_context_state::proj_phase_start_ms(e));
+    option::some(phases::boundary_at(ps, config::proj_tenure_ceiling(asset_context_state::proj_config(e))))
 }
 
 public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::handover_expiry_opt(read_context(escrow))
+    asset_context_state::proj_handover_expiry(read_context(escrow))
 }
 
 public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
@@ -384,30 +384,30 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     bid_time_ms: u64,
 ): Option<u64> {
     let e = read_context(escrow);
-    if (!asset_context_state::is_handover_open_state(e)) return option::none();
-    let phase_start = *option::borrow(&asset_context_state::phase_start_ms_opt(e));
-    let c           = asset_context_state::config(e);
-    let tenure      = config::tenure_ceiling(c);
-    option::some(handover_policy_state::expiry_at(config::handover(c), bid_time_ms, phase_start, tenure))
+    if (!asset_context_state::proj_is_handover_open(e)) return option::none();
+    let phase_start = *option::borrow(&asset_context_state::proj_phase_start_ms(e));
+    let c           = asset_context_state::proj_config(e);
+    let tenure      = config::proj_tenure_ceiling(c);
+    option::some(handover_policy_state::expiry_at(config::proj_handover(c), bid_time_ms, phase_start, tenure))
 }
 
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    config::tenure_ceiling(cfg(escrow))
+    config::proj_tenure_ceiling(cfg(escrow))
 }
 
 public fun integrated_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::integrated_at_ms(read_context(escrow))
+    asset_context_state::proj_integrated_at_ms(read_context(escrow))
 }
 
 public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     let e = read_context(escrow);
-    retire_policy_state::unlock_at_ms(config::retire(asset_context_state::config(e)), asset_context_state::integrated_at_ms(e))
+    retire_policy_state::unlock_at_ms(config::proj_retire(asset_context_state::proj_config(e)), asset_context_state::proj_integrated_at_ms(e))
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────
@@ -474,13 +474,13 @@ public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
     escrow:     &Escrow<Asset, CoinType>,
     bid_amount: u64,
 ): u64 {
-    price_function_state::evaluate_price_fn(config::price_function_state(cfg(escrow)), bid_amount)
+    price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg(escrow)), bid_amount)
 }
 
 public fun last_acq_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::last_acq_price_opt(read_context(escrow))
+    asset_context_state::proj_last_acq_price(read_context(escrow))
 }
 
 // ─── Settlement views ────────────────────────────────────────────────────────
@@ -490,7 +490,7 @@ public fun compute_handover_settlement<Asset: key + store, CoinType>(
     boundary_ms: u64,
 ): (u64, u64, u64) {
     let e     = read_context(escrow);
-    let stake = asset_context_state::current_stake_value(e);
+    let stake = asset_context_state::proj_current_stake_value(e);
     let used  = asset_context_state::used_credit_at(e, boundary_ms);
     let (owner_share, protocol_fee) = asset_context_state::split_fee(used);
     (stake - used, owner_share, protocol_fee)
@@ -500,8 +500,8 @@ public fun compute_tenure_settlement<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): (u64, u64) {
     let e = read_context(escrow);
-    assert!(asset_context_state::is_rented_state(e), ENotRented);
-    asset_context_state::split_fee(asset_context_state::current_stake_value(e))
+    assert!(asset_context_state::proj_is_rented(e), ENotRented);
+    asset_context_state::split_fee(asset_context_state::proj_current_stake_value(e))
 }
 
 // ─── Earnings views ──────────────────────────────────────────────────────────
@@ -509,7 +509,7 @@ public fun compute_tenure_settlement<Asset: key + store, CoinType>(
 public fun owner_balance<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::owner_balance(read_context(escrow))
+    asset_context_state::proj_owner_balance(read_context(escrow))
 }
 
 // ─── Config views ────────────────────────────────────────────────────────────
@@ -523,7 +523,7 @@ public fun integration_config<Asset: key + store, CoinType>(
 public fun fee_inbox_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
-    asset_context_state::fee_inbox_id(read_context(escrow))
+    asset_context_state::proj_fee_inbox_id(read_context(escrow))
 }
 
 public fun protocol_fee_bps(): u64 { asset_context_state::protocol_fee_bps() }
@@ -532,43 +532,43 @@ public fun bps_denominator():  u64 { asset_context_state::bps_denominator() }
 public fun min_rent_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    config::min_rent_price(cfg(escrow))
+    config::proj_min_rent_price(cfg(escrow))
 }
 
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    descent_policy_state::window_ceiling_opt(config::descent(cfg(escrow)))
+    descent_policy_state::proj_window_ceiling(config::proj_descent(cfg(escrow)))
 }
 
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    handover_policy_state::countdown_floor_ms_opt(config::handover(cfg(escrow)))
+    handover_policy_state::proj_countdown_floor_ms(config::proj_handover(cfg(escrow)))
 }
 
 public fun retire_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    retire_policy_state::floor_ms_opt(config::retire(cfg(escrow)))
+    retire_policy_state::proj_floor_ms(config::proj_retire(cfg(escrow)))
 }
 
 public fun credit_curve<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): CurveShapeState {
-    *config::credit_curve(cfg(escrow))
+    *config::proj_credit_curve(cfg(escrow))
 }
 
 public fun descent_curve<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): CurveShapeState {
-    *config::descent_curve(cfg(escrow))
+    *config::proj_descent_curve(cfg(escrow))
 }
 
 public fun ascending_price_function_state<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): PriceFunctionState {
-    *config::price_function_state(cfg(escrow))
+    *config::proj_price_function_state(cfg(escrow))
 }
 
 // === Private Functions ===
@@ -582,7 +582,7 @@ fun read_context<Asset: key + store, CoinType>(
 fun cfg<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &IntegrationConfig {
-    asset_context_state::config(read_context(escrow))
+    asset_context_state::proj_config(read_context(escrow))
 }
 
 // === Test Functions ===
@@ -598,7 +598,7 @@ public(package) fun read_engine_for_testing<Asset: key + store, CoinType>(
 public(package) fun owner_value_for_testing<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::owner_balance(read_context(escrow))
+    asset_context_state::proj_owner_balance(read_context(escrow))
 }
 
 #[test_only]

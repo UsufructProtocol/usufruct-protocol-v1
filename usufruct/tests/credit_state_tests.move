@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::credit_state_tests;
+module usufruct::credit_context_state_tests;
 
 use usufruct::{
     config,
-    credit_state,
+    credit_context_state::{Self as credit_state},
     curve_shape_state,
     descent_policy_state,
     handover_policy_state,
@@ -122,8 +122,8 @@ fun accruing_various_curves_stay_in_bounds() {
 #[test]
 fun accruing_predicate() {
     let cs = credit_state::accruing(STAKE, T0);
-    assert!(credit_state::is_accruing(&cs), 0);
-    assert!(!credit_state::is_capped(&cs),  1);
+    assert!(credit_state::proj_is_accruing(&cs), 0);
+    assert!(!credit_state::proj_is_capped(&cs),  1);
 }
 
 // ─── §2. Capped ───────────────────────────────────────────────────────────────
@@ -185,6 +185,6 @@ fun capped_at_tenure_boundary_returns_full_stake_when_expiry_past_ceiling() {
 #[test]
 fun capped_predicate() {
     let cs = credit_state::capped(STAKE, T0, EXPIRY);
-    assert!(!credit_state::is_accruing(&cs), 0);
-    assert!(credit_state::is_capped(&cs),    1);
+    assert!(!credit_state::proj_is_accruing(&cs), 0);
+    assert!(credit_state::proj_is_capped(&cs),    1);
 }

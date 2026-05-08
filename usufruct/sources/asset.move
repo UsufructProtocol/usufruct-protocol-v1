@@ -42,14 +42,23 @@ public struct AssetIdentity has copy, drop, store {
     escrow_id: ID,
 }
 
-/// Wrapper around an external `U` while it lives in a borrow-capable
-/// state (HandoverOpen / HandoverConfirmed). `available` is `Some`
-/// when the asset is in escrow custody and `None` while it is on loan
-/// to the tenant. Outside those two states the asset is held raw —
-/// the wrapper exists exactly where the borrow protocol needs it.
-public struct Asset<U: key + store> has store {
+/// Wrapper around an external `U` during active tenancy (Occupied / Demand).
+/// `available` is `Some` when the asset is in escrow custody and `None`
+/// while it is on loan to the tenant. The borrow protocol (take/put/receipt)
+/// lives here — this wrapper exists exactly where it is needed.
+public struct AssetCustodyOpen<U: key + store> has store {
     identity:  AssetIdentity,
     available: Option<U>,
+}
+
+/// Wrapper around an external `U` while no tenancy is active (Idle, AtDutch,
+/// Retired). No borrow protocol — the asset is simply held in custody.
+/// Distinct from `AssetCustodyOpen` so that `WaitingContext` fields are a
+/// concrete named type (`TypeInner::Apply`) rather than a raw type parameter,
+/// enabling deep nested match patterns without hitting the compiler limitation
+/// described in BUG_REPORT.md.
+public struct AssetCustodyLocked<U: key + store> has store {
+    asset: U,
 }
 
 /// Hot potato — no abilities. Minted by `take` and consumed by `put`
@@ -69,17 +78,15 @@ public struct AssetReceipt {
 
 // === View Functions ===
 
-public(package) fun identity<U: key + store>(self: &Asset<U>): &AssetIdentity { &self.identity }
+// ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun is_available<U: key + store>(self: &Asset<U>): bool {
+public(package) fun proj_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID { object::id(&self.asset) }
+
+public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.identity.asset_id }
+public(package) fun proj_escrow_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.identity.escrow_id }
+public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool {
     option::is_some(&self.available)
 }
-
-public(package) fun id_asset_id(id: &AssetIdentity):  ID { id.asset_id }
-public(package) fun id_escrow_id(id: &AssetIdentity): ID { id.escrow_id }
-
-public(package) fun receipt_asset_id(r: &AssetReceipt):  ID { r.asset_id }
-public(package) fun receipt_escrow_id(r: &AssetReceipt): ID { r.escrow_id }
 
 // === Admin Functions ===
 
@@ -90,18 +97,32 @@ public(package) fun receipt_escrow_id(r: &AssetReceipt): ID { r.escrow_id }
 /// binding from this point on. Sole construction site — called by
 /// `asset_state::rent` when the lifecycle crosses into a borrowable
 /// state.
-public(package) fun new<U: key + store>(u: U, escrow_id: ID): Asset<U> {
-    Asset {
+/// Wrap a `U` for borrow-capable custody. Called when entering Renting state.
+public(package) fun new<U: key + store>(u: U, escrow_id: ID): AssetCustodyOpen<U> {
+    AssetCustodyOpen {
         identity:  AssetIdentity { asset_id: object::id(&u), escrow_id },
         available: option::some(u),
     }
+}
+
+/// Wrap a `U` for locked custody (no borrow protocol). Called when entering
+/// Waiting state (Idle, AtDutch, Retired).
+public(package) fun lock<U: key + store>(u: U): AssetCustodyLocked<U> {
+    AssetCustodyLocked { asset: u }
+}
+
+/// Unwrap a locked custody, returning the raw `U`. Called when transitioning
+/// from Waiting to Renting (before `new` wraps it as open custody).
+public(package) fun unlock<U: key + store>(self: AssetCustodyLocked<U>): U {
+    let AssetCustodyLocked { asset } = self;
+    asset
 }
 
 /// Borrow path: extract the inner `U` and mint an `AssetReceipt`. The
 /// slot is left `None`; the receipt is the proof-of-borrow, hot-potato
 /// shaped so it cannot be stored or forgotten — must reach `put`
 /// within the same PTB.
-public(package) fun take<U: key + store>(self: &mut Asset<U>): (U, AssetReceipt) {
+public(package) fun take<U: key + store>(self: &mut AssetCustodyOpen<U>): (U, AssetReceipt) {
     let u = option::extract(&mut self.available);
     let receipt = AssetReceipt {
         asset_id:  self.identity.asset_id,
@@ -117,7 +138,7 @@ public(package) fun take<U: key + store>(self: &mut Asset<U>): (U, AssetReceipt)
 ///   2. receipt-swap:    self.asset_id  != receipt.asset_id
 ///   3. asset-swap:      object::id(&u) != receipt.asset_id
 public(package) fun put<U: key + store>(
-    self:    &mut Asset<U>,
+    self:    &mut AssetCustodyOpen<U>,
     u:       U,
     receipt: AssetReceipt,
 ) {
@@ -132,8 +153,10 @@ public(package) fun put<U: key + store>(
 /// if the slot is empty (asset still borrowed). Used at transitions
 /// out of the borrow-capable states (e.g. `asset_state::expire`
 /// HandoverOpen → AtDutch).
-public(package) fun unbundle<U: key + store>(self: Asset<U>): U {
-    let Asset { identity: _, available } = self;
+/// Unwrap an open custody asset, returning the raw `U`. Aborts if the slot
+/// is empty (asset still borrowed). Called at transitions out of Renting.
+public(package) fun unbundle<U: key + store>(self: AssetCustodyOpen<U>): U {
+    let AssetCustodyOpen { identity: _, available } = self;
     assert!(option::is_some(&available), E_ASSET_NOT_AVAILABLE);
     option::destroy_some(available)
 }
@@ -157,3 +180,12 @@ public fun forge_receipt_for_testing(asset_id: ID, escrow_id: ID): AssetReceipt 
 public fun destroy_receipt_for_testing(r: AssetReceipt) {
     let AssetReceipt { asset_id: _, escrow_id: _ } = r;
 }
+
+/// Inspect the asset_id stamped on a receipt. Test-only — production
+/// code never needs to read receipt fields; `put` validates them internally.
+#[test_only]
+public fun receipt_asset_id_for_testing(r: &AssetReceipt): ID { r.asset_id }
+
+/// Inspect the escrow_id stamped on a receipt. Test-only — same reason.
+#[test_only]
+public fun receipt_escrow_id_for_testing(r: &AssetReceipt): ID { r.escrow_id }

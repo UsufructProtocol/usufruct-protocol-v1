@@ -44,9 +44,9 @@ fun nothing_constructs_nothing_variant() {
     let (_, stake) = id_and_stake(0);
     tenant::destroy_empty_stake(stake);
     let rs = refund_state::nothing<TEST_COIN>(fee_share(50), owner_earnings(450));
-    assert!(refund_state::is_nothing(&rs));
-    assert!(!refund_state::is_parcial(&rs));
-    assert!(!refund_state::is_total(&rs));
+    assert!(refund_state::proj_is_nothing(&rs));
+    assert!(!refund_state::proj_is_parcial(&rs));
+    assert!(!refund_state::proj_is_total(&rs));
     refund_state::destroy_for_testing(rs);
 }
 
@@ -54,9 +54,9 @@ fun nothing_constructs_nothing_variant() {
 fun parcial_constructs_parcial_variant() {
     let (id, stake) = id_and_stake(300);
     let rs = refund_state::parcial<TEST_COIN>(id, stake, fee_share(50), owner_earnings(450));
-    assert!(refund_state::is_parcial(&rs));
-    assert!(!refund_state::is_nothing(&rs));
-    assert!(!refund_state::is_total(&rs));
+    assert!(refund_state::proj_is_parcial(&rs));
+    assert!(!refund_state::proj_is_nothing(&rs));
+    assert!(!refund_state::proj_is_total(&rs));
     refund_state::destroy_for_testing(rs);
 }
 
@@ -64,9 +64,9 @@ fun parcial_constructs_parcial_variant() {
 fun total_constructs_total_variant() {
     let (id, stake) = id_and_stake(1_000);
     let rs = refund_state::total<TEST_COIN>(id, stake);
-    assert!(refund_state::is_total(&rs));
-    assert!(!refund_state::is_nothing(&rs));
-    assert!(!refund_state::is_parcial(&rs));
+    assert!(refund_state::proj_is_total(&rs));
+    assert!(!refund_state::proj_is_nothing(&rs));
+    assert!(!refund_state::proj_is_parcial(&rs));
     refund_state::destroy_for_testing(rs);
 }
 
@@ -102,7 +102,7 @@ fun destroy_for_testing_handles_all_three_variants() {
 fun identity_passed_into_variant_is_independent_of_caller_copy() {
     let (id, stake) = id_and_stake(100);
     let id_copy_before = id;
-    let _ = tenant::id_cap_id(&id_copy_before);
+    let _ = tenant::proj_cap_id(&id_copy_before);
     let rs = refund_state::parcial<TEST_COIN>(id, stake, fee_share(10), owner_earnings(20));
     refund_state::destroy_for_testing(rs);
 }

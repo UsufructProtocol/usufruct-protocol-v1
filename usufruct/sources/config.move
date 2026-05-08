@@ -82,6 +82,17 @@ public fun new_config(
 
 // === View Functions ===
 
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):       u64                  { cfg.min_rent_price }
+public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):        u64                  { cfg.tenure_ceiling }
+public(package) fun proj_handover(cfg: &IntegrationConfig):              &HandoverPolicyState  { &cfg.handover }
+public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicyState   { &cfg.descent }
+public(package) fun proj_retire(cfg: &IntegrationConfig):                &RetirePolicyState    { &cfg.retire }
+public(package) fun proj_credit_curve(cfg: &IntegrationConfig):          &CurveShapeState      { &cfg.credit_curve }
+public(package) fun proj_descent_curve(cfg: &IntegrationConfig):         &CurveShapeState      { &cfg.descent_curve }
+public(package) fun proj_price_function_state(cfg: &IntegrationConfig):  &PriceFunctionState   { &cfg.price_function_state }
+
 // === Admin Functions ===
 
 // === Package Functions ===
@@ -89,17 +100,6 @@ public fun new_config(
 public(package) fun emit_registration(cfg: &IntegrationConfig, escrow_id: ID) {
     event::emit(IntegrationConfigRegistered { escrow_id, config: *cfg });
 }
-
-// --- IntegrationConfig getters ---
-
-public(package) fun min_rent_price(cfg: &IntegrationConfig):    u64               { cfg.min_rent_price }
-public(package) fun tenure_ceiling(cfg: &IntegrationConfig):    u64               { cfg.tenure_ceiling }
-public(package) fun handover(cfg: &IntegrationConfig):          &HandoverPolicyState   { &cfg.handover }
-public(package) fun descent(cfg: &IntegrationConfig):           &DescentPolicyState    { &cfg.descent }
-public(package) fun retire(cfg: &IntegrationConfig):            &RetirePolicyState     { &cfg.retire }
-public(package) fun credit_curve(cfg: &IntegrationConfig):      &CurveShapeState       { &cfg.credit_curve }
-public(package) fun descent_curve(cfg: &IntegrationConfig):     &CurveShapeState       { &cfg.descent_curve }
-public(package) fun price_function_state(cfg: &IntegrationConfig):    &PriceFunctionState    { &cfg.price_function_state }
 
 // === Private Functions ===
 

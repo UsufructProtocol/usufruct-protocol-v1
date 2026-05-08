@@ -1431,7 +1431,7 @@ fun borrow_asset_with_pending_cap_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = asset_context_state::EReceiptEscrowMismatch, location = usufruct::asset_context_state)]
+#[expected_failure(abort_code = asset::E_ASSET_WRONG_ESCROW, location = usufruct::asset)]
 fun return_asset_with_foreign_receipt_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);

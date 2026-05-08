@@ -27,26 +27,24 @@ public fun new_retire_deferred(floor_ms: u64): RetirePolicyState {
     RetirePolicyState::Deferred { floor_ms }
 }
 
-// === Package Functions ===
+// === View Functions ===
 
-/// True iff the policy is `Immediate` — `retire()` is available from
-/// integration time onward with no waiting period.
-public(package) fun is_immediate(policy: &RetirePolicyState): bool {
-    match (policy) {
-        RetirePolicyState::Immediate => true,
-        _                       => false,
-    }
+// ### RUNTIME PROJECTION FOR SDK ###
+
+public(package) fun proj_is_immediate(policy: &RetirePolicyState): bool {
+    match (policy) { RetirePolicyState::Immediate => true, _ => false }
 }
-
-/// Optional retire floor for display purposes.
-///   Deferred { floor_ms } → Some(floor_ms)
-///   Immediate             → None (no waiting period configured)
-public(package) fun floor_ms_opt(policy: &RetirePolicyState): Option<u64> {
+public(package) fun proj_is_deferred(policy: &RetirePolicyState): bool {
+    match (policy) { RetirePolicyState::Deferred { .. } => true, _ => false }
+}
+public(package) fun proj_floor_ms(policy: &RetirePolicyState): Option<u64> {
     match (policy) {
         RetirePolicyState::Deferred { floor_ms } => option::some(*floor_ms),
         RetirePolicyState::Immediate             => option::none(),
     }
 }
+
+// === Package Functions ===
 
 /// Absolute timestamp at which `retire()` becomes available.
 ///   Immediate             → integrated_at_ms (unlocked from creation)

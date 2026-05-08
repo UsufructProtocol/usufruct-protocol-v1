@@ -10,6 +10,7 @@ module usufruct::runtime_projection;
 
 use usufruct::{
     asset::{Self, AssetCustodyOpen, AssetCustodyLocked},
+    phases,
     asset_context_state::{Self as acs, AssetContext},
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
@@ -68,7 +69,11 @@ public fun tenant_stake_value_of<C>(s: &TenantStake<C>): u64            { tenant
 
 public fun retire_is_immediate(p: &RetirePolicyState): bool       { retire::proj_is_immediate(p) }
 public fun retire_is_deferred(p: &RetirePolicyState):  bool       { retire::proj_is_deferred(p) }
-public fun retire_floor_ms(p: &RetirePolicyState):     Option<u64> { retire::proj_floor_ms(p) }
+public fun retire_floor_ms(p: &RetirePolicyState): Option<u64> {
+    let opt = retire::proj_floor_ms(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === refund_state ===
 
@@ -106,13 +111,21 @@ public fun owner_earnings_value<C>(e: &OwnerEarnings<C>): u64             { owne
 public fun handover_is_instant(p: &HandoverPolicyState):    bool       { handover::proj_is_instant(p) }
 public fun handover_is_fixed_time(p: &HandoverPolicyState): bool       { handover::proj_is_fixed_time(p) }
 public fun handover_is_countdown(p: &HandoverPolicyState):  bool       { handover::proj_is_countdown(p) }
-public fun handover_countdown_floor_ms(p: &HandoverPolicyState): Option<u64> { handover::proj_countdown_floor_ms(p) }
+public fun handover_countdown_floor_ms(p: &HandoverPolicyState): Option<u64> {
+    let opt = handover::proj_countdown_floor_ms(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === descent_policy_state ===
 
 public fun descent_is_skipped(p: &DescentPolicyState): bool       { descent::proj_is_skipped(p) }
 public fun descent_is_window(p: &DescentPolicyState):  bool       { descent::proj_is_window(p) }
-public fun descent_window_ceiling(p: &DescentPolicyState): Option<u64> { descent::proj_window_ceiling(p) }
+public fun descent_window_ceiling(p: &DescentPolicyState): Option<u64> {
+    let opt = descent::proj_window_ceiling(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === curve_shape_state ===
 

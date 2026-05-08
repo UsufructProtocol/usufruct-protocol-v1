@@ -5,7 +5,7 @@ module usufruct::retire_policy_state;
 
 // === Imports ===
 
-use usufruct::phases::{Self, Timestamp, Boundary};
+use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 // === Errors ===
 
@@ -43,9 +43,9 @@ public(package) fun proj_is_immediate(policy: &RetirePolicyState): bool {
 public(package) fun proj_is_deferred(policy: &RetirePolicyState): bool {
     match (policy) { RetirePolicyState::Deferred { .. } => true, _ => false }
 }
-public(package) fun proj_floor_ms(policy: &RetirePolicyState): Option<u64> {
+public(package) fun proj_floor_ms(policy: &RetirePolicyState): Option<Duration> {
     match (policy) {
-        RetirePolicyState::Deferred { floor_ms } => option::some(*floor_ms),
+        RetirePolicyState::Deferred { floor_ms } => option::some(phases::duration(*floor_ms)),
         RetirePolicyState::Immediate             => option::none(),
     }
 }

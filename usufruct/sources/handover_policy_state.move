@@ -48,9 +48,9 @@ public(package) fun proj_is_fixed_time(policy: &HandoverPolicyState): bool {
 public(package) fun proj_is_countdown(policy: &HandoverPolicyState): bool {
     match (policy) { HandoverPolicyState::Countdown { .. } => true, _ => false }
 }
-public(package) fun proj_countdown_floor_ms(policy: &HandoverPolicyState): Option<u64> {
+public(package) fun proj_countdown_floor_ms(policy: &HandoverPolicyState): Option<Duration> {
     match (policy) {
-        HandoverPolicyState::Countdown { floor_ms } => option::some(*floor_ms),
+        HandoverPolicyState::Countdown { floor_ms } => option::some(phases::duration(*floor_ms)),
         HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => option::none(),
     }
 }

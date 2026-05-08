@@ -538,19 +538,25 @@ public fun min_rent_price<Asset: key + store, CoinType>(
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    descent_policy_state::proj_window_ceiling(config::proj_descent(cfg(escrow)))
+    let opt = descent_policy_state::proj_window_ceiling(config::proj_descent(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    handover_policy_state::proj_countdown_floor_ms(config::proj_handover(cfg(escrow)))
+    let opt = handover_policy_state::proj_countdown_floor_ms(config::proj_handover(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun retire_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    retire_policy_state::proj_floor_ms(config::proj_retire(cfg(escrow)))
+    let opt = retire_policy_state::proj_floor_ms(config::proj_retire(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun credit_curve<Asset: key + store, CoinType>(

@@ -44,9 +44,9 @@ public(package) fun proj_is_skipped(policy: &DescentPolicyState): bool {
 public(package) fun proj_is_window(policy: &DescentPolicyState): bool {
     match (policy) { DescentPolicyState::Window { .. } => true, _ => false }
 }
-public(package) fun proj_window_ceiling(policy: &DescentPolicyState): Option<u64> {
+public(package) fun proj_window_ceiling(policy: &DescentPolicyState): Option<Duration> {
     match (policy) {
-        DescentPolicyState::Window { ceiling_ms } => option::some(*ceiling_ms),
+        DescentPolicyState::Window { ceiling_ms } => option::some(phases::duration(*ceiling_ms)),
         DescentPolicyState::Skipped               => option::none(),
     }
 }

@@ -640,11 +640,9 @@ public(package) fun execute_reset_config<Asset: key + store, CoinType>(
             event::emit(ConfigReset { escrow_id, new_config: new_cfg });
             AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
         },
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start } } }, owner, fee_inbox_id, integrated_at, pending_config: _, .. } => {
-            let boundary = phases::now(clock);
-            let new_state = do_auction_expiry(asset, last_acq_price, phase_start, escrow_id, boundary);
-            event::emit(ConfigReset { escrow_id, new_config: new_cfg });
-            AssetContext { asset_state: new_state, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
+        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start } } }, owner, config, fee_inbox_id, integrated_at, pending_config: _, escrow_id: _ } => {
+            event::emit(ConfigResetScheduled { escrow_id, new_config: new_cfg });
+            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start } } }, owner, config, pending_config: option::some(new_cfg), fee_inbox_id, integrated_at, escrow_id }
         },
         AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at, pending_config: _, escrow_id: _ } => {
             assert!(!is_retiring(&tenancy), ERetireAlreadyScheduled);

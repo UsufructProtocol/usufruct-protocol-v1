@@ -20,7 +20,6 @@ use sui::{
 };
 use usufruct::{
     asset::{Self, AssetReceipt},
-    cap_authorization_state::{Self as cap_auth_module, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     descent_policy_state,
     monetary::{Self, Price, Stake},
@@ -52,6 +51,29 @@ const ENotRetired:            u64 = 12;
 const ENoEarnings:            u64 = 13;
 
 // === Structs ===
+
+/// Role a `TenantCap` plays relative to the current lifecycle state.
+/// Co-resident with asset_context_state so match arms can branch on variants
+/// directly — Move restricts pattern access to the defining module.
+///
+///   · `Current` — cap belongs to the active tenant. May borrow.
+///   · `Pending` — cap belongs to the pending bidder (HandoverConfirmed). May not borrow.
+///   · `Stale`   — cap is superseded, former tenant, or no active rental.
+public enum CapAuthorizationState has drop {
+    Current,
+    Pending,
+    Stale,
+}
+
+public(package) fun proj_is_current(a: &CapAuthorizationState): bool {
+    match (a) { CapAuthorizationState::Current => true, _ => false }
+}
+public(package) fun proj_is_pending(a: &CapAuthorizationState): bool {
+    match (a) { CapAuthorizationState::Pending => true, _ => false }
+}
+public(package) fun proj_is_stale(a: &CapAuthorizationState): bool {
+    match (a) { CapAuthorizationState::Stale => true, _ => false }
+}
 
 /// Result of splitting a credit amount into owner earnings and protocol fee.
 /// Named fields prevent positional swap between the two semantically distinct
@@ -476,7 +498,7 @@ public(package) fun cap_authorization_state<Asset: key + store, CoinType>(
 ): CapAuthorizationState {
     match (&e.asset_state) {
         AssetState::Renting { tenancy } => cap_auth_for_tenancy(tenancy, cap_id),
-        _ => cap_auth_module::stale(),
+        _ => CapAuthorizationState::Stale,
     }
 }
 
@@ -626,7 +648,10 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
         },
         AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at, escrow_id } => {
             assert!(tenant_cap::proj_escrow_id(&cap) == escrow_id, EWrongEscrowTenantCap);
-            assert_cap_stale(&tenancy, object::id(&cap));
+            match (cap_auth_for_tenancy(&tenancy, object::id(&cap))) {
+                CapAuthorizationState::Stale => {},
+                _ => abort ETenantCapNotStale,
+            };
             tenant_cap::burn(cap, ctx);
             AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at, escrow_id }
         },
@@ -921,13 +946,13 @@ public(package) fun cap_auth_for_tenancy<Asset: key + store, CoinType>(
 ): CapAuthorizationState {
     match (&t.state) {
         TenancyState::Occupied { tenant } => {
-            if (cap_id == tenant::proj_cap_id(tenant::proj_identity(tenant))) cap_auth_module::current()
-            else cap_auth_module::stale()
+            if (cap_id == tenant::proj_cap_id(tenant::proj_identity(tenant))) CapAuthorizationState::Current
+            else CapAuthorizationState::Stale
         },
         TenancyState::Demand { current, pending, .. } => {
-            if      (cap_id == tenant::proj_cap_id(tenant::proj_identity(current))) cap_auth_module::current()
-            else if (cap_id == tenant::proj_cap_id(tenant::proj_identity(pending))) cap_auth_module::pending()
-            else cap_auth_module::stale()
+            if      (cap_id == tenant::proj_cap_id(tenant::proj_identity(current))) CapAuthorizationState::Current
+            else if (cap_id == tenant::proj_cap_id(tenant::proj_identity(pending))) CapAuthorizationState::Pending
+            else CapAuthorizationState::Stale
         },
     }
 }
@@ -1152,17 +1177,25 @@ public(package) fun take_asset<Asset: key + store, CoinType>(
     escrow_id: ID,
     cap_id:    ID,
 ): (TenancyContext<Asset, CoinType>, Asset, AssetReceipt) {
+    let auth = cap_auth_for_tenancy(&tenancy, cap_id);
     let TenancyContext { mut asset, phase_start, retiring, state } = tenancy;
     let (tenant_addr, state) = match (state) {
         TenancyState::Occupied { tenant } => {
-            assert!(cap_id == tenant::proj_cap_id(tenant::proj_identity(&tenant)), EStaleTenantCap);
-            (tenant::proj_address(tenant::proj_identity(&tenant)), TenancyState::Occupied { tenant })
+            match (auth) {
+                CapAuthorizationState::Current => (tenant::proj_address(tenant::proj_identity(&tenant)), TenancyState::Occupied { tenant }),
+                CapAuthorizationState::Pending => abort EPendingTenantCap,
+                CapAuthorizationState::Stale   => abort EStaleTenantCap,
+            }
         },
         TenancyState::Demand { current, pending, handover_expiry } => {
-            if (cap_id == tenant::proj_cap_id(tenant::proj_identity(&pending))) { abort EPendingTenantCap };
-            assert!(cap_id == tenant::proj_cap_id(tenant::proj_identity(&current)), EStaleTenantCap);
-            let addr = tenant::proj_address(tenant::proj_identity(&current));
-            (addr, TenancyState::Demand { current, pending, handover_expiry })
+            match (auth) {
+                CapAuthorizationState::Current => {
+                    let addr = tenant::proj_address(tenant::proj_identity(&current));
+                    (addr, TenancyState::Demand { current, pending, handover_expiry })
+                },
+                CapAuthorizationState::Pending => abort EPendingTenantCap,
+                CapAuthorizationState::Stale   => abort EStaleTenantCap,
+            }
         },
     };
     let (u, receipt) = asset::take(&mut asset);
@@ -1191,21 +1224,6 @@ public(package) fun put_asset<Asset: key + store, CoinType>(
     asset::put(&mut asset, asset_in, receipt_in);
     event::emit(AssetReturned { escrow_id, tenant_cap_id, tenant: tenant_addr });
     TenancyContext { asset, phase_start, retiring, state }
-}
-
-/// Assert that `cap_id` is neither the current nor pending cap (safe to burn).
-public(package) fun assert_cap_stale<Asset: key + store, CoinType>(
-    t:      &TenancyContext<Asset, CoinType>,
-    cap_id: ID,
-) {
-    match (&t.state) {
-        TenancyState::Occupied { tenant } =>
-            assert!(cap_id != tenant::proj_cap_id(tenant::proj_identity(tenant)), ETenantCapNotStale),
-        TenancyState::Demand { current, pending, .. } => {
-            assert!(cap_id != tenant::proj_cap_id(tenant::proj_identity(current)), ETenantCapNotStale);
-            assert!(cap_id != tenant::proj_cap_id(tenant::proj_identity(pending)), ETenantCapNotStale);
-        },
-    }
 }
 
 // === Private Functions ===

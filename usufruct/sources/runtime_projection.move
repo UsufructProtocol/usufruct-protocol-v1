@@ -11,13 +11,12 @@ module usufruct::runtime_projection;
 use usufruct::{
     asset::{Self, AssetCustodyOpen, AssetCustodyLocked},
     phases,
-    asset_context_state::{Self as acs, AssetContext},
+    asset_context_state::{Self as acs, AssetContext, CapAuthorizationState},
     monetary,
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
     refund_state::{Self as refund, RefundState},
     tenant::{Self as tenant_mod, Tenant, TenantIdentity, TenantStake},
-    cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     credit_context_state::{Self as credit, CreditContext},
     curve_shape_state::{Self as curve, CurveShapeState},
@@ -193,9 +192,9 @@ public fun config_price_fn(cfg: &IntegrationConfig):       &PriceFunctionState  
 
 // === cap_authorization_state ===
 
-public fun cap_auth_is_current(a: &CapAuthorizationState): bool { cap_auth::proj_is_current(a) }
-public fun cap_auth_is_pending(a: &CapAuthorizationState): bool { cap_auth::proj_is_pending(a) }
-public fun cap_auth_is_stale(a: &CapAuthorizationState):   bool { cap_auth::proj_is_stale(a)   }
+public fun cap_auth_is_current(a: &CapAuthorizationState): bool { acs::proj_is_current(a) }
+public fun cap_auth_is_pending(a: &CapAuthorizationState): bool { acs::proj_is_pending(a) }
+public fun cap_auth_is_stale(a: &CapAuthorizationState):   bool { acs::proj_is_stale(a)   }
 
 // === asset ===
 

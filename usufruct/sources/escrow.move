@@ -13,11 +13,10 @@ use sui::{
 };
 use usufruct::{
     asset::AssetReceipt,
-    cap_authorization_state::CapAuthorizationState,
     config::{Self, IntegrationConfig},
     curve_shape_state::CurveShapeState,
     descent_policy_state,
-    asset_context_state::{Self, AssetContext},
+    asset_context_state::{Self, AssetContext, CapAuthorizationState},
     handover_policy_state,
     monetary,
     owner_cap::{Self, OwnerCap},

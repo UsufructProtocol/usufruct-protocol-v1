@@ -247,9 +247,9 @@ public(package) fun proj_fee_inbox_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): ID { e.fee_inbox_id }
 
-public(package) fun proj_integrated_at_ms<Asset: key + store, CoinType>(
+public(package) fun proj_integrated_at<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): u64 { phases::timestamp_ms(e.integrated_at) }
+): Timestamp { e.integrated_at }
 
 public(package) fun proj_escrow_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
@@ -268,8 +268,8 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
 
 public(package) fun proj_owner_balance<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): u64 {
-    owner::proj_value(&e.owner)
+): Stake {
+    monetary::stake(owner::proj_value(&e.owner))
 }
 
 public(package) fun proj_owner_cap_id<Asset: key + store, CoinType>(

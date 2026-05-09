@@ -36,10 +36,10 @@ public fun asset_is_rented<A: key + store, C>(e: &AssetContext<A, C>):   bool  {
 public fun asset_is_handover_open<A: key + store, C>(e: &AssetContext<A, C>):      bool { acs::proj_is_handover_open(e) }
 public fun asset_is_handover_confirmed<A: key + store, C>(e: &AssetContext<A, C>): bool { acs::proj_is_handover_confirmed(e) }
 public fun asset_is_retiring<A: key + store, C>(e: &AssetContext<A, C>):  bool  { acs::proj_is_retiring(e) }
-public fun asset_owner_balance<A: key + store, C>(e: &AssetContext<A, C>):   u64 { acs::proj_owner_balance(e) }
+public fun asset_owner_balance<A: key + store, C>(e: &AssetContext<A, C>):   u64 { monetary::stake_mist(acs::proj_owner_balance(e)) }
 public fun asset_owner_cap_id<A: key + store, C>(e: &AssetContext<A, C>):    ID  { acs::proj_owner_cap_id(e) }
 public fun asset_fee_inbox_id<A: key + store, C>(e: &AssetContext<A, C>):    ID  { acs::proj_fee_inbox_id(e) }
-public fun asset_integrated_at_ms<A: key + store, C>(e: &AssetContext<A, C>): u64 { acs::proj_integrated_at_ms(e) }
+public fun asset_integrated_at_ms<A: key + store, C>(e: &AssetContext<A, C>): u64 { phases::timestamp_ms(acs::proj_integrated_at(e)) }
 public fun asset_current_addr<A: key + store, C>(e: &AssetContext<A, C>):  Option<address> { acs::proj_current_addr(e) }
 public fun asset_current_cap_id<A: key + store, C>(e: &AssetContext<A, C>): Option<ID>     { acs::proj_current_cap_id(e) }
 public fun asset_pending_addr<A: key + store, C>(e: &AssetContext<A, C>):  Option<address> { acs::proj_pending_addr(e) }

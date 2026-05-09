@@ -404,14 +404,14 @@ public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
 public fun integrated_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::proj_integrated_at_ms(read_context(escrow))
+    phases::timestamp_ms(asset_context_state::proj_integrated_at(read_context(escrow)))
 }
 
 public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     let e = read_context(escrow);
-    phases::timestamp_ms(retire_policy_state::unlock_at(config::proj_retire(asset_context_state::proj_config(e)), phases::timestamp(asset_context_state::proj_integrated_at_ms(e))))
+    phases::timestamp_ms(retire_policy_state::unlock_at(config::proj_retire(asset_context_state::proj_config(e)), asset_context_state::proj_integrated_at(e)))
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────
@@ -513,7 +513,7 @@ public fun compute_tenure_settlement<Asset: key + store, CoinType>(
 public fun owner_balance<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::proj_owner_balance(read_context(escrow))
+    monetary::stake_mist(asset_context_state::proj_owner_balance(read_context(escrow)))
 }
 
 // ─── Config views ────────────────────────────────────────────────────────────
@@ -608,7 +608,7 @@ public(package) fun read_engine_for_testing<Asset: key + store, CoinType>(
 public(package) fun owner_value_for_testing<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::proj_owner_balance(read_context(escrow))
+    monetary::stake_mist(asset_context_state::proj_owner_balance(read_context(escrow)))
 }
 
 #[test_only]

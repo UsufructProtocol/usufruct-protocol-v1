@@ -149,6 +149,19 @@ public fun retire<Asset: key + store, CoinType>(
     escrow.asset_context.fill(context);
 }
 
+/// Owner-gated operational parameter reset.
+public fun reset_config<Asset: key + store, CoinType>(
+    escrow:    &mut Escrow<Asset, CoinType>,
+    owner_cap: &OwnerCap,
+    new_cfg:   IntegrationConfig,
+    clock:     &Clock,
+    ctx:       &mut TxContext,
+) {
+    let context = escrow.asset_context.extract();
+    let context = asset_context_state::execute_reset_config(context, owner_cap, new_cfg, clock, ctx);
+    escrow.asset_context.fill(context);
+}
+
 /// Single entry point to become tenant or place a bid.
 public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut Escrow<Asset, CoinType>,
@@ -527,6 +540,12 @@ public fun fee_inbox_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
     asset_context_state::proj_fee_inbox_id(read_context(escrow))
+}
+
+public fun has_pending_config_reset<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): bool {
+    option::is_some(&asset_context_state::proj_pending_config(read_context(escrow)))
 }
 
 public fun protocol_fee_bps(): u64 { asset_context_state::protocol_fee_bps() }

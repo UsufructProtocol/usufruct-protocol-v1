@@ -82,7 +82,7 @@ public fun integrate<Asset: key + store, CoinType>(
     let owner_addr       = ctx.sender();
     let owner_cap        = owner_cap::new(escrow_id, owner_addr, ctx);
     let owner_cap_id     = object::id(&owner_cap);
-    let fee_inbox_id     = protocol_fee_ref::inbox_id(fee_ref);
+    let fee_inbox_id     = protocol_fee_ref::proj_inbox_id(fee_ref);
     let integrated_at_ms = clock::timestamp_ms(clock);
 
     config::emit_registration(&cfg, escrow_id);
@@ -106,7 +106,7 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Coin<CoinType> {
-    assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
+    assert!(owner_cap::proj_escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     let context = escrow.asset_context.extract();
     let (context, coin) = asset_context_state::execute_withdraw_earnings(context, owner_cap, clock, ctx);
     escrow.asset_context.fill(context);
@@ -120,7 +120,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
-    assert!(owner_cap::escrow_id(&owner_cap) == object::id(&escrow), EWrongEscrowOwnerCap);
+    assert!(owner_cap::proj_escrow_id(&owner_cap) == object::id(&escrow), EWrongEscrowOwnerCap);
     let escrow_id    = object::id(&escrow);
     let owner_cap_id = object::id(&owner_cap);
     let owner_addr   = ctx.sender();
@@ -149,7 +149,7 @@ public fun retire<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
+    assert!(owner_cap::proj_escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     let context = escrow.asset_context.extract();
     let context = asset_context_state::execute_retire(context, clock, ctx);
     escrow.asset_context.fill(context);

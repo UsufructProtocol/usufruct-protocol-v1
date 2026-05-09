@@ -106,7 +106,7 @@ fun integrate_and_take(
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset, cfg, &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::escrow_id(&cap);
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.next_tx(OWNER);
@@ -129,7 +129,7 @@ fun integrate_creates_idle_escrow_smoke() {
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset, cfg, &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::escrow_id(&cap);
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
 
     sc.next_tx(OWNER);
     let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
@@ -173,7 +173,7 @@ fun integrate_idle_across_handover_modes() {
         let cap = escrow::integrate<DemoAsset, SUI>(
             asset, cfg, &fee_ref, &clk, sc.ctx(),
         );
-        let escrow_id = owner_cap::escrow_id(&cap);
+        let escrow_id = owner_cap::proj_escrow_id(&cap);
 
         clock::destroy_for_testing(clk);
         test_scenario::return_immutable(fee_ref);
@@ -206,7 +206,7 @@ fun integrate_leaves_escrow_idle() {
     let asset   = mk_demo_asset(sc.ctx());
 
     let cap       = escrow::integrate<DemoAsset, SUI>(asset, cfg, &fee_ref, &clk, sc.ctx());
-    let escrow_id = owner_cap::escrow_id(&cap);
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
 
     sc.next_tx(OWNER);
     let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);

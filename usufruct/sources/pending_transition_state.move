@@ -65,7 +65,7 @@ public fun is_auction(t: &PendingTransitionState): bool {
 }
 
 /// Boundary timestamp the firing handler will stamp on the resulting state and event.
-public fun boundary(t: &PendingTransitionState): Timestamp {
+public fun proj_boundary(t: &PendingTransitionState): Timestamp {
     t.boundary
 }
 

@@ -47,7 +47,7 @@ fun n1_new_returns_cap_and_id_by_value() {
     {
         let (cap, id) = tenant_cap::new(escrow_id_1(), ALICE, scenario.ctx());
 
-        assert_eq!(tenant_cap::escrow_id(&cap), escrow_id_1());
+        assert_eq!(tenant_cap::proj_escrow_id(&cap), escrow_id_1());
         assert_eq!(object::id(&cap), id);
 
         let events = event::events_by_type<TenantCapMinted>();
@@ -93,8 +93,8 @@ fun n3_two_new_calls_distinct_args() {
         let (cap0, id0) = tenant_cap::new(escrow_id_1(), ALICE, scenario.ctx());
         let (cap1, id1) = tenant_cap::new(escrow_id_2(), BOB,   scenario.ctx());
 
-        assert_eq!(tenant_cap::escrow_id(&cap0), escrow_id_1());
-        assert_eq!(tenant_cap::escrow_id(&cap1), escrow_id_2());
+        assert_eq!(tenant_cap::proj_escrow_id(&cap0), escrow_id_1());
+        assert_eq!(tenant_cap::proj_escrow_id(&cap1), escrow_id_2());
 
         let events = event::events_by_type<TenantCapMinted>();
         assert_eq!(events.length(), 2);
@@ -150,7 +150,7 @@ fun n6_zero_escrow_id_accepted() {
         let zero_escrow = object::id_from_address(@0x0);
         let (cap, id) = tenant_cap::new(zero_escrow, ALICE, scenario.ctx());
 
-        assert_eq!(tenant_cap::escrow_id(&cap), zero_escrow);
+        assert_eq!(tenant_cap::proj_escrow_id(&cap), zero_escrow);
 
         let events = event::events_by_type<TenantCapMinted>();
         assert_minted(&events[0], id, zero_escrow, ALICE);
@@ -191,7 +191,7 @@ fun n8_cap_is_store_transferable() {
     scenario.next_tx(BOB);
     {
         let cap = scenario.take_from_sender<TenantCap>();
-        assert_eq!(tenant_cap::escrow_id(&cap), escrow_id_1());
+        assert_eq!(tenant_cap::proj_escrow_id(&cap), escrow_id_1());
         tenant_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
@@ -334,7 +334,7 @@ fun g1_escrow_id_getter_returns_bound_id() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let (cap, _) = tenant_cap::new(escrow_id_1(), ALICE, scenario.ctx());
-        assert_eq!(tenant_cap::escrow_id(&cap), escrow_id_1());
+        assert_eq!(tenant_cap::proj_escrow_id(&cap), escrow_id_1());
         tenant_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
@@ -349,7 +349,7 @@ fun g2_escrow_id_getter_is_pure() {
         let (cap, _) = tenant_cap::new(escrow_id_1(), ALICE, scenario.ctx());
         let mut k: u64 = 0;
         while (k < 5) {
-            assert_eq!(tenant_cap::escrow_id(&cap), escrow_id_1());
+            assert_eq!(tenant_cap::proj_escrow_id(&cap), escrow_id_1());
             k = k + 1;
         };
         tenant_cap::burn(cap, scenario.ctx());
@@ -364,7 +364,7 @@ fun g3_escrow_id_getter_returns_zero_when_zero() {
     {
         let zero_escrow = object::id_from_address(@0x0);
         let (cap, _) = tenant_cap::new(zero_escrow, ALICE, scenario.ctx());
-        assert_eq!(tenant_cap::escrow_id(&cap), zero_escrow);
+        assert_eq!(tenant_cap::proj_escrow_id(&cap), zero_escrow);
         tenant_cap::burn(cap, scenario.ctx());
     };
     scenario.end();

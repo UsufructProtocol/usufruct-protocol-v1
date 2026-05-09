@@ -32,7 +32,7 @@ fun n1_new_returns_cap_and_emits_minted_event() {
     {
         let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
 
-        assert_eq!(owner_cap::escrow_id(&cap), escrow_id_1());
+        assert_eq!(owner_cap::proj_escrow_id(&cap), escrow_id_1());
 
         let events = event::events_by_type<OwnerCapMinted>();
         assert_eq!(events.length(), 1);
@@ -55,8 +55,8 @@ fun n2_two_new_calls_produce_distinct_caps_and_events() {
         let cap1 = owner_cap::new(escrow_id_2(), BOB,   scenario.ctx());
 
         assert!(object::id(&cap0) != object::id(&cap1));
-        assert_eq!(owner_cap::escrow_id(&cap0), escrow_id_1());
-        assert_eq!(owner_cap::escrow_id(&cap1), escrow_id_2());
+        assert_eq!(owner_cap::proj_escrow_id(&cap0), escrow_id_1());
+        assert_eq!(owner_cap::proj_escrow_id(&cap1), escrow_id_2());
 
         let events = event::events_by_type<OwnerCapMinted>();
         assert_eq!(events.length(), 2);
@@ -235,7 +235,7 @@ fun g1_escrow_id_getter_returns_bound_id() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
-        assert_eq!(owner_cap::escrow_id(&cap), escrow_id_1());
+        assert_eq!(owner_cap::proj_escrow_id(&cap), escrow_id_1());
         transfer::public_transfer(cap, ALICE);
     };
     scenario.end();
@@ -249,7 +249,7 @@ fun g2_escrow_id_getter_is_pure() {
         let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
         let mut k: u64 = 0;
         while (k < 5) {
-            assert_eq!(owner_cap::escrow_id(&cap), escrow_id_1());
+            assert_eq!(owner_cap::proj_escrow_id(&cap), escrow_id_1());
             k = k + 1;
         };
         transfer::public_transfer(cap, ALICE);
@@ -264,7 +264,7 @@ fun g3_escrow_id_getter_returns_zero_when_zero() {
     {
         let zero_escrow = object::id_from_address(@0x0);
         let cap = owner_cap::new(zero_escrow, ALICE, scenario.ctx());
-        assert_eq!(owner_cap::escrow_id(&cap), zero_escrow);
+        assert_eq!(owner_cap::proj_escrow_id(&cap), zero_escrow);
         transfer::public_transfer(cap, ALICE);
     };
     scenario.end();

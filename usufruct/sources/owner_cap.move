@@ -39,7 +39,7 @@ public struct OwnerCapBurned has copy, drop {
 // === View Functions ===
 
 /// Returns the ID of the `RentalEscrow` this cap authorizes.
-public fun escrow_id(cap: &OwnerCap): ID {
+public fun proj_escrow_id(cap: &OwnerCap): ID {
     cap.escrow_id
 }
 

@@ -5,26 +5,32 @@ module usufruct::retire_policy_state;
 
 // === Imports ===
 
-use usufruct::phases;
+use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 // === Errors ===
 
 const ERetireFloorZero: u64 = 0;
 
+// === Constants ===
+
 // === Structs ===
 
 public enum RetirePolicyState has copy, drop, store {
     Immediate,
-    Deferred { floor_ms: u64 },
+    Deferred { floor: Duration },
 }
+
+// === Events ===
+
+// === Method Aliases ===
 
 // === Public Functions ===
 
 public fun new_retire_immediate(): RetirePolicyState { RetirePolicyState::Immediate }
 
-public fun new_retire_deferred(floor_ms: u64): RetirePolicyState {
-    assert!(floor_ms > 0, ERetireFloorZero);
-    RetirePolicyState::Deferred { floor_ms }
+public fun new_retire_deferred(floor: Duration): RetirePolicyState {
+    assert!(phases::duration_ms(floor) > 0, ERetireFloorZero);
+    RetirePolicyState::Deferred { floor }
 }
 
 // === View Functions ===
@@ -37,46 +43,42 @@ public(package) fun proj_is_immediate(policy: &RetirePolicyState): bool {
 public(package) fun proj_is_deferred(policy: &RetirePolicyState): bool {
     match (policy) { RetirePolicyState::Deferred { .. } => true, _ => false }
 }
-public(package) fun proj_floor_ms(policy: &RetirePolicyState): Option<u64> {
+public(package) fun proj_floor_ms(policy: &RetirePolicyState): Option<Duration> {
     match (policy) {
-        RetirePolicyState::Deferred { floor_ms } => option::some(*floor_ms),
+        RetirePolicyState::Deferred { floor } => option::some(*floor),
         RetirePolicyState::Immediate             => option::none(),
     }
 }
 
+// === Admin Functions ===
+
 // === Package Functions ===
 
 /// Absolute timestamp at which `retire()` becomes available.
-///   Immediate             → integrated_at_ms (unlocked from creation)
-///   Deferred { floor_ms } → integrated_at_ms + floor_ms
-public(package) fun unlock_at_ms(
-    policy:           &RetirePolicyState,
-    integrated_at_ms: u64,
-): u64 {
+public(package) fun unlock_at(
+    policy: &RetirePolicyState,
+    at:     Timestamp,
+): Timestamp {
     match (policy) {
-        RetirePolicyState::Immediate             => phases::boundary_at(integrated_at_ms, 0),
-        RetirePolicyState::Deferred { floor_ms } => phases::boundary_at(integrated_at_ms, *floor_ms),
+        RetirePolicyState::Immediate             => phases::boundary_at(at, phases::zero()),
+        RetirePolicyState::Deferred { floor } => phases::boundary_at(at, *floor),
     }
 }
 
-/// True iff `retire()` may proceed.
-///   - Immediate is always unlocked.
-///   - Deferred unlocks when `floor_ms` elapses since
-///     `integrated_at_ms`.
+/// Whether `retire()` may proceed.
 public(package) fun is_unlocked(
-    policy:           &RetirePolicyState,
-    integrated_at_ms: u64,
-    now_ms:           u64,
-): bool {
+    policy: &RetirePolicyState,
+    at:     Timestamp,
+    now:    Timestamp,
+): Boundary {
     match (policy) {
-        // Immediate unlocks from `integrated_at_ms` onward: zero floor
-        // means the gate opens at integration, not vacuously before.
-        // Defensive monotonicity — every variant gates through the time
-        // layer (`phases::has_passed`); none are vacuous. In production,
-        // clock-monotone makes this equivalent to `=> true`.
         RetirePolicyState::Immediate             =>
-            phases::has_passed(integrated_at_ms, 0, now_ms),
-        RetirePolicyState::Deferred { floor_ms } =>
-            phases::has_passed(integrated_at_ms, *floor_ms, now_ms),
+            phases::check_boundary(at, phases::zero(), now),
+        RetirePolicyState::Deferred { floor } =>
+            phases::check_boundary(at, *floor, now),
     }
 }
+
+// === Private Functions ===
+
+// === Test Functions ===

@@ -14,7 +14,14 @@ const ENthRootBadDegree: u64 = 1;
 
 // === Constants ===
 
+const BPS_DENOMINATOR: u64 = 10_000;
+
 // === Structs ===
+
+/// A rate expressed in basis points (1/10_000 units).
+/// Generic mathematical concept — one basis point = 0.01%.
+/// Domain modules validate their own invariants before constructing.
+public struct BasisPoints has copy, drop, store { bps: u64 }
 
 // === Events ===
 
@@ -27,6 +34,21 @@ const ENthRootBadDegree: u64 = 1;
 // === Admin Functions ===
 
 // === Package Functions ===
+
+/// Construct a `BasisPoints` from a raw value. No range validation —
+/// domain modules assert their own invariants before constructing.
+public(package) fun bps(value: u64): BasisPoints { BasisPoints { bps: value } }
+
+/// Raw basis point value — for SDK projection and test assertions.
+public(package) fun bps_value(rate: BasisPoints): u64 { rate.bps }
+
+/// The fixed denominator for all basis point calculations.
+public(package) fun bps_denominator(): u64 { BPS_DENOMINATOR }
+
+/// Apply a basis point rate to an amount: `amount × rate / 10_000`.
+public(package) fun apply_bps(amount: u64, rate: BasisPoints): u64 {
+    mul_div(amount, rate.bps, BPS_DENOMINATOR)
+}
 
 public(package) fun mul_div(a: u64, b: u64, c: u64): u64 {
     let num: u128 = (a as u128) * (b as u128);

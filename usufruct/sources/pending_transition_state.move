@@ -5,6 +5,8 @@ module usufruct::pending_transition_state;
 
 // === Imports ===
 
+use usufruct::phases::{Self, Timestamp};
+
 // === Errors ===
 
 // === Constants ===
@@ -35,8 +37,8 @@ public enum PendingTransitionKind has copy, drop {
 /// and consumed by `fire`. Not stored — derived from AssetContext on
 /// demand. `drop` only; ephemeral derived value.
 public struct PendingTransitionState has drop {
-    boundary_ms: u64,
-    kind:        PendingTransitionKind,
+    boundary: Timestamp,
+    kind:     PendingTransitionKind,
 }
 
 // === Events ===
@@ -62,29 +64,33 @@ public fun is_auction(t: &PendingTransitionState): bool {
     match (&t.kind) { PendingTransitionKind::Auction => true, _ => false }
 }
 
-/// Boundary timestamp the firing handler will stamp on the resulting
-/// state and on its emitted event.
+/// Boundary timestamp the firing handler will stamp on the resulting state and event.
+public fun proj_boundary(t: &PendingTransitionState): Timestamp {
+    t.boundary
+}
+
+/// Raw millisecond value — for event emission and legacy u64 consumers.
 public fun boundary_ms(t: &PendingTransitionState): u64 {
-    t.boundary_ms
+    phases::timestamp_ms(t.boundary)
 }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-/// Construct a `Handover` pending transition at `boundary_ms`.
-public(package) fun handover(boundary_ms: u64): PendingTransitionState {
-    PendingTransitionState { boundary_ms, kind: PendingTransitionKind::Handover }
+/// Construct a `Handover` pending transition at `boundary`.
+public(package) fun handover(boundary: Timestamp): PendingTransitionState {
+    PendingTransitionState { boundary, kind: PendingTransitionKind::Handover }
 }
 
-/// Construct a `Tenure` pending transition at `boundary_ms`.
-public(package) fun tenure(boundary_ms: u64): PendingTransitionState {
-    PendingTransitionState { boundary_ms, kind: PendingTransitionKind::Tenure }
+/// Construct a `Tenure` pending transition at `boundary`.
+public(package) fun tenure(boundary: Timestamp): PendingTransitionState {
+    PendingTransitionState { boundary, kind: PendingTransitionKind::Tenure }
 }
 
-/// Construct an `Auction` pending transition at `boundary_ms`.
-public(package) fun auction(boundary_ms: u64): PendingTransitionState {
-    PendingTransitionState { boundary_ms, kind: PendingTransitionKind::Auction }
+/// Construct an `Auction` pending transition at `boundary`.
+public(package) fun auction(boundary: Timestamp): PendingTransitionState {
+    PendingTransitionState { boundary, kind: PendingTransitionKind::Auction }
 }
 
 // === Private Functions ===

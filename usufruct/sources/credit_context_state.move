@@ -8,8 +8,8 @@ module usufruct::credit_context_state;
 use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape_state,
-    math,
-    phases,
+    monetary::{Self, Stake},
+    phases::{Self, Timestamp},
 };
 
 // === Errors ===
@@ -22,22 +22,22 @@ use usufruct::{
 /// Shared fields (stake, phase_start_ms) live in CreditContext.
 public enum CreditState has drop {
     Accruing,
-    Capped { expiry_ms: u64 },
+    Capped { expiry: Timestamp },
 }
 
 /// Context-State carrier for credit consumption.
 ///
 ///   · `Accruing` — HandoverOpen: credit accumulates freely against
 ///                  `credit_curve` over the full tenure window.
-///   · `Capped`   — HandoverConfirmed: accrual freezes at `expiry_ms`;
+///   · `Capped`   — HandoverConfirmed: accrual freezes at `expiry`;
 ///                  the remainder stays with the departing tenant.
 ///
 /// Derived by the coordinator from `LifecycleState` accessors; never
 /// stored inside `TenantState` or `LifecycleState`.
 public struct CreditContext has drop {
-    stake:          u64,
-    phase_start_ms: u64,
-    variant:        CreditState,
+    stake:       Stake,
+    phase_start: Timestamp,
+    variant:     CreditState,
 }
 
 // === Events ===
@@ -50,8 +50,8 @@ public struct CreditContext has drop {
 
 // ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun proj_stake(ctx: &CreditContext): u64 { ctx.stake }
-public(package) fun proj_phase_start_ms(ctx: &CreditContext): u64 { ctx.phase_start_ms }
+public(package) fun proj_stake(ctx: &CreditContext): Stake     { ctx.stake }
+public(package) fun proj_phase_start(ctx: &CreditContext): Timestamp { ctx.phase_start }
 
 public(package) fun proj_is_accruing(ctx: &CreditContext): bool {
     match (&ctx.variant) { CreditState::Accruing => true, _ => false }
@@ -61,10 +61,10 @@ public(package) fun proj_is_capped(ctx: &CreditContext): bool {
     match (&ctx.variant) { CreditState::Capped { .. } => true, _ => false }
 }
 
-public(package) fun proj_expiry_ms(ctx: &CreditContext): Option<u64> {
+public(package) fun proj_expiry(ctx: &CreditContext): Option<Timestamp> {
     match (&ctx.variant) {
-        CreditState::Capped { expiry_ms } => option::some(*expiry_ms),
-        CreditState::Accruing             => option::none(),
+        CreditState::Capped { expiry } => option::some(*expiry),
+        CreditState::Accruing          => option::none(),
     }
 }
 
@@ -73,40 +73,40 @@ public(package) fun proj_expiry_ms(ctx: &CreditContext): Option<u64> {
 // === Package Functions ===
 
 /// Construct `Accruing` — HandoverOpen, no countdown in progress.
-public(package) fun accruing(stake: u64, phase_start_ms: u64): CreditContext {
-    CreditContext { stake, phase_start_ms, variant: CreditState::Accruing }
+public(package) fun accruing(stake: Stake, phase_start: Timestamp): CreditContext {
+    CreditContext { stake, phase_start, variant: CreditState::Accruing }
 }
 
-/// Construct `Capped` — HandoverConfirmed, credit freezes at `expiry_ms`.
-public(package) fun capped(stake: u64, phase_start_ms: u64, expiry_ms: u64): CreditContext {
-    CreditContext { stake, phase_start_ms, variant: CreditState::Capped { expiry_ms } }
+/// Construct `Capped` — HandoverConfirmed, credit freezes at `expiry`.
+public(package) fun capped(stake: Stake, phase_start: Timestamp, expiry: Timestamp): CreditContext {
+    CreditContext { stake, phase_start, variant: CreditState::Capped { expiry } }
 }
 
-/// Credit consumed from the tenant's stake up to `timestamp_ms`.
+/// Credit consumed from the tenant's stake up to `now`.
 ///
 /// Both variants evaluate `credit_curve(elapsed / tenure_ceiling)`
 /// scaled by `stake`; they differ only in the effective timestamp:
-/// `Accruing` uses `timestamp_ms` directly, `Capped` saturates it at
-/// `expiry_ms` so accrual freezes when the countdown boundary passes.
+/// `Accruing` uses `now` directly, `Capped` saturates at `expiry`
+/// so accrual freezes when the countdown boundary passes.
 ///
 /// Returns 0 when elapsed == 0; returns `stake` when elapsed >=
 /// `tenure_ceiling` (curve short-circuit at SCALE).
 public(package) fun used_credit(
-    ctx:          &CreditContext,
-    cfg:          &IntegrationConfig,
-    timestamp_ms: u64,
-): u64 {
-    let effective_ms = match (&ctx.variant) {
-        CreditState::Accruing             => timestamp_ms,
-        CreditState::Capped { expiry_ms } => phases::earliest(timestamp_ms, *expiry_ms),
+    ctx: &CreditContext,
+    cfg: &IntegrationConfig,
+    now: Timestamp,
+): Stake {
+    let effective = match (&ctx.variant) {
+        CreditState::Accruing          => now,
+        CreditState::Capped { expiry } => phases::earliest(now, *expiry),
     };
-    let elapsed = phases::elapsed_since(ctx.phase_start_ms, effective_ms);
+    let elapsed = phases::elapsed_since(ctx.phase_start, effective);
     let g = curve_shape_state::evaluate_curve(
         config::proj_credit_curve(cfg),
-        elapsed,
-        config::proj_tenure_ceiling(cfg),
+        phases::duration_ms(elapsed),        // ← temporal → math domain
+        phases::duration_ms(config::proj_tenure_ceiling(cfg)),  // ← temporal → math domain
     );
-    math::mul_div(ctx.stake, g, curve_shape_state::scale())
+    monetary::stake(curve_shape_state::apply(monetary::stake_mist(ctx.stake), g))
 }
 
 // === Private Functions ===

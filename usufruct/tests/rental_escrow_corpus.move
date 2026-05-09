@@ -11,6 +11,9 @@ use usufruct::{
     curve_shape_state::{Self, CurveShapeState},
     descent_policy_state::{Self, DescentPolicyState},
     handover_policy_state::{Self, HandoverPolicyState},
+    math,
+    monetary,
+    phases,
     price_function_state::{Self, PriceFunctionState},
     retire_policy_state::{Self, RetirePolicyState},
 };
@@ -194,8 +197,8 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8): CorpusEntry {
 fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8): IntegrationConfig {
     let curve = make_curve(e);
     config::new_config(
-        MIN_RENT_PRICE,
-        TENURE_CEILING,
+        monetary::price(MIN_RENT_PRICE),
+        phases::duration(TENURE_CEILING),
         make_handover(c),
         make_descent(h),
         make_retire(f),
@@ -215,13 +218,13 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64 {
 
 fun make_handover(c: u8): HandoverPolicyState {
     if (c == 0)      { handover_policy_state::new_handover_instant() }
-    else if (c == 1) { handover_policy_state::new_handover_countdown(HANDOVER_COUNTDOWN_C1) }
+    else if (c == 1) { handover_policy_state::new_handover_countdown(phases::duration(HANDOVER_COUNTDOWN_C1)) }
     else             { handover_policy_state::new_handover_fixed_time() }
 }
 
 fun make_price_function_state(d: u8): PriceFunctionState {
-    if (d == 0) { price_function_state::new_fixed_delta(FIXED_DELTA_VALUE) }
-    else        { price_function_state::new_compound_delta(COMPOUND_DELTA_BPS, COMPOUND_DELTA_VALUE) }
+    if (d == 0) { price_function_state::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
+    else        { price_function_state::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
 }
 
 fun make_curve(e: u8): CurveShapeState {
@@ -236,12 +239,12 @@ fun make_curve(e: u8): CurveShapeState {
 
 fun make_descent(h: u8): DescentPolicyState {
     if (h == 0) { descent_policy_state::new_descent_skipped() }
-    else        { descent_policy_state::new_descent_window(DESCENT_WINDOW_H1) }
+    else        { descent_policy_state::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
 }
 
 fun make_retire(f: u8): RetirePolicyState {
     if (f == 0) { retire_policy_state::new_retire_immediate() }
-    else        { retire_policy_state::new_retire_deferred(RETIRE_DEFERRED_F1) }
+    else        { retire_policy_state::new_retire_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
 }
 
 // --- Filter helpers (called after axis validation in filter_*) ---

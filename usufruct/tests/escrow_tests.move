@@ -38,6 +38,7 @@ use usufruct::{
     escrow_corpus,
     fee_message::FeeMessageSent,
     owner_cap::{Self, OwnerCap},
+    phases,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
     tenant::{Self, Tenant},
@@ -105,7 +106,7 @@ fun integrate_and_take(
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset, cfg, &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::escrow_id(&cap);
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.next_tx(OWNER);
@@ -128,7 +129,7 @@ fun integrate_creates_idle_escrow_smoke() {
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset, cfg, &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::escrow_id(&cap);
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
 
     sc.next_tx(OWNER);
     let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
@@ -172,7 +173,7 @@ fun integrate_idle_across_handover_modes() {
         let cap = escrow::integrate<DemoAsset, SUI>(
             asset, cfg, &fee_ref, &clk, sc.ctx(),
         );
-        let escrow_id = owner_cap::escrow_id(&cap);
+        let escrow_id = owner_cap::proj_escrow_id(&cap);
 
         clock::destroy_for_testing(clk);
         test_scenario::return_immutable(fee_ref);
@@ -205,7 +206,7 @@ fun integrate_leaves_escrow_idle() {
     let asset   = mk_demo_asset(sc.ctx());
 
     let cap       = escrow::integrate<DemoAsset, SUI>(asset, cfg, &fee_ref, &clk, sc.ctx());
-    let escrow_id = owner_cap::escrow_id(&cap);
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
 
     sc.next_tx(OWNER);
     let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
@@ -849,7 +850,7 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     // Ensure boundary < tenure: 25_000 + 5_000 = 30_000 < 100_000.
     clock::set_for_testing(&mut clk, boundary_ms);
     let used_credit_expected = escrow::compute_used_credit(&escrow, &clk);
-    escrow::fire_do_handover_for_testing(&mut escrow, boundary_ms, sc.ctx());
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
     // Post-condition: HandoverOpen, current is t2.
     assert!(escrow::is_handover_open(&escrow), 0);
@@ -884,6 +885,44 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
 
 // ─── §12. do_tenure_expiry ───────────────────────────────────────────────────
 
+/// At tenure expiry the tenant never receives a refund.
+/// split_fee(principal) = owner_share + protocol_fee exactly — no remainder.
+/// Preserves the invariant: the Nothing path is taken, never Parcial.
+#[test]
+fun do_tenure_expiry_tenant_receives_no_refund() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let principal = escrow_corpus::min_rent_price_const();
+    let cap_t1 = escrow::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    let boundary_ms = escrow_corpus::tenure_ceiling_const();
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
+
+    // Conservation: owner_share + protocol_fee = principal.
+    // If this fails, some mist escaped to the tenant.
+    let expired = event::events_by_type<TenureExpired>();
+    assert_eq!(expired.length(), 1);
+    assert_eq!(
+        asset_context_state::tenure_expired_owner_share(&expired[0]) +
+        asset_context_state::tenure_expired_protocol_fee(&expired[0]),
+        principal,
+    );
+
+    // No coin was transferred to the tenant — Nothing, not Parcial.
+    sc.next_tx(TENANT_ADDR_1);
+    assert!(!sc.has_most_recent_for_sender<coin::Coin<SUI>>(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 /// HandoverOpen → AtDutch via tenure boundary. Refund is always
 /// Nothing (full stake consumed: owner+fee). last_acquisition_price
 /// equals the principal at boundary.
@@ -900,7 +939,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
 
     let owner_before = escrow::owner_value_for_testing(&escrow);
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
-    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, boundary_ms, sc.ctx());
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
     // Post-condition: NotRented + AtDutch.
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
@@ -949,7 +988,7 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     escrow::drive_to_retiring_flag_for_testing(&mut escrow);
 
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
-    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, boundary_ms, sc.ctx());
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
     // Post-condition: NotRented + Retired (not AtDutch).
     assert!(escrow::is_retired(&escrow), 0);
@@ -1092,7 +1131,7 @@ fun retire_when_already_retiring_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = escrow::EWrongEscrowOwnerCap, location = usufruct::escrow)]
+#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun retire_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1147,7 +1186,7 @@ fun do_auction_expiry_returns_to_idle() {
     );
 
     let boundary_ms = 100_000 + escrow_corpus::descent_window_h1_const();
-    escrow::fire_do_auction_expiry_for_testing(&mut escrow, boundary_ms);
+    escrow::fire_do_auction_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms));
 
     assert!(escrow::is_idle(&escrow), 0);
 
@@ -1366,7 +1405,7 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, &clk, sc.ctx());
-    let (foreign_cap, _) = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
+    let foreign_cap = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
@@ -1389,7 +1428,7 @@ fun borrow_asset_from_idle_aborts() {
 
     // Mint a cap bound to this escrow but never used (no active rental).
     let escrow_id = object::id(&escrow);
-    let (cap, _) = tenant_cap::new(escrow_id, TENANT_ADDR_1, sc.ctx());
+    let cap = tenant_cap::new(escrow_id, TENANT_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &cap, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
@@ -1514,7 +1553,7 @@ fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     let cfg = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let (foreign, _) = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
+    let foreign = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
 
     escrow::burn_tenant_cap(&mut escrow, foreign, &clk, sc.ctx());
 
@@ -1541,7 +1580,7 @@ fun withdraw_earnings_drains_owner_balance() {
 
     // Tenure expiry routes 90% to owner.
     escrow::fire_do_tenure_expiry_for_testing(
-        &mut escrow, escrow_corpus::tenure_ceiling_const(), sc.ctx(),
+        &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
     );
     let owner_share_expected = principal - principal / 10;
     assert_eq!(escrow::owner_value_for_testing(&escrow), owner_share_expected);
@@ -1578,7 +1617,7 @@ fun withdraw_earnings_with_zero_balance_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = escrow::EWrongEscrowOwnerCap, location = usufruct::escrow)]
+#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun withdraw_earnings_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1641,11 +1680,11 @@ fun claim_asset_sweeps_owner_earnings() {
     let cap_t1 = escrow::rent(&mut escrow_handle, p1, &clk, sc.ctx());
 
     escrow::fire_do_tenure_expiry_for_testing(
-        &mut escrow_handle, escrow_corpus::tenure_ceiling_const(), sc.ctx(),
+        &mut escrow_handle, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
     );
     // Drive auction → idle → retired so claim can run.
     escrow::fire_do_auction_expiry_for_testing(
-        &mut escrow_handle, escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const(),
+        &mut escrow_handle, phases::timestamp(escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const()),
     );
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
 
@@ -1680,7 +1719,7 @@ fun claim_asset_when_not_retired_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = escrow::EWrongEscrowOwnerCap, location = usufruct::escrow)]
+#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun claim_asset_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -4109,6 +4148,10 @@ fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
             + asset_context_state::handover_completed_protocol_fee(he),
             stake,                        // all of stake distributed
         );
+
+        // No coin was transferred to the departing tenant — Nothing, not Parcial.
+        sc.next_tx(TENANT_ADDR_1);
+        assert!(!sc.has_most_recent_for_sender<coin::Coin<SUI>>(), tag);
 
         transfer::public_transfer(cap_t1, OWNER);
         transfer::public_transfer(cap_t2, OWNER);

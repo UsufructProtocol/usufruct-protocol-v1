@@ -10,12 +10,13 @@ module usufruct::runtime_projection;
 
 use usufruct::{
     asset::{Self, AssetCustodyOpen, AssetCustodyLocked},
-    asset_context_state::{Self as acs, AssetContext},
+    phases,
+    asset_context_state::{Self as acs, AssetContext, CapAuthorizationState},
+    monetary,
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
     refund_state::{Self as refund, RefundState},
     tenant::{Self as tenant_mod, Tenant, TenantIdentity, TenantStake},
-    cap_authorization_state::{Self as cap_auth, CapAuthorizationState},
     config::{Self, IntegrationConfig},
     credit_context_state::{Self as credit, CreditContext},
     curve_shape_state::{Self as curve, CurveShapeState},
@@ -35,25 +36,45 @@ public fun asset_is_rented<A: key + store, C>(e: &AssetContext<A, C>):   bool  {
 public fun asset_is_handover_open<A: key + store, C>(e: &AssetContext<A, C>):      bool { acs::proj_is_handover_open(e) }
 public fun asset_is_handover_confirmed<A: key + store, C>(e: &AssetContext<A, C>): bool { acs::proj_is_handover_confirmed(e) }
 public fun asset_is_retiring<A: key + store, C>(e: &AssetContext<A, C>):  bool  { acs::proj_is_retiring(e) }
-public fun asset_owner_balance<A: key + store, C>(e: &AssetContext<A, C>):   u64 { acs::proj_owner_balance(e) }
+public fun asset_owner_balance<A: key + store, C>(e: &AssetContext<A, C>):   u64 { monetary::stake_mist(acs::proj_owner_balance(e)) }
 public fun asset_owner_cap_id<A: key + store, C>(e: &AssetContext<A, C>):    ID  { acs::proj_owner_cap_id(e) }
 public fun asset_fee_inbox_id<A: key + store, C>(e: &AssetContext<A, C>):    ID  { acs::proj_fee_inbox_id(e) }
-public fun asset_integrated_at_ms<A: key + store, C>(e: &AssetContext<A, C>): u64 { acs::proj_integrated_at_ms(e) }
+public fun asset_integrated_at_ms<A: key + store, C>(e: &AssetContext<A, C>): u64 { phases::timestamp_ms(acs::proj_integrated_at(e)) }
 public fun asset_current_addr<A: key + store, C>(e: &AssetContext<A, C>):  Option<address> { acs::proj_current_addr(e) }
 public fun asset_current_cap_id<A: key + store, C>(e: &AssetContext<A, C>): Option<ID>     { acs::proj_current_cap_id(e) }
 public fun asset_pending_addr<A: key + store, C>(e: &AssetContext<A, C>):  Option<address> { acs::proj_pending_addr(e) }
 public fun asset_pending_cap_id<A: key + store, C>(e: &AssetContext<A, C>): Option<ID>     { acs::proj_pending_cap_id(e) }
-public fun asset_current_stake<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>    { acs::proj_current_stake(e) }
-public fun asset_pending_stake<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>    { acs::proj_pending_stake(e) }
-public fun asset_phase_start_ms<A: key + store, C>(e: &AssetContext<A, C>): Option<u64>   { acs::proj_phase_start_ms(e) }
-public fun asset_handover_expiry<A: key + store, C>(e: &AssetContext<A, C>): Option<u64>  { acs::proj_handover_expiry(e) }
-public fun asset_last_acq_price<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>  { acs::proj_last_acq_price(e) }
+public fun asset_current_stake<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_current_stake(e);
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun asset_pending_stake<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_pending_stake(e);
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun asset_phase_start_ms<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_phase_start(e);
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
+public fun asset_handover_expiry<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_handover_expiry(e);
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
+public fun asset_last_acq_price<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_last_acq_price(e);
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === fee_message ===
 
-public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
+public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { monetary::stake_mist(fee_msg::proj_share_value(s)) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
-public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { monetary::stake_mist(fee_msg::proj_amount(msg)) }
 
 // === tenant ===
 
@@ -68,7 +89,11 @@ public fun tenant_stake_value_of<C>(s: &TenantStake<C>): u64            { tenant
 
 public fun retire_is_immediate(p: &RetirePolicyState): bool       { retire::proj_is_immediate(p) }
 public fun retire_is_deferred(p: &RetirePolicyState):  bool       { retire::proj_is_deferred(p) }
-public fun retire_floor_ms(p: &RetirePolicyState):     Option<u64> { retire::proj_floor_ms(p) }
+public fun retire_floor_ms(p: &RetirePolicyState): Option<u64> {
+    let opt = retire::proj_floor_ms(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === refund_state ===
 
@@ -81,9 +106,21 @@ public fun refund_is_total<C>(rs: &RefundState<C>):   bool { refund::proj_is_tot
 public fun price_state_is_rest(s: &PriceState):      bool       { ps::proj_is_rest(s) }
 public fun price_state_is_ascending(s: &PriceState): bool       { ps::proj_is_ascending(s) }
 public fun price_state_is_descending(s: &PriceState): bool      { ps::proj_is_descending(s) }
-public fun price_state_ascending_stake(s: &PriceState): Option<u64>           { ps::proj_ascending_stake(s) }
-public fun price_state_descending_last_acq_price(s: &PriceState): Option<u64> { ps::proj_descending_last_acq_price(s) }
-public fun price_state_descending_phase_start_ms(s: &PriceState): Option<u64> { ps::proj_descending_phase_start_ms(s) }
+public fun price_state_ascending_stake(s: &PriceState): Option<u64> {
+    let opt = ps::proj_ascending_stake(s);
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun price_state_descending_last_acq_price(s: &PriceState): Option<u64> {
+    let opt = ps::proj_descending_last_acq_price(s);
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun price_state_descending_phase_start_ms(s: &PriceState): Option<u64> {
+    let opt = ps::proj_descending_phase_start(s);
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === price_function_state ===
 
@@ -106,13 +143,21 @@ public fun owner_earnings_value<C>(e: &OwnerEarnings<C>): u64             { owne
 public fun handover_is_instant(p: &HandoverPolicyState):    bool       { handover::proj_is_instant(p) }
 public fun handover_is_fixed_time(p: &HandoverPolicyState): bool       { handover::proj_is_fixed_time(p) }
 public fun handover_is_countdown(p: &HandoverPolicyState):  bool       { handover::proj_is_countdown(p) }
-public fun handover_countdown_floor_ms(p: &HandoverPolicyState): Option<u64> { handover::proj_countdown_floor_ms(p) }
+public fun handover_countdown_floor_ms(p: &HandoverPolicyState): Option<u64> {
+    let opt = handover::proj_countdown_floor_ms(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === descent_policy_state ===
 
 public fun descent_is_skipped(p: &DescentPolicyState): bool       { descent::proj_is_skipped(p) }
 public fun descent_is_window(p: &DescentPolicyState):  bool       { descent::proj_is_window(p) }
-public fun descent_window_ceiling(p: &DescentPolicyState): Option<u64> { descent::proj_window_ceiling(p) }
+public fun descent_window_ceiling(p: &DescentPolicyState): Option<u64> {
+    let opt = descent::proj_window_ceiling(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === curve_shape_state ===
 
@@ -128,16 +173,20 @@ public fun curve_exponential_alpha_neg(s: &CurveShapeState): Option<bool> { curv
 
 // === credit_context_state ===
 
-public fun credit_stake(ctx: &CreditContext): u64          { credit::proj_stake(ctx) }
-public fun credit_phase_start_ms(ctx: &CreditContext): u64 { credit::proj_phase_start_ms(ctx) }
+public fun credit_stake(ctx: &CreditContext): u64          { monetary::stake_mist(credit::proj_stake(ctx)) }
+public fun credit_phase_start_ms(ctx: &CreditContext): u64 { phases::timestamp_ms(credit::proj_phase_start(ctx)) }
 public fun credit_is_accruing(ctx: &CreditContext): bool   { credit::proj_is_accruing(ctx) }
 public fun credit_is_capped(ctx: &CreditContext): bool     { credit::proj_is_capped(ctx) }
-public fun credit_expiry_ms(ctx: &CreditContext): Option<u64> { credit::proj_expiry_ms(ctx) }
+public fun credit_expiry_ms(ctx: &CreditContext): Option<u64> {
+    let opt = credit::proj_expiry(ctx);
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === config ===
 
-public fun config_min_rent_price(cfg: &IntegrationConfig): u64                 { config::proj_min_rent_price(cfg) }
-public fun config_tenure_ceiling(cfg: &IntegrationConfig): u64                 { config::proj_tenure_ceiling(cfg) }
+public fun config_min_rent_price(cfg: &IntegrationConfig): u64                 { monetary::price_mist(config::proj_min_rent_price(cfg)) }
+public fun config_tenure_ceiling(cfg: &IntegrationConfig): u64                 { phases::duration_ms(config::proj_tenure_ceiling(cfg)) }
 public fun config_handover(cfg: &IntegrationConfig):       &HandoverPolicyState { config::proj_handover(cfg) }
 public fun config_descent(cfg: &IntegrationConfig):        &DescentPolicyState  { config::proj_descent(cfg) }
 public fun config_retire(cfg: &IntegrationConfig):         &RetirePolicyState   { config::proj_retire(cfg) }
@@ -147,9 +196,9 @@ public fun config_price_fn(cfg: &IntegrationConfig):       &PriceFunctionState  
 
 // === cap_authorization_state ===
 
-public fun cap_auth_is_current(a: &CapAuthorizationState): bool { cap_auth::proj_is_current(a) }
-public fun cap_auth_is_pending(a: &CapAuthorizationState): bool { cap_auth::proj_is_pending(a) }
-public fun cap_auth_is_stale(a: &CapAuthorizationState):   bool { cap_auth::proj_is_stale(a)   }
+public fun cap_auth_is_current(a: &CapAuthorizationState): bool { acs::proj_is_current(a) }
+public fun cap_auth_is_pending(a: &CapAuthorizationState): bool { acs::proj_is_pending(a) }
+public fun cap_auth_is_stale(a: &CapAuthorizationState):   bool { acs::proj_is_stale(a)   }
 
 // === asset ===
 

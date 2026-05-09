@@ -10,6 +10,8 @@ use usufruct::{
     curve_shape_state::CurveShapeState,
     descent_policy_state::DescentPolicyState,
     handover_policy_state::{Self, HandoverPolicyState},
+    monetary::{Self, Price},
+    phases::{Self, Duration},
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
@@ -25,8 +27,8 @@ const EHandoverFloorExceedsTenure: u64 = 2;   // Countdown.floor_ms >= tenure_ce
 // === Structs ===
 
 public struct IntegrationConfig has copy, drop, store {
-    min_rent_price:  u64,
-    tenure_ceiling:  u64,
+    min_rent_price:  Price,
+    tenure_ceiling:  Duration,
     handover:        HandoverPolicyState,
     descent:         DescentPolicyState,
     retire:          RetirePolicyState,
@@ -47,8 +49,8 @@ public struct IntegrationConfigRegistered has copy, drop {
 // === Public Functions ===
 
 public fun new_config(
-    min_rent_price: u64,
-    tenure_ceiling: u64,
+    min_rent_price: Price,
+    tenure_ceiling: Duration,
     handover:       HandoverPolicyState,
     descent:        DescentPolicyState,
     retire:         RetirePolicyState,
@@ -56,8 +58,8 @@ public fun new_config(
     descent_curve:  CurveShapeState,
     price_function_state: PriceFunctionState,
 ): IntegrationConfig {
-    assert!(min_rent_price > 0, EMinRentPriceZero);
-    assert!(tenure_ceiling > 0, ETenureCeilingZero);
+    assert!(monetary::price_mist(min_rent_price) > 0, EMinRentPriceZero);
+    assert!(phases::duration_ms(tenure_ceiling) > 0, ETenureCeilingZero);
     // Cross-field validation: Countdown.floor_ms < tenure_ceiling.
     // Equality is the FixedTime variant. Intra-variant invariants
     // (e.g. floor_ms > 0) are owned by the policy module's
@@ -84,8 +86,8 @@ public fun new_config(
 
 // ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):       u64                  { cfg.min_rent_price }
-public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):        u64                  { cfg.tenure_ceiling }
+public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):       Price                { cfg.min_rent_price }
+public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):        Duration             { cfg.tenure_ceiling }
 public(package) fun proj_handover(cfg: &IntegrationConfig):              &HandoverPolicyState  { &cfg.handover }
 public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicyState   { &cfg.descent }
 public(package) fun proj_retire(cfg: &IntegrationConfig):                &RetirePolicyState    { &cfg.retire }

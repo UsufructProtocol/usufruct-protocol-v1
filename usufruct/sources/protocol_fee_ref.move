@@ -28,7 +28,7 @@ public struct ProtocolFeeRef has key {
 // === View Functions ===
 
 /// Returns the ID of the `ProtocolFeeInbox` this ref points to.
-public fun inbox_id(fee_ref: &ProtocolFeeRef): ID {
+public fun proj_inbox_id(fee_ref: &ProtocolFeeRef): ID {
     fee_ref.inbox_id
 }
 

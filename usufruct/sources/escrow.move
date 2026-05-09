@@ -13,12 +13,12 @@ use sui::{
 };
 use usufruct::{
     asset::AssetReceipt,
-    cap_authorization_state::CapAuthorizationState,
     config::{Self, IntegrationConfig},
     curve_shape_state::CurveShapeState,
     descent_policy_state,
-    asset_context_state::{Self, AssetContext},
+    asset_context_state::{Self, AssetContext, CapAuthorizationState},
     handover_policy_state,
+    monetary,
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
     phases,
@@ -30,9 +30,7 @@ use usufruct::{
 
 // === Errors ===
 
-const ENotRented:           u64 = 0;
 const ENotRetired:          u64 = 6;
-const EWrongEscrowOwnerCap: u64 = 11;
 
 // === Structs ===
 
@@ -81,7 +79,7 @@ public fun integrate<Asset: key + store, CoinType>(
     let owner_addr       = ctx.sender();
     let owner_cap        = owner_cap::new(escrow_id, owner_addr, ctx);
     let owner_cap_id     = object::id(&owner_cap);
-    let fee_inbox_id     = protocol_fee_ref::inbox_id(fee_ref);
+    let fee_inbox_id     = protocol_fee_ref::proj_inbox_id(fee_ref);
     let integrated_at_ms = clock::timestamp_ms(clock);
 
     config::emit_registration(&cfg, escrow_id);
@@ -105,7 +103,6 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Coin<CoinType> {
-    assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     let context = escrow.asset_context.extract();
     let (context, coin) = asset_context_state::execute_withdraw_earnings(context, owner_cap, clock, ctx);
     escrow.asset_context.fill(context);
@@ -119,7 +116,6 @@ public fun claim_asset<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
-    assert!(owner_cap::escrow_id(&owner_cap) == object::id(&escrow), EWrongEscrowOwnerCap);
     let escrow_id    = object::id(&escrow);
     let owner_cap_id = object::id(&owner_cap);
     let owner_addr   = ctx.sender();
@@ -148,9 +144,8 @@ public fun retire<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    assert!(owner_cap::escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::execute_retire(context, clock, ctx);
+    let context = asset_context_state::execute_retire(context, owner_cap, clock, ctx);
     escrow.asset_context.fill(context);
 }
 
@@ -347,13 +342,17 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
 public fun current_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::proj_current_stake(read_context(escrow))
+    let opt = asset_context_state::proj_current_stake(read_context(escrow));
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun pending_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::proj_pending_stake(read_context(escrow))
+    let opt = asset_context_state::proj_pending_stake(read_context(escrow));
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
 }
 
 // ─── Temporal views ───────────────────────────────────────────────────────────
@@ -361,7 +360,9 @@ public fun pending_stake<Asset: key + store, CoinType>(
 public fun phase_start_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::proj_phase_start_ms(read_context(escrow))
+    let opt = asset_context_state::proj_phase_start(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun tenure_expiry_ms<Asset: key + store, CoinType>(
@@ -369,14 +370,16 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
 ): Option<u64> {
     let e = read_context(escrow);
     if (!asset_context_state::proj_is_rented(e)) return option::none();
-    let ps = *option::borrow(&asset_context_state::proj_phase_start_ms(e));
-    option::some(phases::boundary_at(ps, config::proj_tenure_ceiling(asset_context_state::proj_config(e))))
+    let ps = *option::borrow(&asset_context_state::proj_phase_start(e));
+    option::some(phases::timestamp_ms(phases::boundary_at(ps, config::proj_tenure_ceiling(asset_context_state::proj_config(e)))))
 }
 
 public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::proj_handover_expiry(read_context(escrow))
+    let opt = asset_context_state::proj_handover_expiry(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
@@ -385,29 +388,29 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
 ): Option<u64> {
     let e = read_context(escrow);
     if (!asset_context_state::proj_is_handover_open(e)) return option::none();
-    let phase_start = *option::borrow(&asset_context_state::proj_phase_start_ms(e));
+    let phase_start = *option::borrow(&asset_context_state::proj_phase_start(e));
     let c           = asset_context_state::proj_config(e);
     let tenure      = config::proj_tenure_ceiling(c);
-    option::some(handover_policy_state::expiry_at(config::proj_handover(c), bid_time_ms, phase_start, tenure))
+    option::some(phases::timestamp_ms(handover_policy_state::expiry_at(config::proj_handover(c), phases::timestamp(bid_time_ms), phase_start, tenure)))
 }
 
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    config::proj_tenure_ceiling(cfg(escrow))
+    phases::duration_ms(config::proj_tenure_ceiling(cfg(escrow)))
 }
 
 public fun integrated_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::proj_integrated_at_ms(read_context(escrow))
+    phases::timestamp_ms(asset_context_state::proj_integrated_at(read_context(escrow)))
 }
 
 public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     let e = read_context(escrow);
-    retire_policy_state::unlock_at_ms(config::proj_retire(asset_context_state::proj_config(e)), asset_context_state::proj_integrated_at_ms(e))
+    phases::timestamp_ms(retire_policy_state::unlock_at(config::proj_retire(asset_context_state::proj_config(e)), asset_context_state::proj_integrated_at(e)))
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────
@@ -446,41 +449,43 @@ public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): u64 {
-    asset_context_state::used_credit_at(read_context(escrow), clock::timestamp_ms(clock))
+    monetary::stake_mist(asset_context_state::used_credit_at(read_context(escrow), phases::now(clock)))
 }
 
 public fun compute_used_credit_at_ms<Asset: key + store, CoinType>(
     escrow:       &Escrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    asset_context_state::used_credit_at(read_context(escrow), timestamp_ms)
+    monetary::stake_mist(asset_context_state::used_credit_at(read_context(escrow), phases::timestamp(timestamp_ms)))
 }
 
 public fun compute_floor_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): u64 {
-    asset_context_state::floor_price_at(read_context(escrow), clock::timestamp_ms(clock))
+    monetary::price_mist(asset_context_state::floor_price_at(read_context(escrow), phases::now(clock)))
 }
 
 public fun compute_floor_price_at_ms<Asset: key + store, CoinType>(
     escrow:       &Escrow<Asset, CoinType>,
     timestamp_ms: u64,
 ): u64 {
-    asset_context_state::floor_price_at(read_context(escrow), timestamp_ms)
+    monetary::price_mist(asset_context_state::floor_price_at(read_context(escrow), phases::timestamp(timestamp_ms)))
 }
 
 public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
     escrow:     &Escrow<Asset, CoinType>,
     bid_amount: u64,
 ): u64 {
-    price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg(escrow)), bid_amount)
+    monetary::price_mist(price_function_state::evaluate_price_fn(config::proj_price_function_state(cfg(escrow)), monetary::price(bid_amount)))
 }
 
 public fun last_acq_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_context_state::proj_last_acq_price(read_context(escrow))
+    let opt = asset_context_state::proj_last_acq_price(read_context(escrow));
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
 }
 
 // ─── Settlement views ────────────────────────────────────────────────────────
@@ -489,19 +494,17 @@ public fun compute_handover_settlement<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     boundary_ms: u64,
 ): (u64, u64, u64) {
-    let e     = read_context(escrow);
-    let stake = asset_context_state::proj_current_stake_value(e);
-    let used  = asset_context_state::used_credit_at(e, boundary_ms);
-    let (owner_share, protocol_fee) = asset_context_state::split_fee(used);
-    (stake - used, owner_share, protocol_fee)
+    let (remaining, owner, fee) = asset_context_state::proj_handover_settlement(
+        read_context(escrow), phases::timestamp(boundary_ms),
+    );
+    (monetary::stake_mist(remaining), monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
 public fun compute_tenure_settlement<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): (u64, u64) {
-    let e = read_context(escrow);
-    assert!(asset_context_state::proj_is_rented(e), ENotRented);
-    asset_context_state::split_fee(asset_context_state::proj_current_stake_value(e))
+    let (owner, fee) = asset_context_state::proj_tenure_settlement(read_context(escrow));
+    (monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
 // ─── Earnings views ──────────────────────────────────────────────────────────
@@ -509,7 +512,7 @@ public fun compute_tenure_settlement<Asset: key + store, CoinType>(
 public fun owner_balance<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::proj_owner_balance(read_context(escrow))
+    monetary::stake_mist(asset_context_state::proj_owner_balance(read_context(escrow)))
 }
 
 // ─── Config views ────────────────────────────────────────────────────────────
@@ -532,25 +535,31 @@ public fun bps_denominator():  u64 { asset_context_state::bps_denominator() }
 public fun min_rent_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    config::proj_min_rent_price(cfg(escrow))
+    monetary::price_mist(config::proj_min_rent_price(cfg(escrow)))
 }
 
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    descent_policy_state::proj_window_ceiling(config::proj_descent(cfg(escrow)))
+    let opt = descent_policy_state::proj_window_ceiling(config::proj_descent(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    handover_policy_state::proj_countdown_floor_ms(config::proj_handover(cfg(escrow)))
+    let opt = handover_policy_state::proj_countdown_floor_ms(config::proj_handover(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun retire_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    retire_policy_state::proj_floor_ms(config::proj_retire(cfg(escrow)))
+    let opt = retire_policy_state::proj_floor_ms(config::proj_retire(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
 }
 
 public fun credit_curve<Asset: key + store, CoinType>(
@@ -598,7 +607,7 @@ public(package) fun read_engine_for_testing<Asset: key + store, CoinType>(
 public(package) fun owner_value_for_testing<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    asset_context_state::proj_owner_balance(read_context(escrow))
+    monetary::stake_mist(asset_context_state::proj_owner_balance(read_context(escrow)))
 }
 
 #[test_only]
@@ -613,7 +622,9 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     phase_start_ms: u64,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_rented_for_testing(context, tenant, phase_start_ms);
+    let context = asset_context_state::drive_to_rented_for_testing(
+        context, tenant, phases::timestamp(phase_start_ms),
+    );
     escrow.asset_context.fill(context);
 }
 
@@ -624,7 +635,9 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     handover_countdown_expiry: u64,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_demand_for_testing(context, tenant, handover_countdown_expiry);
+    let context = asset_context_state::drive_to_demand_for_testing(
+        context, tenant, phases::timestamp(handover_countdown_expiry),
+    );
     escrow.asset_context.fill(context);
 }
 
@@ -638,7 +651,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
 ) {
     let context = escrow.asset_context.extract();
     let context = asset_context_state::drive_to_at_dutch_for_testing(
-        context, owner_amount, fee_amount, last_acq_price, new_phase_start_ms,
+        context, owner_amount, fee_amount, last_acq_price, phases::timestamp(new_phase_start_ms),
     );
     escrow.asset_context.fill(context);
 }
@@ -663,33 +676,33 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
 
 #[test_only]
 public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
-    escrow:      &mut Escrow<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    escrow:   &mut Escrow<Asset, CoinType>,
+    boundary: phases::Timestamp,
+    ctx:      &mut TxContext,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_handover_for_testing(context, boundary_ms, ctx);
+    let context = asset_context_state::fire_do_handover_for_testing(context, boundary, ctx);
     escrow.asset_context.fill(context);
 }
 
 #[test_only]
 public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinType>(
-    escrow:      &mut Escrow<Asset, CoinType>,
-    boundary_ms: u64,
-    ctx:         &mut TxContext,
+    escrow:   &mut Escrow<Asset, CoinType>,
+    boundary: phases::Timestamp,
+    ctx:      &mut TxContext,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_tenure_expiry_for_testing(context, boundary_ms, ctx);
+    let context = asset_context_state::fire_do_tenure_expiry_for_testing(context, boundary, ctx);
     escrow.asset_context.fill(context);
 }
 
 #[test_only]
 public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
-    escrow:      &mut Escrow<Asset, CoinType>,
-    boundary_ms: u64,
+    escrow:   &mut Escrow<Asset, CoinType>,
+    boundary: phases::Timestamp,
 ) {
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_auction_expiry_for_testing(context, boundary_ms);
+    let context = asset_context_state::fire_do_auction_expiry_for_testing(context, boundary);
     escrow.asset_context.fill(context);
 }
 

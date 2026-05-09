@@ -6,6 +6,7 @@ module usufruct::descent_policy_state_tests;
 
 use std::unit_test::assert_eq;
 use usufruct::descent_policy_state::{Self, DescentPolicyState};
+use usufruct::phases;
 
 // ─── new_descent_window — abort ───────────────────────────────────────────────
 
@@ -13,7 +14,7 @@ use usufruct::descent_policy_state::{Self, DescentPolicyState};
 #[expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
 fun new_descent_window_rejects_zero() {
     // Window(0) is not allowed; the zero-ceiling mode is Skipped.
-    descent_policy_state::new_descent_window(0);
+    descent_policy_state::new_descent_window(phases::duration(0));
 }
 
 // ─── has_expired ──────────────────────────────────────────────────────────────
@@ -39,19 +40,19 @@ fun has_expired_table() {
         HasExpiredCase { policy: descent_policy_state::new_descent_skipped(), phase_start: 0,   now: 0,   expected: true  }, // zero anchor
 
         // Window — boundary triple at phase_start + ceiling = 150
-        HasExpiredCase { policy: descent_policy_state::new_descent_window(50), phase_start: 100, now: 149, expected: false }, // one before
-        HasExpiredCase { policy: descent_policy_state::new_descent_window(50), phase_start: 100, now: 150, expected: true  }, // exact
-        HasExpiredCase { policy: descent_policy_state::new_descent_window(50), phase_start: 100, now: 151, expected: true  }, // one after
+        HasExpiredCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 100, now: 149, expected: false }, // one before
+        HasExpiredCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 100, now: 150, expected: true  }, // exact
+        HasExpiredCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 100, now: 151, expected: true  }, // one after
 
         // Window with phase_start=0 (boundary == ceiling)
-        HasExpiredCase { policy: descent_policy_state::new_descent_window(50), phase_start: 0, now: 49, expected: false },
-        HasExpiredCase { policy: descent_policy_state::new_descent_window(50), phase_start: 0, now: 50, expected: true  },
+        HasExpiredCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 0, now: 49, expected: false },
+        HasExpiredCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 0, now: 50, expected: true  },
     ];
     let mut i = 0;
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(descent_policy_state::has_expired(&c.policy, c.phase_start, c.now), c.expected);
+        assert_eq!(descent_policy_state::has_expired(&c.policy, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed(), c.expected);
         i = i + 1;
     };
 }
@@ -73,15 +74,15 @@ fun expiry_at_table() {
         ExpiryAtCase { policy: descent_policy_state::new_descent_skipped(), phase_start: 100, expected: 100 },
 
         // Window — returns phase_start + ceiling
-        ExpiryAtCase { policy: descent_policy_state::new_descent_window(50),    phase_start: 100, expected: 150 },
-        ExpiryAtCase { policy: descent_policy_state::new_descent_window(1),     phase_start: 0,   expected: 1   },
-        ExpiryAtCase { policy: descent_policy_state::new_descent_window(9_999), phase_start: 1,   expected: 10_000 },
+        ExpiryAtCase { policy: descent_policy_state::new_descent_window(phases::duration(50)),    phase_start: 100, expected: 150 },
+        ExpiryAtCase { policy: descent_policy_state::new_descent_window(phases::duration(1)),     phase_start: 0,   expected: 1   },
+        ExpiryAtCase { policy: descent_policy_state::new_descent_window(phases::duration(9_999)), phase_start: 1,   expected: 10_000 },
     ];
     let mut i = 0;
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(descent_policy_state::expiry_at(&c.policy, c.phase_start), c.expected);
+        assert_eq!(phases::timestamp_ms(descent_policy_state::expiry_at(&c.policy, phases::timestamp(c.phase_start))), c.expected);
         i = i + 1;
     };
 }
@@ -96,8 +97,8 @@ fun window_ceiling_returns_ceiling_for_window() {
     let len = ceilings.length();
     while (i < len) {
         let c = ceilings[i];
-        let p = descent_policy_state::new_descent_window(c);
-        assert_eq!(descent_policy_state::window_ceiling(&p), c);
+        let p = descent_policy_state::new_descent_window(phases::duration(c));
+        assert_eq!(phases::duration_ms(descent_policy_state::window_ceiling(&p)), c);
         i = i + 1;
     };
 }
@@ -136,20 +137,20 @@ fun has_expired_iff_now_ge_expiry_at() {
         DeSisterCase { policy: descent_policy_state::new_descent_skipped(), phase_start: 0,   now: 0   },
 
         // Window — boundary triple at phase_start + ceiling = 150
-        DeSisterCase { policy: descent_policy_state::new_descent_window(50), phase_start: 100, now: 149 },
-        DeSisterCase { policy: descent_policy_state::new_descent_window(50), phase_start: 100, now: 150 },
-        DeSisterCase { policy: descent_policy_state::new_descent_window(50), phase_start: 100, now: 151 },
+        DeSisterCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 100, now: 149 },
+        DeSisterCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 100, now: 150 },
+        DeSisterCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 100, now: 151 },
 
         // Window at zero anchor
-        DeSisterCase { policy: descent_policy_state::new_descent_window(50), phase_start: 0, now: 49 },
-        DeSisterCase { policy: descent_policy_state::new_descent_window(50), phase_start: 0, now: 50 },
+        DeSisterCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 0, now: 49 },
+        DeSisterCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 0, now: 50 },
     ];
     let mut i = 0;
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        let bool_view = descent_policy_state::has_expired(&c.policy, c.phase_start, c.now);
-        let u64_view  = c.now >= descent_policy_state::expiry_at(&c.policy, c.phase_start);
+        let bool_view = descent_policy_state::has_expired(&c.policy, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed();
+        let u64_view  = c.now >= phases::timestamp_ms(descent_policy_state::expiry_at(&c.policy, phases::timestamp(c.phase_start)));
         assert_eq!(bool_view, u64_view);
         i = i + 1;
     };

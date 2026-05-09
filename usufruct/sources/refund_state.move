@@ -105,6 +105,13 @@ public(package) fun total<C>(
     RefundState::Total { identity, stake }
 }
 
+/// Construct `Total` from a superseded bidder whose full stake is
+/// returned with no owner or fee involvement.
+public(package) fun from_superseded<C>(pending: Tenant<C>): RefundState<C> {
+    let (identity, stake) = tenant::unbundle(pending);
+    total(identity, stake)
+}
+
 /// Construct `Parcial` or `Nothing` from a departing `Tenant` whose
 /// owner and fee shares have already been extracted. If the remaining
 /// stake is non-zero the tenant gets a partial refund (`Parcial`);

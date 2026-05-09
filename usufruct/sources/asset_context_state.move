@@ -24,7 +24,7 @@ use usufruct::{
     descent_policy_state,
     monetary::{Self, Price, Stake},
     owner::{Self, Owner},
-    owner_cap::OwnerCap,
+    owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
     price_state,
     retire_policy_state,
@@ -45,6 +45,7 @@ const ERetiredNoBid:          u64 = 3;
 const ERetireFloorNotElapsed: u64 = 4;
 const EAlreadyRetired:        u64 = 5;
 const EWrongEscrowTenantCap:  u64 = 6;
+const EWrongEscrowOwnerCap:   u64 = 11;
 const EStaleTenantCap:        u64 = 8;
 const EReceiptEscrowMismatch: u64 = 10;
 const ENotRetired:            u64 = 12;
@@ -574,10 +575,12 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
 }
 
 public(package) fun execute_retire<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
-    clock:  &Clock,
-    ctx:    &mut TxContext,
+    context:   AssetContext<Asset, CoinType>,
+    owner_cap: &OwnerCap,
+    clock:     &Clock,
+    ctx:       &mut TxContext,
 ): AssetContext<Asset, CoinType> {
+    assert!(owner_cap::proj_escrow_id(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
     let context = apply_pending_transition_states(context, clock, ctx);
     let now = phases::now(clock);
     assert!(
@@ -664,6 +667,7 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (AssetContext<Asset, CoinType>, Coin<CoinType>) {
+    assert!(owner_cap::proj_escrow_id(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
     let context       = apply_pending_transition_states(context, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
@@ -680,6 +684,7 @@ public(package) fun unwrap_for_claim<Asset: key + store, CoinType>(
     owner_cap: &OwnerCap,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
+    assert!(owner_cap::proj_escrow_id(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }, mut owner, .. } => {
             let coin = owner::withdraw(&mut owner, owner_cap, ctx);

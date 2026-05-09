@@ -32,7 +32,6 @@ use usufruct::{
 
 const ENotRented:           u64 = 0;
 const ENotRetired:          u64 = 6;
-const EWrongEscrowOwnerCap: u64 = 11;
 
 // === Structs ===
 
@@ -105,7 +104,6 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Coin<CoinType> {
-    assert!(owner_cap::proj_escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     let context = escrow.asset_context.extract();
     let (context, coin) = asset_context_state::execute_withdraw_earnings(context, owner_cap, clock, ctx);
     escrow.asset_context.fill(context);
@@ -119,7 +117,6 @@ public fun claim_asset<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
-    assert!(owner_cap::proj_escrow_id(&owner_cap) == object::id(&escrow), EWrongEscrowOwnerCap);
     let escrow_id    = object::id(&escrow);
     let owner_cap_id = object::id(&owner_cap);
     let owner_addr   = ctx.sender();
@@ -148,9 +145,8 @@ public fun retire<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    assert!(owner_cap::proj_escrow_id(owner_cap) == object::id(escrow), EWrongEscrowOwnerCap);
     let context = escrow.asset_context.extract();
-    let context = asset_context_state::execute_retire(context, clock, ctx);
+    let context = asset_context_state::execute_retire(context, owner_cap, clock, ctx);
     escrow.asset_context.fill(context);
 }
 

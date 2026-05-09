@@ -1093,7 +1093,7 @@ fun retire_when_already_retiring_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = escrow::EWrongEscrowOwnerCap, location = usufruct::escrow)]
+#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun retire_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1579,7 +1579,7 @@ fun withdraw_earnings_with_zero_balance_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = escrow::EWrongEscrowOwnerCap, location = usufruct::escrow)]
+#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun withdraw_earnings_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1681,7 +1681,7 @@ fun claim_asset_when_not_retired_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = escrow::EWrongEscrowOwnerCap, location = usufruct::escrow)]
+#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun claim_asset_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);

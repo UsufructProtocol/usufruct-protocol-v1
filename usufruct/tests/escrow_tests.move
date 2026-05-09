@@ -4149,6 +4149,10 @@ fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
             stake,                        // all of stake distributed
         );
 
+        // No coin was transferred to the departing tenant — Nothing, not Parcial.
+        sc.next_tx(TENANT_ADDR_1);
+        assert!(!sc.has_most_recent_for_sender<coin::Coin<SUI>>(), tag);
+
         transfer::public_transfer(cap_t1, OWNER);
         transfer::public_transfer(cap_t2, OWNER);
         test_scenario::return_shared(escrow);

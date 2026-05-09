@@ -107,9 +107,21 @@ public fun refund_is_total<C>(rs: &RefundState<C>):   bool { refund::proj_is_tot
 public fun price_state_is_rest(s: &PriceState):      bool       { ps::proj_is_rest(s) }
 public fun price_state_is_ascending(s: &PriceState): bool       { ps::proj_is_ascending(s) }
 public fun price_state_is_descending(s: &PriceState): bool      { ps::proj_is_descending(s) }
-public fun price_state_ascending_stake(s: &PriceState): Option<u64>           { ps::proj_ascending_stake(s) }
-public fun price_state_descending_last_acq_price(s: &PriceState): Option<u64> { ps::proj_descending_last_acq_price(s) }
-public fun price_state_descending_phase_start_ms(s: &PriceState): Option<u64> { ps::proj_descending_phase_start_ms(s) }
+public fun price_state_ascending_stake(s: &PriceState): Option<u64> {
+    let opt = ps::proj_ascending_stake(s);
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun price_state_descending_last_acq_price(s: &PriceState): Option<u64> {
+    let opt = ps::proj_descending_last_acq_price(s);
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun price_state_descending_phase_start_ms(s: &PriceState): Option<u64> {
+    let opt = ps::proj_descending_phase_start(s);
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === price_function_state ===
 

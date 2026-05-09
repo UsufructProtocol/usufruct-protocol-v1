@@ -145,6 +145,34 @@ public(package) fun with_retire_deferred():     vector<CorpusEntry> { filter_f(a
 public(package) fun with_fixed_pricing():       vector<CorpusEntry> { filter_d(all(), 0) }
 public(package) fun with_compound_pricing():    vector<CorpusEntry> { filter_d(all(), 1) }
 
+/// Rebuild `cfg` with a different `min_rent_price`. All other fields unchanged.
+public(package) fun with_min_rent_price(cfg: IntegrationConfig, price_mist: u64): IntegrationConfig {
+    config::new_config(
+        monetary::price(price_mist),
+        config::proj_tenure_ceiling(&cfg),
+        *config::proj_handover(&cfg),
+        *config::proj_descent(&cfg),
+        *config::proj_retire(&cfg),
+        *config::proj_credit_curve(&cfg),
+        *config::proj_descent_curve(&cfg),
+        *config::proj_price_function_state(&cfg),
+    )
+}
+
+/// Rebuild `cfg` with a different `tenure_ceiling`. All other fields unchanged.
+public(package) fun with_tenure_ceiling(cfg: IntegrationConfig, ceiling_ms: u64): IntegrationConfig {
+    config::new_config(
+        config::proj_min_rent_price(&cfg),
+        phases::duration(ceiling_ms),
+        *config::proj_handover(&cfg),
+        *config::proj_descent(&cfg),
+        *config::proj_retire(&cfg),
+        *config::proj_credit_curve(&cfg),
+        *config::proj_descent_curve(&cfg),
+        *config::proj_price_function_state(&cfg),
+    )
+}
+
 // --- Tag constructor ---
 
 /// Validated τ2 tag. Aborts per-axis if any index is out of range.

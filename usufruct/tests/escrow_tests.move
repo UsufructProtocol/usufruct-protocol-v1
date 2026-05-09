@@ -4845,6 +4845,375 @@ fun reset_config_at_dutch_natural_expiry_applies_pending() {
     sc.end();
 }
 
+// ─── §reset_config — behavioral dimensions ────────────────────────────────────
+
+// Test BD-1: min_rent_price floor changes after reset ─────────────────────────
+/// reset_config immediately updates compute_floor_price when applied from Idle.
+/// Proves the new min_rent_price is active, not just stored.
+#[test]
+fun reset_config_behavior_min_rent_price_floor_changes() {
+    let mut sc = setup();
+    let cfg_low  = escrow_corpus::by_tag(0); // 10 SUI floor
+    let cfg_high = escrow_corpus::with_min_rent_price(
+        escrow_corpus::by_tag(0), 20_000_000_000,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_low, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Before reset: floor = 10 SUI
+    assert!(escrow::compute_floor_price(&escrow, &clk) == escrow_corpus::min_rent_price_const(), 0);
+
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_high, &clk, sc.ctx());
+
+    // After reset: floor = 20 SUI
+    assert!(escrow::compute_floor_price(&escrow, &clk) == 20_000_000_000, 1);
+    assert!(escrow::integration_config(&escrow) == cfg_high, 2);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-1b: bid rejected after min_rent_price raised ────────────────────────
+/// After reset raises min_rent_price to 20 SUI, a bid of 15 SUI is rejected.
+#[test]
+#[expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
+fun reset_config_behavior_min_rent_price_bid_rejected_after_reset() {
+    let mut sc = setup();
+    let cfg_low  = escrow_corpus::by_tag(0);
+    let cfg_high = escrow_corpus::with_min_rent_price(
+        escrow_corpus::by_tag(0), 20_000_000_000,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_low, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_high, &clk, sc.ctx());
+
+    // 15 SUI is above the old 10 SUI floor but below the new 20 SUI floor.
+    let cap = escrow::rent(&mut escrow, mk_payment(15_000_000_000, sc.ctx()), &clk, sc.ctx());
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-2: tenure_ceiling affects has_pending_transition_states ─────────────
+/// Proves the new tenure_ceiling governs T2's expiry boundary after reset.
+/// At t=160_000, T2 (ceiling=50_000, phase_start=100_000) has expired but
+/// under the old ceiling=100_000 it would not have.
+#[test]
+fun reset_config_behavior_tenure_ceiling_apt_detection() {
+    let mut sc = setup();
+    let cfg_long  = escrow_corpus::by_tag(0);
+    let cfg_short = escrow_corpus::with_tenure_ceiling(escrow_corpus::by_tag(0), 50_000);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_long, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents under cfg_long (ceiling=100_000). phase_start=0.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // At t=60_000, T1's tenure (ceiling=100_000) has NOT expired yet.
+    clock::set_for_testing(&mut clk, 60_000);
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk), 0);
+
+    // Schedule cfg_short (ceiling=50_000) — takes effect after T1's tenure.
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_short, &clk, sc.ctx());
+
+    // T1's tenure expires at 100_000 (old ceiling still governs T1).
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 1);
+
+    // Rent T2 under cfg_short (ceiling=50_000). phase_start=100_000.
+    let cap_t2 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // T2's tenure expires at 100_000 + 50_000 = 150_000.
+    // At t=160_000, that boundary has passed → pending transition present.
+    // Under old cfg_long, T2 would expire at 200_000 — NOT pending at 160_000.
+    clock::set_for_testing(&mut clk, 160_000);
+    assert!(escrow::has_pending_transition_states(&escrow, &clk), 2);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-3: descent policy determines AtDutch vs Idle for the next cycle ──────
+/// After reset_config from Skip→Window, the NEXT tenure expiry (T2) routes
+/// through AtDutch. Under the old Skip policy it would have been Idle.
+#[test]
+fun reset_config_behavior_descent_policy_atdutch_presence() {
+    let mut sc = setup();
+    // cfg_skip: h=0 Skip — tenure expiry → Idle
+    let cfg_skip   = escrow_corpus::by_tag(0);
+    // cfg_window: h=1 Window — tenure expiry → AtDutch
+    let cfg_window = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_skip, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents under cfg_skip.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // Schedule cfg_window; will be applied at T1's tenure expiry.
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_window, &clk, sc.ctx());
+
+    // T1's tenure expires → Idle with cfg_window (pending_config skips AtDutch
+    // during fire(), so T1's own expiry still goes to Idle directly).
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 0);
+    assert!(escrow::integration_config(&escrow) == cfg_window, 1);
+
+    // T2 rents under cfg_window (Window descent). phase_start = tenure_ceiling.
+    let cap_t2 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // T2's tenure expires at 2 × tenure_ceiling. With Window descent and no
+    // pending_config, fire() goes to AtDutch instead of Idle.
+    clock::set_for_testing(&mut clk, 2 * escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 2);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-4: credit curve determines compute_used_credit_at_ms value ──────────
+/// Linear and Smoothstep curves yield different used-credit at 25% of tenure.
+/// Proves the active credit curve is used in credit accounting.
+#[test]
+fun reset_config_behavior_credit_curve_used_credit_changes() {
+    let mut sc = setup();
+    let cfg_linear     = escrow_corpus::by_tag(0);
+    // e=1 → Smoothstep curve
+    let cfg_smoothstep = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 1, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_linear, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents under cfg_linear; phase_start = 0.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // T1 at 25% of its tenure.
+    let quarter_ms = escrow_corpus::tenure_ceiling_const() / 4;
+    let credit_linear = escrow::compute_used_credit_at_ms(&escrow, quarter_ms);
+
+    // Schedule cfg_smoothstep; apply at T1's tenure expiry.
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_smoothstep, &clk, sc.ctx());
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+
+    // T2 rents under cfg_smoothstep; phase_start = tenure_ceiling.
+    let cap_t2 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // T2 at 25% of its tenure: tenure_ceiling + quarter_ms.
+    let credit_smoothstep = escrow::compute_used_credit_at_ms(
+        &escrow, escrow_corpus::tenure_ceiling_const() + quarter_ms,
+    );
+
+    // Linear: 10 SUI × 0.25 = 2_500_000_000
+    // Smoothstep at 0.25: 3×0.0625 - 2×0.015625 ≈ 0.15625 → 1_562_500_000
+    assert!(credit_linear != credit_smoothstep, 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-5: price function governs compute_next_ascending_floor ──────────────
+/// FixedDelta and CompoundDelta produce different next-floor values for the
+/// same bid. Proves the active price function is consulted on every call.
+#[test]
+fun reset_config_behavior_price_function_floor_escalation() {
+    let mut sc = setup();
+    // d=0: FixedDelta — next_floor = bid + FIXED_DELTA (10 SUI)
+    let cfg_fixed_delta    = escrow_corpus::by_tag(0);
+    // d=1: CompoundDelta — next_floor = bid × 1.1 + 1 mist
+    let cfg_compound_delta = escrow_corpus::by_tag(escrow_corpus::tag(0, 1, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_fixed_delta, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let bid_amount = escrow_corpus::min_rent_price_const(); // 10 SUI
+
+    // Before reset: FixedDelta — 10 SUI + 10 SUI = 20 SUI
+    let floor_before = escrow::compute_next_ascending_floor(&escrow, bid_amount);
+    assert!(floor_before == bid_amount + escrow_corpus::fixed_delta_value_const(), 0);
+
+    // Reset to CompoundDelta immediately (Idle state).
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_compound_delta, &clk, sc.ctx());
+
+    // After reset: CompoundDelta — 10 SUI × 1.1 + 1 = 11_000_000_001
+    let floor_after = escrow::compute_next_ascending_floor(&escrow, bid_amount);
+    assert!(floor_after != floor_before, 1);
+    assert!(floor_after == 11_000_000_001, 2);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-6: retire policy floor observable after reset ───────────────────────
+/// retire_floor_ms reflects the active retire policy. Immediate → None;
+/// after reset to Deferred → Some(retire_deferred_f1_const()).
+#[test]
+fun reset_config_behavior_retire_policy_floor_observable() {
+    let mut sc = setup();
+    let cfg_immediate = escrow_corpus::by_tag(0);                              // f=0 Immediate
+    let cfg_deferred  = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 1)); // f=1 Deferred
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_immediate, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Immediate policy: no floor.
+    assert!(escrow::retire_floor_ms(&escrow) == option::none(), 0);
+
+    // Reset to Deferred (Idle → immediate apply).
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_deferred, &clk, sc.ctx());
+
+    // Deferred policy: floor = RETIRE_DEFERRED_F1.
+    assert!(
+        escrow::retire_floor_ms(&escrow) == option::some(escrow_corpus::retire_deferred_f1_const()),
+        1,
+    );
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-6b: retire blocked after reset raises the floor ─────────────────────
+/// After switching from Immediate to Deferred, retire() at t=0 aborts.
+#[test]
+#[expected_failure(abort_code = asset_context_state::ERetireFloorNotElapsed, location = usufruct::asset_context_state)]
+fun reset_config_behavior_retire_policy_abort_after_reset() {
+    let mut sc = setup();
+    let cfg_immediate = escrow_corpus::by_tag(0);
+    let cfg_deferred  = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 1));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_immediate, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_deferred, &clk, sc.ctx());
+
+    // Deferred floor = 10_000_000 ms; clock at t=0 → abort.
+    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-7: Instant handover lets T2 borrow immediately after bidding ─────────
+/// With Instant policy T2's cap becomes Current after apply_pending_transition_states,
+/// allowing borrow_asset to succeed.
+#[test]
+fun reset_config_behavior_handover_instant_borrow_succeeds() {
+    let mut sc = setup();
+    let cfg_instant = escrow_corpus::by_tag(0); // c=0 Instant
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_instant, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // T1 becomes current tenant.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // T2 bids — with Instant policy, handover fires immediately via APT.
+    let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+    let cap_t2 = escrow::rent(
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // Fire the Instant handover.
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+
+    // T2 is now current; borrow_asset succeeds (no abort).
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t2, &clk, sc.ctx());
+    escrow::return_asset(&mut escrow, asset, receipt);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test BD-7b: FixedTime handover blocks T4 borrow until handover fires ─────────
+/// After reset from Instant to FixedTime, the pending bidder (T4) cannot
+/// borrow until the handover boundary has passed.
+#[test]
+#[expected_failure(abort_code = asset_context_state::EPendingTenantCap, location = usufruct::asset_context_state)]
+fun reset_config_behavior_handover_fixed_borrow_blocked() {
+    let mut sc = setup();
+    let cfg_instant = escrow_corpus::by_tag(0);                               // c=0 Instant
+    let cfg_fixed   = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FixedTime
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_instant, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents under cfg_instant.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // Schedule cfg_fixed (FixedTime); applied when T1's tenure expires.
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_fixed, &clk, sc.ctx());
+
+    // T1's tenure expires → Idle with cfg_fixed.
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 0);
+
+    // T3 rents under cfg_fixed (FixedTime). phase_start = tenure_ceiling = 100_000.
+    let cap_t3 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // T4 bids; FixedTime handover_expiry = 100_000 + 100_000 = 200_000.
+    // Clock is still at 100_000 — far below expiry.
+    let floor_t4 = escrow::compute_floor_price(&escrow, &clk);
+    let cap_t4 = escrow::rent(
+        &mut escrow, mk_payment(floor_t4, sc.ctx()), &clk, sc.ctx(),
+    );
+
+    // T4's cap is Pending — handover has not fired. borrow_asset aborts.
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t4, &clk, sc.ctx());
+    escrow::return_asset(&mut escrow, asset, receipt);
+
+    // Unreachable — abort above.
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t4, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §EV. Event field invariants — cap IDs and timing ────────────────────────
 
 // ── EV-1 + EV-2: bid and handover cap_id consistency ─────────────────────────

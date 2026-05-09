@@ -1324,7 +1324,8 @@ fun do_place_bid<Asset: key + store, CoinType>(
     );
     let pending_addr = ctx.sender();
     let bid_amount   = coin::value(&payment);
-    let (cap, cap_id) = tenant_cap::new(escrow_id, pending_addr, ctx);
+    let cap    = tenant_cap::new(escrow_id, pending_addr, ctx);
+    let cap_id = object::id(&cap);
     let t = tenant::new<CoinType>(cap_id, pending_addr, coin::into_balance(payment));
     event::emit(BidPlaced {
         escrow_id,
@@ -1374,7 +1375,8 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 
     let new_bidder     = ctx.sender();
     let new_bid_amount = coin::value(&payment);
-    let (cap, cap_id)  = tenant_cap::new(escrow_id, new_bidder, ctx);
+    let cap    = tenant_cap::new(escrow_id, new_bidder, ctx);
+    let cap_id = object::id(&cap);
     let t = tenant::new<CoinType>(cap_id, new_bidder, coin::into_balance(payment));
 
     let (identity, stake) = tenant::unbundle(pending);
@@ -1635,7 +1637,8 @@ fun do_install<Asset: key + store, CoinType>(
     let price_paid  = coin::value(&payment);
     let tenant_addr = ctx.sender();
     let now_ms      = phases::timestamp_ms(now);
-    let (cap, cap_id) = tenant_cap::new(escrow_id, tenant_addr, ctx);
+    let cap    = tenant_cap::new(escrow_id, tenant_addr, ctx);
+    let cap_id = object::id(&cap);
     let t = tenant::new<CoinType>(cap_id, tenant_addr, coin::into_balance(payment));
     let wrapped = asset::new(asset::unlock(locked), escrow_id);
     event::emit(RentStarted {

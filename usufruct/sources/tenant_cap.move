@@ -52,11 +52,10 @@ public(package) fun new(
     escrow_id: ID,
     tenant:    address,
     ctx:       &mut TxContext,
-): (TenantCap, ID) {
+): TenantCap {
     let cap = TenantCap { id: object::new(ctx), escrow_id };
-    let tenant_cap_id = object::uid_to_inner(&cap.id);
-    event::emit(TenantCapMinted { tenant_cap_id, escrow_id, tenant });
-    (cap, tenant_cap_id)
+    event::emit(TenantCapMinted { tenant_cap_id: object::id(&cap), escrow_id, tenant });
+    cap
 }
 
 /// Destroys `cap` by value and emits `TenantCapBurned`.
@@ -88,6 +87,5 @@ public fun burned_tenant(e: &TenantCapBurned): address { e.tenant }
 
 #[test_only]
 public fun mint_then_burn_for_testing(escrow_id: ID, tenant: address, ctx: &mut TxContext) {
-    let (cap, _) = new(escrow_id, tenant, ctx);
-    burn(cap, ctx);
+    burn(new(escrow_id, tenant, ctx), ctx);
 }

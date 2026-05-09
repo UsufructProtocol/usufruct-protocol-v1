@@ -30,7 +30,6 @@ use usufruct::{
 
 // === Errors ===
 
-const ENotRented:           u64 = 0;
 const ENotRetired:          u64 = 6;
 
 // === Structs ===

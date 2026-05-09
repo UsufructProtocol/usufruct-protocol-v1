@@ -1367,7 +1367,7 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, &clk, sc.ctx());
-    let (foreign_cap, _) = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
+    let foreign_cap = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
@@ -1390,7 +1390,7 @@ fun borrow_asset_from_idle_aborts() {
 
     // Mint a cap bound to this escrow but never used (no active rental).
     let escrow_id = object::id(&escrow);
-    let (cap, _) = tenant_cap::new(escrow_id, TENANT_ADDR_1, sc.ctx());
+    let cap = tenant_cap::new(escrow_id, TENANT_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &cap, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
@@ -1515,7 +1515,7 @@ fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     let cfg = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let (foreign, _) = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
+    let foreign = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
 
     escrow::burn_tenant_cap(&mut escrow, foreign, &clk, sc.ctx());
 

@@ -110,7 +110,27 @@ Instead it chose a third option: prohibit external matching entirely. This elimi
 
 **Aborting with a named error is safer than continuing silently.** Move's restriction produces the second outcome and calls it stability.
 
-**The architectural consequence.** When exhaustiveness must be guaranteed, all matching collapses into the module that defines the enums. In this codebase `asset_context_state.move` is the protocol's centralised interpreter — over 1700 lines — not because of poor modular design, but because it is the only location where the compiler can verify exhaustive matching over state combinations that matter. The size of that file is the legible cost of the language constraint.
+**The restriction does not destroy expressiveness — it collapses locality.** The proof is `asset_context_state.move` itself, which documents its own reason for existing on line 4:
+
+```move
+/// All nested enum types must co-reside: Move 2024 restricts pattern access to the
+/// defining module.
+```
+
+Inside that module the code is fully expressive. Transitions read naturally, the compiler verifies exhaustiveness, and adding a new variant breaks the match in compilation:
+
+```move
+match (state) {
+    TenancyState::Demand { current, pending, .. } =>
+        RentingFireResultState::Handover { tenancy: do_handover(...) },
+    TenancyState::Occupied { tenant } =>
+        RentingFireResultState::TenureExpired { ..., last_acq_price, retiring },
+}
+```
+
+The guarantee works. It simply cannot be distributed. External modules can observe state through projectors but cannot participate in the match. All polymorphic behaviour over the protocol's enums must co-reside where the enums are defined, rather than living where it semantically belongs.
+
+The cost is not expressiveness. It is **locality**: `asset_context_state.move` at 1700+ lines is not a design failure — it is the forced concentration of every exhaustive decision the protocol makes. The size of that file is the legible cost of the language constraint, and it is the correct response to it.
 
 ---
 

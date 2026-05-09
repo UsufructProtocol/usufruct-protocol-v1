@@ -167,6 +167,23 @@ This means the state model is not a technical detail — it is a **commitment to
 
 The expressiveness of the current state model — `AssetState` splitting into `Renting` and `Waiting`, each with its own sub-machine — is therefore an investment against future migration cost. A richer model that anticipates the protocol's lifecycle requirements from the first deploy is worth more than a minimal model that defers complexity to a future version, because that future version carries a coordination burden the initial deploy does not.
 
+**The natural solution: independent deploy without coupling.**
+
+In functional code, adding new features naturally means adding new states to the enums. That is the pattern this codebase follows — every lifecycle phase is a variant, every transition is a match arm. Under Sui's type system, those new variants cannot be added to an existing deployed package. But they do not need to be.
+
+The cleanest upgrade strategy is to publish v2 as an independent package with no migration functions and no dependency on v1:
+
+- v2 defines its own types, its own enums, its own state model — with whatever new variants the new features require
+- Owners who want new features integrate their assets in v2 — they get a fresh `Escrow v2`
+- v1 objects continue working in v1 indefinitely — no object is broken, no holder is forced to act
+- Migration happens organically: when a v1 tenure expires naturally, the owner can choose to open in v2 instead of renewing in v1
+
+This works cleanly for this protocol because each `Escrow` is independent — there is no shared global state between escrows. A v1 escrow and a v2 escrow can coexist without interference. The only separation is per-version accounting for protocol fees, which is acceptable.
+
+The result is that the question "how do we migrate?" becomes "when do users choose to adopt v2?" — which is the correct question for a financial protocol. Adoption should be voluntary and driven by the value the new version offers, not by forced obsolescence of the old one.
+
+This reframes the sealed-enum constraint entirely. What appears to be a limitation — you cannot extend an enum after deploy — is in practice an invitation to version the protocol cleanly. Each version is a complete, self-contained state machine with its own guarantees. v1 and v2 coexist, each with its own objects, its own users, and its own lifecycle. The market decides when to migrate.
+
 ---
 
 ## PTB boundary discipline

@@ -134,6 +134,33 @@ The cost is not expressiveness. It is **locality**: `asset_context_state.move` a
 
 ---
 
+## The same restriction, seen from the future: upgrades
+
+The cross-module enum restriction and Sui's upgrade policy are the same constraint viewed from two angles.
+
+Sui's compatible upgrade policy prohibits modifying existing public types. A public enum — `AssetState`, `TenancyState`, `WaitingState` — cannot acquire new variants in an upgrade. The type is published and immutable. **The protocol's state model is sealed at deploy time.**
+
+This means that if the protocol ever needs a new lifecycle state — say, `Paused` to freeze an asset during a legal dispute — that cannot be a new variant on the existing enum. It requires a new package version with an explicit migration.
+
+The cross-module matching restriction and the upgrade immutability restriction are therefore the same principle from different directions:
+
+- **Cross-module matching**: you cannot distribute behaviour over an enum outside its defining module.
+- **Upgrades**: you cannot extend an enum after it is deployed.
+
+Both follow from the same premise: the enum is a sealed contract. What inside the module is an exhaustiveness guarantee becomes, from outside and from the future, an extensibility constraint.
+
+The available paths when new state is genuinely needed:
+
+1. **New package version** — define new types, new enums, new state model. Existing objects (created by the old package) remain the old type; migration functions explicitly convert them. Deliberate and versioned.
+2. **Dynamic fields** — attach optional state to existing objects as dynamic fields. No static type safety, but pragmatic for additive, optional extensions that do not alter the core lifecycle.
+3. **Additive functions only** — if the new behaviour does not require new state, add functions to the existing package. The state model does not change; only what can be done with it does.
+
+The practical implication for this codebase: `AssetState`, `TenancyState`, and `WaitingState` must be expressive enough from the first deploy. The state model cannot be evolved incrementally — it must be anticipated. That raises the cost of the initial design and makes a well-considered architecture more valuable over time: there is no cheap iteration path once objects are on-chain.
+
+This is not unique to Move. Any system that persists typed state faces the same tension between expressiveness now and evolvability later. Move makes that tension explicit and forces it to be resolved at design time rather than deferred to a runtime migration.
+
+---
+
 ## PTB boundary discipline
 
 Public functions in `escrow.move` remain `u64` in and out — PTBs work with primitives. Every typed value is unwrapped at that boundary with an explicit extractor. The internal package works in the typed domain; the SDK boundary is the only place raw primitives appear.

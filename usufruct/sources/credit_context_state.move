@@ -61,9 +61,9 @@ public(package) fun proj_is_capped(ctx: &CreditContext): bool {
     match (&ctx.variant) { CreditState::Capped { .. } => true, _ => false }
 }
 
-public(package) fun proj_expiry_ms(ctx: &CreditContext): Option<u64> {
+public(package) fun proj_expiry(ctx: &CreditContext): Option<Timestamp> {
     match (&ctx.variant) {
-        CreditState::Capped { expiry } => option::some(phases::timestamp_ms(*expiry)),
+        CreditState::Capped { expiry } => option::some(*expiry),
         CreditState::Accruing          => option::none(),
     }
 }

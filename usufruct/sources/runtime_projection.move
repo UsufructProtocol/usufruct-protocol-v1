@@ -177,7 +177,11 @@ public fun credit_stake(ctx: &CreditContext): u64          { monetary::stake_mis
 public fun credit_phase_start_ms(ctx: &CreditContext): u64 { phases::timestamp_ms(credit::proj_phase_start(ctx)) }
 public fun credit_is_accruing(ctx: &CreditContext): bool   { credit::proj_is_accruing(ctx) }
 public fun credit_is_capped(ctx: &CreditContext): bool     { credit::proj_is_capped(ctx) }
-public fun credit_expiry_ms(ctx: &CreditContext): Option<u64> { credit::proj_expiry_ms(ctx) }
+public fun credit_expiry_ms(ctx: &CreditContext): Option<u64> {
+    let opt = credit::proj_expiry(ctx);
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === config ===
 

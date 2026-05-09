@@ -1379,8 +1379,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let cap_id = object::id(&cap);
     let t = tenant::new<CoinType>(cap_id, new_bidder, coin::into_balance(payment));
 
-    let (identity, stake) = tenant::unbundle(pending);
-    let refund = refund_state::total(identity, stake);
+    let refund = refund_state::from_superseded(pending);
     refund_state::distribute(refund, owner, fee_inbox_id, ctx);
 
     event::emit(BidSuperseded {

@@ -885,6 +885,44 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
 
 // ─── §12. do_tenure_expiry ───────────────────────────────────────────────────
 
+/// At tenure expiry the tenant never receives a refund.
+/// split_fee(principal) = owner_share + protocol_fee exactly — no remainder.
+/// Preserves the invariant: the Nothing path is taken, never Parcial.
+#[test]
+fun do_tenure_expiry_tenant_receives_no_refund() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let principal = escrow_corpus::min_rent_price_const();
+    let cap_t1 = escrow::rent(&mut escrow, p1, &clk, sc.ctx());
+
+    let boundary_ms = escrow_corpus::tenure_ceiling_const();
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
+
+    // Conservation: owner_share + protocol_fee = principal.
+    // If this fails, some mist escaped to the tenant.
+    let expired = event::events_by_type<TenureExpired>();
+    assert_eq!(expired.length(), 1);
+    assert_eq!(
+        asset_context_state::tenure_expired_owner_share(&expired[0]) +
+        asset_context_state::tenure_expired_protocol_fee(&expired[0]),
+        principal,
+    );
+
+    // No coin was transferred to the tenant — Nothing, not Parcial.
+    sc.next_tx(TENANT_ADDR_1);
+    assert!(!sc.has_most_recent_for_sender<coin::Coin<SUI>>(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 /// HandoverOpen → AtDutch via tenure boundary. Refund is always
 /// Nothing (full stake consumed: owner+fee). last_acquisition_price
 /// equals the principal at boundary.

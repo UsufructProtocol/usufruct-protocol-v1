@@ -73,9 +73,9 @@ public fun asset_last_acq_price<A: key + store, C>(e: &AssetContext<A, C>): Opti
 
 // === fee_message ===
 
-public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { fee_msg::proj_share_value(s) }
+public fun fee_share_value<C>(s: &FeeShare<C>):           u64 { monetary::stake_mist(fee_msg::proj_share_value(s)) }
 public fun fee_message_escrow_id<C>(msg: &FeeMessage<C>): ID  { fee_msg::proj_escrow_id(msg) }
-public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { fee_msg::proj_amount(msg) }
+public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { monetary::stake_mist(fee_msg::proj_amount(msg)) }
 
 // === tenant ===
 

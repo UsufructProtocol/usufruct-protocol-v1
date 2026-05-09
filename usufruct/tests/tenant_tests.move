@@ -85,7 +85,7 @@ fun destroy_empty_stake_aborts_on_nonzero() {
 fun take_fee_share_partial_reduces_stake_and_returns_typed_share() {
     let mut t = t1();
     let share = tenant::take_fee_share(&mut t, monetary::stake(75), fake_escrow_id());
-    assert_eq!(fee_message::proj_share_value(&share),     75);
+    assert_eq!(monetary::stake_mist(fee_message::proj_share_value(&share)),     75);
     assert_eq!(fee_message::share_escrow_id(&share), fake_escrow_id());
     assert_eq!(tenant::proj_stake_value(&t), STAKE_T1 - 75);
     fee_message::destroy_share_for_testing(share);
@@ -96,7 +96,7 @@ fun take_fee_share_partial_reduces_stake_and_returns_typed_share() {
 fun take_fee_share_zero_returns_zero_share_unchanged_stake() {
     let mut t = t1();
     let share = tenant::take_fee_share(&mut t, monetary::stake(0), fake_escrow_id());
-    assert_eq!(fee_message::proj_share_value(&share), 0);
+    assert_eq!(monetary::stake_mist(fee_message::proj_share_value(&share)), 0);
     assert_eq!(tenant::proj_stake_value(&t), STAKE_T1);
     fee_message::destroy_share_for_testing(share);
     tenant::destroy_for_testing(t);

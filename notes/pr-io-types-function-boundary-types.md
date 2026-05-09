@@ -184,6 +184,24 @@ The result is that the question "how do we migrate?" becomes "when do users choo
 
 This reframes the sealed-enum constraint entirely. What appears to be a limitation — you cannot extend an enum after deploy — is in practice an invitation to version the protocol cleanly. Each version is a complete, self-contained state machine with its own guarantees. v1 and v2 coexist, each with its own objects, its own users, and its own lifecycle. The market decides when to migrate.
 
+**New package per version is not a workaround — it is the idiomatic upgrade strategy for functional code in Sui.** Sui's object model and the algebraic type model are consistent with each other. Objects are persistent values of immutable types, not mutable instances. When the protocol evolves it does not mutate existing values — it produces values of a new type with new guarantees. That is exactly what functional programming does with data. The upgrade constraint is the consequence of that consistency, not a contradiction of it.
+
+---
+
+## Conclusion: does the cross-module matching restriction have a strong argument?
+
+After following this chain — the restriction, the projector workaround, the upgrade model, the independent deploy strategy — the answer is precise:
+
+**The restriction has a legitimate argument for a problem that the correct architecture does not produce.**
+
+The problem it tries to solve is real: in a system with persistent typed objects, adding variants to a public enum could leave on-chain callers with incomplete matches. That is a genuine concern in an upgrade-in-place model.
+
+But Move's chosen solution — prohibiting external matching entirely — produces the exact failure it tries to prevent, only silently instead of explicitly. A caller using `proj_is_X` does not learn about the new variant. A caller forced to include a wildcard arm would abort with a named error.
+
+And the independent deploy strategy dissolves the problem at the root. If new features mean new packages, there are never on-chain callers holding incomplete matches against an enum that grew. Each version of the enum lives in its own package, sealed, complete, with all its callers compiled against it. The restriction loses its justification.
+
+The restriction is the right answer to the wrong question. The right question is not "how do we prevent external matches from breaking when enums grow?" but "how do we design protocols so that enums do not need to grow after deploy?" The answer to that question is expressive algebraic state models and independent versioned deploys — both of which this codebase already practices.
+
 ---
 
 ## PTB boundary discipline

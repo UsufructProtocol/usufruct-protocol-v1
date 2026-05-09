@@ -1649,6 +1649,10 @@ fun fire<Asset: key + store, CoinType>(
                     if (retiring) {
                         event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, config, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
+                    } else if (option::is_some(&pending_config)) {
+                        let new_cfg = option::destroy_some(pending_config);
+                        event::emit(ConfigReset { escrow_id, new_config: new_cfg });
+                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Idle } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
                     } else {
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
                     }

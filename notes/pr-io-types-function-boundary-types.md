@@ -159,6 +159,14 @@ The practical implication for this codebase: `AssetState`, `TenancyState`, and `
 
 This is not unique to Move. Any system that persists typed state faces the same tension between expressiveness now and evolvability later. Move makes that tension explicit and forces it to be resolved at design time rather than deferred to a runtime migration.
 
+**The distinction between upgrade and new package matters here.** A compatible upgrade preserves the package ID — existing objects remain valid because their type references that same ID. A new package has a different package ID, which means `Escrow<Asset, CoinType>` from package v1 and `Escrow<Asset, CoinType>` from package v2 are different types from the compiler's perspective, even if the code is nearly identical.
+
+Adding `WaitingState::Paused` therefore cannot be an upgrade — it requires a new package plus explicit migration functions that consume v1 objects and produce v2 objects. That migration is not transparent to users. A tenant holding a `TenantCap` from package v1 holds a cap the new package does not recognise directly. Migration requires coordination: off-chain communication, time windows, and incentives for holders to act.
+
+This means the state model is not a technical detail — it is a **commitment to the protocol's users**. Every `Escrow` object on-chain is a live instance of that model. Changing the model means asking every holder to migrate.
+
+The expressiveness of the current state model — `AssetState` splitting into `Renting` and `Waiting`, each with its own sub-machine — is therefore an investment against future migration cost. A richer model that anticipates the protocol's lifecycle requirements from the first deploy is worth more than a minimal model that defers complexity to a future version, because that future version carries a coordination burden the initial deploy does not.
+
 ---
 
 ## PTB boundary discipline

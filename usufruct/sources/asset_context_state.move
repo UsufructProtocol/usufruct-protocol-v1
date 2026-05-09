@@ -1188,8 +1188,9 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let mut departing  = tenant;
     let owner_earnings = tenant::take_owner_earnings(&mut departing, alloc.owner_share);
     let fee_share      = tenant::take_fee_share(&mut departing, alloc.protocol_fee, escrow_id);
-    let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
-    refund_state::distribute(refund, owner, fee_inbox_id, ctx);
+    let (_, stake)     = tenant::unbundle(departing);
+    tenant::destroy_empty_stake(stake);
+    refund_state::distribute(refund_state::nothing(fee_share, owner_earnings), owner, fee_inbox_id, ctx);
 
     event::emit(TenureExpired {
         escrow_id,

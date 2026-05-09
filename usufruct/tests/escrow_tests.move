@@ -30,8 +30,6 @@ use usufruct::{
         AssetReturned,
         ConfigReset,
         ConfigResetScheduled,
-        ERetireAlreadyScheduled,
-        EAlreadyRetired,
     },
     pending_transition_state,
     escrow::{
@@ -4673,12 +4671,13 @@ fun reset_config_override_last_write_wins() {
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &clk, sc.ctx());
 
-    // First reset: cfg_a = tag 0 (same as original, but the pending slot is set)
-    let cfg_a = escrow_corpus::by_tag(0);
+    // Three distinct configs: original=tag(0,0,0,1,0), cfg_a=tag(1,0,0,0,0) c=1 countdown,
+    // cfg_b=tag(1) f=1 deferred. All three are structurally different.
+    let cfg_a = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)); // c=1 countdown
     escrow::reset_config(&mut escrow, &owner_cap, cfg_a, &clk, sc.ctx());
 
     // Second reset: cfg_b = tag 1 — overrides cfg_a.
-    let cfg_b = escrow_corpus::by_tag(1);
+    let cfg_b = escrow_corpus::by_tag(1); // f=1 deferred
     escrow::reset_config(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
 
     assert!(escrow::has_pending_config_reset(&escrow), 0);

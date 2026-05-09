@@ -45,11 +45,31 @@ public fun asset_current_addr<A: key + store, C>(e: &AssetContext<A, C>):  Optio
 public fun asset_current_cap_id<A: key + store, C>(e: &AssetContext<A, C>): Option<ID>     { acs::proj_current_cap_id(e) }
 public fun asset_pending_addr<A: key + store, C>(e: &AssetContext<A, C>):  Option<address> { acs::proj_pending_addr(e) }
 public fun asset_pending_cap_id<A: key + store, C>(e: &AssetContext<A, C>): Option<ID>     { acs::proj_pending_cap_id(e) }
-public fun asset_current_stake<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>    { acs::proj_current_stake(e) }
-public fun asset_pending_stake<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>    { acs::proj_pending_stake(e) }
-public fun asset_phase_start_ms<A: key + store, C>(e: &AssetContext<A, C>): Option<u64>   { acs::proj_phase_start_ms(e) }
-public fun asset_handover_expiry<A: key + store, C>(e: &AssetContext<A, C>): Option<u64>  { acs::proj_handover_expiry(e) }
-public fun asset_last_acq_price<A: key + store, C>(e: &AssetContext<A, C>):  Option<u64>  { acs::proj_last_acq_price(e) }
+public fun asset_current_stake<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_current_stake(e);
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun asset_pending_stake<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_pending_stake(e);
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun asset_phase_start_ms<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_phase_start(e);
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
+public fun asset_handover_expiry<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_handover_expiry(e);
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
+public fun asset_last_acq_price<A: key + store, C>(e: &AssetContext<A, C>): Option<u64> {
+    let opt = acs::proj_last_acq_price(e);
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
 
 // === fee_message ===
 

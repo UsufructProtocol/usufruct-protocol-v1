@@ -351,7 +351,7 @@ public(package) fun proj_pending_cap_id<Asset: key + store, CoinType>(
 
 public(package) fun proj_current_stake<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): Option<u64> {
+): Option<Stake> {
     match (&e.asset_state) {
         AssetState::Renting { tenancy } => option::some(current_stake(tenancy)),
         _ => option::none(),
@@ -360,7 +360,7 @@ public(package) fun proj_current_stake<Asset: key + store, CoinType>(
 
 public(package) fun proj_current_stake_value<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): u64 {
+): Stake {
     match (&e.asset_state) {
         AssetState::Renting { tenancy } => current_stake(tenancy),
         _ => abort ENotRented,
@@ -369,20 +369,20 @@ public(package) fun proj_current_stake_value<Asset: key + store, CoinType>(
 
 public(package) fun proj_pending_stake<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): Option<u64> {
+): Option<Stake> {
     match (&e.asset_state) {
         AssetState::Renting { tenancy } => pending_stake_for_tenancy(tenancy),
         _ => option::none(),
     }
 }
 
-public(package) fun proj_phase_start_ms<Asset: key + store, CoinType>(
+public(package) fun proj_phase_start<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): Option<u64> {
+): Option<Timestamp> {
     match (&e.asset_state) {
-        AssetState::Renting { tenancy } => option::some(phase_start_ms(tenancy)),
+        AssetState::Renting { tenancy } => option::some(phase_start(tenancy)),
         AssetState::Waiting { waiting } => match (&waiting.state) {
-            WaitingState::AtDutch { phase_start, .. } => option::some(phases::timestamp_ms(*phase_start)),
+            WaitingState::AtDutch { phase_start, .. } => option::some(*phase_start),
             _ => option::none(),
         },
     }
@@ -390,7 +390,7 @@ public(package) fun proj_phase_start_ms<Asset: key + store, CoinType>(
 
 public(package) fun proj_handover_expiry<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): Option<u64> {
+): Option<Timestamp> {
     match (&e.asset_state) {
         AssetState::Renting { tenancy } => handover_expiry_for_tenancy(tenancy),
         _ => option::none(),
@@ -399,10 +399,10 @@ public(package) fun proj_handover_expiry<Asset: key + store, CoinType>(
 
 public(package) fun proj_last_acq_price<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): Option<u64> {
+): Option<Price> {
     match (&e.asset_state) {
         AssetState::Waiting { waiting } => match (&waiting.state) {
-            WaitingState::AtDutch { last_acq_price, .. } => option::some(monetary::price_mist(*last_acq_price)),
+            WaitingState::AtDutch { last_acq_price, .. } => option::some(*last_acq_price),
             _ => option::none(),
         },
         _ => option::none(),
@@ -446,11 +446,11 @@ public(package) fun proj_handover_settlement<Asset: key + store, CoinType>(
     e:   &AssetContext<Asset, CoinType>,
     now: Timestamp,
 ): (Stake, Stake, Stake) {
-    let stake_mist = proj_current_stake_value(e);
-    let used       = used_credit_at(e, now);
-    let alloc      = split_fee(used);
+    let stake = proj_current_stake_value(e);
+    let used  = used_credit_at(e, now);
+    let alloc = split_fee(used);
     (
-        monetary::stake(stake_mist - monetary::stake_mist(used)),
+        monetary::stake(monetary::stake_mist(stake) - monetary::stake_mist(used)),
         alloc.owner_share,
         alloc.protocol_fee,
     )
@@ -462,7 +462,7 @@ public(package) fun proj_tenure_settlement<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): (Stake, Stake) {
     assert!(proj_is_rented(e), ENotRented);
-    let alloc = split_fee(monetary::stake(proj_current_stake_value(e)));
+    let alloc = split_fee(proj_current_stake_value(e));
     (alloc.owner_share, alloc.protocol_fee)
 }
 
@@ -849,33 +849,33 @@ public(package) fun pending_cap_id_for_tenancy<Asset: key + store, CoinType>(
 
 public(package) fun current_stake<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
-): u64 {
+): Stake {
     match (&t.state) {
-        TenancyState::Occupied { tenant  } => tenant::proj_stake_value(tenant),
-        TenancyState::Demand   { current, .. } => tenant::proj_stake_value(current),
+        TenancyState::Occupied { tenant  } => monetary::stake(tenant::proj_stake_value(tenant)),
+        TenancyState::Demand   { current, .. } => monetary::stake(tenant::proj_stake_value(current)),
     }
 }
 
 public(package) fun pending_stake_for_tenancy<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
-): Option<u64> {
+): Option<Stake> {
     match (&t.state) {
-        TenancyState::Demand   { pending, .. } => option::some(tenant::proj_stake_value(pending)),
+        TenancyState::Demand   { pending, .. } => option::some(monetary::stake(tenant::proj_stake_value(pending))),
         TenancyState::Occupied { .. }          => option::none(),
     }
 }
 
-public(package) fun phase_start_ms<Asset: key + store, CoinType>(
+public(package) fun phase_start<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
-): u64 {
-    phases::timestamp_ms(t.phase_start)
+): Timestamp {
+    t.phase_start
 }
 
 public(package) fun handover_expiry_for_tenancy<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
-): Option<u64> {
+): Option<Timestamp> {
     match (&t.state) {
-        TenancyState::Demand   { handover_expiry, .. } => option::some(phases::timestamp_ms(*handover_expiry)),
+        TenancyState::Demand   { handover_expiry, .. } => option::some(*handover_expiry),
         TenancyState::Occupied { .. }                  => option::none(),
     }
 }

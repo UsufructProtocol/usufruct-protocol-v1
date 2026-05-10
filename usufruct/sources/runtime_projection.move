@@ -12,6 +12,7 @@ use usufruct::{
     asset::{Self, AssetCustodyOpen, AssetCustodyLocked},
     phases,
     asset_context_state::{Self as acs, AssetContext, CapAuthorizationState},
+    min_rent_price_state::{Self as mrp, MinRentPriceState},
     monetary,
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
@@ -183,9 +184,30 @@ public fun credit_expiry_ms(ctx: &CreditContext): Option<u64> {
     else option::none()
 }
 
+// === min_rent_price_state ===
+
+public fun min_rent_price_is_fixed(p: &MinRentPriceState):        bool         { mrp::proj_is_fixed(p) }
+public fun min_rent_price_is_random_in_range(p: &MinRentPriceState): bool      { mrp::proj_is_random_in_range(p) }
+public fun min_rent_price_fixed_mist(p: &MinRentPriceState): Option<u64> {
+    let opt = mrp::proj_fixed_price(p);
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun min_rent_price_range_min_mist(p: &MinRentPriceState): Option<u64> {
+    let opt = mrp::proj_range_min(p);
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+public fun min_rent_price_range_max_mist(p: &MinRentPriceState): Option<u64> {
+    let opt = mrp::proj_range_max(p);
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+
 // === config ===
 
-public fun config_min_rent_price(cfg: &IntegrationConfig): u64                 { monetary::price_mist(config::proj_min_rent_price(cfg)) }
+public fun config_min_rent_price(cfg: &IntegrationConfig): &MinRentPriceState  { config::proj_min_rent_price(cfg) }
+public fun config_min_rent_price_floor(cfg: &IntegrationConfig): u64           { monetary::price_mist(mrp::floor_for_view(config::proj_min_rent_price(cfg))) }
 public fun config_tenure_ceiling(cfg: &IntegrationConfig): u64                 { phases::duration_ms(config::proj_tenure_ceiling(cfg)) }
 public fun config_handover(cfg: &IntegrationConfig):       &HandoverPolicyState { config::proj_handover(cfg) }
 public fun config_descent(cfg: &IntegrationConfig):        &DescentPolicyState  { config::proj_descent(cfg) }

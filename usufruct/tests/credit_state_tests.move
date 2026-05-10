@@ -10,6 +10,7 @@ use usufruct::{
     curve_shape_state,
     descent_policy_state,
     handover_policy_state,
+    min_rent_price_state,
     monetary,
     phases,
     price_function_state,
@@ -26,7 +27,7 @@ const EXPIRY: u64 = T0 + 25_000;    // handover countdown expiry
 
 fun base_cfg(): config::IntegrationConfig {
     config::new_config(
-        monetary::price(MIN), phases::duration(TENURE),
+        min_rent_price_state::new_fixed(monetary::price(MIN)), phases::duration(TENURE),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
         retire_policy_state::new_retire_immediate(),
@@ -105,7 +106,7 @@ fun accruing_various_curves_stay_in_bounds() {
     while (i < curves.length()) {
         let curve = *curves.borrow(i);
         let cfg = config::new_config(
-            monetary::price(MIN), phases::duration(TENURE),
+            min_rent_price_state::new_fixed(monetary::price(MIN)), phases::duration(TENURE),
             handover_policy_state::new_handover_instant(),
             descent_policy_state::new_descent_skipped(),
             retire_policy_state::new_retire_immediate(),

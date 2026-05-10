@@ -12,6 +12,7 @@ use usufruct::{
     descent_policy_state::{Self, DescentPolicyState},
     handover_policy_state::{Self, HandoverPolicyState},
     math,
+    min_rent_price_state,
     monetary,
     phases,
     price_function_state::{Self, PriceFunctionState},
@@ -145,10 +146,24 @@ public(package) fun with_retire_deferred():     vector<CorpusEntry> { filter_f(a
 public(package) fun with_fixed_pricing():       vector<CorpusEntry> { filter_d(all(), 0) }
 public(package) fun with_compound_pricing():    vector<CorpusEntry> { filter_d(all(), 1) }
 
-/// Rebuild `cfg` with a different `min_rent_price`. All other fields unchanged.
+/// Rebuild `cfg` with a different `min_rent_price` (Fixed policy). All other fields unchanged.
 public(package) fun with_min_rent_price(cfg: IntegrationConfig, price_mist: u64): IntegrationConfig {
     config::new_config(
-        monetary::price(price_mist),
+        min_rent_price_state::new_fixed(monetary::price(price_mist)),
+        config::proj_tenure_ceiling(&cfg),
+        *config::proj_handover(&cfg),
+        *config::proj_descent(&cfg),
+        *config::proj_retire(&cfg),
+        *config::proj_credit_curve(&cfg),
+        *config::proj_descent_curve(&cfg),
+        *config::proj_price_function_state(&cfg),
+    )
+}
+
+/// Rebuild `cfg` with a random-in-range `min_rent_price`. All other fields unchanged.
+public(package) fun with_random_min_rent_price(cfg: IntegrationConfig, min_mist: u64, max_mist: u64): IntegrationConfig {
+    config::new_config(
+        min_rent_price_state::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
         config::proj_tenure_ceiling(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
@@ -162,7 +177,7 @@ public(package) fun with_min_rent_price(cfg: IntegrationConfig, price_mist: u64)
 /// Rebuild `cfg` with a different `tenure_ceiling`. All other fields unchanged.
 public(package) fun with_tenure_ceiling(cfg: IntegrationConfig, ceiling_ms: u64): IntegrationConfig {
     config::new_config(
-        config::proj_min_rent_price(&cfg),
+        *config::proj_min_rent_price(&cfg),
         phases::duration(ceiling_ms),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
@@ -225,7 +240,7 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8): CorpusEntry {
 fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8): IntegrationConfig {
     let curve = make_curve(e);
     config::new_config(
-        monetary::price(MIN_RENT_PRICE),
+        min_rent_price_state::new_fixed(monetary::price(MIN_RENT_PRICE)),
         phases::duration(TENURE_CEILING),
         make_handover(c),
         make_descent(h),

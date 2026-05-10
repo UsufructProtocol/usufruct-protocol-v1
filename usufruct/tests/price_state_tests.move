@@ -133,7 +133,7 @@ fun ascending_predicate() {
 fun descending_at_phase_start_returns_last_acq_price() {
     // P3a — at t = phase_start_ms, elapsed = 0, h = 0 → no descent yet.
     let cfg = base_cfg(true);
-    let ps  = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN));
+    let ps  = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE));
     assert!(monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(T0))) == LAST, 0);
 }
 
@@ -142,7 +142,7 @@ fun descending_at_window_end_returns_min_rent_price() {
     // P3b — at t = phase_start_ms + window_ceiling, h = SCALE → spread fully consumed.
     // Holds for ALL curve shapes (evaluate_curve short-circuits to SCALE at t >= t_max).
     let cfg      = base_cfg(true);
-    let ps       = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN));
+    let ps       = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE));
     let boundary = T0 + TENURE; // window_ceiling == TENURE in base_cfg
     assert!(monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(boundary))) == MIN, 0);
 }
@@ -151,7 +151,7 @@ fun descending_at_window_end_returns_min_rent_price() {
 fun descending_price_is_monotone_decreasing() {
     // P3c — price at t1 >= price at t2 when t1 <= t2.
     let cfg  = base_cfg(true);
-    let ps   = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN));
+    let ps   = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE));
     let mid  = T0 + TENURE / 2;
     let late = T0 + TENURE * 3 / 4;
     let p_mid  = monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(mid)));
@@ -167,7 +167,7 @@ fun descending_mid_window_is_between_bounds() {
     // price ∈ (min_rent_price, last_acq_price) for curves that are
     // strictly between 0 and SCALE in the interior.
     let cfg = base_cfg(true);
-    let ps  = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN));
+    let ps  = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE));
     let mid = T0 + TENURE / 2;
     let p   = monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(mid)));
     assert!(p > MIN,  0);
@@ -178,7 +178,7 @@ fun descending_mid_window_is_between_bounds() {
 fun descending_saturates_past_window() {
     // P3e — price does not go below min_rent_price past the window.
     let cfg  = base_cfg(true);
-    let ps   = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN));
+    let ps   = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE));
     let past = T0 + TENURE * 2;
     assert!(monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(past))) == MIN, 0);
 }
@@ -208,7 +208,7 @@ fun descending_various_curves_respect_bounds() {
             curve,
             price_function_state::new_fixed_delta(monetary::price(MIN)),
         );
-        let ps = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN));
+        let ps = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE));
         let p  = monetary::price_mist(price_state::floor_price(&ps, &cfg, phases::timestamp(mid)));
         assert!(p >= MIN,  (i as u64));
         assert!(p <= LAST, (i as u64) + 100);
@@ -218,7 +218,7 @@ fun descending_various_curves_respect_bounds() {
 
 #[test]
 fun descending_predicate() {
-    let ps = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN));
+    let ps = price_state::descending(monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE));
     assert!(!price_state::proj_is_rest(&ps),       0);
     assert!(!price_state::proj_is_ascending(&ps),  1);
     assert!(price_state::proj_is_descending(&ps),  2);

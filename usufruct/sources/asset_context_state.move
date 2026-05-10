@@ -494,8 +494,8 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
             floor_price_at_for_tenancy(tenancy, &e.config, now),
         AssetState::Waiting { waiting } => match (&waiting.state) {
             WaitingState::Idle { resolved_floor, .. } => *resolved_floor,
-            WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor, .. } => {
-                let ps = price_state::descending(*last_acq_price, *phase_start, *resolved_floor);
+            WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor, resolved_descent, .. } => {
+                let ps = price_state::descending(*last_acq_price, *phase_start, *resolved_floor, *resolved_descent);
                 price_state::floor_price(&ps, &e.config, now)
             },
             WaitingState::Retired => abort ERetiredNoBid,
@@ -1717,7 +1717,8 @@ fun fire<Asset: key + store, CoinType>(
                         event::emit(ConfigReset { escrow_id, new_config: new_cfg });
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Idle { resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover } } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
                     } else {
-                        let resolved_descent = descent_policy_state::resolve(config::proj_descent(&config));
+                        let mut generator    = sui::random::new_generator(random, ctx);
+                        let resolved_descent = descent_policy_state::resolve(config::proj_descent(&config), &mut generator);
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
                     }
                 },
@@ -1851,7 +1852,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
                 event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                 AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, config, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
             } else {
-                AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&config)) } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
+                AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8])) } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
             }
         },
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start, resolved_floor, resolved_ceiling, resolved_handover, state: TenancyState::OccupiedRetiring { tenant } } }, mut owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
@@ -1866,7 +1867,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
                 event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                 AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, config, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
             } else {
-                AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&config)) } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
+                AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8])) } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
             }
         },
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start: _p, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,
@@ -1963,7 +1964,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
                 asset, tenant, owner_amount, fee_amount, escrow_id,
             );
             let raw_asset = asset::unbundle(wrapped);
-            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: asset::lock(raw_asset), state: WaitingState::AtDutch { last_acq_price: monetary::price(last_acq_price), phase_start: new_phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&config)) } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
+            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: asset::lock(raw_asset), state: WaitingState::AtDutch { last_acq_price: monetary::price(last_acq_price), phase_start: new_phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8])) } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
         },
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start: _p, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, phase_start: _p, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, state: TenancyState::DemandRetiring { current: _c, pending: _p2, handover_expiry: _e } } }, owner: _o, .. } => abort ENotRented,

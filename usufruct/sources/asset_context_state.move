@@ -17,11 +17,13 @@ use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
     event,
+    random::{Random, RandomGenerator},
 };
 use usufruct::{
     asset::{Self, AssetReceipt},
     config::{Self, IntegrationConfig},
     descent_policy_state,
+    min_rent_price_state,
     monetary::{Self, Price, Stake},
     owner::{Self, Owner},
     owner_cap::{Self, OwnerCap},
@@ -96,7 +98,7 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 
 /// Sub-machine state for waiting (no-tenant) lifecycle phases.
 public enum WaitingState has store, drop {
-    Idle,
+    Idle { resolved_floor: Price },
     AtDutch { last_acq_price: Price, phase_start: Timestamp },
     Retired,
 }
@@ -221,9 +223,11 @@ public(package) fun new<Asset: key + store, CoinType>(
     fee_inbox_id:     ID,
     integrated_at_ms: u64,
     escrow_id:        ID,
+    generator:        &mut RandomGenerator,
 ): AssetContext<Asset, CoinType> {
+    let resolved_floor = min_rent_price_state::resolve(config::proj_min_rent_price(&config), generator);
     AssetContext {
-        asset_state:    AssetState::Waiting { waiting: WaitingContext { asset: asset::lock(asset), state: WaitingState::Idle } },
+        asset_state:    AssetState::Waiting { waiting: WaitingContext { asset: asset::lock(asset), state: WaitingState::Idle { resolved_floor } } },
         owner:          owner::new<CoinType>(owner_cap_id),
         config,
         pending_config: option::none(),
@@ -304,7 +308,7 @@ public(package) fun proj_is_idle<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
-        AssetState::Waiting { waiting } => match (&waiting.state) { WaitingState::Idle => true, _ => false },
+        AssetState::Waiting { waiting } => match (&waiting.state) { WaitingState::Idle { .. } => true, _ => false },
         _ => false,
     }
 }
@@ -462,7 +466,7 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
         AssetState::Renting { tenancy } =>
             floor_price_at_for_tenancy(tenancy, &e.config, now),
         AssetState::Waiting { waiting } => match (&waiting.state) {
-            WaitingState::Idle => config::proj_min_rent_price(&e.config),
+            WaitingState::Idle { resolved_floor } => *resolved_floor,
             WaitingState::AtDutch { last_acq_price, phase_start } => {
                 let ps = price_state::descending(*last_acq_price, *phase_start);
                 price_state::floor_price(&ps, &e.config, now)
@@ -544,20 +548,21 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
                 };
                 option::none()
             },
-            WaitingState::Idle | WaitingState::Retired => option::none(),
+            WaitingState::Idle { .. } | WaitingState::Retired => option::none(),
         },
     }
 }
 
 public(package) fun apply_pending_transition_states<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
-    clock:  &Clock,
-    ctx:    &mut TxContext,
+    random:  &Random,
+    clock:   &Clock,
+    ctx:     &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     let mut current = context;
     let mut pending = next_pending(&current, clock);
     while (option::is_some(&pending)) {
-        current = fire(current, option::destroy_some(pending), ctx);
+        current = fire(current, option::destroy_some(pending), random, ctx);
         pending = next_pending(&current, clock);
     };
     current
@@ -568,10 +573,11 @@ public(package) fun apply_pending_transition_states<Asset: key + store, CoinType
 public(package) fun execute_rent<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
     payment: Coin<CoinType>,
+    random:  &Random,
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): (AssetContext<Asset, CoinType>, TenantCap) {
-    let context = apply_pending_transition_states(context, clock, ctx);
+    let context = apply_pending_transition_states(context, random, clock, ctx);
     let now    = phases::now(clock);
     let floor  = floor_price_at(&context, now);
     assert!(coin::value(&payment) >= monetary::price_mist(floor), EInsufficientPayment);
@@ -597,11 +603,12 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
 public(package) fun execute_retire<Asset: key + store, CoinType>(
     context:   AssetContext<Asset, CoinType>,
     owner_cap: &OwnerCap,
+    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     assert!(owner_cap::proj_escrow_id(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
-    let context = apply_pending_transition_states(context, clock, ctx);
+    let context = apply_pending_transition_states(context, random, clock, ctx);
     let now = phases::now(clock);
     assert!(
         retire_policy_state::is_unlocked(
@@ -627,18 +634,21 @@ public(package) fun execute_reset_config<Asset: key + store, CoinType>(
     context:   AssetContext<Asset, CoinType>,
     owner_cap: &OwnerCap,
     new_cfg:   IntegrationConfig,
+    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     assert!(owner_cap::proj_escrow_id(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
-    let context = apply_pending_transition_states(context, clock, ctx);
+    let context = apply_pending_transition_states(context, random, clock, ctx);
     let escrow_id = context.escrow_id;
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: _a, state: WaitingState::Retired } }, owner: _o, .. } =>
             abort EAlreadyRetired,
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle } }, owner, fee_inbox_id, integrated_at, pending_config: _, .. } => {
+        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor: _ } } }, owner, fee_inbox_id, integrated_at, pending_config: _, .. } => {
+            let mut generator = sui::random::new_generator(random, ctx);
+            let new_floor = min_rent_price_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
             event::emit(ConfigReset { escrow_id, new_config: new_cfg });
-            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
+            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor: new_floor } } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
         },
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start } } }, owner, config, fee_inbox_id, integrated_at, pending_config: _, escrow_id: _ } => {
             event::emit(ConfigResetScheduled { escrow_id, new_config: new_cfg });
@@ -655,10 +665,11 @@ public(package) fun execute_reset_config<Asset: key + store, CoinType>(
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
     tenant_cap: &TenantCap,
+    random:     &Random,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (AssetContext<Asset, CoinType>, Asset, AssetReceipt) {
-    let context = apply_pending_transition_states(context, clock, ctx);
+    let context = apply_pending_transition_states(context, random, clock, ctx);
     assert!(tenant_cap::proj_escrow_id(tenant_cap) == context.escrow_id, EWrongEscrowTenantCap);
     let cap_id = object::id(tenant_cap);
     match (context) {
@@ -686,11 +697,12 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
 
 public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
-    cap:    TenantCap,
-    clock:  &Clock,
-    ctx:    &mut TxContext,
+    cap:     TenantCap,
+    random:  &Random,
+    clock:   &Clock,
+    ctx:     &mut TxContext,
 ): AssetContext<Asset, CoinType> {
-    let context = apply_pending_transition_states(context, clock, ctx);
+    let context = apply_pending_transition_states(context, random, clock, ctx);
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
             let is_retired = match (&waiting.state) { WaitingState::Retired => true, _ => false };
@@ -713,11 +725,12 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
 public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
     owner_cap: &OwnerCap,
+    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (AssetContext<Asset, CoinType>, Coin<CoinType>) {
     assert!(owner_cap::proj_escrow_id(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
-    let context       = apply_pending_transition_states(context, clock, ctx);
+    let context       = apply_pending_transition_states(context, random, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
@@ -1632,8 +1645,9 @@ public(package) fun asset_returned_tenant(e: &AssetReturned): address           
 
 fun fire<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,
-    t:      PendingTransitionState,
-    ctx:    &mut TxContext,
+    t:       PendingTransitionState,
+    random:  &Random,
+    ctx:     &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     let boundary = pending_transition_state::proj_boundary(&t);
     match (context) {
@@ -1642,15 +1656,17 @@ fun fire<Asset: key + store, CoinType>(
                 RentingFireResultState::Handover { tenancy: new_tenancy } =>
                     AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id },
                 RentingFireResultState::TenureExpired { asset, last_acq_price, retiring } => {
-                    let locked       = asset::lock(asset);
-                    let boundary_ms  = phases::timestamp_ms(boundary);
+                    let locked      = asset::lock(asset);
+                    let boundary_ms = phases::timestamp_ms(boundary);
                     if (retiring) {
                         event::emit(AssetRetired { escrow_id, timestamp_ms: boundary_ms });
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, config, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
                     } else if (option::is_some(&pending_config)) {
                         let new_cfg = option::destroy_some(pending_config);
+                        let mut generator = sui::random::new_generator(random, ctx);
+                        let resolved_floor = min_rent_price_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
                         event::emit(ConfigReset { escrow_id, new_config: new_cfg });
-                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Idle } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
+                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Idle { resolved_floor } } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
                     } else {
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
                     }
@@ -1658,13 +1674,14 @@ fun fire<Asset: key + store, CoinType>(
             }
         },
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start } } }, owner, mut config, fee_inbox_id, integrated_at, escrow_id, mut pending_config } => {
-            let new_state = do_auction_expiry(asset, last_acq_price, phase_start, escrow_id, boundary);
             if (option::is_some(&pending_config)) {
                 let new_cfg = option::destroy_some(pending_config);
                 event::emit(ConfigReset { escrow_id, new_config: new_cfg });
                 config = new_cfg;
                 pending_config = option::none();
             };
+            let mut generator = sui::random::new_generator(random, ctx);
+            let new_state = do_auction_expiry(asset, last_acq_price, phase_start, &config, escrow_id, boundary, &mut generator);
             AssetContext { asset_state: new_state, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
         },
         AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
@@ -1708,11 +1725,14 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
     asset:          asset::AssetCustodyLocked<Asset>,
     last_acq_price: Price,
     phase_start:    Timestamp,
+    config:         &IntegrationConfig,
     escrow_id:      ID,
     boundary:       Timestamp,
+    generator:      &mut RandomGenerator,
 ): AssetState<Asset, CoinType> {
     event::emit(AuctionExpired { escrow_id, phase_start_ms: phases::timestamp_ms(phase_start), last_acq_price: monetary::price_mist(last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
-    AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle } }
+    let resolved_floor = min_rent_price_state::resolve(config::proj_min_rent_price(config), generator);
+    AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor } } }
 }
 
 fun do_retire_immediately<Asset: key + store, CoinType>(
@@ -1802,15 +1822,16 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
 
 #[test_only]
 public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
-    boundary: Timestamp,
+    context:   AssetContext<Asset, CoinType>,
+    boundary:  Timestamp,
+    generator: &mut RandomGenerator,
 ): AssetContext<Asset, CoinType> {
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {
                 WaitingState::AtDutch { last_acq_price, phase_start } =>
-                    AssetContext { asset_state: do_auction_expiry(asset, last_acq_price, phase_start, escrow_id, boundary), owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id },
+                    AssetContext { asset_state: do_auction_expiry(asset, last_acq_price, phase_start, &config, escrow_id, boundary, generator), owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id },
                 _ => abort ENotRented,
             }
         },
@@ -1828,7 +1849,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {
-                WaitingState::Idle => {
+                WaitingState::Idle { .. } => {
                     let tenancy = new_occupied(asset::new(asset::unlock(asset), escrow_id), tenant_in, phase_start);
                     AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
                 },
@@ -1903,7 +1924,7 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {
-                WaitingState::Idle =>
+                WaitingState::Idle { .. } =>
                     AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id },
                 _ => abort ENotRented,
             }

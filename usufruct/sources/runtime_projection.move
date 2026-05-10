@@ -13,6 +13,7 @@ use usufruct::{
     phases,
     asset_context_state::{Self as acs, AssetContext, CapAuthorizationState},
     min_rent_price_state::{Self as mrp, MinRentPriceState},
+    tenure_ceiling_state::{Self as tcs, TenureCeilingState},
     monetary,
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
     price_state::{Self as ps, PriceState},
@@ -204,12 +205,33 @@ public fun min_rent_price_range_max_mist(p: &MinRentPriceState): Option<u64> {
     else option::none()
 }
 
+// === tenure_ceiling_state ===
+
+public fun tenure_ceiling_is_fixed(p: &TenureCeilingState):           bool         { tcs::proj_is_fixed(p) }
+public fun tenure_ceiling_is_random_in_range(p: &TenureCeilingState): bool         { tcs::proj_is_random_in_range(p) }
+public fun tenure_ceiling_fixed_ms(p: &TenureCeilingState): Option<u64> {
+    let opt = tcs::proj_fixed_ceiling(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+public fun tenure_ceiling_range_min_ms(p: &TenureCeilingState): Option<u64> {
+    let opt = tcs::proj_range_min(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+public fun tenure_ceiling_range_max_ms(p: &TenureCeilingState): Option<u64> {
+    let opt = tcs::proj_range_max(p);
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
 // === config ===
 
-public fun config_min_rent_price(cfg: &IntegrationConfig): &MinRentPriceState  { config::proj_min_rent_price(cfg) }
-public fun config_min_rent_price_floor(cfg: &IntegrationConfig): u64           { monetary::price_mist(mrp::floor_for_view(config::proj_min_rent_price(cfg))) }
-public fun config_tenure_ceiling(cfg: &IntegrationConfig): u64                 { phases::duration_ms(config::proj_tenure_ceiling(cfg)) }
-public fun config_handover(cfg: &IntegrationConfig):       &HandoverPolicyState { config::proj_handover(cfg) }
+public fun config_min_rent_price(cfg: &IntegrationConfig): &MinRentPriceState   { config::proj_min_rent_price(cfg) }
+public fun config_min_rent_price_floor(cfg: &IntegrationConfig): u64            { monetary::price_mist(mrp::floor_for_view(config::proj_min_rent_price(cfg))) }
+public fun config_tenure_ceiling(cfg: &IntegrationConfig): &TenureCeilingState  { config::proj_tenure_ceiling(cfg) }
+public fun config_tenure_ceiling_min_ms(cfg: &IntegrationConfig): u64           { phases::duration_ms(tcs::min_ceiling(config::proj_tenure_ceiling(cfg))) }
+public fun config_handover(cfg: &IntegrationConfig):       &HandoverPolicyState  { config::proj_handover(cfg) }
 public fun config_descent(cfg: &IntegrationConfig):        &DescentPolicyState  { config::proj_descent(cfg) }
 public fun config_retire(cfg: &IntegrationConfig):         &RetirePolicyState   { config::proj_retire(cfg) }
 public fun config_credit_curve(cfg: &IntegrationConfig):   &CurveShapeState     { config::proj_credit_curve(cfg) }

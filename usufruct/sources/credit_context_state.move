@@ -9,7 +9,7 @@ use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape_state,
     monetary::{Self, Stake},
-    phases::{Self, Timestamp},
+    phases::{Self, Duration, Timestamp},
 };
 
 // === Errors ===
@@ -92,9 +92,10 @@ public(package) fun capped(stake: Stake, phase_start: Timestamp, expiry: Timesta
 /// Returns 0 when elapsed == 0; returns `stake` when elapsed >=
 /// `tenure_ceiling` (curve short-circuit at SCALE).
 public(package) fun used_credit(
-    ctx: &CreditContext,
-    cfg: &IntegrationConfig,
-    now: Timestamp,
+    ctx:              &CreditContext,
+    cfg:              &IntegrationConfig,
+    resolved_ceiling: Duration,
+    now:              Timestamp,
 ): Stake {
     let effective = match (&ctx.variant) {
         CreditState::Accruing          => now,
@@ -103,8 +104,8 @@ public(package) fun used_credit(
     let elapsed = phases::elapsed_since(ctx.phase_start, effective);
     let g = curve_shape_state::evaluate_curve(
         config::proj_credit_curve(cfg),
-        phases::duration_ms(elapsed),        // ← temporal → math domain
-        phases::duration_ms(config::proj_tenure_ceiling(cfg)),  // ← temporal → math domain
+        phases::duration_ms(elapsed),                // ← temporal → math domain
+        phases::duration_ms(resolved_ceiling),       // ← temporal → math domain
     );
     monetary::stake(curve_shape_state::apply(monetary::stake_mist(ctx.stake), g))
 }

@@ -21,6 +21,7 @@ use usufruct::{
     asset_context_state::{Self, AssetContext, CapAuthorizationState},
     handover_policy_state,
     min_rent_price_state,
+    tenure_ceiling_state,
     monetary,
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
@@ -396,8 +397,9 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
 ): Option<u64> {
     let e = read_context(escrow);
     if (!asset_context_state::proj_is_rented(e)) return option::none();
-    let ps = *option::borrow(&asset_context_state::proj_phase_start(e));
-    option::some(phases::timestamp_ms(phases::boundary_at(ps, config::proj_tenure_ceiling(asset_context_state::proj_config(e)))))
+    let ps      = *option::borrow(&asset_context_state::proj_phase_start(e));
+    let ceiling = *option::borrow(&asset_context_state::proj_resolved_ceiling(e));
+    option::some(phases::timestamp_ms(phases::boundary_at(ps, ceiling)))
 }
 
 public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
@@ -415,15 +417,15 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     let e = read_context(escrow);
     if (!asset_context_state::proj_is_handover_open(e)) return option::none();
     let phase_start = *option::borrow(&asset_context_state::proj_phase_start(e));
+    let ceiling     = *option::borrow(&asset_context_state::proj_resolved_ceiling(e));
     let c           = asset_context_state::proj_config(e);
-    let tenure      = config::proj_tenure_ceiling(c);
-    option::some(phases::timestamp_ms(handover_policy_state::expiry_at(config::proj_handover(c), phases::timestamp(bid_time_ms), phase_start, tenure)))
+    option::some(phases::timestamp_ms(handover_policy_state::expiry_at(config::proj_handover(c), phases::timestamp(bid_time_ms), phase_start, ceiling)))
 }
 
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    phases::duration_ms(config::proj_tenure_ceiling(cfg(escrow)))
+    phases::duration_ms(tenure_ceiling_state::min_ceiling(config::proj_tenure_ceiling(cfg(escrow))))
 }
 
 public fun integrated_at_ms<Asset: key + store, CoinType>(

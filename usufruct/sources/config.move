@@ -11,14 +11,13 @@ use usufruct::{
     descent_policy_state::DescentPolicyState,
     handover_policy_state::{Self, HandoverPolicyState},
     min_rent_price_state::MinRentPriceState,
-    phases::{Self, Duration},
+    tenure_ceiling_state::{Self as tenure_ceiling_state, TenureCeilingState},
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
 
 // === Errors ===
 
-const ETenureCeilingZero:          u64 = 1;
 const EHandoverFloorExceedsTenure: u64 = 2;   // Countdown.floor_ms >= tenure_ceiling
 
 // === Constants ===
@@ -27,7 +26,7 @@ const EHandoverFloorExceedsTenure: u64 = 2;   // Countdown.floor_ms >= tenure_ce
 
 public struct IntegrationConfig has copy, drop, store {
     min_rent_price:  MinRentPriceState,
-    tenure_ceiling:  Duration,
+    tenure_ceiling:  TenureCeilingState,
     handover:        HandoverPolicyState,
     descent:         DescentPolicyState,
     retire:          RetirePolicyState,
@@ -49,7 +48,7 @@ public struct IntegrationConfigRegistered has copy, drop {
 
 public fun new_config(
     min_rent_price: MinRentPriceState,
-    tenure_ceiling: Duration,
+    tenure_ceiling: TenureCeilingState,
     handover:       HandoverPolicyState,
     descent:        DescentPolicyState,
     retire:         RetirePolicyState,
@@ -57,7 +56,6 @@ public fun new_config(
     descent_curve:  CurveShapeState,
     price_function_state: PriceFunctionState,
 ): IntegrationConfig {
-    assert!(phases::duration_ms(tenure_ceiling) > 0, ETenureCeilingZero);
     // Cross-field validation: Countdown.floor_ms < tenure_ceiling.
     // Equality is the FixedTime variant. Intra-variant invariants
     // (e.g. floor_ms > 0) are owned by the policy module's
@@ -65,7 +63,7 @@ public fun new_config(
     // `handover_policy_state::countdown_floor_lt` since pattern-matching
     // on an enum variant is restricted to the defining module.
     assert!(
-        handover_policy_state::countdown_floor_lt(&handover, tenure_ceiling),
+        handover_policy_state::countdown_floor_lt(&handover, tenure_ceiling_state::min_ceiling(&tenure_ceiling)),
         EHandoverFloorExceedsTenure,
     );
     IntegrationConfig {
@@ -84,9 +82,9 @@ public fun new_config(
 
 // ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):       &MinRentPriceState   { &cfg.min_rent_price }
-public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):        Duration             { cfg.tenure_ceiling }
-public(package) fun proj_handover(cfg: &IntegrationConfig):              &HandoverPolicyState  { &cfg.handover }
+public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):       &MinRentPriceState    { &cfg.min_rent_price }
+public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):        &TenureCeilingState   { &cfg.tenure_ceiling }
+public(package) fun proj_handover(cfg: &IntegrationConfig):              &HandoverPolicyState   { &cfg.handover }
 public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicyState   { &cfg.descent }
 public(package) fun proj_retire(cfg: &IntegrationConfig):                &RetirePolicyState    { &cfg.retire }
 public(package) fun proj_credit_curve(cfg: &IntegrationConfig):          &CurveShapeState      { &cfg.credit_curve }

@@ -335,6 +335,12 @@ public(package) fun has_expired(resolved_floor: Duration, resolved_ceiling: Dura
 
 This principle is a corollary of Principle 2 applied to the configuration–computation boundary: once a value is resolved, passing the unresolved policy makes the illegal state (e.g., `RandomInRange` at computation time) representable.
 
+**How `RandomInRange` reveals latent coupling:**
+
+Projections over deterministic variants always produce a value — `Instant`, `FixedTime`, `Countdown` each have a concrete answer in any match arm. The coupling is invisible because no arm fails. `RandomInRange` is the variant that cannot produce a value at computation time, forcing `abort 0`. That abort is not a missing case — it is the signature of the coupling. The fix is not to handle the case; it is to move the resolution to the correct boundary so the case never reaches computation.
+
+After the fix, `RandomInRange` is just another way to produce a `Duration`. The engine sees one type. The cycle that resolves via `Fixed(7d)`, `Window(14d)`, or `RandomInRange(3d, 14d)` is indistinguishable at the computation layer — all three become a `Duration` at Idle entry. The policy that produced it is invisible by design.
+
 ---
 
 ## Applied checklist

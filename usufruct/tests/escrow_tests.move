@@ -32,6 +32,7 @@ use usufruct::{
         ConfigReset,
         ConfigResetScheduled,
     },
+    min_rent_price_state,
     pending_transition_state,
     escrow::{
         Self,
@@ -5612,5 +5613,286 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
         clock::destroy_for_testing(clk);
         c = c + 1;
     };
+    sc.end();
+}
+
+// ─── §RandomInRange — MinRentPriceState policy tests ─────────────────────────
+//
+// Tests for the RandomInRange variant of MinRentPriceState.
+// Constructors validate invariants; resolution tests verify the drawn floor
+// always falls within [min, max]; bid tests verify the bidder strategy.
+
+// ── Constructor validation ────────────────────────────────────────────────────
+
+#[test]
+#[expected_failure(abort_code = min_rent_price_state::EPriceZero, location = usufruct::min_rent_price_state)]
+fun new_fixed_zero_price_aborts() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let _p = min_rent_price_state::new_fixed(usufruct::monetary::price(0));
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = min_rent_price_state::EPriceZero, location = usufruct::min_rent_price_state)]
+fun new_random_in_range_zero_min_aborts() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let _p = min_rent_price_state::new_random_in_range(
+        usufruct::monetary::price(0),
+        usufruct::monetary::price(10_000_000_000),
+    );
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = min_rent_price_state::EMinNotLtMax, location = usufruct::min_rent_price_state)]
+fun new_random_in_range_min_equals_max_aborts() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let _p = min_rent_price_state::new_random_in_range(
+        usufruct::monetary::price(10_000_000_000),
+        usufruct::monetary::price(10_000_000_000),
+    );
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = min_rent_price_state::EMinNotLtMax, location = usufruct::min_rent_price_state)]
+fun new_random_in_range_min_greater_than_max_aborts() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let _p = min_rent_price_state::new_random_in_range(
+        usufruct::monetary::price(15_000_000_000),
+        usufruct::monetary::price(10_000_000_000),
+    );
+    sc.end();
+}
+
+// ── Resolution invariant: floor ∈ [min, max] ─────────────────────────────────
+
+// Range used across resolution tests: 5 SUI – 15 SUI
+const RANDOM_MIN: u64 = 5_000_000_000;
+const RANDOM_MAX: u64 = 15_000_000_000;
+
+#[test]
+fun random_floor_resolves_in_range_at_integrate() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let floor = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor >= RANDOM_MIN, 0);
+    assert!(floor <= RANDOM_MAX, 1);
+
+    // view returns policy min, not resolved floor
+    assert!(escrow::min_rent_price(&escrow) == RANDOM_MIN, 2);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+fun random_floor_resolves_in_range_after_auction_expiry() {
+    let mut sc = setup();
+    // h=1 Window so AtDutch occurs after tenure expiry
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
+        RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Drive Idle → Renting → AtDutch then let auction expire → Idle with new drawn floor
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_at_dutch_for_testing(
+        &mut escrow,
+        STAKE_T1 - STAKE_T1 / 10,
+        STAKE_T1 / 10,
+        escrow_corpus::min_rent_price_const() * 2,
+        0,
+    );
+    let boundary_ms = escrow_corpus::descent_window_h1_const();
+    clock::set_for_testing(&mut clk, boundary_ms);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 0);
+    let floor = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor >= RANDOM_MIN, 1);
+    assert!(floor <= RANDOM_MAX, 2);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+fun random_floor_resolves_in_range_after_tenure_expiry() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
+        RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+
+    // Tenure + descent window → Idle
+    let t_idle = escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const();
+    clock::set_for_testing(&mut clk, t_idle);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 0);
+    let floor = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor >= RANDOM_MIN, 1);
+    assert!(floor <= RANDOM_MAX, 2);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+fun random_floor_resolves_in_range_after_reset_config_from_idle() {
+    let mut sc = setup();
+    let cfg_fixed = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_fixed, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let cfg_random = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
+    );
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_random, &random, &clk, sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 0);
+    let floor = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor >= RANDOM_MIN, 1);
+    assert!(floor <= RANDOM_MAX, 2);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── Bid strategy ─────────────────────────────────────────────────────────────
+
+#[test]
+fun bid_at_max_always_succeeds_with_random_policy() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Bidding at max guarantees acceptance regardless of drawn floor
+    let cap = escrow::rent(
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+    assert!(escrow::is_rented(&escrow), 0);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
+fun bid_below_min_always_fails_with_random_policy() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Any drawn floor ≥ RANDOM_MIN > RANDOM_MIN - 1 → always rejected
+    let cap = escrow::rent(
+        &mut escrow, mk_payment(RANDOM_MIN - 1, sc.ctx()), &random, &clk, sc.ctx());
+    // Unreachable — abort above. Required to satisfy Move's linear type checker.
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── View vs resolved distinction ─────────────────────────────────────────────
+
+#[test]
+fun min_rent_price_view_returns_policy_min_not_resolved_floor() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
+    );
+    let (escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // min_rent_price() always returns the policy min (floor_for_view)
+    assert!(escrow::min_rent_price(&escrow) == RANDOM_MIN, 0);
+
+    // compute_floor_price() returns the resolved floor ∈ [min, max]
+    let resolved = escrow::compute_floor_price(&escrow, &clk);
+    assert!(resolved >= RANDOM_MIN, 1);
+    assert!(resolved <= RANDOM_MAX, 2);
+
+    // The two views may differ — the resolved floor is not necessarily the minimum
+    // (no assertion on equality/inequality since the draw is deterministic but opaque)
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── Floor stability within the Idle cycle ────────────────────────────────────
+
+#[test]
+fun random_floor_stable_within_idle_cycle() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Read the resolved floor twice — it must be identical (stored, not re-drawn)
+    let floor_a = escrow::compute_floor_price(&escrow, &clk);
+    let floor_b = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor_a == floor_b, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
     sc.end();
 }

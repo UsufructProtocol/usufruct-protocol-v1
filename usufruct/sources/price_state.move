@@ -8,7 +8,7 @@ module usufruct::price_state;
 use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape_state,
-    min_rent_price_state,
+    floor_price_policy_state,
     monetary::{Self, Price, Stake},
     phases::{Self, Timestamp, Duration},
     price_function_state,
@@ -98,7 +98,7 @@ public(package) fun floor_price(
     now:   Timestamp,
 ): Price {
     match (state) {
-        PriceState::Rest => min_rent_price_state::floor_for_view(config::proj_min_rent_price(cfg)),
+        PriceState::Rest => floor_price_policy_state::floor_for_view(config::proj_min_rent_price(cfg)),
         PriceState::Ascending { stake } =>
             price_function_state::evaluate_price_fn(
                 config::proj_price_function_state(cfg),

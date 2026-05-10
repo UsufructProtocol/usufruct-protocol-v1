@@ -32,8 +32,8 @@ use usufruct::{
         ConfigReset,
         ConfigResetScheduled,
     },
-    min_rent_price_state,
-    tenure_ceiling_state,
+    floor_price_policy_state,
+    tenure_policy_state,
     pending_transition_state,
     escrow::{
         Self,
@@ -5621,29 +5621,29 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
     sc.end();
 }
 
-// ─── §RandomInRange — MinRentPriceState policy tests ─────────────────────────
+// ─── §RandomInRange — FloorPricePolicyState policy tests ─────────────────────────
 //
-// Tests for the RandomInRange variant of MinRentPriceState.
+// Tests for the RandomInRange variant of FloorPricePolicyState.
 // Constructors validate invariants; resolution tests verify the drawn floor
 // always falls within [min, max]; bid tests verify the bidder strategy.
 
 // ── Constructor validation ────────────────────────────────────────────────────
 
 #[test]
-#[expected_failure(abort_code = min_rent_price_state::EPriceZero, location = usufruct::min_rent_price_state)]
+#[expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
 fun new_fixed_zero_price_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = min_rent_price_state::new_fixed(usufruct::monetary::price(0));
+    let _p = floor_price_policy_state::new_fixed(usufruct::monetary::price(0));
     sc.end();
 }
 
 #[test]
-#[expected_failure(abort_code = min_rent_price_state::EPriceZero, location = usufruct::min_rent_price_state)]
+#[expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
 fun new_random_in_range_zero_min_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = min_rent_price_state::new_random_in_range(
+    let _p = floor_price_policy_state::new_random_in_range(
         usufruct::monetary::price(0),
         usufruct::monetary::price(10_000_000_000),
     );
@@ -5651,11 +5651,11 @@ fun new_random_in_range_zero_min_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = min_rent_price_state::EMinNotLtMax, location = usufruct::min_rent_price_state)]
+#[expected_failure(abort_code = floor_price_policy_state::EMinNotLtMax, location = usufruct::floor_price_policy_state)]
 fun new_random_in_range_min_equals_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = min_rent_price_state::new_random_in_range(
+    let _p = floor_price_policy_state::new_random_in_range(
         usufruct::monetary::price(10_000_000_000),
         usufruct::monetary::price(10_000_000_000),
     );
@@ -5663,11 +5663,11 @@ fun new_random_in_range_min_equals_max_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = min_rent_price_state::EMinNotLtMax, location = usufruct::min_rent_price_state)]
+#[expected_failure(abort_code = floor_price_policy_state::EMinNotLtMax, location = usufruct::floor_price_policy_state)]
 fun new_random_in_range_min_greater_than_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = min_rent_price_state::new_random_in_range(
+    let _p = floor_price_policy_state::new_random_in_range(
         usufruct::monetary::price(15_000_000_000),
         usufruct::monetary::price(10_000_000_000),
     );
@@ -6117,9 +6117,9 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     sc.end();
 }
 
-// ─── §TenureCeilingState — policy tests ──────────────────────────────────────
+// ─── §TenurePolicyState — policy tests ──────────────────────────────────────
 //
-// Mirrors the MinRentPriceState test suite for TenureCeilingState.
+// Mirrors the FloorPricePolicyState test suite for TenurePolicyState.
 // The observable of resolved_ceiling is tenure_expiry_ms():
 //   tenure_expiry_ms = phase_start + resolved_ceiling
 // At phase_start = 0, tenure_expiry_ms == resolved_ceiling_ms.
@@ -6130,20 +6130,20 @@ const CEILING_RAND_MAX: u64 = 150_000;  // 150k ms
 // ── Constructor validation ────────────────────────────────────────────────────
 
 #[test]
-#[expected_failure(abort_code = tenure_ceiling_state::EDurationZero, location = usufruct::tenure_ceiling_state)]
+#[expected_failure(abort_code = tenure_policy_state::EDurationZero, location = usufruct::tenure_policy_state)]
 fun new_fixed_zero_ceiling_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_ceiling_state::new_fixed(phases::duration(0));
+    let _p = tenure_policy_state::new_fixed(phases::duration(0));
     sc.end();
 }
 
 #[test]
-#[expected_failure(abort_code = tenure_ceiling_state::EDurationZero, location = usufruct::tenure_ceiling_state)]
+#[expected_failure(abort_code = tenure_policy_state::EDurationZero, location = usufruct::tenure_policy_state)]
 fun new_random_ceiling_zero_min_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_ceiling_state::new_random_in_range(
+    let _p = tenure_policy_state::new_random_in_range(
         phases::duration(0),
         phases::duration(100_000),
     );
@@ -6151,11 +6151,11 @@ fun new_random_ceiling_zero_min_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenure_ceiling_state::EMinNotLtMax, location = usufruct::tenure_ceiling_state)]
+#[expected_failure(abort_code = tenure_policy_state::EMinNotLtMax, location = usufruct::tenure_policy_state)]
 fun new_random_ceiling_min_equals_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_ceiling_state::new_random_in_range(
+    let _p = tenure_policy_state::new_random_in_range(
         phases::duration(100_000),
         phases::duration(100_000),
     );
@@ -6163,11 +6163,11 @@ fun new_random_ceiling_min_equals_max_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = tenure_ceiling_state::EMinNotLtMax, location = usufruct::tenure_ceiling_state)]
+#[expected_failure(abort_code = tenure_policy_state::EMinNotLtMax, location = usufruct::tenure_policy_state)]
 fun new_random_ceiling_min_greater_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_ceiling_state::new_random_in_range(
+    let _p = tenure_policy_state::new_random_in_range(
         phases::duration(200_000),
         phases::duration(100_000),
     );

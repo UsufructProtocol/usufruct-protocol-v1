@@ -20,8 +20,8 @@ use usufruct::{
     descent_policy_state,
     asset_context_state::{Self, AssetContext, CapAuthorizationState},
     handover_policy_state,
-    min_rent_price_state,
-    tenure_ceiling_state,
+    floor_price_policy_state,
+    tenure_policy_state,
     monetary,
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
@@ -425,7 +425,7 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    phases::duration_ms(tenure_ceiling_state::min_ceiling(config::proj_tenure_ceiling(cfg(escrow))))
+    phases::duration_ms(tenure_policy_state::min_ceiling(config::proj_tenure_ceiling(cfg(escrow))))
 }
 
 public fun integrated_at_ms<Asset: key + store, CoinType>(
@@ -570,7 +570,7 @@ public fun bps_denominator():  u64 { asset_context_state::bps_denominator() }
 public fun min_rent_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    monetary::price_mist(min_rent_price_state::floor_for_view(config::proj_min_rent_price(cfg(escrow))))
+    monetary::price_mist(floor_price_policy_state::floor_for_view(config::proj_min_rent_price(cfg(escrow))))
 }
 
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(

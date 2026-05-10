@@ -23,8 +23,8 @@ use usufruct::{
     asset::{Self, AssetReceipt},
     config::{Self, IntegrationConfig},
     descent_policy_state,
-    min_rent_price_state,
-    tenure_ceiling_state,
+    floor_price_policy_state,
+    tenure_policy_state,
     monetary::{Self, Price, Stake},
     owner::{Self, Owner},
     owner_cap::{Self, OwnerCap},
@@ -232,8 +232,8 @@ public(package) fun new<Asset: key + store, CoinType>(
     escrow_id:        ID,
     generator:        &mut RandomGenerator,
 ): AssetContext<Asset, CoinType> {
-    let resolved_floor    = min_rent_price_state::resolve(config::proj_min_rent_price(&config), generator);
-    let resolved_ceiling  = tenure_ceiling_state::resolve(config::proj_tenure_ceiling(&config), generator);
+    let resolved_floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(&config), generator);
+    let resolved_ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(&config), generator);
     let resolved_handover = handover_policy_state::resolve(config::proj_handover(&config), resolved_ceiling, generator);
     AssetContext {
         asset_state:    AssetState::Waiting { waiting: WaitingContext { asset: asset::lock(asset), state: WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } } },
@@ -676,8 +676,8 @@ public(package) fun execute_reset_config<Asset: key + store, CoinType>(
             abort EAlreadyRetired,
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor: _, resolved_ceiling: _, resolved_handover: _ } } }, owner, fee_inbox_id, integrated_at, pending_config: _, .. } => {
             let mut generator    = sui::random::new_generator(random, ctx);
-            let new_floor        = min_rent_price_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
-            let new_ceiling      = tenure_ceiling_state::resolve(config::proj_tenure_ceiling(&new_cfg), &mut generator);
+            let new_floor        = floor_price_policy_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
+            let new_ceiling      = tenure_policy_state::resolve(config::proj_tenure_ceiling(&new_cfg), &mut generator);
             let new_handover     = handover_policy_state::resolve(config::proj_handover(&new_cfg), new_ceiling, &mut generator);
             event::emit(ConfigReset { escrow_id, new_config: new_cfg });
             AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover } } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
@@ -1711,8 +1711,8 @@ fun fire<Asset: key + store, CoinType>(
                     } else if (option::is_some(&pending_config)) {
                         let new_cfg = option::destroy_some(pending_config);
                         let mut generator    = sui::random::new_generator(random, ctx);
-                        let new_floor        = min_rent_price_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
-                        let new_ceiling      = tenure_ceiling_state::resolve(config::proj_tenure_ceiling(&new_cfg), &mut generator);
+                        let new_floor        = floor_price_policy_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
+                        let new_ceiling      = tenure_policy_state::resolve(config::proj_tenure_ceiling(&new_cfg), &mut generator);
                         let new_handover     = handover_policy_state::resolve(config::proj_handover(&new_cfg), new_ceiling, &mut generator);
                         event::emit(ConfigReset { escrow_id, new_config: new_cfg });
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Idle { resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover } } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
@@ -1785,8 +1785,8 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
     generator:      &mut RandomGenerator,
 ): AssetState<Asset, CoinType> {
     event::emit(AuctionExpired { escrow_id, phase_start_ms: phases::timestamp_ms(phase_start), last_acq_price: monetary::price_mist(last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
-    let resolved_floor    = min_rent_price_state::resolve(config::proj_min_rent_price(config), generator);
-    let resolved_ceiling  = tenure_ceiling_state::resolve(config::proj_tenure_ceiling(config), generator);
+    let resolved_floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(config), generator);
+    let resolved_ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(config), generator);
     let resolved_handover = handover_policy_state::resolve(config::proj_handover(config), resolved_ceiling, generator);
     AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } } }
 }

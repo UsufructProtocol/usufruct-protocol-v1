@@ -304,6 +304,39 @@ An invariant that is only implied by the math, but never explicitly asserted, wi
 
 ---
 
+## 19. Policy types resolve to domain primitives — computation never sees the policy
+
+**Level: module architecture**
+
+A policy type encodes a *choice* about how to derive a value. A computation function uses the *derived value*. These are different things and must not share a type.
+
+If a computation function takes `&PolicyState`, it is leaking configuration past the resolution boundary. The correct form: `resolve(&PolicyState) → DomainPrimitive` at the cycle-entry boundary; computation functions take only the resolved primitive.
+
+```move
+// Before — policy crosses into the computation layer; abort 0 needed for variants
+// that "shouldn't exist here"
+fun has_expired(policy: &HandoverPolicyState, bid_time, phase_start, ceiling, now): Boundary {
+    match (policy) {
+        HandoverPolicyState::RandomInRange { .. } => abort 0, // unreachable after resolve()
+        ...
+    }
+}
+
+// After — policy stops at resolve(); computation is uniform across all variants
+public(package) fun resolve(policy: &HandoverPolicyState, ceiling: Duration, gen: &mut RandomGenerator): Duration { ... }
+public(package) fun has_expired(resolved_floor: Duration, resolved_ceiling: Duration, bid_time: Timestamp, phase_start: Timestamp, now: Timestamp): Boundary {
+    phases::check_boundary(phases::earliest(...), phases::zero(), now)
+}
+```
+
+**Diagnostic:** an `abort 0` (or any abort) in a match arm annotated `// unreachable after resolve()` is the smell. It means the policy type crossed the boundary. The fix is always the same: extract the resolved primitive, shrink the parameter to a domain type.
+
+**Test:** no computation function (`has_expired`, `expiry_at`, `is_unlocked`, `unlock_at`) accepts a `&*PolicyState` parameter. The policy type stops at `resolve()`.
+
+This principle is a corollary of Principle 2 applied to the configuration–computation boundary: once a value is resolved, passing the unresolved policy makes the illegal state (e.g., `RandomInRange` at computation time) representable.
+
+---
+
 ## Applied checklist
 
 When writing or reviewing code in this codebase:
@@ -315,3 +348,4 @@ When writing or reviewing code in this codebase:
 - [ ] Does any module call `tenant::unbundle()` or similar decompositions that should be encapsulated?
 - [ ] Does any state machine use a `bool` for a one-way transition?
 - [ ] Are all match sites exhaustive — would adding a new variant cause a compile error at every branch?
+- [ ] Does any computation function accept `&*PolicyState`? If so, `resolve()` is missing and the policy crossed the resolution boundary.

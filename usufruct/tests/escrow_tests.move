@@ -33,6 +33,7 @@ use usufruct::{
         ConfigResetScheduled,
     },
     min_rent_price_state,
+    tenure_ceiling_state,
     pending_transition_state,
     escrow::{
         Self,
@@ -6105,6 +6106,323 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     assert!(escrow::compute_floor_price_at_ms(&escrow, t_full) == fixed_price, 3);
 
     transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §TenureCeilingState — policy tests ──────────────────────────────────────
+//
+// Mirrors the MinRentPriceState test suite for TenureCeilingState.
+// The observable of resolved_ceiling is tenure_expiry_ms():
+//   tenure_expiry_ms = phase_start + resolved_ceiling
+// At phase_start = 0, tenure_expiry_ms == resolved_ceiling_ms.
+
+const CEILING_RAND_MIN: u64 = 50_000;   // 50k ms
+const CEILING_RAND_MAX: u64 = 150_000;  // 150k ms
+
+// ── Constructor validation ────────────────────────────────────────────────────
+
+#[test]
+#[expected_failure(abort_code = tenure_ceiling_state::EDurationZero, location = usufruct::tenure_ceiling_state)]
+fun new_fixed_zero_ceiling_aborts() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let _p = tenure_ceiling_state::new_fixed(phases::duration(0));
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = tenure_ceiling_state::EDurationZero, location = usufruct::tenure_ceiling_state)]
+fun new_random_ceiling_zero_min_aborts() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let _p = tenure_ceiling_state::new_random_in_range(
+        phases::duration(0),
+        phases::duration(100_000),
+    );
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = tenure_ceiling_state::EMinNotLtMax, location = usufruct::tenure_ceiling_state)]
+fun new_random_ceiling_min_equals_max_aborts() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let _p = tenure_ceiling_state::new_random_in_range(
+        phases::duration(100_000),
+        phases::duration(100_000),
+    );
+    sc.end();
+}
+
+#[test]
+#[expected_failure(abort_code = tenure_ceiling_state::EMinNotLtMax, location = usufruct::tenure_ceiling_state)]
+fun new_random_ceiling_min_greater_max_aborts() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let _p = tenure_ceiling_state::new_random_in_range(
+        phases::duration(200_000),
+        phases::duration(100_000),
+    );
+    sc.end();
+}
+
+// ── Resolution invariant: resolved_ceiling ∈ [min, max] ──────────────────────
+
+#[test]
+fun random_ceiling_resolves_in_range_after_integrate() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_tenure_ceiling(
+        escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Rent at t=0; phase_start=0 so tenure_expiry_ms == resolved_ceiling_ms
+    let cap = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+    let expiry = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
+    assert!(expiry >= CEILING_RAND_MIN, 0);
+    assert!(expiry <= CEILING_RAND_MAX, 1);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+fun random_ceiling_resolves_in_range_after_auction_expiry() {
+    let mut sc = setup();
+    // h=1 Window to produce AtDutch → Idle cycle
+    let cfg = escrow_corpus::with_random_tenure_ceiling(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
+        CEILING_RAND_MIN, CEILING_RAND_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Drive to AtDutch → auction expires → new Idle with fresh resolved_ceiling
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_at_dutch_for_testing(
+        &mut escrow,
+        STAKE_T1 - STAKE_T1 / 10,
+        STAKE_T1 / 10,
+        escrow_corpus::min_rent_price_const() * 2,
+        0,
+    );
+    clock::set_for_testing(&mut clk, escrow_corpus::descent_window_h1_const());
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 0);
+
+    // Rent from the new Idle (phase_start = descent_window); resolved_ceiling ∈ [min, max]
+    let cap = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+    let phase_start = *option::borrow(&escrow::phase_start_ms(&escrow));
+    let expiry      = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
+    let resolved_ceiling_ms = expiry - phase_start;
+    assert!(resolved_ceiling_ms >= CEILING_RAND_MIN, 1);
+    assert!(resolved_ceiling_ms <= CEILING_RAND_MAX, 2);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── View distinction ──────────────────────────────────────────────────────────
+
+#[test]
+fun tenure_ceiling_view_returns_policy_min_not_resolved() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_tenure_ceiling(
+        escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // tenure_ceiling_ms() returns the policy min (min_ceiling), not the resolved value
+    assert!(escrow::tenure_ceiling_ms(&escrow) == CEILING_RAND_MIN, 0);
+
+    // After renting, tenure_expiry_ms() reflects the actual resolved ceiling
+    let cap = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+    let expiry = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
+    assert!(expiry >= CEILING_RAND_MIN, 1);
+    assert!(expiry <= CEILING_RAND_MAX, 2);
+    // The two may differ: policy min vs resolved value
+    assert!(escrow::tenure_ceiling_ms(&escrow) == CEILING_RAND_MIN, 3);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── APT fires exactly at resolved ceiling ─────────────────────────────────────
+
+#[test]
+fun random_ceiling_apt_fires_at_resolved_ceiling() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_tenure_ceiling(
+        escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Rent at t=0; resolved_ceiling_ms = tenure_expiry_ms (since phase_start=0)
+    let cap = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+    let expiry_ms = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
+
+    // One ms before the resolved ceiling: no pending transition
+    clock::set_for_testing(&mut clk, expiry_ms - 1);
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk), 0);
+
+    // Exactly at the resolved ceiling: APT is pending
+    clock::set_for_testing(&mut clk, expiry_ms);
+    assert!(escrow::has_pending_transition_states(&escrow, &clk), 1);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── Stability within cycle ────────────────────────────────────────────────────
+
+#[test]
+fun random_ceiling_stable_within_rental_cycle() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_tenure_ceiling(
+        escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let cap = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+
+    // Read tenure_expiry_ms twice — must be identical (stored, not re-drawn)
+    let expiry_a = escrow::tenure_expiry_ms(&escrow);
+    let expiry_b = escrow::tenure_expiry_ms(&escrow);
+    assert!(expiry_a == expiry_b, 0);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── Reset config changes the ceiling range for the next cycle ─────────────────
+
+#[test]
+fun random_ceiling_reset_config_changes_range() {
+    let ceiling_range2_min: u64 = 200_000;
+    let ceiling_range2_max: u64 = 300_000;
+
+    let mut sc = setup();
+    let cfg1 = escrow_corpus::with_random_tenure_ceiling(
+        escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg1, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Cycle 1: resolved_ceiling ∈ [50k, 150k]
+    let cap1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+    let expiry1 = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
+    assert!(expiry1 >= CEILING_RAND_MIN, 0);
+    assert!(expiry1 <= CEILING_RAND_MAX, 1);
+
+    // Reset to range [200k, 300k] — applied at next Idle
+    let cfg2 = escrow_corpus::with_random_tenure_ceiling(
+        escrow_corpus::by_tag(0), ceiling_range2_min, ceiling_range2_max,
+    );
+    escrow::reset_config(&mut escrow, &owner_cap, cfg2, &random, &clk, sc.ctx());
+
+    // Tenure expires → Idle with new config (pending_config skips AtDutch)
+    clock::set_for_testing(&mut clk, expiry1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 2);
+
+    // Cycle 2: resolved_ceiling drawn from new range [200k, 300k]
+    let cap2 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+    let phase2 = *option::borrow(&escrow::phase_start_ms(&escrow));
+    let expiry2 = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
+    let resolved2 = expiry2 - phase2;
+    assert!(resolved2 >= ceiling_range2_min, 3);
+    assert!(resolved2 <= ceiling_range2_max, 4);
+
+    transfer::public_transfer(cap1, OWNER);
+    transfer::public_transfer(cap2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ── Two cycles — different resolved ceilings ─────────────────────────────────
+
+#[test]
+fun random_ceiling_different_per_cycle() {
+    let mut sc = setup();
+    // h=1 Window so AtDutch occurs between cycles
+    let cfg = escrow_corpus::with_random_tenure_ceiling(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
+        CEILING_RAND_MIN, CEILING_RAND_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Cycle 1
+    let cap1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+    let expiry1 = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
+    assert!(expiry1 >= CEILING_RAND_MIN, 0);
+    assert!(expiry1 <= CEILING_RAND_MAX, 1);
+
+    // Tenure + descent window → Idle (cycle 2 draws new ceiling)
+    let t_idle = expiry1 + escrow_corpus::descent_window_h1_const();
+    clock::set_for_testing(&mut clk, t_idle);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 2);
+
+    // Cycle 2: resolved_ceiling also ∈ [min, max] (fresh draw)
+    let cap2 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+    let phase2  = *option::borrow(&escrow::phase_start_ms(&escrow));
+    let expiry2 = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
+    let ceiling2 = expiry2 - phase2;
+    assert!(ceiling2 >= CEILING_RAND_MIN, 3);
+    assert!(ceiling2 <= CEILING_RAND_MAX, 4);
+
+    transfer::public_transfer(cap1, OWNER);
+    transfer::public_transfer(cap2, OWNER);
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     test_scenario::return_shared(random);

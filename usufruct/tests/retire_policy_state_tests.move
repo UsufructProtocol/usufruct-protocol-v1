@@ -56,7 +56,8 @@ fun is_unlocked_table() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(retire_policy_state::is_unlocked(&c.policy, phases::timestamp(c.integrated_at), phases::timestamp(c.now)).is_crossed(), c.expected);
+        let resolved = retire_policy_state::resolve(&c.policy);
+        assert_eq!(retire_policy_state::is_unlocked(resolved, phases::timestamp(c.integrated_at), phases::timestamp(c.now)).is_crossed(), c.expected);
         i = i + 1;
     };
 }
@@ -75,7 +76,8 @@ fun is_unlocked_monotone_in_now_under_deferred() {
     let mut n: u64 = 0;
     let mut crossed = false;
     while (n <= 200) {
-        let cur = retire_policy_state::is_unlocked(&p, phases::timestamp(integrated_at), phases::timestamp(n)).is_crossed();
+        let resolved = retire_policy_state::resolve(&p);
+        let cur = retire_policy_state::is_unlocked(resolved, phases::timestamp(integrated_at), phases::timestamp(n)).is_crossed();
         if (crossed) assert!(cur, 0);
         if (cur) crossed = true;
         n = n + 1;

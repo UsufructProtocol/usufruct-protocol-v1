@@ -10,16 +10,14 @@ use usufruct::{
     curve_shape_state::CurveShapeState,
     descent_policy_state::DescentPolicyState,
     handover_policy_state::{Self, HandoverPolicyState},
-    monetary::{Self, Price},
-    phases::{Self, Duration},
+    floor_price_policy_state::FloorPricePolicyState,
+    tenure_policy_state::{Self as tenure_policy_state, TenurePolicyState},
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
 
 // === Errors ===
 
-const EMinRentPriceZero:           u64 = 0;
-const ETenureCeilingZero:          u64 = 1;
 const EHandoverFloorExceedsTenure: u64 = 2;   // Countdown.floor_ms >= tenure_ceiling
 
 // === Constants ===
@@ -27,8 +25,8 @@ const EHandoverFloorExceedsTenure: u64 = 2;   // Countdown.floor_ms >= tenure_ce
 // === Structs ===
 
 public struct IntegrationConfig has copy, drop, store {
-    min_rent_price:  Price,
-    tenure_ceiling:  Duration,
+    min_rent_price:  FloorPricePolicyState,
+    tenure_ceiling:  TenurePolicyState,
     handover:        HandoverPolicyState,
     descent:         DescentPolicyState,
     retire:          RetirePolicyState,
@@ -49,8 +47,8 @@ public struct IntegrationConfigRegistered has copy, drop {
 // === Public Functions ===
 
 public fun new_config(
-    min_rent_price: Price,
-    tenure_ceiling: Duration,
+    min_rent_price: FloorPricePolicyState,
+    tenure_ceiling: TenurePolicyState,
     handover:       HandoverPolicyState,
     descent:        DescentPolicyState,
     retire:         RetirePolicyState,
@@ -58,8 +56,6 @@ public fun new_config(
     descent_curve:  CurveShapeState,
     price_function_state: PriceFunctionState,
 ): IntegrationConfig {
-    assert!(monetary::price_mist(min_rent_price) > 0, EMinRentPriceZero);
-    assert!(phases::duration_ms(tenure_ceiling) > 0, ETenureCeilingZero);
     // Cross-field validation: Countdown.floor_ms < tenure_ceiling.
     // Equality is the FixedTime variant. Intra-variant invariants
     // (e.g. floor_ms > 0) are owned by the policy module's
@@ -67,7 +63,7 @@ public fun new_config(
     // `handover_policy_state::countdown_floor_lt` since pattern-matching
     // on an enum variant is restricted to the defining module.
     assert!(
-        handover_policy_state::countdown_floor_lt(&handover, tenure_ceiling),
+        handover_policy_state::countdown_floor_lt(&handover, tenure_policy_state::min_ceiling(&tenure_ceiling)),
         EHandoverFloorExceedsTenure,
     );
     IntegrationConfig {
@@ -86,9 +82,9 @@ public fun new_config(
 
 // ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):       Price                { cfg.min_rent_price }
-public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):        Duration             { cfg.tenure_ceiling }
-public(package) fun proj_handover(cfg: &IntegrationConfig):              &HandoverPolicyState  { &cfg.handover }
+public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):       &FloorPricePolicyState    { &cfg.min_rent_price }
+public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):        &TenurePolicyState   { &cfg.tenure_ceiling }
+public(package) fun proj_handover(cfg: &IntegrationConfig):              &HandoverPolicyState   { &cfg.handover }
 public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicyState   { &cfg.descent }
 public(package) fun proj_retire(cfg: &IntegrationConfig):                &RetirePolicyState    { &cfg.retire }
 public(package) fun proj_credit_curve(cfg: &IntegrationConfig):          &CurveShapeState      { &cfg.credit_curve }

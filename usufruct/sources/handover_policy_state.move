@@ -1,29 +1,27 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
+#[allow(lint(public_random))]
 module usufruct::handover_policy_state;
 
 // === Imports ===
 
+use sui::random::RandomGenerator;
 use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 // === Errors ===
 
 const EHandoverFloorZero: u64 = 0;
-
-// === Constants ===
+const EMinNotLtMax:       u64 = 1;
 
 // === Structs ===
 
 public enum HandoverPolicyState has copy, drop, store {
     Instant,
-    Countdown { floor: Duration },
     FixedTime,
+    Countdown      { floor: Duration },
+    RandomInRange  { min: Duration, max: Duration },
 }
-
-// === Events ===
-
-// === Method Aliases ===
 
 // === Public Functions ===
 
@@ -33,6 +31,12 @@ public fun new_handover_fixed_time(): HandoverPolicyState { HandoverPolicyState:
 public fun new_handover_countdown(floor: Duration): HandoverPolicyState {
     assert!(phases::duration_ms(floor) > 0, EHandoverFloorZero);
     HandoverPolicyState::Countdown { floor }
+}
+
+public fun new_handover_random_in_range(min: Duration, max: Duration): HandoverPolicyState {
+    assert!(phases::duration_ms(min) > 0, EHandoverFloorZero);
+    assert!(phases::duration_ms(min) < phases::duration_ms(max), EMinNotLtMax);
+    HandoverPolicyState::RandomInRange { min, max }
 }
 
 // === View Functions ===
@@ -48,76 +52,101 @@ public(package) fun proj_is_fixed_time(policy: &HandoverPolicyState): bool {
 public(package) fun proj_is_countdown(policy: &HandoverPolicyState): bool {
     match (policy) { HandoverPolicyState::Countdown { .. } => true, _ => false }
 }
+public(package) fun proj_is_random_in_range(policy: &HandoverPolicyState): bool {
+    match (policy) { HandoverPolicyState::RandomInRange { .. } => true, _ => false }
+}
 public(package) fun proj_countdown_floor_ms(policy: &HandoverPolicyState): Option<Duration> {
     match (policy) {
         HandoverPolicyState::Countdown { floor } => option::some(*floor),
-        HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => option::none(),
+        _ => option::none(),
     }
 }
-
-// === Admin Functions ===
+public(package) fun proj_range_min(policy: &HandoverPolicyState): Option<Duration> {
+    match (policy) {
+        HandoverPolicyState::RandomInRange { min, .. } => option::some(*min),
+        _ => option::none(),
+    }
+}
+public(package) fun proj_range_max(policy: &HandoverPolicyState): Option<Duration> {
+    match (policy) {
+        HandoverPolicyState::RandomInRange { max, .. } => option::some(*max),
+        _ => option::none(),
+    }
+}
 
 // === Package Functions ===
 
-/// Whether the handover countdown has expired — the pending bid should finalize.
-///   - Instant   fires at `bid_time` (zero countdown).
-///   - FixedTime fires at `phase_start + tenure_ceiling`.
-///   - Countdown fires at `min(bid_time + floor, phase_start + tenure_ceiling)` —
-///               whichever of the two boundaries is crossed first.
-public(package) fun has_expired(
-    policy:         &HandoverPolicyState,
-    bid_time:       Timestamp,
-    phase_start:    Timestamp,
-    tenure_ceiling: Duration,
-    now:            Timestamp,
-): Boundary {
-    match (policy) {
-        HandoverPolicyState::Instant   =>
-            phases::check_boundary(bid_time, phases::zero(), now),
-        HandoverPolicyState::FixedTime =>
-            phases::check_boundary(phase_start, tenure_ceiling, now),
-        // Crosses when either boundary is reached; equivalent to
-        // `check_boundary(min(A,B), zero(), now)` by min identity.
-        HandoverPolicyState::Countdown { floor } =>
-            phases::check_boundary(
-                phases::earliest(
-                    phases::boundary_at(bid_time,    *floor),
-                    phases::boundary_at(phase_start, tenure_ceiling),
-                ),
-                phases::zero(),
-                now,
-            ),
-    }
-}
-
-/// True iff a `Countdown` variant's `floor_ms` is strictly less than the
-/// given ceiling. Used by `config::new_config` to enforce the cross-field
-/// constraint `Countdown.floor_ms < tenure_ceiling`.
+/// Cross-field guard: the maximum possible handover floor must be < tenure ceiling,
+/// so the constraint holds for every possible draw.
 public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: Duration): bool {
     match (policy) {
-        HandoverPolicyState::Countdown { floor }            => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
+        HandoverPolicyState::Countdown { floor }       => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
+        HandoverPolicyState::RandomInRange { max, .. } => phases::duration_ms(*max)   < phases::duration_ms(ceiling),
         HandoverPolicyState::Instant | HandoverPolicyState::FixedTime => true,
     }
 }
 
-/// Canonical handover boundary timestamp — the moment the pending bid finalizes.
-public(package) fun expiry_at(
-    policy:         &HandoverPolicyState,
-    bid_time:       Timestamp,
-    phase_start:    Timestamp,
-    tenure_ceiling: Duration,
-): Timestamp {
+/// Resolve the policy to a concrete Duration (the effective handover floor).
+/// Stored once per Idle cycle in TenancyContext; never re-read from config during a tenancy.
+///
+///   Instant          → Duration(0)   expiry = min(bid + 0,       ...) = bid_time
+///   FixedTime        → ceiling       expiry = min(bid + C, t₀ + C) = t₀ + C
+///   Countdown(f)     → f             expiry = min(bid + f, t₀ + C)
+///   RandomInRange    → draw[min,max] expiry = min(bid + draw, t₀ + C)
+public(package) fun resolve(
+    policy:    &HandoverPolicyState,
+    ceiling:   Duration,
+    generator: &mut RandomGenerator,
+): Duration {
     match (policy) {
-        HandoverPolicyState::Instant   => bid_time,
-        HandoverPolicyState::FixedTime => phases::boundary_at(phase_start, tenure_ceiling),
-        HandoverPolicyState::Countdown { floor } =>
-            phases::earliest(
-                phases::boundary_at(bid_time,    *floor),
-                phases::boundary_at(phase_start, tenure_ceiling),
-            ),
+        HandoverPolicyState::Instant                    => phases::zero(),
+        HandoverPolicyState::FixedTime                  => ceiling,
+        HandoverPolicyState::Countdown { floor }        => *floor,
+        HandoverPolicyState::RandomInRange { min, max } => phases::duration(
+            generator.generate_u64_in_range(
+                phases::duration_ms(*min),
+                phases::duration_ms(*max),
+            )
+        ),
     }
 }
 
-// === Private Functions ===
+/// Whether the handover countdown has expired — called with the resolved floor
+/// drawn at Idle entry. Uniform formula across all policy variants:
+///   expiry = min(bid_time + resolved_floor, phase_start + resolved_ceiling)
+public(package) fun has_expired(
+    resolved_floor:   Duration,
+    resolved_ceiling: Duration,
+    bid_time:         Timestamp,
+    phase_start:      Timestamp,
+    now:              Timestamp,
+): Boundary {
+    phases::check_boundary(
+        phases::earliest(
+            phases::boundary_at(bid_time,    resolved_floor),
+            phases::boundary_at(phase_start, resolved_ceiling),
+        ),
+        phases::zero(),
+        now,
+    )
+}
+
+/// Canonical handover boundary timestamp — called with the resolved floor.
+public(package) fun expiry_at(
+    resolved_floor:   Duration,
+    resolved_ceiling: Duration,
+    bid_time:         Timestamp,
+    phase_start:      Timestamp,
+): Timestamp {
+    phases::earliest(
+        phases::boundary_at(bid_time,    resolved_floor),
+        phases::boundary_at(phase_start, resolved_ceiling),
+    )
+}
 
 // === Test Functions ===
+
+#[test_only]
+public fun e_handover_floor_zero(): u64 { EHandoverFloorZero }
+#[test_only]
+public fun e_min_not_lt_max(): u64 { EMinNotLtMax }

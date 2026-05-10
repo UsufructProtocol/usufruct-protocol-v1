@@ -8,9 +8,9 @@ module usufruct::price_state;
 use usufruct::{
     config::{Self, IntegrationConfig},
     curve_shape_state,
-    descent_policy_state,
+    floor_price_policy_state,
     monetary::{Self, Price, Stake},
-    phases::{Self, Timestamp},
+    phases::{Self, Timestamp, Duration},
     price_function_state,
 };
 
@@ -36,7 +36,7 @@ use usufruct::{
 public enum PriceState has drop {
     Rest,
     Ascending  { stake: Stake },
-    Descending { last_acq_price: Price, phase_start: Timestamp },
+    Descending { last_acq_price: Price, phase_start: Timestamp, resolved_floor: Price, resolved_descent: Duration },
 }
 
 // === Events ===
@@ -77,9 +77,10 @@ public(package) fun ascending(stake: Stake): PriceState {
 }
 
 /// Construct `Descending` — Dutch auction in progress.
-/// `last_acq_price` seeds the descent; `phase_start` anchors the temporal decay.
-public(package) fun descending(last_acq_price: Price, phase_start: Timestamp): PriceState {
-    PriceState::Descending { last_acq_price, phase_start }
+/// `last_acq_price` seeds the descent; `phase_start` anchors the temporal decay;
+/// `resolved_floor` anchors the descent bottom; `resolved_descent` is the window duration.
+public(package) fun descending(last_acq_price: Price, phase_start: Timestamp, resolved_floor: Price, resolved_descent: Duration): PriceState {
+    PriceState::Descending { last_acq_price, phase_start, resolved_floor, resolved_descent }
 }
 
 /// Floor price a bidder must meet given the current pricing regime.
@@ -97,21 +98,20 @@ public(package) fun floor_price(
     now:   Timestamp,
 ): Price {
     match (state) {
-        PriceState::Rest => config::proj_min_rent_price(cfg),
+        PriceState::Rest => floor_price_policy_state::floor_for_view(config::proj_min_rent_price(cfg)),
         PriceState::Ascending { stake } =>
             price_function_state::evaluate_price_fn(
                 config::proj_price_function_state(cfg),
                 monetary::as_reference_price(*stake),
             ),
-        PriceState::Descending { last_acq_price, phase_start } => {
+        PriceState::Descending { last_acq_price, phase_start, resolved_floor, resolved_descent } => {
             let elapsed  = phases::elapsed_since(*phase_start, now);
-            let t_max    = descent_policy_state::window_ceiling(config::proj_descent(cfg));
             let h        = curve_shape_state::evaluate_curve(
                 config::proj_descent_curve(cfg),
-                phases::duration_ms(elapsed),   // ← temporal → math domain
-                phases::duration_ms(t_max),     // ← temporal → math domain
+                phases::duration_ms(elapsed),            // ← temporal → math domain
+                phases::duration_ms(*resolved_descent),  // ← temporal → math domain
             );
-            let spread   = monetary::price_mist(monetary::price_sub(*last_acq_price, config::proj_min_rent_price(cfg)));
+            let spread   = monetary::price_mist(monetary::price_sub(*last_acq_price, *resolved_floor));
             let consumed = curve_shape_state::apply(spread, h);    // ← monetary → math domain
             monetary::price_sub(*last_acq_price, monetary::price(consumed))
         },

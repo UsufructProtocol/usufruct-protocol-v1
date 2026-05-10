@@ -12,6 +12,8 @@ use usufruct::{
     descent_policy_state::{Self, DescentPolicyState},
     handover_policy_state::{Self, HandoverPolicyState},
     math,
+    floor_price_policy_state,
+    tenure_policy_state,
     monetary,
     phases,
     price_function_state::{Self, PriceFunctionState},
@@ -197,8 +199,8 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8): CorpusEntry {
 fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8): IntegrationConfig {
     let curve = make_curve(e);
     config::new_config(
-        monetary::price(MIN_RENT_PRICE),
-        phases::duration(TENURE_CEILING),
+        floor_price_policy_state::new_fixed(monetary::price(MIN_RENT_PRICE)),
+        tenure_policy_state::new_fixed(phases::duration(TENURE_CEILING)),
         make_handover(c),
         make_descent(h),
         make_retire(f),

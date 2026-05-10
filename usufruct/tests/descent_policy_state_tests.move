@@ -52,7 +52,9 @@ fun has_expired_table() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(descent_policy_state::has_expired(&c.policy, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed(), c.expected);
+        let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
+        let resolved = descent_policy_state::resolve(&c.policy, &mut gen);
+        assert_eq!(descent_policy_state::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed(), c.expected);
         i = i + 1;
     };
 }
@@ -82,7 +84,9 @@ fun expiry_at_table() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(phases::timestamp_ms(descent_policy_state::expiry_at(&c.policy, phases::timestamp(c.phase_start))), c.expected);
+        let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
+        let resolved = descent_policy_state::resolve(&c.policy, &mut gen);
+        assert_eq!(phases::timestamp_ms(descent_policy_state::expiry_at(resolved, phases::timestamp(c.phase_start))), c.expected);
         i = i + 1;
     };
 }
@@ -149,9 +153,75 @@ fun has_expired_iff_now_ge_expiry_at() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        let bool_view = descent_policy_state::has_expired(&c.policy, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed();
-        let u64_view  = c.now >= phases::timestamp_ms(descent_policy_state::expiry_at(&c.policy, phases::timestamp(c.phase_start)));
+        let mut gen   = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
+        let resolved  = descent_policy_state::resolve(&c.policy, &mut gen);
+        let bool_view = descent_policy_state::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed();
+        let u64_view  = c.now >= phases::timestamp_ms(descent_policy_state::expiry_at(resolved, phases::timestamp(c.phase_start)));
         assert_eq!(bool_view, u64_view);
+        i = i + 1;
+    };
+}
+
+// ─── RandomInRange — constructors ─────────────────────────────────────────────
+
+#[test]
+#[expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
+fun new_descent_random_in_range_rejects_zero_min() {
+    descent_policy_state::new_descent_random_in_range(phases::duration(0), phases::duration(100));
+}
+
+#[test]
+#[expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
+fun new_descent_random_in_range_rejects_min_eq_max() {
+    descent_policy_state::new_descent_random_in_range(phases::duration(50), phases::duration(50));
+}
+
+#[test]
+#[expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
+fun new_descent_random_in_range_rejects_min_gt_max() {
+    descent_policy_state::new_descent_random_in_range(phases::duration(100), phases::duration(50));
+}
+
+// ─── RandomInRange — resolve draws in bounds ──────────────────────────────────
+
+#[test]
+fun resolve_random_in_range_draws_in_bounds() {
+    let min: u64 = 10;
+    let max: u64 = 50;
+    let policy = descent_policy_state::new_descent_random_in_range(
+        phases::duration(min),
+        phases::duration(max),
+    );
+    let seeds = vector[vector[0u8], vector[1u8], vector[2u8], vector[3u8], vector[7u8]];
+    let mut i = 0;
+    while (i < seeds.length()) {
+        let mut gen = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
+        let result  = descent_policy_state::resolve(&policy, &mut gen);
+        let ms      = phases::duration_ms(result);
+        assert!(ms >= min && ms <= max, 0);
+        i = i + 1;
+    };
+}
+
+// ─── RandomInRange — expiry_at is in [phase+min, phase+max] ──────────────────
+
+#[test]
+fun random_in_range_expiry_at_within_bounds() {
+    let min: u64 = 10;
+    let max: u64 = 100;
+    let phase_start: u64 = 500;
+    let policy = descent_policy_state::new_descent_random_in_range(
+        phases::duration(min),
+        phases::duration(max),
+    );
+    let seeds = vector[vector[0u8], vector[1u8], vector[4u8], vector[9u8]];
+    let mut i = 0;
+    while (i < seeds.length()) {
+        let mut gen  = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
+        let resolved = descent_policy_state::resolve(&policy, &mut gen);
+        let expiry   = phases::timestamp_ms(descent_policy_state::expiry_at(resolved, phases::timestamp(phase_start)));
+        assert!(expiry >= phase_start + min, 0);
+        assert!(expiry <= phase_start + max, 1);
         i = i + 1;
     };
 }

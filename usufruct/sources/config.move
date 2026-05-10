@@ -12,6 +12,7 @@ use usufruct::{
     handover_policy_state::{Self, HandoverPolicyState},
     floor_price_policy_state::FloorPricePolicyState,
     tenure_policy_state::{Self as tenure_policy_state, TenurePolicyState},
+    tenure_cycles_policy_state::TenureCyclesPolicyState,
     price_function_state::PriceFunctionState,
     retire_policy_state::RetirePolicyState,
 };
@@ -25,13 +26,14 @@ const EHandoverFloorExceedsTenure: u64 = 2;   // Countdown.floor_ms >= tenure_ce
 // === Structs ===
 
 public struct IntegrationConfig has copy, drop, store {
-    min_rent_price:  FloorPricePolicyState,
-    tenure_ceiling:  TenurePolicyState,
-    handover:        HandoverPolicyState,
-    descent:         DescentPolicyState,
-    retire:          RetirePolicyState,
-    credit_curve:    CurveShapeState,
-    descent_curve:   CurveShapeState,
+    min_rent_price:   FloorPricePolicyState,
+    tenure_ceiling:   TenurePolicyState,
+    tenure_cycles:    TenureCyclesPolicyState,
+    handover:         HandoverPolicyState,
+    descent:          DescentPolicyState,
+    retire:           RetirePolicyState,
+    credit_curve:     CurveShapeState,
+    descent_curve:    CurveShapeState,
     price_function_state:  PriceFunctionState,
 }
 
@@ -47,13 +49,14 @@ public struct IntegrationConfigRegistered has copy, drop {
 // === Public Functions ===
 
 public fun new_config(
-    min_rent_price: FloorPricePolicyState,
-    tenure_ceiling: TenurePolicyState,
-    handover:       HandoverPolicyState,
-    descent:        DescentPolicyState,
-    retire:         RetirePolicyState,
-    credit_curve:   CurveShapeState,
-    descent_curve:  CurveShapeState,
+    min_rent_price:  FloorPricePolicyState,
+    tenure_ceiling:  TenurePolicyState,
+    tenure_cycles:   TenureCyclesPolicyState,
+    handover:        HandoverPolicyState,
+    descent:         DescentPolicyState,
+    retire:          RetirePolicyState,
+    credit_curve:    CurveShapeState,
+    descent_curve:   CurveShapeState,
     price_function_state: PriceFunctionState,
 ): IntegrationConfig {
     // Cross-field validation: Countdown.floor_ms < tenure_ceiling.
@@ -69,6 +72,7 @@ public fun new_config(
     IntegrationConfig {
         min_rent_price,
         tenure_ceiling,
+        tenure_cycles,
         handover,
         descent,
         retire,
@@ -82,9 +86,10 @@ public fun new_config(
 
 // ### RUNTIME PROJECTION FOR SDK ###
 
-public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):       &FloorPricePolicyState    { &cfg.min_rent_price }
-public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):        &TenurePolicyState   { &cfg.tenure_ceiling }
-public(package) fun proj_handover(cfg: &IntegrationConfig):              &HandoverPolicyState   { &cfg.handover }
+public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):        &FloorPricePolicyState      { &cfg.min_rent_price }
+public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):         &TenurePolicyState          { &cfg.tenure_ceiling }
+public(package) fun proj_tenure_cycles(cfg: &IntegrationConfig):          &TenureCyclesPolicyState    { &cfg.tenure_cycles }
+public(package) fun proj_handover(cfg: &IntegrationConfig):               &HandoverPolicyState         { &cfg.handover }
 public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicyState   { &cfg.descent }
 public(package) fun proj_retire(cfg: &IntegrationConfig):                &RetirePolicyState    { &cfg.retire }
 public(package) fun proj_credit_curve(cfg: &IntegrationConfig):          &CurveShapeState      { &cfg.credit_curve }

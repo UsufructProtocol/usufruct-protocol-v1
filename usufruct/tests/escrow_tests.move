@@ -32,6 +32,7 @@ use usufruct::{
         ConfigReset,
         ConfigResetScheduled,
     },
+    cycles,
     floor_price_policy_state,
     tenure_policy_state,
     pending_transition_state,
@@ -612,7 +613,7 @@ fun rent_from_idle_installs_new_tenant() {
 
     let floor = escrow_corpus::min_rent_price_const();
     let payment = mk_payment(floor, sc.ctx());
-    let t_cap = escrow::rent(&mut escrow, payment, &random, &clk, sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Post-condition: state is HandoverOpen.
     assert!(escrow::is_handover_open(&escrow), 0);
@@ -658,7 +659,7 @@ fun rent_from_at_dutch_installs_new_tenant() {
     let floor = escrow::compute_floor_price(&escrow, &clk);
 
     let payment = mk_payment(floor, sc.ctx());
-    let t_cap = escrow::rent(&mut escrow, payment, &random, &clk, sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
 
     assert!(escrow::is_handover_open(&escrow), 0);
 
@@ -691,14 +692,14 @@ fun rent_from_handover_open_places_bid() {
 
         // First rent: Idle → HandoverOpen.
         let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-        let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+        let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
         // Second rent: HandoverOpen → HandoverConfirmed.
         let now2 = 5_000;
         clock::set_for_testing(&mut clk, now2);
         let floor2 = escrow::compute_floor_price(&escrow, &clk);
         let p2 = mk_payment(floor2, sc.ctx());
-        let cap_t2 = escrow::rent(&mut escrow, p2, &random, &clk, sc.ctx());
+        let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
 
         assert!(escrow::is_handover_confirmed(&escrow), tag_cfg);
 
@@ -733,7 +734,7 @@ fun rent_from_handover_open_aborts_when_retiring_flag_set() {
 
     // First rent: Idle → HandoverOpen.
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Lift the retiring flag (real `retire`/`do_set_retiring_flag`
     // arrive in C5; the drive helper exercises the place_bid guard
@@ -742,7 +743,7 @@ fun rent_from_handover_open_aborts_when_retiring_flag_set() {
 
     // Second rent: HandoverOpen + retiring=true → must abort.
     let p2 = mk_payment(escrow_corpus::min_rent_price_const() * 2, sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -769,18 +770,18 @@ fun rent_from_handover_confirmed_supersedes_bid() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     let p2_amt = escrow_corpus::min_rent_price_const() * 2;
     let p2 = mk_payment(p2_amt, sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Third rent supersedes t2.
     let now3 = 1_000;
     clock::set_for_testing(&mut clk, now3);
     let floor3 = escrow::compute_floor_price(&escrow, &clk);
     let p3 = mk_payment(floor3, sc.ctx());
-    let cap_t3 = escrow::rent(&mut escrow, p3, &random, &clk, sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, cycles::cycles(1), &random, &clk, sc.ctx());
 
     assert!(escrow::is_handover_confirmed(&escrow), 0);
 
@@ -813,7 +814,7 @@ fun rent_below_floor_aborts() {
     let random = sc.take_shared<Random>();
 
     let payment = mk_payment(escrow_corpus::min_rent_price_const() - 1, sc.ctx());
-    let cap = escrow::rent(&mut escrow, payment, &random, &clk, sc.ctx());
+    let cap = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -834,7 +835,7 @@ fun rent_from_retired_aborts() {
     escrow::drive_to_retired_for_testing(&mut escrow);
 
     let payment = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap = escrow::rent(&mut escrow, payment, &random, &clk, sc.ctx());
+    let cap = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -862,14 +863,14 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
 
     // Drive to HandoverConfirmed via two rent calls.
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     let phase_start = 0;
 
     let now2 = 5_000;
     clock::set_for_testing(&mut clk, now2);
     let floor2 = escrow::compute_floor_price(&escrow, &clk);
     let p2 = mk_payment(floor2, sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
 
     let principal_t1 = escrow_corpus::min_rent_price_const();
     let owner_before = escrow::owner_value_for_testing(&escrow);
@@ -928,7 +929,7 @@ fun do_tenure_expiry_tenant_receives_no_refund() {
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let principal = escrow_corpus::min_rent_price_const();
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
@@ -967,7 +968,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     let principal = escrow_corpus::min_rent_price_const();
 
     let owner_before = escrow::owner_value_for_testing(&escrow);
@@ -1017,7 +1018,7 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Lift retiring flag (real retire arrives in C5).
     escrow::drive_to_retiring_flag_for_testing(&mut escrow);
@@ -1117,7 +1118,7 @@ fun retire_from_handover_open_only_lifts_flag() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), 0);
@@ -1163,7 +1164,7 @@ fun retire_when_already_retiring_aborts() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
     // Second call must fail — flag is already set.
     escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
@@ -1280,7 +1281,7 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Probe at clock just past the tenure boundary — Tenure is pending.
     let probe_ms = escrow_corpus::tenure_ceiling_const() + 1;
@@ -1334,13 +1335,13 @@ fun apt_fires_handover_when_countdown_expires() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     let now2 = 5_000;
     clock::set_for_testing(&mut clk, now2);
     let floor2 = escrow::compute_floor_price(&escrow, &clk);
     let p2 = mk_payment(floor2, sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), 0);
 
     // Jump clock past the countdown expiry.
@@ -1373,7 +1374,7 @@ fun apt_fires_tenure_expiry_when_elapsed() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Jump clock past the tenure boundary.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
@@ -1407,7 +1408,7 @@ fun apt_cascade_tenure_then_auction_skipped() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -1441,7 +1442,7 @@ fun borrow_asset_then_return_completes_cycle() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     let (asset_out, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
     let borrowed = event::events_by_type<AssetBorrowed>();
@@ -1469,7 +1470,7 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     let foreign_cap = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &foreign_cap, &random, &clk, sc.ctx());
@@ -1520,11 +1521,11 @@ fun borrow_asset_with_pending_cap_aborts() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     let now2 = 5_000;
     clock::set_for_testing(&mut clk, now2);
     let p2 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // cap_t2 is the pending bidder — cannot borrow.
     let (a, r) = escrow::borrow_asset(&mut escrow, &cap_t2, &random, &clk, sc.ctx());
@@ -1549,7 +1550,7 @@ fun return_asset_with_foreign_receipt_aborts() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     let (asset_out, _real_receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
 
     // Forge a receipt with a foreign escrow_id but the right asset_id.
@@ -1578,16 +1579,16 @@ fun burn_tenant_cap_burns_displaced_bidder_cap() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     let now2 = 5_000;
     clock::set_for_testing(&mut clk, now2);
     let p2 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
     // Supersede t2 with t3 — t2's cap is now stale.
     let now3 = now2 + 100;
     clock::set_for_testing(&mut clk, now3);
     let p3 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
-    let cap_t3 = escrow::rent(&mut escrow, p3, &random, &clk, sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Burn the stale cap_t2.
     escrow::burn_tenant_cap(&mut escrow, cap_t2, &random, &clk, sc.ctx());
@@ -1611,7 +1612,7 @@ fun burn_tenant_cap_on_live_current_cap_aborts() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     // cap_t1 is the live current — burn must abort.
     escrow::burn_tenant_cap(&mut escrow, cap_t1, &random, &clk, sc.ctx());
 
@@ -1655,7 +1656,7 @@ fun withdraw_earnings_drains_owner_balance() {
 
     let principal = escrow_corpus::min_rent_price_const();
     let p1 = mk_payment(principal, sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Tenure expiry routes 90% to owner.
     escrow::fire_do_tenure_expiry_for_testing(
@@ -1764,7 +1765,7 @@ fun claim_asset_sweeps_owner_earnings() {
 
     let principal = escrow_corpus::min_rent_price_const();
     let p1 = mk_payment(principal, sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow_handle, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow_handle, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     escrow::fire_do_tenure_expiry_for_testing(
         &mut escrow_handle, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
@@ -1845,13 +1846,13 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     let now2 = 1_000;
     clock::set_for_testing(&mut clk, now2);
     let floor2 = escrow::compute_floor_price(&escrow, &clk);
     let p2 = mk_payment(floor2, sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), 0);
 
     // Jump clock past the second tenure boundary so all three
@@ -1895,13 +1896,13 @@ fun e2e_full_rental_cycle_with_bid_and_handover() {
 
     // T1 rents (Idle → HandoverOpen).
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow_handle, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow_handle, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 places a bid (HandoverOpen → HandoverConfirmed).
     let now2 = 5_000;
     clock::set_for_testing(&mut clk, now2);
     let p2 = mk_payment(escrow::compute_floor_price(&escrow_handle, &clk), sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow_handle, p2, &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow_handle, p2, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // APT at expiry: handover fires (HandoverConfirmed → HandoverOpen
     // with t2 promoted).
@@ -1969,7 +1970,7 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
 
         let principal = escrow_corpus::min_rent_price_const();
         let p1 = mk_payment(principal, sc.ctx());
-        let cap_t1 = escrow::rent(&mut escrow_handle, p1, &random, &clk, sc.ctx());
+        let cap_t1 = escrow::rent(&mut escrow_handle, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
         // APT past tenure → AtDutch.
         clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
@@ -2011,7 +2012,7 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
     let random = sc.take_shared<Random>();
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow_handle, p1, &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow_handle, p1, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Retire mid-rental — flag lifts, state stays HO.
     escrow::retire(&mut escrow_handle, &owner_cap, &random, &clk, sc.ctx());
@@ -2065,7 +2066,7 @@ fun e2e_two_tenant_successions_price_escalates() {
 
     // T1: rent from Idle at min_rent_price → HandoverOpen.
     let price_t1 = escrow_corpus::min_rent_price_const();
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // T2: bid on T1's tenure → HandoverConfirmed.
@@ -2073,7 +2074,7 @@ fun e2e_two_tenant_successions_price_escalates() {
     clock::set_for_testing(&mut clk, now_t2);
     let price_t2  = escrow::compute_floor_price(&escrow, &clk);
     assert!(price_t2 > price_t1, tag); // price escalated
-    let cap_t2    = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2    = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // APT: Instant handover fires at bid_time_ms=1000 → HandoverOpen (T2 current).
@@ -2086,7 +2087,7 @@ fun e2e_two_tenant_successions_price_escalates() {
     clock::set_for_testing(&mut clk, now_t3);
     let price_t3  = escrow::compute_floor_price(&escrow, &clk);
     assert!(price_t3 > price_t2, tag); // price escalated again
-    let cap_t3    = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t3    = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // APT: second Instant handover → HandoverOpen (T3 current).
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -2147,14 +2148,14 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 
     // T1: rent from Idle → HandoverOpen at min_rent_price.
     let price_t1 = escrow_corpus::min_rent_price_const();
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2: bid on T1's tenure (HO → HC). floor_price > min_rent_price.
     let now_t2   = 1_000;
     clock::set_for_testing(&mut clk, now_t2);
     let price_t2 = escrow::compute_floor_price(&escrow, &clk);
     assert!(price_t2 > price_t1, tag);
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // APT: Instant handover → HandoverOpen (T2 current, phase_start = now_t2).
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -2176,7 +2177,7 @@ fun e2e_auction_winner_rents_at_mid_descent() {
     assert!(price_t3 >= escrow_corpus::min_rent_price_const(), tag); // never below min
 
     // T3 rents at the descending price → HandoverOpen.
-    let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -2269,8 +2270,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     // T1: rent from Idle → HandoverOpen.
     let cap_t1   = escrow::rent(
         &mut escrow,
-        mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()),
-        &random,
+        mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random,
         &clk,
         sc.ctx(),
     );
@@ -2281,8 +2281,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2   = escrow::rent(
         &mut escrow,
-        mk_payment(floor_t2, sc.ctx()),
-        &random,
+        mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random,
         &clk,
         sc.ctx(),
     );
@@ -2295,8 +2294,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     let floor_t3 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t3   = escrow::rent(
         &mut escrow,
-        mk_payment(floor_t3, sc.ctx()),
-        &random,
+        mk_payment(floor_t3, sc.ctx()), cycles::cycles(1), &random,
         &clk,
         sc.ctx(),
     );
@@ -2350,8 +2348,7 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
         // T1 rents at min_rent_price — no successor.
         let cap_t1 = escrow::rent(
             &mut escrow,
-            mk_payment(min_price, sc.ctx()),
-            &random,
+            mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random,
             &clk,
             sc.ctx(),
         );
@@ -2383,8 +2380,7 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
         clock::set_for_testing(&mut clk, now_mid);
         let cap_t2 = escrow::rent(
             &mut escrow,
-            mk_payment(min_price, sc.ctx()),
-            &random,
+            mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random,
             &clk,
             sc.ctx(),
         );
@@ -2421,7 +2417,7 @@ fun e2e_b1_five_ptbs_borrow_chain() {
     // PTB 1: T1 rents from Idle — immediately current.
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
-    let cap_t1 = escrow::rent(&mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
     assert!(escrow::is_handover_open(&escrow), tag);
@@ -2439,7 +2435,7 @@ fun e2e_b1_five_ptbs_borrow_chain() {
         let t = (ptb as u64) * 1_000;
         clock::set_for_testing(&mut clk, t);
         let floor = escrow::compute_floor_price(&escrow, &clk);
-        let cap = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), &random_ptb, &clk, sc.ctx());
+        let cap = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), cycles::cycles(1), &random_ptb, &clk, sc.ctx());
         escrow::apply_pending_transition_states(&mut escrow, &random_ptb, &clk, sc.ctx());
         let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap, &random_ptb, &clk, sc.ctx());
         escrow::return_asset(&mut escrow, asset, receipt);
@@ -2490,7 +2486,7 @@ fun e2e_b1_instant_borrow_across_curve_shape_states() {
         let random = sc.take_shared<Random>();
 
         // T1 rents from Idle — immediately current — borrows in same PTB.
-        let cap_t1 = escrow::rent(&mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+        let cap_t1 = escrow::rent(&mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
         let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
         escrow::return_asset(&mut escrow, asset, receipt);
         assert!(escrow::is_handover_open(&escrow), tag);
@@ -2520,12 +2516,12 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 bids → APT Instant → T1 stale.
     clock::set_for_testing(&mut clk, 1_000);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     // T1's cap is now stale — borrow must abort.
@@ -2558,11 +2554,11 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
 
     // T1 rents, tenure expires → AtDutchAuction.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     // T2 places a bid and APT fires handover so last_acq_price > min to get a spread.
     clock::set_for_testing(&mut clk, 1_000);
     let floor_b4  = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t2_temp = escrow::rent(&mut escrow, mk_payment(floor_b4, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2_temp = escrow::rent(&mut escrow, mk_payment(floor_b4, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     // Now T2 holds tenure; advance past T2's tenure ceiling.
     let tenure_boundary = 1_000 + escrow_corpus::tenure_ceiling_const();
@@ -2574,7 +2570,7 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     let now_mid  = tenure_boundary + escrow_corpus::descent_window_h1_const() / 2;
     clock::set_for_testing(&mut clk, now_mid);
     let price_t3 = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t3   = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t3   = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // T3 borrows in the same PTB — no APT needed (do_install_new_tenant makes T3 current directly).
@@ -2606,7 +2602,7 @@ fun e2e_b6_same_ptb_repeated_borrow_return_cycles() {
     let random  = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Cycle 1
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
@@ -2644,11 +2640,11 @@ fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
     let random  = sc.take_shared<Random>();
 
     let price_t1 = escrow_corpus::min_rent_price_const();
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     let price_t2 = escrow::compute_floor_price(&escrow, &clk);
     assert!(price_t2 > price_t1, tag);
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     let price_t3 = escrow::compute_floor_price(&escrow, &clk);
@@ -2659,7 +2655,7 @@ fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
     let gap_3_2 = price_t3 - price_t2;
     assert!(gap_3_2 > gap_2_1, tag);
 
-    let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -2689,17 +2685,17 @@ fun e2e_p2_fixed_delta_gap_is_constant_across_re_prices() {
     let delta   = escrow_corpus::fixed_delta_value_const();
 
     let price_t1 = escrow_corpus::min_rent_price_const();
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     let price_t2 = escrow::compute_floor_price(&escrow, &clk);
     assert_eq!(price_t2 - price_t1, delta);
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     let price_t3 = escrow::compute_floor_price(&escrow, &clk);
     assert_eq!(price_t3 - price_t2, delta); // constant gap
 
-    let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -2731,14 +2727,14 @@ fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
 
     // T1 rents at t=0.
     let cap_t1 = escrow::rent(
-        &mut escrow_handle, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow_handle, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 bids at t=tenure_ceiling/2 → APT Instant fires handover.
     // T1 held for half the tenure: used_credit > 0 → owner accumulates earnings.
     let t_mid    = escrow_corpus::tenure_ceiling_const() / 2;
     clock::set_for_testing(&mut clk, t_mid);
     let floor_e1 = escrow::compute_floor_price(&escrow_handle, &clk);
-    let cap_t2   = escrow::rent(&mut escrow_handle, mk_payment(floor_e1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow_handle, mk_payment(floor_e1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow_handle, &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow_handle), tag);
 
@@ -2793,12 +2789,12 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
 
     // T1 rents (Idle → HandoverOpen).
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 places a bid (HandoverOpen → HandoverConfirmed).
     clock::set_for_testing(&mut clk, 1_000);
     let floor_r1 = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_r1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_r1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // Owner sets retiring flag while in HandoverConfirmed.
@@ -2849,7 +2845,7 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Exact boundary: clock == phase_start(0) + tenure_ceiling.
     let boundary = escrow_corpus::tenure_ceiling_const();
@@ -2880,7 +2876,7 @@ fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // One ms before the boundary — nothing should fire.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() - 1);
@@ -2914,19 +2910,19 @@ fun e2e_f2_fixed_time_T3_supersedes_T2_wins_at_tenure_boundary() {
 
     // T1 rents (Idle → HandoverOpen, phase_start = 0).
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 bids at t=1000 → HandoverConfirmed.
     clock::set_for_testing(&mut clk, 1_000);
     let floor_f2a = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t2    = escrow::rent(&mut escrow, mk_payment(floor_f2a, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2    = escrow::rent(&mut escrow, mk_payment(floor_f2a, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
     assert_eq!(event::events_by_type<BidPlaced>().length(), 1);
 
     // T3 supersedes T2 at t=2000 (before tenure_ceiling=100_000).
     clock::set_for_testing(&mut clk, 2_000);
     let floor_f2b = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t3    = escrow::rent(&mut escrow, mk_payment(floor_f2b, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t3    = escrow::rent(&mut escrow, mk_payment(floor_f2b, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert_eq!(event::events_by_type<BidSuperseded>().length(), 1);
 
     // APT at tenure_ceiling (= FixedTime handover expiry = phase_start + tenure_ceiling = 100_000).
@@ -2977,7 +2973,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
     assert!(escrow::is_handover_open(&escrow), tag);
@@ -2993,7 +2989,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     let random = sc.take_shared<Random>();
     clock::set_for_testing(&mut clk, 1_000);
     let floor2  = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t2  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     // Countdown has not elapsed — T2 is still pending, state unchanged.
@@ -3051,13 +3047,13 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
 
     // T1 (OWNER) rents from Idle → HandoverOpen (current at min_price).
     let cap_t1_current = escrow::rent(
-        &mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // OWNER bids on own tenure at t=1_000 → HandoverConfirmed (current + pending).
     clock::set_for_testing(&mut clk, 1_000);
     let price_2     = escrow::compute_floor_price(&escrow, &clk);
     let cap_t1_bid1 = escrow::rent(
-        &mut escrow, mk_payment(price_2, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(price_2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // OWNER supersedes own pending bid at t=2_000 (before 1_000+25_000 countdown).
@@ -3065,7 +3061,7 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     let price_3     = escrow::compute_floor_price(&escrow, &clk);
     assert!(price_3 > price_2, tag);
     let cap_t1_bid2 = escrow::rent(
-        &mut escrow, mk_payment(price_3, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(price_3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let sup = event::events_by_type<BidSuperseded>();
     assert_eq!(sup.length(), 1);
     let se = sup.borrow(0);
@@ -3119,7 +3115,7 @@ fun e2e_current_tenant_defends_against_challenger() {
 
     // T1 (OWNER) rents from Idle → HandoverOpen.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 (CHALLENGER) bids at t=1_000 → HandoverConfirmed.
     clock::set_for_testing(&mut clk, 1_000);
@@ -3127,7 +3123,7 @@ fun e2e_current_tenant_defends_against_challenger() {
     sc.next_tx(CHALLENGER);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     let floor_2 = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t2  = escrow::rent(&mut escrow, mk_payment(floor_2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2  = escrow::rent(&mut escrow, mk_payment(floor_2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
     test_scenario::return_shared(escrow);
 
@@ -3136,7 +3132,7 @@ fun e2e_current_tenant_defends_against_challenger() {
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     clock::set_for_testing(&mut clk, 2_000);
     let floor_3    = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t1_new = escrow::rent(&mut escrow, mk_payment(floor_3, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1_new = escrow::rent(&mut escrow, mk_payment(floor_3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let sup = event::events_by_type<BidSuperseded>();
     assert_eq!(sup.length(), 1);
     let se = sup.borrow(0);
@@ -3192,7 +3188,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
 
     // Idle: pay 2×min_price. Floor after = 2×min + delta (not min + delta).
     let price_t1 = 2 * min_price;
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let rs       = event::events_by_type<RentStarted>();
     assert_eq!(asset_context_state::rent_started_price_paid(rs.borrow(0)), price_t1);
     assert!(price_t1 >= asset_context_state::rent_started_floor_price(rs.borrow(0)), tag);
@@ -3202,7 +3198,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     clock::set_for_testing(&mut clk, 1_000);
     let floor_ho = price_t1 + delta;
     let price_t2 = 2 * floor_ho;
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let bp       = event::events_by_type<BidPlaced>();
     assert_eq!(asset_context_state::bid_placed_bid_amount(bp.borrow(0)), price_t2);
     assert!(price_t2 >= asset_context_state::bid_placed_floor_price(bp.borrow(0)), tag);
@@ -3212,7 +3208,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     clock::set_for_testing(&mut clk, 2_000);
     let floor_hc = price_t2 + delta;
     let price_t3 = 2 * floor_hc;
-    let cap_t3   = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t3   = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let bs       = event::events_by_type<BidSuperseded>();
     assert_eq!(asset_context_state::bid_superseded_new_bid_amount(bs.borrow(0)), price_t3);
     assert!(price_t3 > floor_hc, tag);
@@ -3238,7 +3234,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     clock::set_for_testing(&mut clk, now_mid);
     let descent_price = escrow::compute_floor_price(&escrow, &clk);
     let price_t4      = 2 * descent_price;
-    let cap_t4        = escrow::rent(&mut escrow, mk_payment(price_t4, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t4        = escrow::rent(&mut escrow, mk_payment(price_t4, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let rs_all        = event::events_by_type<RentStarted>();
     assert_eq!(rs_all.length(), 2); // Idle + AtDutch
     assert_eq!(asset_context_state::rent_started_price_paid(rs_all.borrow(1)), price_t4);
@@ -3287,14 +3283,14 @@ fun e2e_hc_floor_uses_pending_stake_not_current_stake() {
 
     // T1 rents from Idle at min_price (10 SUI).
     let cap_t1   = escrow::rent(
-        &mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let floor_ho = escrow::compute_floor_price(&escrow, &clk);
     assert_eq!(floor_ho, min_price + delta); // = 20 SUI
 
     // T2 bids at exactly floor_HO (minimal bid) → HandoverConfirmed.
     // T2_stake = floor_HO = min_price + delta = 20 SUI.
     let cap_t2   = escrow::rent(
-        &mut escrow, mk_payment(floor_ho, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(floor_ho, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // floor_HC must use T2's pending stake (20 SUI), not T1's current stake (10 SUI).
@@ -3339,13 +3335,13 @@ fun e2e_fin1_handover_financial_conservation() {
 
     // T1 rents at min_price (this is the principal we will conserve).
     let price_t1 = escrow_corpus::min_rent_price_const();
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 bids at mid-tenure so used_credit > 0.
     let t_mid    = escrow_corpus::tenure_ceiling_const() / 2; // 50_000 ms
     clock::set_for_testing(&mut clk, t_mid);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Instant handover fires at bid_time = t_mid.
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -3406,14 +3402,14 @@ fun e2e_fin2_tenure_expiry_financial_conservation() {
 
     // T1 rents at min_price from Idle → HandoverOpen (T1's stake = min_price).
     let price_t1 = escrow_corpus::min_rent_price_const();
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 bids at t=1_000 → price_t2 = min_price + delta (FixedDelta) > price_t1.
     let now_t2   = 1_000u64;
     clock::set_for_testing(&mut clk, now_t2);
     let price_t2 = escrow::compute_floor_price(&escrow, &clk);
     assert!(price_t2 > price_t1, tag); // stakes differ — non-trivial test
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Instant handover fires: T2 is now current, T2.phase_start = now_t2.
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -3485,7 +3481,7 @@ fun e2e_fin3_90_10_split_exact() {
     let mut clk_a = clock::create_for_testing(sc.ctx());
     let random_a  = sc.take_shared<Random>();
     let cap_a1    = escrow::rent(
-        &mut escrow_a, mk_payment(min_price, sc.ctx()), &random_a, &clk_a, sc.ctx());
+        &mut escrow_a, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random_a, &clk_a, sc.ctx());
     clock::set_for_testing(&mut clk_a, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow_a, &random_a, &clk_a, sc.ctx());
     {
@@ -3515,12 +3511,12 @@ fun e2e_fin3_90_10_split_exact() {
     let mut clk_b = clock::create_for_testing(sc.ctx());
     let random_b  = sc.take_shared<Random>();
     let cap_b1    = escrow::rent(
-        &mut escrow_b, mk_payment(min_price, sc.ctx()), &random_b, &clk_b, sc.ctx());
+        &mut escrow_b, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random_b, &clk_b, sc.ctx());
     let t_mid     = escrow_corpus::tenure_ceiling_const() / 2; // 50_000 ms
     clock::set_for_testing(&mut clk_b, t_mid);
     let floor_b   = escrow::compute_floor_price(&escrow_b, &clk_b);
     let cap_b2    = escrow::rent(
-        &mut escrow_b, mk_payment(floor_b, sc.ctx()), &random_b, &clk_b, sc.ctx());
+        &mut escrow_b, mk_payment(floor_b, sc.ctx()), cycles::cycles(1), &random_b, &clk_b, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow_b, &random_b, &clk_b, sc.ctx());
     assert!(escrow::is_handover_open(&escrow_b), tag);
     {
@@ -3579,7 +3575,7 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
 
         // T1 rents at 2×min_price (phase_start = 0). No handover needed for spread.
         let cap_t1 = escrow::rent(
-            &mut escrow, mk_payment(stake, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(stake, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
         // APT at exact tenure boundary → AtDutchAuction (last_acq_price = stake).
         clock::set_for_testing(&mut clk, tenure_boundary);
@@ -3635,7 +3631,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 
         // T1 rents at min_price (stake = min_price, phase_start = 0).
         let cap_t1 = escrow::rent(
-            &mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
         // DESC-3: at exact phase_start (elapsed = 0), no stake is earned yet.
         // compute_used_credit is a pure view — does not trigger APT.
@@ -3683,7 +3679,7 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
 
     // T1 rents at 3×min_price. Elevated stake to make the reset contrast visible.
     let price_t1 = 3 * min_price;
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     // floor_HO = T1_stake + delta = 3×min + delta — well above min_price.
     assert!(escrow::compute_floor_price(&escrow, &clk) > min_price, tag);
 
@@ -3701,7 +3697,7 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
     assert_eq!(floor_after, min_price);
 
     // T2 rents at min_rent_price — the protocol accepts the minimum entry.
-    let cap_t2 = escrow::rent(&mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -3742,13 +3738,13 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
 
     // T1 rents from Idle → HandoverOpen (phase_start = 0).
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 bids at t=1_000 → HandoverConfirmed (countdown_expiry = 26_000).
     clock::set_for_testing(&mut clk, 1_000);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2   = escrow::rent(
-        &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // ── Boundary 1: Handover ────────────────────────────────────────────────
@@ -3886,7 +3882,7 @@ fun e2e_retire2_from_at_dutch() {
 
     // T1 rents; tenure expires → AtDutchAuction.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
@@ -3917,7 +3913,7 @@ fun e2e_retire3_from_handover_open() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // Retiring flag set; state stays HandoverOpen.
@@ -3951,11 +3947,11 @@ fun e2e_retire4_from_handover_confirmed() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     clock::set_for_testing(&mut clk, 1_000);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2   = escrow::rent(
-        &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // Retiring flag set in HC; state stays HandoverConfirmed.
@@ -3996,7 +3992,7 @@ fun e2e_retire5_from_handover_open_while_borrowed() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Asset borrowed — lifecycle state has asset = None.
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
@@ -4036,11 +4032,11 @@ fun e2e_retire6_from_handover_confirmed_while_borrowed() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     clock::set_for_testing(&mut clk, 1_000);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2   = escrow::rent(
-        &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // T1 (current cap) borrows in HC. borrow_asset APT: t=1_000 < expiry=26_000 → no-op.
@@ -4136,7 +4132,7 @@ fun e2e_cred1_used_credit_clamped_at_handover_confirmed_expiry_across_curves() {
 
         // T1 rents at t=0 → HandoverOpen (Accruing regime).
         let cap_t1 = escrow::rent(
-            &mut escrow, mk_payment(stake, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(stake, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
         // Accruing: used_credit is strictly increasing before the bid.
         clock::set_for_testing(&mut clk, 500);
@@ -4150,7 +4146,7 @@ fun e2e_cred1_used_credit_clamped_at_handover_confirmed_expiry_across_curves() {
         // clock already at 1_000 from above.
         let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
         let cap_t2   = escrow::rent(
-            &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
         // CRED-1: Capped regime freezes credit at expiry for every curve shape.
         clock::set_for_testing(&mut clk, expiry);
@@ -4233,13 +4229,13 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
 
         // T1 rents at t=0 → HandoverOpen.
         let cap_t1 = escrow::rent(
-            &mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
         // T2 bids at t_mid → Instant handover fires → T2 current.
         clock::set_for_testing(&mut clk, t_mid);
         let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
         let cap_t2   = escrow::rent(
-            &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
         escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
         assert!(escrow::is_handover_open(&escrow), tag);
 
@@ -4323,11 +4319,11 @@ fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
 
         // T1 rents at t=0 (phase_start=0); T2 bids → HC (expiry=100_000).
         let cap_t1 = escrow::rent(
-            &mut escrow, mk_payment(stake, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(stake, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
         clock::set_for_testing(&mut clk, 1_000);
         let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
         let cap_t2   = escrow::rent(
-            &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
         // APT at tenure boundary: FixedTime expiry fires → handover.
         clock::set_for_testing(&mut clk, boundary);
@@ -4383,13 +4379,13 @@ fun e2e_corpus_gap_compound_delta_financial_conservation() {
 
     // T1 rents at min_price; T2 bids at CompoundDelta floor (> T1+FixedDelta).
     let cap_t1   = escrow::rent(
-        &mut escrow, mk_payment(stake_t1, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(stake_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let t_mid    = escrow_corpus::tenure_ceiling_const() / 2;
     clock::set_for_testing(&mut clk, t_mid);
     let stake_t2 = escrow::compute_floor_price(&escrow, &clk);
     assert!(stake_t2 > stake_t1, tag); // CompoundDelta raises the floor
     let cap_t2   = escrow::rent(
-        &mut escrow, mk_payment(stake_t2, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(stake_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Instant handover fires → T2 current.
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -4463,7 +4459,7 @@ fun e2e_corpus_gap_deferred_retire_from_handover_open_after_floor() {
     // T1 rents late: tenure_boundary(10_050_000) > retire_floor(10_000_000).
     clock::set_for_testing(&mut clk, t_rent);
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // retire() after floor elapses but before tenure expires.
@@ -4505,7 +4501,7 @@ fun e2e_corpus_gap_retiring_flag_bypasses_at_dutch_with_window_policy() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
     // Retire from HO with h=1: retiring flag set. State stays HO.
@@ -4560,13 +4556,13 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 
     // T1 rents (Idle → HO, phase_start=0).
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(min_price, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(min_price, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 bids at t=1_000 → HC. Stamps countdown_expiry = 1_000 + 25_000 = 26_000.
     clock::set_for_testing(&mut clk, 1_000);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2   = escrow::rent(
-        &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
 
     // Read the original countdown expiry from the BidPlaced event — this is the oracle.
@@ -4583,7 +4579,7 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
     clock::set_for_testing(&mut clk, 2_000);
     let floor_t3 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t3   = escrow::rent(
-        &mut escrow, mk_payment(floor_t3, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(floor_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), tag);
     assert_eq!(event::events_by_type<BidSuperseded>().length(), 1);
 
@@ -4712,7 +4708,7 @@ fun reset_config_renting_schedules_without_interrupting() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     let new_cfg = escrow_corpus::by_tag(1);
     escrow::reset_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
@@ -4747,7 +4743,7 @@ fun reset_config_tenure_expiry_skips_at_dutch_collapses_to_idle() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     let new_cfg = escrow_corpus::by_tag(1);
     escrow::reset_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
@@ -4787,7 +4783,7 @@ fun reset_config_handover_preserves_pending_does_not_apply() {
 
     // T1 rents → HandoverOpen.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Schedule config reset.
     let new_cfg = escrow_corpus::by_tag(1);
@@ -4835,7 +4831,7 @@ fun reset_config_chain_handover_then_tenure_expiry_applies() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     let new_cfg = escrow_corpus::by_tag(1);
     escrow::reset_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
@@ -4887,7 +4883,7 @@ fun reset_config_override_last_write_wins() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Three distinct configs: original=tag(0,0,0,1,0), cfg_a=tag(1,0,0,0,0) c=1 countdown,
     // cfg_b=tag(1) f=1 deferred. All three are structurally different.
@@ -4938,7 +4934,7 @@ fun reset_config_retire_wins_discards_pending_silently() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     let new_cfg = escrow_corpus::by_tag(1);
     escrow::reset_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
@@ -5003,7 +4999,7 @@ fun reset_config_on_retiring_aborts() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Set the retiring flag.
     escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
@@ -5121,7 +5117,7 @@ fun reset_config_behavior_min_rent_price_bid_rejected_after_reset() {
     escrow::reset_config(&mut escrow, &owner_cap, cfg_high, &random, &clk, sc.ctx());
 
     // 15 SUI is above the old 10 SUI floor but below the new 20 SUI floor.
-    let cap = escrow::rent(&mut escrow, mk_payment(15_000_000_000, sc.ctx()), &random, &clk, sc.ctx());
+    let cap = escrow::rent(&mut escrow, mk_payment(15_000_000_000, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -5146,7 +5142,7 @@ fun reset_config_behavior_tenure_ceiling_apt_detection() {
 
     // T1 rents under cfg_long (ceiling=100_000). phase_start=0.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // At t=60_000, T1's tenure (ceiling=100_000) has NOT expired yet.
@@ -5163,7 +5159,7 @@ fun reset_config_behavior_tenure_ceiling_apt_detection() {
 
     // Rent T2 under cfg_short (ceiling=50_000). phase_start=100_000.
     let cap_t2 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // T2's tenure expires at 100_000 + 50_000 = 150_000.
@@ -5197,7 +5193,7 @@ fun reset_config_behavior_descent_policy_atdutch_presence() {
 
     // T1 rents under cfg_skip.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // Schedule cfg_window; will be applied at T1's tenure expiry.
@@ -5212,7 +5208,7 @@ fun reset_config_behavior_descent_policy_atdutch_presence() {
 
     // T2 rents under cfg_window (Window descent). phase_start = tenure_ceiling.
     let cap_t2 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // T2's tenure expires at 2 × tenure_ceiling. With Window descent and no
@@ -5245,7 +5241,7 @@ fun reset_config_behavior_credit_curve_used_credit_changes() {
 
     // T1 rents under cfg_linear; phase_start = 0.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // T1 at 25% of its tenure.
@@ -5259,7 +5255,7 @@ fun reset_config_behavior_credit_curve_used_credit_changes() {
 
     // T2 rents under cfg_smoothstep; phase_start = tenure_ceiling.
     let cap_t2 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // T2 at 25% of its tenure: tenure_ceiling + quarter_ms.
@@ -5383,13 +5379,13 @@ fun reset_config_behavior_handover_instant_borrow_succeeds() {
 
     // T1 becomes current tenant.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // T2 bids — with Instant policy, handover fires immediately via APT.
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2 = escrow::rent(
-        &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // Fire the Instant handover.
@@ -5423,7 +5419,7 @@ fun reset_config_behavior_handover_fixed_borrow_blocked() {
 
     // T1 rents under cfg_instant.
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // Schedule cfg_fixed (FixedTime); applied when T1's tenure expires.
@@ -5436,14 +5432,14 @@ fun reset_config_behavior_handover_fixed_borrow_blocked() {
 
     // T3 rents under cfg_fixed (FixedTime). phase_start = tenure_ceiling = 100_000.
     let cap_t3 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // T4 bids; FixedTime handover_expiry = 100_000 + 100_000 = 200_000.
     // Clock is still at 100_000 — far below expiry.
     let floor_t4 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t4 = escrow::rent(
-        &mut escrow, mk_payment(floor_t4, sc.ctx()), &random, &clk, sc.ctx(),
+        &mut escrow, mk_payment(floor_t4, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
     // T4's cap is Pending — handover has not fired. borrow_asset aborts.
@@ -5483,13 +5479,13 @@ fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
 
     // T1 rents (Idle → HO).
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // T2 bids (HO → HC). cap_t2 is the pending cap.
     clock::set_for_testing(&mut clk, 1_000);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2   = escrow::rent(
-        &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // EV-1: BidPlaced.tenant_cap_id == the cap returned by rent().
     let bp = event::events_by_type<BidPlaced>();
@@ -5537,7 +5533,7 @@ fun e2e_ev3_borrow_return_cap_id_consistency() {
 
     // T1 rents → HO (T1 is current).
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let cap_t1_id = object::id(&cap_t1);
 
     // Borrow and return in same PTB.
@@ -5588,13 +5584,13 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
 
         // T1 rents → HO (phase_start = 0).
         let cap_t1 = escrow::rent(
-            &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
         // T2 bids at bid_time → HC. BidPlaced event stamps the expiry.
         clock::set_for_testing(&mut clk, bid_time);
         let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
         let cap_t2   = escrow::rent(
-            &mut escrow, mk_payment(floor_t2, sc.ctx()), &random, &clk, sc.ctx());
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
         let bp = event::events_by_type<BidPlaced>();
         assert_eq!(bp.length(), 1);
@@ -5755,7 +5751,7 @@ fun random_floor_resolves_in_range_after_tenure_expiry() {
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Tenure + descent window → Idle
     let t_idle = escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const();
@@ -5814,7 +5810,7 @@ fun bid_at_max_always_succeeds_with_random_policy() {
 
     // Bidding at max guarantees acceptance regardless of drawn floor
     let cap = escrow::rent(
-        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     assert!(escrow::is_rented(&escrow), 0);
 
     transfer::public_transfer(cap, OWNER);
@@ -5838,7 +5834,7 @@ fun bid_below_min_always_fails_with_random_policy() {
 
     // Any drawn floor ≥ RANDOM_MIN > RANDOM_MIN - 1 → always rejected
     let cap = escrow::rent(
-        &mut escrow, mk_payment(RANDOM_MIN - 1, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(RANDOM_MIN - 1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     // Unreachable — abort above. Required to satisfy Move's linear type checker.
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -5929,7 +5925,7 @@ fun e2e_random_two_cycles_atdutch_collapses_at_own_resolved_floor() {
 
     // Rent at max (guaranteed to succeed regardless of F1)
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Tenure expires → AtDutch (phase_start = 100_000, resolved_floor = F1 carried)
     let t_atdutch_1 = escrow_corpus::tenure_ceiling_const();
@@ -5953,7 +5949,7 @@ fun e2e_random_two_cycles_atdutch_collapses_at_own_resolved_floor() {
 
     // Rent cycle 2 (phase_start = t_collapse_1)
     let cap_t2 = escrow::rent(
-        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Tenure expires → AtDutch cycle 2 (phase_start = t_collapse_1 + tenure)
     let t_atdutch_2 = t_collapse_1 + escrow_corpus::tenure_ceiling_const();
@@ -5999,7 +5995,7 @@ fun e2e_random_atdutch_descent_bottom_is_cycle_resolved_floor() {
 
     // Rent → tenure expires → AtDutch (resolved_floor carried into descent)
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let t_atdutch = escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, t_atdutch);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -6046,7 +6042,7 @@ fun e2e_random_reset_config_changes_range_for_next_cycle() {
 
     // Rent, then reset config to range [20, 30]
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let cfg2 = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(0), range2_min, range2_max,
     );
@@ -6094,7 +6090,7 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     // Rent at 2× floor (sets last_acq_price for the descent)
     let bid = fixed_price * 2;
     let cap_t1 = escrow::rent(
-        &mut escrow, mk_payment(bid, sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(bid, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Tenure expires → AtDutch (resolved_floor = fixed_price carried into descent)
     let t_atdutch = escrow_corpus::tenure_ceiling_const();
@@ -6188,7 +6184,7 @@ fun random_ceiling_resolves_in_range_after_integrate() {
 
     // Rent at t=0; phase_start=0 so tenure_expiry_ms == resolved_ceiling_ms
     let cap = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let expiry = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
     assert!(expiry >= CEILING_RAND_MIN, 0);
     assert!(expiry <= CEILING_RAND_MAX, 1);
@@ -6230,7 +6226,7 @@ fun random_ceiling_resolves_in_range_after_auction_expiry() {
 
     // Rent from the new Idle (phase_start = descent_window); resolved_ceiling ∈ [min, max]
     let cap = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let phase_start = *option::borrow(&escrow::phase_start_ms(&escrow));
     let expiry      = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
     let resolved_ceiling_ms = expiry - phase_start;
@@ -6262,7 +6258,7 @@ fun tenure_ceiling_view_returns_policy_min_not_resolved() {
 
     // After renting, tenure_expiry_ms() reflects the actual resolved ceiling
     let cap = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let expiry = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
     assert!(expiry >= CEILING_RAND_MIN, 1);
     assert!(expiry <= CEILING_RAND_MAX, 2);
@@ -6291,7 +6287,7 @@ fun random_ceiling_apt_fires_at_resolved_ceiling() {
 
     // Rent at t=0; resolved_ceiling_ms = tenure_expiry_ms (since phase_start=0)
     let cap = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let expiry_ms = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
 
     // One ms before the resolved ceiling: no pending transition
@@ -6323,7 +6319,7 @@ fun random_ceiling_stable_within_rental_cycle() {
     let random = sc.take_shared<Random>();
 
     let cap = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Read tenure_expiry_ms twice — must be identical (stored, not re-drawn)
     let expiry_a = escrow::tenure_expiry_ms(&escrow);
@@ -6355,7 +6351,7 @@ fun random_ceiling_reset_config_changes_range() {
 
     // Cycle 1: resolved_ceiling ∈ [50k, 150k]
     let cap1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let expiry1 = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
     assert!(expiry1 >= CEILING_RAND_MIN, 0);
     assert!(expiry1 <= CEILING_RAND_MAX, 1);
@@ -6373,7 +6369,7 @@ fun random_ceiling_reset_config_changes_range() {
 
     // Cycle 2: resolved_ceiling drawn from new range [200k, 300k]
     let cap2 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let phase2 = *option::borrow(&escrow::phase_start_ms(&escrow));
     let expiry2 = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
     let resolved2 = expiry2 - phase2;
@@ -6405,7 +6401,7 @@ fun random_ceiling_different_per_cycle() {
 
     // Cycle 1
     let cap1 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let expiry1 = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
     assert!(expiry1 >= CEILING_RAND_MIN, 0);
     assert!(expiry1 <= CEILING_RAND_MAX, 1);
@@ -6418,7 +6414,7 @@ fun random_ceiling_different_per_cycle() {
 
     // Cycle 2: resolved_ceiling also ∈ [min, max] (fresh draw)
     let cap2 = escrow::rent(
-        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), &random, &clk, sc.ctx());
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
     let phase2  = *option::borrow(&escrow::phase_start_ms(&escrow));
     let expiry2 = *option::borrow(&escrow::tenure_expiry_ms(&escrow));
     let ceiling2 = expiry2 - phase2;

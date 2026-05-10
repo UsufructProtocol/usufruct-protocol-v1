@@ -13,6 +13,7 @@ use usufruct::{
     handover_policy_state::{Self, HandoverPolicyState},
     math,
     floor_price_policy_state,
+    tenure_cycles_policy_state,
     tenure_policy_state,
     monetary,
     phases,
@@ -152,6 +153,7 @@ public(package) fun with_min_rent_price(cfg: IntegrationConfig, price_mist: u64)
     config::new_config(
         floor_price_policy_state::new_fixed(monetary::price(price_mist)),
         *config::proj_tenure_ceiling(&cfg),
+        *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_retire(&cfg),
@@ -166,6 +168,7 @@ public(package) fun with_random_min_rent_price(cfg: IntegrationConfig, min_mist:
     config::new_config(
         floor_price_policy_state::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
         *config::proj_tenure_ceiling(&cfg),
+        *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_retire(&cfg),
@@ -180,6 +183,7 @@ public(package) fun with_tenure_ceiling(cfg: IntegrationConfig, ceiling_ms: u64)
     config::new_config(
         *config::proj_min_rent_price(&cfg),
         tenure_policy_state::new_fixed(phases::duration(ceiling_ms)),
+        *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_retire(&cfg),
@@ -194,6 +198,7 @@ public(package) fun with_random_tenure_ceiling(cfg: IntegrationConfig, min_ms: u
     config::new_config(
         *config::proj_min_rent_price(&cfg),
         tenure_policy_state::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
+        *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_retire(&cfg),
@@ -257,6 +262,7 @@ fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8): IntegrationConfig {
     config::new_config(
         floor_price_policy_state::new_fixed(monetary::price(MIN_RENT_PRICE)),
         tenure_policy_state::new_fixed(phases::duration(TENURE_CEILING)),
+        tenure_cycles_policy_state::new_single(),
         make_handover(c),
         make_descent(h),
         make_retire(f),

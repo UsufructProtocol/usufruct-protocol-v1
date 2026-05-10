@@ -13,6 +13,7 @@ use usufruct::{
     handover_policy_state::{Self, HandoverPolicyState},
     math,
     floor_price_policy_state,
+    tenure_cycles_policy_state,
     tenure_policy_state,
     monetary,
     phases,
@@ -201,6 +202,7 @@ fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8): IntegrationConfig {
     config::new_config(
         floor_price_policy_state::new_fixed(monetary::price(MIN_RENT_PRICE)),
         tenure_policy_state::new_fixed(phases::duration(TENURE_CEILING)),
+        tenure_cycles_policy_state::new_single(),
         make_handover(c),
         make_descent(h),
         make_retire(f),

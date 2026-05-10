@@ -11,6 +11,7 @@ use usufruct::{
     descent_policy_state,
     handover_policy_state,
     floor_price_policy_state,
+    tenure_cycles_policy_state,
     tenure_policy_state,
     monetary,
     phases,
@@ -30,6 +31,7 @@ fun base_cfg(): config::IntegrationConfig {
     config::new_config(
         floor_price_policy_state::new_fixed(monetary::price(MIN)),
         tenure_policy_state::new_fixed(phases::duration(TENURE)),
+        tenure_cycles_policy_state::new_single(),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
         retire_policy_state::new_retire_immediate(),
@@ -110,6 +112,7 @@ fun accruing_various_curves_stay_in_bounds() {
         let cfg = config::new_config(
             floor_price_policy_state::new_fixed(monetary::price(MIN)),
             tenure_policy_state::new_fixed(phases::duration(TENURE)),
+            tenure_cycles_policy_state::new_single(),
             handover_policy_state::new_handover_instant(),
             descent_policy_state::new_descent_skipped(),
             retire_policy_state::new_retire_immediate(),

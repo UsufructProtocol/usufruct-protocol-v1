@@ -6066,3 +6066,48 @@ fun e2e_random_reset_config_changes_range_for_next_cycle() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §Fixed — AtDutch descent collapse symmetry ───────────────────────────────
+
+// Symmetric to E2E-2 for RandomInRange: with Fixed policy, the AtDutch descent
+// collapses exactly to the fixed price at full descent (elapsed == window).
+// This pins the invariant for both policy variants: descent bottom == resolved_floor,
+// which for Fixed is always the configured price.
+#[test]
+fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
+    let mut sc = setup();
+    // h=1 Window, all other axes at default — fixed min_rent_price (corpus default)
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let fixed_price = escrow_corpus::min_rent_price_const();
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Idle floor == fixed price (resolved_floor drawn from Fixed policy)
+    assert!(escrow::compute_floor_price(&escrow, &clk) == fixed_price, 0);
+
+    // Rent at 2× floor (sets last_acq_price for the descent)
+    let bid = fixed_price * 2;
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(bid, sc.ctx()), &random, &clk, sc.ctx());
+
+    // Tenure expires → AtDutch (resolved_floor = fixed_price carried into descent)
+    let t_atdutch = escrow_corpus::tenure_ceiling_const();
+    clock::set_for_testing(&mut clk, t_atdutch);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 1);
+
+    // Start of descent: price == last_acq_price (= bid = 2× fixed_price)
+    assert!(escrow::compute_floor_price_at_ms(&escrow, t_atdutch) == bid, 2);
+
+    // Full descent: price collapses to fixed_price (not 0, not any other value)
+    let t_full = t_atdutch + escrow_corpus::descent_window_h1_const();
+    assert!(escrow::compute_floor_price_at_ms(&escrow, t_full) == fixed_price, 3);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

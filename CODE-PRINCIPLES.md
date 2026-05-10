@@ -355,3 +355,4 @@ When writing or reviewing code in this codebase:
 - [ ] Does any state machine use a `bool` for a one-way transition?
 - [ ] Are all match sites exhaustive — would adding a new variant cause a compile error at every branch?
 - [ ] Does any computation function accept `&*PolicyState`? If so, `resolve()` is missing and the policy crossed the resolution boundary.
+- [ ] Does any `proj_*` that returns a policy type appear outside a `resolve()` call site? Policy projectors must flow directly into `resolve()` — never into computation functions.

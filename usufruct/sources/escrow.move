@@ -438,7 +438,8 @@ public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     let e = read_context(escrow);
-    phases::timestamp_ms(retire_policy_state::unlock_at(config::proj_retire(asset_context_state::proj_config(e)), asset_context_state::proj_integrated_at(e)))
+    let resolved = retire_policy_state::resolve(config::proj_retire(asset_context_state::proj_config(e)));
+    phases::timestamp_ms(retire_policy_state::unlock_at(resolved, asset_context_state::proj_integrated_at(e)))
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────

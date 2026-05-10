@@ -55,33 +55,31 @@ public(package) fun proj_window_ceiling(policy: &DescentPolicyState): Option<Dur
 
 // === Package Functions ===
 
-/// Whether the descent window has expired — the auction should collapse to `Idle`.
-///   - Skipped collapses immediately at `phase_start` (zero window).
-///   - Window expires when the ceiling elapses since `phase_start`.
-public(package) fun has_expired(
-    policy:      &DescentPolicyState,
-    phase_start: Timestamp,
-    now:         Timestamp,
-): Boundary {
+/// Resolve the policy to a concrete Duration (the descent window).
+///   Skipped → Duration(0)      collapses immediately at phase_start
+///   Window  → ceiling          collapses at phase_start + ceiling
+public(package) fun resolve(policy: &DescentPolicyState): Duration {
     match (policy) {
-        DescentPolicyState::Skipped =>
-            phases::check_boundary(phase_start, phases::zero(), now),
-        DescentPolicyState::Window { ceiling } =>
-            phases::check_boundary(phase_start, *ceiling, now),
+        DescentPolicyState::Skipped                => phases::zero(),
+        DescentPolicyState::Window { ceiling }     => *ceiling,
     }
 }
 
-/// Canonical auction-collapse boundary — the moment `do_auction_expiry` fires.
-/// Skipped collapses to `phase_start` itself.
+/// Whether the descent window has expired — called with the resolved window Duration.
+public(package) fun has_expired(
+    resolved:    Duration,
+    phase_start: Timestamp,
+    now:         Timestamp,
+): Boundary {
+    phases::check_boundary(phase_start, resolved, now)
+}
+
+/// Canonical auction-collapse boundary — called with the resolved window Duration.
 public(package) fun expiry_at(
-    policy:      &DescentPolicyState,
+    resolved:    Duration,
     phase_start: Timestamp,
 ): Timestamp {
-    match (policy) {
-        DescentPolicyState::Skipped               => phase_start,
-        DescentPolicyState::Window { ceiling } =>
-            phases::boundary_at(phase_start, *ceiling),
-    }
+    phases::boundary_at(phase_start, resolved)
 }
 
 /// Width of the descent window. Aborts on `Skipped` — callers that

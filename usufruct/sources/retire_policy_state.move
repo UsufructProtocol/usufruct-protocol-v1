@@ -54,29 +54,24 @@ public(package) fun proj_floor_ms(policy: &RetirePolicyState): Option<Duration> 
 
 // === Package Functions ===
 
-/// Absolute timestamp at which `retire()` becomes available.
-public(package) fun unlock_at(
-    policy: &RetirePolicyState,
-    at:     Timestamp,
-): Timestamp {
+/// Resolve the policy to a concrete Duration (the unlock floor).
+///   Immediate → Duration(0)    available from integration time
+///   Deferred  → floor          available at integrated_at + floor
+public(package) fun resolve(policy: &RetirePolicyState): Duration {
     match (policy) {
-        RetirePolicyState::Immediate             => phases::boundary_at(at, phases::zero()),
-        RetirePolicyState::Deferred { floor } => phases::boundary_at(at, *floor),
+        RetirePolicyState::Immediate          => phases::zero(),
+        RetirePolicyState::Deferred { floor } => *floor,
     }
 }
 
+/// Absolute timestamp at which `retire()` becomes available.
+public(package) fun unlock_at(resolved: Duration, at: Timestamp): Timestamp {
+    phases::boundary_at(at, resolved)
+}
+
 /// Whether `retire()` may proceed.
-public(package) fun is_unlocked(
-    policy: &RetirePolicyState,
-    at:     Timestamp,
-    now:    Timestamp,
-): Boundary {
-    match (policy) {
-        RetirePolicyState::Immediate             =>
-            phases::check_boundary(at, phases::zero(), now),
-        RetirePolicyState::Deferred { floor } =>
-            phases::check_boundary(at, *floor, now),
-    }
+public(package) fun is_unlocked(resolved: Duration, at: Timestamp, now: Timestamp): Boundary {
+    phases::check_boundary(at, resolved, now)
 }
 
 // === Private Functions ===

@@ -52,7 +52,8 @@ fun has_expired_table() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(descent_policy_state::has_expired(&c.policy, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed(), c.expected);
+        let resolved = descent_policy_state::resolve(&c.policy);
+        assert_eq!(descent_policy_state::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed(), c.expected);
         i = i + 1;
     };
 }
@@ -82,7 +83,8 @@ fun expiry_at_table() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        assert_eq!(phases::timestamp_ms(descent_policy_state::expiry_at(&c.policy, phases::timestamp(c.phase_start))), c.expected);
+        let resolved = descent_policy_state::resolve(&c.policy);
+        assert_eq!(phases::timestamp_ms(descent_policy_state::expiry_at(resolved, phases::timestamp(c.phase_start))), c.expected);
         i = i + 1;
     };
 }
@@ -149,8 +151,9 @@ fun has_expired_iff_now_ge_expiry_at() {
     let len = cases.length();
     while (i < len) {
         let c = &cases[i];
-        let bool_view = descent_policy_state::has_expired(&c.policy, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed();
-        let u64_view  = c.now >= phases::timestamp_ms(descent_policy_state::expiry_at(&c.policy, phases::timestamp(c.phase_start)));
+        let resolved  = descent_policy_state::resolve(&c.policy);
+        let bool_view = descent_policy_state::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed();
+        let u64_view  = c.now >= phases::timestamp_ms(descent_policy_state::expiry_at(resolved, phases::timestamp(c.phase_start)));
         assert_eq!(bool_view, u64_view);
         i = i + 1;
     };

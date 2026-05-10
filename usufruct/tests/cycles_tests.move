@@ -66,22 +66,6 @@ fun total_price_table() {
     };
 }
 
-// ─── per_cycle_stake ──────────────────────────────────────────────────────────
-
-#[test]
-fun per_cycle_stake_single_is_identity() {
-    let stake = monetary::stake(300_000_000_000);
-    let result = monetary::stake_mist(cycles::per_cycle_stake(stake, cycles::cycles(1)));
-    assert_eq!(result, 300_000_000_000);
-}
-
-#[test]
-fun per_cycle_stake_divides_evenly() {
-    let stake = monetary::stake(300_000_000_000);
-    let result = monetary::stake_mist(cycles::per_cycle_stake(stake, cycles::cycles(3)));
-    assert_eq!(result, 100_000_000_000);
-}
-
 // ─── cycles_count extractor ───────────────────────────────────────────────────
 
 #[test]

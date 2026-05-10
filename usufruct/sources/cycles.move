@@ -5,7 +5,7 @@ module usufruct::cycles;
 
 // === Imports ===
 
-use usufruct::monetary::{Self, Price, Stake};
+use usufruct::monetary::{Self, Price};
 
 // === Errors ===
 
@@ -42,12 +42,6 @@ public(package) fun is_single(c: Cycles): bool { c.count == 1 }
 /// Total payment required: floor_price × cycles.
 public(package) fun total_price(floor: Price, c: Cycles): Price {
     monetary::price(monetary::price_mist(floor) * c.count)
-}
-
-/// Per-cycle stake rate: total_stake / cycles.
-/// Used in commit 2 to normalise a multi-cycle tenant's stake for pricing.
-public(package) fun per_cycle_stake(stake: Stake, c: Cycles): Stake {
-    monetary::stake(monetary::stake_mist(stake) / c.count)
 }
 
 // === Private Functions ===

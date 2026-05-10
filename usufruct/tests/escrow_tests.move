@@ -5896,3 +5896,173 @@ fun random_floor_stable_within_idle_cycle() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §RandomInRange — e2e tests ───────────────────────────────────────────────
+
+// E2E 1: Two-cycle floor variability
+// Each Idle draws a fresh resolved_floor. Each AtDutch collapses exactly to
+// the resolved_floor of its own cycle — not the policy min, not the other
+// cycle's floor. Verified by reading compute_floor_price_at_ms at the full
+// descent boundary (elapsed == window → spread fully consumed → floor == F).
+#[test]
+fun e2e_random_two_cycles_atdutch_collapses_at_own_resolved_floor() {
+    let mut sc = setup();
+    // h=1 Window so AtDutch has a measurable descent
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
+        RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // ── Cycle 1 ──────────────────────────────────────────────────────────────
+    // F1 = resolved_floor drawn at integrate time
+    let f1 = escrow::compute_floor_price(&escrow, &clk);
+    assert!(f1 >= RANDOM_MIN, 0);
+    assert!(f1 <= RANDOM_MAX, 1);
+
+    // Rent at max (guaranteed to succeed regardless of F1)
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+
+    // Tenure expires → AtDutch (phase_start = 100_000, resolved_floor = F1 carried)
+    let t_atdutch_1 = escrow_corpus::tenure_ceiling_const();
+    clock::set_for_testing(&mut clk, t_atdutch_1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 2);
+
+    // At full descent: floor collapses exactly to F1 (not policy min)
+    let t_collapse_1 = t_atdutch_1 + escrow_corpus::descent_window_h1_const();
+    assert!(escrow::compute_floor_price_at_ms(&escrow, t_collapse_1) == f1, 3);
+
+    // Auction expires → Idle (F2 freshly drawn for cycle 2)
+    clock::set_for_testing(&mut clk, t_collapse_1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 4);
+
+    // ── Cycle 2 ──────────────────────────────────────────────────────────────
+    let f2 = escrow::compute_floor_price(&escrow, &clk);
+    assert!(f2 >= RANDOM_MIN, 5);
+    assert!(f2 <= RANDOM_MAX, 6);
+
+    // Rent cycle 2 (phase_start = t_collapse_1)
+    let cap_t2 = escrow::rent(
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+
+    // Tenure expires → AtDutch cycle 2 (phase_start = t_collapse_1 + tenure)
+    let t_atdutch_2 = t_collapse_1 + escrow_corpus::tenure_ceiling_const();
+    clock::set_for_testing(&mut clk, t_atdutch_2);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 7);
+
+    // At full descent of cycle 2: floor collapses exactly to F2 (not F1, not policy min)
+    let t_collapse_2 = t_atdutch_2 + escrow_corpus::descent_window_h1_const();
+    assert!(escrow::compute_floor_price_at_ms(&escrow, t_collapse_2) == f2, 8);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// E2E 2: AtDutch descent bottom is resolved_floor, not policy min.
+// At full descent (elapsed == window), compute_floor_price equals the
+// resolved_floor captured at Idle entry — not min_rent_price() (policy min).
+// The two values may coincide only by chance; the assertion targets the
+// cycle floor, making the invariant explicit regardless of the draw.
+#[test]
+fun e2e_random_atdutch_descent_bottom_is_cycle_resolved_floor() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
+        RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Capture F = resolved_floor drawn at Idle entry
+    let resolved_floor = escrow::compute_floor_price(&escrow, &clk);
+    assert!(resolved_floor >= RANDOM_MIN, 0);
+    assert!(resolved_floor <= RANDOM_MAX, 1);
+    // policy min is RANDOM_MIN — may or may not equal resolved_floor
+    assert!(escrow::min_rent_price(&escrow) == RANDOM_MIN, 2);
+
+    // Rent → tenure expires → AtDutch (resolved_floor carried into descent)
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+    let t_atdutch = escrow_corpus::tenure_ceiling_const();
+    clock::set_for_testing(&mut clk, t_atdutch);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 3);
+
+    // Start of descent: price equals last_acq_price (= RANDOM_MAX, what T1 paid)
+    let floor_start = escrow::compute_floor_price_at_ms(&escrow, t_atdutch);
+    assert!(floor_start == RANDOM_MAX, 4);
+
+    // Full descent: price == resolved_floor (anchored at cycle floor, not policy min)
+    let t_full = t_atdutch + escrow_corpus::descent_window_h1_const();
+    let floor_bottom = escrow::compute_floor_price_at_ms(&escrow, t_full);
+    assert!(floor_bottom == resolved_floor, 5);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// E2E 3: reset_config to a different RandomInRange range → next Idle draws from
+// the new range, not the original one. The resolved_floor after reset belongs
+// entirely to the new range — the old range is never consulted again.
+#[test]
+fun e2e_random_reset_config_changes_range_for_next_cycle() {
+    let range2_min: u64 = 20_000_000_000;  // 20 SUI
+    let range2_max: u64 = 30_000_000_000;  // 30 SUI
+
+    let mut sc = setup();
+    // Cycle 1: RandomInRange [5, 15]
+    let cfg1 = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg1, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // F1 ∈ [5, 15]
+    let f1 = escrow::compute_floor_price(&escrow, &clk);
+    assert!(f1 >= RANDOM_MIN, 0);
+    assert!(f1 <= RANDOM_MAX, 1);
+
+    // Rent, then reset config to range [20, 30]
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(RANDOM_MAX, sc.ctx()), &random, &clk, sc.ctx());
+    let cfg2 = escrow_corpus::with_random_min_rent_price(
+        escrow_corpus::by_tag(0), range2_min, range2_max,
+    );
+    escrow::reset_config(&mut escrow, &owner_cap, cfg2, &random, &clk, sc.ctx());
+
+    // Tenure expires → Idle with floor drawn from NEW range [20, 30]
+    // (pending_config skips AtDutch → new Idle with cfg2 applied)
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 2);
+
+    // F2 must come from the new range, not the original [5, 15]
+    let f2 = escrow::compute_floor_price(&escrow, &clk);
+    assert!(f2 >= range2_min, 3);
+    assert!(f2 <= range2_max, 4);
+    assert!(escrow::min_rent_price(&escrow) == range2_min, 5);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

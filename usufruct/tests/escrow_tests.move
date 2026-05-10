@@ -32,8 +32,16 @@ use usufruct::{
         ConfigReset,
         ConfigResetScheduled,
     },
+    config,
+    curve_shape_state,
     cycles,
+    descent_policy_state,
     floor_price_policy_state,
+    handover_policy_state,
+    monetary,
+    price_function_state,
+    retire_policy_state,
+    tenure_cycles_policy_state,
     tenure_policy_state,
     pending_transition_state,
     escrow::{
@@ -6423,6 +6431,161 @@ fun random_ceiling_different_per_cycle() {
 
     transfer::public_transfer(cap1, OWNER);
     transfer::public_transfer(cap2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §Multi-cycle tenancy ─────────────────────────────────────────────────────
+
+// Helper: build an IntegrationConfig with Multi tenure_cycles policy.
+fun multi_cycle_cfg(): config::IntegrationConfig {
+    let tenure  = escrow_corpus::tenure_ceiling_const();
+    let floor   = escrow_corpus::min_rent_price_const();
+    config::new_config(
+        floor_price_policy_state::new_fixed(monetary::price(floor)),
+        tenure_policy_state::new_fixed(phases::duration(tenure)),
+        tenure_cycles_policy_state::new_multi(),
+        handover_policy_state::new_handover_fixed_time(),
+        descent_policy_state::new_descent_skipped(),
+        retire_policy_state::new_retire_immediate(),
+        curve_shape_state::new_linear(),
+        curve_shape_state::new_linear(),
+        price_function_state::new_fixed_delta(monetary::price(floor)),
+    )
+}
+
+/// Single policy + cycles(2) → EMultiCycleNotAllowed.
+#[test]
+#[expected_failure(abort_code = tenure_cycles_policy_state::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy_state)]
+fun multi_cycle_single_policy_rejects_cycles_two() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0); // Single (default corpus)
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let floor   = escrow_corpus::min_rent_price_const();
+    let payment = mk_payment(floor * 2, sc.ctx());
+    // cycles(2) on a Single-policy escrow must abort
+    let cap = escrow::rent(&mut escrow, payment, cycles::cycles(2), &random, &clk, sc.ctx());
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Multi policy + cycles(3): ceiling extends to tenure × 3.
+#[test]
+fun multi_cycle_install_extends_ceiling_three_x() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let tenure  = escrow_corpus::tenure_ceiling_const();
+    let floor   = escrow_corpus::min_rent_price_const();
+    let payment = mk_payment(floor * 3, sc.ctx()); // 3 cycles × floor
+    let cap     = escrow::rent(&mut escrow, payment, cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // tenure_expiry_ms = phase_start(0) + tenure × 3
+    let expiry = escrow::tenure_expiry_ms(&escrow);
+    assert!(option::is_some(&expiry), 0);
+    assert!(*option::borrow(&expiry) == tenure * 3, 1);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// cycles(1) on Multi policy: ceiling == tenure (degenerates correctly).
+#[test]
+fun multi_cycle_single_cycle_degenerates() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let tenure  = escrow_corpus::tenure_ceiling_const();
+    let floor   = escrow_corpus::min_rent_price_const();
+    let payment = mk_payment(floor, sc.ctx());
+    let cap     = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    let expiry = escrow::tenure_expiry_ms(&escrow);
+    assert!(*option::borrow(&expiry) == tenure, 0); // 1 × tenure
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Insufficient payment for cycles(3) aborts.
+#[test]
+#[expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
+fun multi_cycle_insufficient_payment_aborts() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let floor   = escrow_corpus::min_rent_price_const();
+    // Pay only 2 cycles worth for a 3-cycle request
+    let payment = mk_payment(floor * 2, sc.ctx());
+    let cap     = escrow::rent(&mut escrow, payment, cycles::cycles(3), &random, &clk, sc.ctx());
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Pending bidder with cycles(3) wins handover → ceiling extends to tenure × 3.
+#[test]
+fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let tenure = escrow_corpus::tenure_ceiling_const();
+    let floor  = escrow_corpus::min_rent_price_const();
+
+    // T1 installs with cycles(1)
+    sc.next_tx(TENANT_ADDR_1);
+    let p1  = mk_payment(floor, sc.ctx());
+    let cap1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // T2 bids with cycles(3): pays total_price(floor_price_at, 3)
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor  = escrow::compute_floor_price(&escrow, &clk);
+    let p2         = mk_payment(bid_floor * 3, sc.ctx());
+    let cap2       = escrow::rent(&mut escrow, p2, cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // Fire handover at phase_start + tenure (FixedTime boundary).
+    let boundary = tenure;
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
+
+    // T2 is now current. New ceiling = tenure × 3, new phase_start = boundary.
+    // expiry = boundary + tenure × 3 = tenure + tenure × 3 = tenure × 4.
+    let expiry = escrow::tenure_expiry_ms(&escrow);
+    assert!(option::is_some(&expiry), 0);
+    assert!(*option::borrow(&expiry) == boundary + tenure * 3, 1);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     test_scenario::return_shared(random);

@@ -6747,3 +6747,196 @@ fun multi_cycle_fixed_time_tenant_consumes_full_ceiling() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+/// Rate symmetry invariant.
+/// T1a: 1 cycle × 10 SUI and T1b: 3 cycles × 30 SUI have the same per-cycle rate.
+/// A 1-cycle competitor must see identical floor in both cases.
+/// Two escrows in the same scenario share the Random object correctly.
+#[test]
+fun multi_cycle_rate_symmetry_same_floor() {
+    let mut sc = setup();
+    let floor  = escrow_corpus::min_rent_price_const();
+    let delta  = escrow_corpus::fixed_delta_value_const();
+
+    // Integrate two escrows in the same scenario to share Random/ProtocolFee objects.
+    let (mut escrow_a, owner_cap_a) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow_b, owner_cap_b) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Escrow A: T1a rents 1 cycle at floor.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap_a   = escrow::rent(&mut escrow_a, mk_payment(floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+    let floor_a = escrow::compute_floor_price(&escrow_a, &clk);
+
+    // Escrow B: T1b rents 3 cycles at floor × 3 (same per-cycle rate).
+    sc.next_tx(TENANT_ADDR_1);
+    let cap_b   = escrow::rent(&mut escrow_b, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+    let floor_b = escrow::compute_floor_price(&escrow_b, &clk);
+
+    // Same per-cycle rate → same floor for a 1-cycle competitor.
+    assert!(floor_a == floor_b, 0);
+    assert!(floor_a == floor + delta, 1); // price_function(10 SUI) = 20 SUI
+
+    transfer::public_transfer(cap_a, TENANT_ADDR_1);
+    transfer::public_transfer(cap_b, TENANT_ADDR_1);
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    owner_cap::burn(owner_cap_a, OWNER);
+    owner_cap::burn(owner_cap_b, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Supersede chain floor invariant.
+/// T1 (3 cycles, 30 SUI) → T2 bid (1 cycle, 20 SUI) → T3 supersedes T2.
+/// T3 floor = price_function(T2.stake / T2.bidding_cycles) = price_function(20/1) = 30 SUI.
+/// NOT price_function(T1.stake / T1.committed_cycles) = price_function(10) = 20 SUI.
+#[test]
+fun multi_cycle_supersede_floor_based_on_pending_rate() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let floor = escrow_corpus::min_rent_price_const();
+    let delta = escrow_corpus::fixed_delta_value_const();
+
+    // T1: 3 cycles, 30 SUI.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T2: 1 cycle, 20 SUI = price_function(10 SUI).
+    sc.next_tx(TENANT_ADDR_2);
+    let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor_t2 == floor + delta, 0); // 20 SUI
+    let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // T3 supersede: floor = price_function(T2.stake / T2.bidding_cycles)
+    //             = price_function(20 SUI / 1) = 20 + 10 = 30 SUI.
+    // NOT price_function(T1's 10 SUI) = 20 SUI.
+    let const_challenger: address = @0xC1;
+    sc.next_tx(const_challenger);
+    let floor_t3 = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor_t3 == floor_t2 + delta, 1); // 30 SUI
+    assert!(floor_t3 > floor_t2, 2);           // strictly escalates
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// FixedTime handover-after-handover invariant.
+/// T1 (3 cycles) → T2 (2 cycles) wins handover.
+/// T2.ceiling = base × 2. T2.resolved_handover = base × 2 (FixedTime tracks new ceiling).
+/// T3 bids → handover expiry = T2.phase_start + base × 2.
+#[test]
+fun multi_cycle_fixed_time_handover_tracks_new_ceiling() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let tenure = escrow_corpus::tenure_ceiling_const();
+    let floor  = escrow_corpus::min_rent_price_const();
+    let delta  = escrow_corpus::fixed_delta_value_const();
+
+    // T1: 3 cycles, ceiling = tenure × 3.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T2: 2 cycles. FixedTime: handover expiry = phase_start(0) + ceiling(tenure×3).
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), cycles::cycles(2), &random, &clk, sc.ctx());
+
+    // T2 wins at boundary = tenure × 3.
+    let boundary_t2 = tenure * 3;
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_t2), sc.ctx());
+
+    // T2 now current: phase_start = tenure×3, ceiling = tenure×2.
+    let expiry_t2 = escrow::tenure_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry_t2), boundary_t2 + tenure * 2);
+
+    // T3 bids at t = tenure×3 + tenure/2 (mid T2 first cycle).
+    let bid_time_t3 = boundary_t2 + tenure / 2;
+    clock::set_for_testing(&mut clk, bid_time_t3);
+    sc.next_tx(@0xC1);
+    let bid_floor_t3 = escrow::compute_floor_price(&escrow, &clk);
+    let cap3 = escrow::rent(&mut escrow, mk_payment(bid_floor_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // FixedTime: T3's handover expiry = T2.phase_start + T2.ceiling = tenure×3 + tenure×2.
+    let handover_expiry_t3 = escrow::handover_countdown_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&handover_expiry_t3), boundary_t2 + tenure * 2);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap3, @0xC1);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Countdown floor-not-scaled-after-handover invariant.
+/// T1 (3 cycles, countdown=25k) → T2 (2 cycles) wins.
+/// T2.ceiling = base×2 = 200k. T2.resolved_handover = 25k (countdown does NOT scale).
+/// T3 bids at t=175k → expiry = min(175k+25k, 25k+200k) = min(200k, 225k) = 200k.
+#[test]
+fun multi_cycle_countdown_floor_not_scaled_after_handover() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let tenure    = escrow_corpus::tenure_ceiling_const();   // 100_000
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const(); // 25_000
+    let delta     = escrow_corpus::fixed_delta_value_const();
+
+    // T1: 3 cycles, ceiling = tenure × 3 = 300k.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T2: 2 cycles. Countdown: expiry = min(0+25k, 0+300k) = 25k.
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), cycles::cycles(2), &random, &clk, sc.ctx());
+
+    // T2 wins at boundary = countdown = 25k.
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(countdown), sc.ctx());
+
+    // T2 now current: phase_start = 25k, ceiling = tenure × 2 = 200k.
+    let expiry_t2 = escrow::tenure_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry_t2), countdown + tenure * 2);
+
+    // T3 bids at t = 25k + tenure×1.5 = 175k (mid T2 tenure).
+    let bid_time_t3 = countdown + tenure * 3 / 2;
+    clock::set_for_testing(&mut clk, bid_time_t3);
+    sc.next_tx(@0xC1);
+    let bid_floor_t3 = escrow::compute_floor_price(&escrow, &clk);
+    let cap3 = escrow::rent(&mut escrow, mk_payment(bid_floor_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Countdown floor = 25k (unchanged, NOT tenure×2 = 200k).
+    // expiry = min(175k + 25k, 25k + 200k) = min(200k, 225k) = 200k.
+    let expected_expiry = bid_time_t3 + countdown; // 175k + 25k = 200k
+    assert!(expected_expiry < countdown + tenure * 2, 0); // < T2.phase_start + T2.ceiling
+    let handover_expiry_t3 = escrow::handover_countdown_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&handover_expiry_t3), expected_expiry);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap3, @0xC1);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

@@ -1136,8 +1136,7 @@ public(package) fun accept_rent_payment<Asset: key + store, CoinType>(
     match (state) {
         TenancyState::Occupied { tenant } =>
             do_place_bid(asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, original_cycles, cycles, escrow_id, payment, floor, now, ctx),
-        TenancyState::OccupiedRetiring { tenant } =>
-            do_place_bid(asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, original_cycles, cycles, escrow_id, payment, floor, now, ctx), // unreachable
+        TenancyState::OccupiedRetiring { tenant: _t } => abort ERetireFlagBlocksBid,
         TenancyState::Demand { current, pending, handover_expiry, pending_cycles: _ } =>
             do_supersede_bid(
                 asset, current, pending, handover_expiry, phase_start, resolved_floor, resolved_ceiling, resolved_handover, original_cycles, cycles, false,

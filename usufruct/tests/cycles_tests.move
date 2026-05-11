@@ -6,7 +6,7 @@ module usufruct::cycles_tests;
 
 use std::unit_test::assert_eq;
 use usufruct::{
-    cycles::{Self, Cycles},
+    cycles,
     monetary,
 };
 

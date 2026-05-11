@@ -6,7 +6,7 @@ module usufruct::tenure_cycles_policy_state_tests;
 
 use usufruct::{
     cycles,
-    tenure_cycles_policy_state::{Self, TenureCyclesPolicyState},
+    tenure_cycles_policy_state,
 };
 
 // ─── Single — validate ────────────────────────────────────────────────────────

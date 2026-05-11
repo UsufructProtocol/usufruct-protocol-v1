@@ -28,6 +28,7 @@ use usufruct::{
     pending_transition_state::{Self, PendingTransitionState},
     phases,
     price_function_state::{Self, PriceFunctionState},
+    escrow_identity,
     protocol_fee_ref::{Self, ProtocolFeeRef},
     retire_policy_state,
     tenant_cap::TenantCap,
@@ -80,25 +81,27 @@ public fun integrate<Asset: key + store, CoinType>(
     ctx:     &mut TxContext,
 ): OwnerCap {
     let uid              = object::new(ctx);
-    let escrow_id        = object::uid_to_inner(&uid);
+    let raw_escrow_id    = object::uid_to_inner(&uid);
+    let escrow_identity  = escrow_identity::new(raw_escrow_id);
     let asset_id         = object::id(&asset);
     let owner_addr       = ctx.sender();
-    let owner_cap        = owner_cap::new(escrow_id, owner_addr, ctx);
+    let owner_cap        = owner_cap::new(raw_escrow_id, owner_addr, ctx);
     let owner_cap_id     = object::id(&owner_cap);
     let fee_inbox_id     = protocol_fee_ref::proj_inbox_id(fee_ref);
+    let inbox_identity   = protocol_fee_ref::proj_inbox_identity(fee_ref);
     let integrated_at_ms = clock::timestamp_ms(clock);
 
-    config::emit_registration(&cfg, escrow_id);
+    config::emit_registration(&cfg, raw_escrow_id);
     let mut generator = sui::random::new_generator(random, ctx);
     let context = asset_context_state::new<Asset, CoinType>(
-        asset, owner_cap_id, cfg, fee_inbox_id, integrated_at_ms, escrow_id, &mut generator,
+        asset, owner_cap_id, cfg, inbox_identity, integrated_at_ms, escrow_identity, &mut generator,
     );
     transfer::share_object(Escrow<Asset, CoinType> {
         id:     uid,
         asset_context: option::some(context),
     });
     event::emit(AssetIntegrated<Asset, CoinType> {
-        escrow_id, owner_cap_id, owner: owner_addr, asset_id, fee_inbox_id, integrated_at_ms,
+        escrow_id: raw_escrow_id, owner_cap_id, owner: owner_addr, asset_id, fee_inbox_id, integrated_at_ms,
     });
     owner_cap
 }

@@ -9,6 +9,7 @@ use usufruct::{
     fee_message::{Self, FeeShare},
     monetary,
     owner::{Self, Owner, OwnerEarnings},
+    protocol_fee_ref::FeeInboxIdentity,
     tenant::{Self, Tenant, TenantIdentity, TenantStake},
 };
 
@@ -142,19 +143,19 @@ public(package) fun from_departing<C>(
 ///   Parcial — split stake; deposit + post + liquidate remainder to identity.
 ///   Total   — full stake refunded to identity; no owner/fee.
 public(package) fun distribute<C>(
-    rs:           RefundState<C>,
-    owner:        &mut Owner<C>,
-    fee_inbox_id: ID,
-    ctx:          &mut TxContext,
+    rs:    RefundState<C>,
+    owner: &mut Owner<C>,
+    inbox: FeeInboxIdentity,
+    ctx:   &mut TxContext,
 ) {
     match (rs) {
         RefundState::Nothing { fee_share, owner_earnings } => {
             owner::deposit(owner, owner_earnings);
-            fee_message::post(fee_share, fee_inbox_id, ctx);
+            fee_message::post(fee_share, inbox, ctx);
         },
         RefundState::Parcial { identity, stake, fee_share, owner_earnings } => {
             owner::deposit(owner, owner_earnings);
-            fee_message::post(fee_share, fee_inbox_id, ctx);
+            fee_message::post(fee_share, inbox, ctx);
             tenant::liquidate(stake, tenant::proj_address(&identity), ctx);
         },
         RefundState::Total { identity, stake } => {

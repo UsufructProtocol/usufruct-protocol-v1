@@ -11,6 +11,11 @@ module usufruct::protocol_fee_ref;
 
 // === Structs ===
 
+/// Typed identity of the `ProtocolFeeInbox`.
+/// Produced once from `ProtocolFeeRef` at integrate time and carried
+/// throughout the fee-distribution path.
+public struct FeeInboxIdentity has copy, drop, store { id: ID }
+
 /// Immutable pointer to the `ProtocolFeeInbox`. Frozen at deploy time;
 /// no fields are ever mutated after creation. Any caller can read it
 /// as `&ProtocolFeeRef` to obtain the fee inbox address.
@@ -27,10 +32,21 @@ public struct ProtocolFeeRef has key {
 
 // === View Functions ===
 
-/// Returns the ID of the `ProtocolFeeInbox` this ref points to.
+/// Returns the ID of the `ProtocolFeeInbox` this ref points to (SDK boundary).
 public fun proj_inbox_id(fee_ref: &ProtocolFeeRef): ID {
     fee_ref.inbox_id
 }
+
+/// Package-internal: produce a `FeeInboxIdentity` from this ref.
+public(package) fun proj_inbox_identity(fee_ref: &ProtocolFeeRef): FeeInboxIdentity {
+    FeeInboxIdentity { id: fee_ref.inbox_id }
+}
+
+/// Construct a `FeeInboxIdentity` from a raw inbox object `ID`.
+public(package) fun fee_inbox_identity(id: ID): FeeInboxIdentity { FeeInboxIdentity { id } }
+
+/// Extract the raw `ID` from a `FeeInboxIdentity`.
+public(package) fun inbox_id(i: FeeInboxIdentity): ID { i.id }
 
 // === Admin Functions ===
 

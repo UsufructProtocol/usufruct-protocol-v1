@@ -8,6 +8,7 @@ use sui::balance;
 use usufruct::{
     fee_message::{Self, FeeShare},
     owner::{Self, OwnerEarnings},
+    escrow_identity,
     refund_state,
     tenant::{Self, TenantIdentity, TenantStake},
 };
@@ -30,7 +31,7 @@ fun id_and_stake(amount: u64): (TenantIdentity, TenantStake<TEST_COIN>) {
 }
 
 fun fee_share(amount: u64): FeeShare<TEST_COIN> {
-    fee_message::new_share(balance::create_for_testing<TEST_COIN>(amount), fake_escrow_id())
+    fee_message::new_share(balance::create_for_testing<TEST_COIN>(amount), escrow_identity::new(fake_escrow_id()))
 }
 
 fun owner_earnings(amount: u64): OwnerEarnings<TEST_COIN> {

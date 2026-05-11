@@ -10,6 +10,7 @@ use usufruct::{
     fee_message::{Self, FeeShare},
     monetary::{Self, Stake},
     owner::{Self, OwnerEarnings},
+    escrow_identity::EscrowIdentity,
 };
 
 // === Errors ===
@@ -96,12 +97,12 @@ public(package) fun destroy_empty_stake<C>(s: TenantStake<C>) {
 /// Drain `amount` off the tenant's stake as a `FeeShare<C>` destined
 /// for `escrow_id`. Aborts via `balance::split` if `amount > stake`.
 public(package) fun take_fee_share<C>(
-    t:         &mut Tenant<C>,
-    amount:    Stake,
-    escrow_id: ID,
+    t:      &mut Tenant<C>,
+    amount: Stake,
+    escrow: EscrowIdentity,
 ): FeeShare<C> {
     let part = balance::split(&mut t.stake.balance, monetary::stake_mist(amount));
-    fee_message::new_share(part, escrow_id)
+    fee_message::new_share(part, escrow)
 }
 
 /// Drain `amount` off the tenant's stake as an `OwnerEarnings<C>`

@@ -5,6 +5,8 @@ module usufruct::asset;
 
 // === Imports ===
 
+use usufruct::escrow_identity::{Self, EscrowIdentity};
+
 // === Errors ===
 
 /// `put` was presented a receipt whose `escrow_id` does not match the
@@ -33,13 +35,13 @@ const E_ASSET_NOT_AVAILABLE: u64 = 4;
 
 /// Composite identity of an asset within the protocol. `asset_id` is
 /// the user-asset's UID (intrinsic, global). `escrow_id` is the
-/// rental-escrow's UID, stamped at wrap-time. The pair is what
+/// rental-escrow's identity, stamped at wrap-time. The pair is what
 /// distinguishes "this asset in this protocol context" from "this
 /// asset somewhere else" — necessary because `U` is external (not
 /// protocol-issued, no inherent escrow binding, unlike the caps).
 public struct AssetIdentity has copy, drop, store {
     asset_id:  ID,
-    escrow_id: ID,
+    escrow_id: EscrowIdentity,
 }
 
 /// Wrapper around an external `U` during active tenancy (Occupied / Demand).
@@ -62,12 +64,11 @@ public struct AssetCustodyLocked<U: key + store> has store {
 }
 
 /// Hot potato — no abilities. Minted by `take` and consumed by `put`
-/// in the same PTB. Carries both ids so that `put` can verify (a)
-/// the receipt did not originate in another escrow, and (b) the
-/// returned `U` is the same physical object that left.
+/// in the same PTB. Carries the full `AssetIdentity` so that `put` can
+/// verify in one typed comparison that the receipt belongs to this escrow
+/// and this asset.
 public struct AssetReceipt {
-    asset_id:  ID,
-    escrow_id: ID,
+    identity: AssetIdentity,
 }
 
 // === Events ===
@@ -83,7 +84,9 @@ public struct AssetReceipt {
 public(package) fun proj_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID { object::id(&self.asset) }
 
 public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.identity.asset_id }
-public(package) fun proj_escrow_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.identity.escrow_id }
+public(package) fun proj_escrow_id<U: key + store>(self: &AssetCustodyOpen<U>): ID {
+    escrow_identity::escrow_id(self.identity.escrow_id)
+}
 public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool {
     option::is_some(&self.available)
 }
@@ -92,15 +95,10 @@ public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>
 
 // === Package Functions ===
 
-/// Wrap an external `U` for borrow-capable custody. `escrow_id` is
-/// stamped now so the wrapper itself carries the protocol-context
-/// binding from this point on. Sole construction site — called by
-/// `asset_state::rent` when the lifecycle crosses into a borrowable
-/// state.
 /// Wrap a `U` for borrow-capable custody. Called when entering Renting state.
 public(package) fun new<U: key + store>(u: U, escrow_id: ID): AssetCustodyOpen<U> {
     AssetCustodyOpen {
-        identity:  AssetIdentity { asset_id: object::id(&u), escrow_id },
+        identity:  AssetIdentity { asset_id: object::id(&u), escrow_id: escrow_identity::new(escrow_id) },
         available: option::some(u),
     }
 }
@@ -123,11 +121,8 @@ public(package) fun unlock<U: key + store>(self: AssetCustodyLocked<U>): U {
 /// shaped so it cannot be stored or forgotten — must reach `put`
 /// within the same PTB.
 public(package) fun take<U: key + store>(self: &mut AssetCustodyOpen<U>): (U, AssetReceipt) {
-    let u = option::extract(&mut self.available);
-    let receipt = AssetReceipt {
-        asset_id:  self.identity.asset_id,
-        escrow_id: self.identity.escrow_id,
-    };
+    let u       = option::extract(&mut self.available);
+    let receipt = AssetReceipt { identity: self.identity };
     (u, receipt)
 }
 
@@ -142,17 +137,13 @@ public(package) fun put<U: key + store>(
     u:       U,
     receipt: AssetReceipt,
 ) {
-    let AssetReceipt { asset_id, escrow_id } = receipt;
-    assert!(self.identity.escrow_id == escrow_id,    E_ASSET_WRONG_ESCROW);
-    assert!(self.identity.asset_id  == asset_id,     E_ASSET_RECEIPT_MISMATCH);
-    assert!(object::id(&u)          == asset_id,     E_ASSET_RETURNED_DIFFERENT);
+    let AssetReceipt { identity } = receipt;
+    assert!(self.identity.escrow_id == identity.escrow_id, E_ASSET_WRONG_ESCROW);
+    assert!(self.identity.asset_id  == identity.asset_id,  E_ASSET_RECEIPT_MISMATCH);
+    assert!(object::id(&u)          == identity.asset_id,  E_ASSET_RETURNED_DIFFERENT);
     option::fill(&mut self.available, u);
 }
 
-/// Unwrap — extract the inner `U` and discard the wrapper. Aborts
-/// if the slot is empty (asset still borrowed). Used at transitions
-/// out of the borrow-capable states (e.g. `asset_state::expire`
-/// HandoverOpen → AtDutch).
 /// Unwrap an open custody asset, returning the raw `U`. Aborts if the slot
 /// is empty (asset still borrowed). Called at transitions out of Renting.
 public(package) fun unbundle<U: key + store>(self: AssetCustodyOpen<U>): U {
@@ -170,22 +161,21 @@ public(package) fun unbundle<U: key + store>(self: AssetCustodyOpen<U>): U {
 /// assertions in `put` (cross-escrow, asset-id mismatch).
 #[test_only]
 public fun forge_receipt_for_testing(asset_id: ID, escrow_id: ID): AssetReceipt {
-    AssetReceipt { asset_id, escrow_id }
+    AssetReceipt { identity: AssetIdentity { asset_id, escrow_id: escrow_identity::new(escrow_id) } }
 }
 
 /// Drop an `AssetReceipt` whose return-path was abandoned in the test.
-/// Production receipts must reach `put`; tests sometimes hold them
-/// only to make assertions on their accessors.
 #[test_only]
 public fun destroy_receipt_for_testing(r: AssetReceipt) {
-    let AssetReceipt { asset_id: _, escrow_id: _ } = r;
+    let AssetReceipt { identity: _ } = r;
 }
 
-/// Inspect the asset_id stamped on a receipt. Test-only — production
-/// code never needs to read receipt fields; `put` validates them internally.
+/// Inspect the asset_id stamped on a receipt. Test-only.
 #[test_only]
-public fun receipt_asset_id_for_testing(r: &AssetReceipt): ID { r.asset_id }
+public fun receipt_asset_id_for_testing(r: &AssetReceipt): ID { r.identity.asset_id }
 
-/// Inspect the escrow_id stamped on a receipt. Test-only — same reason.
+/// Inspect the escrow_id stamped on a receipt. Test-only.
 #[test_only]
-public fun receipt_escrow_id_for_testing(r: &AssetReceipt): ID { r.escrow_id }
+public fun receipt_escrow_id_for_testing(r: &AssetReceipt): ID {
+    escrow_identity::escrow_id(r.identity.escrow_id)
+}

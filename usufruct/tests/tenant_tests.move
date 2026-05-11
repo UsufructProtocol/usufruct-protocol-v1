@@ -38,7 +38,7 @@ fun new_constructs_tenant_with_expected_identity_and_stake() {
     let id = tenant::proj_identity(&t);
     assert_eq!(tenant::proj_cap_id(id),  cap_t1());
     assert_eq!(tenant::proj_address(id), ADDR_T1);
-    assert_eq!(tenant::proj_stake_value(&t), STAKE_T1);
+    assert_eq!(tenant::proj_stake_value(&t), monetary::stake(STAKE_T1));
     tenant::destroy_for_testing(t);
 }
 
@@ -46,7 +46,7 @@ fun new_constructs_tenant_with_expected_identity_and_stake() {
 fun stake_value_of_reads_inner_balance() {
     let t = t1();
     let s = tenant::proj_stake(&t);
-    assert_eq!(tenant::proj_stake_value_of(s), STAKE_T1);
+    assert_eq!(tenant::proj_stake_value_of(s), monetary::stake(STAKE_T1));
     tenant::destroy_for_testing(t);
 }
 
@@ -58,7 +58,7 @@ fun unbundle_returns_identity_and_stake() {
     let (id, stake) = tenant::unbundle(t);
     assert_eq!(tenant::proj_cap_id(&id),     cap_t1());
     assert_eq!(tenant::proj_address(&id),    ADDR_T1);
-    assert_eq!(tenant::proj_stake_value_of(&stake), STAKE_T1);
+    assert_eq!(tenant::proj_stake_value_of(&stake), monetary::stake(STAKE_T1));
     tenant::destroy_stake_for_testing(stake);
 }
 
@@ -87,7 +87,7 @@ fun take_fee_share_partial_reduces_stake_and_returns_typed_share() {
     let share = tenant::take_fee_share(&mut t, monetary::stake(75), fake_escrow_id());
     assert_eq!(monetary::stake_mist(fee_message::proj_share_value(&share)),     75);
     assert_eq!(fee_message::share_escrow_id(&share), fake_escrow_id());
-    assert_eq!(tenant::proj_stake_value(&t), STAKE_T1 - 75);
+    assert_eq!(tenant::proj_stake_value(&t), monetary::stake(STAKE_T1 - 75));
     fee_message::destroy_share_for_testing(share);
     tenant::destroy_for_testing(t);
 }
@@ -97,7 +97,7 @@ fun take_fee_share_zero_returns_zero_share_unchanged_stake() {
     let mut t = t1();
     let share = tenant::take_fee_share(&mut t, monetary::stake(0), fake_escrow_id());
     assert_eq!(monetary::stake_mist(fee_message::proj_share_value(&share)), 0);
-    assert_eq!(tenant::proj_stake_value(&t), STAKE_T1);
+    assert_eq!(tenant::proj_stake_value(&t), monetary::stake(STAKE_T1));
     fee_message::destroy_share_for_testing(share);
     tenant::destroy_for_testing(t);
 }

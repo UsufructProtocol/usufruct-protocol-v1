@@ -7,6 +7,7 @@ module usufruct::refund_state;
 
 use usufruct::{
     fee_message::{Self, FeeShare},
+    monetary,
     owner::{Self, Owner, OwnerEarnings},
     tenant::{Self, Tenant, TenantIdentity, TenantStake},
 };
@@ -123,7 +124,7 @@ public(package) fun from_departing<C>(
     fee_share:      FeeShare<C>,
     owner_earnings: OwnerEarnings<C>,
 ): RefundState<C> {
-    if (tenant::proj_stake_value(&departing) > 0) {
+    if (monetary::stake_mist(tenant::proj_stake_value(&departing)) > 0) {
         let (identity, stake) = tenant::unbundle(departing);
         parcial(identity, stake, fee_share, owner_earnings)
     } else {

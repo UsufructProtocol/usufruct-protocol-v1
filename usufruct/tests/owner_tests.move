@@ -217,7 +217,7 @@ fun take_owner_earnings_then_deposit_round_trip() {
         assert_eq!(owner::proj_earnings_value(&earn), 250);
         owner::deposit(&mut o, earn);
         assert_eq!(owner::proj_value(&o), 250);
-        assert_eq!(tenant::proj_stake_value(&t), 750);
+        assert_eq!(tenant::proj_stake_value(&t), monetary::stake(750));
 
         tenant::destroy_for_testing(t);
         owner::destroy_for_testing(o);

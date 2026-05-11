@@ -82,10 +82,10 @@ public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { monetary::stake_
 
 public fun tenant_identity<C>(t: &Tenant<C>):          &TenantIdentity  { tenant_mod::proj_identity(t) }
 public fun tenant_stake<C>(t: &Tenant<C>):             &TenantStake<C>  { tenant_mod::proj_stake(t) }
-public fun tenant_stake_value<C>(t: &Tenant<C>):       u64              { tenant_mod::proj_stake_value(t) }
+public fun tenant_stake_value<C>(t: &Tenant<C>):       u64              { monetary::stake_mist(tenant_mod::proj_stake_value(t)) }
 public fun tenant_cap_id(id: &TenantIdentity):          ID               { tenant_mod::proj_cap_id(id) }
 public fun tenant_address(id: &TenantIdentity):         address          { tenant_mod::proj_address(id) }
-public fun tenant_stake_value_of<C>(s: &TenantStake<C>): u64            { tenant_mod::proj_stake_value_of(s) }
+public fun tenant_stake_value_of<C>(s: &TenantStake<C>): u64            { monetary::stake_mist(tenant_mod::proj_stake_value_of(s)) }
 
 // === retire_policy_state ===
 

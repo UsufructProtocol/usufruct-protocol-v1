@@ -53,6 +53,7 @@ public(package) fun price_add(a: Price, b: Price): Price {
     Price { mist: sum as u64 }
 }
 public(package) fun price_sub(a: Price, b: Price): Price { Price { mist: a.mist - b.mist } }
+public(package) fun stake_sub(a: Stake, b: Stake): Stake { Stake { mist: a.mist - b.mist } }
 
 // === Private Functions ===
 

@@ -619,16 +619,16 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: _a, state: WaitingState::Retired } }, owner: _o, .. } =>
             abort ERetiredNoBid,
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
-            let (new_state, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, escrow_id, payment, monetary::price_mist(floor), now, ctx);
+            let (new_state, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, escrow_id, payment, floor, now, ctx);
             (AssetContext { asset_state: new_state, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }, cap)
         },
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { resolved_floor, resolved_ceiling, resolved_handover, .. } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
-            let (new_state, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, escrow_id, payment, monetary::price_mist(floor), now, ctx);
+            let (new_state, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, escrow_id, payment, floor, now, ctx);
             (AssetContext { asset_state: new_state, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }, cap)
         },
         AssetContext { asset_state: AssetState::Renting { tenancy }, mut owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
             let (new_tenancy, cap) = accept_rent_payment(
-                tenancy, &mut owner, escrow_id, fee_inbox_id, payment, monetary::price_mist(floor), cycles, now, ctx,
+                tenancy, &mut owner, escrow_id, fee_inbox_id, payment, floor, cycles, now, ctx,
             );
             (AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }, cap)
         },
@@ -997,9 +997,9 @@ public(package) fun current_stake<Asset: key + store, CoinType>(
 ): Stake {
     match (&t.state) {
         TenancyState::Occupied { tenant } | TenancyState::OccupiedRetiring { tenant } =>
-            monetary::stake(tenant::proj_stake_value(tenant)),
+            tenant::proj_stake_value(tenant),
         TenancyState::Demand { current, .. } | TenancyState::DemandRetiring { current, .. } =>
-            monetary::stake(tenant::proj_stake_value(current)),
+            tenant::proj_stake_value(current),
     }
 }
 
@@ -1008,7 +1008,7 @@ public(package) fun pending_stake_for_tenancy<Asset: key + store, CoinType>(
 ): Option<Stake> {
     match (&t.state) {
         TenancyState::Demand { pending, .. } | TenancyState::DemandRetiring { pending, .. } =>
-            option::some(monetary::stake(tenant::proj_stake_value(pending))),
+            option::some(tenant::proj_stake_value(pending)),
         TenancyState::Occupied { .. } | TenancyState::OccupiedRetiring { .. } => option::none(),
     }
 }
@@ -1045,7 +1045,7 @@ public(package) fun floor_price_at_for_tenancy<Asset: key + store, CoinType>(
         TenancyState::Demand { pending, bidding_cycles, .. } | TenancyState::DemandRetiring { pending, bidding_cycles, .. } =>
             (tenant::proj_stake_value(pending), *bidding_cycles),
     };
-    let ps = price_state::ascending(cycles::per_cycle_stake(monetary::stake(stake), n));
+    let ps = price_state::ascending(cycles::per_cycle_stake(stake, n));
     price_state::floor_price(&ps, config, now)
 }
 
@@ -1056,11 +1056,11 @@ public(package) fun used_credit_at_for_tenancy<Asset: key + store, CoinType>(
 ): Stake {
     let cs = match (&t.state) {
         TenancyState::Occupied { tenant } | TenancyState::OccupiedRetiring { tenant } =>
-            credit_state::accruing(monetary::stake(tenant::proj_stake_value(tenant)), t.phase_start),
+            credit_state::accruing(tenant::proj_stake_value(tenant), t.phase_start),
         TenancyState::Demand { current, handover_expiry, .. }
         | TenancyState::DemandRetiring { current, handover_expiry, .. } =>
             credit_state::capped(
-                monetary::stake(tenant::proj_stake_value(current)),
+                tenant::proj_stake_value(current),
                 t.phase_start,
                 *handover_expiry,
             ),
@@ -1126,7 +1126,7 @@ public(package) fun accept_rent_payment<Asset: key + store, CoinType>(
     escrow_id:    ID,
     fee_inbox_id: ID,
     payment:      Coin<CoinType>,
-    floor:        u64,
+    floor:        Price,
     cycles:       Cycles,
     now:          Timestamp,
     ctx:          &mut TxContext,
@@ -1226,13 +1226,13 @@ fun do_handover<Asset: key + store, CoinType>(
     boundary:          Timestamp,
     ctx:               &mut TxContext,
 ): TenancyContext<Asset, CoinType> {
-    let principal   = monetary::stake(tenant::proj_stake_value(&current));
+    let principal   = tenant::proj_stake_value(&current);
     let used_credit = {
         let cs = credit_state::capped(principal, phase_start, boundary);
         credit_state::used_credit(&cs, config, resolved_ceiling, boundary)
     };
     let alloc         = split_fee(used_credit);
-    let remain_credit = monetary::stake_mist(principal) - monetary::stake_mist(used_credit);
+    let remain_credit = monetary::stake_sub(principal, used_credit);
 
     let displaced_cap_id = tenant::proj_cap_id(tenant::proj_identity(&current));
     let displaced_addr   = tenant::proj_address(tenant::proj_identity(&current));
@@ -1247,7 +1247,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let new_addr       = tenant::proj_address(tenant::proj_identity(&pending));
     let new_stake      = tenant::proj_stake_value(&pending);
     let new_rent_price = monetary::price_mist({
-        let ps = price_state::ascending(monetary::stake(new_stake));
+        let ps = price_state::ascending(new_stake);
         price_state::floor_price(&ps, config, boundary)
     });
     let boundary_ms = phases::timestamp_ms(boundary);
@@ -1259,11 +1259,11 @@ fun do_handover<Asset: key + store, CoinType>(
         displaced_phase_start_ms: phases::timestamp_ms(phase_start),
         new_tenant_cap_id:        new_cap_id,
         new_tenant_addr:          new_addr,
-        new_tenant_stake:         new_stake,
+        new_tenant_stake:         monetary::stake_mist(new_stake),
         used_credit:              monetary::stake_mist(used_credit),
         owner_share:              monetary::stake_mist(alloc.owner_share),
         protocol_fee:             monetary::stake_mist(alloc.protocol_fee),
-        remain_credit,
+        remain_credit:            monetary::stake_mist(remain_credit),
         new_rent_price,
         timestamp_ms:             boundary_ms,
     });
@@ -1292,7 +1292,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     boundary:          Timestamp,
     ctx:               &mut TxContext,
 ): (asset::AssetCustodyOpen<Asset>, Price, Price, Duration, Duration, bool) {
-    let principal      = monetary::stake(tenant::proj_stake_value(&tenant));
+    let principal      = tenant::proj_stake_value(&tenant);
     let tenant_cap_id  = tenant::proj_cap_id(tenant::proj_identity(&tenant));
     let tenant_addr    = tenant::proj_address(tenant::proj_identity(&tenant));
     let alloc = split_fee(principal);
@@ -1429,7 +1429,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     cycles:            Cycles,
     escrow_id:         ID,
     payment:           Coin<CoinType>,
-    floor:             u64,
+    floor:             Price,
     now:               Timestamp,
     ctx:               &mut TxContext,
 ): (TenancyContext<Asset, CoinType>, TenantCap) {
@@ -1446,12 +1446,12 @@ fun do_place_bid<Asset: key + store, CoinType>(
         escrow_id,
         current_tenant_cap_id:     current_cap_id,
         current_tenant_addr:       current_addr,
-        current_tenant_stake:      current_stake,
+        current_tenant_stake:      monetary::stake_mist(current_stake),
         current_phase_start_ms:    phases::timestamp_ms(phase_start),
         tenant_cap_id:             cap_id,
         pending_tenant:            pending_addr,
         bid_amount,
-        floor_price:               floor,
+        floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(expiry),
         timestamp_ms:              phases::timestamp_ms(now),
     });
@@ -1486,7 +1486,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     escrow_id:        ID,
     fee_inbox_id:     ID,
     payment:          Coin<CoinType>,
-    floor:            u64,
+    floor:            Price,
     now:              Timestamp,
     ctx:              &mut TxContext,
 ): (TenancyContext<Asset, CoinType>, TenantCap) {
@@ -1510,15 +1510,15 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         escrow_id,
         protected_tenant_cap_id:   protected_cap_id,
         protected_tenant_addr:     protected_addr,
-        protected_tenant_stake:    protected_stake,
+        protected_tenant_stake:    monetary::stake_mist(protected_stake),
         protected_phase_start_ms:  phases::timestamp_ms(phase_start),
         displaced_tenant_cap_id:   displaced_cap_id,
         new_tenant_cap_id:         cap_id,
         displaced_bidder:          displaced_addr,
-        refunded_amount,
+        refunded_amount:           monetary::stake_mist(refunded_amount),
         new_bidder,
         new_bid_amount,
-        floor_price:               floor,
+        floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
         timestamp_ms:              phases::timestamp_ms(now),
     });
@@ -1782,7 +1782,7 @@ fun do_install<Asset: key + store, CoinType>(
     cycles:            Cycles,
     escrow_id:         ID,
     payment:           Coin<CoinType>,
-    floor:             u64,
+    floor:             Price,
     now:               Timestamp,
     ctx:               &mut TxContext,
 ): (AssetState<Asset, CoinType>, TenantCap) {
@@ -1797,7 +1797,7 @@ fun do_install<Asset: key + store, CoinType>(
     let extended_handover = cycles::total_duration(resolved_handover, cycles);
     event::emit(RentStarted {
         escrow_id, tenant_cap_id: cap_id, tenant: tenant_addr,
-        phase_start_ms: now_ms, price_paid, floor_price: floor,
+        phase_start_ms: now_ms, price_paid, floor_price: monetary::price_mist(floor),
     });
     (AssetState::Renting { tenancy: new_occupied(wrapped, t, now, resolved_floor, extended_ceiling, extended_handover, cycles) }, cap)
 }

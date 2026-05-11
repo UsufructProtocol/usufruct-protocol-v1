@@ -13,7 +13,7 @@ use usufruct::{
     handover_policy_state::{Self, HandoverPolicyState},
     math,
     floor_price_policy_state,
-    tenure_cycles_policy_state,
+    tenure_cycles_policy_state::{Self, TenureCyclesPolicyState},
     tenure_policy_state,
     monetary,
     phases,
@@ -199,6 +199,21 @@ public(package) fun with_random_tenure_ceiling(cfg: IntegrationConfig, min_ms: u
         *config::proj_min_rent_price(&cfg),
         tenure_policy_state::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
         *config::proj_tenure_cycles(&cfg),
+        *config::proj_handover(&cfg),
+        *config::proj_descent(&cfg),
+        *config::proj_retire(&cfg),
+        *config::proj_credit_curve(&cfg),
+        *config::proj_descent_curve(&cfg),
+        *config::proj_price_function_state(&cfg),
+    )
+}
+
+/// Rebuild `cfg` with a different `tenure_cycles` policy. All other fields unchanged.
+public(package) fun with_tenure_cycles(cfg: IntegrationConfig, policy: TenureCyclesPolicyState): IntegrationConfig {
+    config::new_config(
+        *config::proj_min_rent_price(&cfg),
+        *config::proj_tenure_ceiling(&cfg),
+        policy,
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_retire(&cfg),

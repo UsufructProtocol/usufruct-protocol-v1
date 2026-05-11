@@ -372,6 +372,8 @@ When adding a new dimension to the system, do not start with the new behaviour. 
 
 **Diagnostic:** if Phase 2 touches more than the guard and new test cases, the abstraction was started from the wrong end.
 
+**Design bugs vs coding bugs.** Phase 3 tests can pass while a design incoherence remains. Code can be correct and the design wrong at the same time — the compiler and tests verify what the design says, not whether the design is coherent. Design bugs are found by asking "is this consistent with the principle being applied?" not by reading the code. The signature of a fixed design bug is the disappearance of special-casing: `83ef929` removed an `if/else` that scaled only `FixedTime` (accidentally, via an equality check with `base_ceiling`) while leaving `Countdown` and `RandomInRange` unscaled. The fix — two uniform lines with no branching — is the proof that the underlying principle (`cycles scales the tenure and everything that depends on the tenure`) was applied consistently. An `if/else` that encodes a variant-specific invariant is always a candidate for a design bug.
+
 ---
 
 ## Applied checklist

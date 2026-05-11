@@ -7645,3 +7645,105 @@ fun handover_scaling_rate_symmetry_per_committed_cycle() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §Normalization invariants ────────────────────────────────────────────────
+
+/// Truncation invariant: rescale_duration is exact across a handover chain.
+/// T1(3) → T2(2) → T3(1): each rescaling divides exactly — no accumulated error.
+/// Final handover value must equal the base countdown, not countdown ± drift.
+#[test]
+fun normalization_rescale_is_exact_across_handover_chain() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const(); // 25_000
+
+    // T1: 3 cycles → extended_handover = 25k × 3 = 75k.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T2 bids. expiry = 75k. T2 wins.
+    sc.next_tx(TENANT_ADDR_2);
+    let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2 * 2, sc.ctx()), cycles::cycles(2), &random, &clk, sc.ctx());
+    // rescale: 75k × 2 / 3 = 50k (exact, 75k divisible by 3)
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(countdown * 3), sc.ctx());
+
+    // T3 bids against T2(handover=50k). T3 wins.
+    clock::set_for_testing(&mut clk, countdown * 3);
+    sc.next_tx(@0xC1);
+    let floor_t3 = escrow::compute_floor_price(&escrow, &clk);
+    let cap3 = escrow::rent(&mut escrow, mk_payment(floor_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+    // rescale: 50k × 1 / 2 = 25k (exact, 50k divisible by 2)
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(countdown * 3 + countdown * 2), sc.ctx());
+
+    // T4 bids against T3(handover=25k). Exactly countdown — no drift.
+    clock::set_for_testing(&mut clk, countdown * 3 + countdown * 2);
+    sc.next_tx(@0xD1);
+    let floor_t4 = escrow::compute_floor_price(&escrow, &clk);
+    let cap4 = escrow::rent(&mut escrow, mk_payment(floor_t4, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    let expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    // T3.handover must be exactly countdown — no accumulated rounding error.
+    assert_eq!(*option::borrow(&expiry), countdown * 3 + countdown * 2 + countdown);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap3, @0xC1);
+    transfer::public_transfer(cap4, @0xD1);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// AtDutch ceiling compounding bug: T1(n) expires → AtDutch carries extended
+/// ceiling (base×n). New tenant from AtDutch with cycles(m) should get
+/// ceiling = base×m, NOT base×n×m.
+#[test]
+fun normalization_at_dutch_ceiling_not_compounded_after_multi_cycle_expiry() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let tenure = escrow_corpus::tenure_ceiling_const();
+    let floor  = escrow_corpus::min_rent_price_const();
+
+    // T1: 3 cycles, ceiling = tenure×3 = 300k.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T1 tenure expires at 300k → AtDutch. AtDutch must carry base ceiling=100k.
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure * 3), sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+
+    // Advance clock to expiry boundary so phase_start is deterministic.
+    let entry_time = tenure * 3;
+    clock::set_for_testing(&mut clk, entry_time);
+
+    // New tenant from AtDutch with cycles(2): ceiling must be base×2 = 200k.
+    // Buggy: AtDutch carries resolved_ceiling=300k → do_install produces 300k×2=600k.
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), cycles::cycles(2), &random, &clk, sc.ctx());
+
+    // phase_start = entry_time = tenure×3. extended_ceiling = base×2 = tenure×2.
+    // Correct expiry = tenure×3 + tenure×2 = tenure×5.
+    // Buggy  expiry = tenure×3 + tenure×3×2 = tenure×9.
+    let expiry = escrow::tenure_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry), entry_time + tenure * 2);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

@@ -1180,14 +1180,14 @@ public(package) fun do_apt_transition<Asset: key + store, CoinType>(
         },
         TenancyState::Occupied { tenant } => {
             let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring) = do_tenure_expiry(
-                asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, false,
+                asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, committed_cycles, false,
                 owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
             RentingFireResultState::TenureExpired { asset: asset::unbundle(wrapped), last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring }
         },
         TenancyState::OccupiedRetiring { tenant } => {
             let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring) = do_tenure_expiry(
-                asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, true,
+                asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, committed_cycles, true,
                 owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
             RentingFireResultState::TenureExpired { asset: asset::unbundle(wrapped), last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring }
@@ -1284,6 +1284,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     resolved_floor:    Price,
     resolved_ceiling:  Duration,
     resolved_handover: Duration,
+    committed_cycles:  Cycles,
     retiring:          bool,
     owner:             &mut Owner<CoinType>,
     escrow_id:         ID,
@@ -1314,7 +1315,11 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         timestamp_ms:           phases::timestamp_ms(boundary),
     });
 
-    (asset, monetary::as_reference_price(principal), resolved_floor, resolved_ceiling, resolved_handover, retiring)
+    // Normalize extended ceiling/handover back to per-cycle base.
+    // The AtDutch/Idle that follows belongs to the next tenant's cycle, not this one's.
+    let base_ceiling  = cycles::rescale_duration(resolved_ceiling,  committed_cycles, cycles::cycles(1));
+    let base_handover = cycles::rescale_duration(resolved_handover, committed_cycles, cycles::cycles(1));
+    (asset, monetary::as_reference_price(principal), resolved_floor, base_ceiling, base_handover, retiring)
 }
 
 /// Set the retiring flag on the current tenancy (Occupied or Demand).
@@ -1862,9 +1867,9 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     ctx:      &mut TxContext,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start, resolved_floor, resolved_ceiling, resolved_handover, committed_cycles: _, state: TenancyState::Occupied { tenant } } }, mut owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start, resolved_floor, resolved_ceiling, resolved_handover, committed_cycles, state: TenancyState::Occupied { tenant } } }, mut owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
             let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring) = do_tenure_expiry(
-                asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, false,
+                asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, committed_cycles, false,
                 &mut owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
             let raw_asset = asset::unbundle(wrapped);
@@ -1877,9 +1882,9 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
                 AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8])) } } }, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }
             }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start, resolved_floor, resolved_ceiling, resolved_handover, committed_cycles: _, state: TenancyState::OccupiedRetiring { tenant } } }, mut owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, phase_start, resolved_floor, resolved_ceiling, resolved_handover, committed_cycles, state: TenancyState::OccupiedRetiring { tenant } } }, mut owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id } => {
             let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring) = do_tenure_expiry(
-                asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, true,
+                asset, tenant, phase_start, resolved_floor, resolved_ceiling, resolved_handover, committed_cycles, true,
                 &mut owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
             let raw_asset = asset::unbundle(wrapped);

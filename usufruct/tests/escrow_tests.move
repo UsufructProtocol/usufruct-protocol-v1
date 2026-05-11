@@ -7951,3 +7951,69 @@ fun do_handover_winner_receives_base_times_bidding_cycles_no_compound() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+/// AtDutch descent is driven by resolved_descent and phase_start only.
+/// resolved_ceiling (extended for multi-cycle) plays no role in auction timing.
+///
+/// T1 (3 cycles, base_tenure=100k) expires at t=300k → AtDutch.
+/// Descent window = descent_window_h1 = 100k.
+///
+/// Verified:
+///   price at t=300k (phase_start) = last_acq_price = T1's stake    [start of descent]
+///   price at t=400k (phase_start + descent) = min_rent_price        [end of descent]
+///   price at t=300k → t=400k is monotone non-increasing             [descent is continuous]
+///
+/// If resolved_ceiling (300k) affected the descent window, the price at t=400k
+/// would NOT reach min_rent_price yet — only at t=300k+300k=600k would it.
+#[test]
+fun at_dutch_descent_driven_by_resolved_descent_not_resolved_ceiling() {
+    let mut sc = setup();
+
+    // Config with Multi tenure_cycles and a descent window.
+    let tenure  = escrow_corpus::tenure_ceiling_const();
+    let floor   = escrow_corpus::min_rent_price_const();
+    let descent = escrow_corpus::descent_window_h1_const();
+    let cfg = escrow_corpus::with_tenure_cycles(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), // h=1 descent window
+        tenure_cycles_policy_state::new_multi(),
+    );
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // T1: 3 cycles → extended_ceiling = tenure×3 = 300k. Stake = floor×3.
+    sc.next_tx(TENANT_ADDR_1);
+    let principal = floor * 3;
+    let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T1 tenure expires at t = tenure×3 = 300k → AtDutch.
+    // AtDutch.phase_start = 300k. resolved_ceiling is normalized to base = 100k.
+    let t_expiry = tenure * 3;
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(t_expiry), sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+
+    // At t_expiry (elapsed=0): price = last_acq_price = T1's stake = floor×3.
+    let price_at_start = escrow::compute_floor_price_at_ms(&escrow, t_expiry);
+    assert_eq!(price_at_start, principal);
+
+    // At t_expiry + descent (elapsed=window): price = min_rent_price = floor.
+    // If resolved_ceiling (300k) were used instead, descent would end at t=600k, not t=400k.
+    let price_at_end = escrow::compute_floor_price_at_ms(&escrow, t_expiry + descent);
+    assert_eq!(price_at_end, floor);
+
+    // Mid-descent: price is strictly between start and end.
+    let price_at_mid = escrow::compute_floor_price_at_ms(&escrow, t_expiry + descent / 2);
+    assert!(price_at_mid < price_at_start, 1);
+    assert!(price_at_mid > price_at_end,   2);
+
+    // Past descent: price stays at min_rent_price (saturated).
+    let price_past = escrow::compute_floor_price_at_ms(&escrow, t_expiry + descent * 2);
+    assert_eq!(price_past, floor);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

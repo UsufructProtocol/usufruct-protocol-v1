@@ -343,6 +343,37 @@ After the fix, `RandomInRange` is just another way to produce a `Duration`. The 
 
 ---
 
+## 20. Seed → extend → test: the three-phase technique for new abstractions
+
+**Level: refactoring strategy**
+
+When adding a new dimension to the system, do not start with the new behaviour. Start by naming what already exists.
+
+**Phase 1 — Seed.** Introduce the new type and thread it through every call site with the identity value (the value that makes the new dimension invisible). No behaviour changes. The compiler forces exhaustive coverage of every site. If existing tests pass without modification, the abstraction fits the codebase cleanly. If they break, the abstraction is fighting the design.
+
+**Phase 2 — Extend.** Remove the identity constraint. The new dimension now carries real values. Because every call site was already updated in Phase 1, Phase 2 is a single change — the removal of the guard that enforced the identity. Structural changes at this stage signal that the seed was incomplete.
+
+**Phase 3 — Test.** The test suite for a new dimension has four layers:
+
+1. **Unit tests** — the new domain type and its algebra in isolation.
+2. **Invariant tests** — properties that must hold for all values of the new dimension (symmetry, monotonicity, correct pricing).
+3. **Degeneration tests** — every invariant test replayed with the identity value. If these fail, Phase 1 was wrong.
+4. **E2E replica tests** — the most important corpus scenarios replayed with `n > 1`. These catch bugs that unit and invariant tests miss because they exercise the full stack.
+
+**What the compiler tells you:**
+
+- Phase 1 with zero test failures: the abstraction is correctly placed.
+- Phase 2 requiring structural changes beyond the guard removal: the seed was incomplete. Return to Phase 1.
+- Phase 3 E2E tests failing: real bugs in the extension logic. The tests earned their existence.
+
+**Canonical example — `Cycles` on branch `explore/tenure-cycles` (commits `21b7200..3179493`):**
+
+`Cycles` was seeded by threading `cycles(1)` through `execute_rent`, `do_install`, `do_handover`, `TenancyContext`, and `TenancyState::Demand`. All 475 existing tests passed unchanged — the abstraction fit. Phase 2 removed the `Single`-only guard. Phase 3 found two production bugs invisible without E2E replica tests: `do_handover` computing new ceiling as `current_ceiling × bidding_cycles` instead of `base_tenure × bidding_cycles`, and `resolved_handover` for `FixedTime` not tracking the extended ceiling after a multi-cycle install or handover.
+
+**Diagnostic:** if Phase 2 touches more than the guard and new test cases, the abstraction was started from the wrong end.
+
+---
+
 ## Applied checklist
 
 When writing or reviewing code in this codebase:

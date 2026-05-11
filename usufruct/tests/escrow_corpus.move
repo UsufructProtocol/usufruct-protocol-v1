@@ -71,25 +71,33 @@ public use fun entry_m   as CorpusEntry.m;
 
 // === Package Functions ===
 
-/// Base deterministic corpus — 168 entries (c=0..2, h=0..1, m=0).
-/// Backward compatible with all existing callers.
+/// Full deterministic corpus — 672 entries, one per (m,c,d,e,h,f) tuple.
+///   m: 0..1  TenureCyclesPolicyState (Single, Multi)
+///   c: 0..3  HandoverPolicyState     (Instant, Countdown, FixedTime, RandomInRange)
+///   d: 0..1  PriceFunctionState      (FixedDelta, CompoundDelta)
+///   e: 0..6  CurveShapeState pair    (Linear..Exponential)
+///   h: 0..2  DescentPolicyState      (Skipped, Window, RandomInRange)
+///   f: 0..1  RetirePolicyState       (Immediate, Deferred)
+///
+/// Requires --gas-limit ≥ 100_000_000.
 /// Call once per test and bind to a local; never inside the iteration loop.
-public(package) fun all(): vector<CorpusEntry> { make_base_slice(0) }
+public(package) fun all(): vector<CorpusEntry> {
+    let mut entries = make_full_slice(0);
+    entries.append(make_full_slice(1));
+    entries
+}
 
-/// 168 entries identical to all() but with tenure_cycles = Multi (m=1).
-public(package) fun all_multi(): vector<CorpusEntry> { make_base_slice(1) }
+/// 336 entries: Single cycle (m=0), full axis cross-product.
+public(package) fun all_single(): vector<CorpusEntry> { make_full_slice(0) }
 
-/// 56 entries: RandomInRange handover (c=3) × all d/e/h/f, m=0.
-public(package) fun all_random_handover(): vector<CorpusEntry> { make_random_handover_slice(0) }
+/// 336 entries: Multi cycle (m=1), full axis cross-product.
+public(package) fun all_multi(): vector<CorpusEntry> { make_full_slice(1) }
 
-/// 56 entries: RandomInRange handover (c=3) × all d/e/h/f, m=1.
-public(package) fun all_random_handover_multi(): vector<CorpusEntry> { make_random_handover_slice(1) }
-
-/// 56 entries: RandomInRange descent (h=2) × all c/d/e/f, m=0.
-public(package) fun all_random_descent(): vector<CorpusEntry> { make_random_descent_slice(0) }
-
-/// 56 entries: RandomInRange descent (h=2) × all c/d/e/f, m=1.
-public(package) fun all_random_descent_multi(): vector<CorpusEntry> { make_random_descent_slice(1) }
+/// Filtered views — derive from all() for full coverage.
+public(package) fun all_random_handover():       vector<CorpusEntry> { filter_c(all_single(), 3) }
+public(package) fun all_random_handover_multi(): vector<CorpusEntry> { filter_c(all_multi(),  3) }
+public(package) fun all_random_descent():        vector<CorpusEntry> { filter_h(all_single(), 2) }
+public(package) fun all_random_descent_multi():  vector<CorpusEntry> { filter_h(all_multi(),  2) }
 
 /// Single-config lookup by τ2 tag. Validates each decoded axis and returns
 /// IntegrationConfig directly — the wrapper carries no new info when the
@@ -307,70 +315,23 @@ fun assert_by_tag_roundtrips(entries: vector<CorpusEntry>) {
     };
 }
 
-// Base: c=0..2, d=0..1, e=0..6, h=0..1, f=0..1 → 3×2×7×2×2 = 168 entries.
-fun make_base_slice(m: u8): vector<CorpusEntry> {
+// Full cross-product: c=0..3, d=0..1, e=0..6, h=0..2, f=0..1 → 4×2×7×3×2 = 336 entries.
+fun make_full_slice(m: u8): vector<CorpusEntry> {
     let mut entries = vector[];
     let mut c = 0u8;
-    while (c <= 2) {
+    while (c <= 3) {
         let mut d = 0u8;
         while (d <= 1) {
             let mut e = 0u8;
             while (e <= 6) {
                 let mut h = 0u8;
-                while (h <= 1) {
+                while (h <= 2) {
                     let mut f = 0u8;
                     while (f <= 1) {
                         entries.push_back(make_entry(c, d, e, h, f, m));
                         f = f + 1;
                     };
                     h = h + 1;
-                };
-                e = e + 1;
-            };
-            d = d + 1;
-        };
-        c = c + 1;
-    };
-    entries
-}
-
-// RandomInRange handover: c=3 fixed, d=0..1, e=0..6, h=0..1, f=0..1 → 1×2×7×2×2 = 56 entries.
-fun make_random_handover_slice(m: u8): vector<CorpusEntry> {
-    let mut entries = vector[];
-    let mut d = 0u8;
-    while (d <= 1) {
-        let mut e = 0u8;
-        while (e <= 6) {
-            let mut h = 0u8;
-            while (h <= 1) {
-                let mut f = 0u8;
-                while (f <= 1) {
-                    entries.push_back(make_entry(3, d, e, h, f, m));
-                    f = f + 1;
-                };
-                h = h + 1;
-            };
-            e = e + 1;
-        };
-        d = d + 1;
-    };
-    entries
-}
-
-// RandomInRange descent: h=2 fixed, c=0..1, d=0..1, e=0..6, f=0..1 → 2×2×7×1×2 = 56 entries.
-// c limited to 0..1 (Instant, Countdown) to avoid countdown_floor_lt conflicts with h=2.
-fun make_random_descent_slice(m: u8): vector<CorpusEntry> {
-    let mut entries = vector[];
-    let mut c = 0u8;
-    while (c <= 1) {
-        let mut d = 0u8;
-        while (d <= 1) {
-            let mut e = 0u8;
-            while (e <= 6) {
-                let mut f = 0u8;
-                while (f <= 1) {
-                    entries.push_back(make_entry(c, d, e, 2, f, m));
-                    f = f + 1;
                 };
                 e = e + 1;
             };
@@ -532,22 +493,25 @@ fun collect_matching_m(es: vector<CorpusEntry>, m: u8): vector<CorpusEntry> {
 
 // === Test Functions ===
 
-// Each self-test targets one slice (≤168 configs) to stay within VM timeout.
+// Self-tests — require --gas-limit ≥ 100_000_000 for the full-corpus tests.
 
 #[test]
-fun all_has_168_entries() { assert!(all().length() == 168, 0); }
+fun all_has_672_entries() { assert!(all().length() == 672, 0); }
 
 #[test]
-fun all_multi_has_168_entries() { assert!(all_multi().length() == 168, 0); }
+fun all_single_has_336_entries() { assert!(all_single().length() == 336, 0); }
 
 #[test]
-fun all_random_handover_has_56_entries() { assert!(all_random_handover().length() == 56, 0); }
+fun all_multi_has_336_entries() { assert!(all_multi().length() == 336, 0); }
 
 #[test]
-fun all_random_descent_has_56_entries() { assert!(all_random_descent().length() == 56, 0); }
+fun all_random_handover_has_84_entries() { assert!(all_random_handover().length() == 84, 0); }
 
 #[test]
-fun all_tags_consistent_base() { assert_tags_consistent(all()); }
+fun all_random_descent_has_112_entries() { assert!(all_random_descent().length() == 112, 0); }
+
+#[test]
+fun all_tags_consistent_single() { assert_tags_consistent(all_single()); }
 
 #[test]
 fun all_tags_consistent_multi() { assert_tags_consistent(all_multi()); }
@@ -559,26 +523,13 @@ fun all_tags_consistent_random_handover() { assert_tags_consistent(all_random_ha
 fun all_tags_consistent_random_descent() { assert_tags_consistent(all_random_descent()); }
 
 #[test]
-fun by_tag_spot_check() {
-    // Spot-check a representative tag from each axis combination.
-    // Full round-trip verification is covered by all_tags_consistent_* tests
-    // (which only re-encode, not re-build the config from a tag).
-    let spot = vector[
-        build_tag(0, 0, 0, 0, 0, 0),  // Single  Instant   FixedDelta  Linear   Skipped  Immediate
-        build_tag(1, 1, 3, 1, 1, 0),  // Single  Countdown Compound    PowerLaw Window   Immediate
-        build_tag(2, 0, 6, 0, 0, 1),  // Single  FixedTime FixedDelta  Exp      Skipped  Deferred
-        build_tag(3, 1, 0, 1, 1, 1),  // Single  Random    Compound    Linear   Window   Deferred
-        build_tag(0, 0, 0, 2, 0, 0),  // Single  Instant   FixedDelta  Linear   RndDesc  Immediate
-        build_tag(0, 0, 0, 0, 0, 1),  // Multi   Instant   FixedDelta  Linear   Skipped  Immediate
-        build_tag(1, 1, 4, 1, 1, 1),  // Multi   Countdown Compound    PowerLaw Window   Deferred
-        build_tag(3, 0, 2, 0, 1, 0),  // Multi   Random    FixedDelta  Logistic Skipped  Deferred... hmm
-    ];
-    let n = spot.length();
-    let mut i = 0;
-    while (i < n) {
-        let t = *spot.borrow(i);
-        let cfg = by_tag(t);
-        let _ = cfg;
-        i = i + 1;
-    };
-}
+fun by_tag_roundtrips_single() { assert_by_tag_roundtrips(all_single()); }
+
+#[test]
+fun by_tag_roundtrips_multi() { assert_by_tag_roundtrips(all_multi()); }
+
+#[test]
+fun by_tag_roundtrips_random_handover() { assert_by_tag_roundtrips(all_random_handover()); }
+
+#[test]
+fun by_tag_roundtrips_random_descent() { assert_by_tag_roundtrips(all_random_descent()); }

@@ -6940,3 +6940,175 @@ fun multi_cycle_countdown_floor_not_scaled_after_handover() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §Degeneration: cycles(1) matches single-cycle baseline ──────────────────
+//
+// Each test pairs the multi-cycle code path (cycles=1) against the expected
+// single-cycle baseline derived from the corpus constants. If the abstraction
+// is clean, cycles(1) is invisible — results are identical to the pre-cycles
+// implementation.
+
+/// Floor degeneration: committed_cycles=1 → price_function(stake/1) = price_function(stake).
+/// The per-cycle normalization must not alter the floor when cycles=1.
+#[test]
+fun degeneration_floor_cycles_one_equals_baseline() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let floor = escrow_corpus::min_rent_price_const();
+    let delta = escrow_corpus::fixed_delta_value_const();
+
+    sc.next_tx(TENANT_ADDR_1);
+    let cap = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // floor = price_function(stake / 1) = price_function(stake) = floor + delta.
+    assert!(escrow::compute_floor_price(&escrow, &clk) == floor + delta, 0);
+
+    transfer::public_transfer(cap, TENANT_ADDR_1);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Ceiling degeneration: cycles(1) → resolved_ceiling = base tenure exactly.
+/// The ceiling extension must not alter anything when the multiplier is 1.
+#[test]
+fun degeneration_ceiling_cycles_one_equals_base_tenure() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let tenure = escrow_corpus::tenure_ceiling_const();
+    let floor  = escrow_corpus::min_rent_price_const();
+
+    sc.next_tx(TENANT_ADDR_1);
+    let cap = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // tenure_expiry = phase_start(0) + tenure × 1 = tenure.
+    let expiry = escrow::tenure_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry), tenure);
+
+    transfer::public_transfer(cap, TENANT_ADDR_1);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Supersede degeneration: cycles(1) on both sides gives the same floor
+/// escalation as the pre-cycles corpus baseline.
+/// T1(1 cycle, floor) → T2 bids(1 cycle) → T3 supersedes T2.
+/// Floor chain: floor → floor+δ → floor+2δ.
+#[test]
+fun degeneration_supersede_floor_chain_cycles_one() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let floor = escrow_corpus::min_rent_price_const();
+    let delta = escrow_corpus::fixed_delta_value_const();
+
+    // T1: 1 cycle, pays floor.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // T2 bids: floor = price_function(floor) = floor + delta.
+    sc.next_tx(TENANT_ADDR_2);
+    let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor_t2 == floor + delta, 0);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // T3 supersedes: floor = price_function(floor+delta) = floor + 2*delta.
+    sc.next_tx(@0xC1);
+    let floor_t3 = escrow::compute_floor_price(&escrow, &clk);
+    assert!(floor_t3 == floor + delta * 2, 1);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// FixedTime degeneration: cycles(1) → handover expiry = phase_start + tenure.
+/// The FixedTime boundary must not be extended when cycles=1.
+#[test]
+fun degeneration_fixed_time_expiry_cycles_one() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let tenure = escrow_corpus::tenure_ceiling_const();
+    let floor  = escrow_corpus::min_rent_price_const();
+    let delta  = escrow_corpus::fixed_delta_value_const();
+
+    // T1: 1 cycle.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // T2 bids: FixedTime expiry = phase_start(0) + ceiling(tenure × 1) = tenure.
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    let expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry), tenure);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Countdown degeneration: cycles(1) → expiry = min(bid+countdown, phase_start+tenure).
+/// The countdown formula must be identical to the pre-cycles baseline.
+#[test]
+fun degeneration_countdown_expiry_cycles_one() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const();
+    let delta     = escrow_corpus::fixed_delta_value_const();
+
+    // T1: 1 cycle, ceiling = tenure.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // T2 bids at t = tenure/2. expiry = min(tenure/2 + countdown, 0 + tenure).
+    let bid_time = tenure / 2;
+    clock::set_for_testing(&mut clk, bid_time);
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // bid_time + countdown = 50k + 25k = 75k < tenure = 100k → countdown wins.
+    let expected = bid_time + countdown;
+    assert!(expected < tenure, 0);
+    let expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry), expected);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

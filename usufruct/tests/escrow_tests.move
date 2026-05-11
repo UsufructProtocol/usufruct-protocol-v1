@@ -3881,6 +3881,119 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     sc.end();
 }
 
+// ─── §APT-1 exhaustive — all c×h×m combinations ──────────────────────────────
+
+/// Exhaustive idempotency test over all combinations of handover policy (c),
+/// descent policy (h), and cycle count (m). d, e, f are fixed at 0 — they
+/// do not affect which APT code path runs.
+///
+/// T1 rents cycles(m+1) so the multi-cycle normalization in do_handover is
+/// exercised for m=1. T2 always rents cycles(1).
+///
+/// hv_expiry is read from the BidPlaced event, making the timing config-agnostic
+/// across all four handover policies (including RandomInRange whose expiry is
+/// non-deterministic).
+///
+/// Three boundaries are tested (or two for h=0):
+///   B1 — handover fires at hv_expiry
+///   B2 — T2's tenure fires at hv_expiry + CEILING
+///   B3 — AtDutch fires at B2 + max_descent  (h=1: DESCENT_WINDOW_H1,
+///                                              h=2: DESCENT_RANDOM_MAX_H2)
+///
+/// At each boundary: first APT fires the transition; second APT is a no-op —
+/// state and event count must be identical after both calls.
+fun apt_idempotency_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenario) {
+    let ceiling  = escrow_corpus::tenure_ceiling_const();
+    let price_t1 = escrow_corpus::min_rent_price_const();
+    let mut i    = 0;
+    while (i < entries.length()) {
+        let entry          = &entries[i];
+        let tag            = entry.tag();
+        let t1_cycle_count = (entry.m() as u64) + 1; // 1 for Single, 2 for Multi
+        let (mut escrow, owner_cap) = integrate_and_take(*entry.cfg(), &mut sc);
+        let mut clk = clock::create_for_testing(sc.ctx());
+        let random  = sc.take_shared<Random>();
+
+        let cap_t1 = escrow::rent(
+            &mut escrow,
+            mk_payment(price_t1 * t1_cycle_count, sc.ctx()),
+            cycles::cycles(t1_cycle_count),
+            &random, &clk, sc.ctx(),
+        );
+
+        clock::set_for_testing(&mut clk, 1_000);
+        let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+        let cap_t2   = escrow::rent(
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+        assert!(escrow::is_handover_confirmed(&escrow), tag);
+
+        // hv_expiry from BidPlaced — config-agnostic for all c values.
+        let hv_expiry = asset_context_state::bid_placed_handover_countdown_expiry(
+            event::events_by_type<BidPlaced>().borrow(0),
+        );
+
+        // ── B1: Handover ──────────────────────────────────────────────────────
+        clock::set_for_testing(&mut clk, hv_expiry);
+        escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+        assert!(escrow::is_handover_open(&escrow), tag);
+        assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
+        escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+        assert!(escrow::is_handover_open(&escrow), tag);
+        assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
+
+        // T2.phase_start = hv_expiry; T2 rented cycles(1) so ceiling = CEILING.
+        let tenure_boundary = hv_expiry + ceiling;
+
+        // ── B2: Tenure expiry ─────────────────────────────────────────────────
+        clock::set_for_testing(&mut clk, tenure_boundary);
+        escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+        assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
+        escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+        assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
+
+        // ── B3: Auction expiry (h ≠ 0 only) ──────────────────────────────────
+        if (entry.h() != 0) {
+            assert!(escrow::is_at_dutch_auction(&escrow), tag);
+            let max_descent = if (entry.h() == 1) {
+                escrow_corpus::descent_window_h1_const()
+            } else {
+                escrow_corpus::descent_random_max_h2_const()
+            };
+            clock::set_for_testing(&mut clk, tenure_boundary + max_descent);
+            escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+            assert!(escrow::is_idle(&escrow), tag);
+            assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
+            escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+            assert!(escrow::is_idle(&escrow), tag);
+            assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
+        } else {
+            assert!(escrow::is_idle(&escrow), tag);
+        };
+
+        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t2, OWNER);
+        test_scenario::return_shared(escrow);
+        owner_cap::burn(owner_cap, OWNER);
+        test_scenario::return_shared(random);
+        clock::destroy_for_testing(clk);
+        i = i + 1;
+    };
+    sc.end();
+}
+
+// d=0, e=0, f=0 fixed (accidental for APT code paths). 24 entries total.
+#[test]
+fun e2e_apt_idempotency_all_ch_m() {
+    apt_idempotency_loop(
+        escrow_corpus::filter_f(
+            escrow_corpus::filter_e(
+                escrow_corpus::filter_d(escrow_corpus::all(), 0),
+            0),
+        0),
+        setup(),
+    );
+}
+
 // ─── §RETIRE. All paths to Retired — asset always recoverable (f=0) ──────────
 //
 // For every reachable lifecycle state, the owner can retire the escrow when

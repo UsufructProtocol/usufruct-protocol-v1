@@ -17,6 +17,7 @@ use usufruct::{
     asset::AssetReceipt,
     config::{Self, IntegrationConfig},
     curve_shape_state::CurveShapeState,
+    cycles::Cycles,
     descent_policy_state,
     asset_context_state::{Self, AssetContext, CapAuthorizationState},
     handover_policy_state,
@@ -176,12 +177,13 @@ public fun reset_config<Asset: key + store, CoinType>(
 public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut Escrow<Asset, CoinType>,
     payment: Coin<CoinType>,
+    cycles:  Cycles,
     random:  &Random,
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): TenantCap {
     let context = escrow.asset_context.extract();
-    let (context, cap) = asset_context_state::execute_rent(context, payment, random, clock, ctx);
+    let (context, cap) = asset_context_state::execute_rent(context, payment, cycles, random, clock, ctx);
     escrow.asset_context.fill(context);
     cap
 }

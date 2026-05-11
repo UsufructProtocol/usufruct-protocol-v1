@@ -6885,49 +6885,56 @@ fun multi_cycle_fixed_time_handover_tracks_new_ceiling() {
     sc.end();
 }
 
-/// Countdown floor-not-scaled-after-handover invariant.
-/// T1 (3 cycles, countdown=25k) → T2 (2 cycles) wins.
-/// T2.ceiling = base×2 = 200k. T2.resolved_handover = 25k (countdown does NOT scale).
-/// T3 bids at t=175k → expiry = min(175k+25k, 25k+200k) = min(200k, 225k) = 200k.
+/// Countdown floor scales with committed_cycles.
+/// T1 (3 cycles): extended_handover = countdown × 3 = 75k.
+/// T2 (2 cycles) wins at 75k: T2.handover = countdown × 2 = 50k, T2.ceiling = 200k.
+/// T3 bids at t=175k → expiry = min(175k+50k, 75k+200k) = min(225k, 275k) = 225k.
+/// The handover window is proportional to the tenure committed — paying N cycles
+/// buys N times the protection window on each handover.
 #[test]
-fun multi_cycle_countdown_floor_not_scaled_after_handover() {
+fun multi_cycle_countdown_scales_with_committed_cycles() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
-    let tenure    = escrow_corpus::tenure_ceiling_const();   // 100_000
+    let tenure    = escrow_corpus::tenure_ceiling_const();
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const(); // 25_000
-    let delta     = escrow_corpus::fixed_delta_value_const();
 
-    // T1: 3 cycles, ceiling = tenure × 3 = 300k.
+    // T1: 3 cycles → extended_handover = 25k × 3 = 75k, extended_ceiling = 300k.
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
 
-    // T2: 2 cycles. Countdown: expiry = min(0+25k, 0+300k) = 25k.
+    // T2: 2 cycles bids at t=0. expiry = min(0 + 75k, 0 + 300k) = 75k.
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), cycles::cycles(2), &random, &clk, sc.ctx());
 
-    // T2 wins at boundary = countdown = 25k.
-    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(countdown), sc.ctx());
+    // Verify T2's handover expiry = 75k (= countdown × 3), not 25k.
+    let expiry_demand = escrow::handover_countdown_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry_demand), countdown * 3);
 
-    // T2 now current: phase_start = 25k, ceiling = tenure × 2 = 200k.
+    // T2 wins at boundary = 75k.
+    let boundary_t2 = countdown * 3;
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_t2), sc.ctx());
+
+    // T2 now current: phase_start = 75k.
+    // base_tenure = 300k/3 = 100k → T2.ceiling = 100k × 2 = 200k.
+    // base_handover = 75k/3 = 25k → T2.handover = 25k × 2 = 50k.
     let expiry_t2 = escrow::tenure_expiry_ms(&escrow);
-    assert_eq!(*option::borrow(&expiry_t2), countdown + tenure * 2);
+    assert_eq!(*option::borrow(&expiry_t2), boundary_t2 + tenure * 2);
 
-    // T3 bids at t = 25k + tenure×1.5 = 175k (mid T2 tenure).
-    let bid_time_t3 = countdown + tenure * 3 / 2;
+    // T3 bids at t = 75k + 100k = 175k. expiry = min(175k+50k, 75k+200k) = 225k.
+    let bid_time_t3 = boundary_t2 + tenure;
     clock::set_for_testing(&mut clk, bid_time_t3);
     sc.next_tx(@0xC1);
     let bid_floor_t3 = escrow::compute_floor_price(&escrow, &clk);
     let cap3 = escrow::rent(&mut escrow, mk_payment(bid_floor_t3, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
-    // Countdown floor = 25k (unchanged, NOT tenure×2 = 200k).
-    // expiry = min(175k + 25k, 25k + 200k) = min(200k, 225k) = 200k.
-    let expected_expiry = bid_time_t3 + countdown; // 175k + 25k = 200k
-    assert!(expected_expiry < countdown + tenure * 2, 0); // < T2.phase_start + T2.ceiling
+    // T2.handover = 50k. expiry = min(175k + 50k, 75k + 200k) = min(225k, 275k) = 225k.
+    let expected_expiry = bid_time_t3 + countdown * 2; // 175k + 50k = 225k
+    assert!(expected_expiry < boundary_t2 + tenure * 2, 0); // < T2.phase_start + T2.ceiling
     let handover_expiry_t3 = escrow::handover_countdown_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry_t3), expected_expiry);
 
@@ -7297,14 +7304,17 @@ fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
     escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
     assert!(escrow::is_handover_confirmed(&escrow), 1);
 
-    // APT at countdown expiry: handover fires, T2 current with retiring flag.
-    clock::set_for_testing(&mut clk, countdown);
+    // T1.extended_handover = countdown × 3 = 75k.
+    // APT fires handover at t = 75k, T2 current with retiring flag.
+    let handover_boundary = countdown * 3;
+    clock::set_for_testing(&mut clk, handover_boundary);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), 2);
 
-    // APT at T2's tenure boundary: T2 ceiling = tenure × 1 = tenure.
-    // phase_start of T2 = countdown. Expiry = countdown + tenure.
-    clock::set_for_testing(&mut clk, countdown + tenure);
+    // T2: committed_cycles=1, phase_start=75k.
+    // base_tenure = 300k/3 = 100k → T2.ceiling = 100k × 1 = 100k.
+    // T2 expires at handover_boundary + tenure = 75k + 100k = 175k.
+    clock::set_for_testing(&mut clk, handover_boundary + tenure);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), 3);
 

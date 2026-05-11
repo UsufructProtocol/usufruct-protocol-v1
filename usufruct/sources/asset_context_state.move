@@ -1268,16 +1268,13 @@ fun do_handover<Asset: key + store, CoinType>(
         timestamp_ms:             boundary_ms,
     });
 
-    // Base tenure per cycle = resolved_ceiling / committed_cycles.
-    // New ceiling = base_tenure × bidding_cycles.
-    let base_tenure_ms = phases::duration_ms(resolved_ceiling) / cycles::cycles_count(committed_cycles);
-    let new_ceiling    = phases::duration(base_tenure_ms * cycles::cycles_count(bidding_cycles));
-    // FixedTime: resolved_handover == base_tenure. Track the new ceiling.
-    let new_handover   = if (phases::duration_ms(resolved_handover) == base_tenure_ms) {
-        new_ceiling
-    } else {
-        resolved_handover
-    };
+    // Normalize to per-cycle base, then scale to bidding_cycles.
+    let n_committed      = cycles::cycles_count(committed_cycles);
+    let n_bidding        = cycles::cycles_count(bidding_cycles);
+    let base_tenure_ms   = phases::duration_ms(resolved_ceiling)  / n_committed;
+    let base_handover_ms = phases::duration_ms(resolved_handover) / n_committed;
+    let new_ceiling      = phases::duration(base_tenure_ms   * n_bidding);
+    let new_handover     = phases::duration(base_handover_ms * n_bidding);
     let state = if (retiring) TenancyState::OccupiedRetiring { tenant: pending }
                 else TenancyState::Occupied { tenant: pending };
     TenancyContext { asset, phase_start: boundary, resolved_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover, committed_cycles: bidding_cycles, state }
@@ -1796,15 +1793,9 @@ fun do_install<Asset: key + store, CoinType>(
     let cap_id = object::id(&cap);
     let t = tenant::new<CoinType>(cap_id, tenant_addr, coin::into_balance(payment));
     let wrapped = asset::new(asset::unlock(locked), escrow_id);
-    let extended_ceiling  = phases::duration(phases::duration_ms(resolved_ceiling) * cycles::cycles_count(cycles));
-    // FixedTime invariant: resolved_handover == resolved_ceiling (base).
-    // After extending, the FixedTime boundary must track the new ceiling.
-    // Countdown/Instant floors are < ceiling so they remain unchanged.
-    let extended_handover = if (phases::duration_ms(resolved_handover) == phases::duration_ms(resolved_ceiling)) {
-        extended_ceiling
-    } else {
-        resolved_handover
-    };
+    let n = cycles::cycles_count(cycles);
+    let extended_ceiling  = phases::duration(phases::duration_ms(resolved_ceiling)  * n);
+    let extended_handover = phases::duration(phases::duration_ms(resolved_handover) * n);
     event::emit(RentStarted {
         escrow_id, tenant_cap_id: cap_id, tenant: tenant_addr,
         phase_start_ms: now_ms, price_paid, floor_price: floor,

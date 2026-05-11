@@ -50,6 +50,7 @@ use usufruct::{
         AssetClaimed,
     },
     escrow_corpus,
+    escrow_identity,
     fee_message::FeeMessageSent,
     owner_cap::{Self, OwnerCap},
     phases,
@@ -97,10 +98,10 @@ const CHALLENGER:    address = @0xC1;
 const STAKE_T1:      u64     = 1_000_000_000;   // 1 SUI
 const STAKE_T2:      u64     = 2_000_000_000;   // 2 SUI
 
-fun cap_id_1(): ID { object::id_from_address(@0xCA1) }
-fun cap_id_2(): ID { object::id_from_address(@0xCA2) }
+fun cap_id_1(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA1)) }
+fun cap_id_2(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA2)) }
 
-fun mk_tenant(stake: u64, addr: address, cap: ID): Tenant<SUI> {
+fun mk_tenant(stake: u64, addr: address, cap: tenant_cap::TenantCapIdentity): Tenant<SUI> {
     tenant::new(cap, addr, balance::create_for_testing<SUI>(stake))
 }
 
@@ -1227,7 +1228,7 @@ fun retire_with_wrong_cap_aborts() {
     let random = sc.take_shared<Random>();
 
     // Mint a foreign cap bound to a different escrow_id.
-    let foreign_cap = owner_cap::new(object::id_from_address(@0xDEAD), OWNER, sc.ctx());
+    let foreign_cap = owner_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
     escrow::retire(&mut escrow, &foreign_cap, &random, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
@@ -1511,7 +1512,7 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
-    let foreign_cap = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
+    let foreign_cap = tenant_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), TENANT_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &foreign_cap, &random, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
@@ -1536,7 +1537,7 @@ fun borrow_asset_from_idle_aborts() {
 
     // Mint a cap bound to this escrow but never used (no active rental).
     let escrow_id = object::id(&escrow);
-    let cap = tenant_cap::new(escrow_id, TENANT_ADDR_1, sc.ctx());
+    let cap = tenant_cap::new(escrow_identity::new(escrow_id), TENANT_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &cap, &random, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
@@ -1671,7 +1672,7 @@ fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
-    let foreign = tenant_cap::new(object::id_from_address(@0xDEAD), TENANT_ADDR_1, sc.ctx());
+    let foreign = tenant_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), TENANT_ADDR_1, sc.ctx());
 
     escrow::burn_tenant_cap(&mut escrow, foreign, &random, &clk, sc.ctx());
 
@@ -1747,7 +1748,7 @@ fun withdraw_earnings_with_wrong_cap_aborts() {
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
-    let foreign = owner_cap::new(object::id_from_address(@0xDEAD), OWNER, sc.ctx());
+    let foreign = owner_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
     let coin = escrow::withdraw_earnings(&mut escrow, &foreign, &random, &clk, sc.ctx());
     coin::burn_for_testing(coin);
     test_scenario::return_shared(escrow);
@@ -1862,7 +1863,7 @@ fun claim_asset_with_wrong_cap_aborts() {
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
-    let foreign = owner_cap::new(object::id_from_address(@0xDEAD), OWNER, sc.ctx());
+    let foreign = owner_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
     let (asset, earnings) = escrow::claim_asset(escrow, foreign, &random, &clk, sc.ctx());
     coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);

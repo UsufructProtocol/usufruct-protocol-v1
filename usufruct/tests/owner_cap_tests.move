@@ -9,7 +9,10 @@ use sui::{
     event,
     test_scenario::{Self},
 };
-use usufruct::owner_cap::{Self, OwnerCap, OwnerCapMinted, OwnerCapBurned};
+use usufruct::{
+    escrow_identity,
+    owner_cap::{Self, OwnerCap, OwnerCapMinted, OwnerCapBurned},
+};
 
 // ─── Actors ────────────────────────────────────────────────────────────────
 
@@ -30,7 +33,7 @@ fun escrow_id_2(): ID { object::id_from_address(@0xE5C2) }
 fun n1_new_returns_cap_and_emits_minted_event() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         assert_eq!(owner_cap::proj_escrow_id(&cap), escrow_id_1());
 
@@ -51,8 +54,8 @@ fun n1_new_returns_cap_and_emits_minted_event() {
 fun n2_two_new_calls_produce_distinct_caps_and_events() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap0 = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
-        let cap1 = owner_cap::new(escrow_id_2(), BOB,   scenario.ctx());
+        let cap0 = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap1 = owner_cap::new(escrow_identity::new(escrow_id_2()), BOB,   scenario.ctx());
 
         assert!(object::id(&cap0) != object::id(&cap1));
         assert_eq!(owner_cap::proj_escrow_id(&cap0), escrow_id_1());
@@ -79,7 +82,7 @@ fun n2_two_new_calls_produce_distinct_caps_and_events() {
 fun n3_owner_is_declarative_not_sender() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), BOB, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
         let events = event::events_by_type<OwnerCapMinted>();
         assert_eq!(owner_cap::minted_owner(&events[0]), BOB);
         transfer::public_transfer(cap, BOB);
@@ -93,7 +96,7 @@ fun n3_owner_is_declarative_not_sender() {
 fun n4_owner_zero_address_accepted() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ZERO, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ZERO, scenario.ctx());
         let events = event::events_by_type<OwnerCapMinted>();
         assert_eq!(owner_cap::minted_owner(&events[0]), ZERO);
         transfer::public_transfer(cap, ALICE);
@@ -108,7 +111,7 @@ fun n5_zero_escrow_id_accepted() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let zero_escrow = object::id_from_address(@0x0);
-        let cap = owner_cap::new(zero_escrow, ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
         let events = event::events_by_type<OwnerCapMinted>();
         assert_eq!(owner_cap::minted_escrow_id(&events[0]), zero_escrow);
         transfer::public_transfer(cap, ALICE);
@@ -123,9 +126,9 @@ fun n5_zero_escrow_id_accepted() {
 fun n6_duplicate_escrow_id_not_rejected_at_new() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap0 = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
-        let cap1 = owner_cap::new(escrow_id_2(), ALICE, scenario.ctx());
-        let cap2 = owner_cap::new(escrow_id_1(), BOB,   scenario.ctx());
+        let cap0 = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap1 = owner_cap::new(escrow_identity::new(escrow_id_2()), ALICE, scenario.ctx());
+        let cap2 = owner_cap::new(escrow_identity::new(escrow_id_1()), BOB,   scenario.ctx());
 
         assert!(object::id(&cap0) != object::id(&cap1));
         assert!(object::id(&cap1) != object::id(&cap2));
@@ -151,7 +154,7 @@ fun b1_burn_deletes_cap_and_emits_burned_event() {
     let cap_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         cap_id = object::id(&cap);
         transfer::public_transfer(cap, ALICE);
     };
@@ -181,7 +184,7 @@ fun b3_burned_owner_reflects_burn_time_holder() {
     let cap_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         cap_id = object::id(&cap);
         transfer::public_transfer(cap, BOB);
     };
@@ -203,7 +206,7 @@ fun b3_burned_owner_reflects_burn_time_holder() {
 fun b4_burned_owner_is_declarative_not_sender() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         owner_cap::burn(cap, BOB);
 
         let events = event::events_by_type<OwnerCapBurned>();
@@ -218,7 +221,7 @@ fun b5_burn_zero_escrow_id_cap() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let zero_escrow = object::id_from_address(@0x0);
-        let cap = owner_cap::new(zero_escrow, ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
         owner_cap::burn(cap, ALICE);
 
         let events = event::events_by_type<OwnerCapBurned>();
@@ -234,7 +237,7 @@ fun b5_burn_zero_escrow_id_cap() {
 fun g1_escrow_id_getter_returns_bound_id() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         assert_eq!(owner_cap::proj_escrow_id(&cap), escrow_id_1());
         transfer::public_transfer(cap, ALICE);
     };
@@ -246,7 +249,7 @@ fun g1_escrow_id_getter_returns_bound_id() {
 fun g2_escrow_id_getter_is_pure() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         let mut k: u64 = 0;
         while (k < 5) {
             assert_eq!(owner_cap::proj_escrow_id(&cap), escrow_id_1());
@@ -263,7 +266,7 @@ fun g3_escrow_id_getter_returns_zero_when_zero() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let zero_escrow = object::id_from_address(@0x0);
-        let cap = owner_cap::new(zero_escrow, ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
         assert_eq!(owner_cap::proj_escrow_id(&cap), zero_escrow);
         transfer::public_transfer(cap, ALICE);
     };
@@ -279,7 +282,7 @@ fun l1_full_lifecycle_mint_then_burn() {
     let mut scenario = test_scenario::begin(ALICE);
     let cap_id: ID;
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         cap_id = object::id(&cap);
         let minted = event::events_by_type<OwnerCapMinted>();
         assert_eq!(minted.length(), 1);
@@ -311,7 +314,7 @@ fun l2_custody_handoff_mint_transfer_burn() {
     let cap_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         cap_id = object::id(&cap);
         let minted = event::events_by_type<OwnerCapMinted>();
         assert_eq!(owner_cap::minted_owner(&minted[0]), ALICE);
@@ -339,8 +342,8 @@ fun l3_two_caps_batched_reversed_burn() {
     let cap1_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap0 = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
-        let cap1 = owner_cap::new(escrow_id_2(), BOB,   scenario.ctx());
+        let cap0 = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap1 = owner_cap::new(escrow_identity::new(escrow_id_2()), BOB,   scenario.ctx());
         cap0_id = object::id(&cap0);
         cap1_id = object::id(&cap1);
 
@@ -382,7 +385,7 @@ fun p2_uid_deleted_on_burn() {
     let cap_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         cap_id = object::id(&cap);
         transfer::public_transfer(cap, ALICE);
     };
@@ -406,7 +409,7 @@ fun new_burn_same_tx_uid_not_in_deleted() {
     let mut scenario = test_scenario::begin(ALICE);
     let cap_id: ID;
     {
-        let cap = owner_cap::new(escrow_id_1(), ALICE, scenario.ctx());
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         cap_id = object::id(&cap);
         owner_cap::burn(cap, ALICE);
     };

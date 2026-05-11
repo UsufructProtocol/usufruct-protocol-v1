@@ -6,6 +6,7 @@ module usufruct::owner_cap;
 // === Imports ===
 
 use sui::event;
+use usufruct::escrow_identity::{Self, EscrowIdentity};
 
 // === Errors ===
 
@@ -15,8 +16,11 @@ use sui::event;
 
 public struct OwnerCap has key, store {
     id:        UID,
-    escrow_id: ID,
+    escrow_id: EscrowIdentity,
 }
+
+/// Typed identity of an `OwnerCap` object — wraps its on-chain `ID`.
+public struct OwnerCapIdentity has copy, drop, store { id: ID }
 
 // === Events ===
 
@@ -38,39 +42,46 @@ public struct OwnerCapBurned has copy, drop {
 
 // === View Functions ===
 
-/// Returns the ID of the `RentalEscrow` this cap authorizes.
+/// Returns the ID of the `RentalEscrow` this cap authorizes (SDK boundary).
 public fun proj_escrow_id(cap: &OwnerCap): ID {
-    cap.escrow_id
+    escrow_identity::escrow_id(cap.escrow_id)
 }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-/// Mints an `OwnerCap` bound to `escrow_id`. Caller is responsible for
-/// delivering it to `owner` — `owner` is a declarative annotation for the
-/// event stream, not a runtime transfer target.
+/// Produce a typed `OwnerCapIdentity` from a live cap reference.
+public(package) fun identity(cap: &OwnerCap): OwnerCapIdentity {
+    OwnerCapIdentity { id: object::id(cap) }
+}
+
+/// Extract the raw `ID` from an `OwnerCapIdentity`.
+public(package) fun cap_id(o: OwnerCapIdentity): ID { o.id }
+
+/// Package-internal: return the `EscrowIdentity` this cap is bound to.
+public(package) fun proj_escrow_identity(cap: &OwnerCap): EscrowIdentity {
+    cap.escrow_id
+}
+
+/// Mints an `OwnerCap` bound to `escrow_id`.
 public(package) fun new(
-    escrow_id: ID,
+    escrow_id: EscrowIdentity,
     owner:     address,
     ctx:       &mut TxContext,
 ): OwnerCap {
-    let cap = OwnerCap {
-        id: object::new(ctx),
-        escrow_id,
-    };
+    let cap          = OwnerCap { id: object::new(ctx), escrow_id };
     let owner_cap_id = object::uid_to_inner(&cap.id);
-    event::emit(OwnerCapMinted { owner_cap_id, escrow_id, owner });
+    event::emit(OwnerCapMinted { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_id), owner });
     cap
 }
 
-/// Destroys `cap` and emits `OwnerCapBurned`. `owner` is declarative —
-/// the caller binds `tx_context::sender(ctx)` at the call site.
+/// Destroys `cap` and emits `OwnerCapBurned`.
 public(package) fun burn(cap: OwnerCap, owner: address) {
     let OwnerCap { id, escrow_id } = cap;
     let owner_cap_id = object::uid_to_inner(&id);
     object::delete(id);
-    event::emit(OwnerCapBurned { owner_cap_id, escrow_id, owner });
+    event::emit(OwnerCapBurned { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_id), owner });
 }
 
 // === Private Functions ===

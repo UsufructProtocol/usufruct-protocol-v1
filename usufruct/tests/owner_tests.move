@@ -7,9 +7,11 @@ module usufruct::owner_tests;
 use std::unit_test::assert_eq;
 use sui::{balance, coin, test_scenario};
 use usufruct::{
+    escrow_identity,
     monetary,
     owner,
-    owner_cap::{Self, OwnerCap},
+    owner_cap::{Self, OwnerCap, OwnerCapIdentity},
+    tenant_cap,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -21,9 +23,9 @@ const OTHER:      address = @0xB2;
 
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 
-fun mk_cap(ctx: &mut TxContext): (OwnerCap, ID) {
-    let cap    = owner_cap::new(fake_escrow_id(), OWNER_ADDR, ctx);
-    let cap_id = object::id(&cap);
+fun mk_cap(ctx: &mut TxContext): (OwnerCap, OwnerCapIdentity) {
+    let cap    = owner_cap::new(escrow_identity::new(fake_escrow_id()), OWNER_ADDR, ctx);
+    let cap_id = owner_cap::identity(&cap);
     (cap, cap_id)
 }
 
@@ -138,7 +140,7 @@ fun withdraw_with_wrong_cap_aborts() {
     {
         let (cap_bound, cap_id) = mk_cap(sc.ctx());
         // A second cap, distinct cap_id — represents a foreign OwnerCap.
-        let cap_other = owner_cap::new(fake_escrow_id(), OTHER, sc.ctx());
+        let cap_other = owner_cap::new(escrow_identity::new(fake_escrow_id()), OTHER, sc.ctx());
         let mut o = owner::new<TEST_COIN>(cap_id);
         owner::deposit(&mut o, owner::new_earnings(balance::create_for_testing<TEST_COIN>(10)));
         let coin_drained = owner::withdraw(&mut o, &cap_other, sc.ctx());
@@ -209,7 +211,7 @@ fun take_owner_earnings_then_deposit_round_trip() {
         let mut o = owner::new<TEST_COIN>(cap_id);
 
         let mut t = tenant::new<TEST_COIN>(
-            object::id_from_address(@0xCA1),
+            tenant_cap::from_id(object::id_from_address(@0xCA1)),
             @0xA1,
             balance::create_for_testing<TEST_COIN>(1_000),
         );

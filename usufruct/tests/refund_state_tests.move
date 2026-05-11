@@ -11,6 +11,7 @@ use usufruct::{
     escrow_identity,
     refund_state,
     tenant::{Self, TenantIdentity, TenantStake},
+    tenant_cap,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -19,14 +20,14 @@ public struct TEST_COIN has drop {}
 
 const ADDR_T1: address = @0xA1;
 
-fun cap_t1(): ID         { object::id_from_address(@0xCA1) }
+fun cap_t1(): ID { object::id_from_address(@0xCA1) }
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 
 /// Build a fresh `(TenantIdentity, TenantStake)` pair via the tenant
 /// constructor + unbundle — the only public path to producing these
 /// types from tests.
 fun id_and_stake(amount: u64): (TenantIdentity, TenantStake<TEST_COIN>) {
-    let t = tenant::new<TEST_COIN>(cap_t1(), ADDR_T1, balance::create_for_testing(amount));
+    let t = tenant::new<TEST_COIN>(tenant_cap::from_id(cap_t1()), ADDR_T1, balance::create_for_testing(amount));
     tenant::unbundle(t)
 }
 

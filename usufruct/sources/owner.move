@@ -6,7 +6,7 @@ module usufruct::owner;
 // === Imports ===
 
 use sui::{balance::{Self, Balance}, coin::{Self, Coin}};
-use usufruct::owner_cap::OwnerCap;
+use usufruct::owner_cap::{Self, OwnerCap, OwnerCapIdentity};
 
 // === Errors ===
 
@@ -25,7 +25,7 @@ const E_OWNER_WRONG_CAP: u64 = 1;
 /// not a pre-registered address. Asymmetric with `TenantIdentity` — and
 /// the asymmetry is structural, not accidental.
 public struct OwnerIdentity has copy, drop, store {
-    cap_id: ID,
+    cap_id: OwnerCapIdentity,
 }
 
 /// Material half of an `Owner`. Wraps the accumulated earnings; the
@@ -59,7 +59,7 @@ public struct Owner<phantom CoinType> has store {
 public(package) fun proj_identity<C>(o: &Owner<C>):              &OwnerIdentity     { &o.identity }
 public(package) fun proj_earnings<C>(o: &Owner<C>):              &OwnerEarnings<C>  { &o.earnings }
 public(package) fun proj_value<C>(o: &Owner<C>):                 u64                { balance::value(&o.earnings.balance) }
-public(package) fun proj_cap_id(id: &OwnerIdentity):             ID                 { id.cap_id }
+public(package) fun proj_cap_id(id: &OwnerIdentity):             OwnerCapIdentity   { id.cap_id }
 public(package) fun proj_earnings_value<C>(e: &OwnerEarnings<C>): u64               { balance::value(&e.balance) }
 
 // === Admin Functions ===
@@ -69,7 +69,7 @@ public(package) fun proj_earnings_value<C>(e: &OwnerEarnings<C>): u64           
 /// Construct an `Owner` bound to `cap_id` with zero earnings. Sole
 /// construction site — the cap-layer supplies the cap_id at escrow
 /// creation time.
-public(package) fun new<C>(cap_id: ID): Owner<C> {
+public(package) fun new<C>(cap_id: OwnerCapIdentity): Owner<C> {
     Owner {
         identity: OwnerIdentity { cap_id },
         earnings: OwnerEarnings { balance: balance::zero<C>() },
@@ -101,7 +101,7 @@ public(package) fun withdraw<C>(
     cap:  &OwnerCap,
     ctx:  &mut TxContext,
 ): Coin<C> {
-    assert!(object::id(cap) == self.identity.cap_id, E_OWNER_WRONG_CAP);
+    assert!(owner_cap::identity(cap) == self.identity.cap_id, E_OWNER_WRONG_CAP);
     let drained = balance::withdraw_all(&mut self.earnings.balance);
     coin::from_balance(drained, ctx)
 }

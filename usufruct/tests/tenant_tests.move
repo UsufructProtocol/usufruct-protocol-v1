@@ -15,6 +15,7 @@ use usufruct::{
     monetary,
     escrow_identity,
     tenant::{Self, Tenant},
+    tenant_cap::{Self, TenantCapIdentity},
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -24,7 +25,7 @@ public struct TEST_COIN has drop {}
 const ADDR_T1: address = @0xA1;
 const STAKE_T1: u64 = 1_000;
 
-fun cap_t1(): ID         { object::id_from_address(@0xCA1) }
+fun cap_t1(): TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA1)) }
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 
 fun t1(): Tenant<TEST_COIN> {

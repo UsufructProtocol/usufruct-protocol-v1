@@ -7,10 +7,11 @@ module usufruct::tenant;
 
 use sui::{balance::{Self, Balance}, coin};
 use usufruct::{
+    escrow_identity::EscrowIdentity,
     fee_message::{Self, FeeShare},
     monetary::{Self, Stake},
     owner::{Self, OwnerEarnings},
-    escrow_identity::EscrowIdentity,
+    tenant_cap::TenantCapIdentity,
 };
 
 // === Errors ===
@@ -23,7 +24,7 @@ use usufruct::{
 /// authority over the slot is the cap_id, while its destination for
 /// payments (refunds, liquidate) is the address. Both irreducible.
 public struct TenantIdentity has copy, drop, store {
-    cap_id:  ID,
+    cap_id:  TenantCapIdentity,
     address: address,
 }
 
@@ -57,7 +58,7 @@ public struct Tenant<phantom CoinType> has store {
 public(package) fun proj_identity<C>(t: &Tenant<C>):      &TenantIdentity { &t.identity }
 public(package) fun proj_stake<C>(t: &Tenant<C>):         &TenantStake<C> { &t.stake }
 public(package) fun proj_stake_value<C>(t: &Tenant<C>):   Stake           { monetary::stake(balance::value(&t.stake.balance)) }
-public(package) fun proj_cap_id(id: &TenantIdentity):      ID              { id.cap_id }
+public(package) fun proj_cap_id(id: &TenantIdentity):      TenantCapIdentity { id.cap_id }
 public(package) fun proj_address(id: &TenantIdentity):     address         { id.address }
 public(package) fun proj_stake_value_of<C>(s: &TenantStake<C>): Stake     { monetary::stake(balance::value(&s.balance)) }
 
@@ -69,7 +70,7 @@ public(package) fun proj_stake_value_of<C>(s: &TenantStake<C>): Stake     { mone
 /// the cap-layer (or a test) supplies the three components and the
 /// nested wrappers are built internally.
 public(package) fun new<C>(
-    cap_id:  ID,
+    cap_id:  TenantCapIdentity,
     address: address,
     balance: Balance<C>,
 ): Tenant<C> {

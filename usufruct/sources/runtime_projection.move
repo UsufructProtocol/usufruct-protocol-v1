@@ -16,6 +16,8 @@ use usufruct::{
     tenure_policy_state::{Self as tcs, TenurePolicyState},
     monetary,
     owner::{Self as owner_mod, Owner, OwnerIdentity, OwnerEarnings},
+    owner_cap,
+    tenant_cap,
     price_state::{Self as ps, PriceState},
     refund_state::{Self as refund, RefundState},
     tenant::{Self as tenant_mod, Tenant, TenantIdentity, TenantStake},
@@ -83,7 +85,7 @@ public fun fee_message_amount<C>(msg: &FeeMessage<C>):    u64 { monetary::stake_
 public fun tenant_identity<C>(t: &Tenant<C>):          &TenantIdentity  { tenant_mod::proj_identity(t) }
 public fun tenant_stake<C>(t: &Tenant<C>):             &TenantStake<C>  { tenant_mod::proj_stake(t) }
 public fun tenant_stake_value<C>(t: &Tenant<C>):       u64              { monetary::stake_mist(tenant_mod::proj_stake_value(t)) }
-public fun tenant_cap_id(id: &TenantIdentity):          ID               { tenant_mod::proj_cap_id(id) }
+public fun tenant_cap_id(id: &TenantIdentity):          ID               { tenant_cap::cap_id(tenant_mod::proj_cap_id(id)) }
 public fun tenant_address(id: &TenantIdentity):         address          { tenant_mod::proj_address(id) }
 public fun tenant_stake_value_of<C>(s: &TenantStake<C>): u64            { monetary::stake_mist(tenant_mod::proj_stake_value_of(s)) }
 
@@ -135,7 +137,7 @@ public fun price_fn_compound_delta_delta(p: &PriceFunctionState): Option<u64> { 
 // === owner ===
 
 public fun owner_value<C>(o: &Owner<C>):                  u64             { owner_mod::proj_value(o) }
-public fun owner_cap_id(id: &OwnerIdentity):               ID              { owner_mod::proj_cap_id(id) }
+public fun owner_cap_id(id: &OwnerIdentity):               ID              { owner_cap::cap_id(owner_mod::proj_cap_id(id)) }
 public fun owner_identity<C>(o: &Owner<C>):               &OwnerIdentity  { owner_mod::proj_identity(o) }
 public fun owner_earnings<C>(o: &Owner<C>):               &OwnerEarnings<C> { owner_mod::proj_earnings(o) }
 public fun owner_earnings_value<C>(e: &OwnerEarnings<C>): u64             { owner_mod::proj_earnings_value(e) }

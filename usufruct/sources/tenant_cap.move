@@ -6,6 +6,7 @@ module usufruct::tenant_cap;
 // === Imports ===
 
 use sui::event;
+use usufruct::escrow_identity::{Self, EscrowIdentity};
 
 // === Errors ===
 
@@ -15,8 +16,11 @@ use sui::event;
 
 public struct TenantCap has key, store {
     id:        UID,
-    escrow_id: ID,
+    escrow_id: EscrowIdentity,
 }
+
+/// Typed identity of a `TenantCap` object — wraps its on-chain `ID`.
+public struct TenantCapIdentity has copy, drop, store { id: ID }
 
 // === Events ===
 
@@ -38,23 +42,41 @@ public struct TenantCapBurned has copy, drop {
 
 // === View Functions ===
 
-/// Returns the ID of the `RentalEscrow` this cap was minted for.
+/// Returns the ID of the `RentalEscrow` this cap was minted for (SDK boundary).
 public fun proj_escrow_id(cap: &TenantCap): ID {
-    cap.escrow_id
+    escrow_identity::escrow_id(cap.escrow_id)
 }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-/// Pure constructor. Builds the cap, emits `TenantCapMinted`, returns `(cap, cap_id)` by value.
+/// Produce a typed `TenantCapIdentity` from a live cap reference.
+public(package) fun identity(cap: &TenantCap): TenantCapIdentity {
+    TenantCapIdentity { id: object::id(cap) }
+}
+
+/// Extract the raw `ID` from a `TenantCapIdentity`.
+public(package) fun cap_id(t: TenantCapIdentity): ID { t.id }
+
+/// Wrap a raw `ID` known to belong to a `TenantCap` into a typed identity.
+/// Used at SDK boundary entry points that receive raw IDs from callers.
+public(package) fun from_id(id: ID): TenantCapIdentity { TenantCapIdentity { id } }
+
+/// Package-internal: return the `EscrowIdentity` this cap is bound to.
+public(package) fun proj_escrow_identity(cap: &TenantCap): EscrowIdentity {
+    cap.escrow_id
+}
+
+/// Pure constructor. Builds the cap, emits `TenantCapMinted`, returns cap by value.
 public(package) fun new(
-    escrow_id: ID,
+    escrow_id: EscrowIdentity,
     tenant:    address,
     ctx:       &mut TxContext,
 ): TenantCap {
-    let cap = TenantCap { id: object::new(ctx), escrow_id };
-    event::emit(TenantCapMinted { tenant_cap_id: object::id(&cap), escrow_id, tenant });
+    let cap           = TenantCap { id: object::new(ctx), escrow_id };
+    let tenant_cap_id = object::id(&cap);
+    event::emit(TenantCapMinted { tenant_cap_id, escrow_id: escrow_identity::escrow_id(escrow_id), tenant });
     cap
 }
 
@@ -62,9 +84,9 @@ public(package) fun new(
 public(package) fun burn(cap: TenantCap, ctx: &TxContext) {
     let TenantCap { id, escrow_id } = cap;
     let tenant_cap_id = object::uid_to_inner(&id);
-    let tenant = tx_context::sender(ctx);
+    let tenant        = tx_context::sender(ctx);
     object::delete(id);
-    event::emit(TenantCapBurned { tenant_cap_id, escrow_id, tenant });
+    event::emit(TenantCapBurned { tenant_cap_id, escrow_id: escrow_identity::escrow_id(escrow_id), tenant });
 }
 
 // === Private Functions ===
@@ -86,6 +108,6 @@ public fun burned_escrow_id(e: &TenantCapBurned): ID { e.escrow_id }
 public fun burned_tenant(e: &TenantCapBurned): address { e.tenant }
 
 #[test_only]
-public fun mint_then_burn_for_testing(escrow_id: ID, tenant: address, ctx: &mut TxContext) {
+public fun mint_then_burn_for_testing(escrow_id: EscrowIdentity, tenant: address, ctx: &mut TxContext) {
     burn(new(escrow_id, tenant, ctx), ctx);
 }

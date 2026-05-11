@@ -1268,12 +1268,8 @@ fun do_handover<Asset: key + store, CoinType>(
         timestamp_ms:             boundary_ms,
     });
 
-    // Normalize to per-cycle base, then scale to bidding_cycles.
-    // mul_div avoids intermediate truncation and handles overflow via u128.
-    let n_committed = cycles::cycles_count(committed_cycles);
-    let n_bidding   = cycles::cycles_count(bidding_cycles);
-    let new_ceiling  = phases::duration(math::mul_div(phases::duration_ms(resolved_ceiling),  n_bidding, n_committed));
-    let new_handover = phases::duration(math::mul_div(phases::duration_ms(resolved_handover), n_bidding, n_committed));
+    let new_ceiling  = cycles::rescale_duration(resolved_ceiling,  committed_cycles, bidding_cycles);
+    let new_handover = cycles::rescale_duration(resolved_handover, committed_cycles, bidding_cycles);
     let state = if (retiring) TenancyState::OccupiedRetiring { tenant: pending }
                 else TenancyState::Occupied { tenant: pending };
     TenancyContext { asset, phase_start: boundary, resolved_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover, committed_cycles: bidding_cycles, state }
@@ -1792,9 +1788,8 @@ fun do_install<Asset: key + store, CoinType>(
     let cap_id = object::id(&cap);
     let t = tenant::new<CoinType>(cap_id, tenant_addr, coin::into_balance(payment));
     let wrapped = asset::new(asset::unlock(locked), escrow_id);
-    let n = cycles::cycles_count(cycles);
-    let extended_ceiling  = phases::duration(phases::duration_ms(resolved_ceiling)  * n);
-    let extended_handover = phases::duration(phases::duration_ms(resolved_handover) * n);
+    let extended_ceiling  = cycles::total_duration(resolved_ceiling,  cycles);
+    let extended_handover = cycles::total_duration(resolved_handover, cycles);
     event::emit(RentStarted {
         escrow_id, tenant_cap_id: cap_id, tenant: tenant_addr,
         phase_start_ms: now_ms, price_paid, floor_price: floor,

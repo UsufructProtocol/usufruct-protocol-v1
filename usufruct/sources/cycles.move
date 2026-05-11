@@ -5,7 +5,9 @@ module usufruct::cycles;
 
 // === Imports ===
 
+use usufruct::math;
 use usufruct::monetary::{Self, Price, Stake};
+use usufruct::phases::{Self, Duration};
 
 // === Errors ===
 
@@ -48,6 +50,18 @@ public(package) fun total_price(floor: Price, c: Cycles): Price {
 /// Used by floor_price_at_for_tenancy — the market competes on rate, not total.
 public(package) fun per_cycle_stake(stake: Stake, c: Cycles): Stake {
     monetary::stake(monetary::stake_mist(stake) / c.count)
+}
+
+/// Scale a Duration by cycles — analogous to total_price.
+/// do_install: extended = base × cycles.
+public(package) fun total_duration(d: Duration, c: Cycles): Duration {
+    phases::duration(phases::duration_ms(d) * c.count)
+}
+
+/// Re-scale a Duration from one cycle count to another.
+/// do_handover: new = old × (bidding / committed), via mul_div for precision.
+public(package) fun rescale_duration(d: Duration, from: Cycles, to: Cycles): Duration {
+    phases::duration(math::mul_div(phases::duration_ms(d), to.count, from.count))
 }
 
 // === Private Functions ===

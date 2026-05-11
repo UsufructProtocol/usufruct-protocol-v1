@@ -1269,12 +1269,11 @@ fun do_handover<Asset: key + store, CoinType>(
     });
 
     // Normalize to per-cycle base, then scale to bidding_cycles.
-    let n_committed      = cycles::cycles_count(committed_cycles);
-    let n_bidding        = cycles::cycles_count(bidding_cycles);
-    let base_tenure_ms   = phases::duration_ms(resolved_ceiling)  / n_committed;
-    let base_handover_ms = phases::duration_ms(resolved_handover) / n_committed;
-    let new_ceiling      = phases::duration(base_tenure_ms   * n_bidding);
-    let new_handover     = phases::duration(base_handover_ms * n_bidding);
+    // mul_div avoids intermediate truncation and handles overflow via u128.
+    let n_committed = cycles::cycles_count(committed_cycles);
+    let n_bidding   = cycles::cycles_count(bidding_cycles);
+    let new_ceiling  = phases::duration(math::mul_div(phases::duration_ms(resolved_ceiling),  n_bidding, n_committed));
+    let new_handover = phases::duration(math::mul_div(phases::duration_ms(resolved_handover), n_bidding, n_committed));
     let state = if (retiring) TenancyState::OccupiedRetiring { tenant: pending }
                 else TenancyState::Occupied { tenant: pending };
     TenancyContext { asset, phase_start: boundary, resolved_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover, committed_cycles: bidding_cycles, state }

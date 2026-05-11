@@ -7320,3 +7320,67 @@ fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+/// Remain_credit returned to the displaced tenant after handover.
+/// T1 (3 cycles, 300 SUI, ceiling=300k) displaced at t=25k (8.3% through tenure).
+/// Explicit assertions:
+///   - remain_credit = principal - used_credit (conservation)
+///   - remain_credit > principal/2 (most stake returned — extended ceiling in use)
+///   - T1 physically receives a Coin<SUI> of value == remain_credit
+///
+/// If resolved_ceiling were wrong (100k instead of 300k), used_credit would be
+/// ~75% of principal, and T1 would receive only ~25%. The remain_credit > principal/2
+/// assertion catches this.
+#[test]
+fun multi_cycle_handover_remain_credit_returned_to_tenant() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const();
+
+    // T1: 3 cycles, principal = floor × 3.
+    sc.next_tx(TENANT_ADDR_1);
+    let principal = floor * 3;
+    let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T2 bids at t=0 with 1 cycle.
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Handover fires at countdown = 25k.
+    // elapsed = 25k / 300k = 8.3% → used_credit is small, remain_credit is large.
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(countdown), sc.ctx());
+
+    let completed = event::events_by_type<HandoverCompleted>();
+    assert_eq!(completed.length(), 1);
+    let used_credit   = asset_context_state::handover_completed_used_credit(&completed[0]);
+    let remain_credit = asset_context_state::handover_completed_remain_credit(&completed[0]);
+
+    // Conservation: full principal accounted for.
+    assert_eq!(used_credit + remain_credit, principal);
+
+    // T1 gets most of their stake back — extended ceiling (300k) is in use.
+    // If base ceiling (100k) were used, elapsed/ceiling = 25k/100k = 25%, so
+    // used_credit ≈ 0.25 × principal, remain_credit ≈ 0.75 × principal — still > 0.5.
+    // Tighter bound: elapsed/ceiling = 25k/300k = 8.3% → remain_credit > 0.9 × principal.
+    assert!(remain_credit > principal * 9 / 10, 0);
+
+    // T1 physically receives the remain_credit as a Coin<SUI>.
+    sc.next_tx(TENANT_ADDR_1);
+    assert!(sc.has_most_recent_for_sender<coin::Coin<SUI>>(), 1);
+    let refund = sc.take_from_sender<coin::Coin<SUI>>();
+    assert_eq!(coin::value(&refund), remain_credit);
+    coin::burn_for_testing(refund);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

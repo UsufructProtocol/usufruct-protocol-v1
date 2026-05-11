@@ -7895,3 +7895,59 @@ fun normalization_same_cycle_count_is_identity() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+/// After do_handover, the winning tenant receives exactly base × bidding_cycles
+/// for both ceiling and handover — no compounding with committed_cycles.
+/// T1(3) → T2(2) wins. Verified immediately after handover, without a
+/// subsequent bid needed for the handover check.
+///
+/// Ceiling:  tenure_expiry_ms     == boundary + tenure×2    (not +tenure×6)
+/// Handover: compute_handover_expiry_at(bid=boundary)
+///           == boundary + countdown×2                       (not +countdown×6)
+#[test]
+fun do_handover_winner_receives_base_times_bidding_cycles_no_compound() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const();
+
+    // T1: 3 cycles → ceiling=300k, handover=75k.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T2: 2 cycles bids at t=0. T1.handover=75k → expiry=75k.
+    sc.next_tx(TENANT_ADDR_2);
+    let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2 * 2, sc.ctx()), cycles::cycles(2), &random, &clk, sc.ctx());
+
+    // T2 wins at boundary = countdown×3 = 75k.
+    let boundary = countdown * 3;
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
+
+    // T2 now current. Verify ceiling and handover without a subsequent bid.
+
+    // Ceiling: base = 300k/3 = 100k. T2.ceiling = 100k×2 = 200k.
+    // expiry = boundary + 200k = 75k + 200k = 275k.
+    // Buggy: boundary + 300k×2 = 675k.
+    let expiry = escrow::tenure_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry), boundary + tenure * 2);
+
+    // Handover: base = 75k/3 = 25k. T2.handover = 25k×2 = 50k.
+    // compute_handover_expiry_at(bid=boundary):
+    //   min(boundary + 50k, boundary + 200k) = boundary + 50k = 125k.
+    // Buggy: min(boundary + 150k, boundary + 200k) = boundary + 150k = 225k.
+    let handover_if_bid_now = escrow::compute_handover_expiry_at(&escrow, boundary);
+    assert_eq!(*option::borrow(&handover_if_bid_now), boundary + countdown * 2);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

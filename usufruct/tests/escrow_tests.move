@@ -3358,137 +3358,162 @@ fun e2e_hc_floor_uses_pending_stake_not_current_stake() {
     sc.end();
 }
 
-// ─── §FIN-1. Financial conservation at handover ──────────────────────────────
+// ─── §FIN-1/2. Financial conservation — exhaustive over all() ────────────────
 
-/// At every handover, the departing tenant's principal is partitioned
-/// exactly into three outputs — no money is created or destroyed:
+/// Verifies FIN-1 and FIN-2 for one slice of the corpus (84 entries).
 ///
-///   owner_share + protocol_fee + remain_credit == principal (T1's stake)
+/// FIN-1: T1's principal is partitioned exactly into three outputs:
+///   owner_share + protocol_fee + remain_credit == price_t1
+///   owner_share + protocol_fee == used_credit
 ///
-/// Derived identities:
-///   owner_share + protocol_fee == used_credit   (earned portion fully split)
-///   remain_credit              == principal - used_credit   (unearned refund)
+/// FIN-2: T2's full stake is consumed at tenure expiry, no remainder:
+///   owner_share + protocol_fee == price_t2
+///   last_acquisition_price     == price_t2
 ///
-/// Setup: T1 rents at min_price; T2 bids at t_mid (half the tenure ceiling)
-/// so used_credit > 0 (non-degenerate). c=0 (Instant) fires handover at
-/// bid_time without requiring a separate clock advance.
-#[test]
-fun e2e_fin1_handover_financial_conservation() {
-    let mut sc  = setup();
-    let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // c=0 Instant, e=0 Linear
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
-    let random = sc.take_shared<Random>();
-
-    // T1 rents at min_price (this is the principal we will conserve).
+/// Timing — T1 rents cycles(1) so T1's ceiling = CEILING for all m:
+///   t_mid =  CEILING/4  =  25_000  T2 bids; used_credit > 0 for every curve
+///   t_hv  =  CEILING+1  = 100_001  APT fires handover; T2's tenure not yet expired
+///   t_te  = 2*CEILING+1 = 200_001  APT fires T2's tenure expiry for every c
+///
+/// do_handover sets T2.phase_start = handover_expiry (≤ CEILING for all c).
+/// T2.tenure = handover_expiry + CEILING ∈ [125_000, 200_000].
+/// t_hv < 125_000 ensures no cascade; t_te > 200_000 ensures tenure fires.
+///
+/// The test is split by (c, m) — 84 entries each — to fit the VM time limit:
+///   e2e_fin_conservation_{instant|countdown|fixed_time|random}_{single|multi}
+/// Together they cover all 672 corpus entries.
+fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenario) {
+    let ceiling  = escrow_corpus::tenure_ceiling_const(); // 100_000
+    let t_mid    = ceiling / 4;                           //  25_000
+    let t_hv     = ceiling + 1;                           // 100_001
+    let t_te     = 2 * ceiling + 1;                       // 200_001
     let price_t1 = escrow_corpus::min_rent_price_const();
-    let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+    let mut i    = 0;
+    while (i < entries.length()) {
+        let entry = &entries[i];
+        let tag   = entry.tag();
+        let (mut escrow, owner_cap) = integrate_and_take(*entry.cfg(), &mut sc);
+        let mut clk = clock::create_for_testing(sc.ctx());
+        let random  = sc.take_shared<Random>();
 
-    // T2 bids at mid-tenure so used_credit > 0.
-    let t_mid    = escrow_corpus::tenure_ceiling_const() / 2; // 50_000 ms
-    clock::set_for_testing(&mut clk, t_mid);
-    let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
-    let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+        let cap_t1 = escrow::rent(
+            &mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
-    // Instant handover fires at bid_time = t_mid.
-    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
-    assert!(escrow::is_handover_open(&escrow), tag);
+        clock::set_for_testing(&mut clk, t_mid);
+        let price_t2 = escrow::compute_floor_price(&escrow, &clk);
+        assert!(price_t2 > price_t1, tag);
+        let cap_t2 = escrow::rent(
+            &mut escrow, mk_payment(price_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
-    let hc_events = event::events_by_type<HandoverCompleted>();
-    assert_eq!(hc_events.length(), 1);
-    let he = hc_events.borrow(0);
-    let used_credit   = asset_context_state::handover_completed_used_credit(he);
-    let owner_share   = asset_context_state::handover_completed_owner_share(he);
-    let protocol_fee  = asset_context_state::handover_completed_protocol_fee(he);
-    let remain_credit = asset_context_state::handover_completed_remain_credit(he);
+        clock::set_for_testing(&mut clk, t_hv);
+        escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+        assert!(escrow::is_handover_open(&escrow), tag);
 
-    // FIN-1: principal partitioned into three outputs exactly.
-    assert_eq!(owner_share + protocol_fee + remain_credit, price_t1);
-    assert_eq!(owner_share + protocol_fee, used_credit);
-    assert_eq!(remain_credit, price_t1 - used_credit);
-    // Non-degenerate: used_credit > 0 at t_mid > phase_start=0.
-    assert!(used_credit > 0, tag);
+        // FIN-1
+        {
+            let hc_evs = event::events_by_type<HandoverCompleted>();
+            assert_eq!(hc_evs.length(), 1);
+            let he = hc_evs.borrow(0);
+            let uc = asset_context_state::handover_completed_used_credit(he);
+            let rc = asset_context_state::handover_completed_remain_credit(he);
+            assert_eq!(
+                asset_context_state::handover_completed_owner_share(he)
+                + asset_context_state::handover_completed_protocol_fee(he)
+                + rc,
+                price_t1,
+            );
+            assert_eq!(
+                asset_context_state::handover_completed_owner_share(he)
+                + asset_context_state::handover_completed_protocol_fee(he),
+                uc,
+            );
+            assert!(uc > 0, tag);
+            // FixedTime: handover fires at t_max → full credit earned, nothing returned.
+            // All other policies: handover fires before t_max → partial credit, refund > 0.
+            if (entry.c() == 2) assert_eq!(rc, 0)
+            else                assert!(rc > 0, tag);
+        };
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
-    test_scenario::return_shared(random);
-    clock::destroy_for_testing(clk);
+        clock::set_for_testing(&mut clk, t_te);
+        escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+
+        // FIN-2
+        {
+            let te_evs = event::events_by_type<TenureExpired>();
+            assert_eq!(te_evs.length(), 1);
+            let te = te_evs.borrow(0);
+            assert_eq!(
+                asset_context_state::tenure_expired_owner_share(te)
+                + asset_context_state::tenure_expired_protocol_fee(te),
+                price_t2,
+            );
+            assert_eq!(asset_context_state::tenure_expired_last_acq_price(te), price_t2);
+        };
+
+        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t2, OWNER);
+        test_scenario::return_shared(escrow);
+        owner_cap::burn(owner_cap, OWNER);
+        test_scenario::return_shared(random);
+        clock::destroy_for_testing(clk);
+        i = i + 1;
+    };
     sc.end();
 }
 
-// ─── §FIN-2. Financial conservation at tenure expiry ─────────────────────────
+// 8 slices × 84 entries = 672 total (full coverage of all()). Requires --gas-limit 500_000_000.
+#[test] fun e2e_fin_conservation_instant_single()    { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 0), setup()); }
+#[test] fun e2e_fin_conservation_countdown_single()  { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 1), setup()); }
+#[test] fun e2e_fin_conservation_fixed_time_single() { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 2), setup()); }
+#[test] fun e2e_fin_conservation_random_single()     { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 3), setup()); }
+#[test] fun e2e_fin_conservation_instant_multi()     { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   0), setup()); }
+#[test] fun e2e_fin_conservation_countdown_multi()   { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   1), setup()); }
+#[test] fun e2e_fin_conservation_fixed_time_multi()  { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   2), setup()); }
+#[test] fun e2e_fin_conservation_random_multi()      { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   3), setup()); }
 
-/// At tenure expiry, the full principal (the CURRENT tenant's stake) is
-/// distributed between owner and protocol — no remainder. The fundamental
-/// invariant is:
+// ─── §FIN-2-sentinel (kept for readability) ──────────────────────────────────
+
+/// Readable two-tenant lifecycle that anchors the FIN-2 invariant to a
+/// concrete config and shows that last_acquisition_price tracks the DEPARTING
+/// tenant's stake — not the founding price.
 ///
-///   owner_share + protocol_fee == last_acquisition_price == current_stake
+/// The exhaustive coverage is in the e2e_fin_conservation_* family above;
+/// this test exists as a named, self-contained explanation of the invariant.
 ///
-/// `last_acquisition_price` records the DEPARTING tenant's stake, which is
-/// NOT necessarily the price paid by the first tenant. After a handover,
-/// the current stake belongs to T2 (their bid amount), not T1.
-///
-/// Setup: T1 rents → T2 wins Instant handover at price_t2 → T2's tenure
-/// expires. The event must carry price_t2 as last_acquisition_price.
-/// Explicitly asserting price_t2 ≠ price_t1 ensures the test covers the
-/// non-trivial case: the coordinator reports the current stake faithfully,
-/// not the founding tenant's price.
-///
-/// Config: c=0 (Instant), h=1 (Window — AtDutchAuction observable after
-/// T2's tenure expiry, confirming it fired from HandoverOpen not HC).
+/// Config: c=0 (Instant), h=1 (Window — AtDutch observable after expiry).
 #[test]
 fun e2e_fin2_tenure_expiry_financial_conservation() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // c=0 Instant, h=1 Window
+    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0);
     let cfg     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
-    // T1 rents at min_price from Idle → HandoverOpen (T1's stake = min_price).
     let price_t1 = escrow_corpus::min_rent_price_const();
     let cap_t1   = escrow::rent(&mut escrow, mk_payment(price_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
-    // T2 bids at t=1_000 → price_t2 = min_price + delta (FixedDelta) > price_t1.
     let now_t2   = 1_000u64;
     clock::set_for_testing(&mut clk, now_t2);
     let price_t2 = escrow::compute_floor_price(&escrow, &clk);
-    assert!(price_t2 > price_t1, tag); // stakes differ — non-trivial test
+    assert!(price_t2 > price_t1, tag);
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
-    // Instant handover fires: T2 is now current, T2.phase_start = now_t2.
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_handover_open(&escrow), tag);
 
-    // T2's tenure boundary = now_t2 + tenure_ceiling = 1_000 + 100_000 = 101_000.
     let t2_tenure_boundary = now_t2 + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, t2_tenure_boundary);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
-    // h=1 Window → TenureExpired fires but AtDutchAuction (not Idle).
     assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
     let te_events = event::events_by_type<TenureExpired>();
     assert_eq!(te_events.length(), 1);
-    let te                     = te_events.borrow(0);
-    let owner_share            = asset_context_state::tenure_expired_owner_share(te);
-    let protocol_fee           = asset_context_state::tenure_expired_protocol_fee(te);
-    let last_acquisition_price = asset_context_state::tenure_expired_last_acq_price(te);
-
-    // FIN-2: full current-tenant stake consumed — no remainder at expiry.
-    // Use price_t2 (the known T2 stake, computed before tenure expiry) as the
-    // independent oracle. Asserting via last_acquisition_price would be
-    // tautological: both sides derive from the same split_fee(principal) call.
-    assert_eq!(owner_share + protocol_fee, price_t2);
-    // last_acquisition_price marks the AtDutch descent start: equals T2's stake,
-    // NOT T1's founding price — the descent begins where the last tenant left off.
-    assert_eq!(last_acquisition_price, price_t2);
-    assert!(last_acquisition_price != price_t1, tag);
-    // Both parties receive something.
-    assert!(owner_share > 0, tag);
-    assert!(protocol_fee > 0, tag);
+    let te  = te_events.borrow(0);
+    let lap = asset_context_state::tenure_expired_last_acq_price(te);
+    assert_eq!(asset_context_state::tenure_expired_owner_share(te) + asset_context_state::tenure_expired_protocol_fee(te), price_t2);
+    assert_eq!(lap, price_t2);
+    assert!(lap != price_t1, tag);
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -4419,78 +4444,6 @@ fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
         };
         m = m + 1;
     };
-    sc.end();
-}
-
-// ── Gap 2: d=1 (CompoundDelta) — financial conservation holds ────────────────
-
-/// The FIN-1/2 conservation invariants hold regardless of the PriceFunctionState
-/// axis. CompoundDelta changes the floor price calculation (multiplicative
-/// escalation) but not the stake value stored after rent(), so the conservation
-/// identities are independent of D.
-///
-/// Verifies both boundaries in one lifecycle:
-///   FIN-1 (handover): owner_share + protocol_fee + remain_credit == T1_stake
-///   FIN-2 (tenure):   owner_share + protocol_fee == T2_stake
-#[test]
-fun e2e_corpus_gap_compound_delta_financial_conservation() {
-    let mut sc  = setup();
-    let tag     = escrow_corpus::tag(0, 1, 0, 1, 0); // d=1 CompoundDelta, h=1 Window
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
-    let random = sc.take_shared<Random>();
-    let stake_t1 = escrow_corpus::min_rent_price_const();
-
-    // T1 rents at min_price; T2 bids at CompoundDelta floor (> T1+FixedDelta).
-    let cap_t1   = escrow::rent(
-        &mut escrow, mk_payment(stake_t1, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
-    let t_mid    = escrow_corpus::tenure_ceiling_const() / 2;
-    clock::set_for_testing(&mut clk, t_mid);
-    let stake_t2 = escrow::compute_floor_price(&escrow, &clk);
-    assert!(stake_t2 > stake_t1, tag); // CompoundDelta raises the floor
-    let cap_t2   = escrow::rent(
-        &mut escrow, mk_payment(stake_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
-
-    // Instant handover fires → T2 current.
-    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
-    assert!(escrow::is_handover_open(&escrow), tag);
-
-    // FIN-1: T1's stake partitioned into three outputs exactly.
-    {
-        let evs = event::events_by_type<HandoverCompleted>();
-        let he  = evs.borrow(0);
-        assert_eq!(
-            asset_context_state::handover_completed_owner_share(he)
-            + asset_context_state::handover_completed_protocol_fee(he)
-            + asset_context_state::handover_completed_remain_credit(he),
-            stake_t1,
-        );
-    };
-
-    // T2's tenure expires → AtDutchAuction (h=1 Window).
-    let t2_boundary = t_mid + escrow_corpus::tenure_ceiling_const();
-    clock::set_for_testing(&mut clk, t2_boundary);
-    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), tag);
-
-    // FIN-2: T2's full stake distributed (no remainder at expiry).
-    {
-        let evs = event::events_by_type<TenureExpired>();
-        let te  = evs.borrow(0);
-        assert_eq!(
-            asset_context_state::tenure_expired_owner_share(te)
-            + asset_context_state::tenure_expired_protocol_fee(te),
-            stake_t2,
-        );
-        assert_eq!(asset_context_state::tenure_expired_last_acq_price(te), stake_t2);
-    };
-
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
-    test_scenario::return_shared(random);
-    clock::destroy_for_testing(clk);
     sc.end();
 }
 

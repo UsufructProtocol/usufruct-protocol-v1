@@ -1922,6 +1922,111 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
 
 // ─── §18. End-to-end scenarios ───────────────────────────────────────────────
 
+/// Exhaustive full-cycle helper: Idle → HO → HC → HO → {Idle|AtDutch} → Idle
+/// → Retired → claimed, over all combinations of c, h, m (d=0, e=0, f=0).
+///
+/// Timing is derived from the BidPlaced event (same strategy as APT idempotency)
+/// so the loop is config-agnostic across all four handover policies.
+///
+/// T1 rents cycles(m+1) to exercise multi-cycle normalization for m=1.
+/// T2 always rents cycles(1). Claim happens in a separate tx.
+fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenario) {
+    let ceiling  = escrow_corpus::tenure_ceiling_const();
+    let price_t1 = escrow_corpus::min_rent_price_const();
+    let mut i    = 0;
+    while (i < entries.length()) {
+        let entry      = &entries[i];
+        let tag        = entry.tag();
+        let t1_cycles  = (entry.m() as u64) + 1;
+        let (mut escrow, owner_cap) = integrate_and_take(*entry.cfg(), &mut sc);
+        let escrow_id  = owner_cap::proj_escrow_id(&owner_cap);
+        let mut clk    = clock::create_for_testing(sc.ctx());
+        let random     = sc.take_shared<Random>();
+
+        // T1: Idle → HandoverOpen.
+        let cap_t1 = escrow::rent(
+            &mut escrow,
+            mk_payment(price_t1 * t1_cycles, sc.ctx()),
+            cycles::cycles(t1_cycles),
+            &random, &clk, sc.ctx(),
+        );
+
+        // T2 bids at t=1_000: HandoverOpen → HandoverConfirmed.
+        clock::set_for_testing(&mut clk, 1_000);
+        let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+        let cap_t2   = escrow::rent(
+            &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+        assert!(escrow::is_handover_confirmed(&escrow), tag);
+
+        // Config-agnostic handover expiry from BidPlaced event.
+        let hv_expiry = asset_context_state::bid_placed_handover_countdown_expiry(
+            event::events_by_type<BidPlaced>().borrow(0),
+        );
+
+        // B1: Handover — HC → HO.
+        clock::set_for_testing(&mut clk, hv_expiry);
+        escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+        assert!(escrow::is_handover_open(&escrow), tag);
+        assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
+
+        // B2: Tenure expiry. T2.phase_start = hv_expiry; T2 rented cycles(1).
+        let tenure_boundary = hv_expiry + ceiling;
+        clock::set_for_testing(&mut clk, tenure_boundary);
+        escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+        assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
+
+        // B3: Auction expiry (h ≠ 0 only — h=0 exits directly to Idle).
+        if (entry.h() != 0) {
+            assert!(escrow::is_at_dutch_auction(&escrow), tag);
+            let max_descent = if (entry.h() == 1) {
+                escrow_corpus::descent_window_h1_const()
+            } else {
+                escrow_corpus::descent_random_max_h2_const()
+            };
+            clock::set_for_testing(&mut clk, tenure_boundary + max_descent);
+            escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+            assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
+        };
+        assert!(escrow::is_idle(&escrow), tag);
+
+        // Retire and return to pool; claim in fresh tx.
+        escrow::drive_to_retired_for_testing(&mut escrow);
+        test_scenario::return_shared(escrow);
+        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t2, OWNER);
+        test_scenario::return_shared(random);
+        clock::destroy_for_testing(clk);
+        sc.next_tx(OWNER);
+
+        let retired = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+        let random2 = sc.take_shared<Random>();
+        let clk2    = clock::create_for_testing(sc.ctx());
+        let (asset, earnings) = escrow::claim_asset(retired, owner_cap, &random2, &clk2, sc.ctx());
+        assert!(coin::value(&earnings) > 0, tag);
+        assert_eq!(event::events_by_type<AssetClaimed>().length(), 1);
+        coin::burn_for_testing(earnings);
+        transfer::public_transfer(asset, OWNER);
+        test_scenario::return_shared(random2);
+        clock::destroy_for_testing(clk2);
+
+        i = i + 1;
+    };
+    sc.end();
+}
+
+// d=0, e=0, f=0 fixed (accidental). 24 entries: 4c × 3h × 2m.
+#[test]
+fun e2e_full_cycle_all_ch_m() {
+    full_cycle_loop(
+        escrow_corpus::filter_f(
+            escrow_corpus::filter_e(
+                escrow_corpus::filter_d(escrow_corpus::all(), 0),
+            0),
+        0),
+        setup(),
+    );
+}
+
 /// Full rental cycle with bid: integrate → rent (Idle→HO) → place bid
 /// (HO→HC) → APT handover (HC→HO) → APT tenure (HO→AtDutch) → APT
 /// auction (AtDutch→Idle) → retire → claim. Verifies the assembly

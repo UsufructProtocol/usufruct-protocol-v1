@@ -6592,3 +6592,158 @@ fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// Helper: Multi + HandoverCountdown.
+fun multi_cycle_cfg_countdown(): config::IntegrationConfig {
+    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const();
+    config::new_config(
+        floor_price_policy_state::new_fixed(monetary::price(floor)),
+        tenure_policy_state::new_fixed(phases::duration(tenure)),
+        tenure_cycles_policy_state::new_multi(),
+        handover_policy_state::new_handover_countdown(phases::duration(countdown)),
+        descent_policy_state::new_descent_skipped(),
+        retire_policy_state::new_retire_immediate(),
+        curve_shape_state::new_linear(),
+        curve_shape_state::new_linear(),
+        price_function_state::new_fixed_delta(monetary::price(floor)),
+    )
+}
+
+/// T1 — Floor is per-cycle rate, not total stake.
+/// T1 pays 3 cycles: stake = 30 SUI, committed_cycles = 3.
+/// compute_floor_price = price_function(10 SUI) = 20 SUI  (FixedDelta(10 SUI))
+/// NOT price_function(30 SUI) = 40 SUI.
+/// This is the direct regression test for the core per-cycle invariant.
+#[test]
+fun multi_cycle_floor_price_is_per_cycle_rate() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let floor  = escrow_corpus::min_rent_price_const();
+    let delta  = escrow_corpus::fixed_delta_value_const();
+
+    // T1 pays 3 cycles: total stake = floor × 3.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // Per-cycle rate = floor × 3 / 3 = floor.
+    // price_function(floor) = floor + delta  (FixedDelta).
+    let expected_floor = floor + delta;
+    let actual_floor   = escrow::compute_floor_price(&escrow, &clk);
+    assert!(actual_floor == expected_floor, 0);
+
+    // Guard: the wrong design would give price_function(3×floor) = 3×floor + delta.
+    assert!(actual_floor < floor * 3 + delta, 1);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// T2 — HandoverCountdown: competitor displaces multi-cycle tenant by rate.
+/// T1 pays 3 cycles (ceiling = tenure × 3). T2 bids at t=tenure/2 with 1
+/// cycle, paying only the per-cycle floor. Handover fires at
+/// t + countdown — well before T1's 300k ceiling. T1 is displaced early.
+#[test]
+fun multi_cycle_countdown_displaces_via_rate() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const();
+    let delta     = escrow_corpus::fixed_delta_value_const();
+
+    // T1 rents 3 cycles: ceiling = tenure × 3.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+    assert!(*option::borrow(&escrow::tenure_expiry_ms(&escrow)) == tenure * 3, 0);
+
+    // T2 bids at t = tenure/2 (mid cycle 1) with 1 cycle.
+    // Pays per-cycle floor only: price_function(floor) = floor + delta.
+    let bid_time = tenure / 2;
+    clock::set_for_testing(&mut clk, bid_time);
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    assert!(bid_floor == floor + delta, 1); // per-cycle floor, not total-based
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Handover fires at bid_time + countdown — before T1's 3-cycle ceiling.
+    let handover_ms = bid_time + countdown;
+    assert!(handover_ms < tenure * 3, 2); // well before full ceiling
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(handover_ms), sc.ctx());
+
+    // HandoverCompleted fires at handover_ms, not at tenure × 3.
+    let completed = event::events_by_type<HandoverCompleted>();
+    assert_eq!(completed.length(), 1);
+    assert_eq!(asset_context_state::handover_completed_timestamp_ms(&completed[0]), handover_ms);
+
+    // T2 is now current with ceiling = tenure × 1 from handover boundary.
+    let expiry = escrow::tenure_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&expiry), handover_ms + tenure);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// T3 — HandoverFixedTime: multi-cycle tenant consumes all paid cycles.
+/// T1 pays 3 cycles (ceiling = tenure × 3). T2 bids at t=tenure/2 but
+/// handover expiry = phase_start + ceiling = tenure × 3. T1 is only
+/// displaced at t = tenure × 3 — the full tenure is respected.
+#[test]
+fun multi_cycle_fixed_time_tenant_consumes_full_ceiling() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let tenure = escrow_corpus::tenure_ceiling_const();
+    let floor  = escrow_corpus::min_rent_price_const();
+    let delta  = escrow_corpus::fixed_delta_value_const();
+
+    // T1 rents 3 cycles: ceiling = tenure × 3.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), cycles::cycles(3), &random, &clk, sc.ctx());
+
+    // T2 bids early at t=tenure/2. FixedTime: expiry = phase_start + ceiling = tenure × 3.
+    let bid_time = tenure / 2;
+    clock::set_for_testing(&mut clk, bid_time);
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    assert!(bid_floor == floor + delta, 0);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Countdown expiry must equal the full 3-cycle ceiling.
+    let handover_expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    assert_eq!(*option::borrow(&handover_expiry), tenure * 3);
+
+    // Handover only fires at tenure × 3 — T1 consumed all paid cycles.
+    let boundary = tenure * 3;
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
+
+    let completed = event::events_by_type<HandoverCompleted>();
+    assert_eq!(completed.length(), 1);
+    assert_eq!(asset_context_state::handover_completed_timestamp_ms(&completed[0]), boundary);
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

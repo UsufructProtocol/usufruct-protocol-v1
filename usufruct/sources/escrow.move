@@ -16,7 +16,7 @@ use sui::{
 use usufruct::{
     asset::AssetReceipt,
     config::{Self, IntegrationConfig},
-    curve_shape_state::CurveShapeState,
+    curve_shape_state::{Self as curve, CurveShapeState},
     cycles::Cycles,
     descent_policy_state,
     asset_context_state::{Self, AssetContext, CapAuthorizationState},
@@ -295,10 +295,22 @@ public fun is_descent_skipped<Asset: key + store, CoinType>(
     descent_policy_state::proj_is_skipped(config::proj_descent(cfg(escrow)))
 }
 
+public fun is_descent_window<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): bool {
+    descent_policy_state::proj_is_window(config::proj_descent(cfg(escrow)))
+}
+
 public fun is_retire_immediate<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     retire_policy_state::proj_is_immediate(config::proj_retire(cfg(escrow)))
+}
+
+public fun is_retire_deferred<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): bool {
+    retire_policy_state::proj_is_deferred(config::proj_retire(cfg(escrow)))
 }
 
 public fun is_handover_instant<Asset: key + store, CoinType>(
@@ -311,6 +323,12 @@ public fun is_handover_fixed_time<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     handover_policy_state::proj_is_fixed_time(config::proj_handover(cfg(escrow)))
+}
+
+public fun is_handover_countdown<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): bool {
+    handover_policy_state::proj_is_countdown(config::proj_handover(cfg(escrow)))
 }
 
 public fun is_retiring<Asset: key + store, CoinType>(
@@ -407,6 +425,62 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
     option::some(phases::timestamp_ms(phases::boundary_at(ps, ceiling)))
 }
 
+public fun active_tenure_ceiling_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_resolved_ceiling(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun active_handover_duration_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_resolved_handover(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun active_floor_price_mist<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_resolved_floor(read_context(escrow));
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun next_floor_price_mist<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_waiting_resolved_floor(read_context(escrow));
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun next_tenure_ceiling_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_waiting_resolved_ceiling(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun next_handover_duration_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_waiting_resolved_handover(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun auction_descent_duration_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_waiting_resolved_descent(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
 public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
@@ -449,11 +523,39 @@ public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
 
 // ─── Cap views ───────────────────────────────────────────────────────────────
 
+public fun owner_cap_is_valid<Asset: key + store, CoinType>(
+    escrow:    &Escrow<Asset, CoinType>,
+    owner_cap: &OwnerCap,
+): bool {
+    asset_context_state::proj_owner_cap_id(read_context(escrow)) == object::id(owner_cap)
+}
+
 public fun tenant_cap_status<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
 ): CapAuthorizationState {
     asset_context_state::cap_authorization_state(read_context(escrow), tenant_cap::from_id(cap_id))
+}
+
+public fun tenant_cap_is_current<Asset: key + store, CoinType>(
+    escrow:     &Escrow<Asset, CoinType>,
+    tenant_cap: &TenantCap,
+): bool {
+    asset_context_state::proj_is_current(&asset_context_state::cap_authorization_state(read_context(escrow), tenant_cap::from_id(object::id(tenant_cap))))
+}
+
+public fun tenant_cap_is_pending<Asset: key + store, CoinType>(
+    escrow:     &Escrow<Asset, CoinType>,
+    tenant_cap: &TenantCap,
+): bool {
+    asset_context_state::proj_is_pending(&asset_context_state::cap_authorization_state(read_context(escrow), tenant_cap::from_id(object::id(tenant_cap))))
+}
+
+public fun tenant_cap_is_stale<Asset: key + store, CoinType>(
+    escrow:     &Escrow<Asset, CoinType>,
+    tenant_cap: &TenantCap,
+): bool {
+    asset_context_state::proj_is_stale(&asset_context_state::cap_authorization_state(read_context(escrow), tenant_cap::from_id(object::id(tenant_cap))))
 }
 
 // ─── Timing views ────────────────────────────────────────────────────────────
@@ -519,6 +621,44 @@ public fun last_acq_price<Asset: key + store, CoinType>(
 ): Option<u64> {
     let opt = asset_context_state::proj_last_acq_price(read_context(escrow));
     if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+
+// ─── Credit context views ─────────────────────────────────────────────────────
+
+public fun credit_is_accruing<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): bool {
+    asset_context_state::proj_credit_is_accruing(read_context(escrow))
+}
+
+public fun credit_is_capped<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): bool {
+    asset_context_state::proj_credit_is_capped(read_context(escrow))
+}
+
+public fun credit_stake_mist<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_credit_stake(read_context(escrow));
+    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun credit_phase_start_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_credit_phase_start(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun credit_expiry_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    let opt = asset_context_state::proj_credit_expiry(read_context(escrow));
+    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
     else option::none()
 }
 
@@ -618,6 +758,160 @@ public fun ascending_price_function_state<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): PriceFunctionState {
     *config::proj_price_function_state(cfg(escrow))
+}
+
+// ─── Tenure policy views ──────────────────────────────────────────────────────
+
+public fun tenure_ceiling_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    tenure_policy_state::proj_is_fixed(config::proj_tenure_ceiling(cfg(escrow)))
+}
+
+public fun tenure_ceiling_is_random_in_range<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    tenure_policy_state::proj_is_random_in_range(config::proj_tenure_ceiling(cfg(escrow)))
+}
+
+public fun tenure_ceiling_fixed_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    let opt = tenure_policy_state::proj_fixed_ceiling(config::proj_tenure_ceiling(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun tenure_ceiling_range_min_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    let opt = tenure_policy_state::proj_range_min(config::proj_tenure_ceiling(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun tenure_ceiling_range_max_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    let opt = tenure_policy_state::proj_range_max(config::proj_tenure_ceiling(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
+    else option::none()
+}
+
+// ─── Floor price policy views ─────────────────────────────────────────────────
+
+public fun min_rent_price_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    floor_price_policy_state::proj_is_fixed(config::proj_min_rent_price(cfg(escrow)))
+}
+
+public fun min_rent_price_is_random_in_range<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    floor_price_policy_state::proj_is_random_in_range(config::proj_min_rent_price(cfg(escrow)))
+}
+
+public fun min_rent_price_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    let opt = floor_price_policy_state::proj_fixed_price(config::proj_min_rent_price(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun min_rent_price_range_min_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    let opt = floor_price_policy_state::proj_range_min(config::proj_min_rent_price(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+
+public fun min_rent_price_range_max_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    let opt = floor_price_policy_state::proj_range_max(config::proj_min_rent_price(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
+    else option::none()
+}
+
+// ─── Credit curve views ───────────────────────────────────────────────────────
+
+public fun credit_curve_is_linear<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_linear(config::proj_credit_curve(cfg(escrow)))
+}
+
+public fun credit_curve_is_smoothstep<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_smoothstep(config::proj_credit_curve(cfg(escrow)))
+}
+
+public fun credit_curve_is_logistic<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_logistic(config::proj_credit_curve(cfg(escrow)))
+}
+
+public fun credit_curve_is_power_law<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_power_law(config::proj_credit_curve(cfg(escrow)))
+}
+
+public fun credit_curve_is_exponential<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_exponential(config::proj_credit_curve(cfg(escrow)))
+}
+
+public fun credit_curve_power_law_alpha_num<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
+    curve::proj_power_law_alpha_num(config::proj_credit_curve(cfg(escrow)))
+}
+
+public fun credit_curve_power_law_alpha_den<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
+    curve::proj_power_law_alpha_den(config::proj_credit_curve(cfg(escrow)))
+}
+
+public fun credit_curve_exponential_alpha_abs<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
+    curve::proj_exponential_alpha_abs(config::proj_credit_curve(cfg(escrow)))
+}
+
+public fun credit_curve_exponential_alpha_neg<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<bool> {
+    curve::proj_exponential_alpha_neg(config::proj_credit_curve(cfg(escrow)))
+}
+
+// ─── Descent curve views ──────────────────────────────────────────────────────
+
+public fun descent_curve_is_linear<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_linear(config::proj_descent_curve(cfg(escrow)))
+}
+
+public fun descent_curve_is_smoothstep<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_smoothstep(config::proj_descent_curve(cfg(escrow)))
+}
+
+public fun descent_curve_is_logistic<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_logistic(config::proj_descent_curve(cfg(escrow)))
+}
+
+public fun descent_curve_is_power_law<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_power_law(config::proj_descent_curve(cfg(escrow)))
+}
+
+public fun descent_curve_is_exponential<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    curve::proj_is_exponential(config::proj_descent_curve(cfg(escrow)))
+}
+
+public fun descent_curve_power_law_alpha_num<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
+    curve::proj_power_law_alpha_num(config::proj_descent_curve(cfg(escrow)))
+}
+
+public fun descent_curve_power_law_alpha_den<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
+    curve::proj_power_law_alpha_den(config::proj_descent_curve(cfg(escrow)))
+}
+
+public fun descent_curve_exponential_alpha_abs<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
+    curve::proj_exponential_alpha_abs(config::proj_descent_curve(cfg(escrow)))
+}
+
+public fun descent_curve_exponential_alpha_neg<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<bool> {
+    curve::proj_exponential_alpha_neg(config::proj_descent_curve(cfg(escrow)))
+}
+
+// ─── Price function views ─────────────────────────────────────────────────────
+
+public fun price_fn_is_fixed_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    price_function_state::proj_is_fixed_delta(config::proj_price_function_state(cfg(escrow)))
+}
+
+public fun price_fn_is_compound_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+    price_function_state::proj_is_compound_delta(config::proj_price_function_state(cfg(escrow)))
+}
+
+public fun price_fn_fixed_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    price_function_state::proj_fixed_delta(config::proj_price_function_state(cfg(escrow)))
+}
+
+public fun price_fn_compound_delta_bps<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    price_function_state::proj_compound_delta_bps(config::proj_price_function_state(cfg(escrow)))
+}
+
+public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
+    price_function_state::proj_compound_delta_delta(config::proj_price_function_state(cfg(escrow)))
 }
 
 // === Private Functions ===

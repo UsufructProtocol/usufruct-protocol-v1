@@ -481,6 +481,66 @@ public(package) fun proj_resolved_handover<Asset: key + store, CoinType>(
     }
 }
 
+public(package) fun proj_resolved_floor<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): Option<Price> {
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => option::some(tenancy.resolved_floor),
+        _ => option::none(),
+    }
+}
+
+public(package) fun proj_waiting_resolved_floor<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): Option<Price> {
+    match (&e.asset_state) {
+        AssetState::Waiting { waiting } => match (&waiting.state) {
+            WaitingState::Idle    { resolved_floor, .. } => option::some(*resolved_floor),
+            WaitingState::AtDutch { resolved_floor, .. } => option::some(*resolved_floor),
+            _ => option::none(),
+        },
+        _ => option::none(),
+    }
+}
+
+public(package) fun proj_waiting_resolved_ceiling<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): Option<Duration> {
+    match (&e.asset_state) {
+        AssetState::Waiting { waiting } => match (&waiting.state) {
+            WaitingState::Idle    { resolved_ceiling, .. } => option::some(*resolved_ceiling),
+            WaitingState::AtDutch { resolved_ceiling, .. } => option::some(*resolved_ceiling),
+            _ => option::none(),
+        },
+        _ => option::none(),
+    }
+}
+
+public(package) fun proj_waiting_resolved_handover<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): Option<Duration> {
+    match (&e.asset_state) {
+        AssetState::Waiting { waiting } => match (&waiting.state) {
+            WaitingState::Idle    { resolved_handover, .. } => option::some(*resolved_handover),
+            WaitingState::AtDutch { resolved_handover, .. } => option::some(*resolved_handover),
+            _ => option::none(),
+        },
+        _ => option::none(),
+    }
+}
+
+public(package) fun proj_waiting_resolved_descent<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): Option<Duration> {
+    match (&e.asset_state) {
+        AssetState::Waiting { waiting } => match (&waiting.state) {
+            WaitingState::AtDutch { resolved_descent, .. } => option::some(*resolved_descent),
+            _ => option::none(),
+        },
+        _ => option::none(),
+    }
+}
+
 public(package) fun proj_last_acq_price<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<Price> {
@@ -489,6 +549,51 @@ public(package) fun proj_last_acq_price<Asset: key + store, CoinType>(
             WaitingState::AtDutch { last_acq_price, .. } => option::some(*last_acq_price),
             _ => option::none(),
         },
+        _ => option::none(),
+    }
+}
+
+public(package) fun proj_credit_stake<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): Option<Stake> {
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => option::some(credit_state::proj_stake(&credit_context_for_tenancy(tenancy))),
+        _ => option::none(),
+    }
+}
+
+public(package) fun proj_credit_phase_start<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): Option<Timestamp> {
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => option::some(credit_state::proj_phase_start(&credit_context_for_tenancy(tenancy))),
+        _ => option::none(),
+    }
+}
+
+public(package) fun proj_credit_is_accruing<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): bool {
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => credit_state::proj_is_accruing(&credit_context_for_tenancy(tenancy)),
+        _ => false,
+    }
+}
+
+public(package) fun proj_credit_is_capped<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): bool {
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => credit_state::proj_is_capped(&credit_context_for_tenancy(tenancy)),
+        _ => false,
+    }
+}
+
+public(package) fun proj_credit_expiry<Asset: key + store, CoinType>(
+    e: &AssetContext<Asset, CoinType>,
+): Option<Timestamp> {
+    match (&e.asset_state) {
+        AssetState::Renting { tenancy } => credit_state::proj_expiry(&credit_context_for_tenancy(tenancy)),
         _ => option::none(),
     }
 }
@@ -1054,6 +1159,18 @@ public(package) fun floor_price_at_for_tenancy<Asset: key + store, CoinType>(
     };
     let ps = price_state::ascending(cycles::per_cycle_stake(stake, n));
     price_state::floor_price(&ps, config, now)
+}
+
+fun credit_context_for_tenancy<Asset: key + store, CoinType>(
+    t: &TenancyContext<Asset, CoinType>,
+): credit_state::CreditContext {
+    match (&t.state) {
+        TenancyState::Occupied { tenant } | TenancyState::OccupiedRetiring { tenant } =>
+            credit_state::accruing(tenant::proj_stake_value(tenant), t.phase_start),
+        TenancyState::Demand { current, handover_expiry, .. }
+        | TenancyState::DemandRetiring { current, handover_expiry, .. } =>
+            credit_state::capped(tenant::proj_stake_value(current), t.phase_start, *handover_expiry),
+    }
 }
 
 public(package) fun used_credit_at_for_tenancy<Asset: key + store, CoinType>(

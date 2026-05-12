@@ -169,7 +169,7 @@ public enum RentingFireResultState<Asset: key + store, phantom CoinType> {
         resolved_floor:    Price,
         resolved_ceiling:  Duration,
         resolved_handover: Duration,
-        retiring:          bool,
+        retire:            RetireCondition,
     },
 }
 
@@ -1342,7 +1342,7 @@ public(package) fun accept_rent_payment<Asset: key + store, CoinType>(
         TenancyState::Demand { current, pending, handover_expiry, bidding_cycles: _, retire } =>
             do_supersede_bid(
                 asset, current, pending, handover_expiry, envelope, cycles,
-                retire_condition::proj_is_retiring(&retire),
+                retire,
                 owner, escrow_id, fee_inbox_id, payment, floor, now, ctx,
             ),
     }
@@ -1365,18 +1365,17 @@ public(package) fun do_apt_transition<Asset: key + store, CoinType>(
         TenancyState::Demand { current, pending, handover_expiry: _, bidding_cycles, retire } => {
             let new_tenancy = do_handover(
                 asset, current, pending, envelope, bidding_cycles,
-                retire_condition::proj_is_retiring(&retire),
+                retire,
                 owner, config, escrow_id, fee_inbox_id, boundary, ctx,
             );
             RentingFireResultState::Handover { tenancy: new_tenancy }
         },
         TenancyState::Occupied { tenant, retire } => {
-            let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring) = do_tenure_expiry(
+            let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover) = do_tenure_expiry(
                 asset, tenant, envelope,
-                retire_condition::proj_is_retiring(&retire),
                 owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
-            RentingFireResultState::TenureExpired { asset: asset::unbundle(wrapped), last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring }
+            RentingFireResultState::TenureExpired { asset: asset::unbundle(wrapped), last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retire }
         },
     }
 }
@@ -1389,7 +1388,7 @@ fun do_handover<Asset: key + store, CoinType>(
     pending:         Tenant<CoinType>,
     mut envelope:    TenancyEnvelope,
     bidding_cycles:  Cycles,
-    retiring:        bool,
+    retire:          RetireCondition,
     owner:           &mut Owner<CoinType>,
     config:          &IntegrationConfig,
     escrow_id:       EscrowIdentity,
@@ -1444,24 +1443,23 @@ fun do_handover<Asset: key + store, CoinType>(
     envelope.resolved_handover = cycles::rescale_duration(envelope.resolved_handover, old_cycles, bidding_cycles);
     envelope.committed_cycles  = bidding_cycles;
     envelope.phase_start       = boundary;
-    let retire = if (retiring) retire_condition::set(retire_condition::new()) else retire_condition::new();
-    let state  = TenancyState::Occupied { tenant: pending, retire };
+    let state = TenancyState::Occupied { tenant: pending, retire };
     TenancyContext { asset, envelope, state }
 }
 
 /// Consume an Occupied tenancy at tenure expiry. Distributes full stake to
-/// owner/protocol. Returns (wrapped_asset, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring).
+/// owner/protocol. Returns (wrapped_asset, last_acq_price, resolved_floor, base_ceiling, base_handover).
+/// The retire condition flows through the enum variant at the call site, not here.
 fun do_tenure_expiry<Asset: key + store, CoinType>(
     asset:        asset::AssetCustodyOpen<Asset>,
     tenant:       Tenant<CoinType>,
     envelope:     TenancyEnvelope,
-    retiring:     bool,
     owner:        &mut Owner<CoinType>,
     escrow_id:    EscrowIdentity,
     fee_inbox_id: FeeInboxIdentity,
     boundary:     Timestamp,
     ctx:          &mut TxContext,
-): (asset::AssetCustodyOpen<Asset>, Price, Price, Duration, Duration, bool) {
+): (asset::AssetCustodyOpen<Asset>, Price, Price, Duration, Duration) {
     let principal      = tenant::proj_stake_value(&tenant);
     let tenant_cap_id  = tenant::proj_cap_id(tenant::proj_identity(&tenant));
     let tenant_addr    = tenant::proj_address(tenant::proj_identity(&tenant));
@@ -1489,7 +1487,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     // The AtDutch/Idle that follows belongs to the next tenant's cycle, not this one's.
     let base_ceiling  = cycles::rescale_duration(envelope.resolved_ceiling,  envelope.committed_cycles, cycles::cycles(1));
     let base_handover = cycles::rescale_duration(envelope.resolved_handover, envelope.committed_cycles, cycles::cycles(1));
-    (asset, monetary::as_reference_price(principal), envelope.resolved_floor, base_ceiling, base_handover, retiring)
+    (asset, monetary::as_reference_price(principal), envelope.resolved_floor, base_ceiling, base_handover)
 }
 
 /// Set the retiring flag on the current tenancy (Occupied or Demand).
@@ -1621,7 +1619,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     handover_expiry: Timestamp,
     envelope:        TenancyEnvelope,
     cycles:          Cycles,
-    retiring:        bool,
+    retire:          RetireCondition,
     owner:           &mut Owner<CoinType>,
     escrow_id:       EscrowIdentity,
     fee_inbox_id:    FeeInboxIdentity,
@@ -1663,8 +1661,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
         timestamp_ms:              phases::timestamp_ms(now),
     });
-    let retire = if (retiring) retire_condition::set(retire_condition::new()) else retire_condition::new();
-    let state  = TenancyState::Demand { current, pending: t, handover_expiry, bidding_cycles: cycles, retire };
+    let state = TenancyState::Demand { current, pending: t, handover_expiry, bidding_cycles: cycles, retire };
     (TenancyContext { asset, envelope, state }, cap)
 }
 
@@ -1864,10 +1861,12 @@ fun fire<Asset: key + store, CoinType>(
             match (do_apt_transition(tenancy, &mut owner, &envelope.config, envelope.escrow_id, envelope.fee_inbox_id, boundary, ctx)) {
                 RentingFireResultState::Handover { tenancy: new_tenancy } =>
                     AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, envelope },
-                RentingFireResultState::TenureExpired { asset, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring } => {
+                RentingFireResultState::TenureExpired { asset, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retire } => {
                     let locked      = asset::lock(asset);
                     let boundary_ms = phases::timestamp_ms(boundary);
-                    if (retiring) {
+                    // P5/P10 boundary crossing: RetireCondition's variants live in
+                    // retire_condition.move, so we project here to branch the asset state.
+                    if (retire_condition::proj_is_retiring(&retire)) {
                         event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(envelope.escrow_id), timestamp_ms: boundary_ms });
                         envelope.pending_config = option::none();
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, envelope }
@@ -1977,7 +1976,7 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_env, state: TenancyState::Demand { current, pending, handover_expiry: _, bidding_cycles, retire } } }, mut owner, envelope } => {
             let new_tenancy = do_handover(
                 asset, current, pending, tenancy_env, bidding_cycles,
-                retire_condition::proj_is_retiring(&retire),
+                retire,
                 &mut owner, &envelope.config, envelope.escrow_id, envelope.fee_inbox_id, boundary, ctx,
             );
             AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, envelope }
@@ -1995,14 +1994,13 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
 ): AssetContext<Asset, CoinType> {
     match (context) {
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_env, state: TenancyState::Occupied { tenant, retire } } }, mut owner, mut envelope } => {
-            let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retiring) = do_tenure_expiry(
+            let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover) = do_tenure_expiry(
                 asset, tenant, tenancy_env,
-                retire_condition::proj_is_retiring(&retire),
                 &mut owner, envelope.escrow_id, envelope.fee_inbox_id, boundary, ctx,
             );
             let locked      = asset::lock(asset::unbundle(wrapped));
             let boundary_ms = phases::timestamp_ms(boundary);
-            if (retiring) {
+            if (retire_condition::proj_is_retiring(&retire)) {
                 event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(envelope.escrow_id), timestamp_ms: boundary_ms });
                 envelope.pending_config = option::none();
                 AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, envelope }

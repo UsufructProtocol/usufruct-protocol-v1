@@ -38,7 +38,7 @@ fun t1(): Tenant<TEST_COIN> {
 fun new_constructs_tenant_with_expected_identity_and_stake() {
     let t = t1();
     let id = tenant::proj_identity(&t);
-    assert_eq!(tenant::proj_cap_id(id),  cap_t1());
+    assert_eq!(tenant::proj_cap_identity(id),  cap_t1());
     assert_eq!(tenant::proj_address(id), ADDR_T1);
     assert_eq!(tenant::proj_stake_value(&t), monetary::stake(STAKE_T1));
     tenant::destroy_for_testing(t);
@@ -58,7 +58,7 @@ fun stake_value_of_reads_inner_balance() {
 fun unbundle_returns_identity_and_stake() {
     let t = t1();
     let (id, stake) = tenant::unbundle(t);
-    assert_eq!(tenant::proj_cap_id(&id),     cap_t1());
+    assert_eq!(tenant::proj_cap_identity(&id),     cap_t1());
     assert_eq!(tenant::proj_address(&id),    ADDR_T1);
     assert_eq!(tenant::proj_stake_value_of(&stake), monetary::stake(STAKE_T1));
     tenant::destroy_stake_for_testing(stake);

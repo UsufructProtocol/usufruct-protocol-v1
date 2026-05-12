@@ -365,7 +365,7 @@ public(package) fun proj_owner_balance<Asset: key + store, CoinType>(
 public(package) fun proj_owner_cap_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): ID {
-    owner_cap::cap_id(owner::proj_cap_id(owner::proj_identity(&e.owner)))
+    owner_cap::cap_id(owner::proj_cap_identity(owner::proj_identity(&e.owner)))
 }
 
 // ─── State predicate views (SDK surface via escrow.move) ──────────────────────
@@ -436,7 +436,7 @@ public(package) fun proj_current_cap_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<ID> {
     match (&e.asset_state) {
-        AssetState::Renting { tenancy } => option::some(tenant_cap::cap_id(current_cap_id(tenancy))),
+        AssetState::Renting { tenancy } => option::some(tenant_cap::cap_id(current_cap_identity(tenancy))),
         _ => option::none(),
     }
 }
@@ -455,7 +455,7 @@ public(package) fun proj_pending_cap_id<Asset: key + store, CoinType>(
 ): Option<ID> {
     match (&e.asset_state) {
         AssetState::Renting { tenancy } => {
-            let opt = pending_cap_id_for_tenancy(tenancy);
+            let opt = pending_cap_identity_for_tenancy(tenancy);
             if (opt.is_some()) option::some(tenant_cap::cap_id(*opt.borrow()))
             else option::none()
         },
@@ -1151,7 +1151,7 @@ public(package) fun asset_id_for_tenancy<Asset: key + store, CoinType>(
 }
 
 /// `&Tenant` of the active leg (Occupied or current of Demand). Single source
-/// of truth for the trio `current_addr` / `current_cap_id` / `current_stake`.
+/// of truth for the trio `current_addr` / `current_cap_identity` / `current_stake`.
 fun current_tenant_ref<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
 ): &Tenant<CoinType> {
@@ -1166,10 +1166,10 @@ public(package) fun current_addr<Asset: key + store, CoinType>(
     tenant::proj_address(tenant::proj_identity(current_tenant_ref(t)))
 }
 
-public(package) fun current_cap_id<Asset: key + store, CoinType>(
+public(package) fun current_cap_identity<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
 ): TenantCapIdentity {
-    tenant::proj_cap_id(tenant::proj_identity(current_tenant_ref(t)))
+    tenant::proj_cap_identity(tenant::proj_identity(current_tenant_ref(t)))
 }
 
 public(package) fun pending_addr_for_tenancy<Asset: key + store, CoinType>(
@@ -1182,12 +1182,12 @@ public(package) fun pending_addr_for_tenancy<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun pending_cap_id_for_tenancy<Asset: key + store, CoinType>(
+public(package) fun pending_cap_identity_for_tenancy<Asset: key + store, CoinType>(
     t: &TenancyContext<Asset, CoinType>,
 ): Option<TenantCapIdentity> {
     match (&t.state) {
         TenancyState::Demand { pending, .. } =>
-            option::some(tenant::proj_cap_id(tenant::proj_identity(pending))),
+            option::some(tenant::proj_cap_identity(tenant::proj_identity(pending))),
         TenancyState::Occupied { .. } => option::none(),
     }
 }
@@ -1279,12 +1279,12 @@ public(package) fun cap_auth_for_tenancy<Asset: key + store, CoinType>(
 ): CapAuthorizationState {
     match (&t.state) {
         TenancyState::Occupied { current, .. } => {
-            if (cap_identity == tenant::proj_cap_id(tenant::proj_identity(current))) CapAuthorizationState::Current
+            if (cap_identity == tenant::proj_cap_identity(tenant::proj_identity(current))) CapAuthorizationState::Current
             else CapAuthorizationState::Stale
         },
         TenancyState::Demand { current, pending, .. } => {
-            if      (cap_identity == tenant::proj_cap_id(tenant::proj_identity(current))) CapAuthorizationState::Current
-            else if (cap_identity == tenant::proj_cap_id(tenant::proj_identity(pending))) CapAuthorizationState::Pending
+            if      (cap_identity == tenant::proj_cap_identity(tenant::proj_identity(current))) CapAuthorizationState::Current
+            else if (cap_identity == tenant::proj_cap_identity(tenant::proj_identity(pending))) CapAuthorizationState::Pending
             else CapAuthorizationState::Stale
         },
     }
@@ -1403,7 +1403,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let alloc         = split_fee(used_credit);
     let remain_credit = monetary::stake_sub(principal, used_credit);
 
-    let displaced_cap_id = tenant::proj_cap_id(tenant::proj_identity(&current));
+    let displaced_cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
     let displaced_addr   = tenant::proj_address(tenant::proj_identity(&current));
 
     let mut departing  = current;
@@ -1412,7 +1412,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
-    let new_cap_id     = tenant::proj_cap_id(tenant::proj_identity(&pending));
+    let new_cap_identity     = tenant::proj_cap_identity(tenant::proj_identity(&pending));
     let new_addr       = tenant::proj_address(tenant::proj_identity(&pending));
     let new_stake      = tenant::proj_stake_value(&pending);
     let new_rent_price = monetary::price_mist({
@@ -1423,10 +1423,10 @@ fun do_handover<Asset: key + store, CoinType>(
 
     event::emit(HandoverCompleted {
         escrow_id: escrow_identity::escrow_id(escrow_identity),
-        displaced_tenant_cap_id:  tenant_cap::cap_id(displaced_cap_id),
+        displaced_tenant_cap_id:  tenant_cap::cap_id(displaced_cap_identity),
         displaced_tenant:         displaced_addr,
         displaced_phase_start_ms: phases::timestamp_ms(envelope.phase_start),
-        new_tenant_cap_id:        tenant_cap::cap_id(new_cap_id),
+        new_tenant_cap_id:        tenant_cap::cap_id(new_cap_identity),
         new_tenant_addr:          new_addr,
         new_tenant_stake:         monetary::stake_mist(new_stake),
         used_credit:              monetary::stake_mist(used_credit),
@@ -1461,7 +1461,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     ctx:          &mut TxContext,
 ): TenureExpiryResult<Asset> {
     let principal      = tenant::proj_stake_value(&tenant);
-    let tenant_cap_id  = tenant::proj_cap_id(tenant::proj_identity(&tenant));
+    let tenant_cap_identity  = tenant::proj_cap_identity(tenant::proj_identity(&tenant));
     let tenant_addr    = tenant::proj_address(tenant::proj_identity(&tenant));
     let alloc = split_fee(principal);
 
@@ -1474,7 +1474,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
 
     event::emit(TenureExpired {
         escrow_id: escrow_identity::escrow_id(escrow_identity),
-        tenant_cap_id: tenant_cap::cap_id(tenant_cap_id),
+        tenant_cap_id: tenant_cap::cap_id(tenant_cap_identity),
         tenant:                 tenant_addr,
         phase_start_ms:         phases::timestamp_ms(envelope.phase_start),
         owner_share:            monetary::stake_mist(alloc.owner_share),
@@ -1542,11 +1542,11 @@ public(package) fun put_asset<Asset: key + store, CoinType>(
     asset_in:   Asset,
     receipt_in: AssetReceipt,
 ): TenancyContext<Asset, CoinType> {
-    let tenant_cap_id = current_cap_id(&tenancy);
+    let tenant_cap_identity = current_cap_identity(&tenancy);
     let tenant_addr   = current_addr(&tenancy);
     let TenancyContext { mut asset, envelope, state } = tenancy;
     asset::put(&mut asset, asset_in, receipt_in);
-    event::emit(AssetReturned { escrow_id: escrow_identity::escrow_id(escrow_identity), tenant_cap_id: tenant_cap::cap_id(tenant_cap_id), tenant: tenant_addr });
+    event::emit(AssetReturned { escrow_id: escrow_identity::escrow_id(escrow_identity), tenant_cap_id: tenant_cap::cap_id(tenant_cap_identity), tenant: tenant_addr });
     TenancyContext { asset, envelope, state }
 }
 
@@ -1564,7 +1564,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     now:       Timestamp,
     ctx:       &mut TxContext,
 ): (TenancyContext<Asset, CoinType>, TenantCap) {
-    let current_cap_id = tenant::proj_cap_id(tenant::proj_identity(&tenant));
+    let current_cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&tenant));
     let current_addr   = tenant::proj_address(tenant::proj_identity(&tenant));
     let current_stake  = tenant::proj_stake_value(&tenant);
     let expiry         = handover_policy_state::expiry_at(envelope.resolved_handover, envelope.resolved_ceiling, now, envelope.phase_start);
@@ -1576,7 +1576,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let t = tenant::new<CoinType>(cap_identity, pending_addr, coin::into_balance(payment));
     event::emit(BidPlaced {
         escrow_id: raw_escrow_id,
-        current_tenant_cap_id:     tenant_cap::cap_id(current_cap_id),
+        current_tenant_cap_id:     tenant_cap::cap_id(current_cap_identity),
         current_tenant_addr:       current_addr,
         current_tenant_stake:      monetary::stake_mist(current_stake),
         current_phase_start_ms:    phases::timestamp_ms(envelope.phase_start),
@@ -1614,10 +1614,10 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     now:             Timestamp,
     ctx:             &mut TxContext,
 ): (TenancyContext<Asset, CoinType>, TenantCap) {
-    let protected_cap_id = tenant::proj_cap_id(tenant::proj_identity(&current));
+    let protected_cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
     let protected_addr   = tenant::proj_address(tenant::proj_identity(&current));
     let protected_stake  = tenant::proj_stake_value(&current);
-    let displaced_cap_id = tenant::proj_cap_id(tenant::proj_identity(&pending));
+    let displaced_cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&pending));
     let displaced_addr   = tenant::proj_address(tenant::proj_identity(&pending));
     let refunded_amount  = tenant::proj_stake_value(&pending);
 
@@ -1633,11 +1633,11 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 
     event::emit(BidSuperseded {
         escrow_id: raw_escrow_id,
-        protected_tenant_cap_id:   tenant_cap::cap_id(protected_cap_id),
+        protected_tenant_cap_id:   tenant_cap::cap_id(protected_cap_identity),
         protected_tenant_addr:     protected_addr,
         protected_tenant_stake:    monetary::stake_mist(protected_stake),
         protected_phase_start_ms:  phases::timestamp_ms(envelope.phase_start),
-        displaced_tenant_cap_id:   tenant_cap::cap_id(displaced_cap_id),
+        displaced_tenant_cap_id:   tenant_cap::cap_id(displaced_cap_identity),
         new_tenant_cap_id:         tenant_cap::cap_id(cap_identity),
         displaced_bidder:          displaced_addr,
         refunded_amount:           monetary::stake_mist(refunded_amount),

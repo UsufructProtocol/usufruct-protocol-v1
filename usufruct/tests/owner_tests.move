@@ -39,7 +39,7 @@ fun new_constructs_owner_with_zero_balance_and_bound_cap_id() {
         let (cap, cap_id) = mk_cap(sc.ctx());
         let o = owner::new<TEST_COIN>(cap_id);
         assert_eq!(owner::proj_value(&o), 0);
-        assert_eq!(owner::proj_cap_id(owner::proj_identity(&o)), cap_id);
+        assert_eq!(owner::proj_cap_identity(owner::proj_identity(&o)), cap_id);
         owner::destroy_for_testing(o);
         owner_cap::burn(cap, OWNER_ADDR);
     };

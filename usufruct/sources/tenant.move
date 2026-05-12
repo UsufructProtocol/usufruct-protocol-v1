@@ -58,7 +58,7 @@ public struct Tenant<phantom CoinType> has store {
 public(package) fun proj_identity<C>(t: &Tenant<C>):      &TenantIdentity { &t.identity }
 public(package) fun proj_stake<C>(t: &Tenant<C>):         &TenantStake<C> { &t.stake }
 public(package) fun proj_stake_value<C>(t: &Tenant<C>):   Stake           { monetary::stake(balance::value(&t.stake.balance)) }
-public(package) fun proj_cap_id(id: &TenantIdentity):      TenantCapIdentity { id.cap_identity }
+public(package) fun proj_cap_identity(id: &TenantIdentity):      TenantCapIdentity { id.cap_identity }
 public(package) fun proj_address(id: &TenantIdentity):     address         { id.address }
 public(package) fun proj_stake_value_of<C>(s: &TenantStake<C>): Stake     { monetary::stake(balance::value(&s.balance)) }
 

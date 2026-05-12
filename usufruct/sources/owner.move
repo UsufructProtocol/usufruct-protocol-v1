@@ -58,7 +58,7 @@ public struct Owner<phantom CoinType> has store {
 
 public(package) fun proj_identity<C>(o: &Owner<C>):              &OwnerIdentity     { &o.identity }
 public(package) fun proj_value<C>(o: &Owner<C>):                 u64                { balance::value(&o.earnings.balance) }
-public(package) fun proj_cap_id(id: &OwnerIdentity):             OwnerCapIdentity   { id.cap_identity }
+public(package) fun proj_cap_identity(id: &OwnerIdentity):             OwnerCapIdentity   { id.cap_identity }
 public(package) fun proj_earnings_value<C>(e: &OwnerEarnings<C>): u64               { balance::value(&e.balance) }
 
 // === Admin Functions ===

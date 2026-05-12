@@ -112,9 +112,9 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Coin<CoinType> {
-    let context = escrow.asset_context.extract();
-    let (context, coin) = asset_context_state::execute_withdraw_earnings(context, owner_cap, random, clock, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let (new_context, coin) = asset_context_state::execute_withdraw_earnings(context, owner_cap, random, clock, ctx);
+    put_context(escrow, new_context);
     coin
 }
 
@@ -152,9 +152,9 @@ public fun retire<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::execute_retire(context, owner_cap, random, clock, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::execute_retire(context, owner_cap, random, clock, ctx);
+    put_context(escrow, new_context);
 }
 
 /// Owner-gated operational parameter reset.
@@ -166,9 +166,9 @@ public fun reset_config<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::execute_reset_config(context, owner_cap, new_cfg, random, clock, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::execute_reset_config(context, owner_cap, new_cfg, random, clock, ctx);
+    put_context(escrow, new_context);
 }
 
 /// Single entry point to become tenant or place a bid.
@@ -180,9 +180,9 @@ public fun rent<Asset: key + store, CoinType>(
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): TenantCap {
-    let context = escrow.asset_context.extract();
-    let (context, cap) = asset_context_state::execute_rent(context, payment, cycles, random, clock, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let (new_context, cap) = asset_context_state::execute_rent(context, payment, cycles, random, clock, ctx);
+    put_context(escrow, new_context);
     cap
 }
 
@@ -194,9 +194,9 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt) {
-    let context = escrow.asset_context.extract();
-    let (context, asset, receipt) = asset_context_state::execute_borrow(context, tenant_cap, random, clock, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let (new_context, asset, receipt) = asset_context_state::execute_borrow(context, tenant_cap, random, clock, ctx);
+    put_context(escrow, new_context);
     (asset, receipt)
 }
 
@@ -206,9 +206,9 @@ public fun return_asset<Asset: key + store, CoinType>(
     asset:      Asset,
     receipt_in: AssetReceipt,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::execute_return(context, asset, receipt_in);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::execute_return(context, asset, receipt_in);
+    put_context(escrow, new_context);
 }
 
 /// Burn a stale `TenantCap` for gas recovery.
@@ -219,9 +219,9 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::execute_burn_tenant_cap(context, cap, random, clock, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::execute_burn_tenant_cap(context, cap, random, clock, ctx);
+    put_context(escrow, new_context);
 }
 
 /// Permissionless settler.
@@ -231,9 +231,9 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
+    put_context(escrow, new_context);
 }
 
 /// Detect the single transition that is due at `now`, if any.
@@ -923,6 +923,19 @@ fun read_context<Asset: key + store, CoinType>(
     option::borrow(&escrow.asset_context)
 }
 
+fun take_context<Asset: key + store, CoinType>(
+    escrow: &mut Escrow<Asset, CoinType>,
+): AssetContext<Asset, CoinType> {
+    escrow.asset_context.extract()
+}
+
+fun put_context<Asset: key + store, CoinType>(
+    escrow:  &mut Escrow<Asset, CoinType>,
+    context: AssetContext<Asset, CoinType>,
+) {
+    escrow.asset_context.fill(context)
+}
+
 fun cfg<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &IntegrationConfig {
@@ -956,11 +969,11 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     tenant:         usufruct::tenant::Tenant<CoinType>,
     phase_start_ms: u64,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_rented_for_testing(
+    let context = take_context(escrow);
+    let new_context = asset_context_state::drive_to_rented_for_testing(
         context, tenant, phases::timestamp(phase_start_ms),
     );
-    escrow.asset_context.fill(context);
+    put_context(escrow, new_context);
 }
 
 #[test_only]
@@ -969,11 +982,11 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     tenant:                    usufruct::tenant::Tenant<CoinType>,
     handover_countdown_expiry: u64,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_demand_for_testing(
+    let context = take_context(escrow);
+    let new_context = asset_context_state::drive_to_demand_for_testing(
         context, tenant, phases::timestamp(handover_countdown_expiry),
     );
-    escrow.asset_context.fill(context);
+    put_context(escrow, new_context);
 }
 
 #[test_only]
@@ -984,29 +997,29 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     last_acq_price:     u64,
     new_phase_start_ms: u64,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_at_dutch_for_testing(
+    let context = take_context(escrow);
+    let new_context = asset_context_state::drive_to_at_dutch_for_testing(
         context, owner_amount, fee_amount, last_acq_price, phases::timestamp(new_phase_start_ms),
     );
-    escrow.asset_context.fill(context);
+    put_context(escrow, new_context);
 }
 
 #[test_only]
 public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_retired_for_testing(context);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::drive_to_retired_for_testing(context);
+    put_context(escrow, new_context);
 }
 
 #[test_only]
 public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::drive_to_retiring_flag_for_testing(context);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::drive_to_retiring_flag_for_testing(context);
+    put_context(escrow, new_context);
 }
 
 #[test_only]
@@ -1015,9 +1028,9 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     boundary: phases::Timestamp,
     ctx:      &mut TxContext,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_handover_for_testing(context, boundary, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::fire_do_handover_for_testing(context, boundary, ctx);
+    put_context(escrow, new_context);
 }
 
 #[test_only]
@@ -1026,9 +1039,9 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     boundary: phases::Timestamp,
     ctx:      &mut TxContext,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_tenure_expiry_for_testing(context, boundary, ctx);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::fire_do_tenure_expiry_for_testing(context, boundary, ctx);
+    put_context(escrow, new_context);
 }
 
 #[test_only]
@@ -1037,9 +1050,9 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     boundary: phases::Timestamp,
 ) {
     let mut generator = sui::random::new_generator_from_seed_for_testing(vector[0u8, 1u8]);
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::fire_do_auction_expiry_for_testing(context, boundary, &mut generator);
-    escrow.asset_context.fill(context);
+    let context = take_context(escrow);
+    let new_context = asset_context_state::fire_do_auction_expiry_for_testing(context, boundary, &mut generator);
+    put_context(escrow, new_context);
 }
 
 // ─── Event field accessors (test-only) ───────────────────────────────────────

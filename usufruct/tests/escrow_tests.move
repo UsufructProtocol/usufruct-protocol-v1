@@ -8273,7 +8273,8 @@ fun at_dutch_descent_driven_by_resolved_descent_not_resolved_ceiling() {
 //   E_COMMITMENT_NOT_EXTENDED      = 17
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const E_COMMITMENT_NOT_EXTENDED: u64 = 17;
+const E_COMMITMENT_FLOOR_NOT_ELAPSED: u64 = 4;   // asset_context_state::ECommitmentFloorNotElapsed
+const E_COMMITMENT_NOT_EXTENDED:      u64 = 17;  // asset_context_state::ECommitmentNotExtended
 
 // ─── Group I: Initialization ──────────────────────────────────────────────────
 
@@ -8559,6 +8560,136 @@ fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── Group V: retire gate ─────────────────────────────────────────────────────
+
+/// V-14: Immediate commitment — retire available at t=0.
+#[test]
+fun commitment_gate_immediate_retire_at_zero() {
+    let mut sc  = setup();
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+    );
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
+    assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// V-15: Deferred(N) — retire at t < anchor+N aborts.
+#[test]
+#[expected_failure(abort_code = E_COMMITMENT_FLOOR_NOT_ELAPSED, location = usufruct::asset_context_state)]
+fun commitment_gate_deferred_retire_before_floor_aborts() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, floor - 1); // one ms before unlock
+    let random = sc.take_shared<Random>();
+
+    escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// V-16: Deferred(N) — retire at t >= anchor+N passes.
+#[test]
+fun commitment_gate_deferred_retire_at_floor_passes() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, floor); // exactly at unlock
+    let random = sc.take_shared<Random>();
+
+    escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
+    assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// V-17: After extend_commitment(Deferred(N)), gate reopens from new anchor.
+/// Before extend: Immediate → retire at t=0 works.
+/// After extend at t=T: retire at t=T aborts (t < T+N); at t=T+N passes.
+#[test]
+#[expected_failure(abort_code = E_COMMITMENT_FLOOR_NOT_ELAPSED, location = usufruct::asset_context_state)]
+fun commitment_gate_extend_reopens_gate_aborts_immediately_after() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    // Extend at t=100 — gate reopens to t=100+floor.
+    clock::set_for_testing(&mut clk, 100);
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(floor)),
+        &clk,
+    );
+
+    // Retire at t=100 (= new anchor, but < 100+floor) → abort.
+    escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+fun commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    // Extend at t=100 to Deferred(floor).
+    clock::set_for_testing(&mut clk, 100);
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(floor)),
+        &clk,
+    );
+
+    // Retire at t = 100+floor (exactly at new expiry) → passes.
+    clock::set_for_testing(&mut clk, 100 + floor);
+    escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
+    assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
     clock::destroy_for_testing(clk);
     sc.end();
 }

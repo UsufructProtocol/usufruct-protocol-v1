@@ -145,11 +145,33 @@ public(package) fun put<U: key + store>(
 }
 
 /// Unwrap an open custody asset, returning the raw `U`. Aborts if the slot
-/// is empty (asset still borrowed). Called at transitions out of Renting.
+/// is empty (asset still borrowed). Primitive — internal callers prefer
+/// `close_tenancy`; tests use this to exercise the assertion directly.
 public(package) fun unbundle<U: key + store>(self: AssetCustodyOpen<U>): U {
     let AssetCustodyOpen { identity: _, available } = self;
     assert!(option::is_some(&available), E_ASSET_NOT_AVAILABLE);
     option::destroy_some(available)
+}
+
+/// Renting → Waiting: tenure has ended. Encapsulates `unbundle + lock` so
+/// callers express the domain transition in one step. The `unbundle` assert
+/// is preserved (aborts if asset is still on loan).
+public(package) fun close_tenancy<U: key + store>(self: AssetCustodyOpen<U>): AssetCustodyLocked<U> {
+    lock(unbundle(self))
+}
+
+/// Waiting → Renting: a new tenancy is starting. Encapsulates `unlock + new`
+/// so callers express the domain transition in one step. The escrow_id is
+/// taken as an `EscrowIdentity` directly (no ID round-trip).
+public(package) fun open_tenancy<U: key + store>(
+    self:      AssetCustodyLocked<U>,
+    escrow_id: EscrowIdentity,
+): AssetCustodyOpen<U> {
+    let AssetCustodyLocked { asset } = self;
+    AssetCustodyOpen {
+        identity:  AssetIdentity { asset_id: object::id(&asset), escrow_id },
+        available: option::some(asset),
+    }
 }
 
 // === Private Functions ===

@@ -1495,10 +1495,10 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     // The AtDutch/Idle that follows belongs to the next tenant's cycle, not this one's.
     let base_ceiling  = cycles::rescale_duration(envelope.resolved_ceiling,  envelope.committed_cycles, cycles::cycles(1));
     let base_handover = cycles::rescale_duration(envelope.resolved_handover, envelope.committed_cycles, cycles::cycles(1));
-    // Tenure has ended: convert from open custody to locked. `unbundle` asserts
-    // the asset is actually present (not on loan) — the borrow protocol is over.
+    // Tenure has ended: switch custody type. close_tenancy asserts the asset
+    // is actually present (not on loan) — the borrow protocol is over.
     TenureExpiryResult {
-        asset:             asset::lock(asset::unbundle(asset)),
+        asset:             asset::close_tenancy(asset),
         last_acq_price:    monetary::as_reference_price(principal),
         resolved_floor:    envelope.resolved_floor,
         resolved_ceiling:  base_ceiling,
@@ -1872,7 +1872,7 @@ fun do_install<Asset: key + store, CoinType>(
     let cap            = tenant_cap::new(escrow_id, tenant_addr, ctx);
     let cap_identity   = tenant_cap::identity(&cap);
     let t = tenant::new<CoinType>(cap_identity, tenant_addr, coin::into_balance(payment));
-    let wrapped = asset::new(asset::unlock(locked), raw_escrow_id);
+    let wrapped = asset::open_tenancy(locked, escrow_id);
     let extended_ceiling  = cycles::total_duration(resolved_ceiling,  cycles);
     let extended_handover = cycles::total_duration(resolved_handover, cycles);
     event::emit(RentStarted {
@@ -1992,7 +1992,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
             match (state) {
                 WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } => {
                     let tenancy_env = new_tenancy_envelope(phase_start, resolved_floor, resolved_ceiling, resolved_handover, cycles::cycles(1));
-                    let tenancy = new_occupied(asset::new(asset::unlock(asset), escrow_identity::escrow_id(envelope.escrow_id)), tenant_in, tenancy_env);
+                    let tenancy = new_occupied(asset::open_tenancy(asset, envelope.escrow_id), tenant_in, tenancy_env);
                     AssetContext { asset_state: AssetState::Renting { tenancy }, owner, envelope }
                 },
                 _ => abort ENotRented,
@@ -2041,8 +2041,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
             let wrapped = unbundle_occupied_for_testing(
                 asset, tenant, owner_amount, fee_amount, envelope.escrow_id,
             );
-            let raw_asset = asset::unbundle(wrapped);
-            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: asset::lock(raw_asset), state: WaitingState::AtDutch { last_acq_price: monetary::price(last_acq_price), phase_start: new_phase_start, resolved_floor: tenancy_env.resolved_floor, resolved_ceiling: tenancy_env.resolved_ceiling, resolved_handover: tenancy_env.resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&envelope.config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8])) } } }, owner, envelope }
+            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: asset::close_tenancy(wrapped), state: WaitingState::AtDutch { last_acq_price: monetary::price(last_acq_price), phase_start: new_phase_start, resolved_floor: tenancy_env.resolved_floor, resolved_ceiling: tenancy_env.resolved_ceiling, resolved_handover: tenancy_env.resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&envelope.config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8])) } } }, owner, envelope }
         },
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, envelope: _env, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e, bidding_cycles: _, retire: _r } } }, owner: _o, .. } => abort ENotRented,
         AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,

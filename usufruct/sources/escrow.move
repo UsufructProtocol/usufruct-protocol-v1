@@ -972,13 +972,6 @@ fun cfg<Asset: key + store, CoinType>(
 // === Test Functions ===
 
 #[test_only]
-public(package) fun read_engine_for_testing<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): &asset_context_state::AssetContext<Asset, CoinType> {
-    read_context(escrow)
-}
-
-#[test_only]
 public(package) fun owner_value_for_testing<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
@@ -1084,26 +1077,6 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
 
 // ─── Event field accessors (test-only) ───────────────────────────────────────
 
-#[test_only]
-public(package) fun asset_integrated_escrow_id<A, C>(e: &AssetIntegrated<A, C>): ID      { e.escrow_id }
-#[test_only]
-public(package) fun asset_integrated_owner_cap_id<A, C>(e: &AssetIntegrated<A, C>): ID   { e.owner_cap_id }
-#[test_only]
-public(package) fun asset_integrated_owner<A, C>(e: &AssetIntegrated<A, C>): address      { e.owner }
-#[test_only]
-public(package) fun asset_integrated_asset_id<A, C>(e: &AssetIntegrated<A, C>): ID       { e.asset_id }
-#[test_only]
-public(package) fun asset_integrated_fee_inbox_id<A, C>(e: &AssetIntegrated<A, C>): ID   { e.fee_inbox_id }
-#[test_only]
-public(package) fun asset_integrated_integrated_at_ms<A, C>(e: &AssetIntegrated<A, C>): u64 { e.integrated_at_ms }
 
 #[test_only]
-public(package) fun asset_claimed_escrow_id(e: &AssetClaimed): ID      { e.escrow_id }
-#[test_only]
-public(package) fun asset_claimed_owner_cap_id(e: &AssetClaimed): ID   { e.owner_cap_id }
-#[test_only]
-public(package) fun asset_claimed_owner(e: &AssetClaimed): address     { e.owner }
-#[test_only]
 public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64 { e.swept_earnings }
-#[test_only]
-public(package) fun asset_claimed_timestamp_ms(e: &AssetClaimed): u64  { e.timestamp_ms }

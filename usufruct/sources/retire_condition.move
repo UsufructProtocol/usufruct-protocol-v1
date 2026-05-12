@@ -7,8 +7,6 @@ module usufruct::retire_condition;
 
 const EAlreadyRetiring: u64 = 0;
 
-public(package) fun e_already_retiring(): u64 { EAlreadyRetiring }
-
 public enum RetireCondition has store, drop {
     NotRetiring,
     Retiring,

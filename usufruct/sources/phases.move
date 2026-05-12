@@ -68,11 +68,6 @@ public(package) fun is_crossed(b: &Boundary): bool {
     match (b) { Boundary::Crossed { .. } => true, _ => false }
 }
 
-/// True iff the boundary has not yet been reached.
-public(package) fun is_pending(b: &Boundary): bool {
-    match (b) { Boundary::Pending { .. } => true, _ => false }
-}
-
 /// Check whether phase boundary `anchor + d` has been crossed at `now`.
 public(package) fun check_boundary(anchor: Timestamp, d: Duration, now: Timestamp): Boundary {
     let boundary_ms = anchor.ms + d.ms;

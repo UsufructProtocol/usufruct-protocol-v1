@@ -1729,38 +1729,14 @@ fun unbundle_occupied_for_testing<Asset: key + store, CoinType>(
 // ─── Test-only event accessors ────────────────────────────────────────────────
 
 #[test_only]
-public(package) fun bid_placed_escrow_id(e: &BidPlaced): ID                      { e.escrow_id }
-#[test_only]
-public(package) fun bid_placed_current_tenant_cap_id(e: &BidPlaced): ID          { e.current_tenant_cap_id }
-#[test_only]
-public(package) fun bid_placed_current_tenant_addr(e: &BidPlaced): address       { e.current_tenant_addr }
-#[test_only]
-public(package) fun bid_placed_current_tenant_stake(e: &BidPlaced): u64          { e.current_tenant_stake }
-#[test_only]
-public(package) fun bid_placed_current_phase_start_ms(e: &BidPlaced): u64        { e.current_phase_start_ms }
-#[test_only]
 public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
-#[test_only]
-public(package) fun bid_placed_pending_tenant(e: &BidPlaced): address            { e.pending_tenant }
 #[test_only]
 public(package) fun bid_placed_bid_amount(e: &BidPlaced): u64                    { e.bid_amount }
 #[test_only]
 public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                   { e.floor_price }
 #[test_only]
 public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64     { e.handover_countdown_expiry }
-#[test_only]
-public(package) fun bid_placed_timestamp_ms(e: &BidPlaced): u64                  { e.timestamp_ms }
 
-#[test_only]
-public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID                  { e.escrow_id }
-#[test_only]
-public(package) fun bid_superseded_protected_cap_id(e: &BidSuperseded): ID           { e.protected_tenant_cap_id }
-#[test_only]
-public(package) fun bid_superseded_protected_addr(e: &BidSuperseded): address        { e.protected_tenant_addr }
-#[test_only]
-public(package) fun bid_superseded_protected_stake(e: &BidSuperseded): u64           { e.protected_tenant_stake }
-#[test_only]
-public(package) fun bid_superseded_protected_phase_start_ms(e: &BidSuperseded): u64  { e.protected_phase_start_ms }
 #[test_only]
 public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID           { e.displaced_tenant_cap_id }
 #[test_only]
@@ -1773,27 +1749,11 @@ public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64      
 public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address            { e.new_bidder }
 #[test_only]
 public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64            { e.new_bid_amount }
-#[test_only]
-public(package) fun bid_superseded_floor_price(e: &BidSuperseded): u64               { e.floor_price }
-#[test_only]
-public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded): u64 { e.handover_countdown_expiry }
-#[test_only]
-public(package) fun bid_superseded_timestamp_ms(e: &BidSuperseded): u64              { e.timestamp_ms }
 
-#[test_only]
-public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
-#[test_only]
-public(package) fun handover_completed_displaced_cap_id(e: &HandoverCompleted): ID           { e.displaced_tenant_cap_id }
 #[test_only]
 public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): address      { e.displaced_tenant }
 #[test_only]
-public(package) fun handover_completed_displaced_phase_start_ms(e: &HandoverCompleted): u64  { e.displaced_phase_start_ms }
-#[test_only]
 public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                 { e.new_tenant_cap_id }
-#[test_only]
-public(package) fun handover_completed_new_addr(e: &HandoverCompleted): address              { e.new_tenant_addr }
-#[test_only]
-public(package) fun handover_completed_new_stake(e: &HandoverCompleted): u64                 { e.new_tenant_stake }
 #[test_only]
 public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64               { e.used_credit }
 #[test_only]
@@ -1808,44 +1768,18 @@ public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u6
 public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64              { e.timestamp_ms }
 
 #[test_only]
-public(package) fun tenure_expired_escrow_id(e: &TenureExpired): ID                  { e.escrow_id }
-#[test_only]
-public(package) fun tenure_expired_tenant_cap_id(e: &TenureExpired): ID              { e.tenant_cap_id }
-#[test_only]
-public(package) fun tenure_expired_tenant(e: &TenureExpired): address                { e.tenant }
-#[test_only]
-public(package) fun tenure_expired_phase_start_ms(e: &TenureExpired): u64            { e.phase_start_ms }
-#[test_only]
 public(package) fun tenure_expired_owner_share(e: &TenureExpired): u64               { e.owner_share }
 #[test_only]
 public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64              { e.protocol_fee }
 #[test_only]
-public(package) fun tenure_expired_last_acquisition_price(e: &TenureExpired): u64    { e.last_acquisition_price }
-#[test_only]
 public(package) fun tenure_expired_last_acq_price(e: &TenureExpired): u64            { e.last_acquisition_price }
-#[test_only]
-public(package) fun tenure_expired_timestamp_ms(e: &TenureExpired): u64              { e.timestamp_ms }
 
-#[test_only]
-public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID                 { e.escrow_id }
-#[test_only]
-public(package) fun retire_flag_set_owner(e: &RetireFlagSet): address                { e.owner }
-#[test_only]
-public(package) fun retire_flag_set_timestamp_ms(e: &RetireFlagSet): u64             { e.timestamp_ms }
 
-#[test_only]
-public(package) fun asset_borrowed_escrow_id(e: &AssetBorrowed): ID                  { e.escrow_id }
 #[test_only]
 public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID              { e.tenant_cap_id }
-#[test_only]
-public(package) fun asset_borrowed_tenant(e: &AssetBorrowed): address                { e.tenant }
 
 #[test_only]
-public(package) fun asset_returned_escrow_id(e: &AssetReturned): ID                  { e.escrow_id }
-#[test_only]
 public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID              { e.tenant_cap_id }
-#[test_only]
-public(package) fun asset_returned_tenant(e: &AssetReturned): address                { e.tenant }
 
 // === Private Functions ===
 
@@ -2134,48 +2068,18 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
 // ─── Test-only event accessors ────────────────────────────────────────────────
 
 #[test_only]
-public(package) fun rent_started_escrow_id(e: &RentStarted): ID                  { e.escrow_id }
-#[test_only]
 public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID              { e.tenant_cap_id }
-#[test_only]
-public(package) fun rent_started_tenant(e: &RentStarted): address                { e.tenant }
-#[test_only]
-public(package) fun rent_started_phase_start_ms(e: &RentStarted): u64            { e.phase_start_ms }
 #[test_only]
 public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
 #[test_only]
 public(package) fun rent_started_floor_price(e: &RentStarted): u64               { e.floor_price }
 
 #[test_only]
-public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID            { e.escrow_id }
-#[test_only]
-public(package) fun auction_expired_phase_start_ms(e: &AuctionExpired): u64      { e.phase_start_ms }
-#[test_only]
-public(package) fun auction_expired_last_acq_price(e: &AuctionExpired): u64      { e.last_acq_price }
-#[test_only]
 public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64        { e.timestamp_ms }
 
-#[test_only]
-public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID                { e.escrow_id }
-#[test_only]
-public(package) fun asset_retired_timestamp_ms(e: &AssetRetired): u64            { e.timestamp_ms }
 
-#[test_only]
-public(package) fun earnings_withdrawn_escrow_id(e: &EarningsWithdrawn): ID      { e.escrow_id }
-#[test_only]
-public(package) fun earnings_withdrawn_owner_cap_id(e: &EarningsWithdrawn): ID   { e.owner_cap_id }
-#[test_only]
-public(package) fun earnings_withdrawn_owner(e: &EarningsWithdrawn): address     { e.owner }
 #[test_only]
 public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64        { e.amount }
-#[test_only]
-public(package) fun earnings_withdrawn_timestamp_ms(e: &EarningsWithdrawn): u64  { e.timestamp_ms }
 
-#[test_only]
-public(package) fun config_update_scheduled_escrow_id(e: &ConfigUpdateScheduled): ID { e.escrow_id }
-#[test_only]
-public(package) fun config_update_scheduled_new_config(e: &ConfigUpdateScheduled): IntegrationConfig { e.new_config }
-#[test_only]
-public(package) fun config_updated_escrow_id(e: &ConfigUpdated): ID { e.escrow_id }
 #[test_only]
 public(package) fun config_updated_new_config(e: &ConfigUpdated): IntegrationConfig { e.new_config }

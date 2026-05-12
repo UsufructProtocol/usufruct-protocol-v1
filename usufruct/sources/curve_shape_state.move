@@ -131,10 +131,6 @@ public(package) fun proj_exponential_alpha_neg(s: &CurveShapeState): Option<bool
 
 // === Package Functions ===
 
-/// Denominator that `CurveHeight` is normalized to. Exposed for SDK
-/// projection and tests; primary usage is through `apply`.
-public(package) fun scale(): u64 { SCALE }
-
 /// Raw `u64` value of a `CurveHeight`. For SDK projection and test
 /// assertions — domain code should use `apply` instead.
 public(package) fun height_value(h: CurveHeight): u64 { h.h }

@@ -77,5 +77,3 @@ public(package) fun is_unlocked(resolved: Duration, at: Timestamp, now: Timestam
 // === Private Functions ===
 
 // === Test Functions ===
-
-public(package) fun e_commitment_floor_zero(): u64 { ECommitmentFloorZero }

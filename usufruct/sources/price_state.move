@@ -52,15 +52,6 @@ public enum PriceState has drop {
 public(package) fun proj_is_rest(s: &PriceState):      bool { match (s) { PriceState::Rest => true, _ => false } }
 public(package) fun proj_is_ascending(s: &PriceState): bool { match (s) { PriceState::Ascending { .. } => true, _ => false } }
 public(package) fun proj_is_descending(s: &PriceState): bool { match (s) { PriceState::Descending { .. } => true, _ => false } }
-public(package) fun proj_ascending_stake(s: &PriceState): Option<Stake> {
-    match (s) { PriceState::Ascending { stake } => option::some(*stake), _ => option::none() }
-}
-public(package) fun proj_descending_last_acq_price(s: &PriceState): Option<Price> {
-    match (s) { PriceState::Descending { last_acq_price, .. } => option::some(*last_acq_price), _ => option::none() }
-}
-public(package) fun proj_descending_phase_start(s: &PriceState): Option<Timestamp> {
-    match (s) { PriceState::Descending { phase_start, .. } => option::some(*phase_start), _ => option::none() }
-}
 
 // === Admin Functions ===
 

@@ -103,15 +103,6 @@ public(package) fun expiry_at(
     phases::boundary_at(phase_start, resolved)
 }
 
-/// Conservative window estimate for SDK views (min of range for RandomInRange).
-/// Not used in production cycle computation — callers use resolved_descent from context.
-public(package) fun min_window(policy: &DescentPolicyState): Duration {
-    match (policy) {
-        DescentPolicyState::Skipped                    => phases::zero(),
-        DescentPolicyState::Window { ceiling }         => *ceiling,
-        DescentPolicyState::RandomInRange { min, .. }  => *min,
-    }
-}
 
 /// Width of the descent window. Aborts on Skipped and RandomInRange —
 /// only valid for the Window variant (SDK/test use only).

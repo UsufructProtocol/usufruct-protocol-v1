@@ -86,7 +86,6 @@ public fun collect_fee_messages<C>(
 public(package) fun proj_share_value<C>(s: &FeeShare<C>): Stake { monetary::stake(balance::value(&s.balance)) }
 
 public(package) fun proj_escrow_id<C>(msg: &FeeMessage<C>): ID    { escrow_identity::escrow_id(msg.escrow) }
-public(package) fun proj_amount<C>(msg: &FeeMessage<C>):    Stake { monetary::stake(balance::value(&msg.balance)) }
 
 // === Admin Functions ===
 

@@ -40,9 +40,6 @@ public(package) fun stake(mist: u64): Stake { Stake { mist } }
 public(package) fun price_mist(p: Price): u64 { p.mist }
 public(package) fun stake_mist(s: Stake): u64 { s.mist }
 
-/// The payment event: a Price becomes a Stake when money changes hands.
-public(package) fun pay(p: Price): Stake { Stake { mist: p.mist } }
-
 /// Tenure expiry: the Stake paid by the last tenant becomes the acquisition
 /// reference price for the Dutch auction descent.
 public(package) fun as_reference_price(s: Stake): Price { Price { mist: s.mist } }

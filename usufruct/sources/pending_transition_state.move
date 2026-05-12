@@ -5,7 +5,7 @@ module usufruct::pending_transition_state;
 
 // === Imports ===
 
-use usufruct::phases::{Self, Timestamp};
+use usufruct::phases::Timestamp;
 
 // === Errors ===
 
@@ -49,29 +49,26 @@ public struct PendingTransitionState has drop {
 
 // === View Functions ===
 
+// ### RUNTIME PROJECTION FOR SDK ###
+
 /// True iff this transition is the handover variant.
-public fun is_handover(t: &PendingTransitionState): bool {
+public(package) fun proj_is_handover(t: &PendingTransitionState): bool {
     match (&t.kind) { PendingTransitionKind::Handover => true, _ => false }
 }
 
 /// True iff this transition is the tenure-expiry variant.
-public fun is_tenure(t: &PendingTransitionState): bool {
+public(package) fun proj_is_tenure(t: &PendingTransitionState): bool {
     match (&t.kind) { PendingTransitionKind::Tenure => true, _ => false }
 }
 
 /// True iff this transition is the auction-expiry variant.
-public fun is_auction(t: &PendingTransitionState): bool {
+public(package) fun proj_is_auction(t: &PendingTransitionState): bool {
     match (&t.kind) { PendingTransitionKind::Auction => true, _ => false }
 }
 
 /// Boundary timestamp the firing handler will stamp on the resulting state and event.
-public fun proj_boundary(t: &PendingTransitionState): Timestamp {
+public(package) fun proj_boundary(t: &PendingTransitionState): Timestamp {
     t.boundary
-}
-
-/// Raw millisecond value — for event emission and legacy u64 consumers.
-public fun boundary_ms(t: &PendingTransitionState): u64 {
-    phases::timestamp_ms(t.boundary)
 }
 
 // === Admin Functions ===

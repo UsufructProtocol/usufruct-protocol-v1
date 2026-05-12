@@ -601,7 +601,7 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
 ): Option<u64> {
     let pending = next_pending(escrow, clock);
     if (option::is_some(&pending)) {
-        option::some(pending_transition_state::boundary_ms(option::borrow(&pending)))
+        option::some(phases::timestamp_ms(pending_transition_state::proj_boundary(option::borrow(&pending))))
     } else {
         option::none()
     }

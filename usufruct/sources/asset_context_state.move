@@ -1862,14 +1862,6 @@ fun fire<Asset: key + store, CoinType>(
                     if (retiring) {
                         event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(escrow_id), timestamp_ms: boundary_ms });
                         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, config, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
-                    } else if (option::is_some(&pending_config)) {
-                        let new_cfg = option::destroy_some(pending_config);
-                        let mut generator    = sui::random::new_generator(random, ctx);
-                        let new_floor        = floor_price_policy_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
-                        let new_ceiling      = tenure_policy_state::resolve(config::proj_tenure_ceiling(&new_cfg), &mut generator);
-                        let new_handover     = handover_policy_state::resolve(config::proj_handover(&new_cfg), new_ceiling, &mut generator);
-                        event::emit(ConfigReset { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
-                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Idle { resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover } } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, escrow_id }
                     } else {
                         let mut generator    = sui::random::new_generator(random, ctx);
                         let resolved_descent = descent_policy_state::resolve(config::proj_descent(&config), &mut generator);

@@ -302,7 +302,7 @@ public(package) fun new<Asset: key + store, CoinType>(
 
 // ─── Variant predicates ───────────────────────────────────────────────────────
 
-public(package) fun is_active<Asset: key + store, CoinType>(
+public(package) fun proj_is_active<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
@@ -313,12 +313,7 @@ public(package) fun is_active<Asset: key + store, CoinType>(
 
 public(package) fun proj_is_inactive<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
-): bool {
-    match (&e.asset_state) {
-        AssetState::Waiting { waiting } => match (&waiting.state) { WaitingState::Retired => true, _ => false },
-        AssetState::Renting { .. } => false,
-    }
-}
+): bool { !proj_is_active(e) }
 
 // ─── Context accessors ────────────────────────────────────────────────────────
 

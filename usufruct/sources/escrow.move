@@ -288,7 +288,7 @@ public fun is_handover_confirmed<Asset: key + store, CoinType>(
 public fun is_active<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::is_active(read_context(escrow))
+    asset_context_state::proj_is_active(read_context(escrow))
 }
 
 public fun is_retired<Asset: key + store, CoinType>(

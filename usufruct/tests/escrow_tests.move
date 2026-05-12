@@ -8402,3 +8402,103 @@ fun commitment_reset_config_does_not_change_anchor() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── Group III: extend_commitment monotonicity ────────────────────────────────
+
+/// III-7: A valid extension (new_expiry >= old_expiry) succeeds and is observable.
+#[test]
+fun commitment_extend_valid_increases_unlocks_at() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let before = escrow::commitment_unlocks_at_ms(&escrow);
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(floor)),
+        &clk,
+    );
+    let after = escrow::commitment_unlocks_at_ms(&escrow);
+
+    assert!(after >= before, 0);
+    assert!(after > before, 1); // Deferred(floor) > Immediate(0)
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// III-8 + III-9: Deferred → Immediate aborts when commitment has not expired.
+/// new_expiry = now + 0 = now < anchor + floor = old_expiry.
+#[test]
+#[expected_failure(abort_code = E_COMMITMENT_NOT_EXTENDED, location = usufruct::asset_context_state)]
+fun commitment_extend_reduce_floor_aborts() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+    // Clock at t=0; old_expiry = 0 + floor; new_expiry = 0 + 0 = 0 < old_expiry.
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy_state::new_immediate(), &clk);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// III-10: Deferred → Immediate passes when commitment already expired.
+/// now >= old_expiry → new_expiry = now >= old_expiry.
+#[test]
+fun commitment_extend_immediate_after_expiry_passes() {
+    let mut sc    = setup();
+    let floor     = escrow_corpus::retire_deferred_f1_const();
+    let tag       = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    // Advance past old_expiry (anchor=0, floor=FLOOR_MS).
+    clock::set_for_testing(&mut clk, floor + 1);
+
+    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy_state::new_immediate(), &clk);
+
+    // After extend to Immediate with anchor = floor+1, unlocks = floor+1.
+    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor + 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// III-11: Immediate → Deferred(N) always passes (now + N > 0 = old_expiry).
+#[test]
+fun commitment_extend_immediate_to_deferred_always_passes() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx()); // t=0
+
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(floor)),
+        &clk,
+    );
+
+    assert!(escrow::is_commitment_deferred(&escrow), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

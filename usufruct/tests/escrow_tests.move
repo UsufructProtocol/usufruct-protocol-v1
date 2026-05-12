@@ -8693,3 +8693,71 @@ fun commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── Group VI: chaining extend_commitment ────────────────────────────────────
+
+/// VI-18: Two sequential extensions are valid if each new_expiry >= previous.
+#[test]
+fun commitment_chain_two_extensions_both_valid() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx()); // t=0
+
+    // First extend: Immediate → Deferred(floor). new_expiry = 0 + floor.
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(floor)),
+        &clk,
+    );
+    let after_first = escrow::commitment_unlocks_at_ms(&escrow);
+    assert_eq!(after_first, floor);
+
+    // Second extend: Deferred(floor) → Deferred(floor*2). new_expiry = 0 + floor*2 >= floor.
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(floor * 2)),
+        &clk,
+    );
+    let after_second = escrow::commitment_unlocks_at_ms(&escrow);
+    assert_eq!(after_second, floor * 2);
+    assert!(after_second > after_first, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// VI-19: Extending with the same Deferred floor from a later time passes.
+/// now > old_anchor → now + floor > old_anchor + floor = old_expiry.
+#[test]
+fun commitment_chain_same_floor_from_later_time_passes() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+    // old_anchor=0, old_expiry=floor.
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // Advance to t=500 (still before expiry) and extend with same floor.
+    // new_expiry = 500 + floor > 0 + floor = old_expiry → valid.
+    clock::set_for_testing(&mut clk, 500);
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(floor)),
+        &clk,
+    );
+
+    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), 500 + floor);
+    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

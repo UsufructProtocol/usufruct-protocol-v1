@@ -1523,27 +1523,13 @@ public(package) fun take_asset<Asset: key + store, CoinType>(
     escrow_id: EscrowIdentity,
     cap_id:    TenantCapIdentity,
 ): (TenancyContext<Asset, CoinType>, Asset, AssetReceipt) {
-    let auth = cap_auth_for_tenancy(&tenancy, cap_id);
-    let TenancyContext { mut asset, envelope, state } = tenancy;
-    let (tenant_addr, state) = match (state) {
-        TenancyState::Occupied { current, retire } => {
-            match (auth) {
-                CapAuthorizationState::Current => (tenant::proj_address(tenant::proj_identity(&current)), TenancyState::Occupied { current, retire }),
-                CapAuthorizationState::Pending => abort EPendingTenantCap,
-                CapAuthorizationState::Stale   => abort EStaleTenantCap,
-            }
-        },
-        TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, retire } => {
-            match (auth) {
-                CapAuthorizationState::Current => {
-                    let addr = tenant::proj_address(tenant::proj_identity(&current));
-                    (addr, TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, retire })
-                },
-                CapAuthorizationState::Pending => abort EPendingTenantCap,
-                CapAuthorizationState::Stale   => abort EStaleTenantCap,
-            }
-        },
+    match (cap_auth_for_tenancy(&tenancy, cap_id)) {
+        CapAuthorizationState::Current => {},
+        CapAuthorizationState::Pending => abort EPendingTenantCap,
+        CapAuthorizationState::Stale   => abort EStaleTenantCap,
     };
+    let tenant_addr = current_addr(&tenancy);
+    let TenancyContext { mut asset, envelope, state } = tenancy;
     let (u, receipt) = asset::take(&mut asset);
     event::emit(AssetBorrowed { escrow_id: escrow_identity::escrow_id(escrow_id), tenant_cap_id: tenant_cap::cap_id(cap_id), tenant: tenant_addr });
     (TenancyContext { asset, envelope, state }, u, receipt)

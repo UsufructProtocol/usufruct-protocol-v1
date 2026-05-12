@@ -143,19 +143,19 @@ public(package) fun from_departing<C>(
 ///   Parcial — split stake; deposit + post + liquidate remainder to identity.
 ///   Total   — full stake refunded to identity; no owner/fee.
 public(package) fun distribute<C>(
-    rs:    RefundState<C>,
-    owner: &mut Owner<C>,
-    inbox: FeeInboxIdentity,
-    ctx:   &mut TxContext,
+    rs:                 RefundState<C>,
+    owner:              &mut Owner<C>,
+    fee_inbox_identity: FeeInboxIdentity,
+    ctx:                &mut TxContext,
 ) {
     match (rs) {
         RefundState::Nothing { fee_share, owner_earnings } => {
             owner::deposit(owner, owner_earnings);
-            fee_message::post(fee_share, inbox, ctx);
+            fee_message::post(fee_share, fee_inbox_identity, ctx);
         },
         RefundState::Parcial { identity, stake, fee_share, owner_earnings } => {
             owner::deposit(owner, owner_earnings);
-            fee_message::post(fee_share, inbox, ctx);
+            fee_message::post(fee_share, fee_inbox_identity, ctx);
             tenant::liquidate(stake, tenant::proj_address(&identity), ctx);
         },
         RefundState::Total { identity, stake } => {

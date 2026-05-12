@@ -9,7 +9,7 @@ use usufruct::escrow_identity::{Self, EscrowIdentity};
 
 // === Errors ===
 
-/// `put` was presented a receipt whose `escrow_id` does not match the
+/// `put` was presented a receipt whose `escrow_identity` does not match the
 /// wrapper's. Cross-escrow attack: a receipt minted by `take` on
 /// escrow X presented to `put` on escrow Y.
 const E_ASSET_WRONG_ESCROW: u64 = 1;
@@ -34,14 +34,14 @@ const E_ASSET_NOT_AVAILABLE: u64 = 4;
 // === Structs ===
 
 /// Composite identity of an asset within the protocol. `asset_id` is
-/// the user-asset's UID (intrinsic, global). `escrow_id` is the
-/// rental-escrow's identity, stamped at wrap-time. The pair is what
+/// the user-asset's UID (intrinsic, global). `escrow_identity` is the
+/// rental-escrow's typed identity, stamped at wrap-time. The pair is what
 /// distinguishes "this asset in this protocol context" from "this
 /// asset somewhere else" — necessary because `U` is external (not
 /// protocol-issued, no inherent escrow binding, unlike the caps).
 public struct AssetIdentity has copy, drop, store {
-    asset_id:  ID,
-    escrow_id: EscrowIdentity,
+    asset_id:        ID,
+    escrow_identity: EscrowIdentity,
 }
 
 /// Wrapper around an external `U` during active tenancy (Occupied / Demand).
@@ -85,7 +85,7 @@ public(package) fun proj_locked_id<U: key + store>(self: &AssetCustodyLocked<U>)
 
 public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.identity.asset_id }
 public(package) fun proj_escrow_id<U: key + store>(self: &AssetCustodyOpen<U>): ID {
-    escrow_identity::escrow_id(self.identity.escrow_id)
+    escrow_identity::escrow_id(self.identity.escrow_identity)
 }
 public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool {
     option::is_some(&self.available)
@@ -98,7 +98,7 @@ public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>
 /// Wrap a `U` for borrow-capable custody. Called when entering Renting state.
 public(package) fun new<U: key + store>(u: U, escrow_id: ID): AssetCustodyOpen<U> {
     AssetCustodyOpen {
-        identity:  AssetIdentity { asset_id: object::id(&u), escrow_id: escrow_identity::new(escrow_id) },
+        identity:  AssetIdentity { asset_id: object::id(&u), escrow_identity: escrow_identity::new(escrow_id) },
         available: option::some(u),
     }
 }
@@ -129,7 +129,7 @@ public(package) fun take<U: key + store>(self: &mut AssetCustodyOpen<U>): (U, As
 /// Return path: consume the receipt and refill the slot. Three
 /// independent assertions guard three distinct attacks:
 ///
-///   1. cross-escrow:    self.escrow_id != receipt.escrow_id
+///   1. cross-escrow:    self.escrow_identity != receipt.escrow_identity
 ///   2. receipt-swap:    self.asset_id  != receipt.asset_id
 ///   3. asset-swap:      object::id(&u) != receipt.asset_id
 public(package) fun put<U: key + store>(
@@ -138,7 +138,7 @@ public(package) fun put<U: key + store>(
     receipt: AssetReceipt,
 ) {
     let AssetReceipt { identity } = receipt;
-    assert!(self.identity.escrow_id == identity.escrow_id, E_ASSET_WRONG_ESCROW);
+    assert!(self.identity.escrow_identity == identity.escrow_identity, E_ASSET_WRONG_ESCROW);
     assert!(self.identity.asset_id  == identity.asset_id,  E_ASSET_RECEIPT_MISMATCH);
     assert!(object::id(&u)          == identity.asset_id,  E_ASSET_RETURNED_DIFFERENT);
     option::fill(&mut self.available, u);
@@ -161,15 +161,15 @@ public(package) fun close_tenancy<U: key + store>(self: AssetCustodyOpen<U>): As
 }
 
 /// Waiting → Renting: a new tenancy is starting. Encapsulates `unlock + new`
-/// so callers express the domain transition in one step. The escrow_id is
-/// taken as an `EscrowIdentity` directly (no ID round-trip).
+/// so callers express the domain transition in one step. The escrow identity
+/// is taken as an `EscrowIdentity` directly (no ID round-trip).
 public(package) fun open_tenancy<U: key + store>(
-    self:      AssetCustodyLocked<U>,
-    escrow_id: EscrowIdentity,
+    self:            AssetCustodyLocked<U>,
+    escrow_identity: EscrowIdentity,
 ): AssetCustodyOpen<U> {
     let AssetCustodyLocked { asset } = self;
     AssetCustodyOpen {
-        identity:  AssetIdentity { asset_id: object::id(&asset), escrow_id },
+        identity:  AssetIdentity { asset_id: object::id(&asset), escrow_identity },
         available: option::some(asset),
     }
 }
@@ -183,7 +183,7 @@ public(package) fun open_tenancy<U: key + store>(
 /// assertions in `put` (cross-escrow, asset-id mismatch).
 #[test_only]
 public fun forge_receipt_for_testing(asset_id: ID, escrow_id: ID): AssetReceipt {
-    AssetReceipt { identity: AssetIdentity { asset_id, escrow_id: escrow_identity::new(escrow_id) } }
+    AssetReceipt { identity: AssetIdentity { asset_id, escrow_identity: escrow_identity::new(escrow_id) } }
 }
 
 /// Drop an `AssetReceipt` whose return-path was abandoned in the test.
@@ -196,8 +196,8 @@ public fun destroy_receipt_for_testing(r: AssetReceipt) {
 #[test_only]
 public fun receipt_asset_id_for_testing(r: &AssetReceipt): ID { r.identity.asset_id }
 
-/// Inspect the escrow_id stamped on a receipt. Test-only.
+/// Inspect the escrow identity stamped on a receipt. Test-only.
 #[test_only]
 public fun receipt_escrow_id_for_testing(r: &AssetReceipt): ID {
-    escrow_identity::escrow_id(r.identity.escrow_id)
+    escrow_identity::escrow_id(r.identity.escrow_identity)
 }

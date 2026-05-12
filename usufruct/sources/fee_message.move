@@ -24,21 +24,21 @@ use usufruct::{
 
 // === Structs ===
 
-/// Pre-message wrapper carrying the balance + escrow_id for a fee
-/// transfer. Constructed by the producer (e.g. tenant draining a fee
-/// share off its stake) and consumed by `post`, which mints the
+/// Pre-message wrapper carrying the balance + escrow identity for a
+/// fee transfer. Constructed by the producer (e.g. tenant draining a
+/// fee share off its stake) and consumed by `post`, which mints the
 /// on-chain `FeeMessage<C>` object and ships it to the inbox. The
 /// share never reaches on-chain storage — it lives only in PTB scope
 /// between the split site and the post site.
 public struct FeeShare<phantom CoinType> has store {
-    balance: Balance<CoinType>,
-    escrow:  EscrowIdentity,
+    balance:         Balance<CoinType>,
+    escrow_identity: EscrowIdentity,
 }
 
 public struct FeeMessage<phantom CoinType> has key {
-    id:      UID,
-    escrow:  EscrowIdentity,
-    balance: Balance<CoinType>,
+    id:              UID,
+    escrow_identity: EscrowIdentity,
+    balance:         Balance<CoinType>,
 }
 
 // === Events ===
@@ -85,34 +85,34 @@ public fun collect_fee_messages<C>(
 
 public(package) fun proj_share_value<C>(s: &FeeShare<C>): Stake { monetary::stake(balance::value(&s.balance)) }
 
-public(package) fun proj_escrow_id<C>(msg: &FeeMessage<C>): ID    { escrow_identity::escrow_id(msg.escrow) }
+public(package) fun proj_escrow_id<C>(msg: &FeeMessage<C>): ID    { escrow_identity::escrow_id(msg.escrow_identity) }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
 /// Construct a `FeeShare<C>` carrying `balance` destined for the fee
-/// flow of `escrow_id`. Pre-message form — no UID minted yet; the
+/// flow of `escrow_identity`. Pre-message form — no UID minted yet; the
 /// on-chain `FeeMessage<C>` is built inside `post`.
-public(package) fun new_share<C>(balance: Balance<C>, escrow: EscrowIdentity): FeeShare<C> {
-    FeeShare { balance, escrow }
+public(package) fun new_share<C>(balance: Balance<C>, escrow_identity: EscrowIdentity): FeeShare<C> {
+    FeeShare { balance, escrow_identity }
 }
 
-/// Mint a `FeeMessage<C>` from `share`, transfer it to `inbox`
-/// via transfer-to-object, and emit `FeeMessageSent<C>`. Fused — no
+/// Mint a `FeeMessage<C>` from `share`, transfer it to the inbox via
+/// transfer-to-object, and emit `FeeMessageSent<C>`. Fused — no
 /// caller ever holds a `FeeMessage<C>` as a local.
 public(package) fun post<C>(
-    share: FeeShare<C>,
-    inbox: FeeInboxIdentity,
-    ctx:   &mut TxContext,
+    share:               FeeShare<C>,
+    fee_inbox_identity:  FeeInboxIdentity,
+    ctx:                 &mut TxContext,
 ) {
-    let FeeShare { balance, escrow } = share;
+    let FeeShare { balance, escrow_identity } = share;
     let amount         = balance::value(&balance);
-    let fee_inbox_id   = protocol_fee_ref::inbox_id(inbox);
-    let escrow_id      = escrow_identity::escrow_id(escrow);
+    let fee_inbox_id   = protocol_fee_ref::inbox_id(fee_inbox_identity);
+    let escrow_id      = escrow_identity::escrow_id(escrow_identity);
     let msg = FeeMessage<C> {
         id: object::new(ctx),
-        escrow,
+        escrow_identity,
         balance,
     };
     let fee_message_id = object::uid_to_inner(&msg.id);
@@ -130,15 +130,15 @@ fun receive_message<C>(
 }
 
 fun consume_message<C>(
-    msg:       FeeMessage<C>,
-    inbox:     FeeInboxIdentity,
-    collector: address,
+    msg:                FeeMessage<C>,
+    fee_inbox_identity: FeeInboxIdentity,
+    collector:          address,
 ): Balance<C> {
-    let FeeMessage { id, escrow, balance } = msg;
+    let FeeMessage { id, escrow_identity, balance } = msg;
     let fee_message_id = object::uid_to_inner(&id);
     let amount         = balance::value(&balance);
-    let fee_inbox_id   = protocol_fee_ref::inbox_id(inbox);
-    let escrow_id      = escrow_identity::escrow_id(escrow);
+    let fee_inbox_id   = protocol_fee_ref::inbox_id(fee_inbox_identity);
+    let escrow_id      = escrow_identity::escrow_id(escrow_identity);
     object::delete(id);
     event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount, collector });
     balance
@@ -165,10 +165,10 @@ public fun consume_message_for_testing<C>(
 
 // FeeShare field accessors (struct fields are module-private)
 #[test_only]
-public fun share_escrow_id<C>(s: &FeeShare<C>): ID { escrow_identity::escrow_id(s.escrow) }
+public fun share_escrow_id<C>(s: &FeeShare<C>): ID { escrow_identity::escrow_id(s.escrow_identity) }
 #[test_only]
 public fun destroy_share_for_testing<C>(s: FeeShare<C>) {
-    let FeeShare { balance, escrow: _ } = s;
+    let FeeShare { balance, escrow_identity: _ } = s;
     balance::destroy_for_testing(balance);
 }
 

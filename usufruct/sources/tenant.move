@@ -21,11 +21,11 @@ use usufruct::{
 // === Structs ===
 
 /// Identity half of a `Tenant`. Two-component because the tenant's
-/// authority over the slot is the cap_id, while its destination for
+/// authority over the slot is the cap_identity, while its destination for
 /// payments (refunds, liquidate) is the address. Both irreducible.
 public struct TenantIdentity has copy, drop, store {
-    cap_id:  TenantCapIdentity,
-    address: address,
+    cap_identity: TenantCapIdentity,
+    address:      address,
 }
 
 /// Material half of a `Tenant`. Wraps the tenant's collateral so raw
@@ -58,7 +58,7 @@ public struct Tenant<phantom CoinType> has store {
 public(package) fun proj_identity<C>(t: &Tenant<C>):      &TenantIdentity { &t.identity }
 public(package) fun proj_stake<C>(t: &Tenant<C>):         &TenantStake<C> { &t.stake }
 public(package) fun proj_stake_value<C>(t: &Tenant<C>):   Stake           { monetary::stake(balance::value(&t.stake.balance)) }
-public(package) fun proj_cap_id(id: &TenantIdentity):      TenantCapIdentity { id.cap_id }
+public(package) fun proj_cap_id(id: &TenantIdentity):      TenantCapIdentity { id.cap_identity }
 public(package) fun proj_address(id: &TenantIdentity):     address         { id.address }
 public(package) fun proj_stake_value_of<C>(s: &TenantStake<C>): Stake     { monetary::stake(balance::value(&s.balance)) }
 
@@ -70,12 +70,12 @@ public(package) fun proj_stake_value_of<C>(s: &TenantStake<C>): Stake     { mone
 /// the cap-layer (or a test) supplies the three components and the
 /// nested wrappers are built internally.
 public(package) fun new<C>(
-    cap_id:  TenantCapIdentity,
-    address: address,
-    balance: Balance<C>,
+    cap_identity: TenantCapIdentity,
+    address:      address,
+    balance:      Balance<C>,
 ): Tenant<C> {
     Tenant {
-        identity: TenantIdentity { cap_id, address },
+        identity: TenantIdentity { cap_identity, address },
         stake:    TenantStake { balance },
     }
 }
@@ -96,14 +96,14 @@ public(package) fun destroy_empty_stake<C>(s: TenantStake<C>) {
 }
 
 /// Drain `amount` off the tenant's stake as a `FeeShare<C>` destined
-/// for `escrow_id`. Aborts via `balance::split` if `amount > stake`.
+/// for `escrow_identity`. Aborts via `balance::split` if `amount > stake`.
 public(package) fun take_fee_share<C>(
-    t:      &mut Tenant<C>,
-    amount: Stake,
-    escrow: EscrowIdentity,
+    t:               &mut Tenant<C>,
+    amount:          Stake,
+    escrow_identity: EscrowIdentity,
 ): FeeShare<C> {
     let part = balance::split(&mut t.stake.balance, monetary::stake_mist(amount));
-    fee_message::new_share(part, escrow)
+    fee_message::new_share(part, escrow_identity)
 }
 
 /// Drain `amount` off the tenant's stake as an `OwnerEarnings<C>`

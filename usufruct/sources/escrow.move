@@ -534,6 +534,20 @@ public fun commitment_unlocks_at_ms<Asset: key + store, CoinType>(
     phases::timestamp_ms(commitment_policy_state::unlock_at(resolved, asset_context_state::proj_commitment_anchor(e)))
 }
 
+public fun commitment_anchor_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): u64 {
+    phases::timestamp_ms(asset_context_state::proj_commitment_anchor(read_context(escrow)))
+}
+
+public fun commitment_remaining_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+    now_ms: u64,
+): u64 {
+    let unlocks = commitment_unlocks_at_ms(escrow);
+    if (now_ms >= unlocks) 0 else unlocks - now_ms
+}
+
 // ─── Cap views ───────────────────────────────────────────────────────────────
 
 public fun owner_cap_is_valid<Asset: key + store, CoinType>(

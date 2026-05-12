@@ -155,6 +155,18 @@ public struct TenancyContext<Asset: key + store, phantom CoinType> has store {
     state:    TenancyState<Asset, CoinType>,
 }
 
+/// Typed return of `do_tenure_expiry`. Hot-potato — must be destructured at
+/// the call site. Named fields prevent positional swap between same-typed
+/// Price/Duration values. The asset is already in `Locked` custody —
+/// tenure has ended, so the borrow protocol is no longer applicable.
+public struct TenureExpiryResult<Asset: key + store> {
+    asset:             asset::AssetCustodyLocked<Asset>,
+    last_acq_price:    Price,
+    resolved_floor:    Price,
+    resolved_ceiling:  Duration,
+    resolved_handover: Duration,
+}
+
 /// Result of do_apt_transition. Co-resident with fire — matched directly
 /// via nested struct pattern, no accessor functions needed.
 public enum RentingFireResultState<Asset: key + store, phantom CoinType> {
@@ -163,8 +175,9 @@ public enum RentingFireResultState<Asset: key + store, phantom CoinType> {
         tenancy: TenancyContext<Asset, CoinType>,
     },
     /// Occupied tenure expired; caller decides AtDutch vs Retired.
+    /// The asset is already in `Locked` custody — no `unlock` step at the call site.
     TenureExpired {
-        asset:             Asset,
+        asset:             asset::AssetCustodyLocked<Asset>,
         last_acq_price:    Price,
         resolved_floor:    Price,
         resolved_ceiling:  Duration,
@@ -1365,11 +1378,11 @@ public(package) fun do_apt_transition<Asset: key + store, CoinType>(
             RentingFireResultState::Handover { tenancy: new_tenancy }
         },
         TenancyState::Occupied { tenant, retire } => {
-            let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover) = do_tenure_expiry(
+            let TenureExpiryResult { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover } = do_tenure_expiry(
                 asset, tenant, envelope,
                 owner, escrow_id, fee_inbox_id, boundary, ctx,
             );
-            RentingFireResultState::TenureExpired { asset: asset::unbundle(wrapped), last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retire }
+            RentingFireResultState::TenureExpired { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retire }
         },
     }
 }
@@ -1442,7 +1455,8 @@ fun do_handover<Asset: key + store, CoinType>(
 }
 
 /// Consume an Occupied tenancy at tenure expiry. Distributes full stake to
-/// owner/protocol. Returns (wrapped_asset, last_acq_price, resolved_floor, base_ceiling, base_handover).
+/// owner/protocol. Returns a `TenureExpiryResult` carrying the wrapped asset
+/// and the per-cycle-normalized policy values for the next phase.
 /// The retire condition flows through the enum variant at the call site, not here.
 fun do_tenure_expiry<Asset: key + store, CoinType>(
     asset:        asset::AssetCustodyOpen<Asset>,
@@ -1453,7 +1467,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     fee_inbox_id: FeeInboxIdentity,
     boundary:     Timestamp,
     ctx:          &mut TxContext,
-): (asset::AssetCustodyOpen<Asset>, Price, Price, Duration, Duration) {
+): TenureExpiryResult<Asset> {
     let principal      = tenant::proj_stake_value(&tenant);
     let tenant_cap_id  = tenant::proj_cap_id(tenant::proj_identity(&tenant));
     let tenant_addr    = tenant::proj_address(tenant::proj_identity(&tenant));
@@ -1481,7 +1495,15 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     // The AtDutch/Idle that follows belongs to the next tenant's cycle, not this one's.
     let base_ceiling  = cycles::rescale_duration(envelope.resolved_ceiling,  envelope.committed_cycles, cycles::cycles(1));
     let base_handover = cycles::rescale_duration(envelope.resolved_handover, envelope.committed_cycles, cycles::cycles(1));
-    (asset, monetary::as_reference_price(principal), envelope.resolved_floor, base_ceiling, base_handover)
+    // Tenure has ended: convert from open custody to locked. `unbundle` asserts
+    // the asset is actually present (not on loan) — the borrow protocol is over.
+    TenureExpiryResult {
+        asset:             asset::lock(asset::unbundle(asset)),
+        last_acq_price:    monetary::as_reference_price(principal),
+        resolved_floor:    envelope.resolved_floor,
+        resolved_ceiling:  base_ceiling,
+        resolved_handover: base_handover,
+    }
 }
 
 /// Set the retiring flag on the current tenancy (Occupied or Demand).
@@ -1790,18 +1812,17 @@ fun fire<Asset: key + store, CoinType>(
                 RentingFireResultState::Handover { tenancy: new_tenancy } =>
                     AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, envelope },
                 RentingFireResultState::TenureExpired { asset, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retire } => {
-                    let locked      = asset::lock(asset);
                     let boundary_ms = phases::timestamp_ms(boundary);
                     // P5/P10 boundary crossing: RetireCondition's variants live in
                     // retire_condition.move, so we project here to branch the asset state.
                     if (retire_condition::proj_is_retiring(&retire)) {
                         event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(envelope.escrow_id), timestamp_ms: boundary_ms });
                         envelope.pending_config = option::none();
-                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, envelope }
+                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }, owner, envelope }
                     } else {
                         let mut generator    = sui::random::new_generator(random, ctx);
                         let resolved_descent = descent_policy_state::resolve(config::proj_descent(&envelope.config), &mut generator);
-                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }, owner, envelope }
+                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }, owner, envelope }
                     }
                 },
             }
@@ -1922,11 +1943,10 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
 ): AssetContext<Asset, CoinType> {
     match (context) {
         AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_env, state: TenancyState::Occupied { tenant, retire } } }, mut owner, mut envelope } => {
-            let (wrapped, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover) = do_tenure_expiry(
+            let TenureExpiryResult { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover } = do_tenure_expiry(
                 asset, tenant, tenancy_env,
                 &mut owner, envelope.escrow_id, envelope.fee_inbox_id, boundary, ctx,
             );
-            let locked      = asset::lock(asset::unbundle(wrapped));
             let boundary_ms = phases::timestamp_ms(boundary);
             if (retire_condition::proj_is_retiring(&retire)) {
                 event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(envelope.escrow_id), timestamp_ms: boundary_ms });

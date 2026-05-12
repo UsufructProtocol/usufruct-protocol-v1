@@ -56,11 +56,9 @@ public struct Tenant<phantom CoinType> has store {
 // ### RUNTIME PROJECTION FOR SDK ###
 
 public(package) fun proj_identity<C>(t: &Tenant<C>):      &TenantIdentity { &t.identity }
-public(package) fun proj_stake<C>(t: &Tenant<C>):         &TenantStake<C> { &t.stake }
 public(package) fun proj_stake_value<C>(t: &Tenant<C>):   Stake           { monetary::stake(balance::value(&t.stake.balance)) }
 public(package) fun proj_cap_id(id: &TenantIdentity):      TenantCapIdentity { id.cap_id }
 public(package) fun proj_address(id: &TenantIdentity):     address         { id.address }
-public(package) fun proj_stake_value_of<C>(s: &TenantStake<C>): Stake     { monetary::stake(balance::value(&s.balance)) }
 
 // === Admin Functions ===
 
@@ -134,6 +132,18 @@ public(package) fun liquidate<C>(
 // === Private Functions ===
 
 // === Test Functions ===
+
+/// Borrow the inner `TenantStake`. Test-only — production code uses
+/// `proj_stake_value` to skip the intermediate borrow.
+#[test_only]
+public fun proj_stake<C>(t: &Tenant<C>): &TenantStake<C> { &t.stake }
+
+/// Stake value via a `&TenantStake` borrow. Test-only counterpart of
+/// `proj_stake_value(&Tenant)` for the unbundled half.
+#[test_only]
+public fun proj_stake_value_of<C>(s: &TenantStake<C>): Stake {
+    monetary::stake(balance::value(&s.balance))
+}
 
 /// Destroy a `Tenant` regardless of stake — releases the inner balance
 /// via `balance::destroy_for_testing`.

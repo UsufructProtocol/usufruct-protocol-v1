@@ -32,6 +32,7 @@ use usufruct::{
         ConfigReset,
         ConfigResetScheduled,
     },
+    retire_condition,
     config,
     curve_shape_state,
     cycles,
@@ -62,6 +63,7 @@ use usufruct::{
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
+const E_ALREADY_RETIRING: u64 = 0; // mirrors retire_condition::EAlreadyRetiring
 const OWNER: address = @0x07;
 
 /// Test asset — minimal key+store object that satisfies the
@@ -1196,7 +1198,7 @@ fun retire_when_already_retired_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = asset_context_state::EAlreadyRetiring, location = usufruct::asset_context_state)]
+#[expected_failure(abort_code = E_ALREADY_RETIRING, location = usufruct::retire_condition)]
 fun retire_when_already_retiring_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);

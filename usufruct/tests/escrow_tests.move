@@ -5324,6 +5324,201 @@ fun reset_config_at_dutch_natural_expiry_applies_pending() {
     sc.end();
 }
 
+// ─── §reset_config — pending_config invariant ────────────────────────────────
+//
+// The invariant under test: pending_config is applied ONLY when the escrow
+// reaches Idle via auction expiry. No other transition — handover, tenure
+// expiry, or re-entry into Renting — may apply it.
+
+// Invariant 1: pending_config survives a chain of handovers untouched ─────────
+/// Two consecutive handovers with a buffered reset: after each handover the
+/// escrow is still Renting, the old config is still active, and no ConfigReset
+/// has been emitted. The pending survives intact through both transitions.
+#[test]
+fun reset_config_pending_survives_multiple_handovers() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let original_cfg = cfg;
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let new_cfg = escrow_corpus::by_tag(1);
+    let tenure   = escrow_corpus::tenure_ceiling_const();
+
+    // T1 is current tenant; reset scheduled.
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
+    escrow::reset_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+
+    // First handover: T1 → T2.
+    escrow::drive_to_demand_for_testing(&mut escrow, mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()), tenure / 4);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(tenure / 4), sc.ctx());
+
+    assert!(escrow::is_rented(&escrow), 0);
+    assert!(escrow::has_pending_config_reset(&escrow), 1);
+    assert!(escrow::integration_config(&escrow) == original_cfg, 2);
+    assert_eq!(event::events_by_type<ConfigReset>().length(), 0);
+
+    // Second handover: T2 → T1.
+    escrow::drive_to_demand_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), tenure / 2);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(tenure / 2), sc.ctx());
+
+    assert!(escrow::is_rented(&escrow), 3);
+    assert!(escrow::has_pending_config_reset(&escrow), 4);
+    assert!(escrow::integration_config(&escrow) == original_cfg, 5);
+    assert_eq!(event::events_by_type<ConfigReset>().length(), 0);
+    assert_eq!(event::events_by_type<ConfigResetScheduled>().length(), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Invariant 2: during AtDutch with pending, old config remains active ──────────
+/// reset_config called while at AtDutch: the escrow stays at AtDutch, the old
+/// config remains active (not the new one), and only at auction expiry does the
+/// new config take effect.
+#[test]
+fun reset_config_at_dutch_old_config_active_until_auction_expiry() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let original_cfg = cfg;
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
+    escrow::drive_to_at_dutch_for_testing(
+        &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
+        escrow_corpus::min_rent_price_const() * 2, 0,
+    );
+
+    // Old config is active; no pending.
+    assert!(escrow::integration_config(&escrow) == original_cfg, 0);
+    assert!(!escrow::has_pending_config_reset(&escrow), 1);
+
+    let new_cfg = escrow_corpus::by_tag(1);
+    escrow::reset_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+
+    // Still at AtDutch; old config still active.
+    assert!(escrow::is_at_dutch_auction(&escrow), 2);
+    assert!(escrow::has_pending_config_reset(&escrow), 3);
+    assert!(escrow::integration_config(&escrow) == original_cfg, 4);
+    assert_eq!(event::events_by_type<ConfigReset>().length(), 0);
+
+    // Auction expiry → new config applied.
+    clock::set_for_testing(&mut clk, escrow_corpus::descent_window_h1_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 5);
+    assert!(escrow::integration_config(&escrow) == new_cfg, 6);
+    assert!(!escrow::has_pending_config_reset(&escrow), 7);
+    assert_eq!(event::events_by_type<ConfigReset>().length(), 1);
+    assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Invariant 3: cross-phase last write wins (Renting → AtDutch) ───────────────
+/// reset_config in Renting sets cfg_a; tenure expires → AtDutch (cfg_a still
+/// pending); reset_config in AtDutch overrides to cfg_b. At auction expiry only
+/// cfg_b is applied. Exactly 1 ConfigReset (cfg_b), 2 ConfigResetScheduled.
+#[test]
+fun reset_config_at_dutch_overrides_renting_pending() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let cfg_a = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let cfg_b = escrow_corpus::by_tag(1);
+    let tenure = escrow_corpus::tenure_ceiling_const();
+
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_a, &random, &clk, sc.ctx());
+
+    // Tenure expiry → AtDutch with cfg_a pending.
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure), sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::has_pending_config_reset(&escrow), 1);
+
+    // Override pending from AtDutch: cfg_b wins.
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_b, &random, &clk, sc.ctx());
+    assert!(escrow::has_pending_config_reset(&escrow), 2);
+    assert_eq!(event::events_by_type<ConfigReset>().length(), 0);
+    assert_eq!(event::events_by_type<ConfigResetScheduled>().length(), 2);
+
+    // Auction expiry → Idle with cfg_b (not cfg_a).
+    clock::set_for_testing(&mut clk, tenure + escrow_corpus::descent_window_h1_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 3);
+    assert!(escrow::integration_config(&escrow) == cfg_b, 4);
+    assert!(!escrow::has_pending_config_reset(&escrow), 5);
+
+    let resets = event::events_by_type<ConfigReset>();
+    assert_eq!(resets.length(), 1);
+    assert!(asset_context_state::config_reset_new_config(resets.borrow(0)) == cfg_b, 6);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Invariant 4: state is clean after application; Idle reset is immediate ──────
+/// After pending_config is consumed at auction expiry → Idle, the pending flag
+/// is false and no residual state leaks into the next cycle. A subsequent
+/// reset_config from that Idle applies immediately (no schedule).
+#[test]
+fun reset_config_state_clean_after_application() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let cfg_cycle1 = escrow_corpus::by_tag(1);
+    let cfg_cycle2 = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let tenure     = escrow_corpus::tenure_ceiling_const();
+
+    // Full cycle: Renting → reset → AtDutch → auction expiry → Idle with cfg_cycle1.
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_cycle1, &random, &clk, sc.ctx());
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure), sc.ctx());
+    clock::set_for_testing(&mut clk, tenure + escrow_corpus::descent_window_h1_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+
+    // State after first cycle.
+    assert!(escrow::is_idle(&escrow), 0);
+    assert!(escrow::integration_config(&escrow) == cfg_cycle1, 1);
+    assert!(!escrow::has_pending_config_reset(&escrow), 2);
+    assert_eq!(event::events_by_type<ConfigReset>().length(), 1);
+
+    // reset_config from Idle → immediate, no schedule.
+    escrow::reset_config(&mut escrow, &owner_cap, cfg_cycle2, &random, &clk, sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 3);
+    assert!(escrow::integration_config(&escrow) == cfg_cycle2, 4);
+    assert!(!escrow::has_pending_config_reset(&escrow), 5);
+    assert_eq!(event::events_by_type<ConfigReset>().length(), 2);
+    assert_eq!(event::events_by_type<ConfigResetScheduled>().length(), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §reset_config — behavioral dimensions ────────────────────────────────────
 
 // Test BD-1: min_rent_price floor changes after reset ─────────────────────────

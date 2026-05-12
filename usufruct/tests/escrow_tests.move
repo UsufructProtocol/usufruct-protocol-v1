@@ -8277,6 +8277,7 @@ const E_COMMITMENT_NOT_EXTENDED: u64 = 17;
 
 // ─── Group I: Initialization ──────────────────────────────────────────────────
 
+
 /// I-1 + I-2: commitment_anchor is set to integrated_at at integrate time.
 /// With Immediate (floor=0), unlock_at = anchor + 0 = anchor = integrated_at.
 #[test]
@@ -8340,5 +8341,64 @@ fun commitment_init_deferred_unlocks_at_integrated_plus_floor() {
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+// ─── Group II: reset_config does not touch commitment ─────────────────────────
+
+/// II-4: commitment_policy unchanged after reset_config.
+#[test]
+fun commitment_reset_config_does_not_change_policy() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // reset_config with a different IntegrationConfig (h=1 descent axis differs).
+    let new_cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    escrow::reset_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+
+    // Commitment is still Deferred(floor) — reset_config cannot change it.
+    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
+    assert!(escrow::is_commitment_deferred(&escrow), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// II-5 + II-6: commitment_anchor and commitment_unlocks_at_ms unchanged after reset_config.
+#[test]
+fun commitment_reset_config_does_not_change_anchor() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let unlocks_before = escrow::commitment_unlocks_at_ms(&escrow);
+
+    // Advance clock and reset config — anchor must not move.
+    clock::set_for_testing(&mut clk, 500);
+    let new_cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    escrow::reset_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+
+    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), unlocks_before);
+    // integrated_at == 0 (clock was 0 at integrate), floor unchanged.
+    assert_eq!(unlocks_before, 0 + floor);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
     sc.end();
 }

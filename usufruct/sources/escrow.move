@@ -22,6 +22,7 @@ use usufruct::{
     asset_context_state::{Self, AssetContext, CapAuthorizationState},
     handover_policy_state,
     floor_price_policy_state,
+    math,
     tenure_policy_state,
     monetary,
     owner_cap::{Self, OwnerCap},
@@ -931,15 +932,18 @@ public fun price_fn_is_compound_delta<Asset: key + store, CoinType>(escrow: &Esc
 }
 
 public fun price_fn_fixed_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    price_function_state::proj_fixed_delta(config::proj_price_function_state(cfg(escrow)))
+    let opt = price_function_state::proj_fixed_delta(config::proj_price_function_state(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt))) else option::none()
 }
 
 public fun price_fn_compound_delta_bps<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    price_function_state::proj_compound_delta_bps(config::proj_price_function_state(cfg(escrow)))
+    let opt = price_function_state::proj_compound_delta_bps(config::proj_price_function_state(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(math::bps_value(option::destroy_some(opt))) else option::none()
 }
 
 public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    price_function_state::proj_compound_delta_delta(config::proj_price_function_state(cfg(escrow)))
+    let opt = price_function_state::proj_compound_delta_delta(config::proj_price_function_state(cfg(escrow)));
+    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt))) else option::none()
 }
 
 // === Private Functions ===

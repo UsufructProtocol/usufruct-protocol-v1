@@ -60,17 +60,17 @@ public(package) fun proj_is_fixed_delta(p: &PriceFunctionState): bool {
 public(package) fun proj_is_compound_delta(p: &PriceFunctionState): bool {
     match (p) { PriceFunctionState::CompoundDelta { .. } => true, _ => false }
 }
-public(package) fun proj_fixed_delta(p: &PriceFunctionState): Option<u64> {
-    match (p) { PriceFunctionState::FixedDelta { delta } => option::some(monetary::price_mist(*delta)), _ => option::none() }
+public(package) fun proj_fixed_delta(p: &PriceFunctionState): Option<Price> {
+    match (p) { PriceFunctionState::FixedDelta { delta } => option::some(*delta), _ => option::none() }
 }
-public(package) fun proj_compound_delta_bps(p: &PriceFunctionState): Option<u64> {
+public(package) fun proj_compound_delta_bps(p: &PriceFunctionState): Option<BasisPoints> {
     match (p) {
-        PriceFunctionState::CompoundDelta { bps, .. } => option::some(math::bps_value(*bps)),
+        PriceFunctionState::CompoundDelta { bps, .. } => option::some(*bps),
         _ => option::none(),
     }
 }
-public(package) fun proj_compound_delta_delta(p: &PriceFunctionState): Option<u64> {
-    match (p) { PriceFunctionState::CompoundDelta { delta, .. } => option::some(monetary::price_mist(*delta)), _ => option::none() }
+public(package) fun proj_compound_delta_delta(p: &PriceFunctionState): Option<Price> {
+    match (p) { PriceFunctionState::CompoundDelta { delta, .. } => option::some(*delta), _ => option::none() }
 }
 
 // === Admin Functions ===

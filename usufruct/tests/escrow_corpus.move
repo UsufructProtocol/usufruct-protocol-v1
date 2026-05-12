@@ -174,7 +174,6 @@ public(package) fun with_min_rent_price(cfg: IntegrationConfig, price_mist: u64)
         *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
-        *config::proj_commitment(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
         *config::proj_price_function_state(&cfg),
@@ -189,7 +188,6 @@ public(package) fun with_random_min_rent_price(cfg: IntegrationConfig, min_mist:
         *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
-        *config::proj_commitment(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
         *config::proj_price_function_state(&cfg),
@@ -204,7 +202,6 @@ public(package) fun with_tenure_ceiling(cfg: IntegrationConfig, ceiling_ms: u64)
         *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
-        *config::proj_commitment(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
         *config::proj_price_function_state(&cfg),
@@ -219,7 +216,6 @@ public(package) fun with_random_tenure_ceiling(cfg: IntegrationConfig, min_ms: u
         *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
-        *config::proj_commitment(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
         *config::proj_price_function_state(&cfg),
@@ -234,7 +230,6 @@ public(package) fun with_tenure_cycles(cfg: IntegrationConfig, policy: TenureCyc
         policy,
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
-        *config::proj_commitment(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
         *config::proj_price_function_state(&cfg),
@@ -355,7 +350,12 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): CorpusEntry {
     }
 }
 
-fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): IntegrationConfig {
+/// CommitmentPolicyState for the given tag (f axis: 0=Immediate, 1=Deferred).
+public(package) fun commitment_by_tag(tag: u64): CommitmentPolicyState {
+    make_commitment((tag % 10) as u8)
+}
+
+fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8, m: u8): IntegrationConfig {
     let curve = make_curve(e);
     config::new_config(
         floor_price_policy_state::new_fixed(monetary::price(MIN_RENT_PRICE)),
@@ -363,7 +363,6 @@ fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): IntegrationConfig {
         make_tenure_cycles(m),
         make_handover(c),
         make_descent(h),
-        make_retire(f),
         curve,
         curve,
         make_price_function_state(d),
@@ -412,7 +411,7 @@ fun make_tenure_cycles(m: u8): TenureCyclesPolicyState {
     else        { tenure_cycles_policy_state::new_multi() }
 }
 
-fun make_retire(f: u8): CommitmentPolicyState {
+fun make_commitment(f: u8): CommitmentPolicyState {
     if (f == 0) { commitment_policy_state::new_immediate() }
     else        { commitment_policy_state::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
 }

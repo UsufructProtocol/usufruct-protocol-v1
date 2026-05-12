@@ -14,7 +14,6 @@ use usufruct::{
     tenure_policy_state::{Self as tenure_policy_state, TenurePolicyState},
     tenure_cycles_policy_state::TenureCyclesPolicyState,
     price_function_state::PriceFunctionState,
-    commitment_policy_state::CommitmentPolicyState,
 };
 
 // === Errors ===
@@ -31,7 +30,6 @@ public struct IntegrationConfig has copy, drop, store {
     tenure_cycles:    TenureCyclesPolicyState,
     handover:         HandoverPolicyState,
     descent:          DescentPolicyState,
-    commitment:       CommitmentPolicyState,
     credit_curve:     CurveShapeState,
     descent_curve:    CurveShapeState,
     price_function_state:  PriceFunctionState,
@@ -54,7 +52,6 @@ public fun new_config(
     tenure_cycles:   TenureCyclesPolicyState,
     handover:        HandoverPolicyState,
     descent:         DescentPolicyState,
-    commitment:      CommitmentPolicyState,
     credit_curve:    CurveShapeState,
     descent_curve:   CurveShapeState,
     price_function_state: PriceFunctionState,
@@ -75,7 +72,6 @@ public fun new_config(
         tenure_cycles,
         handover,
         descent,
-        commitment,
         credit_curve,
         descent_curve,
         price_function_state,
@@ -91,7 +87,6 @@ public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):         &Tenur
 public(package) fun proj_tenure_cycles(cfg: &IntegrationConfig):          &TenureCyclesPolicyState    { &cfg.tenure_cycles }
 public(package) fun proj_handover(cfg: &IntegrationConfig):               &HandoverPolicyState         { &cfg.handover }
 public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicyState   { &cfg.descent }
-public(package) fun proj_commitment(cfg: &IntegrationConfig):            &CommitmentPolicyState { &cfg.commitment }
 public(package) fun proj_credit_curve(cfg: &IntegrationConfig):          &CurveShapeState      { &cfg.credit_curve }
 public(package) fun proj_descent_curve(cfg: &IntegrationConfig):         &CurveShapeState      { &cfg.descent_curve }
 public(package) fun proj_price_function_state(cfg: &IntegrationConfig):  &PriceFunctionState   { &cfg.price_function_state }

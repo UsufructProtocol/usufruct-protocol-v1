@@ -30,7 +30,7 @@ use usufruct::{
     price_function_state::{Self, PriceFunctionState},
     escrow_identity,
     protocol_fee_ref::{Self, ProtocolFeeRef},
-    commitment_policy_state,
+    commitment_policy_state::{Self, CommitmentPolicyState},
     tenant_cap::{Self, TenantCap},
 };
 
@@ -73,12 +73,13 @@ public struct AssetClaimed has copy, drop {
 /// Create and share an `Escrow`. Mints the `OwnerCap` and
 /// returns it to the caller.
 public fun integrate<Asset: key + store, CoinType>(
-    asset:   Asset,
-    cfg:     IntegrationConfig,
-    fee_ref: &ProtocolFeeRef,
-    random:  &Random,
-    clock:   &Clock,
-    ctx:     &mut TxContext,
+    asset:      Asset,
+    cfg:        IntegrationConfig,
+    commitment: CommitmentPolicyState,
+    fee_ref:    &ProtocolFeeRef,
+    random:     &Random,
+    clock:      &Clock,
+    ctx:        &mut TxContext,
 ): OwnerCap {
     let uid              = object::new(ctx);
     let raw_escrow_id    = object::uid_to_inner(&uid);
@@ -94,7 +95,7 @@ public fun integrate<Asset: key + store, CoinType>(
     config::emit_registration(&cfg, raw_escrow_id);
     let mut generator = sui::random::new_generator(random, ctx);
     let context = asset_context_state::new<Asset, CoinType>(
-        asset, owner_cap_identity, cfg, inbox_identity, integrated_at_ms, escrow_identity, &mut generator,
+        asset, owner_cap_identity, cfg, commitment, inbox_identity, integrated_at_ms, escrow_identity, &mut generator,
     );
     transfer::share_object(Escrow<Asset, CoinType> {
         id:     uid,
@@ -159,6 +160,18 @@ public fun retire<Asset: key + store, CoinType>(
 ) {
     let context = escrow.asset_context.extract();
     let context = asset_context_state::execute_retire(context, owner_cap, random, clock, ctx);
+    escrow.asset_context.fill(context);
+}
+
+/// Owner-gated commitment extension. New expiry must be ≥ current expiry.
+public fun extend_commitment<Asset: key + store, CoinType>(
+    escrow:     &mut Escrow<Asset, CoinType>,
+    owner_cap:  &OwnerCap,
+    new_policy: CommitmentPolicyState,
+    clock:      &Clock,
+) {
+    let context = escrow.asset_context.extract();
+    let context = asset_context_state::execute_extend_commitment(context, owner_cap, new_policy, clock);
     escrow.asset_context.fill(context);
 }
 
@@ -304,13 +317,13 @@ public fun is_descent_window<Asset: key + store, CoinType>(
 public fun is_commitment_immediate<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    commitment_policy_state::proj_is_immediate(config::proj_commitment(cfg(escrow)))
+    commitment_policy_state::proj_is_immediate(&asset_context_state::proj_commitment_policy(read_context(escrow)))
 }
 
 public fun is_commitment_deferred<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    commitment_policy_state::proj_is_deferred(config::proj_commitment(cfg(escrow)))
+    commitment_policy_state::proj_is_deferred(&asset_context_state::proj_commitment_policy(read_context(escrow)))
 }
 
 public fun is_handover_instant<Asset: key + store, CoinType>(
@@ -516,9 +529,9 @@ public fun integrated_at_ms<Asset: key + store, CoinType>(
 public fun commitment_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    let e = read_context(escrow);
-    let resolved = commitment_policy_state::resolve(config::proj_commitment(asset_context_state::proj_config(e)));
-    phases::timestamp_ms(commitment_policy_state::unlock_at(resolved, asset_context_state::proj_integrated_at(e)))
+    let e        = read_context(escrow);
+    let resolved = commitment_policy_state::resolve(&asset_context_state::proj_commitment_policy(e));
+    phases::timestamp_ms(commitment_policy_state::unlock_at(resolved, asset_context_state::proj_commitment_anchor(e)))
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────
@@ -737,7 +750,7 @@ public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
 public fun commitment_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = commitment_policy_state::proj_floor_ms(config::proj_commitment(cfg(escrow)));
+    let opt = commitment_policy_state::proj_floor_ms(&asset_context_state::proj_commitment_policy(read_context(escrow)));
     if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
     else option::none()
 }

@@ -765,16 +765,10 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     let floor  = floor_price_at(&context, now);
     assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
     match (context) {
-        // Compiler bug (not a language restriction): deeply nested struct-in-enum patterns
-        // cause an internal panic in match_compilation.rs instead of compiling or producing
-        // a proper diagnostic. Two-level match is the workaround.
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: _a, state: WaitingState::Retired } }, owner: _o, .. } =>
             abort ERetiredNoBid,
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } } }, owner, envelope } => {
-            let (new_state, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, envelope.escrow_id, payment, floor, now, ctx);
-            (AssetContext { asset_state: new_state, owner, envelope }, cap)
-        },
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { resolved_floor, resolved_ceiling, resolved_handover, .. } } }, owner, envelope } => {
+        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } } }, owner, envelope }
+        | AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { resolved_floor, resolved_ceiling, resolved_handover, .. } } }, owner, envelope } => {
             let (new_state, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, envelope.escrow_id, payment, floor, now, ctx);
             (AssetContext { asset_state: new_state, owner, envelope }, cap)
         },

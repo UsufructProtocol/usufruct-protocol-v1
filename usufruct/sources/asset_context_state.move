@@ -359,7 +359,7 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
 public(package) fun proj_owner_balance<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Stake {
-    monetary::stake(owner::proj_value(&e.owner))
+    owner::proj_value(&e.owner)
 }
 
 public(package) fun proj_owner_cap_id<Asset: key + store, CoinType>(
@@ -933,7 +933,7 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     let owner_addr   = ctx.sender();
     let AssetContext { asset_state, mut owner, envelope } = context;
     let (coin, amount) = do_withdraw(&mut owner, owner_cap, ctx);
-    event::emit(EarningsWithdrawn { escrow_id: escrow_identity::escrow_id(envelope.escrow_id), owner_cap_id, owner: owner_addr, amount, timestamp_ms });
+    event::emit(EarningsWithdrawn { escrow_id: escrow_identity::escrow_id(envelope.escrow_id), owner_cap_id, owner: owner_addr, amount: monetary::stake_mist(amount), timestamp_ms });
     (AssetContext { asset_state, owner, envelope }, coin)
 }
 
@@ -1841,9 +1841,9 @@ fun do_withdraw<CoinType>(
     owner:     &mut Owner<CoinType>,
     owner_cap: &OwnerCap,
     ctx:       &mut TxContext,
-): (Coin<CoinType>, u64) {
+): (Coin<CoinType>, Stake) {
     let amount = owner::proj_value(owner);
-    assert!(amount > 0, ENoEarnings);
+    assert!(monetary::stake_mist(amount) > 0, ENoEarnings);
     let coin = owner::withdraw(owner, owner_cap, ctx);
     (coin, amount)
 }

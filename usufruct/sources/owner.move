@@ -6,7 +6,10 @@ module usufruct::owner;
 // === Imports ===
 
 use sui::{balance::{Self, Balance}, coin::{Self, Coin}};
-use usufruct::owner_cap::{Self, OwnerCap, OwnerCapIdentity};
+use usufruct::{
+    monetary::{Self, Stake},
+    owner_cap::{Self, OwnerCap, OwnerCapIdentity},
+};
 
 // === Errors ===
 
@@ -57,9 +60,9 @@ public struct Owner<phantom CoinType> has store {
 // ### RUNTIME PROJECTION FOR SDK ###
 
 public(package) fun proj_identity<C>(o: &Owner<C>):              &OwnerIdentity     { &o.identity }
-public(package) fun proj_value<C>(o: &Owner<C>):                 u64                { balance::value(&o.earnings.balance) }
+public(package) fun proj_value<C>(o: &Owner<C>):                 Stake              { monetary::stake(balance::value(&o.earnings.balance)) }
 public(package) fun proj_cap_id(id: &OwnerIdentity):             OwnerCapIdentity   { id.cap_id }
-public(package) fun proj_earnings_value<C>(e: &OwnerEarnings<C>): u64               { balance::value(&e.balance) }
+public(package) fun proj_earnings_value<C>(e: &OwnerEarnings<C>): Stake             { monetary::stake(balance::value(&e.balance)) }
 
 // === Admin Functions ===
 

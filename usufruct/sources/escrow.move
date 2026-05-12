@@ -36,8 +36,6 @@ use usufruct::{
 
 // === Errors ===
 
-const ENotRetired:          u64 = 6;
-
 // === Structs ===
 
 /// Central shared object. One per integrated asset.
@@ -134,10 +132,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
 
     let Escrow { id, asset_context } = escrow;
     let context = option::destroy_some(asset_context);
-    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    assert!(asset_context_state::proj_is_inactive(&context), ENotRetired);
-
-    let (asset, earnings) = asset_context_state::unwrap_for_claim(context, &owner_cap, ctx);
+    let (asset, earnings) = asset_context_state::execute_claim(context, &owner_cap, random, clock, ctx);
     let swept_earnings    = coin::value(&earnings);
     owner_cap::burn(owner_cap, owner_addr);
     object::delete(id);

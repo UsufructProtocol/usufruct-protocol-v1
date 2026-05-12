@@ -1834,7 +1834,7 @@ fun claim_asset_sweeps_owner_earnings() {
 }
 
 #[test]
-#[expected_failure(abort_code = escrow::ENotRetired, location = usufruct::escrow)]
+#[expected_failure(abort_code = asset_context_state::ENotRetired, location = usufruct::asset_context_state)]
 fun claim_asset_when_not_retired_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);

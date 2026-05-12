@@ -889,6 +889,20 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     (AssetContext { asset_state, owner, config, pending_config, fee_inbox_id, integrated_at, escrow_id }, coin)
 }
 
+/// Terminal action: settle pending transitions, assert retired, unwrap asset and earnings.
+public(package) fun execute_claim<Asset: key + store, CoinType>(
+    context:   AssetContext<Asset, CoinType>,
+    owner_cap: &OwnerCap,
+    random:    &Random,
+    clock:     &Clock,
+    ctx:       &mut TxContext,
+): (Asset, Coin<CoinType>) {
+    assert!(owner_cap::proj_escrow_identity(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
+    let context = apply_pending_transition_states(context, random, clock, ctx);
+    assert!(proj_is_inactive(&context), ENotRetired);
+    unwrap_for_claim(context, owner_cap, ctx)
+}
+
 /// Terminal: consume a Retired engine and return (asset, residual earnings).
 public(package) fun unwrap_for_claim<Asset: key + store, CoinType>(
     context: AssetContext<Asset, CoinType>,

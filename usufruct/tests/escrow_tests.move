@@ -8264,3 +8264,81 @@ fun at_dutch_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §COMMITMENT — CommitmentPolicy invariants
+//
+// Error mirrors (private constants in asset_context_state):
+//   E_COMMITMENT_FLOOR_NOT_ELAPSED = 4
+//   E_COMMITMENT_NOT_EXTENDED      = 17
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const E_COMMITMENT_NOT_EXTENDED: u64 = 17;
+
+// ─── Group I: Initialization ──────────────────────────────────────────────────
+
+/// I-1 + I-2: commitment_anchor is set to integrated_at at integrate time.
+/// With Immediate (floor=0), unlock_at = anchor + 0 = anchor = integrated_at.
+#[test]
+fun commitment_init_anchor_equals_integrated_at() {
+    let mut sc  = setup();
+    let cfg     = escrow_corpus::by_tag(0);
+    let (escrow, cap) = integrate_and_take_with_commitment(cfg, commitment_policy_state::new_immediate(), &mut sc);
+
+    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// I-3a: commitment_floor_ms is None for Immediate.
+#[test]
+fun commitment_init_immediate_floor_ms_is_none() {
+    let mut sc  = setup();
+    let cfg     = escrow_corpus::by_tag(0);
+    let (escrow, cap) = integrate_and_take_with_commitment(cfg, commitment_policy_state::new_immediate(), &mut sc);
+
+    assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
+    assert!(escrow::is_commitment_immediate(&escrow), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// I-3b: commitment_floor_ms is Some(N) for Deferred(N).
+#[test]
+fun commitment_init_deferred_floor_ms_is_some_n() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (escrow, cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+
+    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
+    assert!(escrow::is_commitment_deferred(&escrow), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// I-3c: commitment_unlocks_at_ms == integrated_at_ms + floor for Deferred.
+#[test]
+fun commitment_init_deferred_unlocks_at_integrated_plus_floor() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
+    let (escrow, cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    );
+
+    let integrated = escrow::integrated_at_ms(&escrow);
+    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), integrated + floor);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}

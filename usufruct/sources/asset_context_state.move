@@ -210,12 +210,12 @@ public struct EarningsWithdrawn has copy, drop {
     timestamp_ms: u64,
 }
 
-public struct ConfigResetScheduled has copy, drop {
+public struct ConfigUpdateScheduled has copy, drop {
     escrow_id:  ID,
     new_config: IntegrationConfig,
 }
 
-public struct ConfigReset has copy, drop {
+public struct ConfigUpdated has copy, drop {
     escrow_id:  ID,
     new_config: IntegrationConfig,
 }
@@ -796,7 +796,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun execute_reset_config<Asset: key + store, CoinType>(
+public(package) fun execute_update_config<Asset: key + store, CoinType>(
     context:   AssetContext<Asset, CoinType>,
     owner_cap: &OwnerCap,
     new_cfg:   IntegrationConfig,
@@ -817,16 +817,16 @@ public(package) fun execute_reset_config<Asset: key + store, CoinType>(
             let new_floor        = floor_price_policy_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
             let new_ceiling      = tenure_policy_state::resolve(config::proj_tenure_ceiling(&new_cfg), &mut generator);
             let new_handover     = handover_policy_state::resolve(config::proj_handover(&new_cfg), new_ceiling, &mut generator);
-            event::emit(ConfigReset { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
+            event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
             AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover } } }, owner, config: new_cfg, pending_config: option::none(), fee_inbox_id, integrated_at, commitment_policy, commitment_anchor, escrow_id }
         },
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }, owner, config, fee_inbox_id, integrated_at, pending_config: _, commitment_policy: _, commitment_anchor: _, escrow_id: _ } => {
-            event::emit(ConfigResetScheduled { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
+            event::emit(ConfigUpdateScheduled { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
             AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }, owner, config, pending_config: option::some(new_cfg), fee_inbox_id, integrated_at, commitment_policy, commitment_anchor, escrow_id }
         },
         AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, fee_inbox_id, integrated_at, pending_config: _, commitment_policy: _, commitment_anchor: _, escrow_id: _ } => {
             assert!(!is_retiring(&tenancy), ERetireAlreadyScheduled);
-            event::emit(ConfigResetScheduled { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
+            event::emit(ConfigUpdateScheduled { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
             AssetContext { asset_state: AssetState::Renting { tenancy }, owner, config, pending_config: option::some(new_cfg), fee_inbox_id, integrated_at, commitment_policy, commitment_anchor, escrow_id }
         },
     }
@@ -1869,7 +1869,7 @@ fun fire<Asset: key + store, CoinType>(
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } } }, owner, mut config, fee_inbox_id, integrated_at, commitment_policy, commitment_anchor, escrow_id, mut pending_config } => {
             if (option::is_some(&pending_config)) {
                 let new_cfg = option::destroy_some(pending_config);
-                event::emit(ConfigReset { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
+                event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_id), new_config: new_cfg });
                 config = new_cfg;
                 pending_config = option::none();
             };
@@ -2159,10 +2159,10 @@ public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64       
 public(package) fun earnings_withdrawn_timestamp_ms(e: &EarningsWithdrawn): u64  { e.timestamp_ms }
 
 #[test_only]
-public(package) fun config_reset_scheduled_escrow_id(e: &ConfigResetScheduled): ID { e.escrow_id }
+public(package) fun config_update_scheduled_escrow_id(e: &ConfigUpdateScheduled): ID { e.escrow_id }
 #[test_only]
-public(package) fun config_reset_scheduled_new_config(e: &ConfigResetScheduled): IntegrationConfig { e.new_config }
+public(package) fun config_update_scheduled_new_config(e: &ConfigUpdateScheduled): IntegrationConfig { e.new_config }
 #[test_only]
-public(package) fun config_reset_escrow_id(e: &ConfigReset): ID { e.escrow_id }
+public(package) fun config_updated_escrow_id(e: &ConfigUpdated): ID { e.escrow_id }
 #[test_only]
-public(package) fun config_reset_new_config(e: &ConfigReset): IntegrationConfig { e.new_config }
+public(package) fun config_updated_new_config(e: &ConfigUpdated): IntegrationConfig { e.new_config }

@@ -171,7 +171,7 @@ public fun extend_commitment<Asset: key + store, CoinType>(
 }
 
 /// Owner-gated operational parameter reset.
-public fun reset_config<Asset: key + store, CoinType>(
+public fun update_config<Asset: key + store, CoinType>(
     escrow:    &mut Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
     new_cfg:   IntegrationConfig,
@@ -180,7 +180,7 @@ public fun reset_config<Asset: key + store, CoinType>(
     ctx:       &mut TxContext,
 ) {
     let context = take_context(escrow);
-    let new_context = asset_context_state::execute_reset_config(context, owner_cap, new_cfg, random, clock, ctx);
+    let new_context = asset_context_state::execute_update_config(context, owner_cap, new_cfg, random, clock, ctx);
     put_context(escrow, new_context);
 }
 
@@ -731,7 +731,7 @@ public fun fee_inbox_id<Asset: key + store, CoinType>(
     asset_context_state::proj_fee_inbox_id(read_context(escrow))
 }
 
-public fun has_pending_config_reset<Asset: key + store, CoinType>(
+public fun has_pending_config_update<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     option::is_some(&asset_context_state::proj_pending_config(read_context(escrow)))

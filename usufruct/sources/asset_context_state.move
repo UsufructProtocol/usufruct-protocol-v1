@@ -32,7 +32,7 @@ use usufruct::{
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
     price_state,
-    retire_policy_state,
+    commitment_policy_state,
     credit_context_state::{Self as credit_state},
     handover_policy_state,
     math,
@@ -51,7 +51,7 @@ use usufruct::{
 const ENotRented:             u64 = 0;
 const EInsufficientPayment:   u64 = 1;
 const ERetiredNoBid:          u64 = 3;
-const ERetireFloorNotElapsed: u64 = 4;
+const ECommitmentFloorNotElapsed: u64 = 4;
 const EAlreadyRetired:        u64 = 5;
 const EWrongEscrowTenantCap:  u64 = 6;
 const EWrongEscrowOwnerCap:   u64 = 11;
@@ -753,12 +753,12 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let context = apply_pending_transition_states(context, random, clock, ctx);
     let now = phases::now(clock);
     assert!(
-        retire_policy_state::is_unlocked(
-            retire_policy_state::resolve(config::proj_retire(&context.config)),
+        commitment_policy_state::is_unlocked(
+            commitment_policy_state::resolve(config::proj_commitment(&context.config)),
             context.integrated_at,
             now,
         ).is_crossed(),
-        ERetireFloorNotElapsed,
+        ECommitmentFloorNotElapsed,
     );
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: _a, state: WaitingState::Retired } }, owner: _o, .. } =>

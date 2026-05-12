@@ -41,7 +41,7 @@ use usufruct::{
     handover_policy_state,
     monetary,
     price_function_state,
-    retire_policy_state,
+    commitment_policy_state,
     tenure_cycles_policy_state,
     tenure_policy_state,
     pending_transition_state,
@@ -1242,7 +1242,7 @@ fun retire_with_wrong_cap_aborts() {
 }
 
 #[test]
-#[expected_failure(abort_code = asset_context_state::ERetireFloorNotElapsed, location = usufruct::asset_context_state)]
+#[expected_failure(abort_code = asset_context_state::ECommitmentFloorNotElapsed, location = usufruct::asset_context_state)]
 fun retire_before_floor_aborts_under_deferred_policy() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 1)); // f=1 deferred
@@ -2344,14 +2344,14 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 
 // ─── §3. Deferred retire floor gate ───────────────────────────────────────────
 
-/// With RetirePolicyState::Deferred, retire() aborts if the clock has not
+/// With CommitmentPolicyState::Deferred, retire() aborts if the clock has not
 /// reached integrated_at_ms + retire_floor. integrated_at_ms = 0
 /// (clock at integration time), retire_floor = 10_000_000.
 ///
 /// Config: c=0, d=0, e=0, h=0, f=1 (Deferred).
 #[test]
 #[expected_failure(
-    abort_code = asset_context_state::ERetireFloorNotElapsed,
+    abort_code = asset_context_state::ECommitmentFloorNotElapsed,
     location   = usufruct::asset_context_state,
 )]
 fun e2e_deferred_retire_aborts_before_floor() {
@@ -4105,9 +4105,9 @@ fun e2e_apt_idempotency_all_ch_m() {
 // ─── §RETIRE. All paths to Retired — asset always recoverable (f=0) ──────────
 //
 // For every reachable lifecycle state, the owner can retire the escrow when
-// retire_policy_state = Immediate (f=0, retire_floor = 0, always unlocked) and
+// commitment_policy_state = Immediate (f=0, retire_floor = 0, always unlocked) and
 // subsequently recover the asset via claim_asset. The Deferred-policy gate
-// (f=1, ERetireFloorNotElapsed) is covered separately in §3.
+// (f=1, ECommitmentFloorNotElapsed) is covered separately in §3.
 //
 // Each test drives to a specific entry state, calls retire(), completes the
 // protocol cascade to Retired, and verifies claim_asset returns the asset.
@@ -5550,7 +5550,7 @@ fun reset_config_behavior_price_function_floor_escalation() {
 }
 
 // Test BD-6: retire policy floor observable after reset ───────────────────────
-/// retire_floor_ms reflects the active retire policy. Immediate → None;
+/// commitment_floor_ms reflects the active retire policy. Immediate → None;
 /// after reset to Deferred → Some(retire_deferred_f1_const()).
 #[test]
 fun reset_config_behavior_retire_policy_floor_observable() {
@@ -5562,14 +5562,14 @@ fun reset_config_behavior_retire_policy_floor_observable() {
     let random = sc.take_shared<Random>();
 
     // Immediate policy: no floor.
-    assert!(escrow::retire_floor_ms(&escrow) == option::none(), 0);
+    assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
 
     // Reset to Deferred (Idle → immediate apply).
     escrow::reset_config(&mut escrow, &owner_cap, cfg_deferred, &random, &clk, sc.ctx());
 
     // Deferred policy: floor = RETIRE_DEFERRED_F1.
     assert!(
-        escrow::retire_floor_ms(&escrow) == option::some(escrow_corpus::retire_deferred_f1_const()),
+        escrow::commitment_floor_ms(&escrow) == option::some(escrow_corpus::retire_deferred_f1_const()),
         1,
     );
 
@@ -5583,7 +5583,7 @@ fun reset_config_behavior_retire_policy_floor_observable() {
 // Test BD-6b: retire blocked after reset raises the floor ─────────────────────
 /// After switching from Immediate to Deferred, retire() at t=0 aborts.
 #[test]
-#[expected_failure(abort_code = asset_context_state::ERetireFloorNotElapsed, location = usufruct::asset_context_state)]
+#[expected_failure(abort_code = asset_context_state::ECommitmentFloorNotElapsed, location = usufruct::asset_context_state)]
 fun reset_config_behavior_retire_policy_abort_after_reset() {
     let mut sc = setup();
     let cfg_immediate = escrow_corpus::by_tag(0);
@@ -6684,7 +6684,7 @@ fun multi_cycle_cfg(): config::IntegrationConfig {
         tenure_cycles_policy_state::new_multi(),
         handover_policy_state::new_handover_fixed_time(),
         descent_policy_state::new_descent_skipped(),
-        retire_policy_state::new_retire_immediate(),
+        commitment_policy_state::new_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(monetary::price(floor)),
@@ -6838,7 +6838,7 @@ fun multi_cycle_cfg_countdown(): config::IntegrationConfig {
         tenure_cycles_policy_state::new_multi(),
         handover_policy_state::new_handover_countdown(phases::duration(countdown)),
         descent_policy_state::new_descent_skipped(),
-        retire_policy_state::new_retire_immediate(),
+        commitment_policy_state::new_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(monetary::price(floor)),
@@ -7641,7 +7641,7 @@ fun multi_cycle_cfg_instant(): config::IntegrationConfig {
         tenure_cycles_policy_state::new_multi(),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
-        retire_policy_state::new_retire_immediate(),
+        commitment_policy_state::new_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(monetary::price(floor)),

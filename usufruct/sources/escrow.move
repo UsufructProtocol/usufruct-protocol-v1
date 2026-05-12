@@ -30,7 +30,7 @@ use usufruct::{
     price_function_state::{Self, PriceFunctionState},
     escrow_identity,
     protocol_fee_ref::{Self, ProtocolFeeRef},
-    retire_policy_state,
+    commitment_policy_state,
     tenant_cap::{Self, TenantCap},
 };
 
@@ -301,16 +301,16 @@ public fun is_descent_window<Asset: key + store, CoinType>(
     descent_policy_state::proj_is_window(config::proj_descent(cfg(escrow)))
 }
 
-public fun is_retire_immediate<Asset: key + store, CoinType>(
+public fun is_commitment_immediate<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    retire_policy_state::proj_is_immediate(config::proj_retire(cfg(escrow)))
+    commitment_policy_state::proj_is_immediate(config::proj_commitment(cfg(escrow)))
 }
 
-public fun is_retire_deferred<Asset: key + store, CoinType>(
+public fun is_commitment_deferred<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    retire_policy_state::proj_is_deferred(config::proj_retire(cfg(escrow)))
+    commitment_policy_state::proj_is_deferred(config::proj_commitment(cfg(escrow)))
 }
 
 public fun is_handover_instant<Asset: key + store, CoinType>(
@@ -513,12 +513,12 @@ public fun integrated_at_ms<Asset: key + store, CoinType>(
     phases::timestamp_ms(asset_context_state::proj_integrated_at(read_context(escrow)))
 }
 
-public fun retire_unlocks_at_ms<Asset: key + store, CoinType>(
+public fun commitment_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     let e = read_context(escrow);
-    let resolved = retire_policy_state::resolve(config::proj_retire(asset_context_state::proj_config(e)));
-    phases::timestamp_ms(retire_policy_state::unlock_at(resolved, asset_context_state::proj_integrated_at(e)))
+    let resolved = commitment_policy_state::resolve(config::proj_commitment(asset_context_state::proj_config(e)));
+    phases::timestamp_ms(commitment_policy_state::unlock_at(resolved, asset_context_state::proj_integrated_at(e)))
 }
 
 // ─── Cap views ───────────────────────────────────────────────────────────────
@@ -734,10 +734,10 @@ public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     else option::none()
 }
 
-public fun retire_floor_ms<Asset: key + store, CoinType>(
+public fun commitment_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = retire_policy_state::proj_floor_ms(config::proj_retire(cfg(escrow)));
+    let opt = commitment_policy_state::proj_floor_ms(config::proj_commitment(cfg(escrow)));
     if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
     else option::none()
 }

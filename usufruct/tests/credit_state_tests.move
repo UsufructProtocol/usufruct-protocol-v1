@@ -16,7 +16,7 @@ use usufruct::{
     monetary,
     phases,
     price_function_state,
-    retire_policy_state,
+    commitment_policy_state,
 };
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ fun base_cfg(): config::IntegrationConfig {
         tenure_cycles_policy_state::new_single(),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
-        retire_policy_state::new_retire_immediate(),
+        commitment_policy_state::new_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(monetary::price(MIN)),
@@ -115,7 +115,7 @@ fun accruing_various_curves_stay_in_bounds() {
             tenure_cycles_policy_state::new_single(),
             handover_policy_state::new_handover_instant(),
             descent_policy_state::new_descent_skipped(),
-            retire_policy_state::new_retire_immediate(),
+            commitment_policy_state::new_immediate(),
             curve,
             curve_shape_state::new_linear(), // descent_curve unused here
             price_function_state::new_fixed_delta(monetary::price(MIN)),

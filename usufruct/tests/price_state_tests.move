@@ -17,7 +17,7 @@ use usufruct::{
     phases,
     price_function_state,
     price_state,
-    retire_policy_state,
+    commitment_policy_state,
 };
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -35,7 +35,6 @@ fun base_cfg(descent: bool): config::IntegrationConfig {
         handover_policy_state::new_handover_instant(),
         if (descent) { descent_policy_state::new_descent_window(phases::duration(TENURE)) }
         else         { descent_policy_state::new_descent_skipped()       },
-        retire_policy_state::new_retire_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(monetary::price(MIN)),
@@ -94,7 +93,6 @@ fun ascending_fixed_delta_adds_delta() {
         tenure_cycles_policy_state::new_single(),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
-        retire_policy_state::new_retire_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
         price_function_state::new_fixed_delta(monetary::price(delta)),
@@ -113,7 +111,6 @@ fun ascending_compound_delta_raises_price() {
         tenure_cycles_policy_state::new_single(),
         handover_policy_state::new_handover_instant(),
         descent_policy_state::new_descent_skipped(),
-        retire_policy_state::new_retire_immediate(),
         curve_shape_state::new_linear(),
         curve_shape_state::new_linear(),
         price_function_state::new_compound_delta(math::bps(1_000), monetary::price(1)), // 10% + 1 mist
@@ -208,7 +205,6 @@ fun descending_various_curves_respect_bounds() {
             tenure_cycles_policy_state::new_single(),
             handover_policy_state::new_handover_instant(),
             descent_policy_state::new_descent_window(phases::duration(TENURE)),
-            retire_policy_state::new_retire_immediate(),
             curve_shape_state::new_linear(), // credit_curve unused here
             curve,
             price_function_state::new_fixed_delta(monetary::price(MIN)),

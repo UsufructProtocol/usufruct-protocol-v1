@@ -18,7 +18,7 @@ use usufruct::{
     monetary,
     phases,
     price_function_state::{Self, PriceFunctionState},
-    retire_policy_state::{Self, RetirePolicyState},
+    commitment_policy_state::{Self, CommitmentPolicyState},
 };
 
 // === Errors ===
@@ -48,7 +48,7 @@ public struct CorpusEntry has copy, drop, store {
     d:   u8,   // 0..1  PriceFunctionState
     e:   u8,   // 0..6  CurveShapeState pair
     h:   u8,   // 0..1  DescentPolicyState
-    f:   u8,   // 0..1  RetirePolicyState
+    f:   u8,   // 0..1  CommitmentPolicyState
     tag: u64,  // c·10_000 + d·1_000 + e·100 + h·10 + f
 }
 
@@ -197,7 +197,7 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8): CorpusEntry {
     }
 }
 
-fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8): IntegrationConfig {
+fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8): IntegrationConfig {
     let curve = make_curve(e);
     config::new_config(
         floor_price_policy_state::new_fixed(monetary::price(MIN_RENT_PRICE)),
@@ -205,7 +205,6 @@ fun build_config(c: u8, d: u8, e: u8, h: u8, f: u8): IntegrationConfig {
         tenure_cycles_policy_state::new_single(),
         make_handover(c),
         make_descent(h),
-        make_retire(f),
         curve,
         curve,
         make_price_function_state(d),
@@ -246,9 +245,9 @@ fun make_descent(h: u8): DescentPolicyState {
     else        { descent_policy_state::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
 }
 
-fun make_retire(f: u8): RetirePolicyState {
-    if (f == 0) { retire_policy_state::new_retire_immediate() }
-    else        { retire_policy_state::new_retire_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
+fun make_commitment(f: u8): CommitmentPolicyState {
+    if (f == 0) { commitment_policy_state::new_immediate() }
+    else        { commitment_policy_state::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
 }
 
 // --- Filter helpers (called after axis validation in filter_*) ---

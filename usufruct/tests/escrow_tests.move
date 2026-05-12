@@ -8502,3 +8502,63 @@ fun commitment_extend_immediate_to_deferred_always_passes() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── Group IV: anchor moves to now on extend_commitment ───────────────────────
+
+/// IV-12 + IV-13: After extend_commitment, commitment_unlocks_at_ms reflects
+/// the new anchor (clock at extend time) + new floor, NOT integrated_at + floor.
+#[test]
+fun commitment_extend_anchor_moves_to_now() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // Advance clock to t=1_000 before extending.
+    clock::set_for_testing(&mut clk, 1_000);
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(floor)),
+        &clk,
+    );
+
+    // New anchor = 1_000 (now at extend time), not 0 (integrated_at).
+    // unlocks_at = 1_000 + floor, not 0 + floor.
+    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), 1_000 + floor);
+    assert!(escrow::commitment_unlocks_at_ms(&escrow) != 0 + floor, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// IV-13b: commitment_floor_ms is unchanged by anchor move — only policy matters.
+#[test]
+fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
+    let mut sc    = setup();
+    let floor     = escrow_corpus::retire_deferred_f1_const();
+    let half_floor = floor / 2;
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, floor + 1); // now > old_expiry, so any extend is valid
+
+    // Extend to Deferred(half_floor) — floor_ms reflects the policy floor, not the anchor.
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(half_floor)),
+        &clk,
+    );
+
+    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(half_floor));
+    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), (floor + 1) + half_floor);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

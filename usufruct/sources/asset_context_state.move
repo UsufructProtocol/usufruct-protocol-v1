@@ -900,16 +900,6 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
     assert!(owner_cap::proj_escrow_identity(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
     let context = apply_pending_transition_states(context, random, clock, ctx);
     assert!(proj_is_inactive(&context), ENotRetired);
-    unwrap_for_claim(context, owner_cap, ctx)
-}
-
-/// Terminal: consume a Retired engine and return (asset, residual earnings).
-public(package) fun unwrap_for_claim<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
-    owner_cap: &OwnerCap,
-    ctx:       &mut TxContext,
-): (Asset, Coin<CoinType>) {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == context.escrow_id, EWrongEscrowOwnerCap);
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }, mut owner, .. } => {
             let coin = owner::withdraw(&mut owner, owner_cap, ctx);

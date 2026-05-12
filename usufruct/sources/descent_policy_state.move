@@ -12,8 +12,8 @@ use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 // === Errors ===
 
 const EDescentCeilingZero:     u64 = 0;
-const EDescentSkippedNoWindow: u64 = 1;
 const EMinNotLtMax:            u64 = 2;
+#[test_only] const EDescentSkippedNoWindow: u64 = 1;
 
 // === Structs ===
 
@@ -104,19 +104,21 @@ public(package) fun expiry_at(
 }
 
 
-/// Width of the descent window. Aborts on Skipped and RandomInRange —
-/// only valid for the Window variant (SDK/test use only).
-public(package) fun window_ceiling(policy: &DescentPolicyState): Duration {
-    match (policy) {
-        DescentPolicyState::Window { ceiling }        => *ceiling,
-        DescentPolicyState::Skipped
-        | DescentPolicyState::RandomInRange { .. }    => abort EDescentSkippedNoWindow,
-    }
-}
-
 // === Test Functions ===
 
 #[test_only]
 public fun e_descent_ceiling_zero(): u64 { EDescentCeilingZero }
 #[test_only]
 public fun e_min_not_lt_max(): u64 { EMinNotLtMax }
+
+/// Width of the descent window. Aborts on Skipped and RandomInRange —
+/// only valid for the Window variant. Test-only; production uses
+/// `proj_window_ceiling` which returns `Option<Duration>` instead.
+#[test_only]
+public fun window_ceiling(policy: &DescentPolicyState): Duration {
+    match (policy) {
+        DescentPolicyState::Window { ceiling }        => *ceiling,
+        DescentPolicyState::Skipped
+        | DescentPolicyState::RandomInRange { .. }    => abort EDescentSkippedNoWindow,
+    }
+}

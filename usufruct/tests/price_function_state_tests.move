@@ -414,3 +414,25 @@ fun eval_compound_delta_monotone_in_price() {
     };
 }
 
+// ─── projectors ──────────────────────────────────────────────────────────────
+
+#[test]
+fun projectors_fixed_delta_variant() {
+    let p = price_function_state::new_fixed_delta(monetary::price(100));
+    assert!(p.proj_is_fixed_delta());
+    assert!(!p.proj_is_compound_delta());
+    assert_eq!(monetary::price_mist(p.proj_fixed_delta().destroy_some()), 100);
+    assert!(p.proj_compound_delta_bps().is_none());
+    assert!(p.proj_compound_delta_delta().is_none());
+}
+
+#[test]
+fun projectors_compound_delta_variant() {
+    let p = price_function_state::new_compound_delta(math::bps(250), monetary::price(50));
+    assert!(!p.proj_is_fixed_delta());
+    assert!(p.proj_is_compound_delta());
+    assert!(p.proj_fixed_delta().is_none());
+    assert_eq!(math::bps_value(p.proj_compound_delta_bps().destroy_some()), 250);
+    assert_eq!(monetary::price_mist(p.proj_compound_delta_delta().destroy_some()), 50);
+}
+

@@ -1245,3 +1245,75 @@ fun gcd_u8(a: u8, b: u8): u8 {
     };
     x
 }
+
+// ─── projectors ──────────────────────────────────────────────────────────────
+
+#[test]
+fun projectors_linear_variant() {
+    let s = curve_shape_state::new_linear();
+    assert!(s.proj_is_linear());
+    assert!(!s.proj_is_smoothstep());
+    assert!(!s.proj_is_logistic());
+    assert!(!s.proj_is_power_law());
+    assert!(!s.proj_is_exponential());
+    assert!(s.proj_power_law_alpha_num().is_none());
+    assert!(s.proj_power_law_alpha_den().is_none());
+    assert!(s.proj_exponential_alpha_abs().is_none());
+    assert!(s.proj_exponential_alpha_neg().is_none());
+}
+
+#[test]
+fun projectors_smoothstep_variant() {
+    let s = curve_shape_state::new_smoothstep();
+    assert!(!s.proj_is_linear());
+    assert!(s.proj_is_smoothstep());
+    assert!(!s.proj_is_logistic());
+    assert!(!s.proj_is_power_law());
+    assert!(!s.proj_is_exponential());
+    assert!(s.proj_power_law_alpha_num().is_none());
+    assert!(s.proj_power_law_alpha_den().is_none());
+    assert!(s.proj_exponential_alpha_abs().is_none());
+    assert!(s.proj_exponential_alpha_neg().is_none());
+}
+
+#[test]
+fun projectors_logistic_variant() {
+    let s = curve_shape_state::new_logistic();
+    assert!(!s.proj_is_linear());
+    assert!(!s.proj_is_smoothstep());
+    assert!(s.proj_is_logistic());
+    assert!(!s.proj_is_power_law());
+    assert!(!s.proj_is_exponential());
+    assert!(s.proj_power_law_alpha_num().is_none());
+    assert!(s.proj_power_law_alpha_den().is_none());
+    assert!(s.proj_exponential_alpha_abs().is_none());
+    assert!(s.proj_exponential_alpha_neg().is_none());
+}
+
+#[test]
+fun projectors_power_law_variant() {
+    let s = curve_shape_state::new_power_law(3, 2);
+    assert!(!s.proj_is_linear());
+    assert!(!s.proj_is_smoothstep());
+    assert!(!s.proj_is_logistic());
+    assert!(s.proj_is_power_law());
+    assert!(!s.proj_is_exponential());
+    assert_eq!(s.proj_power_law_alpha_num().destroy_some(), 3);
+    assert_eq!(s.proj_power_law_alpha_den().destroy_some(), 2);
+    assert!(s.proj_exponential_alpha_abs().is_none());
+    assert!(s.proj_exponential_alpha_neg().is_none());
+}
+
+#[test]
+fun projectors_exponential_variant() {
+    let s = curve_shape_state::new_exponential(5, true);
+    assert!(!s.proj_is_linear());
+    assert!(!s.proj_is_smoothstep());
+    assert!(!s.proj_is_logistic());
+    assert!(!s.proj_is_power_law());
+    assert!(s.proj_is_exponential());
+    assert!(s.proj_power_law_alpha_num().is_none());
+    assert!(s.proj_power_law_alpha_den().is_none());
+    assert_eq!(s.proj_exponential_alpha_abs().destroy_some(), 5);
+    assert_eq!(s.proj_exponential_alpha_neg().destroy_some(), true);
+}

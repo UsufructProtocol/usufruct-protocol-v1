@@ -186,7 +186,10 @@ public fun update_config<Asset: key + store, CoinType>(
     ctx:       &mut TxContext,
 ) {
     let context = take_context(escrow);
-    let new_context = asset_context_state::execute_update_config(context, owner_cap, new_cfg, random, clock, ctx);
+    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
+    let (mut core, dispatch) = asset_context_state::dispatch(context);
+    let new_dispatch = asset_context_state::execute_update_config(dispatch, &mut core, owner_cap, new_cfg, random, ctx);
+    let new_context = asset_context_state::collect(core, new_dispatch);
     put_context(escrow, new_context);
 }
 

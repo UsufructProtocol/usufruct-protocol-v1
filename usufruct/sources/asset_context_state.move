@@ -1036,39 +1036,62 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     }
 }
 
+/// Entry-point dispatcher for update_config. Five arms, all reachable
+/// from the public API:
+///   · Retired  → abort `EAlreadyRetired`.
+///   · Idle     → apply the new config immediately: re-resolve floor /
+///                ceiling / handover with fresh randomness and replace
+///                the Idle resolutions. Emits `ConfigUpdated`.
+///   · AtDutch  → schedule the new config (`pending_config`); the
+///                descending auction in flight is allowed to complete
+///                under the old parameters. Emits `ConfigUpdateScheduled`.
+///   · Occupied → schedule the new config. Aborts
+///                `ERetireAlreadyScheduled` if the retire flag is set —
+///                a pending retire takes precedence over a pending
+///                config change.
+///   · Demand   → schedule the new config. Same retire-flag guard.
+///
+/// `random` is only consumed in the Idle arm (the only place that
+/// re-resolves policy values immediately).
 public(package) fun execute_update_config<Asset: key + store, CoinType>(
-    context:   AssetContext<Asset, CoinType>,
+    d:         AssetContextDispatch<Asset, CoinType>,
+    core:      &mut EscrowCoreHandoff<CoinType>,
     owner_cap: &OwnerCap,
     new_cfg:   IntegrationConfig,
     random:    &Random,
-    clock:     &Clock,
     ctx:       &mut TxContext,
-): AssetContext<Asset, CoinType> {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == context.envelope.escrow_identity, EWrongEscrowOwnerCap);
-    let context = apply_pending_transition_states(context, random, clock, ctx);
-    match (context) {
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: _a, state: WaitingState::Retired } }, owner: _o, .. } =>
-            abort EAlreadyRetired,
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { .. } } }, owner, mut envelope } => {
+): AssetContextDispatch<Asset, CoinType> {
+    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.envelope.escrow_identity, EWrongEscrowOwnerCap);
+    let raw_escrow_id = escrow_identity::escrow_id(core.envelope.escrow_identity);
+    match (d) {
+        AssetContextDispatch::Retired { ctx: _retired } => abort EAlreadyRetired,
+        AssetContextDispatch::Idle { ctx: idle } => {
+            let IdleContext { asset, resolved_floor: _, resolved_ceiling: _, resolved_handover: _ } = idle;
             let mut generator = sui::random::new_generator(random, ctx);
             let new_floor     = floor_price_policy_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
             let new_ceiling   = tenure_policy_state::resolve(config::proj_tenure_ceiling(&new_cfg), &mut generator);
             let new_handover  = handover_policy_state::resolve(config::proj_handover(&new_cfg), new_ceiling, &mut generator);
-            event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), new_config: new_cfg });
-            envelope.config = new_cfg;
-            envelope.pending_config = option::none();
-            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover } } }, owner, envelope }
+            event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_cfg });
+            core.envelope.config = new_cfg;
+            core.envelope.pending_config = option::none();
+            AssetContextDispatch::Idle { ctx: IdleContext { asset, resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover } }
         },
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }, owner, mut envelope } => {
-            event::emit(ConfigUpdateScheduled { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), new_config: new_cfg });
-            envelope.pending_config = option::some(new_cfg);
-            AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }, owner, envelope }
+        AssetContextDispatch::AtDutch { ctx: atd } => {
+            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
+            core.envelope.pending_config = option::some(new_cfg);
+            AssetContextDispatch::AtDutch { ctx: atd }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy }, owner, mut envelope } => {
-            assert!(!is_retiring(&tenancy), ERetireAlreadyScheduled);
-            event::emit(ConfigUpdateScheduled { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), new_config: new_cfg });
-            envelope.pending_config = option::some(new_cfg);
-            AssetContext { asset_state: AssetState::Renting { tenancy }, owner, envelope }
+        AssetContextDispatch::Occupied { ctx: occupied } => {
+            assert!(!retire_condition::proj_is_retiring(&occupied.retire), ERetireAlreadyScheduled);
+            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
+            core.envelope.pending_config = option::some(new_cfg);
+            AssetContextDispatch::Occupied { ctx: occupied }
+        },
+        AssetContextDispatch::Demand { ctx: demand } => {
+            assert!(!retire_condition::proj_is_retiring(&demand.retire), ERetireAlreadyScheduled);
+            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
+            core.envelope.pending_config = option::some(new_cfg);
+            AssetContextDispatch::Demand { ctx: demand }
         },
     }
 }

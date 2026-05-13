@@ -980,36 +980,59 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     }
 }
 
+/// Entry-point dispatcher for retire. Five arms, all reachable from the
+/// public API:
+///   · Retired  → abort `EAlreadyRetired`.
+///   · Idle     → `do_retire_immediately` on the locked custody → Retired.
+///   · AtDutch  → `do_retire_immediately` on the locked custody → Retired.
+///                The descending-auction parameters are dropped — they
+///                belong to a tenancy cycle that ends with this action.
+///   · Occupied → `set_retiring_flag_occupied` → Occupied (flag set).
+///                The asset can still be borrowed/returned during the
+///                grace period; the flag prevents new bids and triggers
+///                Retired at the next tenure expiry.
+///   · Demand   → `set_retiring_flag_demand` → Demand (flag set). Same
+///                semantics; the active handover countdown is unaffected.
+///
+/// Owner-cap binding is checked first. The commitment policy must be
+/// unlocked (`ECommitmentFloorNotElapsed`) regardless of state — it is a
+/// property of the owner's permanence commitment, not the lifecycle.
+///
+/// `pending_config` is cleared unconditionally: any scheduled config
+/// change is abandoned by the decision to retire.
 public(package) fun execute_retire<Asset: key + store, CoinType>(
-    context:   AssetContext<Asset, CoinType>,
+    d:         AssetContextDispatch<Asset, CoinType>,
+    core:      &mut EscrowCoreHandoff<CoinType>,
     owner_cap: &OwnerCap,
-    random:    &Random,
     clock:     &Clock,
-    ctx:       &mut TxContext,
-): AssetContext<Asset, CoinType> {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == context.envelope.escrow_identity, EWrongEscrowOwnerCap);
-    let context = apply_pending_transition_states(context, random, clock, ctx);
-    let now     = phases::now(clock);
+    ctx:       &TxContext,
+): AssetContextDispatch<Asset, CoinType> {
+    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.envelope.escrow_identity, EWrongEscrowOwnerCap);
+    let now = phases::now(clock);
     assert!(
         commitment_policy_state::is_unlocked(
-            commitment_policy_state::resolve(&context.envelope.commitment_policy),
-            context.envelope.commitment_anchor,
+            commitment_policy_state::resolve(&core.envelope.commitment_policy),
+            core.envelope.commitment_anchor,
             now,
         ).is_crossed(),
         ECommitmentFloorNotElapsed,
     );
-    match (context) {
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: _a, state: WaitingState::Retired } }, owner: _o, .. } =>
-            abort EAlreadyRetired,
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, .. } }, owner, mut envelope } => {
-            envelope.pending_config = option::none();
-            AssetContext { asset_state: do_retire_immediately(asset, envelope.escrow_identity, now, ctx), owner, envelope }
+    core.envelope.pending_config = option::none();
+    let escrow_identity = core.envelope.escrow_identity;
+    match (d) {
+        AssetContextDispatch::Retired { ctx: _retired } => abort EAlreadyRetired,
+        AssetContextDispatch::Idle { ctx: idle } => {
+            let IdleContext { asset, resolved_floor: _, resolved_ceiling: _, resolved_handover: _ } = idle;
+            AssetContextDispatch::Retired { ctx: do_retire_immediately(asset, escrow_identity, now, ctx) }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy }, owner, mut envelope } => {
-            envelope.pending_config = option::none();
-            let new_tenancy = set_retiring_flag(tenancy, envelope.escrow_identity, now, ctx);
-            AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, envelope }
+        AssetContextDispatch::AtDutch { ctx: atd } => {
+            let AtDutchContext { asset, last_acq_price: _, phase_start: _, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } = atd;
+            AssetContextDispatch::Retired { ctx: do_retire_immediately(asset, escrow_identity, now, ctx) }
         },
+        AssetContextDispatch::Occupied { ctx: occupied } =>
+            AssetContextDispatch::Occupied { ctx: set_retiring_flag_occupied(occupied, escrow_identity, now, ctx) },
+        AssetContextDispatch::Demand { ctx: demand } =>
+            AssetContextDispatch::Demand { ctx: set_retiring_flag_demand(demand, escrow_identity, now, ctx) },
     }
 }
 
@@ -1754,23 +1777,32 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     }
 }
 
-/// Set the retiring flag on the current tenancy (Occupied or Demand).
-/// Emits RetireFlagSet. Aborts if already retiring (via retire_condition::set).
-public(package) fun set_retiring_flag<Asset: key + store, CoinType>(
-    tenancy:   TenancyContext<Asset, CoinType>,
+/// Set the retiring flag on an Occupied tenancy. Emits RetireFlagSet.
+/// Aborts via `retire_condition::set` if the flag is already set —
+/// guarantees idempotence is observable as a failure, not a silent
+/// re-emit of the same event.
+fun set_retiring_flag_occupied<Asset: key + store, CoinType>(
+    occupied:        OccupiedContext<Asset, CoinType>,
     escrow_identity: EscrowIdentity,
-    now:       Timestamp,
-    ctx:       &TxContext,
-): TenancyContext<Asset, CoinType> {
+    now:             Timestamp,
+    ctx:             &TxContext,
+): OccupiedContext<Asset, CoinType> {
     event::emit(RetireFlagSet { escrow_id: escrow_identity::escrow_id(escrow_identity), owner: ctx.sender(), timestamp_ms: phases::timestamp_ms(now) });
-    let TenancyContext { asset, envelope, state } = tenancy;
-    let state = match (state) {
-        TenancyState::Occupied { current, retire } =>
-            TenancyState::Occupied { current, retire: retire_condition::set(retire) },
-        TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, retire } =>
-            TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, retire: retire_condition::set(retire) },
-    };
-    TenancyContext { asset, envelope, state }
+    let OccupiedContext { asset, envelope, current, retire } = occupied;
+    OccupiedContext { asset, envelope, current, retire: retire_condition::set(retire) }
+}
+
+/// Set the retiring flag on a Demand tenancy. Same semantics as the
+/// Occupied variant; the active handover countdown is untouched.
+fun set_retiring_flag_demand<Asset: key + store, CoinType>(
+    demand:          DemandContext<Asset, CoinType>,
+    escrow_identity: EscrowIdentity,
+    now:             Timestamp,
+    ctx:             &TxContext,
+): DemandContext<Asset, CoinType> {
+    event::emit(RetireFlagSet { escrow_id: escrow_identity::escrow_id(escrow_identity), owner: ctx.sender(), timestamp_ms: phases::timestamp_ms(now) });
+    let DemandContext { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } = demand;
+    DemandContext { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire: retire_condition::set(retire) }
 }
 
 /// Borrow the underlying asset from an Occupied tenancy. Aborts if the
@@ -2204,16 +2236,16 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
 }
 
 fun do_retire_immediately<Asset: key + store, CoinType>(
-    asset:     asset::AssetCustodyLocked<Asset>,
+    asset:           asset::AssetCustodyLocked<Asset>,
     escrow_identity: EscrowIdentity,
-    now:       Timestamp,
-    ctx:       &TxContext,
-): AssetState<Asset, CoinType> {
+    now:             Timestamp,
+    ctx:             &TxContext,
+): RetiredContext<Asset, CoinType> {
     let timestamp_ms  = phases::timestamp_ms(now);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
     emit_retire_flag_set(raw_escrow_id, ctx.sender(), timestamp_ms);
     event::emit(AssetRetired { escrow_id: raw_escrow_id, timestamp_ms });
-    AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }
+    RetiredContext { asset }
 }
 
 // === Test Functions ===

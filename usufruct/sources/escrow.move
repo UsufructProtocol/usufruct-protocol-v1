@@ -407,17 +407,13 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
 public fun current_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_current_stake(read_context(escrow));
-    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_current_stake(read_context(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
 public fun pending_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_pending_stake(read_context(escrow));
-    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_pending_stake(read_context(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
 // ─── Temporal views ───────────────────────────────────────────────────────────
@@ -425,9 +421,7 @@ public fun pending_stake<Asset: key + store, CoinType>(
 public fun phase_start_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_phase_start(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_phase_start(read_context(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
 public fun tenure_expiry_ms<Asset: key + store, CoinType>(
@@ -443,65 +437,49 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
 public fun active_tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_resolved_ceiling(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_resolved_ceiling(read_context(escrow)).map!(|v| phases::duration_ms(v))
 }
 
 public fun active_handover_duration_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_resolved_handover(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_resolved_handover(read_context(escrow)).map!(|v| phases::duration_ms(v))
 }
 
 public fun active_floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_resolved_floor(read_context(escrow));
-    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_resolved_floor(read_context(escrow)).map!(|v| monetary::price_mist(v))
 }
 
 public fun next_floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_waiting_resolved_floor(read_context(escrow));
-    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_waiting_resolved_floor(read_context(escrow)).map!(|v| monetary::price_mist(v))
 }
 
 public fun next_tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_waiting_resolved_ceiling(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_waiting_resolved_ceiling(read_context(escrow)).map!(|v| phases::duration_ms(v))
 }
 
 public fun next_handover_duration_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_waiting_resolved_handover(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_waiting_resolved_handover(read_context(escrow)).map!(|v| phases::duration_ms(v))
 }
 
 public fun auction_descent_duration_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_waiting_resolved_descent(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_waiting_resolved_descent(read_context(escrow)).map!(|v| phases::duration_ms(v))
 }
 
 public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_handover_expiry(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_handover_expiry(read_context(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
 public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
@@ -600,12 +578,7 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): Option<u64> {
-    let pending = next_pending(escrow, clock);
-    if (pending.is_some()) {
-        option::some(phases::timestamp_ms(pending_transition_state::proj_boundary(pending.borrow())))
-    } else {
-        option::none()
-    }
+    next_pending(escrow, clock).map!(|v| phases::timestamp_ms(pending_transition_state::proj_boundary(&v)))
 }
 
 // ─── Pricing views ───────────────────────────────────────────────────────────
@@ -648,9 +621,7 @@ public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
 public fun last_acq_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_last_acq_price(read_context(escrow));
-    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_last_acq_price(read_context(escrow)).map!(|v| monetary::price_mist(v))
 }
 
 // ─── Credit context views ─────────────────────────────────────────────────────
@@ -670,25 +641,19 @@ public fun credit_is_capped<Asset: key + store, CoinType>(
 public fun credit_stake_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_credit_stake(read_context(escrow));
-    if (option::is_some(&opt)) option::some(monetary::stake_mist(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_credit_stake(read_context(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
 public fun credit_phase_start_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_credit_phase_start(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_credit_phase_start(read_context(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
 public fun credit_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = asset_context_state::proj_credit_expiry(read_context(escrow));
-    if (option::is_some(&opt)) option::some(phases::timestamp_ms(option::destroy_some(opt)))
-    else option::none()
+    asset_context_state::proj_credit_expiry(read_context(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
 // ─── Settlement views ────────────────────────────────────────────────────────
@@ -750,25 +715,19 @@ public fun min_rent_price<Asset: key + store, CoinType>(
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = descent_policy_state::proj_window_ceiling(config::proj_descent(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    descent_policy_state::proj_window_ceiling(config::proj_descent(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = handover_policy_state::proj_countdown_floor_ms(config::proj_handover(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    handover_policy_state::proj_countdown_floor_ms(config::proj_handover(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun commitment_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    let opt = commitment_policy_state::proj_floor_ms(&asset_context_state::proj_commitment_policy(read_context(escrow)));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    commitment_policy_state::proj_floor_ms(&asset_context_state::proj_commitment_policy(read_context(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun credit_curve<Asset: key + store, CoinType>(
@@ -800,21 +759,15 @@ public fun tenure_ceiling_is_random_in_range<Asset: key + store, CoinType>(escro
 }
 
 public fun tenure_ceiling_fixed_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = tenure_policy_state::proj_fixed_ceiling(config::proj_tenure_ceiling(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    tenure_policy_state::proj_fixed_ceiling(config::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun tenure_ceiling_range_min_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = tenure_policy_state::proj_range_min(config::proj_tenure_ceiling(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    tenure_policy_state::proj_range_min(config::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun tenure_ceiling_range_max_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = tenure_policy_state::proj_range_max(config::proj_tenure_ceiling(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(phases::duration_ms(option::destroy_some(opt)))
-    else option::none()
+    tenure_policy_state::proj_range_max(config::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 // ─── Floor price policy views ─────────────────────────────────────────────────
@@ -828,21 +781,15 @@ public fun min_rent_price_is_random_in_range<Asset: key + store, CoinType>(escro
 }
 
 public fun min_rent_price_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = floor_price_policy_state::proj_fixed_price(config::proj_min_rent_price(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
-    else option::none()
+    floor_price_policy_state::proj_fixed_price(config::proj_min_rent_price(cfg(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun min_rent_price_range_min_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = floor_price_policy_state::proj_range_min(config::proj_min_rent_price(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
-    else option::none()
+    floor_price_policy_state::proj_range_min(config::proj_min_rent_price(cfg(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun min_rent_price_range_max_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = floor_price_policy_state::proj_range_max(config::proj_min_rent_price(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt)))
-    else option::none()
+    floor_price_policy_state::proj_range_max(config::proj_min_rent_price(cfg(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 // ─── Credit curve views ───────────────────────────────────────────────────────
@@ -932,18 +879,15 @@ public fun price_fn_is_compound_delta<Asset: key + store, CoinType>(escrow: &Esc
 }
 
 public fun price_fn_fixed_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = price_function_state::proj_fixed_delta(config::proj_price_function_state(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt))) else option::none()
+    price_function_state::proj_fixed_delta(config::proj_price_function_state(cfg(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun price_fn_compound_delta_bps<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = price_function_state::proj_compound_delta_bps(config::proj_price_function_state(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(math::bps_value(option::destroy_some(opt))) else option::none()
+    price_function_state::proj_compound_delta_bps(config::proj_price_function_state(cfg(escrow))).map!(|v| math::bps_value(v))
 }
 
 public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    let opt = price_function_state::proj_compound_delta_delta(config::proj_price_function_state(cfg(escrow)));
-    if (option::is_some(&opt)) option::some(monetary::price_mist(option::destroy_some(opt))) else option::none()
+    price_function_state::proj_compound_delta_delta(config::proj_price_function_state(cfg(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 // === Private Functions ===

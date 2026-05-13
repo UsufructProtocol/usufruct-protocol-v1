@@ -750,8 +750,8 @@ public(package) fun apply_pending_transition_states<Asset: key + store, CoinType
 ): AssetContext<Asset, CoinType> {
     let mut current = context;
     let mut pending = next_pending(&current, clock);
-    while (option::is_some(&pending)) {
-        current = fire(current, option::destroy_some(pending), random, ctx);
+    while (pending.is_some()) {
+        current = fire(current, pending.destroy_some(), random, ctx);
         pending = next_pending(&current, clock);
     };
     current
@@ -1798,8 +1798,8 @@ fun fire<Asset: key + store, CoinType>(
             }
         },
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, .. } } }, owner, mut envelope } => {
-            if (option::is_some(&envelope.pending_config)) {
-                let new_cfg = option::destroy_some(envelope.pending_config);
+            if (envelope.pending_config.is_some()) {
+                let new_cfg = envelope.pending_config.destroy_some();
                 event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), new_config: new_cfg });
                 envelope.config = new_cfg;
                 envelope.pending_config = option::none();

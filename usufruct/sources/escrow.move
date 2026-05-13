@@ -133,7 +133,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
     let owner_addr   = ctx.sender();
 
     let Escrow { id, asset_context } = escrow;
-    let context = option::destroy_some(asset_context);
+    let context = asset_context.destroy_some();
     let (asset, earnings) = asset_context_state::execute_claim(context, &owner_cap, random, clock, ctx);
     let swept_earnings    = coin::value(&earnings);
     owner_cap::burn(owner_cap, owner_addr);
@@ -435,8 +435,8 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
 ): Option<u64> {
     let e = read_context(escrow);
     if (!asset_context_state::proj_is_rented(e)) return option::none();
-    let ps      = *option::borrow(&asset_context_state::proj_phase_start(e));
-    let ceiling = *option::borrow(&asset_context_state::proj_resolved_ceiling(e));
+    let ps      = *asset_context_state::proj_phase_start(e).borrow();
+    let ceiling = *asset_context_state::proj_resolved_ceiling(e).borrow();
     option::some(phases::timestamp_ms(phases::boundary_at(ps, ceiling)))
 }
 
@@ -510,9 +510,9 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
 ): Option<u64> {
     let e = read_context(escrow);
     if (!asset_context_state::proj_is_handover_open(e)) return option::none();
-    let phase_start       = *option::borrow(&asset_context_state::proj_phase_start(e));
-    let resolved_ceiling  = *option::borrow(&asset_context_state::proj_resolved_ceiling(e));
-    let resolved_handover = *option::borrow(&asset_context_state::proj_resolved_handover(e));
+    let phase_start       = *asset_context_state::proj_phase_start(e).borrow();
+    let resolved_ceiling  = *asset_context_state::proj_resolved_ceiling(e).borrow();
+    let resolved_handover = *asset_context_state::proj_resolved_handover(e).borrow();
     option::some(phases::timestamp_ms(handover_policy_state::expiry_at(resolved_handover, resolved_ceiling, phases::timestamp(bid_time_ms), phase_start)))
 }
 
@@ -593,7 +593,7 @@ public fun has_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): bool {
-    option::is_some(&next_pending(escrow, clock))
+    next_pending(escrow, clock).is_some()
 }
 
 public fun next_transition_ms<Asset: key + store, CoinType>(
@@ -601,8 +601,8 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
     clock:  &Clock,
 ): Option<u64> {
     let pending = next_pending(escrow, clock);
-    if (option::is_some(&pending)) {
-        option::some(phases::timestamp_ms(pending_transition_state::proj_boundary(option::borrow(&pending))))
+    if (pending.is_some()) {
+        option::some(phases::timestamp_ms(pending_transition_state::proj_boundary(pending.borrow())))
     } else {
         option::none()
     }
@@ -735,7 +735,7 @@ public fun fee_inbox_id<Asset: key + store, CoinType>(
 public fun has_pending_config_update<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    option::is_some(&asset_context_state::proj_pending_config(read_context(escrow)))
+    asset_context_state::proj_pending_config(read_context(escrow)).is_some()
 }
 
 public fun protocol_fee_bps(): u64 { asset_context_state::protocol_fee_bps() }
@@ -951,7 +951,7 @@ public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &
 fun read_context<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &AssetContext<Asset, CoinType> {
-    option::borrow(&escrow.asset_context)
+    escrow.asset_context.borrow()
 }
 
 fun take_context<Asset: key + store, CoinType>(

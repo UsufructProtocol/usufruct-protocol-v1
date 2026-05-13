@@ -208,3 +208,38 @@ fun random_in_range_expiry_at_within_bounds() {
         i = i + 1;
     };
 }
+
+// ─── projectors ──────────────────────────────────────────────────────────────
+
+#[test]
+fun projectors_skipped_variant() {
+    let p = descent_policy_state::new_descent_skipped();
+    assert!(p.proj_is_skipped());
+    assert!(!p.proj_is_window());
+    assert!(!p.proj_is_random_in_range());
+    assert!(p.proj_window_ceiling().is_none());
+    assert!(p.proj_range_min().is_none());
+    assert!(p.proj_range_max().is_none());
+}
+
+#[test]
+fun projectors_window_variant() {
+    let p = descent_policy_state::new_descent_window(phases::duration(75));
+    assert!(!p.proj_is_skipped());
+    assert!(p.proj_is_window());
+    assert!(!p.proj_is_random_in_range());
+    assert_eq!(phases::duration_ms(p.proj_window_ceiling().destroy_some()), 75);
+    assert!(p.proj_range_min().is_none());
+    assert!(p.proj_range_max().is_none());
+}
+
+#[test]
+fun projectors_random_in_range_variant() {
+    let p = descent_policy_state::new_descent_random_in_range(phases::duration(20), phases::duration(80));
+    assert!(!p.proj_is_skipped());
+    assert!(!p.proj_is_window());
+    assert!(p.proj_is_random_in_range());
+    assert!(p.proj_window_ceiling().is_none());
+    assert_eq!(phases::duration_ms(p.proj_range_min().destroy_some()), 20);
+    assert_eq!(phases::duration_ms(p.proj_range_max().destroy_some()), 80);
+}

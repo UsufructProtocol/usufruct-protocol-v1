@@ -290,3 +290,53 @@ fun has_expired_monotone_in_now() {
         n = n + 1;
     };
 }
+
+// ─── projectors ──────────────────────────────────────────────────────────────
+
+#[test]
+fun projectors_instant_variant() {
+    let p = handover_policy_state::new_handover_instant();
+    assert!(p.proj_is_instant());
+    assert!(!p.proj_is_fixed_time());
+    assert!(!p.proj_is_countdown());
+    assert!(!p.proj_is_random_in_range());
+    assert!(p.proj_countdown_floor_ms().is_none());
+    assert!(p.proj_range_min().is_none());
+    assert!(p.proj_range_max().is_none());
+}
+
+#[test]
+fun projectors_fixed_time_variant() {
+    let p = handover_policy_state::new_handover_fixed_time();
+    assert!(!p.proj_is_instant());
+    assert!(p.proj_is_fixed_time());
+    assert!(!p.proj_is_countdown());
+    assert!(!p.proj_is_random_in_range());
+    assert!(p.proj_countdown_floor_ms().is_none());
+    assert!(p.proj_range_min().is_none());
+    assert!(p.proj_range_max().is_none());
+}
+
+#[test]
+fun projectors_countdown_variant() {
+    let p = handover_policy_state::new_handover_countdown(phases::duration(42));
+    assert!(!p.proj_is_instant());
+    assert!(!p.proj_is_fixed_time());
+    assert!(p.proj_is_countdown());
+    assert!(!p.proj_is_random_in_range());
+    assert_eq!(phases::duration_ms(p.proj_countdown_floor_ms().destroy_some()), 42);
+    assert!(p.proj_range_min().is_none());
+    assert!(p.proj_range_max().is_none());
+}
+
+#[test]
+fun projectors_random_in_range_variant() {
+    let p = handover_policy_state::new_handover_random_in_range(phases::duration(10), phases::duration(100));
+    assert!(!p.proj_is_instant());
+    assert!(!p.proj_is_fixed_time());
+    assert!(!p.proj_is_countdown());
+    assert!(p.proj_is_random_in_range());
+    assert!(p.proj_countdown_floor_ms().is_none());
+    assert_eq!(phases::duration_ms(p.proj_range_min().destroy_some()), 10);
+    assert_eq!(phases::duration_ms(p.proj_range_max().destroy_some()), 100);
+}

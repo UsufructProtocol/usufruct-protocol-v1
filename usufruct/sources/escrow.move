@@ -114,9 +114,10 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Coin<CoinType> {
-    let context = drain_pendings(take_context(escrow), random, clock, ctx);
-    let (new_context, coin) = asset_context_state::execute_withdraw_earnings(context, owner_cap, clock, ctx);
-    put_context(escrow, new_context);
+    let (mut core, dispatch) = asset_context_state::dispatch(take_context(escrow));
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
+    let coin = asset_context_state::execute_withdraw_earnings(&mut core, owner_cap, clock, ctx);
+    put_context(escrow, asset_context_state::collect(core, dispatch));
     coin
 }
 
@@ -169,9 +170,9 @@ public fun extend_commitment<Asset: key + store, CoinType>(
     new_policy: CommitmentPolicyState,
     clock:      &Clock,
 ) {
-    let context = escrow.asset_context.extract();
-    let context = asset_context_state::execute_extend_commitment(context, owner_cap, new_policy, clock);
-    escrow.asset_context.fill(context);
+    let (mut core, dispatch) = asset_context_state::dispatch(take_context(escrow));
+    asset_context_state::execute_extend_commitment(&mut core, owner_cap, new_policy, clock);
+    put_context(escrow, asset_context_state::collect(core, dispatch));
 }
 
 /// Owner-gated operational parameter reset.
@@ -245,22 +246,6 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     put_context(escrow, asset_context_state::collect(core, new_dispatch));
 }
 
-/// Drain pending transitions on a legacy AssetContext via the new
-/// dispatch-form APT loop. Used by the few entry points that still hand
-/// off through AssetContext (claim_asset and withdraw_earnings); the
-/// dispatch/collect bridge is cheap and disappears entirely once the
-/// storage refactor lands.
-fun drain_pendings<Asset: key + store, CoinType>(
-    context: usufruct::asset_context_state::AssetContext<Asset, CoinType>,
-    random:  &Random,
-    clock:   &Clock,
-    ctx:     &mut TxContext,
-): usufruct::asset_context_state::AssetContext<Asset, CoinType> {
-    let (mut core, dispatch) = asset_context_state::dispatch(context);
-    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
-    asset_context_state::collect(core, dispatch)
-}
-
 /// Permissionless settler.
 public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
@@ -268,9 +253,9 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let context = take_context(escrow);
-    let context = drain_pendings(context, random, clock, ctx);
-    put_context(escrow, context);
+    let (mut core, dispatch) = asset_context_state::dispatch(take_context(escrow));
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
+    put_context(escrow, asset_context_state::collect(core, dispatch));
 }
 
 /// Detect the single transition that is due at `now`, if any.

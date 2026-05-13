@@ -1326,35 +1326,41 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
-    context:   AssetContext<Asset, CoinType>,
+/// Owner-gated earnings withdrawal. Operates on the core handoff
+/// (owner + envelope) — orthogonal to the lifecycle state, so no
+/// dispatch match is needed. The caller is responsible for routing
+/// `core` from the dispatch boundary.
+public(package) fun execute_withdraw_earnings<CoinType>(
+    core:      &mut EscrowCoreHandoff<CoinType>,
     owner_cap: &OwnerCap,
     clock:     &Clock,
     ctx:       &mut TxContext,
-): (AssetContext<Asset, CoinType>, Coin<CoinType>) {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == context.envelope.escrow_identity, EWrongEscrowOwnerCap);
+): Coin<CoinType> {
+    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.envelope.escrow_identity, EWrongEscrowOwnerCap);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
-    let AssetContext { asset_state, mut owner, envelope } = context;
-    let (coin, amount) = do_withdraw(&mut owner, owner_cap, ctx);
-    event::emit(EarningsWithdrawn { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), owner_cap_id, owner: owner_addr, amount: monetary::stake_mist(amount), timestamp_ms });
-    (AssetContext { asset_state, owner, envelope }, coin)
+    let (coin, amount) = do_withdraw(&mut core.owner, owner_cap, ctx);
+    event::emit(EarningsWithdrawn { escrow_id: escrow_identity::escrow_id(core.envelope.escrow_identity), owner_cap_id, owner: owner_addr, amount: monetary::stake_mist(amount), timestamp_ms });
+    coin
 }
 
 /// Extend the owner's permanence commitment. The new expiry must be ≥ the
 /// current expiry — the commitment can only grow, never shrink.
-public(package) fun execute_extend_commitment<Asset: key + store, CoinType>(
-    context:    AssetContext<Asset, CoinType>,
+///
+/// Operates on the core handoff: commitment_policy + commitment_anchor
+/// live in the envelope, orthogonal to the lifecycle state.
+public(package) fun execute_extend_commitment<CoinType>(
+    core:       &mut EscrowCoreHandoff<CoinType>,
     owner_cap:  &OwnerCap,
     new_policy: CommitmentPolicyState,
     clock:      &Clock,
-): AssetContext<Asset, CoinType> {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == context.envelope.escrow_identity, EWrongEscrowOwnerCap);
+) {
+    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.envelope.escrow_identity, EWrongEscrowOwnerCap);
     let now         = phases::now(clock);
     let old_expiry  = commitment_policy_state::unlock_at(
-        commitment_policy_state::resolve(&context.envelope.commitment_policy),
-        context.envelope.commitment_anchor,
+        commitment_policy_state::resolve(&core.envelope.commitment_policy),
+        core.envelope.commitment_anchor,
     );
     let new_expiry  = commitment_policy_state::unlock_at(
         commitment_policy_state::resolve(&new_policy),
@@ -1365,15 +1371,13 @@ public(package) fun execute_extend_commitment<Asset: key + store, CoinType>(
         ECommitmentNotExtended,
     );
     event::emit(CommitmentExtended {
-        escrow_id:     escrow_identity::escrow_id(context.envelope.escrow_identity),
+        escrow_id:     escrow_identity::escrow_id(core.envelope.escrow_identity),
         new_policy,
         new_expiry_ms: phases::timestamp_ms(new_expiry),
         timestamp_ms:  phases::timestamp_ms(now),
     });
-    let AssetContext { asset_state, owner, mut envelope } = context;
-    envelope.commitment_policy = new_policy;
-    envelope.commitment_anchor = now;
-    AssetContext { asset_state, owner, envelope }
+    core.envelope.commitment_policy = new_policy;
+    core.envelope.commitment_anchor = now;
 }
 
 /// Terminal action: unwrap a RetiredContext into the underlying asset and

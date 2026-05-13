@@ -5,7 +5,7 @@ module usufruct::tenant;
 
 // === Imports ===
 
-use sui::{balance::{Self, Balance}, coin};
+use sui::balance::{Self, Balance};
 use usufruct::{
     escrow_identity::EscrowIdentity,
     fee_message::{Self, FeeShare},
@@ -126,7 +126,7 @@ public(package) fun liquidate<C>(
     ctx:   &mut TxContext,
 ) {
     let TenantStake { balance } = stake;
-    transfer::public_transfer(coin::from_balance(balance, ctx), to);
+    transfer::public_transfer(balance.into_coin(ctx), to);
 }
 
 // === Private Functions ===

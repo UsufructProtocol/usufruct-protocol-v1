@@ -5,7 +5,7 @@ module usufruct::owner;
 
 // === Imports ===
 
-use sui::{balance::{Self, Balance}, coin::{Self, Coin}};
+use sui::{balance::{Self, Balance}, coin::Coin};
 use usufruct::{
     monetary::{Self, Stake},
     owner_cap::{Self, OwnerCap, OwnerCapIdentity},
@@ -105,7 +105,7 @@ public(package) fun withdraw<C>(
 ): Coin<C> {
     assert!(owner_cap::identity(cap) == self.identity.cap_identity, E_OWNER_WRONG_CAP);
     let drained = balance::withdraw_all(&mut self.earnings.balance);
-    coin::from_balance(drained, ctx)
+    drained.into_coin(ctx)
 }
 
 /// Tear down an `Owner<C>` known to hold zero earnings. Aborts via

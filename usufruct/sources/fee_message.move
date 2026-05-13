@@ -7,7 +7,7 @@ module usufruct::fee_message;
 
 use sui::{
     balance::{Self, Balance},
-    coin::{Self, Coin},
+    coin::Coin,
     event,
     transfer::Receiving,
 };
@@ -76,7 +76,7 @@ public fun collect_fee_messages<C>(
         let msg = receive_message(inbox, ticket);
         balance::join(&mut total, consume_message(msg, inbox_identity, collector));
     });
-    coin::from_balance(total, ctx)
+    total.into_coin(ctx)
 }
 
 // === View Functions ===

@@ -74,6 +74,84 @@ fun dispose_escrow(escrow: Escrow<DemoAsset, SUI>, cap: OwnerCap) {
     transfer::public_transfer(cap, OWNER);
 }
 
+// ─── projector matrix helper ─────────────────────────────────────────────────
+//
+// State codes used by the cartesian-product test below. Following the
+// per-axis tag convention used by escrow_view_tests.move (e.g. c == 0 for
+// Instant handover), state_id encodes the expected state-machine leaf:
+//
+//   0 → Waiting::Idle
+//   1 → Waiting::AtDutch
+//   2 → Waiting::Retired
+//   3 → Renting::Occupied
+//   4 → Renting::Demand
+//
+// `assert_projector_pattern` runs every Option/bool view in escrow.move
+// once and asserts the expected presence/absence for the given state.
+// The patterns are derived from the state machine projector definitions
+// in asset_context_state — see the per-state match arms there.
+
+const STATE_IDLE:     u8 = 0;
+const STATE_AT_DUTCH: u8 = 1;
+const STATE_RETIRED:  u8 = 2;
+const STATE_OCCUPIED: u8 = 3;
+const STATE_DEMAND:   u8 = 4;
+
+fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
+    let in_renting = state_id == STATE_OCCUPIED || state_id == STATE_DEMAND;
+    let in_demand  = state_id == STATE_DEMAND;
+    let in_at_dutch = state_id == STATE_AT_DUTCH;
+    let in_waiting_with_resolved = state_id == STATE_IDLE || state_id == STATE_AT_DUTCH;
+
+    // — Discriminators —
+    assert_eq!(escrow::is_idle(escrow),             state_id == STATE_IDLE);
+    assert_eq!(escrow::is_at_dutch_auction(escrow), state_id == STATE_AT_DUTCH);
+    assert_eq!(escrow::is_retired(escrow),          state_id == STATE_RETIRED);
+    assert_eq!(escrow::is_occupied(escrow),         state_id == STATE_OCCUPIED);
+    assert_eq!(escrow::is_demand(escrow),           state_id == STATE_DEMAND);
+    assert_eq!(escrow::is_rented(escrow),           in_renting);
+    assert_eq!(escrow::is_active(escrow),           state_id != STATE_RETIRED);
+    // No scenario in this matrix sets the retire flag.
+    assert!(!escrow::is_retiring(escrow));
+
+    // — Tenant slots: current populated under Renting; pending only under Demand —
+    assert_eq!(escrow::current_tenant_addr(escrow).is_some(),   in_renting);
+    assert_eq!(escrow::current_tenant_cap_id(escrow).is_some(), in_renting);
+    assert_eq!(escrow::current_stake(escrow).is_some(),         in_renting);
+    assert_eq!(escrow::pending_tenant_addr(escrow).is_some(),   in_demand);
+    assert_eq!(escrow::pending_tenant_cap_id(escrow).is_some(), in_demand);
+    assert_eq!(escrow::pending_stake(escrow).is_some(),         in_demand);
+
+    // — phase_start: tenancy envelope (Renting) or state (AtDutch) —
+    assert_eq!(escrow::phase_start_ms(escrow).is_some(), in_renting || in_at_dutch);
+    // tenure_expiry computed only under Renting (early-returns otherwise)
+    assert_eq!(escrow::tenure_expiry_ms(escrow).is_some(), in_renting);
+
+    // — active_* resolved values: live in TenancyEnvelope, only Renting —
+    assert_eq!(escrow::active_tenure_ceiling_ms(escrow).is_some(),    in_renting);
+    assert_eq!(escrow::active_handover_duration_ms(escrow).is_some(), in_renting);
+    assert_eq!(escrow::active_floor_price_mist(escrow).is_some(),     in_renting);
+
+    // — next_* (waiting-resolved): live in WaitingState::Idle and AtDutch —
+    assert_eq!(escrow::next_floor_price_mist(escrow).is_some(),     in_waiting_with_resolved);
+    assert_eq!(escrow::next_tenure_ceiling_ms(escrow).is_some(),    in_waiting_with_resolved);
+    assert_eq!(escrow::next_handover_duration_ms(escrow).is_some(), in_waiting_with_resolved);
+
+    // — AtDutch-only fields —
+    assert_eq!(escrow::auction_descent_duration_ms(escrow).is_some(), in_at_dutch);
+    assert_eq!(escrow::last_acq_price(escrow).is_some(),              in_at_dutch);
+
+    // — Demand-only fields (handover countdown active) —
+    assert_eq!(escrow::handover_countdown_expiry_ms(escrow).is_some(), in_demand);
+
+    // — Credit context: Accruing in Occupied, Capped in Demand —
+    assert_eq!(escrow::credit_is_accruing(escrow), state_id == STATE_OCCUPIED);
+    assert_eq!(escrow::credit_is_capped(escrow),   in_demand);
+    assert_eq!(escrow::credit_stake_mist(escrow).is_some(),      in_renting);
+    assert_eq!(escrow::credit_phase_start_ms(escrow).is_some(),  in_renting);
+    assert_eq!(escrow::credit_expiry_ms(escrow).is_some(),       in_demand);
+}
+
 // ─── idle views ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -435,5 +513,86 @@ fun retiring_flag_views_after_retire_during_renting() {
     transfer::public_transfer(t_cap, TENANT_ADDR);
     clock::destroy_for_testing(clk);
     dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+// ─── cartesian state × projector matrix ──────────────────────────────────────
+
+/// Builds an escrow in each of the 5 state-machine leaves and asserts the
+/// full projector vector via assert_projector_pattern. Closes the partial
+/// coverage in asset_context_state's per-state match arms — each projector
+/// is exercised on every reachable state in a single test.
+#[test]
+fun cartesian_state_projector_matrix() {
+    let mut sc = setup();
+    let cfg           = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let cfg_countdown = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let cfg_window    = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+
+    // — Idle —
+    let (escrow, cap) = build_escrow(cfg, &mut sc);
+    assert_projector_pattern(&escrow, STATE_IDLE);
+    dispose_escrow(escrow, cap);
+
+    // — Retired (retire from Idle) —
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    sc.next_tx(OWNER);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+    escrow::retire(&mut escrow, &cap, &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+    assert_projector_pattern(&escrow, STATE_RETIRED);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+
+    // — Occupied (rent from Idle) —
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+    assert_projector_pattern(&escrow, STATE_OCCUPIED);
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+
+    // — Demand (Countdown handover → second rent places a bid) —
+    let (mut escrow, cap) = build_escrow(cfg_countdown, &mut sc);
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let t1_cap = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+    let second_tenant: address = @0xA2;
+    sc.next_tx(second_tenant);
+    clock::set_for_testing(&mut clk, 5_000);
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2     = mk_payment(floor2, sc.ctx());
+    let t2_cap = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+    assert_projector_pattern(&escrow, STATE_DEMAND);
+    transfer::public_transfer(t1_cap, TENANT_ADDR);
+    transfer::public_transfer(t2_cap, second_tenant);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+
+    // — AtDutch (Window descent → tenure expiry advances to AtDutch) —
+    let (mut escrow, cap) = build_escrow(cfg_window, &mut sc);
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let expiry  = escrow::tenure_expiry_ms(&escrow).destroy_some();
+    clock::set_for_testing(&mut clk, expiry);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+    assert_projector_pattern(&escrow, STATE_AT_DUTCH);
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+
     sc.end();
 }

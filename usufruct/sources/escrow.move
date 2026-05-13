@@ -250,7 +250,10 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ) {
     let context = take_context(escrow);
-    let new_context = asset_context_state::execute_burn_tenant_cap(context, cap, random, clock, ctx);
+    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
+    let (core, dispatch) = asset_context_state::dispatch(context);
+    let new_dispatch = asset_context_state::execute_burn_tenant_cap(dispatch, &core, cap, ctx);
+    let new_context = asset_context_state::collect(core, new_dispatch);
     put_context(escrow, new_context);
 }
 

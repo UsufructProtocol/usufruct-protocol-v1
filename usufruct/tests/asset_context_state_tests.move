@@ -17,6 +17,7 @@ use usufruct::{
     asset::{Self, AssetReceipt},
     asset_context_state,
     commitment_policy_state,
+    cycles,
     escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
@@ -56,9 +57,12 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
     DemoAsset { id: object::new(ctx) }
 }
 
-/// Integrate an escrow and immediately take it back as a shared object.
-/// Returns (escrow, owner_cap). Caller must dispose both.
-fun integrate_and_take(sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
+/// Integrate an escrow with the given config and immediately take it
+/// back as a shared object. Returns (escrow, owner_cap).
+fun integrate_and_take_with_cfg(
+    cfg: usufruct::config::IntegrationConfig,
+    sc:  &mut Scenario,
+): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
@@ -66,7 +70,7 @@ fun integrate_and_take(sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
     let rnd     = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset,
-        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)),
+        cfg,
         commitment_policy_state::new_immediate(),
         &fee_ref, &rnd, &clk, sc.ctx(),
     );
@@ -78,6 +82,15 @@ fun integrate_and_take(sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
     let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
     (escrow, cap)
+}
+
+/// Default integration: tag(0,0,0,0,0). Instant handover — fine for
+/// tests that don't put the escrow into Demand.
+fun integrate_and_take(sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
+    integrate_and_take_with_cfg(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)),
+        sc,
+    )
 }
 
 /// Re-take the shared escrow by value (so it can be consumed by claim_asset).
@@ -364,5 +377,118 @@ fun return_asset_aborts_in_retired_state() {
 
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
+    sc.end();
+}
+
+// ─── execute_burn_tenant_cap invariants (C7) ─────────────────────────────────
+//
+// Two invariants travel together; neither alone is sufficient:
+//
+//   1. Only caps issued by THIS escrow can be burned
+//      (EWrongEscrowTenantCap). Otherwise an attacker could route caps
+//      issued elsewhere through any Retired escrow as a burn machine,
+//      potentially destroying caps still current/pending on their
+//      origin escrow.
+//
+//   2. Only stale caps can be burned (ETenantCapNotStale).
+//      current/pending caps are still in active use.
+//
+// In Idle/AtDutch/Retired the second invariant is satisfied
+// structurally (no current/pending exists in those contexts). The
+// legacy form skipped the escrow-identity check in Retired, opening
+// the bypass for invariant 1. This test fixes the latent bug.
+//
+// Existing coverage for the other cases (see escrow_tests):
+//   · burn_tenant_cap_with_foreign_escrow_cap_aborts  — invariant 1, Idle.
+//   · burn_tenant_cap_on_live_current_cap_aborts      — invariant 2, Occupied.
+//   · burn_tenant_cap_burns_displaced_bidder_cap      — happy path, Demand.
+
+#[test, expected_failure(abort_code = asset_context_state::EWrongEscrowTenantCap, location = usufruct::asset_context_state)]
+fun burn_foreign_cap_in_retired_aborts() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+
+    escrow::drive_to_retired_for_testing(&mut escrow);
+
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    // Cap issued by some other escrow (here a synthetic identity); the
+    // Retired state of `escrow` must not be a backdoor for burning it.
+    let foreign = tenant_cap::new(
+        escrow_identity::new(object::id_from_address(@0xDEAD)),
+        TENANT_ADDR_1,
+        sc.ctx(),
+    );
+
+    escrow::burn_tenant_cap(&mut escrow, foreign, &rnd, &clk, sc.ctx());
+
+    transfer::public_transfer(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_context_state::ETenantCapNotStale, location = usufruct::asset_context_state)]
+fun burn_live_current_cap_in_demand_aborts() {
+    let mut sc = setup();
+    // Countdown handover (c=1) — without this, the Instant handover (c=0)
+    // would fire on APT at the start of burn_tenant_cap and Demand would
+    // collapse to Occupied with cap_t2 as the new current, making cap_t1
+    // legitimately stale.
+    let (mut escrow, owner_cap) = integrate_and_take_with_cfg(
+        escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)),
+        &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    // Rent #1: Idle → Occupied. cap_t1 becomes current.
+    let p1     = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    // Rent #2: Occupied → Demand (place_bid). cap_t2 becomes pending,
+    // cap_t1 stays current.
+    let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::compute_floor_price(&escrow, &clk)), sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &rnd, &clk, sc.ctx());
+
+    // Burn the live current cap — must abort.
+    escrow::burn_tenant_cap(&mut escrow, cap_t1, &rnd, &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_context_state::ETenantCapNotStale, location = usufruct::asset_context_state)]
+fun burn_live_pending_cap_in_demand_aborts() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take_with_cfg(
+        escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)),
+        &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    let p1     = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::compute_floor_price(&escrow, &clk)), sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &rnd, &clk, sc.ctx());
+
+    // Burn the live pending cap — must abort. This case is distinct
+    // from current: pending lives only in Demand. In the legacy form
+    // both checks lived in the `cap_auth_for_tenancy` match; in the
+    // typed-states form `pending` is a direct field of DemandContext,
+    // so the assert is per-arm and per-field.
+    escrow::burn_tenant_cap(&mut escrow, cap_t2, &rnd, &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
     sc.end();
 }

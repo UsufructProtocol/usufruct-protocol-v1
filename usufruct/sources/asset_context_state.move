@@ -1185,29 +1185,64 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     }
 }
 
+/// Entry-point dispatcher for burning a stale TenantCap (gas recovery).
+///
+/// Two invariants are enforced together — neither alone is sufficient:
+///
+///   1. The cap must have been issued by THIS escrow
+///      (`EWrongEscrowTenantCap`). Without this guard, a Retired escrow
+///      could be used as a "burn machine" for caps issued by other
+///      escrows, including caps that are still `current`/`pending`
+///      there — silently breaking invariant 2 on a foreign escrow.
+///
+///   2. The cap must not be `current` or `pending` of an active tenancy
+///      (`ETenantCapNotStale`). Only stale caps may be burned, so that
+///      live tenancy references are never destroyed.
+///
+/// In Idle/AtDutch/Retired the second guard is satisfied structurally —
+/// the type carries no `current`/`pending`, so every cap issued by this
+/// escrow is stale by construction. The two Renting variants add the
+/// stale check inline, with per-variant scope (Occupied checks only
+/// against `current`; Demand checks against both `current` and `pending`).
+///
+/// Behavior change vs the legacy form: the legacy code skipped the
+/// escrow-identity check when the state was Retired. That skip was the
+/// bypass for invariant 1 — closed here.
 public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
-    cap:     TenantCap,
-    random:  &Random,
-    clock:   &Clock,
-    ctx:     &mut TxContext,
-): AssetContext<Asset, CoinType> {
-    let context = apply_pending_transition_states(context, random, clock, ctx);
-    match (context) {
-        AssetContext { asset_state: AssetState::Waiting { waiting }, owner, envelope } => {
-            let is_retired = match (&waiting.state) { WaitingState::Retired => true, _ => false };
-            if (!is_retired) { assert!(tenant_cap::proj_escrow_identity(&cap) == envelope.escrow_identity, EWrongEscrowTenantCap) };
+    d:    AssetContextDispatch<Asset, CoinType>,
+    core: &EscrowCoreHandoff<CoinType>,
+    cap:  TenantCap,
+    ctx:  &TxContext,
+): AssetContextDispatch<Asset, CoinType> {
+    assert!(tenant_cap::proj_escrow_identity(&cap) == core.envelope.escrow_identity, EWrongEscrowTenantCap);
+    match (d) {
+        AssetContextDispatch::Retired { ctx: retired } => {
             tenant_cap::burn(cap, ctx);
-            AssetContext { asset_state: AssetState::Waiting { waiting }, owner, envelope }
+            AssetContextDispatch::Retired { ctx: retired }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy }, owner, envelope } => {
-            assert!(tenant_cap::proj_escrow_identity(&cap) == envelope.escrow_identity, EWrongEscrowTenantCap);
-            match (cap_auth_for_tenancy(&tenancy, tenant_cap::identity(&cap))) {
-                CapAuthorizationState::Stale => {},
-                _ => abort ETenantCapNotStale,
-            };
+        AssetContextDispatch::Idle { ctx: idle } => {
             tenant_cap::burn(cap, ctx);
-            AssetContext { asset_state: AssetState::Renting { tenancy }, owner, envelope }
+            AssetContextDispatch::Idle { ctx: idle }
+        },
+        AssetContextDispatch::AtDutch { ctx: atd } => {
+            tenant_cap::burn(cap, ctx);
+            AssetContextDispatch::AtDutch { ctx: atd }
+        },
+        AssetContextDispatch::Occupied { ctx: occupied } => {
+            let cap_identity = tenant_cap::identity(&cap);
+            let current_cap  = tenant::proj_cap_identity(tenant::proj_identity(&occupied.current));
+            assert!(cap_identity != current_cap, ETenantCapNotStale);
+            tenant_cap::burn(cap, ctx);
+            AssetContextDispatch::Occupied { ctx: occupied }
+        },
+        AssetContextDispatch::Demand { ctx: demand } => {
+            let cap_identity = tenant_cap::identity(&cap);
+            let current_cap  = tenant::proj_cap_identity(tenant::proj_identity(&demand.current));
+            let pending_cap  = tenant::proj_cap_identity(tenant::proj_identity(&demand.pending));
+            assert!(cap_identity != current_cap, ETenantCapNotStale);
+            assert!(cap_identity != pending_cap, ETenantCapNotStale);
+            tenant_cap::burn(cap, ctx);
+            AssetContextDispatch::Demand { ctx: demand }
         },
     }
 }

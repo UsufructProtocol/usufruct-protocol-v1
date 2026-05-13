@@ -4,6 +4,7 @@
 #[test_only]
 module usufruct::credit_context_state_tests;
 
+use std::unit_test::assert_eq;
 use usufruct::{
     config,
     credit_context_state::{Self as credit_state},
@@ -131,6 +132,9 @@ fun accruing_predicate() {
     let cs = credit_state::accruing(monetary::stake(STAKE), phases::timestamp(T0));
     assert!(credit_state::proj_is_accruing(&cs), 0);
     assert!(!credit_state::proj_is_capped(&cs),  1);
+    assert_eq!(monetary::stake_mist(credit_state::proj_stake(&cs)), STAKE);
+    assert_eq!(phases::timestamp_ms(credit_state::proj_phase_start(&cs)), T0);
+    assert!(credit_state::proj_expiry(&cs).is_none());
 }
 
 // ─── §2. Capped ───────────────────────────────────────────────────────────────
@@ -194,4 +198,7 @@ fun capped_predicate() {
     let cs = credit_state::capped(monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY));
     assert!(!credit_state::proj_is_accruing(&cs), 0);
     assert!(credit_state::proj_is_capped(&cs),    1);
+    assert_eq!(monetary::stake_mist(credit_state::proj_stake(&cs)), STAKE);
+    assert_eq!(phases::timestamp_ms(credit_state::proj_phase_start(&cs)), T0);
+    assert_eq!(phases::timestamp_ms(credit_state::proj_expiry(&cs).destroy_some()), EXPIRY);
 }

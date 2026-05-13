@@ -80,3 +80,21 @@ fun is_unlocked_monotone_in_now_under_deferred() {
         n = n + 1;
     };
 }
+
+// ─── projectors ──────────────────────────────────────────────────────────────
+
+#[test]
+fun projectors_immediate_variant() {
+    let p = commitment_policy_state::new_immediate();
+    assert!(p.proj_is_immediate());
+    assert!(!p.proj_is_deferred());
+    assert!(p.proj_floor_ms().is_none());
+}
+
+#[test]
+fun projectors_deferred_variant() {
+    let p = commitment_policy_state::new_deferred(phases::duration(50));
+    assert!(!p.proj_is_immediate());
+    assert!(p.proj_is_deferred());
+    assert_eq!(phases::duration_ms(p.proj_floor_ms().destroy_some()), 50);
+}

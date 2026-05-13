@@ -31,7 +31,7 @@ fun has_expired_table() {
     let cases = vector[
         // Skipped — fires from `phase_start` onward (defensively monotone).
         // The auction never has a real window: the boundary collapses to
-        // phase_start itself, so HandoverConfirmed → Idle in one APT step
+        // phase_start itself, so Demand → Idle in one APT step
         // (spec M6b / Q11).
         HasExpiredCase { policy: descent_policy_state::new_descent_skipped(), phase_start: 100, now: 99,  expected: false }, // before phase
         HasExpiredCase { policy: descent_policy_state::new_descent_skipped(), phase_start: 100, now: 100, expected: true  }, // exact phase

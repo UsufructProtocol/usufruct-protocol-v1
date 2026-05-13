@@ -26,9 +26,9 @@ public enum PendingTransitionKind has copy, drop {
 /// loop separates *detection* (which transition is due, if any) from
 /// *firing* (apply the corresponding boundary handler).
 ///
-///   · `Handover` — handover-countdown expired in HandoverConfirmed.
+///   · `Handover` — handover-countdown expired in Demand.
 ///                  `boundary_ms` is the stored countdown expiry.
-///   · `Tenure`   — tenure ceiling elapsed in HandoverOpen.
+///   · `Tenure`   — tenure ceiling elapsed in Occupied.
 ///                  `boundary_ms` is `phase_start_ms + tenure_ceiling`.
 ///   · `Auction`  — descent window elapsed in AtDutch.
 ///                  `boundary_ms` is `descent_policy_state::expiry_at`.

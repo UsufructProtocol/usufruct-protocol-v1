@@ -27,9 +27,9 @@ public enum CreditState has drop {
 
 /// Context-State carrier for credit consumption.
 ///
-///   · `Accruing` — HandoverOpen: credit accumulates freely against
+///   · `Accruing` — Occupied: credit accumulates freely against
 ///                  `credit_curve` over the full tenure window.
-///   · `Capped`   — HandoverConfirmed: accrual freezes at `expiry`;
+///   · `Capped`   — Demand: accrual freezes at `expiry`;
 ///                  the remainder stays with the departing tenant.
 ///
 /// Derived by the coordinator from `LifecycleState` accessors; never
@@ -72,12 +72,12 @@ public(package) fun proj_expiry(ctx: &CreditContext): Option<Timestamp> {
 
 // === Package Functions ===
 
-/// Construct `Accruing` — HandoverOpen, no countdown in progress.
+/// Construct `Accruing` — Occupied, no countdown in progress.
 public(package) fun accruing(stake: Stake, phase_start: Timestamp): CreditContext {
     CreditContext { stake, phase_start, variant: CreditState::Accruing }
 }
 
-/// Construct `Capped` — HandoverConfirmed, credit freezes at `expiry`.
+/// Construct `Capped` — Demand, credit freezes at `expiry`.
 public(package) fun capped(stake: Stake, phase_start: Timestamp, expiry: Timestamp): CreditContext {
     CreditContext { stake, phase_start, variant: CreditState::Capped { expiry } }
 }

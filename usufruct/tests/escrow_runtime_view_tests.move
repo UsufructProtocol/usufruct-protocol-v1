@@ -187,7 +187,7 @@ fun rented_views_post_rent() {
     // last_acq_price is recorded only on AtDutch transitions, not on rent from Idle.
     assert!(escrow::last_acq_price(&escrow).is_none());
 
-    // — Credit context — accruing in HandoverOpen-like Renting state —
+    // — Credit context — accruing in Occupied-like Renting state —
     assert!(escrow::credit_stake_mist(&escrow).is_some());
     assert!(escrow::credit_phase_start_ms(&escrow).is_some());
 

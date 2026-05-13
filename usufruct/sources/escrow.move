@@ -274,16 +274,16 @@ public fun is_at_dutch_auction<Asset: key + store, CoinType>(
     asset_context_state::proj_is_at_dutch(read_context(escrow))
 }
 
-public fun is_handover_open<Asset: key + store, CoinType>(
+public fun is_occupied<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::proj_is_handover_open(read_context(escrow))
+    asset_context_state::proj_is_occupied(read_context(escrow))
 }
 
-public fun is_handover_confirmed<Asset: key + store, CoinType>(
+public fun is_demand<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_context_state::proj_is_handover_confirmed(read_context(escrow))
+    asset_context_state::proj_is_demand(read_context(escrow))
 }
 
 public fun is_active<Asset: key + store, CoinType>(
@@ -487,7 +487,7 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     bid_time_ms: u64,
 ): Option<u64> {
     let e = read_context(escrow);
-    if (!asset_context_state::proj_is_handover_open(e)) return option::none();
+    if (!asset_context_state::proj_is_occupied(e)) return option::none();
     let phase_start       = *asset_context_state::proj_phase_start(e).borrow();
     let resolved_ceiling  = *asset_context_state::proj_resolved_ceiling(e).borrow();
     let resolved_handover = *asset_context_state::proj_resolved_handover(e).borrow();

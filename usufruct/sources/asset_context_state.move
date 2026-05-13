@@ -69,7 +69,7 @@ const ERetireAlreadyScheduled:  u64 = 16;
 /// directly — Move restricts pattern access to the defining module.
 ///
 ///   · `Current` — cap belongs to the active tenant. May borrow.
-///   · `Pending` — cap belongs to the pending bidder (HandoverConfirmed). May not borrow.
+///   · `Pending` — cap belongs to the pending bidder (Demand). May not borrow.
 ///   · `Stale`   — cap is superseded, former tenant, or no active rental.
 public enum CapAuthorizationState has drop {
     Current,
@@ -396,7 +396,7 @@ public(package) fun proj_is_rented<Asset: key + store, CoinType>(
 }
 
 /// True iff renting and tenancy is Occupied (no pending bid yet).
-public(package) fun proj_is_handover_open<Asset: key + store, CoinType>(
+public(package) fun proj_is_occupied<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {
@@ -406,7 +406,7 @@ public(package) fun proj_is_handover_open<Asset: key + store, CoinType>(
 }
 
 /// True iff renting and tenancy is Demand (pending bidder present).
-public(package) fun proj_is_handover_confirmed<Asset: key + store, CoinType>(
+public(package) fun proj_is_demand<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): bool {
     match (&e.asset_state) {

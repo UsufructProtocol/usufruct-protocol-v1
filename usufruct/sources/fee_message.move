@@ -168,7 +168,7 @@ public fun consume_message_for_testing<C>(
 public fun share_escrow_id<C>(s: &FeeShare<C>): ID { escrow_identity::escrow_id(s.escrow_identity) }
 #[test_only]
 public fun destroy_share_for_testing<C>(s: FeeShare<C>) {
-    let FeeShare { balance, escrow_identity: _ } = s;
+    let FeeShare { balance, .. } = s;
     balance::destroy_for_testing(balance);
 }
 

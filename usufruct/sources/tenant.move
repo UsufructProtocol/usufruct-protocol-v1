@@ -149,7 +149,7 @@ public fun proj_stake_value_of<C>(s: &TenantStake<C>): Stake {
 /// via `balance::destroy_for_testing`.
 #[test_only]
 public fun destroy_for_testing<C>(t: Tenant<C>) {
-    let Tenant { identity: _, stake } = t;
+    let Tenant { stake, .. } = t;
     let TenantStake { balance } = stake;
     balance::destroy_for_testing(balance);
 }

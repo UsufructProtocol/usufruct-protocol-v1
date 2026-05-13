@@ -148,7 +148,7 @@ public(package) fun put<U: key + store>(
 /// is empty (asset still borrowed). Primitive — internal callers prefer
 /// `close_tenancy`; tests use this to exercise the assertion directly.
 public(package) fun unbundle<U: key + store>(self: AssetCustodyOpen<U>): U {
-    let AssetCustodyOpen { identity: _, available } = self;
+    let AssetCustodyOpen { available, .. } = self;
     assert!(option::is_some(&available), E_ASSET_NOT_AVAILABLE);
     option::destroy_some(available)
 }
@@ -189,7 +189,7 @@ public fun forge_receipt_for_testing(asset_id: ID, escrow_id: ID): AssetReceipt 
 /// Drop an `AssetReceipt` whose return-path was abandoned in the test.
 #[test_only]
 public fun destroy_receipt_for_testing(r: AssetReceipt) {
-    let AssetReceipt { identity: _ } = r;
+    let AssetReceipt { .. } = r;
 }
 
 /// Inspect the asset_id stamped on a receipt. Test-only.

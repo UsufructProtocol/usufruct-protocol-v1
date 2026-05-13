@@ -810,7 +810,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     match (context) {
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: _a, state: WaitingState::Retired } }, owner: _o, .. } =>
             abort EAlreadyRetired,
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: _ } }, owner, mut envelope } => {
+        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, .. } }, owner, mut envelope } => {
             envelope.pending_config = option::none();
             AssetContext { asset_state: do_retire_immediately(asset, envelope.escrow_identity, now, ctx), owner, envelope }
         },
@@ -1338,7 +1338,7 @@ public(package) fun accept_rent_payment<Asset: key + store, CoinType>(
             if (retire_condition::proj_is_retiring(&retire)) abort ERetireFlagBlocksBid;
             do_place_bid(asset, current, envelope, cycles, escrow_identity, payment, floor, now, ctx)
         },
-        TenancyState::Demand { current, pending, handover_expiry, bidding_cycles: _, retire } =>
+        TenancyState::Demand { current, pending, handover_expiry, retire, .. } =>
             do_supersede_bid(
                 asset, current, pending, handover_expiry, envelope, cycles,
                 retire,
@@ -1361,7 +1361,7 @@ public(package) fun do_apt_transition<Asset: key + store, CoinType>(
 ): RentingFireResultState<Asset, CoinType> {
     let TenancyContext { asset, envelope, state } = tenancy;
     match (state) {
-        TenancyState::Demand { current, pending, handover_expiry: _, bidding_cycles, retire } => {
+        TenancyState::Demand { current, pending, bidding_cycles, retire, .. } => {
             let new_tenancy = do_handover(
                 asset, current, pending, envelope, bidding_cycles,
                 retire,
@@ -1797,7 +1797,7 @@ fun fire<Asset: key + store, CoinType>(
                 },
             }
         },
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } } }, owner, mut envelope } => {
+        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, .. } } }, owner, mut envelope } => {
             if (option::is_some(&envelope.pending_config)) {
                 let new_cfg = option::destroy_some(envelope.pending_config);
                 event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), new_config: new_cfg });
@@ -1941,7 +1941,7 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
         AssetContext { asset_state: AssetState::Waiting { waiting }, owner, envelope } => {
             let WaitingContext { asset, state } = waiting;
             match (state) {
-                WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } =>
+                WaitingState::AtDutch { last_acq_price, phase_start, .. } =>
                     AssetContext { asset_state: do_auction_expiry(asset, last_acq_price, phase_start, &envelope.config, envelope.escrow_identity, boundary, generator), owner, envelope },
                 _ => abort ENotRented,
             }
@@ -1986,7 +1986,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
             // Preserve retire condition carried over from Occupied into the resulting Demand.
             let TenancyContext { asset: a2, envelope: env2, state } = new_tenancy;
             let state = match (state) {
-                TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, retire: _ } =>
+                TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, .. } =>
                     TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, retire },
                 s => s,
             };
@@ -2007,7 +2007,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     new_phase_start: Timestamp,
 ): AssetContext<Asset, CoinType> {
     match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_env, state: TenancyState::Occupied { current, retire: _ } } }, owner, envelope } => {
+        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_env, state: TenancyState::Occupied { current, .. } } }, owner, envelope } => {
             let wrapped = unbundle_occupied_for_testing(
                 asset, current, owner_amount, fee_amount, envelope.escrow_identity,
             );

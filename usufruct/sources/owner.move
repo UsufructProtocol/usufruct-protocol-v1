@@ -114,7 +114,7 @@ public(package) fun withdraw<C>(
 /// arithmetic. Symmetric with `tenant::destroy_empty_stake`. Used at
 /// escrow-deletion time after `withdraw` has drained the earnings.
 public(package) fun destroy_empty<C>(o: Owner<C>) {
-    let Owner { identity: _, earnings } = o;
+    let Owner { earnings, .. } = o;
     let OwnerEarnings { balance } = earnings;
     balance::destroy_zero(balance);
 }
@@ -125,7 +125,7 @@ public(package) fun destroy_empty<C>(o: Owner<C>) {
 
 #[test_only]
 public fun destroy_for_testing<C>(o: Owner<C>) {
-    let Owner { identity: _, earnings } = o;
+    let Owner { earnings, .. } = o;
     let OwnerEarnings { balance } = earnings;
     balance::destroy_for_testing(balance);
 }

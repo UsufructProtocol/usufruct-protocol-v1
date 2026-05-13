@@ -39,10 +39,7 @@ fun mul_div_table() {
         // 2^63: intermediate = 2^64 > u64::MAX; final = 2^63 fits
         MulDivCase { a: 9223372036854775808, b: 2, c: 2, expected: 9223372036854775808 },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let result = math::mul_div(case.a, case.b, case.c);
         assert_eq!(result, case.expected);
         // Invariant: result*c ≤ a*b < (result+1)*c
@@ -52,8 +49,7 @@ fun mul_div_table() {
         let c = case.c as u128;
         assert!(r * c <= ab, 0);
         assert!(ab < (r + 1) * c, 1);
-        i = i + 1;
-    };
+    });
 }
 
 #[test, expected_failure(arithmetic_error, location = usufruct::math)]
@@ -127,17 +123,13 @@ fun nth_root_u128_table() {
         NthRootCase { n: 79228162514264337593543950336,           d: 4, expected: 16777216    }, // 2^96, 4rt=2^24
         NthRootCase { n: 79228162514264337593543950335,           d: 4, expected: 16777215    }, // 2^96-1
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let result = math::nth_root_u128(case.n, case.d);
         assert_eq!(result, case.expected);
         // Invariant: result^d ≤ n < (result+1)^d
         assert!(pow_u128(result, case.d) <= case.n, 0);
         assert!(upper_bound_holds(case.n, result, case.d), 1);
-        i = i + 1;
-    };
+    });
 }
 
 #[test, expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
@@ -230,16 +222,12 @@ fun nth_root_u128_scaled_irrationals() {
         NthRootCase { n:  7 * s4, d: 4, expected: 1626576561 },
         NthRootCase { n: 10 * s4, d: 4, expected: 1778279410 },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let result = math::nth_root_u128(case.n, case.d);
         assert_eq!(result, case.expected);
         assert!(pow_u128(result, case.d) <= case.n, 0);
         assert!(upper_bound_holds(case.n, result, case.d), 1);
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
@@ -262,16 +250,12 @@ fun nth_root_u128_convergence_stress() {
         NthRootCase { n:  1_329_227_995_788_542_650_362_654_246_339_346_433,   d: 3, expected: 1_099_511_627_777 },         // (2^40+1)^3
         NthRootCase { n:  1_329_228_000_736_676_036_962_857_191_812_890_625,   d: 4, expected: 1_073_741_825 },             // (2^30+1)^4
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let result = math::nth_root_u128(case.n, case.d);
         assert_eq!(result, case.expected);
         assert!(pow_u128(result, case.d) <= case.n, 0);
         assert!(upper_bound_holds(case.n, result, case.d), 1);
-        i = i + 1;
-    };
+    });
 }
 
 // result^d, valid for d in {2,3,4} and result in range safe per spec §3

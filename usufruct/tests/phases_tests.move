@@ -38,18 +38,14 @@ fun has_passed_table_and_monotone_in_now() {
         HasPassedCase { anchor: max - 1, duration: 1, now: max - 1, expected: false },
         HasPassedCase { anchor: max - 1, duration: 1, now: max,     expected: true  },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let result = phases::check_boundary(
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
             phases::timestamp(c.now),
         ).is_crossed();
         assert_eq!(result, c.expected);
-        i = i + 1;
-    };
+    });
 
     // Invariant: monotone in `now`. The clock-non-decreasing precondition
     // only strengthens the predicate, so once has_passed flips true, it
@@ -107,10 +103,7 @@ fun elapsed_since_table_and_reciprocal_when_after_start() {
         // Saturation at MAX (now far below start)
         ElapsedSinceCase { start: max, now: 0,   expected: 0   },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let r = phases::duration_ms(phases::elapsed_since(
             phases::timestamp(c.start),
             phases::timestamp(c.now),
@@ -120,8 +113,7 @@ fun elapsed_since_table_and_reciprocal_when_after_start() {
         // r + start == now — elapsed_since is information-preserving in
         // the non-saturated regime. Catches off-by-one in the subtraction.
         if (c.now >= c.start) assert_eq!(r + c.start, c.now);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── boundary_at ──────────────────────────────────────────────────────────────
@@ -147,17 +139,13 @@ fun boundary_at_table() {
         BoundaryAtCase { anchor: max - 1, duration: 1,   expected: max },
         BoundaryAtCase { anchor: 1,       duration: max - 1, expected: max },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let result = phases::timestamp_ms(phases::boundary_at(
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
         ));
         assert_eq!(result, c.expected);
-        i = i + 1;
-    };
+    });
 }
 
 #[test, expected_failure(arithmetic_error, location = usufruct::phases)]
@@ -189,18 +177,14 @@ fun earliest_table_and_commutative() {
         EarliestCase { a: 0,   b: 0,   expected: 0   },
         EarliestCase { a: max, b: max, expected: max },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let result   = phases::timestamp_ms(phases::earliest(phases::timestamp(c.a), phases::timestamp(c.b)));
         let result_r = phases::timestamp_ms(phases::earliest(phases::timestamp(c.b), phases::timestamp(c.a)));
         assert_eq!(result, c.expected);
         // Commutativity invariant: earliest is symmetric in its arguments.
         // Catches accidentally swapping `min` for a non-symmetric op.
         assert_eq!(result_r, c.expected);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── sister identity: has_passed ⇔ now >= boundary_at ─────────────────────────
@@ -236,10 +220,7 @@ fun has_passed_iff_now_ge_boundary_at() {
         SisterIdentityCase { anchor: 0,   duration: 50, now: 49  },
         SisterIdentityCase { anchor: 0,   duration: 50, now: 50  },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let bool_view = phases::check_boundary(
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
@@ -250,6 +231,5 @@ fun has_passed_iff_now_ge_boundary_at() {
             phases::duration(c.duration),
         ));
         assert_eq!(bool_view, u64_view);
-        i = i + 1;
-    };
+    });
 }

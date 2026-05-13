@@ -192,9 +192,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         },
     ];
 
-    let mut i = 0;
-    while (i < cases.length()) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let cfg = config::new_config(
             floor_price_policy_state::new_fixed(monetary::price(c.min_rent_price)),
             c.tenure_ceiling,
@@ -213,8 +211,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         assert_eq!(*config::proj_credit_curve(&cfg),    c.credit_curve);
         assert_eq!(*config::proj_descent_curve(&cfg),   c.descent_curve);
         assert_eq!(*config::proj_price_function_state(&cfg), c.price_function_state);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── §7.3 Explicit field pins (R1–R8) ─────────────────────────────────────────

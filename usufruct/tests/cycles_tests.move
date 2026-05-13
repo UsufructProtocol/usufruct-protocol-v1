@@ -55,14 +55,10 @@ fun total_price_table() {
         // minimal price
         TotalPriceCase { floor_mist: 1, n: 7, expected: 7 },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let result = monetary::price_mist(cycles::total_price(monetary::price(c.floor_mist), cycles::cycles(c.n)));
         assert_eq!(result, c.expected);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── cycles_count extractor ───────────────────────────────────────────────────

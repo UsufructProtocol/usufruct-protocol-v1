@@ -112,13 +112,9 @@ fun countdown_floor_lt_table() {
         CountdownFloorLtCase { policy: handover_policy_state::new_handover_random_in_range(phases::duration(10), phases::duration(99)), ceiling: 100, expected: true  },
         CountdownFloorLtCase { policy: handover_policy_state::new_handover_random_in_range(phases::duration(10), phases::duration(100)), ceiling: 100, expected: false },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         assert_eq!(handover_policy_state::countdown_floor_lt(&c.policy, phases::duration(c.ceiling)), c.expected);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── has_expired — takes resolved_floor: Duration ────────────────────────────
@@ -160,10 +156,7 @@ fun has_expired_table() {
         HasExpiredCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, now: 149, expected: false },
         HasExpiredCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, now: 150, expected: true  },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         assert_eq!(
             handover_policy_state::has_expired(
                 phases::duration(c.resolved_floor),
@@ -174,8 +167,7 @@ fun has_expired_table() {
             ).is_crossed(),
             c.expected,
         );
-        i = i + 1;
-    };
+    });
 }
 
 // ─── expiry_at ────────────────────────────────────────────────────────────────
@@ -208,10 +200,7 @@ fun expiry_at_table() {
         // Countdown equality: min(150, 150) = 150
         ExpiryAtCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, expected: 150 },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         assert_eq!(
             phases::timestamp_ms(handover_policy_state::expiry_at(
                 phases::duration(c.resolved_floor),
@@ -221,8 +210,7 @@ fun expiry_at_table() {
             )),
             c.expected,
         );
-        i = i + 1;
-    };
+    });
 }
 
 // ─── sister identity: has_expired ⇔ now >= expiry_at ─────────────────────────
@@ -259,10 +247,7 @@ fun has_expired_iff_now_ge_expiry_at() {
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, now: 149 },
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, now: 150 },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let bool_view = handover_policy_state::has_expired(
             phases::duration(c.resolved_floor),
             phases::duration(c.resolved_ceiling),
@@ -277,8 +262,7 @@ fun has_expired_iff_now_ge_expiry_at() {
             phases::timestamp(c.phase_start),
         ));
         assert_eq!(bool_view, u64_view);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── monotonicity ─────────────────────────────────────────────────────────────

@@ -20,14 +20,10 @@ fun new_fixed_delta_success() {
         FixedDeltaSuccessCase { delta: 1                              }, // minimum valid
         FixedDeltaSuccessCase { delta: 18_446_744_073_709_551_615     }, // u64::MAX
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let pf = price_function_state::new_fixed_delta(monetary::price(case.delta));
         assert_eq!(price_function_state::fixed_delta_fields_for_testing(&pf), case.delta);
-        i = i + 1;
-    };
+    });
 }
 
 #[test_only]
@@ -44,16 +40,12 @@ fun new_compound_delta_success() {
         CompoundDeltaSuccessCase { bps: bpu,                        delta: 1 }, // 100% bps — inside bounds
         CompoundDeltaSuccessCase { bps: 18_446_744_073_709_541_615, delta: 1 }, // u64::MAX - BPS_PER_UNIT
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let pf = price_function_state::new_compound_delta(math::bps(case.bps), monetary::price(case.delta));
         let (stored_bps, stored_delta) = price_function_state::compound_delta_fields_for_testing(&pf);
         assert_eq!(stored_bps,   case.bps);
         assert_eq!(stored_delta, case.delta);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── §5.0.2 Constructor abort ──────────────────────────────────────────────
@@ -105,15 +97,11 @@ fun eval_fixed_delta_golden_vectors_and_strict_increase() {
         FixedDeltaCase { price: 18_446_744_073_709_551_614, delta: 1,             result: 18_446_744_073_709_551_615 }, // u64::MAX-1 boundary
         FixedDeltaCase { price: 18_446_744_073_709_551_613, delta: 1,             result: 18_446_744_073_709_551_614 }, // F: (u64::MAX-2, 1)
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let r = price_function_state::eval_fixed_delta_for_testing(case.price, case.delta);
         assert_eq!(r, case.result);
         assert!(r > case.price, 0); // strict increase: delta > 0 by construction
-        i = i + 1;
-    };
+    });
 }
 
 #[test, expected_failure(abort_code = monetary::EPriceAddOverflow, location = usufruct::monetary)]
@@ -151,16 +139,12 @@ fun eval_compound_delta_golden_vectors() {
         CompoundDeltaCase { price: 20_000,         bps: 1,      delta: 1,             result: 20_003         }, // above threshold: pct +2, +delta
         CompoundDeltaCase { price: 1_000_000_000,  bps: 1,      delta: 1,             result: 1_000_100_001  }, // full 0.01% contribution
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let r = price_function_state::eval_compound_delta_for_testing(
             case.price, case.bps, case.delta,
         );
         assert_eq!(r, case.result);
-        i = i + 1;
-    };
+    });
 }
 
 #[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
@@ -201,16 +185,12 @@ fun eval_compound_delta_pct_floor_threshold_seed_set_c() {
         ThresholdCase { bps: 500,   threshold: 20     },
         ThresholdCase { bps: 1_000, threshold: 10     },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let below = price_function_state::eval_compound_delta_for_testing(case.threshold - 1, case.bps, 1);
         assert_eq!(below, case.threshold); // (threshold-1) + delta=1 = threshold; pct = 0
         let at = price_function_state::eval_compound_delta_for_testing(case.threshold, case.bps, 1);
         assert!(at >= case.threshold + 1, 0); // pct contributes >= 1 at threshold
-        i = i + 1;
-    };
+    });
 }
 
 // Property: strict increase — seed set C'.
@@ -230,16 +210,12 @@ fun eval_compound_delta_strict_increase_seed_set_c_prime() {
         CompoundStrictIncCase { price: 1_000_000_000, bps: 1,  delta: 1_000_000_000 },
         CompoundStrictIncCase { price: 0,           bps: 500, delta: 1             },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let r = price_function_state::eval_compound_delta_for_testing(
             case.price, case.bps, case.delta,
         );
         assert!(r > case.price, 0);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── §5.3 evaluate_price_fn ────────────────────────────────────────────────

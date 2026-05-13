@@ -103,6 +103,10 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     let in_at_dutch = state_id == STATE_AT_DUTCH;
     let in_waiting_with_resolved = state_id == STATE_IDLE || state_id == STATE_AT_DUTCH;
 
+    // — Static identity — asset_id traverses both Waiting and Renting branches
+    //   of proj_asset_id (asset_id_for_tenancy in Renting) —
+    let _ = escrow::asset_id(escrow);
+
     // — Discriminators —
     assert_eq!(escrow::is_idle(escrow),             state_id == STATE_IDLE);
     assert_eq!(escrow::is_at_dutch_auction(escrow), state_id == STATE_AT_DUTCH);

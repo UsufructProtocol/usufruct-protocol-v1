@@ -329,10 +329,6 @@ public(package) fun proj_integrated_at<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Timestamp { e.envelope.integrated_at }
 
-public(package) fun proj_escrow_id<Asset: key + store, CoinType>(
-    e: &AssetContext<Asset, CoinType>,
-): ID { escrow_identity::escrow_id(e.envelope.escrow_identity) }
-
 public(package) fun proj_pending_config<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<IntegrationConfig> { e.envelope.pending_config }

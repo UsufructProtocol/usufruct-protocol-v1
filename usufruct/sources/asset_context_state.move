@@ -454,11 +454,8 @@ public(package) fun proj_pending_cap_id<Asset: key + store, CoinType>(
     e: &AssetContext<Asset, CoinType>,
 ): Option<ID> {
     match (&e.asset_state) {
-        AssetState::Renting { tenancy } => {
-            let opt = pending_cap_identity_for_tenancy(tenancy);
-            if (opt.is_some()) option::some(tenant_cap::cap_id(*opt.borrow()))
-            else option::none()
-        },
+        AssetState::Renting { tenancy } =>
+            pending_cap_identity_for_tenancy(tenancy).map!(|v| tenant_cap::cap_id(v)),
         _ => option::none(),
     }
 }
@@ -1799,10 +1796,9 @@ fun fire<Asset: key + store, CoinType>(
         },
         AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, .. } } }, owner, mut envelope } => {
             if (envelope.pending_config.is_some()) {
-                let new_cfg = envelope.pending_config.destroy_some();
+                let new_cfg = envelope.pending_config.extract();
                 event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), new_config: new_cfg });
                 envelope.config = new_cfg;
-                envelope.pending_config = option::none();
             };
             let mut generator = sui::random::new_generator(random, ctx);
             let new_state = do_auction_expiry(asset, last_acq_price, phase_start, &envelope.config, envelope.escrow_identity, boundary, &mut generator);

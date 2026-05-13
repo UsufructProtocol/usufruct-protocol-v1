@@ -137,7 +137,7 @@ public fun claim_asset<Asset: key + store, CoinType>(
     let (asset, earnings) = asset_context_state::execute_claim(context, &owner_cap, random, clock, ctx);
     let swept_earnings    = coin::value(&earnings);
     owner_cap::burn(owner_cap, owner_addr);
-    object::delete(id);
+    id.delete();
 
     event::emit(AssetClaimed {
         escrow_id, owner_cap_id, owner: owner_addr, swept_earnings,

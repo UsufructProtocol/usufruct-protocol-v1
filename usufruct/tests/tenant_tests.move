@@ -73,8 +73,7 @@ fun destroy_empty_stake_ok_on_zero() {
     tenant::destroy_empty_stake(stake);
 }
 
-#[test]
-#[expected_failure]
+#[test, expected_failure]
 fun destroy_empty_stake_aborts_on_nonzero() {
     let t = t1();
     let (_id, stake) = tenant::unbundle(t);
@@ -104,8 +103,7 @@ fun take_fee_share_zero_returns_zero_share_unchanged_stake() {
     tenant::destroy_for_testing(t);
 }
 
-#[test]
-#[expected_failure]
+#[test, expected_failure]
 fun take_fee_share_more_than_stake_aborts() {
     let mut t = t1();
     let share = tenant::take_fee_share(&mut t, monetary::stake(STAKE_T1 + 1), escrow_identity::new(fake_escrow_id()));

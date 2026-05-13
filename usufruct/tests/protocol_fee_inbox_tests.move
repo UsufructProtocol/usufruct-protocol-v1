@@ -40,8 +40,7 @@ fun i1_deployer_receives_exactly_one_inbox() {
     scenario.end();
 }
 
-#[test]
-#[expected_failure]
+#[test, expected_failure]
 fun i2_no_second_inbox_for_deployer() {
     let mut scenario = setup();
     scenario.next_tx(DEPLOYER);
@@ -137,8 +136,7 @@ fun b1_frozen_fee_ref_readable_by_anyone() {
     scenario.end();
 }
 
-#[test]
-#[expected_failure]
+#[test, expected_failure]
 fun b2_fee_ref_not_owned_by_deployer() {
     let mut scenario = setup();
     scenario.next_tx(DEPLOYER);
@@ -150,8 +148,7 @@ fun b2_fee_ref_not_owned_by_deployer() {
     scenario.end();
 }
 
-#[test]
-#[expected_failure]
+#[test, expected_failure]
 fun b3_fee_ref_not_shared() {
     let mut scenario = setup();
     scenario.next_tx(DEPLOYER);
@@ -181,8 +178,7 @@ fun t1_deployer_can_transfer_inbox_to_alice() {
     scenario.end();
 }
 
-#[test]
-#[expected_failure]
+#[test, expected_failure]
 fun t2_after_transfer_deployer_cannot_take_inbox() {
     let mut scenario = setup();
     scenario.next_tx(DEPLOYER);

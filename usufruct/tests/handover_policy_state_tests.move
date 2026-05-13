@@ -10,26 +10,22 @@ use usufruct::phases;
 
 // ─── constructors — abort guards ──────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = handover_policy_state::EHandoverFloorZero, location = usufruct::handover_policy_state)]
+#[test, expected_failure(abort_code = handover_policy_state::EHandoverFloorZero, location = usufruct::handover_policy_state)]
 fun new_handover_countdown_rejects_zero() {
     handover_policy_state::new_handover_countdown(phases::duration(0));
 }
 
-#[test]
-#[expected_failure(abort_code = handover_policy_state::EHandoverFloorZero, location = usufruct::handover_policy_state)]
+#[test, expected_failure(abort_code = handover_policy_state::EHandoverFloorZero, location = usufruct::handover_policy_state)]
 fun new_handover_random_in_range_rejects_zero_min() {
     handover_policy_state::new_handover_random_in_range(phases::duration(0), phases::duration(100));
 }
 
-#[test]
-#[expected_failure(abort_code = handover_policy_state::EMinNotLtMax, location = usufruct::handover_policy_state)]
+#[test, expected_failure(abort_code = handover_policy_state::EMinNotLtMax, location = usufruct::handover_policy_state)]
 fun new_handover_random_in_range_rejects_min_eq_max() {
     handover_policy_state::new_handover_random_in_range(phases::duration(50), phases::duration(50));
 }
 
-#[test]
-#[expected_failure(abort_code = handover_policy_state::EMinNotLtMax, location = usufruct::handover_policy_state)]
+#[test, expected_failure(abort_code = handover_policy_state::EMinNotLtMax, location = usufruct::handover_policy_state)]
 fun new_handover_random_in_range_rejects_min_gt_max() {
     handover_policy_state::new_handover_random_in_range(phases::duration(100), phases::duration(50));
 }

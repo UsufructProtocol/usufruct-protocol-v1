@@ -69,8 +69,7 @@ fun has_passed_table_and_monotone_in_now() {
     };
 }
 
-#[test]
-#[expected_failure(arithmetic_error, location = usufruct::phases)]
+#[test, expected_failure(arithmetic_error, location = usufruct::phases)]
 fun has_passed_overflow_in_anchor_plus_duration_aborts() {
     // anchor + duration overflows u64 → Move aborts arithmetic.
     phases::check_boundary(
@@ -161,8 +160,7 @@ fun boundary_at_table() {
     };
 }
 
-#[test]
-#[expected_failure(arithmetic_error, location = usufruct::phases)]
+#[test, expected_failure(arithmetic_error, location = usufruct::phases)]
 fun boundary_at_overflow_aborts() {
     // u64::MAX + 1 overflows. Pinned: Move's `+` aborts on overflow rather
     // than wrapping; this is the contract `boundary_at` inherits.

@@ -12,8 +12,7 @@ const E_COMMITMENT_FLOOR_ZERO: u64 = 0; // mirrors commitment_policy_state::ECom
 
 // ─── new_deferred — abort ──────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = E_COMMITMENT_FLOOR_ZERO, location = usufruct::commitment_policy_state)]
+#[test, expected_failure(abort_code = E_COMMITMENT_FLOOR_ZERO, location = usufruct::commitment_policy_state)]
 fun new_deferred_rejects_zero() {
     // Deferred(0) is not allowed; the zero-floor mode is Immediate.
     commitment_policy_state::new_deferred(phases::duration(0));

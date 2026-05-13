@@ -58,33 +58,28 @@ fun new_compound_delta_success() {
 
 // ─── §5.0.2 Constructor abort ──────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = price_function_state::EDeltaZero, location = usufruct::price_function_state)]
+#[test, expected_failure(abort_code = price_function_state::EDeltaZero, location = usufruct::price_function_state)]
 fun new_fixed_delta_delta_zero_aborts() {
     price_function_state::new_fixed_delta(monetary::price(0));
 }
 
-#[test]
-#[expected_failure(abort_code = price_function_state::EDeltaZero, location = usufruct::price_function_state)]
+#[test, expected_failure(abort_code = price_function_state::EDeltaZero, location = usufruct::price_function_state)]
 fun new_compound_delta_delta_zero_aborts() {
     price_function_state::new_compound_delta(math::bps(500), monetary::price(0));
 }
 
-#[test]
-#[expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
+#[test, expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
 fun new_compound_delta_bps_zero_aborts() {
     price_function_state::new_compound_delta(math::bps(0), monetary::price(1));
 }
 
-#[test]
-#[expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
+#[test, expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
 fun new_compound_delta_bps_one_above_upper_bound_aborts() {
     // u64::MAX - BPS_PER_UNIT + 1 = 18_446_744_073_709_541_616 — smallest value that overflows
     price_function_state::new_compound_delta(math::bps(18_446_744_073_709_541_616), monetary::price(1));
 }
 
-#[test]
-#[expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
+#[test, expected_failure(abort_code = price_function_state::EBpsRange, location = usufruct::price_function_state)]
 fun new_compound_delta_bps_max_aborts() {
     price_function_state::new_compound_delta(math::bps(18_446_744_073_709_551_615), monetary::price(1)); // u64::MAX saturated
 }
@@ -121,14 +116,12 @@ fun eval_fixed_delta_golden_vectors_and_strict_increase() {
     };
 }
 
-#[test]
-#[expected_failure(abort_code = monetary::EPriceAddOverflow, location = usufruct::monetary)]
+#[test, expected_failure(abort_code = monetary::EPriceAddOverflow, location = usufruct::monetary)]
 fun eval_fixed_delta_overflow_max_plus_one_aborts() {
     price_function_state::eval_fixed_delta_for_testing(18_446_744_073_709_551_615, 1); // u64::MAX + 1
 }
 
-#[test]
-#[expected_failure(abort_code = monetary::EPriceAddOverflow, location = usufruct::monetary)]
+#[test, expected_failure(abort_code = monetary::EPriceAddOverflow, location = usufruct::monetary)]
 fun eval_fixed_delta_overflow_half_each_aborts() {
     // (u64::MAX/2 + 1) + (u64::MAX/2 + 1) = u64::MAX + 1
     price_function_state::eval_fixed_delta_for_testing(9_223_372_036_854_775_808, 9_223_372_036_854_775_808);
@@ -170,22 +163,19 @@ fun eval_compound_delta_golden_vectors() {
     };
 }
 
-#[test]
-#[expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
+#[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun eval_compound_delta_overflow_mul_div_max_aborts() {
     // mul_div(u64::MAX, 10_001, 10_000) > u64::MAX — math layer aborts
     price_function_state::eval_compound_delta_for_testing(18_446_744_073_709_551_615, 1, 1);
 }
 
-#[test]
-#[expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
+#[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun eval_compound_delta_overflow_mul_div_double_aborts() {
     // mul_div(u64::MAX-1, 20_000, 10_000) = 2*(u64::MAX-1) — overflows u64
     price_function_state::eval_compound_delta_for_testing(18_446_744_073_709_551_614, 10_000, 1);
 }
 
-#[test]
-#[expected_failure(arithmetic_error, location = usufruct::price_function_state)]
+#[test, expected_failure(arithmetic_error, location = usufruct::price_function_state)]
 fun eval_compound_delta_overflow_add_delta_aborts() {
     // pct result (~u64::MAX/2) fits u64; delta = u64::MAX fits u64; their sum overflows
     price_function_state::eval_compound_delta_for_testing(9_223_372_036_854_775_807, 1, 18_446_744_073_709_551_615);

@@ -132,8 +132,7 @@ fun withdraw_on_empty_earnings_returns_zero_coin() {
 
 // ─── §4. withdraw — abort path ────────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = owner::E_OWNER_WRONG_CAP, location = usufruct::owner)]
+#[test, expected_failure(abort_code = owner::E_OWNER_WRONG_CAP, location = usufruct::owner)]
 fun withdraw_with_wrong_cap_aborts() {
     let mut sc = test_scenario::begin(OWNER_ADDR);
     sc.next_tx(OWNER_ADDR);
@@ -184,8 +183,7 @@ fun destroy_empty_ok_after_full_withdraw() {
     sc.end();
 }
 
-#[test]
-#[expected_failure]
+#[test, expected_failure]
 fun destroy_empty_aborts_on_nonzero() {
     let mut sc = test_scenario::begin(OWNER_ADDR);
     sc.next_tx(OWNER_ADDR);

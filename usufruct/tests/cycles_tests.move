@@ -12,8 +12,7 @@ use usufruct::{
 
 // ─── cycles() — abort ─────────────────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = cycles::ECyclesZero, location = usufruct::cycles)]
+#[test, expected_failure(abort_code = cycles::ECyclesZero, location = usufruct::cycles)]
 fun cycles_zero_aborts() {
     cycles::cycles(0);
 }

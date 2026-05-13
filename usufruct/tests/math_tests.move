@@ -56,33 +56,28 @@ fun mul_div_table() {
     };
 }
 
-#[test]
-#[expected_failure(arithmetic_error, location = usufruct::math)]
+#[test, expected_failure(arithmetic_error, location = usufruct::math)]
 fun mul_div_c_zero_aborts() {
     math::mul_div(1, 1, 0);
 }
 
-#[test]
-#[expected_failure(arithmetic_error, location = usufruct::math)]
+#[test, expected_failure(arithmetic_error, location = usufruct::math)]
 fun mul_div_all_zero_aborts() {
     math::mul_div(0, 0, 0);
 }
 
-#[test]
-#[expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
+#[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun mul_div_overflow_max_times_2() {
     math::mul_div(u64::max_value!(), 2, 1);
 }
 
-#[test]
-#[expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
+#[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun mul_div_overflow_exact_u64_boundary() {
     // 2^32 * 2^32 = 2^64 = u64::MAX + 1
     math::mul_div(4294967296, 4294967296, 1);
 }
 
-#[test]
-#[expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
+#[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun mul_div_overflow_max_times_max() {
     math::mul_div(u64::max_value!(), u64::max_value!(), 1);
 }
@@ -145,14 +140,12 @@ fun nth_root_u128_table() {
     };
 }
 
-#[test]
-#[expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
+#[test, expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
 fun nth_root_u128_rejects_degree_above_4() {
     math::nth_root_u128(100, 5);
 }
 
-#[test]
-#[expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
+#[test, expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
 fun nth_root_u128_rejects_degree_below_2() {
     math::nth_root_u128(100, 1);
 }

@@ -339,8 +339,7 @@ fun getter_roundtrip_r7_price_function_state_compound_delta() {
 
 // ─── §7.2 — Invalid inputs (one function each) ────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
 fun new_config_rejects_min_rent_price_zero() {
     // Validation moved to FloorPricePolicyState constructor; new_fixed(0) aborts before new_config.
     config::new_config(
@@ -351,8 +350,7 @@ fun new_config_rejects_min_rent_price_zero() {
     );
 }
 
-#[test]
-#[expected_failure(abort_code = 0, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = 0, location = usufruct::tenure_policy_state)]
 fun new_config_rejects_tenure_ceiling_zero() {
     config::new_config(
         floor_price_policy_state::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
@@ -364,8 +362,7 @@ fun new_config_rejects_tenure_ceiling_zero() {
     );
 }
 
-#[test]
-#[expected_failure(abort_code = config::EHandoverFloorExceedsTenure, location = usufruct::config)]
+#[test, expected_failure(abort_code = config::EHandoverFloorExceedsTenure, location = usufruct::config)]
 fun new_config_rejects_countdown_floor_gt_tenure_ceiling() {
     // I3: Countdown(100) with tenure_ceiling=50
     config::new_config(
@@ -379,8 +376,7 @@ fun new_config_rejects_countdown_floor_gt_tenure_ceiling() {
     );
 }
 
-#[test]
-#[expected_failure(abort_code = config::EHandoverFloorExceedsTenure, location = usufruct::config)]
+#[test, expected_failure(abort_code = config::EHandoverFloorExceedsTenure, location = usufruct::config)]
 fun new_config_rejects_countdown_floor_tenure_ceiling_plus_one() {
     // I4: smallest strictly-greater case — guards off-by-one on the < check
     config::new_config(
@@ -394,8 +390,7 @@ fun new_config_rejects_countdown_floor_tenure_ceiling_plus_one() {
     );
 }
 
-#[test]
-#[expected_failure(abort_code = config::EHandoverFloorExceedsTenure, location = usufruct::config)]
+#[test, expected_failure(abort_code = config::EHandoverFloorExceedsTenure, location = usufruct::config)]
 fun new_config_rejects_countdown_floor_u64_max_tenure_ceiling_max_minus_one() {
     // I5: u64-saturated boundary; confirms plain unsigned compare (no arithmetic overflow)
     config::new_config(
@@ -409,8 +404,7 @@ fun new_config_rejects_countdown_floor_u64_max_tenure_ceiling_max_minus_one() {
     );
 }
 
-#[test]
-#[expected_failure(abort_code = config::EHandoverFloorExceedsTenure, location = usufruct::config)]
+#[test, expected_failure(abort_code = config::EHandoverFloorExceedsTenure, location = usufruct::config)]
 fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
     // I6: equality with tenure_ceiling is FixedTime, not the upper edge of Countdown.
     // Constructor accepts Countdown(1_000) but new_config rejects when paired with

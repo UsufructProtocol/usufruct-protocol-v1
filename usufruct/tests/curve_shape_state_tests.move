@@ -57,50 +57,42 @@ fun new_exponential_lower_and_upper_bounds_succeed() {
 
 // ─── Constructors — abort ──────────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaNumRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaNumRange, location = usufruct::curve_shape_state)]
 fun new_power_law_alpha_num_zero_aborts() {
     let _ = curve_shape_state::new_power_law(0, 2);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaNumRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaNumRange, location = usufruct::curve_shape_state)]
 fun new_power_law_alpha_num_above_8_aborts() {
     let _ = curve_shape_state::new_power_law(9, 2);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaDenRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaDenRange, location = usufruct::curve_shape_state)]
 fun new_power_law_alpha_den_zero_aborts() {
     let _ = curve_shape_state::new_power_law(3, 0);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaDenRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaDenRange, location = usufruct::curve_shape_state)]
 fun new_power_law_alpha_den_above_4_aborts() {
     let _ = curve_shape_state::new_power_law(3, 5);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EDegenerateLinear, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EDegenerateLinear, location = usufruct::curve_shape_state)]
 fun new_power_law_degenerate_2_2_aborts() {
     let _ = curve_shape_state::new_power_law(2, 2);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EDegenerateLinear, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EDegenerateLinear, location = usufruct::curve_shape_state)]
 fun new_power_law_degenerate_4_4_aborts() {
     let _ = curve_shape_state::new_power_law(4, 4);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaAbsRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaAbsRange, location = usufruct::curve_shape_state)]
 fun new_exponential_alpha_abs_zero_aborts() {
     let _ = curve_shape_state::new_exponential(0, false);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaAbsRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaAbsRange, location = usufruct::curve_shape_state)]
 fun new_exponential_alpha_abs_above_8_aborts() {
     let _ = curve_shape_state::new_exponential(9, true);
 }

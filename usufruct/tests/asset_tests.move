@@ -93,8 +93,7 @@ fun put_with_authentic_receipt_restores_availability() {
 
 // Cross-escrow: forge a receipt that claims to come from escrow Y;
 // presented to a wrapper bound to escrow X. Aborts on E_ASSET_WRONG_ESCROW.
-#[test]
-#[expected_failure(abort_code = asset::E_ASSET_WRONG_ESCROW, location = usufruct::asset)]
+#[test, expected_failure(abort_code = asset::E_ASSET_WRONG_ESCROW, location = usufruct::asset)]
 fun put_with_receipt_from_wrong_escrow_aborts() {
     let mut sc = test_scenario::begin(@0xA);
     sc.next_tx(@0xA);
@@ -117,8 +116,7 @@ fun put_with_receipt_from_wrong_escrow_aborts() {
 // Receipt-asset-id mismatch: the receipt claims a different asset_id
 // than the wrapper's. Within a single wrapper this can only happen
 // via a forged or swapped receipt. Aborts on E_ASSET_RECEIPT_MISMATCH.
-#[test]
-#[expected_failure(abort_code = asset::E_ASSET_RECEIPT_MISMATCH, location = usufruct::asset)]
+#[test, expected_failure(abort_code = asset::E_ASSET_RECEIPT_MISMATCH, location = usufruct::asset)]
 fun put_with_receipt_carrying_wrong_asset_id_aborts() {
     let mut sc = test_scenario::begin(@0xA);
     sc.next_tx(@0xA);
@@ -141,8 +139,7 @@ fun put_with_receipt_carrying_wrong_asset_id_aborts() {
 
 // Asset-swap: the wrapper and receipt agree on ids, but the returned
 // `U` is a different physical object. Aborts on E_ASSET_RETURNED_DIFFERENT.
-#[test]
-#[expected_failure(abort_code = asset::E_ASSET_RETURNED_DIFFERENT, location = usufruct::asset)]
+#[test, expected_failure(abort_code = asset::E_ASSET_RETURNED_DIFFERENT, location = usufruct::asset)]
 fun put_with_swapped_asset_aborts() {
     let mut sc = test_scenario::begin(@0xA);
     sc.next_tx(@0xA);
@@ -178,8 +175,7 @@ fun unbundle_when_available_returns_inner_u() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset::E_ASSET_NOT_AVAILABLE, location = usufruct::asset)]
+#[test, expected_failure(abort_code = asset::E_ASSET_NOT_AVAILABLE, location = usufruct::asset)]
 fun unbundle_when_unavailable_aborts() {
     let mut sc = test_scenario::begin(@0xA);
     sc.next_tx(@0xA);

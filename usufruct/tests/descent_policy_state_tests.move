@@ -10,8 +10,7 @@ use usufruct::phases;
 
 // ─── new_descent_window — abort ───────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
 fun new_descent_window_rejects_zero() {
     // Window(0) is not allowed; the zero-ceiling mode is Skipped.
     descent_policy_state::new_descent_window(phases::duration(0));
@@ -107,8 +106,7 @@ fun window_ceiling_returns_ceiling_for_window() {
     };
 }
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EDescentSkippedNoWindow, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EDescentSkippedNoWindow, location = usufruct::descent_policy_state)]
 fun window_ceiling_aborts_on_skipped() {
     // window_ceiling on Skipped is unreachable in production
     // (compute_price_descent only fires from AtDutchAuction, structurally
@@ -164,20 +162,17 @@ fun has_expired_iff_now_ge_expiry_at() {
 
 // ─── RandomInRange — constructors ─────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
 fun new_descent_random_in_range_rejects_zero_min() {
     descent_policy_state::new_descent_random_in_range(phases::duration(0), phases::duration(100));
 }
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
 fun new_descent_random_in_range_rejects_min_eq_max() {
     descent_policy_state::new_descent_random_in_range(phases::duration(50), phases::duration(50));
 }
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
 fun new_descent_random_in_range_rejects_min_gt_max() {
     descent_policy_state::new_descent_random_in_range(phases::duration(100), phases::duration(50));
 }

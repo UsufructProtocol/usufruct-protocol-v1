@@ -167,25 +167,6 @@ public struct TenureExpiryResult<Asset: key + store> {
     resolved_handover: Duration,
 }
 
-/// Result of do_apt_transition. Co-resident with fire — matched directly
-/// via nested struct pattern, no accessor functions needed.
-public enum RentingFireResultState<Asset: key + store, phantom CoinType> {
-    /// Demand → Occupied handover completed; tenancy stays active.
-    Handover {
-        tenancy: TenancyContext<Asset, CoinType>,
-    },
-    /// Occupied tenure expired; caller decides AtDutch vs Retired.
-    /// The asset is already in `Locked` custody — no `unlock` step at the call site.
-    TenureExpired {
-        asset:             asset::AssetCustodyLocked<Asset>,
-        last_acq_price:    Price,
-        resolved_floor:    Price,
-        resolved_ceiling:  Duration,
-        resolved_handover: Duration,
-        retire:            RetireCondition,
-    },
-}
-
 /// Context envelope: everything the lifecycle FSM carries that is not the
 /// state itself nor the earnings ledger.
 ///
@@ -286,6 +267,31 @@ public enum AssetContextDispatch<Asset: key + store, phantom CoinType> {
 public enum RentingDispatch<Asset: key + store, phantom CoinType> {
     Occupied { ctx: OccupiedContext<Asset, CoinType> },
     Demand   { ctx: DemandContext<Asset, CoinType> },
+}
+
+/// Narrow sub-dispatch for the states that can fire an APT transition:
+/// AtDutch (auction expiry → Idle), Occupied (tenure expiry → AtDutch or
+/// Retired), Demand (handover → Occupied). Idle and Retired never have
+/// pending transitions — `next_apt_step` reflects this by never producing
+/// a FirableDispatch from them, so the `fire` function cannot be called
+/// with a non-firable state. No abort arm for the impossible-by-design.
+public enum FirableDispatch<Asset: key + store, phantom CoinType> {
+    AtDutch  { ctx: AtDutchContext<Asset, CoinType> },
+    Occupied { ctx: OccupiedContext<Asset, CoinType> },
+    Demand   { ctx: DemandContext<Asset, CoinType> },
+}
+
+/// Result of inspecting an AssetContextDispatch for a due APT transition.
+/// `Settled` carries the dispatch back unchanged (no transition is due);
+/// `Pending` carries a `FirableDispatch` + the transition to fire. The
+/// hot-potato discipline guarantees the caller must consume exactly one
+/// branch — there is no path where the dispatch silently disappears.
+public enum AptStep<Asset: key + store, phantom CoinType> {
+    Settled { d: AssetContextDispatch<Asset, CoinType> },
+    Pending {
+        firable:    FirableDispatch<Asset, CoinType>,
+        transition: PendingTransitionState,
+    },
 }
 
 // === Events ===
@@ -870,42 +876,115 @@ public(package) fun cap_authorization_state<Asset: key + store, CoinType>(
 
 // ─── APT and pending detection ────────────────────────────────────────────────
 
+/// Read-only peek over the legacy `AssetContext` form. Kept for the
+/// public SDK view in `escrow.move` (`escrow::next_pending`), which only
+/// borrows the escrow and never consumes its context. The APT loop uses
+/// the consuming `next_apt_step` instead — it needs to physically move
+/// the dispatch into `fire`.
 public(package) fun next_pending<Asset: key + store, CoinType>(
     e:     &AssetContext<Asset, CoinType>,
     clock: &Clock,
 ): Option<PendingTransitionState> {
     let now = phases::now(clock);
     match (&e.asset_state) {
-        AssetState::Renting { tenancy } =>
-            next_pending_from_tenancy(tenancy, now),
+        AssetState::Renting { tenancy } => match (&tenancy.state) {
+            TenancyState::Demand { handover_expiry, .. } => {
+                if (phases::check_boundary(*handover_expiry, phases::zero(), now).is_crossed()) {
+                    option::some(pending_transition_state::handover(*handover_expiry))
+                } else {
+                    option::none()
+                }
+            },
+            TenancyState::Occupied { .. } => {
+                let start   = tenancy.envelope.phase_start;
+                let ceiling = tenancy.envelope.resolved_ceiling;
+                if (phases::check_boundary(start, ceiling, now).is_crossed()) {
+                    option::some(pending_transition_state::tenure(phases::boundary_at(start, ceiling)))
+                } else {
+                    option::none()
+                }
+            },
+        },
         AssetState::Waiting { waiting } => match (&waiting.state) {
             WaitingState::AtDutch { phase_start, resolved_descent, .. } => {
                 let start = *phase_start;
                 if (descent_policy_state::has_expired(*resolved_descent, start, now).is_crossed()) {
-                    return option::some(
-                        pending_transition_state::auction(descent_policy_state::expiry_at(*resolved_descent, start))
-                    )
-                };
-                option::none()
+                    option::some(pending_transition_state::auction(descent_policy_state::expiry_at(*resolved_descent, start)))
+                } else {
+                    option::none()
+                }
             },
             WaitingState::Idle { .. } | WaitingState::Retired => option::none(),
         },
     }
 }
 
+/// Inspect a dispatch and produce an APT step: either `Settled` (no
+/// transition due — caller keeps the dispatch unchanged) or `Pending`
+/// (transition due — caller proceeds to `fire`, getting a typed
+/// `FirableDispatch` it cannot misuse on a non-firable state).
+///
+/// Idle and Retired always settle. AtDutch / Occupied / Demand settle
+/// when their boundary has not been crossed yet, and otherwise transfer
+/// into the Pending branch with a FirableDispatch of the same variant.
+public(package) fun next_apt_step<Asset: key + store, CoinType>(
+    d:     AssetContextDispatch<Asset, CoinType>,
+    clock: &Clock,
+): AptStep<Asset, CoinType> {
+    let now = phases::now(clock);
+    match (d) {
+        AssetContextDispatch::Idle { ctx } =>
+            AptStep::Settled { d: AssetContextDispatch::Idle { ctx } },
+        AssetContextDispatch::Retired { ctx } =>
+            AptStep::Settled { d: AssetContextDispatch::Retired { ctx } },
+        AssetContextDispatch::AtDutch { ctx: atd } => {
+            if (descent_policy_state::has_expired(atd.resolved_descent, atd.phase_start, now).is_crossed()) {
+                let transition = pending_transition_state::auction(descent_policy_state::expiry_at(atd.resolved_descent, atd.phase_start));
+                AptStep::Pending { firable: FirableDispatch::AtDutch { ctx: atd }, transition }
+            } else {
+                AptStep::Settled { d: AssetContextDispatch::AtDutch { ctx: atd } }
+            }
+        },
+        AssetContextDispatch::Occupied { ctx: occ } => {
+            let start   = occ.envelope.phase_start;
+            let ceiling = occ.envelope.resolved_ceiling;
+            if (phases::check_boundary(start, ceiling, now).is_crossed()) {
+                let transition = pending_transition_state::tenure(phases::boundary_at(start, ceiling));
+                AptStep::Pending { firable: FirableDispatch::Occupied { ctx: occ }, transition }
+            } else {
+                AptStep::Settled { d: AssetContextDispatch::Occupied { ctx: occ } }
+            }
+        },
+        AssetContextDispatch::Demand { ctx: dem } => {
+            if (phases::check_boundary(dem.handover_expiry, phases::zero(), now).is_crossed()) {
+                let transition = pending_transition_state::handover(dem.handover_expiry);
+                AptStep::Pending { firable: FirableDispatch::Demand { ctx: dem }, transition }
+            } else {
+                AptStep::Settled { d: AssetContextDispatch::Demand { ctx: dem } }
+            }
+        },
+    }
+}
+
+/// Drain every pending APT transition. Loops `next_apt_step` → `fire`
+/// until a `Settled` step is produced. The dispatch is consumed and
+/// re-produced each iteration.
 public(package) fun apply_pending_transition_states<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
-    random:  &Random,
-    clock:   &Clock,
-    ctx:     &mut TxContext,
-): AssetContext<Asset, CoinType> {
-    let mut current = context;
-    let mut pending = next_pending(&current, clock);
-    while (pending.is_some()) {
-        current = fire(current, pending.destroy_some(), random, ctx);
-        pending = next_pending(&current, clock);
-    };
-    current
+    d:      AssetContextDispatch<Asset, CoinType>,
+    core:   &mut EscrowCoreHandoff<CoinType>,
+    random: &Random,
+    clock:  &Clock,
+    ctx:    &mut TxContext,
+): AssetContextDispatch<Asset, CoinType> {
+    let mut current = d;
+    loop {
+        match (next_apt_step(current, clock)) {
+            AptStep::Settled { d: settled } => return settled,
+            AptStep::Pending { firable, transition } => {
+                current = fire(firable, transition, core, random, ctx);
+            },
+        }
+    }
 }
 
 // ─── Action executors ─────────────────────────────────────────────────────────
@@ -1248,14 +1327,12 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
 }
 
 public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
+    context:   AssetContext<Asset, CoinType>,
     owner_cap: &OwnerCap,
-    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (AssetContext<Asset, CoinType>, Coin<CoinType>) {
     assert!(owner_cap::proj_escrow_identity(owner_cap) == context.envelope.escrow_identity, EWrongEscrowOwnerCap);
-    let context       = apply_pending_transition_states(context, random, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
@@ -1656,82 +1733,24 @@ public(package) fun cap_auth_for_tenancy<Asset: key + store, CoinType>(
     }
 }
 
-// ─── APT pending detection ────────────────────────────────────────────────────
-
-public(package) fun next_pending_from_tenancy<Asset: key + store, CoinType>(
-    t:   &TenancyContext<Asset, CoinType>,
-    now: Timestamp,
-): Option<PendingTransitionState> {
-    match (&t.state) {
-        TenancyState::Demand { handover_expiry, .. } => {
-            if (phases::check_boundary(*handover_expiry, phases::zero(), now).is_crossed()) {
-                return option::some(pending_transition_state::handover(*handover_expiry))
-            };
-            option::none()
-        },
-        TenancyState::Occupied { .. } => {
-            let start   = t.envelope.phase_start;
-            let ceiling = t.envelope.resolved_ceiling;
-            if (phases::check_boundary(start, ceiling, now).is_crossed()) {
-                return option::some(
-                    pending_transition_state::tenure(phases::boundary_at(start, ceiling))
-                )
-            };
-            option::none()
-        },
-    }
-}
-
 // ─── Tenancy-internal transitions ─────────────────────────────────────────────
-
-/// Dispatch the pending APT transition. Match lives here so engine_state::fire
-/// receives a typed result and never inspects TenancyState variant internals.
-/// Owner is mutated in-place; caller (Engine) owns it and passes &mut.
-public(package) fun do_apt_transition<Asset: key + store, CoinType>(
-    tenancy:      TenancyContext<Asset, CoinType>,
-    owner:        &mut Owner<CoinType>,
-    config:       &IntegrationConfig,
-    escrow_identity:    EscrowIdentity,
-    fee_inbox_identity: FeeInboxIdentity,
-    boundary:     Timestamp,
-    ctx:          &mut TxContext,
-): RentingFireResultState<Asset, CoinType> {
-    let TenancyContext { asset, envelope, state } = tenancy;
-    match (state) {
-        TenancyState::Demand { current, pending, bidding_cycles, retire, .. } => {
-            let new_tenancy = do_handover(
-                asset, current, pending, envelope, bidding_cycles,
-                retire,
-                owner, config, escrow_identity, fee_inbox_identity, boundary, ctx,
-            );
-            RentingFireResultState::Handover { tenancy: new_tenancy }
-        },
-        TenancyState::Occupied { current, retire } => {
-            let TenureExpiryResult { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover } = do_tenure_expiry(
-                asset, current, envelope,
-                owner, escrow_identity, fee_inbox_identity, boundary, ctx,
-            );
-            RentingFireResultState::TenureExpired { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retire }
-        },
-    }
-}
 
 /// Demand → Occupied: fire the handover transition at `boundary_ms`.
 /// Distributes used credit to owner; retiring flag propagates to new Occupied.
 fun do_handover<Asset: key + store, CoinType>(
-    asset:           asset::AssetCustodyOpen<Asset>,
-    current:         Tenant<CoinType>,
-    pending:         Tenant<CoinType>,
-    mut envelope:    TenancyEnvelope,
-    bidding_cycles:  Cycles,
-    retire:          RetireCondition,
-    owner:           &mut Owner<CoinType>,
-    config:          &IntegrationConfig,
-    escrow_identity:       EscrowIdentity,
-    fee_inbox_identity:    FeeInboxIdentity,
-    boundary:        Timestamp,
-    ctx:             &mut TxContext,
-): TenancyContext<Asset, CoinType> {
+    asset:              asset::AssetCustodyOpen<Asset>,
+    current:            Tenant<CoinType>,
+    pending:            Tenant<CoinType>,
+    mut envelope:       TenancyEnvelope,
+    bidding_cycles:     Cycles,
+    retire:             RetireCondition,
+    owner:              &mut Owner<CoinType>,
+    config:             &IntegrationConfig,
+    escrow_identity:    EscrowIdentity,
+    fee_inbox_identity: FeeInboxIdentity,
+    boundary:           Timestamp,
+    ctx:                &mut TxContext,
+): OccupiedContext<Asset, CoinType> {
     let principal   = tenant::proj_stake_value(&current);
     let used_credit = {
         let cs = credit_state::capped(principal, envelope.phase_start, boundary);
@@ -1779,8 +1798,7 @@ fun do_handover<Asset: key + store, CoinType>(
     envelope.resolved_handover = cycles::rescale_duration(envelope.resolved_handover, old_cycles, bidding_cycles);
     envelope.committed_cycles  = bidding_cycles;
     envelope.phase_start       = boundary;
-    let state = TenancyState::Occupied { current: pending, retire };
-    TenancyContext { asset, envelope, state }
+    OccupiedContext { asset, envelope, current: pending, retire }
 }
 
 /// Consume an Occupied tenancy at tenure expiry. Distributes full stake to
@@ -2194,45 +2212,62 @@ public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID         
 
 // === Private Functions ===
 
+/// Fire one APT transition. The `FirableDispatch` precondition is encoded
+/// in the type: Idle and Retired cannot reach this function. The output
+/// is a wider `AssetContextDispatch` because the transition may leave
+/// the firable subset (Occupied tenure-expiry → Retired; AtDutch
+/// auction-expiry → Idle).
+///
+/// Each arm dispatches to the action helper directly — no intermediate
+/// enum: the input variant already tells us which transition fires.
 fun fire<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
-    t:       PendingTransitionState,
-    random:  &Random,
-    ctx:     &mut TxContext,
-): AssetContext<Asset, CoinType> {
-    let boundary = pending_transition_state::proj_boundary(&t);
-    match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy }, mut owner, mut envelope } => {
-            match (do_apt_transition(tenancy, &mut owner, &envelope.config, envelope.escrow_identity, envelope.fee_inbox_identity, boundary, ctx)) {
-                RentingFireResultState::Handover { tenancy: new_tenancy } =>
-                    AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, envelope },
-                RentingFireResultState::TenureExpired { asset, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, retire } => {
-                    let boundary_ms = phases::timestamp_ms(boundary);
-                    // P5/P10 boundary crossing: RetireCondition's variants live in
-                    // retire_condition.move, so we project here to branch the asset state.
-                    if (retire_condition::proj_is_retiring(&retire)) {
-                        event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), timestamp_ms: boundary_ms });
-                        envelope.pending_config = option::none();
-                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }, owner, envelope }
-                    } else {
-                        let mut generator    = sui::random::new_generator(random, ctx);
-                        let resolved_descent = descent_policy_state::resolve(config::proj_descent(&envelope.config), &mut generator);
-                        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }, owner, envelope }
-                    }
-                },
+    firable:    FirableDispatch<Asset, CoinType>,
+    transition: PendingTransitionState,
+    core:       &mut EscrowCoreHandoff<CoinType>,
+    random:     &Random,
+    ctx:        &mut TxContext,
+): AssetContextDispatch<Asset, CoinType> {
+    let boundary = pending_transition_state::proj_boundary(&transition);
+    match (firable) {
+        FirableDispatch::Demand { ctx: demand } => {
+            let DemandContext { asset, envelope, current, pending, handover_expiry: _, bidding_cycles, retire } = demand;
+            let new_occ = do_handover(
+                asset, current, pending, envelope, bidding_cycles, retire,
+                &mut core.owner, &core.envelope.config,
+                core.envelope.escrow_identity, core.envelope.fee_inbox_identity,
+                boundary, ctx,
+            );
+            AssetContextDispatch::Occupied { ctx: new_occ }
+        },
+        FirableDispatch::Occupied { ctx: occupied } => {
+            let OccupiedContext { asset, envelope, current, retire } = occupied;
+            let TenureExpiryResult { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover } = do_tenure_expiry(
+                asset, current, envelope,
+                &mut core.owner, core.envelope.escrow_identity, core.envelope.fee_inbox_identity,
+                boundary, ctx,
+            );
+            let boundary_ms = phases::timestamp_ms(boundary);
+            if (retire_condition::proj_is_retiring(&retire)) {
+                event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(core.envelope.escrow_identity), timestamp_ms: boundary_ms });
+                core.envelope.pending_config = option::none();
+                AssetContextDispatch::Retired { ctx: RetiredContext { asset: locked } }
+            } else {
+                let mut generator    = sui::random::new_generator(random, ctx);
+                let resolved_descent = descent_policy_state::resolve(config::proj_descent(&core.envelope.config), &mut generator);
+                AssetContextDispatch::AtDutch { ctx: AtDutchContext { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } }
             }
         },
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, .. } } }, owner, mut envelope } => {
-            if (envelope.pending_config.is_some()) {
-                let new_cfg = envelope.pending_config.extract();
-                event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), new_config: new_cfg });
-                envelope.config = new_cfg;
+        FirableDispatch::AtDutch { ctx: atd } => {
+            let AtDutchContext { asset, last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } = atd;
+            if (core.envelope.pending_config.is_some()) {
+                let new_cfg = core.envelope.pending_config.extract();
+                event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(core.envelope.escrow_identity), new_config: new_cfg });
+                core.envelope.config = new_cfg;
             };
             let mut generator = sui::random::new_generator(random, ctx);
-            let new_state = do_auction_expiry(asset, last_acq_price, phase_start, &envelope.config, envelope.escrow_identity, boundary, &mut generator);
-            AssetContext { asset_state: new_state, owner, envelope }
+            let new_idle = do_auction_expiry(asset, last_acq_price, phase_start, &core.envelope.config, core.envelope.escrow_identity, boundary, &mut generator);
+            AssetContextDispatch::Idle { ctx: new_idle }
         },
-        AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
     }
 }
 
@@ -2278,19 +2313,19 @@ fun do_install<Asset: key + store, CoinType>(
 }
 
 fun do_auction_expiry<Asset: key + store, CoinType>(
-    asset:          asset::AssetCustodyLocked<Asset>,
-    last_acq_price: Price,
-    phase_start:    Timestamp,
-    config:         &IntegrationConfig,
-    escrow_identity:      EscrowIdentity,
-    boundary:       Timestamp,
-    generator:      &mut RandomGenerator,
-): AssetState<Asset, CoinType> {
+    asset:           asset::AssetCustodyLocked<Asset>,
+    last_acq_price:  Price,
+    phase_start:     Timestamp,
+    config:          &IntegrationConfig,
+    escrow_identity: EscrowIdentity,
+    boundary:        Timestamp,
+    generator:       &mut RandomGenerator,
+): IdleContext<Asset, CoinType> {
     event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(phase_start), last_acq_price: monetary::price_mist(last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
     let resolved_floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(config), generator);
     let resolved_ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(config), generator);
     let resolved_handover = handover_policy_state::resolve(config::proj_handover(config), resolved_ceiling, generator);
-    AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } } }
+    IdleContext { asset, resolved_floor, resolved_ceiling, resolved_handover }
 }
 
 fun do_retire_immediately<Asset: key + store, CoinType>(
@@ -2311,47 +2346,61 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
 
 #[test_only]
 public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
+    context:  AssetContext<Asset, CoinType>,
     boundary: Timestamp,
     ctx:      &mut TxContext,
 ): AssetContext<Asset, CoinType> {
-    match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_env, state: TenancyState::Demand { current, pending, handover_expiry: _, bidding_cycles, retire } } }, mut owner, envelope } => {
-            let new_tenancy = do_handover(
-                asset, current, pending, tenancy_env, bidding_cycles,
-                retire,
-                &mut owner, &envelope.config, envelope.escrow_identity, envelope.fee_inbox_identity, boundary, ctx,
+    let (core, d) = dispatch(context);
+    let EscrowCoreHandoff { mut owner, envelope } = core;
+    match (d) {
+        AssetContextDispatch::Demand { ctx: demand } => {
+            let DemandContext { asset, envelope: tenancy_env, current, pending, handover_expiry: _, bidding_cycles, retire } = demand;
+            let new_occ = do_handover(
+                asset, current, pending, tenancy_env, bidding_cycles, retire,
+                &mut owner, &envelope.config,
+                envelope.escrow_identity, envelope.fee_inbox_identity,
+                boundary, ctx,
             );
-            AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, envelope }
+            collect(EscrowCoreHandoff { owner, envelope }, AssetContextDispatch::Occupied { ctx: new_occ })
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, envelope: _env, state: TenancyState::Occupied { current: _c, retire: _r } } }, owner: _o, .. } => abort ENotRented,
-        AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
+        AssetContextDispatch::Idle    { ctx: _i } => abort ENotRented,
+        AssetContextDispatch::AtDutch { ctx: _a } => abort ENotRented,
+        AssetContextDispatch::Retired { ctx: _r } => abort ENotRented,
+        AssetContextDispatch::Occupied { ctx: _o } => abort ENotRented,
     }
 }
 
 #[test_only]
 public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
+    context:  AssetContext<Asset, CoinType>,
     boundary: Timestamp,
     ctx:      &mut TxContext,
 ): AssetContext<Asset, CoinType> {
-    match (context) {
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_env, state: TenancyState::Occupied { current, retire } } }, mut owner, mut envelope } => {
+    let (core, d) = dispatch(context);
+    let EscrowCoreHandoff { mut owner, mut envelope } = core;
+    match (d) {
+        AssetContextDispatch::Occupied { ctx: occupied } => {
+            let OccupiedContext { asset, envelope: tenancy_env, current, retire } = occupied;
             let TenureExpiryResult { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover } = do_tenure_expiry(
                 asset, current, tenancy_env,
-                &mut owner, envelope.escrow_identity, envelope.fee_inbox_identity, boundary, ctx,
+                &mut owner, envelope.escrow_identity, envelope.fee_inbox_identity,
+                boundary, ctx,
             );
             let boundary_ms = phases::timestamp_ms(boundary);
             if (retire_condition::proj_is_retiring(&retire)) {
                 event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(envelope.escrow_identity), timestamp_ms: boundary_ms });
                 envelope.pending_config = option::none();
-                AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::Retired } }, owner, envelope }
+                collect(EscrowCoreHandoff { owner, envelope }, AssetContextDispatch::Retired { ctx: RetiredContext { asset: locked } })
             } else {
-                AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: locked, state: WaitingState::AtDutch { last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent: descent_policy_state::resolve(config::proj_descent(&envelope.config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8])) } } }, owner, envelope }
+                let resolved_descent = descent_policy_state::resolve(config::proj_descent(&envelope.config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8]));
+                let atd = AtDutchContext { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent };
+                collect(EscrowCoreHandoff { owner, envelope }, AssetContextDispatch::AtDutch { ctx: atd })
             }
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy: TenancyContext { asset: _a, envelope: _env, state: TenancyState::Demand { current: _c, pending: _p2, handover_expiry: _e, bidding_cycles: _, retire: _r } } }, owner: _o, .. } => abort ENotRented,
-        AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRented,
+        AssetContextDispatch::Idle    { ctx: _i } => abort ENotRented,
+        AssetContextDispatch::AtDutch { ctx: _a } => abort ENotRented,
+        AssetContextDispatch::Retired { ctx: _r } => abort ENotRented,
+        AssetContextDispatch::Demand  { ctx: _d } => abort ENotRented,
     }
 }
 
@@ -2361,16 +2410,17 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     boundary:  Timestamp,
     generator: &mut RandomGenerator,
 ): AssetContext<Asset, CoinType> {
-    match (context) {
-        AssetContext { asset_state: AssetState::Waiting { waiting }, owner, envelope } => {
-            let WaitingContext { asset, state } = waiting;
-            match (state) {
-                WaitingState::AtDutch { last_acq_price, phase_start, .. } =>
-                    AssetContext { asset_state: do_auction_expiry(asset, last_acq_price, phase_start, &envelope.config, envelope.escrow_identity, boundary, generator), owner, envelope },
-                _ => abort ENotRented,
-            }
+    let (core, d) = dispatch(context);
+    match (d) {
+        AssetContextDispatch::AtDutch { ctx: atd } => {
+            let AtDutchContext { asset, last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } = atd;
+            let new_idle = do_auction_expiry(asset, last_acq_price, phase_start, &core.envelope.config, core.envelope.escrow_identity, boundary, generator);
+            collect(core, AssetContextDispatch::Idle { ctx: new_idle })
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy: _t }, owner: _o, .. } => abort ENotRented,
+        AssetContextDispatch::Idle     { ctx: _i } => abort ENotRented,
+        AssetContextDispatch::Retired  { ctx: _r } => abort ENotRented,
+        AssetContextDispatch::Occupied { ctx: _o } => abort ENotRented,
+        AssetContextDispatch::Demand   { ctx: _d } => abort ENotRented,
     }
 }
 

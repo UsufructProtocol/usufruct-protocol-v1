@@ -114,8 +114,8 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Coin<CoinType> {
-    let context = take_context(escrow);
-    let (new_context, coin) = asset_context_state::execute_withdraw_earnings(context, owner_cap, random, clock, ctx);
+    let context = drain_pendings(take_context(escrow), random, clock, ctx);
+    let (new_context, coin) = asset_context_state::execute_withdraw_earnings(context, owner_cap, clock, ctx);
     put_context(escrow, new_context);
     coin
 }
@@ -134,8 +134,8 @@ public fun claim_asset<Asset: key + store, CoinType>(
 
     let Escrow { id, asset_context } = escrow;
     let context = asset_context.destroy_some();
-    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    let (core, dispatch) = asset_context_state::dispatch(context);
+    let (mut core, dispatch) = asset_context_state::dispatch(context);
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
     let (asset, earnings) = asset_context_state::execute_claim(dispatch, core, &owner_cap, ctx);
     let swept_earnings    = coin::value(&earnings);
     owner_cap::burn(owner_cap, owner_addr);
@@ -156,12 +156,10 @@ public fun retire<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    let context = take_context(escrow);
-    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    let (mut core, dispatch) = asset_context_state::dispatch(context);
+    let (mut core, dispatch) = asset_context_state::dispatch(take_context(escrow));
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
     let new_dispatch = asset_context_state::execute_retire(dispatch, &mut core, owner_cap, clock, ctx);
-    let new_context = asset_context_state::collect(core, new_dispatch);
-    put_context(escrow, new_context);
+    put_context(escrow, asset_context_state::collect(core, new_dispatch));
 }
 
 /// Owner-gated commitment extension. New expiry must be ≥ current expiry.
@@ -185,12 +183,10 @@ public fun update_config<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    let context = take_context(escrow);
-    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    let (mut core, dispatch) = asset_context_state::dispatch(context);
+    let (mut core, dispatch) = asset_context_state::dispatch(take_context(escrow));
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
     let new_dispatch = asset_context_state::execute_update_config(dispatch, &mut core, owner_cap, new_cfg, random, ctx);
-    let new_context = asset_context_state::collect(core, new_dispatch);
-    put_context(escrow, new_context);
+    put_context(escrow, asset_context_state::collect(core, new_dispatch));
 }
 
 /// Single entry point to become tenant or place a bid.
@@ -202,12 +198,10 @@ public fun rent<Asset: key + store, CoinType>(
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): TenantCap {
-    let context = take_context(escrow);
-    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    let (mut core, dispatch) = asset_context_state::dispatch(context);
+    let (mut core, dispatch) = asset_context_state::dispatch(take_context(escrow));
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
     let (new_dispatch, cap) = asset_context_state::execute_rent(dispatch, &mut core, payment, cycles, clock, ctx);
-    let new_context = asset_context_state::collect(core, new_dispatch);
-    put_context(escrow, new_context);
+    put_context(escrow, asset_context_state::collect(core, new_dispatch));
     cap
 }
 
@@ -219,12 +213,10 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt) {
-    let context = take_context(escrow);
-    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    let (core, dispatch) = asset_context_state::dispatch(context);
+    let (mut core, dispatch) = asset_context_state::dispatch(take_context(escrow));
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
     let (new_dispatch, asset, receipt) = asset_context_state::execute_borrow(dispatch, &core, tenant_cap);
-    let new_context = asset_context_state::collect(core, new_dispatch);
-    put_context(escrow, new_context);
+    put_context(escrow, asset_context_state::collect(core, new_dispatch));
     (asset, receipt)
 }
 
@@ -234,11 +226,9 @@ public fun return_asset<Asset: key + store, CoinType>(
     asset:      Asset,
     receipt_in: AssetReceipt,
 ) {
-    let context = take_context(escrow);
-    let (core, dispatch) = asset_context_state::dispatch(context);
+    let (core, dispatch) = asset_context_state::dispatch(take_context(escrow));
     let new_dispatch = asset_context_state::execute_return(dispatch, &core, asset, receipt_in);
-    let new_context = asset_context_state::collect(core, new_dispatch);
-    put_context(escrow, new_context);
+    put_context(escrow, asset_context_state::collect(core, new_dispatch));
 }
 
 /// Burn a stale `TenantCap` for gas recovery.
@@ -249,12 +239,26 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let context = take_context(escrow);
-    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    let (core, dispatch) = asset_context_state::dispatch(context);
+    let (mut core, dispatch) = asset_context_state::dispatch(take_context(escrow));
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
     let new_dispatch = asset_context_state::execute_burn_tenant_cap(dispatch, &core, cap, ctx);
-    let new_context = asset_context_state::collect(core, new_dispatch);
-    put_context(escrow, new_context);
+    put_context(escrow, asset_context_state::collect(core, new_dispatch));
+}
+
+/// Drain pending transitions on a legacy AssetContext via the new
+/// dispatch-form APT loop. Used by the few entry points that still hand
+/// off through AssetContext (claim_asset and withdraw_earnings); the
+/// dispatch/collect bridge is cheap and disappears entirely once the
+/// storage refactor lands.
+fun drain_pendings<Asset: key + store, CoinType>(
+    context: usufruct::asset_context_state::AssetContext<Asset, CoinType>,
+    random:  &Random,
+    clock:   &Clock,
+    ctx:     &mut TxContext,
+): usufruct::asset_context_state::AssetContext<Asset, CoinType> {
+    let (mut core, dispatch) = asset_context_state::dispatch(context);
+    let dispatch = asset_context_state::apply_pending_transition_states(dispatch, &mut core, random, clock, ctx);
+    asset_context_state::collect(core, dispatch)
 }
 
 /// Permissionless settler.
@@ -265,8 +269,8 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ) {
     let context = take_context(escrow);
-    let new_context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
-    put_context(escrow, new_context);
+    let context = drain_pendings(context, random, clock, ctx);
+    put_context(escrow, context);
 }
 
 /// Detect the single transition that is due at `now`, if any.

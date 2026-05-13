@@ -24,7 +24,6 @@ use usufruct::{
     owner_cap::{Self, OwnerCap},
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
-    tenant_cap::TenantCap,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -291,6 +290,141 @@ fun at_dutch_views_after_tenure_expiry() {
     clock::set_for_testing(&mut clk, expiry + escrow_corpus::descent_window_h1_const() + 1);
     let pending2 = escrow::next_pending(&escrow, &clk).destroy_some();
     assert!(usufruct::pending_transition_state::proj_is_auction(&pending2));
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+// ─── Waiting::Retired ─────────────────────────────────────────────────────────
+
+#[test]
+fun retired_views_after_retire_from_idle() {
+    let mut sc  = setup();
+    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(OWNER);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+    escrow::retire(&mut escrow, &cap, &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+
+    // — State predicates —
+    assert!(escrow::is_retired(&escrow));
+    assert!(!escrow::is_idle(&escrow));
+    assert!(!escrow::is_at_dutch_auction(&escrow));
+    assert!(!escrow::is_rented(&escrow));
+    assert!(!escrow::is_active(&escrow));            // Retired is the only inactive state
+    assert!(!escrow::is_occupied(&escrow));
+    assert!(!escrow::is_demand(&escrow));
+    assert!(!escrow::is_retiring(&escrow));
+
+    // — Tenant / phase / runtime resolution — all none in Retired —
+    assert!(escrow::current_tenant_addr(&escrow).is_none());
+    assert!(escrow::pending_tenant_addr(&escrow).is_none());
+    assert!(escrow::current_stake(&escrow).is_none());
+    assert!(escrow::phase_start_ms(&escrow).is_none());
+    assert!(escrow::tenure_expiry_ms(&escrow).is_none());
+    assert!(escrow::next_floor_price_mist(&escrow).is_none()); // Retired has no resolved-for-next
+    assert!(escrow::next_pending(&escrow, &clk).is_none());
+
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+// ─── Renting::Demand ──────────────────────────────────────────────────────────
+
+#[test]
+fun demand_views_after_handover_bid() {
+    let mut sc  = setup();
+    // c=1 → handover=Countdown; second rent enters Demand (not Instant fire-through).
+    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    // First rent: Idle → Occupied at min_rent_price.
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let t1_cap = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Second rent at a later time: Occupied → Demand. floor escalates by
+    // state (compute_floor_price returns the right value for either state).
+    let second_tenant: address = @0xA2;
+    sc.next_tx(second_tenant);
+    clock::set_for_testing(&mut clk, 5_000);
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2     = mk_payment(floor2, sc.ctx());
+    let t2_cap = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+
+    // — State predicates —
+    assert!(escrow::is_demand(&escrow));
+    assert!(!escrow::is_occupied(&escrow));
+    assert!(escrow::is_rented(&escrow));
+    assert!(escrow::is_active(&escrow));
+    assert!(!escrow::is_retiring(&escrow));
+
+    // — Both tenant slots populated —
+    assert_eq!(escrow::current_tenant_addr(&escrow).destroy_some(),   TENANT_ADDR);
+    assert_eq!(escrow::current_tenant_cap_id(&escrow).destroy_some(), object::id(&t1_cap));
+    assert_eq!(escrow::pending_tenant_addr(&escrow).destroy_some(),   second_tenant);
+    assert_eq!(escrow::pending_tenant_cap_id(&escrow).destroy_some(), object::id(&t2_cap));
+    assert!(escrow::current_stake(&escrow).is_some());
+    assert!(escrow::pending_stake(&escrow).is_some());
+
+    // — Cap status: t1 current, t2 pending —
+    assert!(escrow::tenant_cap_is_current(&escrow, &t1_cap));
+    assert!(!escrow::tenant_cap_is_pending(&escrow, &t1_cap));
+    assert!(escrow::tenant_cap_is_pending(&escrow, &t2_cap));
+    assert!(!escrow::tenant_cap_is_current(&escrow, &t2_cap));
+
+    // — Handover countdown is active; expiry is recorded —
+    assert!(escrow::handover_countdown_expiry_ms(&escrow).is_some());
+
+    transfer::public_transfer(t1_cap, TENANT_ADDR);
+    transfer::public_transfer(t2_cap, second_tenant);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+// ─── Renting::Occupied with retire flag (Retiring) ────────────────────────────
+
+#[test]
+fun retiring_flag_views_after_retire_during_renting() {
+    let mut sc  = setup();
+    // c=1 → Countdown handover; rules out Instant fire-through on retire.
+    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    // Rent.
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Owner sets retire flag while in Occupied — flag is set, state remains
+    // Occupied until tenure expiry handles it.
+    sc.next_tx(OWNER);
+    escrow::retire(&mut escrow, &cap, &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+
+    // — Predicates: still Occupied, but retiring flag is now true —
+    assert!(escrow::is_occupied(&escrow));
+    assert!(escrow::is_rented(&escrow));
+    assert!(escrow::is_active(&escrow));
+    assert!(escrow::is_retiring(&escrow));
+    assert!(!escrow::is_demand(&escrow));
+    assert!(!escrow::is_retired(&escrow));
+
+    // — Current tenant unchanged by retire-flag-set —
+    assert_eq!(escrow::current_tenant_addr(&escrow).destroy_some(), TENANT_ADDR);
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
     clock::destroy_for_testing(clk);

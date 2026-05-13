@@ -207,3 +207,93 @@ fun rented_views_post_rent() {
     dispose_escrow(escrow, cap);
     sc.end();
 }
+
+// ─── settlement views ────────────────────────────────────────────────────────
+
+#[test]
+fun settlement_views_in_rented_state() {
+    let mut sc  = setup();
+    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+
+    // tenure_settlement: aborts unless rented; here it succeeds and the
+    // (owner + fee) split equals the current stake (no credit consumed yet).
+    let (t_owner, t_fee) = escrow::compute_tenure_settlement(&escrow);
+    assert_eq!(t_owner + t_fee, STAKE);
+
+    // handover_settlement at a mid-tenancy boundary: remaining + owner + fee
+    // partition the current stake, with `remaining` being stake - used_credit.
+    let phase_start = escrow::phase_start_ms(&escrow).destroy_some();
+    let mid_boundary = phase_start + escrow_corpus::tenure_ceiling_const() / 2;
+    let (h_rem, h_owner, h_fee) = escrow::compute_handover_settlement(&escrow, mid_boundary);
+    assert_eq!(h_rem + h_owner + h_fee, STAKE);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+// ─── pending transitions and AtDutch entry ───────────────────────────────────
+
+#[test]
+fun at_dutch_views_after_tenure_expiry() {
+    let mut sc  = setup();
+    // h=1 → Descent::Window; ensures the escrow enters AtDutch on tenure expiry
+    // instead of collapsing back to Idle (which Descent::Skipped would do).
+    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Before tenure_expiry: no pending transition.
+    assert!(escrow::next_pending(&escrow, &clk).is_none());
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk));
+
+    // Advance clock to tenure_expiry boundary.
+    let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
+    clock::set_for_testing(&mut clk, expiry);
+
+    // Now a Tenure transition is pending.
+    assert!(escrow::has_pending_transition_states(&escrow, &clk));
+    let pending = escrow::next_pending(&escrow, &clk).destroy_some();
+    assert!(usufruct::pending_transition_state::proj_is_tenure(&pending));
+    assert_eq!(escrow::next_transition_ms(&escrow, &clk).destroy_some(), expiry);
+
+    // Fire the transition → state advances to AtDutch (descent=Window).
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+
+    assert!(escrow::is_at_dutch_auction(&escrow));
+    assert!(!escrow::is_idle(&escrow));
+    assert!(!escrow::is_rented(&escrow));
+
+    // AtDutch records the last acquisition price and stores the resolved
+    // descent window, plus the resolved values for the next bid.
+    assert!(escrow::last_acq_price(&escrow).is_some());
+    assert!(escrow::auction_descent_duration_ms(&escrow).is_some());
+    assert!(escrow::next_floor_price_mist(&escrow).is_some());
+    assert!(escrow::next_tenure_ceiling_ms(&escrow).is_some());
+    assert!(escrow::next_handover_duration_ms(&escrow).is_some());
+
+    // Advance clock past the descent window: an Auction transition becomes pending.
+    clock::set_for_testing(&mut clk, expiry + escrow_corpus::descent_window_h1_const() + 1);
+    let pending2 = escrow::next_pending(&escrow, &clk).destroy_some();
+    assert!(usufruct::pending_transition_state::proj_is_auction(&pending2));
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}

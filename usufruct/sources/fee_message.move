@@ -70,7 +70,7 @@ public fun collect_fee_messages<C>(
     ctx:     &mut TxContext,
 ): Coin<C> {
     let inbox_identity = protocol_fee_ref::fee_inbox_identity(object::id(inbox));
-    let collector      = tx_context::sender(ctx);
+    let collector      = ctx.sender();
     let mut total      = balance::zero<C>();
     tickets.do!(|ticket| {
         let msg = receive_message(inbox, ticket);

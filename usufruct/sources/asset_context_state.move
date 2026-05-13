@@ -910,32 +910,72 @@ public(package) fun apply_pending_transition_states<Asset: key + store, CoinType
 
 // ─── Action executors ─────────────────────────────────────────────────────────
 
+/// Entry-point dispatcher for rent. Five arms, all reachable from the
+/// public API:
+///   · Retired → abort `ERetiredNoBid` (was structurally unreachable in
+///     the legacy form because `floor_price_at` aborted first; now floor
+///     is computed per-arm and the abort is the genuine consequence of
+///     calling rent on a retired escrow).
+///   · Idle    → install (`do_install`) → Occupied.
+///   · AtDutch → install (`do_install`) → Occupied. Floor is the
+///     descending Dutch price at `now`.
+///   · Occupied → place bid (`do_place_bid`) → Demand. Aborts
+///     `ERetireFlagBlocksBid` if the tenancy is flagged for retirement.
+///   · Demand   → supersede bid (`do_supersede_bid`) → Demand. Mutates
+///     `core.owner` to distribute the displaced bidder's refund.
+///
+/// Cycle validation against the integration config is the first check —
+/// it does not depend on lifecycle state.
 public(package) fun execute_rent<Asset: key + store, CoinType>(
-    context: AssetContext<Asset, CoinType>,
+    d:       AssetContextDispatch<Asset, CoinType>,
+    core:    &mut EscrowCoreHandoff<CoinType>,
     payment: Coin<CoinType>,
     cycles:  Cycles,
-    random:  &Random,
     clock:   &Clock,
     ctx:     &mut TxContext,
-): (AssetContext<Asset, CoinType>, TenantCap) {
-    tenure_cycles_policy_state::validate(config::proj_tenure_cycles(&context.envelope.config), cycles);
-    let context = apply_pending_transition_states(context, random, clock, ctx);
-    let now    = phases::now(clock);
-    let floor  = floor_price_at(&context, now);
-    assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
-    match (context) {
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset: _a, state: WaitingState::Retired } }, owner: _o, .. } =>
-            abort ERetiredNoBid,
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } } }, owner, envelope }
-        | AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { resolved_floor, resolved_ceiling, resolved_handover, .. } } }, owner, envelope } => {
-            let (new_state, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, envelope.escrow_identity, payment, floor, now, ctx);
-            (AssetContext { asset_state: new_state, owner, envelope }, cap)
+): (AssetContextDispatch<Asset, CoinType>, TenantCap) {
+    tenure_cycles_policy_state::validate(config::proj_tenure_cycles(&core.envelope.config), cycles);
+    let now                = phases::now(clock);
+    let escrow_identity    = core.envelope.escrow_identity;
+    let fee_inbox_identity = core.envelope.fee_inbox_identity;
+    match (d) {
+        AssetContextDispatch::Retired { ctx: _retired } => abort ERetiredNoBid,
+        AssetContextDispatch::Idle { ctx: idle } => {
+            let IdleContext { asset, resolved_floor, resolved_ceiling, resolved_handover } = idle;
+            let floor = resolved_floor;
+            assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
+            let (new_occ, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, escrow_identity, payment, floor, now, ctx);
+            (AssetContextDispatch::Occupied { ctx: new_occ }, cap)
         },
-        AssetContext { asset_state: AssetState::Renting { tenancy }, mut owner, envelope } => {
-            let (new_tenancy, cap) = accept_rent_payment(
-                tenancy, &mut owner, envelope.escrow_identity, envelope.fee_inbox_identity, payment, floor, cycles, now, ctx,
+        AssetContextDispatch::AtDutch { ctx: atd } => {
+            let AtDutchContext { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } = atd;
+            let ps    = price_state::descending(last_acq_price, phase_start, resolved_floor, resolved_descent);
+            let floor = price_state::floor_price(&ps, &core.envelope.config, now);
+            assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
+            let (new_occ, cap) = do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, escrow_identity, payment, floor, now, ctx);
+            (AssetContextDispatch::Occupied { ctx: new_occ }, cap)
+        },
+        AssetContextDispatch::Occupied { ctx: occupied } => {
+            let OccupiedContext { asset, envelope, current, retire } = occupied;
+            if (retire_condition::proj_is_retiring(&retire)) abort ERetireFlagBlocksBid;
+            let stake = tenant::proj_stake_value(&current);
+            let ps    = price_state::ascending(cycles::per_cycle_stake(stake, envelope.committed_cycles));
+            let floor = price_state::floor_price(&ps, &core.envelope.config, now);
+            assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
+            let (new_dem, cap) = do_place_bid(asset, current, envelope, cycles, escrow_identity, payment, floor, now, ctx);
+            (AssetContextDispatch::Demand { ctx: new_dem }, cap)
+        },
+        AssetContextDispatch::Demand { ctx: demand } => {
+            let DemandContext { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } = demand;
+            let stake = tenant::proj_stake_value(&pending);
+            let ps    = price_state::ascending(cycles::per_cycle_stake(stake, bidding_cycles));
+            let floor = price_state::floor_price(&ps, &core.envelope.config, now);
+            assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
+            let (new_dem, cap) = do_supersede_bid(
+                asset, current, pending, handover_expiry, envelope, cycles, retire,
+                &mut core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
             );
-            (AssetContext { asset_state: AssetState::Renting { tenancy: new_tenancy }, owner, envelope }, cap)
+            (AssetContextDispatch::Demand { ctx: new_dem }, cap)
         },
     }
 }
@@ -1563,35 +1603,6 @@ public(package) fun next_pending_from_tenancy<Asset: key + store, CoinType>(
 
 // ─── Tenancy-internal transitions ─────────────────────────────────────────────
 
-/// Dispatch a rent payment: Occupied → Demand (place_bid) or Demand → Demand
-/// (supersede_bid). Owner receives the displaced bidder's refund only in the
-/// supersede path; passes through unchanged for a fresh bid.
-public(package) fun accept_rent_payment<Asset: key + store, CoinType>(
-    tenancy:      TenancyContext<Asset, CoinType>,
-    owner:        &mut Owner<CoinType>,
-    escrow_identity:    EscrowIdentity,
-    fee_inbox_identity: FeeInboxIdentity,
-    payment:      Coin<CoinType>,
-    floor:        Price,
-    cycles:       Cycles,
-    now:          Timestamp,
-    ctx:          &mut TxContext,
-): (TenancyContext<Asset, CoinType>, TenantCap) {
-    let TenancyContext { asset, envelope, state } = tenancy;
-    match (state) {
-        TenancyState::Occupied { current, retire } => {
-            if (retire_condition::proj_is_retiring(&retire)) abort ERetireFlagBlocksBid;
-            do_place_bid(asset, current, envelope, cycles, escrow_identity, payment, floor, now, ctx)
-        },
-        TenancyState::Demand { current, pending, handover_expiry, retire, .. } =>
-            do_supersede_bid(
-                asset, current, pending, handover_expiry, envelope, cycles,
-                retire,
-                owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
-            ),
-    }
-}
-
 /// Dispatch the pending APT transition. Match lives here so engine_state::fire
 /// receives a typed result and never inspects TenancyState variant internals.
 /// Owner is mutated in-place; caller (Engine) owns it and passes &mut.
@@ -1852,16 +1863,16 @@ fun put_asset_demand<Asset: key + store, CoinType>(
 
 /// Occupied → Demand.
 fun do_place_bid<Asset: key + store, CoinType>(
-    asset:     asset::AssetCustodyOpen<Asset>,
-    tenant:    Tenant<CoinType>,
-    envelope:  TenancyEnvelope,
-    cycles:    Cycles,
+    asset:           asset::AssetCustodyOpen<Asset>,
+    tenant:          Tenant<CoinType>,
+    envelope:        TenancyEnvelope,
+    cycles:          Cycles,
     escrow_identity: EscrowIdentity,
-    payment:   Coin<CoinType>,
-    floor:     Price,
-    now:       Timestamp,
-    ctx:       &mut TxContext,
-): (TenancyContext<Asset, CoinType>, TenantCap) {
+    payment:         Coin<CoinType>,
+    floor:           Price,
+    now:             Timestamp,
+    ctx:             &mut TxContext,
+): (DemandContext<Asset, CoinType>, TenantCap) {
     let current_cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&tenant));
     let current_addr   = tenant::proj_address(tenant::proj_identity(&tenant));
     let current_stake  = tenant::proj_stake_value(&tenant);
@@ -1886,10 +1897,14 @@ fun do_place_bid<Asset: key + store, CoinType>(
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
-        TenancyContext {
+        DemandContext {
             asset,
             envelope,
-            state: TenancyState::Demand { current: tenant, pending: t, handover_expiry: expiry, bidding_cycles: cycles, retire: retire_condition::new() },
+            current: tenant,
+            pending: t,
+            handover_expiry: expiry,
+            bidding_cycles: cycles,
+            retire: retire_condition::new(),
         },
         cap,
     )
@@ -1897,21 +1912,21 @@ fun do_place_bid<Asset: key + store, CoinType>(
 
 /// Demand → Demand: displace the existing pending bidder.
 fun do_supersede_bid<Asset: key + store, CoinType>(
-    asset:           asset::AssetCustodyOpen<Asset>,
-    current:         Tenant<CoinType>,
-    pending:         Tenant<CoinType>,
-    handover_expiry: Timestamp,
-    envelope:        TenancyEnvelope,
-    cycles:          Cycles,
-    retire:          RetireCondition,
-    owner:           &mut Owner<CoinType>,
-    escrow_identity:       EscrowIdentity,
-    fee_inbox_identity:    FeeInboxIdentity,
-    payment:         Coin<CoinType>,
-    floor:           Price,
-    now:             Timestamp,
-    ctx:             &mut TxContext,
-): (TenancyContext<Asset, CoinType>, TenantCap) {
+    asset:              asset::AssetCustodyOpen<Asset>,
+    current:            Tenant<CoinType>,
+    pending:            Tenant<CoinType>,
+    handover_expiry:    Timestamp,
+    envelope:           TenancyEnvelope,
+    cycles:             Cycles,
+    retire:             RetireCondition,
+    owner:              &mut Owner<CoinType>,
+    escrow_identity:    EscrowIdentity,
+    fee_inbox_identity: FeeInboxIdentity,
+    payment:            Coin<CoinType>,
+    floor:              Price,
+    now:                Timestamp,
+    ctx:                &mut TxContext,
+): (DemandContext<Asset, CoinType>, TenantCap) {
     let protected_cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
     let protected_addr   = tenant::proj_address(tenant::proj_identity(&current));
     let protected_stake  = tenant::proj_stake_value(&current);
@@ -1945,8 +1960,18 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
         timestamp_ms:              phases::timestamp_ms(now),
     });
-    let state = TenancyState::Demand { current, pending: t, handover_expiry, bidding_cycles: cycles, retire };
-    (TenancyContext { asset, envelope, state }, cap)
+    (
+        DemandContext {
+            asset,
+            envelope,
+            current,
+            pending: t,
+            handover_expiry,
+            bidding_cycles: cycles,
+            retire,
+        },
+        cap,
+    )
 }
 
 // === Test Functions ===
@@ -2138,18 +2163,18 @@ fun do_install<Asset: key + store, CoinType>(
     resolved_ceiling:  Duration,
     resolved_handover: Duration,
     cycles:            Cycles,
-    escrow_identity:         EscrowIdentity,
+    escrow_identity:   EscrowIdentity,
     payment:           Coin<CoinType>,
     floor:             Price,
     now:               Timestamp,
     ctx:               &mut TxContext,
-): (AssetState<Asset, CoinType>, TenantCap) {
+): (OccupiedContext<Asset, CoinType>, TenantCap) {
     let price_paid    = coin::value(&payment);
     let tenant_addr   = ctx.sender();
     let now_ms        = phases::timestamp_ms(now);
-    let raw_escrow_id  = escrow_identity::escrow_id(escrow_identity);
-    let cap            = tenant_cap::new(escrow_identity, tenant_addr, ctx);
-    let cap_identity   = tenant_cap::identity(&cap);
+    let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
+    let cap           = tenant_cap::new(escrow_identity, tenant_addr, ctx);
+    let cap_identity  = tenant_cap::identity(&cap);
     let t = tenant::new<CoinType>(cap_identity, tenant_addr, coin::into_balance(payment));
     let wrapped = asset::open_tenancy(locked, escrow_identity);
     let extended_ceiling  = cycles::total_duration(resolved_ceiling,  cycles);
@@ -2159,7 +2184,7 @@ fun do_install<Asset: key + store, CoinType>(
         phase_start_ms: now_ms, price_paid, floor_price: monetary::price_mist(floor),
     });
     let envelope = new_tenancy_envelope(now, resolved_floor, extended_ceiling, extended_handover, cycles);
-    (AssetState::Renting { tenancy: new_occupied(wrapped, t, envelope) }, cap)
+    (OccupiedContext { asset: wrapped, envelope, current: t, retire: retire_condition::new() }, cap)
 }
 
 fun do_auction_expiry<Asset: key + store, CoinType>(

@@ -197,7 +197,10 @@ public fun rent<Asset: key + store, CoinType>(
     ctx:     &mut TxContext,
 ): TenantCap {
     let context = take_context(escrow);
-    let (new_context, cap) = asset_context_state::execute_rent(context, payment, cycles, random, clock, ctx);
+    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
+    let (mut core, dispatch) = asset_context_state::dispatch(context);
+    let (new_dispatch, cap) = asset_context_state::execute_rent(dispatch, &mut core, payment, cycles, clock, ctx);
+    let new_context = asset_context_state::collect(core, new_dispatch);
     put_context(escrow, new_context);
     cap
 }

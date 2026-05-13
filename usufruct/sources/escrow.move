@@ -211,7 +211,10 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt) {
     let context = take_context(escrow);
-    let (new_context, asset, receipt) = asset_context_state::execute_borrow(context, tenant_cap, random, clock, ctx);
+    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
+    let (core, dispatch) = asset_context_state::dispatch(context);
+    let (new_dispatch, asset, receipt) = asset_context_state::execute_borrow(dispatch, &core, tenant_cap);
+    let new_context = asset_context_state::collect(core, new_dispatch);
     put_context(escrow, new_context);
     (asset, receipt)
 }
@@ -223,7 +226,9 @@ public fun return_asset<Asset: key + store, CoinType>(
     receipt_in: AssetReceipt,
 ) {
     let context = take_context(escrow);
-    let new_context = asset_context_state::execute_return(context, asset, receipt_in);
+    let (core, dispatch) = asset_context_state::dispatch(context);
+    let new_dispatch = asset_context_state::execute_return(dispatch, &core, asset, receipt_in);
+    let new_context = asset_context_state::collect(core, new_dispatch);
     put_context(escrow, new_context);
 }
 

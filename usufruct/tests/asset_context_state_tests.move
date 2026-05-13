@@ -14,11 +14,12 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
+    asset::{Self, AssetReceipt},
     asset_context_state,
     commitment_policy_state,
     escrow::{Self, Escrow},
     escrow_corpus,
-    monetary,
+    escrow_identity,
     owner_cap::{Self, OwnerCap},
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
@@ -221,5 +222,147 @@ fun claim_asset_aborts_in_demand_state() {
     transfer::public_transfer(asset, OWNER);
     test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── execute_borrow / execute_return wrong-state aborts (C3) ─────────────────
+//
+// `execute_borrow` accepts only Occupied/Demand via the narrow contract
+// `execute_borrow_renting`. The three Waiting variants (Idle, AtDutch,
+// Retired) abort `EStaleTenantCap` in the wrapper's dispatch arms —
+// reachable from the public API and individually tested here.
+//
+// `execute_return` is symmetric: Waiting variants abort
+// `EReceiptEscrowMismatch`. The receipt is forged via
+// `asset::forge_receipt_for_testing`; in production no caller could
+// obtain a receipt while the escrow is in a Waiting state, but a hostile
+// or buggy caller could forge one — the abort path is the protocol's
+// final guard.
+//
+// The Idle case for borrow is already covered by
+// `escrow_tests::borrow_asset_from_idle_aborts`; the two missing
+// Waiting variants (AtDutch, Retired) get their tests here.
+
+#[test, expected_failure(abort_code = asset_context_state::EStaleTenantCap, location = usufruct::asset_context_state)]
+fun borrow_asset_aborts_in_at_dutch_state() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow,
+        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        0,
+    );
+    escrow::drive_to_at_dutch_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
+
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+    let foreign_cap = tenant_cap::new(
+        escrow_identity::new(object::id(&escrow)),
+        TENANT_ADDR_1,
+        sc.ctx(),
+    );
+
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &rnd, &clk, sc.ctx());
+
+    transfer::public_transfer(asset, OWNER);
+    asset::destroy_receipt_for_testing(receipt);
+    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_context_state::EStaleTenantCap, location = usufruct::asset_context_state)]
+fun borrow_asset_aborts_in_retired_state() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+
+    escrow::drive_to_retired_for_testing(&mut escrow);
+
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+    let foreign_cap = tenant_cap::new(
+        escrow_identity::new(object::id(&escrow)),
+        TENANT_ADDR_1,
+        sc.ctx(),
+    );
+
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &rnd, &clk, sc.ctx());
+
+    transfer::public_transfer(asset, OWNER);
+    asset::destroy_receipt_for_testing(receipt);
+    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Build a junk asset + receipt pair targeting `escrow_id` for the
+/// wrong-state-return tests. The receipt would not be valid in production
+/// (the escrow is not in Renting and the asset is a fresh object), but
+/// the dispatch arm aborts EReceiptEscrowMismatch before it is validated.
+fun mk_junk_asset_and_receipt(escrow_id: ID, sc: &mut Scenario): (DemoAsset, AssetReceipt) {
+    let asset    = mk_demo_asset(sc.ctx());
+    let asset_id = object::id(&asset);
+    let receipt  = asset::forge_receipt_for_testing(asset_id, escrow_id);
+    (asset, receipt)
+}
+
+#[test, expected_failure(abort_code = asset_context_state::EReceiptEscrowMismatch, location = usufruct::asset_context_state)]
+fun return_asset_aborts_in_idle_state() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+
+    let escrow_id = object::id(&escrow);
+    let (junk_asset, junk_receipt) = mk_junk_asset_and_receipt(escrow_id, &mut sc);
+
+    escrow::return_asset(&mut escrow, junk_asset, junk_receipt);
+
+    transfer::public_transfer(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_context_state::EReceiptEscrowMismatch, location = usufruct::asset_context_state)]
+fun return_asset_aborts_in_at_dutch_state() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow,
+        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        0,
+    );
+    escrow::drive_to_at_dutch_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
+
+    let escrow_id = object::id(&escrow);
+    let (junk_asset, junk_receipt) = mk_junk_asset_and_receipt(escrow_id, &mut sc);
+
+    escrow::return_asset(&mut escrow, junk_asset, junk_receipt);
+
+    transfer::public_transfer(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_context_state::EReceiptEscrowMismatch, location = usufruct::asset_context_state)]
+fun return_asset_aborts_in_retired_state() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+
+    escrow::drive_to_retired_for_testing(&mut escrow);
+
+    let escrow_id = object::id(&escrow);
+    let (junk_asset, junk_receipt) = mk_junk_asset_and_receipt(escrow_id, &mut sc);
+
+    escrow::return_asset(&mut escrow, junk_asset, junk_receipt);
+
+    transfer::public_transfer(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
     sc.end();
 }

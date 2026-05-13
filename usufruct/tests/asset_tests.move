@@ -193,3 +193,19 @@ fun unbundle_when_unavailable_aborts() {
     };
     sc.end();
 }
+
+// ─── §6. locked custody ──────────────────────────────────────────────────────
+
+#[test]
+fun proj_locked_id_returns_inner_asset_id() {
+    let mut sc = test_scenario::begin(@0xA);
+    sc.next_tx(@0xA);
+    {
+        let u      = new_test_asset(sc.ctx());
+        let uid    = object::id(&u);
+        let locked = asset::lock(u);
+        assert_eq!(asset::proj_locked_id(&locked), uid);
+        transfer::public_transfer(asset::unlock(locked), SINK);
+    };
+    sc.end();
+}

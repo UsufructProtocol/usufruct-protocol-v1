@@ -255,6 +255,7 @@ fun r1_receive_message_returns_correct_balance() {
         let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
         let ticket    = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
         let msg       = fee_message::receive_message_for_testing(&mut inbox, ticket);
+        assert_eq!(fee_message::proj_escrow_id(&msg), fake_escrow_id());
         let bal       = fee_message::consume_message_for_testing(msg, object::id(&inbox), ADMIN);
         assert_eq!(balance::value(&bal), 777);
         balance::destroy_for_testing(bal);

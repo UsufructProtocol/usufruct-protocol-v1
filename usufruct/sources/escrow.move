@@ -911,6 +911,21 @@ fun put_context<Asset: key + store, CoinType>(
     escrow.asset_context.fill(context)
 }
 
+#[test_only]
+public(package) fun take_context_for_testing<Asset: key + store, CoinType>(
+    escrow: &mut Escrow<Asset, CoinType>,
+): AssetContext<Asset, CoinType> {
+    take_context(escrow)
+}
+
+#[test_only]
+public(package) fun put_context_for_testing<Asset: key + store, CoinType>(
+    escrow:  &mut Escrow<Asset, CoinType>,
+    context: AssetContext<Asset, CoinType>,
+) {
+    put_context(escrow, context)
+}
+
 fun cfg<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &IntegrationConfig {

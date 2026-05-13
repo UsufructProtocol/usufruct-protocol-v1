@@ -213,6 +213,70 @@ public struct AssetContext<Asset: key + store, phantom CoinType> has store {
     envelope:    ContextEnvelope,
 }
 
+// ─── Per-state hot-potato contexts (typed-states refactor, strangler) ─────────
+//
+// Each leaf state of the lifecycle FSM has a dedicated hot-potato struct
+// carrying *exactly* the fields that state needs. No more, no less.
+// Functions that only accept one state take the narrow type directly; the
+// type system guarantees the wrong state cannot reach them.
+//
+// `EscrowCoreHandoff` carries the fields orthogonal to the state machine
+// (owner ledger + protocol envelope). It is a transient handle that exists
+// only between `dispatch` and `collect`.
+
+public struct EscrowCoreHandoff<phantom CoinType> {
+    owner:    Owner<CoinType>,
+    envelope: ContextEnvelope,
+}
+
+public struct IdleContext<Asset: key + store, phantom CoinType> {
+    asset:             asset::AssetCustodyLocked<Asset>,
+    resolved_floor:    Price,
+    resolved_ceiling:  Duration,
+    resolved_handover: Duration,
+}
+
+public struct AtDutchContext<Asset: key + store, phantom CoinType> {
+    asset:             asset::AssetCustodyLocked<Asset>,
+    last_acq_price:    Price,
+    phase_start:       Timestamp,
+    resolved_floor:    Price,
+    resolved_ceiling:  Duration,
+    resolved_handover: Duration,
+    resolved_descent:  Duration,
+}
+
+public struct RetiredContext<Asset: key + store, phantom CoinType> {
+    asset: asset::AssetCustodyLocked<Asset>,
+}
+
+public struct OccupiedContext<Asset: key + store, phantom CoinType> {
+    asset:    asset::AssetCustodyOpen<Asset>,
+    envelope: TenancyEnvelope,
+    current:  Tenant<CoinType>,
+    retire:   RetireCondition,
+}
+
+public struct DemandContext<Asset: key + store, phantom CoinType> {
+    asset:           asset::AssetCustodyOpen<Asset>,
+    envelope:        TenancyEnvelope,
+    current:         Tenant<CoinType>,
+    pending:         Tenant<CoinType>,
+    handover_expiry: Timestamp,
+    bidding_cycles:  Cycles,
+    retire:          RetireCondition,
+}
+
+/// Narrow type for the lifecycle state, decoupled from the on-disk
+/// AssetContext. Hot-potato — must be consumed by a matching `collect`.
+public enum AssetContextDispatch<Asset: key + store, phantom CoinType> {
+    Idle     { ctx: IdleContext<Asset, CoinType> },
+    AtDutch  { ctx: AtDutchContext<Asset, CoinType> },
+    Retired  { ctx: RetiredContext<Asset, CoinType> },
+    Occupied { ctx: OccupiedContext<Asset, CoinType> },
+    Demand   { ctx: DemandContext<Asset, CoinType> },
+}
+
 // === Events ===
 
 public struct RentStarted has copy, drop {
@@ -298,6 +362,78 @@ public(package) fun new<Asset: key + store, CoinType>(
             escrow_identity,
         },
     }
+}
+
+// ─── Dispatch / collect (typed-states bridge) ─────────────────────────────────
+//
+// `dispatch` splits a monolithic `AssetContext` into:
+//   · `EscrowCoreHandoff` — owner ledger + protocol envelope.
+//   · `AssetContextDispatch` — one of the five lifecycle-state contexts.
+//
+// `collect` does the inverse. Both are total — every input shape is covered
+// by construction. The pair is the strangler bridge between the legacy
+// monolithic representation and per-state functions. Once every executor
+// has been migrated, the storage layout itself can split (Escrow.core +
+// Escrow.state) and these helpers go away.
+
+public(package) fun dispatch<Asset: key + store, CoinType>(
+    ctx: AssetContext<Asset, CoinType>,
+): (EscrowCoreHandoff<CoinType>, AssetContextDispatch<Asset, CoinType>) {
+    let AssetContext { asset_state, owner, envelope } = ctx;
+    let core = EscrowCoreHandoff { owner, envelope };
+    let dispatch = match (asset_state) {
+        AssetState::Waiting { waiting } => {
+            let WaitingContext { asset, state } = waiting;
+            match (state) {
+                WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } =>
+                    AssetContextDispatch::Idle { ctx: IdleContext { asset, resolved_floor, resolved_ceiling, resolved_handover } },
+                WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } =>
+                    AssetContextDispatch::AtDutch { ctx: AtDutchContext { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } },
+                WaitingState::Retired =>
+                    AssetContextDispatch::Retired { ctx: RetiredContext { asset } },
+            }
+        },
+        AssetState::Renting { tenancy } => {
+            let TenancyContext { asset, envelope: tenancy_envelope, state } = tenancy;
+            match (state) {
+                TenancyState::Occupied { current, retire } =>
+                    AssetContextDispatch::Occupied { ctx: OccupiedContext { asset, envelope: tenancy_envelope, current, retire } },
+                TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, retire } =>
+                    AssetContextDispatch::Demand { ctx: DemandContext { asset, envelope: tenancy_envelope, current, pending, handover_expiry, bidding_cycles, retire } },
+            }
+        },
+    };
+    (core, dispatch)
+}
+
+public(package) fun collect<Asset: key + store, CoinType>(
+    core: EscrowCoreHandoff<CoinType>,
+    d:    AssetContextDispatch<Asset, CoinType>,
+): AssetContext<Asset, CoinType> {
+    let EscrowCoreHandoff { owner, envelope } = core;
+    let asset_state = match (d) {
+        AssetContextDispatch::Idle { ctx } => {
+            let IdleContext { asset, resolved_floor, resolved_ceiling, resolved_handover } = ctx;
+            AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Idle { resolved_floor, resolved_ceiling, resolved_handover } } }
+        },
+        AssetContextDispatch::AtDutch { ctx } => {
+            let AtDutchContext { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } = ctx;
+            AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::AtDutch { last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } } }
+        },
+        AssetContextDispatch::Retired { ctx } => {
+            let RetiredContext { asset } = ctx;
+            AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }
+        },
+        AssetContextDispatch::Occupied { ctx } => {
+            let OccupiedContext { asset, envelope: tenancy_envelope, current, retire } = ctx;
+            AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_envelope, state: TenancyState::Occupied { current, retire } } }
+        },
+        AssetContextDispatch::Demand { ctx } => {
+            let DemandContext { asset, envelope: tenancy_envelope, current, pending, handover_expiry, bidding_cycles, retire } = ctx;
+            AssetState::Renting { tenancy: TenancyContext { asset, envelope: tenancy_envelope, state: TenancyState::Demand { current, pending, handover_expiry, bidding_cycles, retire } } }
+        },
+    };
+    AssetContext { asset_state, owner, envelope }
 }
 
 // ─── Variant predicates ───────────────────────────────────────────────────────
@@ -1648,6 +1784,18 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 
 public(package) fun emit_retire_flag_set(escrow_id: ID, owner: address, timestamp_ms: u64) {
     event::emit(RetireFlagSet { escrow_id, owner, timestamp_ms });
+}
+
+/// Run an AssetContext through dispatch + collect. The result must be
+/// observationally equivalent to the input (same state, same fields).
+/// Used by C1 round-trip tests; will be exercised structurally by every
+/// migrated execute_* in C2-C9.
+#[test_only]
+public(package) fun roundtrip_for_testing<Asset: key + store, CoinType>(
+    ctx: AssetContext<Asset, CoinType>,
+): AssetContext<Asset, CoinType> {
+    let (core, d) = dispatch(ctx);
+    collect(core, d)
 }
 
 #[test_only]

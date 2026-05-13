@@ -134,7 +134,9 @@ public fun claim_asset<Asset: key + store, CoinType>(
 
     let Escrow { id, asset_context } = escrow;
     let context = asset_context.destroy_some();
-    let (asset, earnings) = asset_context_state::execute_claim(context, &owner_cap, random, clock, ctx);
+    let context = asset_context_state::apply_pending_transition_states(context, random, clock, ctx);
+    let (core, dispatch) = asset_context_state::dispatch(context);
+    let (asset, earnings) = asset_context_state::execute_claim(dispatch, core, &owner_cap, ctx);
     let swept_earnings    = coin::value(&earnings);
     owner_cap::burn(owner_cap, owner_addr);
     id.delete();

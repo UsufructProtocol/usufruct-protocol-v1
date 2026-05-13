@@ -1100,25 +1100,63 @@ public(package) fun execute_extend_commitment<Asset: key + store, CoinType>(
     AssetContext { asset_state, owner, envelope }
 }
 
-/// Terminal action: settle pending transitions, assert retired, unwrap asset and earnings.
-public(package) fun execute_claim<Asset: key + store, CoinType>(
-    context:   AssetContext<Asset, CoinType>,
+/// Terminal action: unwrap a RetiredContext into the underlying asset and
+/// the swept owner earnings. The type guarantees the lifecycle state — no
+/// runtime assert on state needed.
+///
+/// The owner-cap → escrow binding check stays here: it is a precondition
+/// of the action ("this cap is allowed to claim from this escrow"), not a
+/// property of where the call comes from.
+public(package) fun execute_claim_retired<Asset: key + store, CoinType>(
+    retired:   RetiredContext<Asset, CoinType>,
+    core:      EscrowCoreHandoff<CoinType>,
     owner_cap: &OwnerCap,
-    random:    &Random,
-    clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == context.envelope.escrow_identity, EWrongEscrowOwnerCap);
-    let context = apply_pending_transition_states(context, random, clock, ctx);
-    assert!(proj_is_inactive(&context), ENotRetired);
-    match (context) {
-        AssetContext { asset_state: AssetState::Waiting { waiting: WaitingContext { asset, state: WaitingState::Retired } }, mut owner, .. } => {
-            let coin = owner::withdraw(&mut owner, owner_cap, ctx);
-            owner::destroy_empty(owner);
-            (asset::unlock(asset), coin)
+    let EscrowCoreHandoff { mut owner, envelope } = core;
+    assert!(owner_cap::proj_escrow_identity(owner_cap) == envelope.escrow_identity, EWrongEscrowOwnerCap);
+    let RetiredContext { asset } = retired;
+    let coin = owner::withdraw(&mut owner, owner_cap, ctx);
+    owner::destroy_empty(owner);
+    (asset::unlock(asset), coin)
+}
+
+/// Entry-point dispatcher for claim. Lives here (not in escrow.move) because
+/// Move 2024 restricts pattern access to the defining module — the wrong-state
+/// arms have to destructure `AssetContextDispatch` and `EscrowCoreHandoff`
+/// before aborting, and that destructure must happen inside this module.
+///
+/// The happy path delegates to `execute_claim_retired`, which is the typed
+/// contract: it can only be called with a `RetiredContext`. The other four
+/// arms abort `ENotRetired` after consuming the hot-potatoes inline — the
+/// abort is reachable from the public API (caller invoked claim while the
+/// escrow was in the wrong lifecycle state) and is what `expected_failure`
+/// tests exercise.
+public(package) fun execute_claim<Asset: key + store, CoinType>(
+    d:         AssetContextDispatch<Asset, CoinType>,
+    core:      EscrowCoreHandoff<CoinType>,
+    owner_cap: &OwnerCap,
+    ctx:       &mut TxContext,
+): (Asset, Coin<CoinType>) {
+    match (d) {
+        AssetContextDispatch::Retired { ctx: retired } =>
+            execute_claim_retired(retired, core, owner_cap, ctx),
+        AssetContextDispatch::Idle { ctx: _idle } => {
+            let EscrowCoreHandoff { owner: _o, envelope: _ } = core;
+            abort ENotRetired
         },
-        AssetContext { asset_state: AssetState::Waiting { waiting: _w }, owner: _o, .. } => abort ENotRetired,
-        AssetContext { asset_state: AssetState::Renting { tenancy: _t }, owner: _o, .. } => abort ENotRetired,
+        AssetContextDispatch::AtDutch { ctx: _atd } => {
+            let EscrowCoreHandoff { owner: _o, envelope: _ } = core;
+            abort ENotRetired
+        },
+        AssetContextDispatch::Occupied { ctx: _occ } => {
+            let EscrowCoreHandoff { owner: _o, envelope: _ } = core;
+            abort ENotRetired
+        },
+        AssetContextDispatch::Demand { ctx: _dem } => {
+            let EscrowCoreHandoff { owner: _o, envelope: _ } = core;
+            abort ENotRetired
+        },
     }
 }
 

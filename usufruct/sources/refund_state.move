@@ -177,12 +177,12 @@ public fun destroy_for_testing<C>(rs: RefundState<C>) {
             fee_message::destroy_share_for_testing(fee_share);
             owner::destroy_earnings_for_testing(owner_earnings);
         },
-        RefundState::Parcial { identity: _, stake, fee_share, owner_earnings } => {
+        RefundState::Parcial { stake, fee_share, owner_earnings, .. } => {
             tenant::destroy_stake_for_testing(stake);
             fee_message::destroy_share_for_testing(fee_share);
             owner::destroy_earnings_for_testing(owner_earnings);
         },
-        RefundState::Total { identity: _, stake } => {
+        RefundState::Total { stake, .. } => {
             tenant::destroy_stake_for_testing(stake);
         },
     }

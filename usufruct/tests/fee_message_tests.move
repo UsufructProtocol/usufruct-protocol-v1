@@ -782,8 +782,7 @@ fun e6_sent_collected_join_on_fee_message_id() {
 // D5: Ticket for a message posted to inbox A, presented to inbox B, aborts.
 // Verifies P7: parent-relation enforcement is done by transfer::receive at the
 // Sui runtime level — no Move-level assert needed or added.
-#[test]
-#[expected_failure]
+#[test, expected_failure]
 fun d5_cross_inbox_ticket_rejected() {
     // Create inbox A → hand to ADMIN; inbox B → stays with DEPLOYER.
     let mut scenario = test_scenario::begin(DEPLOYER);

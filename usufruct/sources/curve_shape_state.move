@@ -175,11 +175,7 @@ fun eval_smoothstep(t: u64, t_max: u64): u64 {
 fun eval_power_law(t: u64, t_max: u64, alpha_num: u8, alpha_den: u8): u64 {
     let x_scaled: u64 = math::mul_div(t, SCALE, t_max);
     let mut acc:  u64 = x_scaled;
-    let mut k:    u8  = 1;
-    while (k < alpha_num) {
-        acc = math::mul_div(acc, x_scaled, SCALE);
-        k = k + 1;
-    };
+    (alpha_num - 1).do!(|_| acc = math::mul_div(acc, x_scaled, SCALE));
     if (alpha_den == 1) {
         return acc
     };

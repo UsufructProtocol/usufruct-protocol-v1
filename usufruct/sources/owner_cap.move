@@ -80,7 +80,7 @@ public(package) fun new(
 public(package) fun burn(cap: OwnerCap, owner: address) {
     let OwnerCap { id, escrow_identity } = cap;
     let owner_cap_id = object::uid_to_inner(&id);
-    object::delete(id);
+    id.delete();
     event::emit(OwnerCapBurned { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), owner });
 }
 

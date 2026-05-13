@@ -10,8 +10,7 @@ use usufruct::phases;
 
 // ─── new_descent_window — abort ───────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
 fun new_descent_window_rejects_zero() {
     // Window(0) is not allowed; the zero-ceiling mode is Skipped.
     descent_policy_state::new_descent_window(phases::duration(0));
@@ -48,15 +47,11 @@ fun has_expired_table() {
         HasExpiredCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 0, now: 49, expected: false },
         HasExpiredCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 0, now: 50, expected: true  },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
         let resolved = descent_policy_state::resolve(&c.policy, &mut gen);
         assert_eq!(descent_policy_state::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed(), c.expected);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── expiry_at ────────────────────────────────────────────────────────────────
@@ -80,15 +75,11 @@ fun expiry_at_table() {
         ExpiryAtCase { policy: descent_policy_state::new_descent_window(phases::duration(1)),     phase_start: 0,   expected: 1   },
         ExpiryAtCase { policy: descent_policy_state::new_descent_window(phases::duration(9_999)), phase_start: 1,   expected: 10_000 },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
         let resolved = descent_policy_state::resolve(&c.policy, &mut gen);
         assert_eq!(phases::timestamp_ms(descent_policy_state::expiry_at(resolved, phases::timestamp(c.phase_start))), c.expected);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── window_ceiling ───────────────────────────────────────────────────────────
@@ -107,8 +98,7 @@ fun window_ceiling_returns_ceiling_for_window() {
     };
 }
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EDescentSkippedNoWindow, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EDescentSkippedNoWindow, location = usufruct::descent_policy_state)]
 fun window_ceiling_aborts_on_skipped() {
     // window_ceiling on Skipped is unreachable in production
     // (compute_price_descent only fires from AtDutchAuction, structurally
@@ -149,35 +139,28 @@ fun has_expired_iff_now_ge_expiry_at() {
         DeSisterCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 0, now: 49 },
         DeSisterCase { policy: descent_policy_state::new_descent_window(phases::duration(50)), phase_start: 0, now: 50 },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let mut gen   = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
         let resolved  = descent_policy_state::resolve(&c.policy, &mut gen);
         let bool_view = descent_policy_state::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed();
         let u64_view  = c.now >= phases::timestamp_ms(descent_policy_state::expiry_at(resolved, phases::timestamp(c.phase_start)));
         assert_eq!(bool_view, u64_view);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── RandomInRange — constructors ─────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EDescentCeilingZero, location = usufruct::descent_policy_state)]
 fun new_descent_random_in_range_rejects_zero_min() {
     descent_policy_state::new_descent_random_in_range(phases::duration(0), phases::duration(100));
 }
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
 fun new_descent_random_in_range_rejects_min_eq_max() {
     descent_policy_state::new_descent_random_in_range(phases::duration(50), phases::duration(50));
 }
 
-#[test]
-#[expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
+#[test, expected_failure(abort_code = descent_policy_state::EMinNotLtMax, location = usufruct::descent_policy_state)]
 fun new_descent_random_in_range_rejects_min_gt_max() {
     descent_policy_state::new_descent_random_in_range(phases::duration(100), phases::duration(50));
 }

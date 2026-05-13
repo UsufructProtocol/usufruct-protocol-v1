@@ -84,8 +84,8 @@ public(package) fun new(
 public(package) fun burn(cap: TenantCap, ctx: &TxContext) {
     let TenantCap { id, escrow_identity } = cap;
     let tenant_cap_id = object::uid_to_inner(&id);
-    let tenant        = tx_context::sender(ctx);
-    object::delete(id);
+    let tenant        = ctx.sender();
+    id.delete();
     event::emit(TenantCapBurned { tenant_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), tenant });
 }
 

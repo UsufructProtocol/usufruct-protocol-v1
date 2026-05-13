@@ -35,18 +35,14 @@ fun new_power_law_reduces_via_gcd_and_stays_coprime() {
         PowerLawCase { in_num: 1, in_den: 3, out_num: 1, out_den: 3 }, // smallest d=3
         PowerLawCase { in_num: 1, in_den: 4, out_num: 1, out_den: 4 }, // smallest d=4, alpha_den=4 boundary
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         let shape = curve_shape_state::new_power_law(case.in_num, case.in_den);
         let (n, d) = curve_shape_state::power_law_fields_for_testing(&shape);
         assert_eq!(n, case.out_num);
         assert_eq!(d, case.out_den);
         // Coprimality invariant: gcd(stored_num, stored_den) == 1
         assert!(gcd_u8(n, d) == 1, 0);
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
@@ -57,50 +53,42 @@ fun new_exponential_lower_and_upper_bounds_succeed() {
 
 // ─── Constructors — abort ──────────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaNumRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaNumRange, location = usufruct::curve_shape_state)]
 fun new_power_law_alpha_num_zero_aborts() {
     let _ = curve_shape_state::new_power_law(0, 2);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaNumRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaNumRange, location = usufruct::curve_shape_state)]
 fun new_power_law_alpha_num_above_8_aborts() {
     let _ = curve_shape_state::new_power_law(9, 2);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaDenRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaDenRange, location = usufruct::curve_shape_state)]
 fun new_power_law_alpha_den_zero_aborts() {
     let _ = curve_shape_state::new_power_law(3, 0);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaDenRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaDenRange, location = usufruct::curve_shape_state)]
 fun new_power_law_alpha_den_above_4_aborts() {
     let _ = curve_shape_state::new_power_law(3, 5);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EDegenerateLinear, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EDegenerateLinear, location = usufruct::curve_shape_state)]
 fun new_power_law_degenerate_2_2_aborts() {
     let _ = curve_shape_state::new_power_law(2, 2);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EDegenerateLinear, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EDegenerateLinear, location = usufruct::curve_shape_state)]
 fun new_power_law_degenerate_4_4_aborts() {
     let _ = curve_shape_state::new_power_law(4, 4);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaAbsRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaAbsRange, location = usufruct::curve_shape_state)]
 fun new_exponential_alpha_abs_zero_aborts() {
     let _ = curve_shape_state::new_exponential(0, false);
 }
 
-#[test]
-#[expected_failure(abort_code = curve_shape_state::EAlphaAbsRange, location = usufruct::curve_shape_state)]
+#[test, expected_failure(abort_code = curve_shape_state::EAlphaAbsRange, location = usufruct::curve_shape_state)]
 fun new_exponential_alpha_abs_above_8_aborts() {
     let _ = curve_shape_state::new_exponential(9, true);
 }
@@ -140,16 +128,12 @@ fun evaluate_curve_edge_cases_apply_to_every_variant() {
     let slen = seeds.length();
     while (s < slen) {
         let shape = &seeds[s];
-        let mut i = 0;
-        let len = cases.length();
-        while (i < len) {
-            let case = &cases[i];
+        cases.do_ref!(|case| {
             assert_eq!(
                 curve_shape_state::height_value(curve_shape_state::evaluate_curve(shape, case.t, case.t_max)),
                 case.expected,
             );
-            i = i + 1;
-        };
+        });
         s = s + 1;
     };
 }
@@ -179,80 +163,60 @@ fun pd1_interior_pairs(): vector<InteriorPair> {
 fun evaluate_curve_dispatch_equivalence_linear() {
     let shape = curve_shape_state::new_linear();
     let pairs = pd1_interior_pairs();
-    let mut i = 0;
-    let len = pairs.length();
-    while (i < len) {
-        let p = &pairs[i];
+    pairs.do_ref!(|p| {
         assert_eq!(
             curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_linear_for_testing(p.t, p.t_max),
         );
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
 fun evaluate_curve_dispatch_equivalence_smoothstep() {
     let shape = curve_shape_state::new_smoothstep();
     let pairs = pd1_interior_pairs();
-    let mut i = 0;
-    let len = pairs.length();
-    while (i < len) {
-        let p = &pairs[i];
+    pairs.do_ref!(|p| {
         assert_eq!(
             curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_smoothstep_for_testing(p.t, p.t_max),
         );
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
 fun evaluate_curve_dispatch_equivalence_logistic() {
     let shape = curve_shape_state::new_logistic();
     let pairs = pd1_interior_pairs();
-    let mut i = 0;
-    let len = pairs.length();
-    while (i < len) {
-        let p = &pairs[i];
+    pairs.do_ref!(|p| {
         assert_eq!(
             curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_logistic_for_testing(p.t, p.t_max),
         );
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
 fun evaluate_curve_dispatch_equivalence_power_law() {
     let shape = curve_shape_state::new_power_law(2, 1);
     let pairs = pd1_interior_pairs();
-    let mut i = 0;
-    let len = pairs.length();
-    while (i < len) {
-        let p = &pairs[i];
+    pairs.do_ref!(|p| {
         assert_eq!(
             curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_power_law_for_testing(p.t, p.t_max, 2, 1),
         );
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
 fun evaluate_curve_dispatch_equivalence_exponential() {
     let shape = curve_shape_state::new_exponential(2, false);
     let pairs = pd1_interior_pairs();
-    let mut i = 0;
-    let len = pairs.length();
-    while (i < len) {
-        let p = &pairs[i];
+    pairs.do_ref!(|p| {
         assert_eq!(
             curve_shape_state::height_value(curve_shape_state::evaluate_curve(&shape, p.t, p.t_max)),
             curve_shape_state::eval_exponential_for_testing(p.t, p.t_max, 2, false),
         );
-        i = i + 1;
-    };
+    });
 }
 
 // ─── eval_linear ───────────────────────────────────────────────────────────
@@ -273,13 +237,9 @@ fun eval_linear_golden_vectors() {
         LinearCase { t: 2, t_max: 3,             expected: 666_666_666 }, // floor 2/3
         LinearCase { t: 1, t_max: 1_000_000_000, expected: 1           }, // minimum nonzero output
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         assert_eq!(curve_shape_state::eval_linear_for_testing(case.t, case.t_max), case.expected);
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
@@ -324,16 +284,12 @@ fun eval_smoothstep_golden_vectors() {
         SmoothstepCase { t: 2_000_000_000, t_max: 4_000_000_000, expected: 500_000_000 }, // g(0.5)=0.5 exact
         SmoothstepCase { t: 3_000_000_000, t_max: 4_000_000_000, expected: 843_750_000 }, // g(0.75)=0.84375
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         assert_eq!(
             curve_shape_state::eval_smoothstep_for_testing(case.t, case.t_max),
             case.expected,
         );
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
@@ -430,16 +386,12 @@ fun eval_power_law_d1_golden_vectors() {
         // 1^8 = 1
         PowerLawEvalCase { t: 4_000_000_000, t_max: 4_000_000_000, n: 8, d: 1, expected: 1_000_000_000 },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let case = &cases[i];
+    cases.do_ref!(|case| {
         assert_eq!(
             curve_shape_state::eval_power_law_for_testing(case.t, case.t_max, case.n, case.d),
             case.expected,
         );
-        i = i + 1;
-    };
+    });
 }
 
 // Monotonicity in t for both d=1 and d>1 paths.

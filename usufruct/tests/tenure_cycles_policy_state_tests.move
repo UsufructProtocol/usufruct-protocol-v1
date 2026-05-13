@@ -16,14 +16,12 @@ fun single_allows_cycles_one() {
     tenure_cycles_policy_state::validate(&tenure_cycles_policy_state::new_single(), cycles::cycles(1));
 }
 
-#[test]
-#[expected_failure(abort_code = tenure_cycles_policy_state::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy_state)]
+#[test, expected_failure(abort_code = tenure_cycles_policy_state::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy_state)]
 fun single_rejects_cycles_two() {
     tenure_cycles_policy_state::validate(&tenure_cycles_policy_state::new_single(), cycles::cycles(2));
 }
 
-#[test]
-#[expected_failure(abort_code = tenure_cycles_policy_state::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy_state)]
+#[test, expected_failure(abort_code = tenure_cycles_policy_state::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy_state)]
 fun single_rejects_cycles_large() {
     tenure_cycles_policy_state::validate(&tenure_cycles_policy_state::new_single(), cycles::cycles(100));
 }

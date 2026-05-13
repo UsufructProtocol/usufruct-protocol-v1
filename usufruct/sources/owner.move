@@ -5,7 +5,7 @@ module usufruct::owner;
 
 // === Imports ===
 
-use sui::{balance::{Self, Balance}, coin::{Self, Coin}};
+use sui::{balance::{Self, Balance}, coin::Coin};
 use usufruct::{
     monetary::{Self, Stake},
     owner_cap::{Self, OwnerCap, OwnerCapIdentity},
@@ -105,7 +105,7 @@ public(package) fun withdraw<C>(
 ): Coin<C> {
     assert!(owner_cap::identity(cap) == self.identity.cap_identity, E_OWNER_WRONG_CAP);
     let drained = balance::withdraw_all(&mut self.earnings.balance);
-    coin::from_balance(drained, ctx)
+    drained.into_coin(ctx)
 }
 
 /// Tear down an `Owner<C>` known to hold zero earnings. Aborts via
@@ -114,7 +114,7 @@ public(package) fun withdraw<C>(
 /// arithmetic. Symmetric with `tenant::destroy_empty_stake`. Used at
 /// escrow-deletion time after `withdraw` has drained the earnings.
 public(package) fun destroy_empty<C>(o: Owner<C>) {
-    let Owner { identity: _, earnings } = o;
+    let Owner { earnings, .. } = o;
     let OwnerEarnings { balance } = earnings;
     balance::destroy_zero(balance);
 }
@@ -125,7 +125,7 @@ public(package) fun destroy_empty<C>(o: Owner<C>) {
 
 #[test_only]
 public fun destroy_for_testing<C>(o: Owner<C>) {
-    let Owner { identity: _, earnings } = o;
+    let Owner { earnings, .. } = o;
     let OwnerEarnings { balance } = earnings;
     balance::destroy_for_testing(balance);
 }

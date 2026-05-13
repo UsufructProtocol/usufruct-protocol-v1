@@ -12,8 +12,7 @@ const E_COMMITMENT_FLOOR_ZERO: u64 = 0; // mirrors commitment_policy_state::ECom
 
 // ─── new_deferred — abort ──────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = E_COMMITMENT_FLOOR_ZERO, location = usufruct::commitment_policy_state)]
+#[test, expected_failure(abort_code = E_COMMITMENT_FLOOR_ZERO, location = usufruct::commitment_policy_state)]
 fun new_deferred_rejects_zero() {
     // Deferred(0) is not allowed; the zero-floor mode is Immediate.
     commitment_policy_state::new_deferred(phases::duration(0));
@@ -54,14 +53,10 @@ fun is_unlocked_table() {
         IsUnlockedCase { policy: commitment_policy_state::new_deferred(phases::duration(7_200_000)), integrated_at: 1_000_000, now: 8_199_999, expected: false },
         IsUnlockedCase { policy: commitment_policy_state::new_deferred(phases::duration(7_200_000)), integrated_at: 1_000_000, now: 8_200_000, expected: true  },
     ];
-    let mut i = 0;
-    let len = cases.length();
-    while (i < len) {
-        let c = &cases[i];
+    cases.do_ref!(|c| {
         let resolved = commitment_policy_state::resolve(&c.policy);
         assert_eq!(commitment_policy_state::is_unlocked(resolved, phases::timestamp(c.integrated_at), phases::timestamp(c.now)).is_crossed(), c.expected);
-        i = i + 1;
-    };
+    });
 }
 
 // ─── monotonicity ─────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ module usufruct::fee_message;
 
 use sui::{
     balance::{Self, Balance},
-    coin::{Self, Coin},
+    coin::Coin,
     event,
     transfer::Receiving,
 };
@@ -70,13 +70,13 @@ public fun collect_fee_messages<C>(
     ctx:     &mut TxContext,
 ): Coin<C> {
     let inbox_identity = protocol_fee_ref::fee_inbox_identity(object::id(inbox));
-    let collector      = tx_context::sender(ctx);
+    let collector      = ctx.sender();
     let mut total      = balance::zero<C>();
     tickets.do!(|ticket| {
         let msg = receive_message(inbox, ticket);
         balance::join(&mut total, consume_message(msg, inbox_identity, collector));
     });
-    coin::from_balance(total, ctx)
+    total.into_coin(ctx)
 }
 
 // === View Functions ===
@@ -139,7 +139,7 @@ fun consume_message<C>(
     let amount         = balance::value(&balance);
     let fee_inbox_id   = protocol_fee_ref::inbox_id(fee_inbox_identity);
     let escrow_id      = escrow_identity::escrow_id(escrow_identity);
-    object::delete(id);
+    id.delete();
     event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount, collector });
     balance
 }
@@ -168,7 +168,7 @@ public fun consume_message_for_testing<C>(
 public fun share_escrow_id<C>(s: &FeeShare<C>): ID { escrow_identity::escrow_id(s.escrow_identity) }
 #[test_only]
 public fun destroy_share_for_testing<C>(s: FeeShare<C>) {
-    let FeeShare { balance, escrow_identity: _ } = s;
+    let FeeShare { balance, .. } = s;
     balance::destroy_for_testing(balance);
 }
 

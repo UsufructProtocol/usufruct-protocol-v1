@@ -88,7 +88,7 @@ public(package) fun proj_escrow_id<U: key + store>(self: &AssetCustodyOpen<U>): 
     escrow_identity::escrow_id(self.identity.escrow_identity)
 }
 public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool {
-    option::is_some(&self.available)
+    self.available.is_some()
 }
 
 // === Admin Functions ===
@@ -121,7 +121,7 @@ public(package) fun unlock<U: key + store>(self: AssetCustodyLocked<U>): U {
 /// shaped so it cannot be stored or forgotten — must reach `put`
 /// within the same PTB.
 public(package) fun take<U: key + store>(self: &mut AssetCustodyOpen<U>): (U, AssetReceipt) {
-    let u       = option::extract(&mut self.available);
+    let u       = self.available.extract();
     let receipt = AssetReceipt { identity: self.identity };
     (u, receipt)
 }
@@ -141,16 +141,16 @@ public(package) fun put<U: key + store>(
     assert!(self.identity.escrow_identity == identity.escrow_identity, E_ASSET_WRONG_ESCROW);
     assert!(self.identity.asset_id  == identity.asset_id,  E_ASSET_RECEIPT_MISMATCH);
     assert!(object::id(&u)          == identity.asset_id,  E_ASSET_RETURNED_DIFFERENT);
-    option::fill(&mut self.available, u);
+    self.available.fill(u);
 }
 
 /// Unwrap an open custody asset, returning the raw `U`. Aborts if the slot
 /// is empty (asset still borrowed). Primitive — internal callers prefer
 /// `close_tenancy`; tests use this to exercise the assertion directly.
 public(package) fun unbundle<U: key + store>(self: AssetCustodyOpen<U>): U {
-    let AssetCustodyOpen { identity: _, available } = self;
-    assert!(option::is_some(&available), E_ASSET_NOT_AVAILABLE);
-    option::destroy_some(available)
+    let AssetCustodyOpen { available, .. } = self;
+    assert!(available.is_some(), E_ASSET_NOT_AVAILABLE);
+    available.destroy_some()
 }
 
 /// Renting → Waiting: tenure has ended. Encapsulates `unbundle + lock` so
@@ -189,7 +189,7 @@ public fun forge_receipt_for_testing(asset_id: ID, escrow_id: ID): AssetReceipt 
 /// Drop an `AssetReceipt` whose return-path was abandoned in the test.
 #[test_only]
 public fun destroy_receipt_for_testing(r: AssetReceipt) {
-    let AssetReceipt { identity: _ } = r;
+    let AssetReceipt { .. } = r;
 }
 
 /// Inspect the asset_id stamped on a receipt. Test-only.

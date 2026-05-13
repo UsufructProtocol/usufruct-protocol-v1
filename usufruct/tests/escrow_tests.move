@@ -471,8 +471,7 @@ fun floor_price_at_dutch_at_full_descent_equals_min_rent_price() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ERetiredNoBid, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ERetiredNoBid, location = usufruct::asset_context_state)]
 fun floor_price_aborts_on_retired() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -596,8 +595,7 @@ fun used_credit_handover_confirmed_clamps_at_expiry() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ENotRented, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ENotRented, location = usufruct::asset_context_state)]
 fun used_credit_aborts_on_idle() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -610,8 +608,7 @@ fun used_credit_aborts_on_idle() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ENotRented, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ENotRented, location = usufruct::asset_context_state)]
 fun used_credit_aborts_on_at_dutch() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -632,8 +629,7 @@ fun used_credit_aborts_on_at_dutch() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ENotRented, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ENotRented, location = usufruct::asset_context_state)]
 fun used_credit_aborts_on_retired() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -775,8 +771,7 @@ fun rent_from_handover_open_places_bid() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ERetireFlagBlocksBid, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ERetireFlagBlocksBid, location = usufruct::asset_context_state)]
 fun rent_from_handover_open_aborts_when_retiring_flag_set() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -856,8 +851,7 @@ fun rent_from_handover_confirmed_supersedes_bid() {
 
 // ─── §10. rent — abort paths ─────────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
 fun rent_below_floor_aborts() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -876,8 +870,7 @@ fun rent_below_floor_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ERetiredNoBid, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ERetiredNoBid, location = usufruct::asset_context_state)]
 fun rent_from_retired_aborts() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(0);
@@ -1189,8 +1182,7 @@ fun retire_from_handover_open_only_lifts_flag() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EAlreadyRetired, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EAlreadyRetired, location = usufruct::asset_context_state)]
 fun retire_when_already_retired_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1206,8 +1198,7 @@ fun retire_when_already_retired_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = E_ALREADY_RETIRING, location = usufruct::retire_condition)]
+#[test, expected_failure(abort_code = E_ALREADY_RETIRING, location = usufruct::retire_condition)]
 fun retire_when_already_retiring_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1229,8 +1220,7 @@ fun retire_when_already_retiring_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun retire_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1250,8 +1240,7 @@ fun retire_with_wrong_cap_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ECommitmentFloorNotElapsed, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ECommitmentFloorNotElapsed, location = usufruct::asset_context_state)]
 fun retire_before_floor_aborts_under_deferred_policy() {
     let mut sc = setup();
     let tag = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 deferred
@@ -1513,8 +1502,7 @@ fun borrow_asset_then_return_completes_cycle() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EWrongEscrowTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EWrongEscrowTenantCap, location = usufruct::asset_context_state)]
 fun borrow_asset_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1538,8 +1526,7 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EStaleTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EStaleTenantCap, location = usufruct::asset_context_state)]
 fun borrow_asset_from_idle_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1562,8 +1549,7 @@ fun borrow_asset_from_idle_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EPendingTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EPendingTenantCap, location = usufruct::asset_context_state)]
 fun borrow_asset_with_pending_cap_aborts() {
     let mut sc = setup();
     // c=1 Countdown so place_bid stamps a future expiry (no APT
@@ -1593,8 +1579,7 @@ fun borrow_asset_with_pending_cap_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset::E_ASSET_WRONG_ESCROW, location = usufruct::asset)]
+#[test, expected_failure(abort_code = asset::E_ASSET_WRONG_ESCROW, location = usufruct::asset)]
 fun return_asset_with_foreign_receipt_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1655,8 +1640,7 @@ fun burn_tenant_cap_burns_displaced_bidder_cap() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ETenantCapNotStale, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ETenantCapNotStale, location = usufruct::asset_context_state)]
 fun burn_tenant_cap_on_live_current_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
@@ -1676,8 +1660,7 @@ fun burn_tenant_cap_on_live_current_cap_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EWrongEscrowTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EWrongEscrowTenantCap, location = usufruct::asset_context_state)]
 fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1735,8 +1718,7 @@ fun withdraw_earnings_drains_owner_balance() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ENoEarnings, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ENoEarnings, location = usufruct::asset_context_state)]
 fun withdraw_earnings_with_zero_balance_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1752,8 +1734,7 @@ fun withdraw_earnings_with_zero_balance_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun withdraw_earnings_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1845,8 +1826,7 @@ fun claim_asset_sweeps_owner_earnings() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::ENotRetired, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ENotRetired, location = usufruct::asset_context_state)]
 fun claim_asset_when_not_retired_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1862,8 +1842,7 @@ fun claim_asset_when_not_retired_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EWrongEscrowOwnerCap, location = usufruct::asset_context_state)]
 fun claim_asset_with_wrong_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -2359,8 +2338,7 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 /// (clock at integration time), retire_floor = 10_000_000.
 ///
 /// Config: c=0, d=0, e=0, h=0, f=1 (Deferred).
-#[test]
-#[expected_failure(
+#[test, expected_failure(
     abort_code = asset_context_state::ECommitmentFloorNotElapsed,
     location   = usufruct::asset_context_state,
 )]
@@ -2671,8 +2649,7 @@ fun e2e_b1_instant_borrow_across_curve_shape_states() {
 
 /// After T2 wins an Instant handover, T1's cap is stale.
 /// borrow_asset() with a stale cap aborts EStaleTenantCap.
-#[test]
-#[expected_failure(abort_code = asset_context_state::EStaleTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EStaleTenantCap, location = usufruct::asset_context_state)]
 fun e2e_b3_stale_tenant_cap_borrow_aborts() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
@@ -4386,8 +4363,7 @@ fun e2e_retire6_from_handover_confirmed_while_borrowed() {
 }
 
 // RETIRE-7: Retired → retire() aborts EAlreadyRetired ─────────────────────
-#[test]
-#[expected_failure(
+#[test, expected_failure(
     abort_code = asset_context_state::EAlreadyRetired,
     location   = usufruct::asset_context_state,
 )]
@@ -5235,8 +5211,7 @@ fun update_config_retire_wins_discards_pending_silently() {
 }
 
 // Test 9: update_config on Retired aborts ──────────────────────────────────────
-#[test]
-#[expected_failure(abort_code = asset_context_state::EAlreadyRetired, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EAlreadyRetired, location = usufruct::asset_context_state)]
 fun update_config_on_retired_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -5257,8 +5232,7 @@ fun update_config_on_retired_aborts() {
 }
 
 // Test 10: update_config on retiring (flag set) aborts ────────────────────────
-#[test]
-#[expected_failure(abort_code = asset_context_state::ERetireAlreadyScheduled, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ERetireAlreadyScheduled, location = usufruct::asset_context_state)]
 fun update_config_on_retiring_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -5565,8 +5539,7 @@ fun update_config_behavior_min_rent_price_floor_changes() {
 
 // Test BD-1b: bid rejected after min_rent_price raised ────────────────────────
 /// After reset raises min_rent_price to 20 SUI, a bid of 15 SUI is rejected.
-#[test]
-#[expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
 fun update_config_behavior_min_rent_price_bid_rejected_after_reset() {
     let mut sc = setup();
     let cfg_low  = escrow_corpus::by_tag(0);
@@ -5810,8 +5783,7 @@ fun commitment_floor_observable_at_integrate_and_after_extend() {
 
 // Test BD-6b: retire blocked after extend_commitment raises the floor ──────────
 /// After extending from Immediate to Deferred, retire() at t=0 aborts.
-#[test]
-#[expected_failure(abort_code = asset_context_state::ECommitmentFloorNotElapsed, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::ECommitmentFloorNotElapsed, location = usufruct::asset_context_state)]
 fun extend_commitment_retire_aborts_before_floor() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -5876,8 +5848,7 @@ fun update_config_behavior_handover_instant_borrow_succeeds() {
 // Test BD-7b: FixedTime handover blocks T4 borrow until handover fires ─────────
 /// After reset from Instant to FixedTime, the pending bidder (T4) cannot
 /// borrow until the handover boundary has passed.
-#[test]
-#[expected_failure(abort_code = asset_context_state::EPendingTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EPendingTenantCap, location = usufruct::asset_context_state)]
 fun update_config_behavior_handover_fixed_borrow_blocked() {
     let mut sc = setup();
     let cfg_instant = escrow_corpus::by_tag(0);                               // c=0 Instant
@@ -6098,8 +6069,7 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
 
 // ── Constructor validation ────────────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
 fun new_fixed_zero_price_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
@@ -6107,8 +6077,7 @@ fun new_fixed_zero_price_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
 fun new_random_in_range_zero_min_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
@@ -6119,8 +6088,7 @@ fun new_random_in_range_zero_min_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = floor_price_policy_state::EMinNotLtMax, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy_state::EMinNotLtMax, location = usufruct::floor_price_policy_state)]
 fun new_random_in_range_min_equals_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
@@ -6131,8 +6099,7 @@ fun new_random_in_range_min_equals_max_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = floor_price_policy_state::EMinNotLtMax, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy_state::EMinNotLtMax, location = usufruct::floor_price_policy_state)]
 fun new_random_in_range_min_greater_than_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
@@ -6294,8 +6261,7 @@ fun bid_at_max_always_succeeds_with_random_policy() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
 fun bid_below_min_always_fails_with_random_policy() {
     let mut sc = setup();
     let cfg = escrow_corpus::with_random_min_rent_price(
@@ -6598,8 +6564,7 @@ const CEILING_RAND_MAX: u64 = 150_000;  // 150k ms
 
 // ── Constructor validation ────────────────────────────────────────────────────
 
-#[test]
-#[expected_failure(abort_code = tenure_policy_state::EDurationZero, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = tenure_policy_state::EDurationZero, location = usufruct::tenure_policy_state)]
 fun new_fixed_zero_ceiling_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
@@ -6607,8 +6572,7 @@ fun new_fixed_zero_ceiling_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = tenure_policy_state::EDurationZero, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = tenure_policy_state::EDurationZero, location = usufruct::tenure_policy_state)]
 fun new_random_ceiling_zero_min_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
@@ -6619,8 +6583,7 @@ fun new_random_ceiling_zero_min_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = tenure_policy_state::EMinNotLtMax, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = tenure_policy_state::EMinNotLtMax, location = usufruct::tenure_policy_state)]
 fun new_random_ceiling_min_equals_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
@@ -6631,8 +6594,7 @@ fun new_random_ceiling_min_equals_max_aborts() {
     sc.end();
 }
 
-#[test]
-#[expected_failure(abort_code = tenure_policy_state::EMinNotLtMax, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = tenure_policy_state::EMinNotLtMax, location = usufruct::tenure_policy_state)]
 fun new_random_ceiling_min_greater_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
@@ -6922,8 +6884,7 @@ fun multi_cycle_cfg(): config::IntegrationConfig {
 }
 
 /// Single policy + cycles(2) → EMultiCycleNotAllowed.
-#[test]
-#[expected_failure(abort_code = tenure_cycles_policy_state::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy_state)]
+#[test, expected_failure(abort_code = tenure_cycles_policy_state::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy_state)]
 fun multi_cycle_single_policy_rejects_cycles_two() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0); // Single (default corpus)
@@ -6995,8 +6956,7 @@ fun multi_cycle_single_cycle_degenerates() {
 }
 
 /// Insufficient payment for cycles(3) aborts.
-#[test]
-#[expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_context_state::EInsufficientPayment, location = usufruct::asset_context_state)]
 fun multi_cycle_insufficient_payment_aborts() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
@@ -8650,8 +8610,7 @@ fun commitment_extend_valid_increases_unlocks_at() {
 
 /// III-8 + III-9: Deferred → Immediate aborts when commitment has not expired.
 /// new_expiry = now + 0 = now < anchor + floor = old_expiry.
-#[test]
-#[expected_failure(abort_code = E_COMMITMENT_NOT_EXTENDED, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = E_COMMITMENT_NOT_EXTENDED, location = usufruct::asset_context_state)]
 fun commitment_extend_reduce_floor_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
@@ -8802,8 +8761,7 @@ fun commitment_gate_immediate_retire_at_zero() {
 }
 
 /// V-15: Deferred(N) — retire at t < anchor+N aborts.
-#[test]
-#[expected_failure(abort_code = E_COMMITMENT_FLOOR_NOT_ELAPSED, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = E_COMMITMENT_FLOOR_NOT_ELAPSED, location = usufruct::asset_context_state)]
 fun commitment_gate_deferred_retire_before_floor_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
@@ -8850,8 +8808,7 @@ fun commitment_gate_deferred_retire_at_floor_passes() {
 /// V-17: After extend_commitment(Deferred(N)), gate reopens from new anchor.
 /// Before extend: Immediate → retire at t=0 works.
 /// After extend at t=T: retire at t=T aborts (t < T+N); at t=T+N passes.
-#[test]
-#[expected_failure(abort_code = E_COMMITMENT_FLOOR_NOT_ELAPSED, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = E_COMMITMENT_FLOOR_NOT_ELAPSED, location = usufruct::asset_context_state)]
 fun commitment_gate_extend_reopens_gate_aborts_immediately_after() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();

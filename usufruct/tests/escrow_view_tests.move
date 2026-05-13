@@ -304,8 +304,40 @@ fun commitment_policy_views_match_variants() {
     assert!(!escrow::is_commitment_immediate(&escrow));
     assert!(escrow::is_commitment_deferred(&escrow));
     assert_eq!(escrow::commitment_floor_ms(&escrow).destroy_some(), deferred_floor);
+
+    // commitment_remaining_ms — exercise both branches of the now<unlocks
+    // vs now>=unlocks guard. Deferred puts unlocks strictly in the future,
+    // so both branches are reachable from the same escrow.
+    let unlocks = escrow::commitment_unlocks_at_ms(&escrow);
+    assert!(unlocks > 0);
+    assert_eq!(escrow::commitment_remaining_ms(&escrow, 0),           unlocks);
+    assert_eq!(escrow::commitment_remaining_ms(&escrow, unlocks),     0);
+    assert_eq!(escrow::commitment_remaining_ms(&escrow, unlocks + 1), 0);
     dispose(escrow, cap);
 
+    sc.end();
+}
+
+// ─── whole-struct view getters ────────────────────────────────────────────────
+
+#[test]
+fun whole_struct_view_getters_return_configured_objects() {
+    // The SDK rarely uses these (it prefers the discriminator + accessor API
+    // already covered above) but they are part of the public surface for
+    // callers that want to round-trip the full enum.
+    let mut sc = setup();
+    // e=0 → Linear curves on both credit and descent; d=0 → FixedDelta price fn.
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (escrow, cap) = build_escrow(cfg, &mut sc);
+
+    assert_eq!(escrow::credit_curve(&escrow),  usufruct::curve_shape_state::new_linear());
+    assert_eq!(escrow::descent_curve(&escrow), usufruct::curve_shape_state::new_linear());
+    assert_eq!(
+        escrow::ascending_price_function_state(&escrow),
+        usufruct::price_function_state::new_fixed_delta(usufruct::monetary::price(escrow_corpus::fixed_delta_value_const())),
+    );
+
+    dispose(escrow, cap);
     sc.end();
 }
 

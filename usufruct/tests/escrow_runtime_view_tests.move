@@ -384,7 +384,13 @@ fun demand_views_after_handover_bid() {
     assert!(!escrow::tenant_cap_is_current(&escrow, &t2_cap));
 
     // — Handover countdown is active; expiry is recorded —
-    assert!(escrow::handover_countdown_expiry_ms(&escrow).is_some());
+    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+
+    // — Credit context flips Accruing → Capped on entering Demand; the cap is
+    //   the handover countdown expiry so accrual freezes there.
+    assert!(escrow::credit_is_capped(&escrow));
+    assert!(!escrow::credit_is_accruing(&escrow));
+    assert_eq!(escrow::credit_expiry_ms(&escrow).destroy_some(), countdown_expiry);
 
     transfer::public_transfer(t1_cap, TENANT_ADDR);
     transfer::public_transfer(t2_cap, second_tenant);

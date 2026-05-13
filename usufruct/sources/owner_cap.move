@@ -15,8 +15,8 @@ use usufruct::escrow_identity::{Self, EscrowIdentity};
 // === Structs ===
 
 public struct OwnerCap has key, store {
-    id:        UID,
-    escrow_id: EscrowIdentity,
+    id:              UID,
+    escrow_identity: EscrowIdentity,
 }
 
 /// Typed identity of an `OwnerCap` object — wraps its on-chain `ID`.
@@ -44,7 +44,7 @@ public struct OwnerCapBurned has copy, drop {
 
 /// Returns the ID of the `RentalEscrow` this cap authorizes (SDK boundary).
 public fun proj_escrow_id(cap: &OwnerCap): ID {
-    escrow_identity::escrow_id(cap.escrow_id)
+    escrow_identity::escrow_id(cap.escrow_identity)
 }
 
 // === Admin Functions ===
@@ -61,27 +61,27 @@ public(package) fun cap_id(o: OwnerCapIdentity): ID { o.id }
 
 /// Package-internal: return the `EscrowIdentity` this cap is bound to.
 public(package) fun proj_escrow_identity(cap: &OwnerCap): EscrowIdentity {
-    cap.escrow_id
+    cap.escrow_identity
 }
 
-/// Mints an `OwnerCap` bound to `escrow_id`.
+/// Mints an `OwnerCap` bound to `escrow_identity`.
 public(package) fun new(
-    escrow_id: EscrowIdentity,
-    owner:     address,
-    ctx:       &mut TxContext,
+    escrow_identity: EscrowIdentity,
+    owner:           address,
+    ctx:             &mut TxContext,
 ): OwnerCap {
-    let cap          = OwnerCap { id: object::new(ctx), escrow_id };
+    let cap          = OwnerCap { id: object::new(ctx), escrow_identity };
     let owner_cap_id = object::uid_to_inner(&cap.id);
-    event::emit(OwnerCapMinted { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_id), owner });
+    event::emit(OwnerCapMinted { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), owner });
     cap
 }
 
 /// Destroys `cap` and emits `OwnerCapBurned`.
 public(package) fun burn(cap: OwnerCap, owner: address) {
-    let OwnerCap { id, escrow_id } = cap;
+    let OwnerCap { id, escrow_identity } = cap;
     let owner_cap_id = object::uid_to_inner(&id);
     object::delete(id);
-    event::emit(OwnerCapBurned { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_id), owner });
+    event::emit(OwnerCapBurned { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), owner });
 }
 
 // === Private Functions ===

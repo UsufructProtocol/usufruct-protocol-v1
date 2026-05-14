@@ -67,6 +67,7 @@ const EWrongEscrowOwnerCap:   u64 = 11;
 const EStaleTenantCap:        u64 = 8;
 const EReceiptEscrowMismatch:  u64 = 10;
 const EReturnedDifferentAsset: u64 = 19;
+const EAssetAlreadyBorrowed:   u64 = 20;
 const ENotRetired:               u64 = 12;
 const ENoEarnings:              u64 = 13;
 const ERetireAlreadyScheduled:  u64 = 16;
@@ -1004,23 +1005,26 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
         AssetState::Occupied { mut asset, terms, cycle } => {
-            let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
-            assert_borrow_authorized(cap_identity, current, option::none());
+            assert_borrow_authorized(cap_identity,
+                tenant::proj_cap_identity(tenant::proj_identity(&terms.current)),
+                option::none());
+            assert!(asset::proj_is_available(&asset), EAssetAlreadyBorrowed);
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
-            let asset_id = asset::proj_asset_id(&asset);
-            let u = asset::take(&mut asset);
-            let receipt = AssetReceipt { identity: asset::new_identity(asset_id, core.escrow_identity) };
+            let asset_id    = asset::proj_asset_id(&asset);
+            let u           = asset::take(&mut asset);
+            let receipt     = AssetReceipt { identity: asset::new_identity(asset_id, core.escrow_identity) };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Occupied { asset, terms, cycle }, u, receipt)
         },
         AssetState::Demand { mut asset, terms, bid, cycle } => {
-            let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
-            let pending = tenant::proj_cap_identity(tenant::proj_identity(&bid.pending));
-            assert_borrow_authorized(cap_identity, current, option::some(pending));
+            assert_borrow_authorized(cap_identity,
+                tenant::proj_cap_identity(tenant::proj_identity(&terms.current)),
+                option::some(tenant::proj_cap_identity(tenant::proj_identity(&bid.pending))));
+            assert!(asset::proj_is_available(&asset), EAssetAlreadyBorrowed);
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
-            let asset_id = asset::proj_asset_id(&asset);
-            let u = asset::take(&mut asset);
-            let receipt = AssetReceipt { identity: asset::new_identity(asset_id, core.escrow_identity) };
+            let asset_id    = asset::proj_asset_id(&asset);
+            let u           = asset::take(&mut asset);
+            let receipt     = AssetReceipt { identity: asset::new_identity(asset_id, core.escrow_identity) };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Demand { asset, terms, bid, cycle }, u, receipt)
         },
@@ -1435,8 +1439,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         timestamp_ms:           phases::timestamp_ms(boundary),
     });
 
-    // Tenure has ended: switch custody type. close_tenancy asserts the asset
-    // is actually present (not on loan) — the borrow protocol is over.
+    assert!(asset::proj_is_available(&asset), EAssetAlreadyBorrowed);
     let locked = asset::close_tenancy(asset);
     if (retire_condition::proj_is_retiring(&retire)) {
         event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
@@ -1947,6 +1950,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
             let fee_share      = tenant::take_fee_share(&mut tenant, monetary::stake(fee_amount), core.escrow_identity);
             let refund = refund_state::from_departing(tenant, fee_share, owner_earnings);
             refund_state::destroy_for_testing(refund);
+            assert!(asset::proj_is_available(&asset), EAssetAlreadyBorrowed);
             AssetState::AtDutch {
                 asset:   asset::close_tenancy(asset),
                 auction: AuctionTerms { last_acq_price: monetary::price(last_acq_price), phase_start: new_phase_start },

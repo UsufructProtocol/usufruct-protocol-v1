@@ -9,11 +9,6 @@ use usufruct::escrow_identity::EscrowIdentity;
 
 // === Errors ===
 
-/// `unbundle` was called on a wrapper whose slot is empty (asset still
-/// borrowed). Used by `asset_state::expire` to enforce that tenure
-/// cannot expire while the asset is out — the abort is the defence.
-const E_ASSET_NOT_AVAILABLE: u64 = 4;
-
 // === Constants ===
 
 // === Structs ===
@@ -104,12 +99,11 @@ public(package) fun put<U: key + store>(self: &mut AssetCustodyOpen<U>, u: U) {
     self.available.fill(u);
 }
 
-/// Unwrap an open custody asset, returning the raw `U`. Aborts if the slot
-/// is empty (asset still borrowed). Primitive — internal callers prefer
-/// `close_tenancy`; tests use this to exercise the assertion directly.
+/// Unwrap an open custody asset, returning the raw `U`. Purely mechanical —
+/// callers in `asset_state` are responsible for asserting availability
+/// before calling this.
 public(package) fun unbundle<U: key + store>(self: AssetCustodyOpen<U>): U {
     let AssetCustodyOpen { available, .. } = self;
-    assert!(available.is_some(), E_ASSET_NOT_AVAILABLE);
     available.destroy_some()
 }
 

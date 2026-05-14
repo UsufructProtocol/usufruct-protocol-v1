@@ -99,23 +99,6 @@ fun unbundle_when_available_returns_inner_u() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset::E_ASSET_NOT_AVAILABLE, location = usufruct::asset)]
-fun unbundle_when_unavailable_aborts() {
-    let mut sc = test_scenario::begin(@0xA);
-    sc.next_tx(@0xA);
-    {
-        let u    = new_test_asset(sc.ctx());
-        let mut w = asset::new(u);
-
-        let out = asset::take(&mut w);
-        transfer::public_transfer(out, SINK);
-
-        // Wrapper is now empty — unbundle must abort.
-        let unreachable = asset::unbundle(w);
-        transfer::public_transfer(unreachable, SINK);
-    };
-    sc.end();
-}
 
 // ─── §5. locked custody ──────────────────────────────────────────────────────
 

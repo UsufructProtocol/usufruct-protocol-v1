@@ -447,6 +447,39 @@ fun burn_live_pending_cap_in_demand_aborts() {
     sc.end();
 }
 
+// ─── execute_borrow — double borrow (C3b) ────────────────────────────────────
+//
+// Attempting to borrow an asset that is already on loan must abort
+// `EAssetNotAvailable`. The check lives in `execute_borrow` in `asset_state`
+// before `asset::take` is called.
+
+#[test, expected_failure(abort_code = asset_state::EAssetAlreadyBorrowed, location = usufruct::asset_state)]
+fun double_borrow_aborts() {
+    let mut sc = setup();
+    let (mut escrow, cap) = integrate_and_take(&mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    let p = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
+
+    // First borrow — succeeds, slot is now empty.
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
+
+    // Second borrow — must abort EAssetAlreadyBorrowed.
+    let (asset2, receipt2) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
+
+    // Unreachable — consumed only to satisfy the type checker.
+    escrow::return_asset(&mut escrow, asset, receipt);
+    escrow::return_asset(&mut escrow, asset2, receipt2);
+    transfer::public_transfer(t_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── execute_return — receipt verification (C4) ───────────────────────────────
 //
 // All three checks live in `asset_state::execute_return`. Forged receipts

@@ -135,6 +135,20 @@ public struct AuctionTerms has copy, drop, store {
     phase_start:    Timestamp,
 }
 
+/// Active integration config plus any pending replacement scheduled for
+/// the next Idle entry. Pending is applied and cleared in do_auction_expiry.
+public struct ConfigSlot has drop, store {
+    active:  IntegrationConfig,
+    pending: Option<IntegrationConfig>,
+}
+
+/// Commitment policy bound to its anchor timestamp. Both fields are
+/// required to evaluate whether the commitment floor has elapsed.
+public struct CommitmentSlot has copy, drop, store {
+    policy: CommitmentPolicyState,
+    anchor: Timestamp,
+}
+
 /// Active tenancy data: who is renting, on what schedule, and whether retire is pending.
 /// Exists only when there is an active tenant (Occupied / Demand states).
 public struct OccupiedTerms<phantom CoinType> has store {
@@ -165,12 +179,10 @@ public struct DemandTerms<phantom CoinType> has store {
 
 public struct EscrowCore<phantom CoinType> has store {
     owner:              Owner<CoinType>,
-    config:             IntegrationConfig,
-    pending_config:     Option<IntegrationConfig>,
+    config:             ConfigSlot,
     fee_inbox_identity: FeeInboxIdentity,
     integrated_at:      Timestamp,
-    commitment_policy:  CommitmentPolicyState,
-    commitment_anchor:  Timestamp,
+    commitment:         CommitmentSlot,
     escrow_identity:    EscrowIdentity,
 }
 
@@ -285,12 +297,10 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let descent  = descent_policy_state::resolve(config::proj_descent(&config), generator);
     let core = EscrowCore {
         owner:              owner::new<CoinType>(owner_cap_identity),
-        config,
-        pending_config:     option::none(),
+        config:             ConfigSlot { active: config, pending: option::none() },
         fee_inbox_identity,
         integrated_at,
-        commitment_policy,
-        commitment_anchor:  integrated_at,
+        commitment:         CommitmentSlot { policy: commitment_policy, anchor: integrated_at },
         escrow_identity,
     };
     let state = AssetState::Idle {
@@ -312,7 +322,8 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
 
 public(package) fun proj_config<CoinType>(
     core: &EscrowCore<CoinType>,
-): &IntegrationConfig { &core.config }
+): &IntegrationConfig { &core.config.active }
+
 
 public(package) fun proj_fee_inbox_id<CoinType>(
     core: &EscrowCore<CoinType>,
@@ -324,15 +335,15 @@ public(package) fun proj_integrated_at<CoinType>(
 
 public(package) fun proj_pending_config<CoinType>(
     core: &EscrowCore<CoinType>,
-): Option<IntegrationConfig> { core.pending_config }
+): Option<IntegrationConfig> { core.config.pending }
 
 public(package) fun proj_commitment_policy<CoinType>(
     core: &EscrowCore<CoinType>,
-): CommitmentPolicyState { core.commitment_policy }
+): CommitmentPolicyState { core.commitment.policy }
 
 public(package) fun proj_commitment_anchor<CoinType>(
     core: &EscrowCore<CoinType>,
-): Timestamp { core.commitment_anchor }
+): Timestamp { core.commitment.anchor }
 
 public(package) fun proj_owner_balance<CoinType>(
     core: &EscrowCore<CoinType>,
@@ -650,16 +661,16 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
         AssetState::Idle { cycle, .. } => cycle.floor,
         AssetState::AtDutch { auction, cycle, .. } => {
             let ps = price_state::descending(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent);
-            price_state::floor_price(&ps, &core.config, now)
+            price_state::floor_price(&ps, &core.config.active, now)
         },
         AssetState::Retired { .. } => abort ERetiredNoBid,
         AssetState::Occupied { terms, .. } => {
             let ps = price_state::ascending(cycles::per_cycle_stake(tenant::proj_stake_value(&terms.current), terms.schedule.committed_cycles));
-            price_state::floor_price(&ps, &core.config, now)
+            price_state::floor_price(&ps, &core.config.active, now)
         },
         AssetState::Demand { bid, .. } => {
             let ps = price_state::ascending(cycles::per_cycle_stake(tenant::proj_stake_value(&bid.pending), bid.handover.cycles));
-            price_state::floor_price(&ps, &core.config, now)
+            price_state::floor_price(&ps, &core.config.active, now)
         },
     }
 }
@@ -672,11 +683,11 @@ public(package) fun used_credit_at<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Occupied { terms, .. } => {
             let cs = credit_state::accruing(tenant::proj_stake_value(&terms.current), terms.schedule.phase_start);
-            credit_state::used_credit(&cs, &core.config, terms.schedule.ceiling_total, now)
+            credit_state::used_credit(&cs, &core.config.active, terms.schedule.ceiling_total, now)
         },
         AssetState::Demand { terms, bid, .. } => {
             let cs = credit_state::capped(tenant::proj_stake_value(&terms.current), terms.schedule.phase_start, bid.handover.expiry);
-            credit_state::used_credit(&cs, &core.config, terms.schedule.ceiling_total, now)
+            credit_state::used_credit(&cs, &core.config.active, terms.schedule.ceiling_total, now)
         },
         _ => abort ENotRented,
     }
@@ -817,7 +828,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): (AssetState<Asset, CoinType>, TenantCap) {
-    tenure_cycles_policy_state::validate(config::proj_tenure_cycles(&core.config), cycles);
+    tenure_cycles_policy_state::validate(config::proj_tenure_cycles(&core.config.active), cycles);
     let now                = phases::now(clock);
     let escrow_identity    = core.escrow_identity;
     let fee_inbox_identity = core.fee_inbox_identity;
@@ -830,7 +841,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         },
         AssetState::AtDutch { asset, auction, cycle } => {
             let ps    = price_state::descending(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent);
-            let floor = price_state::floor_price(&ps, &core.config, now);
+            let floor = price_state::floor_price(&ps, &core.config.active, now);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_install(asset, cycle, cycles, escrow_identity, payment, floor, now, ctx)
         },
@@ -838,14 +849,14 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
             if (retire_condition::proj_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = tenant::proj_stake_value(&terms.current);
             let ps    = price_state::ascending(cycles::per_cycle_stake(stake, terms.schedule.committed_cycles));
-            let floor = price_state::floor_price(&ps, &core.config, now);
+            let floor = price_state::floor_price(&ps, &core.config.active, now);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, cycles, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Demand { asset, terms, bid, cycle } => {
             let stake = tenant::proj_stake_value(&bid.pending);
             let ps    = price_state::ascending(cycles::per_cycle_stake(stake, bid.handover.cycles));
-            let floor = price_state::floor_price(&ps, &core.config, now);
+            let floor = price_state::floor_price(&ps, &core.config.active, now);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_supersede_bid(
                 asset, terms, bid, cycle, cycles,
@@ -886,13 +897,13 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let now = phases::now(clock);
     assert!(
         commitment_policy_state::is_unlocked(
-            commitment_policy_state::resolve(&core.commitment_policy),
-            core.commitment_anchor,
+            commitment_policy_state::resolve(&core.commitment.policy),
+            core.commitment.anchor,
             now,
         ).is_crossed(),
         ECommitmentFloorNotElapsed,
     );
-    core.pending_config = option::none();
+    core.config.pending = option::none();
     let escrow_identity = core.escrow_identity;
     let raw_escrow_id   = escrow_identity::escrow_id(escrow_identity);
     let now_ms          = phases::timestamp_ms(now);
@@ -946,30 +957,30 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
         AssetState::Retired { asset: _retired } => abort EAlreadyRetired,
         AssetState::Idle { asset, cycle: _ } => {
             event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.config = new_cfg;
-            core.pending_config = option::none();
+            core.config.active = new_cfg;
+            core.config.pending = option::none();
             let mut generator = sui::random::new_generator(random, ctx);
-            let floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(&core.config), &mut generator);
-            let ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(&core.config), &mut generator);
-            let handover = handover_policy_state::resolve(config::proj_handover(&core.config), ceiling, &mut generator);
-            let descent  = descent_policy_state::resolve(config::proj_descent(&core.config), &mut generator);
+            let floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(&core.config.active), &mut generator);
+            let ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(&core.config.active), &mut generator);
+            let handover = handover_policy_state::resolve(config::proj_handover(&core.config.active), ceiling, &mut generator);
+            let descent  = descent_policy_state::resolve(config::proj_descent(&core.config.active), &mut generator);
             AssetState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
         },
         AssetState::AtDutch { asset, auction, cycle } => {
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.pending_config = option::some(new_cfg);
+            core.config.pending = option::some(new_cfg);
             AssetState::AtDutch { asset, auction, cycle }
         },
         AssetState::Occupied { asset, terms, cycle } => {
             assert!(!retire_condition::proj_is_retiring(&terms.retire), ERetireAlreadyScheduled);
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.pending_config = option::some(new_cfg);
+            core.config.pending = option::some(new_cfg);
             AssetState::Occupied { asset, terms, cycle }
         },
         AssetState::Demand { asset, terms, bid, cycle } => {
             assert!(!retire_condition::proj_is_retiring(&terms.retire), ERetireAlreadyScheduled);
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.pending_config = option::some(new_cfg);
+            core.config.pending = option::some(new_cfg);
             AssetState::Demand { asset, terms, bid, cycle }
         },
     }
@@ -1107,8 +1118,8 @@ public(package) fun execute_extend_commitment<CoinType>(
     assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
     let now         = phases::now(clock);
     let old_expiry  = commitment_policy_state::unlock_at(
-        commitment_policy_state::resolve(&core.commitment_policy),
-        core.commitment_anchor,
+        commitment_policy_state::resolve(&core.commitment.policy),
+        core.commitment.anchor,
     );
     let new_expiry  = commitment_policy_state::unlock_at(
         commitment_policy_state::resolve(&new_policy),
@@ -1124,8 +1135,8 @@ public(package) fun execute_extend_commitment<CoinType>(
         new_expiry_ms: phases::timestamp_ms(new_expiry),
         timestamp_ms:  phases::timestamp_ms(now),
     });
-    core.commitment_policy = new_policy;
-    core.commitment_anchor = now;
+    core.commitment.policy = new_policy;
+    core.commitment.anchor = now;
 }
 
 /// Retired → Destroyed: the terminal claim action. The Retired arm
@@ -1370,7 +1381,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     terms:              OccupiedTerms<CoinType>,
     cycle:              CycleParams,
     owner:              &mut Owner<CoinType>,
-    pending_config:     &mut Option<IntegrationConfig>,
+    config:             &mut ConfigSlot,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
     boundary:           Timestamp,
@@ -1406,7 +1417,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let locked = asset::close_tenancy(asset);
     if (retire_condition::proj_is_retiring(&retire)) {
         event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
-        *pending_config = option::none();
+        config.pending = option::none();
         AssetState::Retired { asset: locked }
     } else {
         // cycle.ceiling and cycle.handover are the per-cycle base values —
@@ -1616,7 +1627,7 @@ fun step_handover<Asset: key + store, CoinType>(
                 let boundary = bid.handover.expiry;
                 do_handover(
                     asset, terms, bid, cycle,
-                    &mut core.owner, &core.config,
+                    &mut core.owner, &core.config.active,
                     core.escrow_identity, core.fee_inbox_identity,
                     boundary, ctx,
                 )
@@ -1642,7 +1653,7 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
                 let boundary = phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total);
                 do_tenure_expiry(
                     asset, terms, cycle,
-                    &mut core.owner, &mut core.pending_config, core.escrow_identity, core.fee_inbox_identity,
+                    &mut core.owner, &mut core.config, core.escrow_identity, core.fee_inbox_identity,
                     boundary, ctx,
                 )
             } else {
@@ -1667,7 +1678,7 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
             if (descent_policy_state::has_expired(cycle.descent, auction.phase_start, now).is_crossed()) {
                 let boundary = descent_policy_state::expiry_at(cycle.descent, auction.phase_start);
                 let mut generator = sui::random::new_generator(random, ctx);
-                do_auction_expiry(asset, auction, &mut core.config, &mut core.pending_config, core.escrow_identity, boundary, &mut generator)
+                do_auction_expiry(asset, auction, &mut core.config, core.escrow_identity, boundary, &mut generator)
             } else {
                 AssetState::AtDutch { asset, auction, cycle }
             }
@@ -1733,22 +1744,21 @@ fun do_install<Asset: key + store, CoinType>(
 fun do_auction_expiry<Asset: key + store, CoinType>(
     asset:           asset::AssetCustodyLocked<Asset>,
     auction:         AuctionTerms,
-    config:          &mut IntegrationConfig,
-    pending_config:  &mut Option<IntegrationConfig>,
+    config:          &mut ConfigSlot,
     escrow_identity: EscrowIdentity,
     boundary:        Timestamp,
     generator:       &mut RandomGenerator,
 ): AssetState<Asset, CoinType> {
     event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
-    if (pending_config.is_some()) {
-        let new_cfg = pending_config.extract();
+    if (config.pending.is_some()) {
+        let new_cfg = config.pending.extract();
         event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_cfg });
-        *config = new_cfg;
+        config.active = new_cfg;
     };
-    let floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(config), generator);
-    let ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(config), generator);
-    let handover = handover_policy_state::resolve(config::proj_handover(config), ceiling, generator);
-    let descent  = descent_policy_state::resolve(config::proj_descent(config), generator);
+    let floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(&config.active), generator);
+    let ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(&config.active), generator);
+    let handover = handover_policy_state::resolve(config::proj_handover(&config.active), ceiling, generator);
+    let descent  = descent_policy_state::resolve(config::proj_descent(&config.active), generator);
     AssetState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
 }
 
@@ -1779,7 +1789,7 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
         AssetState::Demand { asset, terms, bid, cycle } =>
             do_handover(
                 asset, terms, bid, cycle,
-                &mut core.owner, &core.config,
+                &mut core.owner, &core.config.active,
                 core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             ),
@@ -1801,7 +1811,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
         AssetState::Occupied { asset, terms, cycle } =>
             do_tenure_expiry(
                 asset, terms, cycle,
-                &mut core.owner, &mut core.pending_config, core.escrow_identity, core.fee_inbox_identity,
+                &mut core.owner, &mut core.config, core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             ),
         AssetState::Idle    { asset: _a, .. } => abort ENotRented,
@@ -1820,7 +1830,7 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
 ): AssetState<Asset, CoinType> {
     match (state) {
         AssetState::AtDutch { asset, auction, .. } =>
-            do_auction_expiry(asset, auction, &mut core.config, &mut core.pending_config, core.escrow_identity, boundary, generator),
+            do_auction_expiry(asset, auction, &mut core.config, core.escrow_identity, boundary, generator),
         AssetState::Idle     { asset: _a, .. } => abort ENotRented,
         AssetState::Retired  { asset: _a }      => abort ENotRented,
         AssetState::Occupied { asset: _a, terms: _t, .. } => abort ENotRented,

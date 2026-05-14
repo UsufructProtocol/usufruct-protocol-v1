@@ -537,26 +537,6 @@ public fun tenant_cap_status<Asset: key + store, CoinType>(
     asset_state::cap_authorization_state(read_state(escrow), tenant_cap::from_id(cap_id))
 }
 
-public fun tenant_cap_is_current<Asset: key + store, CoinType>(
-    escrow:     &Escrow<Asset, CoinType>,
-    tenant_cap: &TenantCap,
-): bool {
-    asset_state::proj_is_current(&asset_state::cap_authorization_state(read_state(escrow), tenant_cap::from_id(object::id(tenant_cap))))
-}
-
-public fun tenant_cap_is_pending<Asset: key + store, CoinType>(
-    escrow:     &Escrow<Asset, CoinType>,
-    tenant_cap: &TenantCap,
-): bool {
-    asset_state::proj_is_pending(&asset_state::cap_authorization_state(read_state(escrow), tenant_cap::from_id(object::id(tenant_cap))))
-}
-
-public fun tenant_cap_is_stale<Asset: key + store, CoinType>(
-    escrow:     &Escrow<Asset, CoinType>,
-    tenant_cap: &TenantCap,
-): bool {
-    asset_state::proj_is_stale(&asset_state::cap_authorization_state(read_state(escrow), tenant_cap::from_id(object::id(tenant_cap))))
-}
 
 // ─── Timing views ────────────────────────────────────────────────────────────
 

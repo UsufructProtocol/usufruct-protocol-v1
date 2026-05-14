@@ -942,49 +942,36 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     }
 }
 
-/// Tenant-gated asset borrow. Narrow contract: only callable on a Renting
-/// Tenant-gated asset borrow. Lives here (not in escrow.move) because the
-/// wrong-state arms have to destructure `AssetState` before aborting, and
-/// Move 2024 restricts that destructure to the defining module. Escrow-
-/// binding is checked first (wrong cap → EWrongEscrowTenantCap before
-/// wrong state → EStaleTenantCap).
-///
-/// Cap-authorization rules are state-specific:
-///   · Occupied — only the current tenant's cap may borrow.
-///   · Demand   — the current tenant may borrow; the pending bidder
-///                must not (EPendingTenantCap); any other cap is stale.
+/// Tenant-gated asset borrow. Cap authorization is delegated to
+/// `cap_authorization_state` — the single source of truth for
+/// Current / Pending / Stale classification.
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
     tenant_cap: &TenantCap,
 ): (AssetState<Asset, CoinType>, Asset, AssetReceipt) {
-    let escrow_identity = core.escrow_identity;
-    assert!(tenant_cap::proj_escrow_identity(tenant_cap) == escrow_identity, EWrongEscrowTenantCap);
-    let cap_identity  = tenant_cap::identity(tenant_cap);
-    let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
+    assert!(tenant_cap::proj_escrow_identity(tenant_cap) == core.escrow_identity, EWrongEscrowTenantCap);
+    let cap_identity = tenant_cap::identity(tenant_cap);
+    match (cap_authorization_state(&s, cap_identity)) {
+        CapAuthorizationState::Current => {},
+        CapAuthorizationState::Pending => abort EPendingTenantCap,
+        CapAuthorizationState::Stale   => abort EStaleTenantCap,
+    };
+    let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
         AssetState::Occupied { mut asset, envelope, current, retire, resolved_descent } => {
-            let current_cap = tenant::proj_cap_identity(tenant::proj_identity(&current));
-            assert!(cap_identity == current_cap, EStaleTenantCap);
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Occupied { asset, envelope, current, retire, resolved_descent }, u, receipt)
         },
         AssetState::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
-            let current_cap = tenant::proj_cap_identity(tenant::proj_identity(&current));
-            let pending_cap = tenant::proj_cap_identity(tenant::proj_identity(&pending));
-            if      (cap_identity == current_cap) {}
-            else if (cap_identity == pending_cap) abort EPendingTenantCap
-            else                                  abort EStaleTenantCap;
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent }, u, receipt)
         },
-        AssetState::Idle    { asset: _a, .. } => abort EStaleTenantCap,
-        AssetState::AtDutch { asset: _a, .. } => abort EStaleTenantCap,
-        AssetState::Retired { asset: _a }     => abort EStaleTenantCap,
+        s => abort EStaleTenantCap,
     }
 }
 
@@ -1035,14 +1022,9 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
 ///      live tenancy references are never destroyed.
 ///
 /// In Idle/AtDutch/Retired the second guard is satisfied structurally —
-/// the type carries no `current`/`pending`, so every cap issued by this
-/// escrow is stale by construction. The two Renting variants add the
-/// stale check inline, with per-variant scope (Occupied checks only
-/// against `current`; Demand checks against both `current` and `pending`).
-///
-/// Behavior change vs the legacy form: the legacy code skipped the
-/// escrow-identity check when the state was Retired. That skip was the
-/// bypass for invariant 1 — closed here.
+/// Tenant-cap gas-recovery burn. Active caps (Current, Pending) abort
+/// `ETenantCapNotStale`; all stale caps burn unconditionally. Authorization
+/// is delegated to `cap_authorization_state`.
 public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
     s:    AssetState<Asset, CoinType>,
     core: &EscrowCore<CoinType>,
@@ -1050,36 +1032,13 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
     ctx:  &TxContext,
 ): AssetState<Asset, CoinType> {
     assert!(tenant_cap::proj_escrow_identity(&cap) == core.escrow_identity, EWrongEscrowTenantCap);
-    match (s) {
-        AssetState::Retired { asset } => {
-            tenant_cap::burn(cap, ctx);
-            AssetState::Retired { asset }
-        },
-        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
-            tenant_cap::burn(cap, ctx);
-            AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
-        },
-        AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
-            tenant_cap::burn(cap, ctx);
-            AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
-        },
-        AssetState::Occupied { asset, envelope, current, retire, resolved_descent } => {
-            let cap_identity = tenant_cap::identity(&cap);
-            let current_cap  = tenant::proj_cap_identity(tenant::proj_identity(&current));
-            assert!(cap_identity != current_cap, ETenantCapNotStale);
-            tenant_cap::burn(cap, ctx);
-            AssetState::Occupied { asset, envelope, current, retire, resolved_descent }
-        },
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
-            let cap_identity = tenant_cap::identity(&cap);
-            let current_cap  = tenant::proj_cap_identity(tenant::proj_identity(&current));
-            let pending_cap  = tenant::proj_cap_identity(tenant::proj_identity(&pending));
-            assert!(cap_identity != current_cap, ETenantCapNotStale);
-            assert!(cap_identity != pending_cap, ETenantCapNotStale);
-            tenant_cap::burn(cap, ctx);
-            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent }
-        },
-    }
+    let cap_identity = tenant_cap::identity(&cap);
+    match (cap_authorization_state(&s, cap_identity)) {
+        CapAuthorizationState::Current => abort ETenantCapNotStale,
+        CapAuthorizationState::Pending => abort ETenantCapNotStale,
+        CapAuthorizationState::Stale   => {},
+    };
+    match (s) { s => { tenant_cap::burn(cap, ctx); s } }
 }
 
 /// Owner-gated earnings withdrawal. Operates on the core handoff

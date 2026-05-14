@@ -8,9 +8,8 @@ module usufruct::escrow;
 
 use std::type_name::{Self, TypeName};
 use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin},
-    event,
+    clock::Clock,
+    coin::Coin,
     random::Random,
 };
 use usufruct::{
@@ -58,29 +57,14 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
     state: Option<AssetState<Asset, CoinType>>,
 }
 
-// === Events ===
-
-public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
-    escrow_id:        ID,
-    owner_cap_id:     ID,
-    owner:            address,
-    asset_id:         ID,
-    fee_inbox_id:     ID,
-    integrated_at_ms: u64,
-}
-
-public struct AssetClaimed has copy, drop {
-    escrow_id:      ID,
-    owner_cap_id:   ID,
-    owner:          address,
-    swept_earnings: u64,
-    timestamp_ms:   u64,
-}
-
 // === Public Functions ===
 
-/// Create and share an `Escrow`. Mints the `OwnerCap` and
-/// returns it to the caller.
+/// Create and share an `Escrow`. Mints the `OwnerCap` and returns it to
+/// the caller. The lifecycle work (resolving policy values, building the
+/// core, minting the cap, emitting events) lives in
+/// `asset_state::execute_integrate`; this entry only handles the Sui
+/// boundary that the `Escrow`-defining module must own: minting the
+/// `UID` and sharing the wrapping struct.
 public fun integrate<Asset: key + store, CoinType>(
     asset:      Asset,
     cfg:        IntegrationConfig,
@@ -90,29 +74,20 @@ public fun integrate<Asset: key + store, CoinType>(
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): OwnerCap {
-    let uid              = object::new(ctx);
-    let raw_escrow_id    = object::uid_to_inner(&uid);
-    let escrow_identity  = escrow_identity::new(raw_escrow_id);
-    let asset_id         = object::id(&asset);
-    let owner_addr       = ctx.sender();
-    let owner_cap          = owner_cap::new(escrow_identity, owner_addr, ctx);
-    let owner_cap_identity = owner_cap::identity(&owner_cap);
-    let fee_inbox_id       = protocol_fee_ref::proj_inbox_id(fee_ref);
-    let inbox_identity     = protocol_fee_ref::proj_inbox_identity(fee_ref);
-    let integrated_at_ms   = clock::timestamp_ms(clock);
-
-    config::emit_registration(&cfg, raw_escrow_id);
+    let uid           = object::new(ctx);
     let mut generator = sui::random::new_generator(random, ctx);
-    let (core, state) = asset_state::new<Asset, CoinType>(
-        asset, owner_cap_identity, cfg, commitment, inbox_identity, integrated_at_ms, escrow_identity, &mut generator,
+    let (core, state, owner_cap) = asset_state::execute_integrate<Asset, CoinType>(
+        asset, cfg, commitment,
+        protocol_fee_ref::proj_inbox_identity(fee_ref),
+        escrow_identity::new(object::uid_to_inner(&uid)),
+        phases::now(clock),
+        &mut generator,
+        ctx,
     );
     transfer::share_object(Escrow<Asset, CoinType> {
         id:    uid,
         core:  option::some(core),
         state: option::some(state),
-    });
-    event::emit(AssetIntegrated<Asset, CoinType> {
-        escrow_id: raw_escrow_id, owner_cap_id: owner_cap::cap_id(owner_cap_identity), owner: owner_addr, asset_id, fee_inbox_id, integrated_at_ms,
     });
     owner_cap
 }
@@ -133,7 +108,11 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     coin
 }
 
-/// Owner-gated terminal claim. Consumes the escrow by value.
+/// Owner-gated terminal claim. Consumes the escrow by value. The
+/// lifecycle work (APT settle, asset unlock, earnings withdrawal,
+/// `AssetClaimed` emission) lives in `asset_state::execute_claim`; this
+/// entry only handles the Sui boundary: unwrapping the `Escrow`,
+/// burning the `OwnerCap`, deleting the `UID`.
 public fun claim_asset<Asset: key + store, CoinType>(
     escrow:    Escrow<Asset, CoinType>,
     owner_cap: OwnerCap,
@@ -141,22 +120,12 @@ public fun claim_asset<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
-    let escrow_id    = object::id(&escrow);
-    let owner_cap_id = object::id(&owner_cap);
-    let owner_addr   = ctx.sender();
-
     let Escrow { id, core, state } = escrow;
-    let mut core_val = core.destroy_some();
-    let new_state = asset_state::apply_pending_transition_states(state.destroy_some(), &mut core_val, random, clock, ctx);
-    let (asset, earnings) = asset_state::execute_claim(new_state, core_val, &owner_cap, ctx);
-    let swept_earnings    = coin::value(&earnings);
-    owner_cap::burn(owner_cap, owner_addr);
+    let mut core_val      = core.destroy_some();
+    let new_state         = asset_state::apply_pending_transition_states(state.destroy_some(), &mut core_val, random, clock, ctx);
+    let (asset, earnings) = asset_state::execute_claim(new_state, core_val, &owner_cap, clock, ctx);
+    owner_cap::burn(owner_cap, ctx.sender());
     id.delete();
-
-    event::emit(AssetClaimed {
-        escrow_id, owner_cap_id, owner: owner_addr, swept_earnings,
-        timestamp_ms: clock::timestamp_ms(clock),
-    });
     (asset, earnings)
 }
 
@@ -1039,9 +1008,3 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     let new_state = asset_state::fire_do_auction_expiry_for_testing(state, escrow.core.borrow(), boundary, &mut generator);
     escrow.state.fill(new_state);
 }
-
-// ─── Event field accessors (test-only) ───────────────────────────────────────
-
-
-#[test_only]
-public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64 { e.swept_earnings }

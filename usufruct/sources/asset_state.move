@@ -47,7 +47,6 @@ use usufruct::{
     math,
     phases::{Self, Timestamp, Duration},
     escrow_identity::{Self, EscrowIdentity},
-    owner_cap::OwnerCapIdentity,
     protocol_fee_ref::{Self, FeeInboxIdentity},
     tenant_cap::{Self, TenantCap, TenantCapIdentity},
     refund_state,
@@ -248,6 +247,27 @@ public struct CommitmentExtended has copy, drop {
     timestamp_ms:  u64,
 }
 
+/// Boundary lifecycle events: `AssetIntegrated` marks Bootstrap → Idle
+/// (one-shot, fired by `execute_integrate`); `AssetClaimed` marks
+/// Retired → Destroyed (terminal, fired by `execute_claim_retired`).
+/// They bracket the on-chain lifetime of the shared `Escrow` object.
+public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
+    escrow_id:        ID,
+    owner_cap_id:     ID,
+    owner:            address,
+    asset_id:         ID,
+    fee_inbox_id:     ID,
+    integrated_at_ms: u64,
+}
+
+public struct AssetClaimed has copy, drop {
+    escrow_id:      ID,
+    owner_cap_id:   ID,
+    owner:          address,
+    swept_earnings: u64,
+    timestamp_ms:   u64,
+}
+
 // === View Functions ===
 
 // ### RUNTIME PROJECTION FOR SDK ###
@@ -255,26 +275,33 @@ public struct CommitmentExtended has copy, drop {
 
 // === Public Functions ===
 
-// ─── Constructor ──────────────────────────────────────────────────────────────
+// ─── Bootstrap → Idle ─────────────────────────────────────────────────────────
 
-/// Construct a fresh integration. Called once by `escrow::integrate`.
-/// Returns the two on-disk slots that the Escrow shared object will
-/// carry: the core (owner ledger + policies + identities) and the
-/// initial lifecycle state (always Idle).
-public(package) fun new<Asset: key + store, CoinType>(
+/// Bootstrap → Idle: the integration action. Mints the `OwnerCap`,
+/// builds the two on-disk slots (`EscrowCore` + `AssetState::Idle`),
+/// resolves the initial policy values, and emits both
+/// `IntegrationConfigRegistered` and `AssetIntegrated`. The caller
+/// (`escrow::integrate`) is left with the Sui-imposed boundary: create
+/// the `UID`, wrap the slots in the `Escrow` struct, and share it.
+public(package) fun execute_integrate<Asset: key + store, CoinType>(
     asset:              Asset,
-    owner_cap_identity: OwnerCapIdentity,
     config:             IntegrationConfig,
     commitment_policy:  CommitmentPolicyState,
     fee_inbox_identity: FeeInboxIdentity,
-    integrated_at_ms:   u64,
     escrow_identity:    EscrowIdentity,
+    integrated_at:      Timestamp,
     generator:          &mut RandomGenerator,
-): (EscrowCore<CoinType>, AssetState<Asset, CoinType>) {
-    let resolved_floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(&config), generator);
-    let resolved_ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(&config), generator);
-    let resolved_handover = handover_policy_state::resolve(config::proj_handover(&config), resolved_ceiling, generator);
-    let integrated_at     = phases::timestamp(integrated_at_ms);
+    ctx:                &mut TxContext,
+): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, OwnerCap) {
+    let owner_addr         = ctx.sender();
+    let owner_cap          = owner_cap::new(escrow_identity, owner_addr, ctx);
+    let owner_cap_identity = owner_cap::identity(&owner_cap);
+    let asset_id           = object::id(&asset);
+    let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
+    config::emit_registration(&config, raw_escrow_id);
+    let resolved_floor     = floor_price_policy_state::resolve(config::proj_min_rent_price(&config), generator);
+    let resolved_ceiling   = tenure_policy_state::resolve(config::proj_tenure_ceiling(&config), generator);
+    let resolved_handover  = handover_policy_state::resolve(config::proj_handover(&config), resolved_ceiling, generator);
     let core = EscrowCore {
         owner:              owner::new<CoinType>(owner_cap_identity),
         config,
@@ -291,7 +318,15 @@ public(package) fun new<Asset: key + store, CoinType>(
         resolved_ceiling,
         resolved_handover,
     };
-    (core, state)
+    event::emit(AssetIntegrated<Asset, CoinType> {
+        escrow_id:        raw_escrow_id,
+        owner_cap_id:     owner_cap::cap_id(owner_cap_identity),
+        owner:            owner_addr,
+        asset_id,
+        fee_inbox_id:     protocol_fee_ref::inbox_id(fee_inbox_identity),
+        integrated_at_ms: phases::timestamp_ms(integrated_at),
+    });
+    (core, state, owner_cap)
 }
 
 // ─── Storage ↔ sub-dispatcher (RentingDispatch only) ─────────────────────────
@@ -1258,7 +1293,8 @@ public(package) fun execute_extend_commitment<CoinType>(
 
 /// Terminal action: unwrap a Retired state into the underlying asset and
 /// the swept owner earnings. The type guarantees the lifecycle state — no
-/// runtime assert on state needed.
+/// runtime assert on state needed. Emits `AssetClaimed` (Retired →
+/// Destroyed lifecycle boundary).
 ///
 /// The owner-cap → escrow binding check stays here: it is a precondition
 /// of the action ("this cap is allowed to claim from this escrow"), not a
@@ -1267,12 +1303,21 @@ public(package) fun execute_claim_retired<Asset: key + store, CoinType>(
     asset:     asset::AssetCustodyLocked<Asset>,
     core:      EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
+    clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
     let EscrowCore { mut owner, escrow_identity, .. } = core;
     assert!(owner_cap::proj_escrow_identity(owner_cap) == escrow_identity, EWrongEscrowOwnerCap);
-    let coin = owner::withdraw(&mut owner, owner_cap, ctx);
+    let coin           = owner::withdraw(&mut owner, owner_cap, ctx);
+    let swept_earnings = coin::value(&coin);
     owner::destroy_empty(owner);
+    event::emit(AssetClaimed {
+        escrow_id:    escrow_identity::escrow_id(escrow_identity),
+        owner_cap_id: object::id(owner_cap),
+        owner:        ctx.sender(),
+        swept_earnings,
+        timestamp_ms: clock::timestamp_ms(clock),
+    });
     (asset::unlock(asset), coin)
 }
 
@@ -1291,11 +1336,12 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
+    clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
     match (s) {
         AssetState::Retired { asset } =>
-            execute_claim_retired(asset, core, owner_cap, ctx),
+            execute_claim_retired(asset, core, owner_cap, clock, ctx),
         AssetState::Idle { asset: _a, .. } => {
             let EscrowCore { owner: _o, .. } = core;
             abort ENotRetired
@@ -1670,10 +1716,6 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 
 // === Test Functions ===
 
-public(package) fun emit_retire_flag_set(escrow_id: ID, owner: address, timestamp_ms: u64) {
-    event::emit(RetireFlagSet { escrow_id, owner, timestamp_ms });
-}
-
 #[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
     let alloc = split_fee(monetary::stake(amount));
@@ -1734,6 +1776,9 @@ public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID         
 
 #[test_only]
 public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID              { e.tenant_cap_id }
+
+#[test_only]
+public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64              { e.swept_earnings }
 
 // === Private Functions ===
 
@@ -1855,7 +1900,7 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
 ): AssetState<Asset, CoinType> {
     let timestamp_ms  = phases::timestamp_ms(now);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
-    emit_retire_flag_set(raw_escrow_id, ctx.sender(), timestamp_ms);
+    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms });
     event::emit(AssetRetired { escrow_id: raw_escrow_id, timestamp_ms });
     AssetState::Retired { asset }
 }

@@ -21,6 +21,7 @@ use usufruct::{
         RentStarted,
         AuctionExpired,
         AssetRetired,
+        AssetClaimed,
         EarningsWithdrawn,
         BidPlaced,
         BidSuperseded,
@@ -45,11 +46,7 @@ use usufruct::{
     tenure_cycles_policy_state,
     tenure_policy_state,
     pending_transition_state,
-    escrow::{
-        Self,
-        Escrow,
-        AssetClaimed,
-    },
+    escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
     fee_message::FeeMessageSent,
@@ -1778,7 +1775,7 @@ fun claim_asset_returns_asset_and_earnings_and_deletes_escrow() {
 
     let claimed = event::events_by_type<AssetClaimed>();
     assert_eq!(claimed.length(), 1);
-    assert_eq!(escrow::asset_claimed_swept_earnings(&claimed[0]), 0);
+    assert_eq!(asset_state::asset_claimed_swept_earnings(&claimed[0]), 0);
 
     coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
@@ -4566,7 +4563,7 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
         assert_eq!(coin::value(&earnings), expected_swept);
         let ac = event::events_by_type<AssetClaimed>();
         assert_eq!(
-            escrow::asset_claimed_swept_earnings(ac.borrow(0)),
+            asset_state::asset_claimed_swept_earnings(ac.borrow(0)),
             expected_swept,
         );
 

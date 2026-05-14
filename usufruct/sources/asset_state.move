@@ -1013,35 +1013,30 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     }
 }
 
-/// Tenant-gated asset return. Waiting variants abort
-/// `EReceiptEscrowMismatch`: the receipt cannot match an escrow that has
-/// no open custody. The `AssetReceipt` verifies the borrow lineage on
-/// the Renting arms; no cap check is needed.
+/// Tenant-gated asset return. Takes `&mut AssetState` — the variant does
+/// not change (Occupied stays Occupied, Demand stays Demand); only the
+/// open custody is mutated. The or-pattern collapses the two renting arms:
+/// both expose the same `asset` and `terms` fields. The `AssetReceipt`
+/// hot-potato is proof of borrow lineage; no explicit cap check is needed.
 public(package) fun execute_return<Asset: key + store, CoinType>(
-    s:          AssetState<Asset, CoinType>,
+    s:          &mut AssetState<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
     asset_in:   Asset,
     receipt_in: AssetReceipt,
-): AssetState<Asset, CoinType> {
-    let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
+) {
     match (s) {
-        AssetState::Occupied { mut asset, terms, cycle } => {
-            let cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
-            let tenant_addr  = tenant::proj_address(tenant::proj_identity(&terms.current));
-            asset::put(&mut asset, asset_in, receipt_in);
-            event::emit(AssetReturned { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            AssetState::Occupied { asset, terms, cycle }
+        AssetState::Occupied { asset, terms, .. } |
+        AssetState::Demand   { asset, terms, .. } => {
+            let cap_id      = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
+            let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
+            asset::put(asset, asset_in, receipt_in);
+            event::emit(AssetReturned {
+                escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
+                tenant_cap_id: tenant_cap::cap_id(cap_id),
+                tenant:        tenant_addr,
+            });
         },
-        AssetState::Demand { mut asset, terms, bid, cycle } => {
-            let cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
-            let tenant_addr  = tenant::proj_address(tenant::proj_identity(&terms.current));
-            asset::put(&mut asset, asset_in, receipt_in);
-            event::emit(AssetReturned { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            AssetState::Demand { asset, terms, bid, cycle }
-        },
-        AssetState::Idle    { asset: _a, .. } => abort EReceiptEscrowMismatch,
-        AssetState::AtDutch { asset: _a, .. } => abort EReceiptEscrowMismatch,
-        AssetState::Retired { asset: _a }     => abort EReceiptEscrowMismatch,
+        _ => abort EReceiptEscrowMismatch,
     }
 }
 

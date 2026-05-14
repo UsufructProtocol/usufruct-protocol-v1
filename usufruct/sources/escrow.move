@@ -209,10 +209,9 @@ public fun return_asset<Asset: key + store, CoinType>(
     asset:      Asset,
     receipt_in: AssetReceipt,
 ) {
-    let state = escrow.state.extract();
-    let core = escrow.core.borrow();
-    let new_state = asset_state::execute_return(state, core, asset, receipt_in);
-    escrow.state.fill(new_state);
+    let state = escrow.state.borrow_mut();
+    let core  = escrow.core.borrow();
+    asset_state::execute_return(state, core, asset, receipt_in);
 }
 
 /// Burn a stale `TenantCap` for gas recovery.

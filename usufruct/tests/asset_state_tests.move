@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::asset_context_state_tests;
+module usufruct::asset_state_tests;
 
 use std::unit_test::assert_eq;
 use sui::{
@@ -15,7 +15,7 @@ use sui::{
 };
 use usufruct::{
     asset::{Self, AssetReceipt},
-    asset_context_state,
+    asset_state,
     commitment_policy_state,
     cycles,
     escrow::{Self, Escrow},
@@ -114,7 +114,7 @@ fun retake_escrow_by_value(escrow: Escrow<DemoAsset, SUI>, sc: &mut Scenario): E
 // by `escrow_tests::claim_asset_when_not_retired_aborts`. The three
 // other leaves get their dedicated tests here.
 
-#[test, expected_failure(abort_code = asset_context_state::ENotRetired, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::ENotRetired, location = usufruct::asset_state)]
 fun claim_asset_aborts_in_at_dutch_state() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(&mut sc);
@@ -141,7 +141,7 @@ fun claim_asset_aborts_in_at_dutch_state() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_context_state::ENotRetired, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::ENotRetired, location = usufruct::asset_state)]
 fun claim_asset_aborts_in_occupied_state() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(&mut sc);
@@ -164,7 +164,7 @@ fun claim_asset_aborts_in_occupied_state() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_context_state::ENotRetired, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::ENotRetired, location = usufruct::asset_state)]
 fun claim_asset_aborts_in_demand_state() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(&mut sc);
@@ -210,7 +210,7 @@ fun claim_asset_aborts_in_demand_state() {
 // `escrow_tests::borrow_asset_from_idle_aborts`; the two missing
 // Waiting variants (AtDutch, Retired) get their tests here.
 
-#[test, expected_failure(abort_code = asset_context_state::EStaleTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
 fun borrow_asset_aborts_in_at_dutch_state() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
@@ -242,7 +242,7 @@ fun borrow_asset_aborts_in_at_dutch_state() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_context_state::EStaleTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
 fun borrow_asset_aborts_in_retired_state() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
@@ -280,7 +280,7 @@ fun mk_junk_asset_and_receipt(escrow_id: ID, sc: &mut Scenario): (DemoAsset, Ass
     (asset, receipt)
 }
 
-#[test, expected_failure(abort_code = asset_context_state::EReceiptEscrowMismatch, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
 fun return_asset_aborts_in_idle_state() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
@@ -295,7 +295,7 @@ fun return_asset_aborts_in_idle_state() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_context_state::EReceiptEscrowMismatch, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
 fun return_asset_aborts_in_at_dutch_state() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
@@ -317,7 +317,7 @@ fun return_asset_aborts_in_at_dutch_state() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_context_state::EReceiptEscrowMismatch, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
 fun return_asset_aborts_in_retired_state() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
@@ -357,7 +357,7 @@ fun return_asset_aborts_in_retired_state() {
 //   · burn_tenant_cap_on_live_current_cap_aborts      — invariant 2, Occupied.
 //   · burn_tenant_cap_burns_displaced_bidder_cap      — happy path, Demand.
 
-#[test, expected_failure(abort_code = asset_context_state::EWrongEscrowTenantCap, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
 fun burn_foreign_cap_in_retired_aborts() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
@@ -384,7 +384,7 @@ fun burn_foreign_cap_in_retired_aborts() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_context_state::ETenantCapNotStale, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
 fun burn_live_current_cap_in_demand_aborts() {
     let mut sc = setup();
     // Countdown handover (c=1) — without this, the Instant handover (c=0)
@@ -417,7 +417,7 @@ fun burn_live_current_cap_in_demand_aborts() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_context_state::ETenantCapNotStale, location = usufruct::asset_context_state)]
+#[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
 fun burn_live_pending_cap_in_demand_aborts() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take_with_cfg(

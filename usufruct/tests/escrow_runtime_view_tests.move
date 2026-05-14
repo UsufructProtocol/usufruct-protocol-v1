@@ -15,7 +15,7 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    asset_context_state,
+    asset_state,
     commitment_policy_state,
     config::IntegrationConfig,
     cycles,
@@ -89,7 +89,7 @@ fun dispose_escrow(escrow: Escrow<DemoAsset, SUI>, cap: OwnerCap) {
 // `assert_projector_pattern` runs every Option/bool view in escrow.move
 // once and asserts the expected presence/absence for the given state.
 // The patterns are derived from the state machine projector definitions
-// in asset_context_state — see the per-state match arms there.
+// in asset_state — see the per-state match arms there.
 
 const STATE_IDLE:     u8 = 0;
 const STATE_AT_DUTCH: u8 = 1;
@@ -228,7 +228,7 @@ fun idle_views_post_integrate() {
     // — Cap status with an unknown ID — Stale in non-Renting state —
     let foreign = object::id_from_address(@0xDEAD);
     let status  = escrow::tenant_cap_status(&escrow, foreign);
-    assert!(asset_context_state::proj_is_stale(&status));
+    assert!(asset_state::proj_is_stale(&status));
 
     dispose_escrow(escrow, cap);
     sc.end();
@@ -277,7 +277,7 @@ fun rented_views_post_rent() {
     assert!(!escrow::tenant_cap_is_pending(&escrow, &t_cap));
     assert!(!escrow::tenant_cap_is_stale(&escrow, &t_cap));
     let status = escrow::tenant_cap_status(&escrow, object::id(&t_cap));
-    assert!(asset_context_state::proj_is_current(&status));
+    assert!(asset_state::proj_is_current(&status));
 
     // — Owner balance: rent payment is collected and split; owner_balance ≥ 0 —
     let _bal = escrow::owner_balance(&escrow);
@@ -524,7 +524,7 @@ fun retiring_flag_views_after_retire_during_renting() {
 
 /// Builds an escrow in each of the 5 state-machine leaves and asserts the
 /// full projector vector via assert_projector_pattern. Closes the partial
-/// coverage in asset_context_state's per-state match arms — each projector
+/// coverage in asset_state's per-state match arms — each projector
 /// is exercised on every reachable state in a single test.
 #[test]
 fun cartesian_state_projector_matrix() {

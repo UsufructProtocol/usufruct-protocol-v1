@@ -100,53 +100,6 @@ fun retake_escrow_by_value(escrow: Escrow<DemoAsset, SUI>, sc: &mut Scenario): E
     sc.take_shared<Escrow<DemoAsset, SUI>>()
 }
 
-// ─── Round-trip ──────────────────────────────────────────────────────────────
-//
-// `dispatch` followed by `collect` must reconstruct an observationally
-// identical AssetContext. The fields are split across the temporary
-// `EscrowCoreHandoff` (owner + envelope) and the per-state context
-// (asset + state-specific data); `collect` merges them back.
-//
-// State coverage: this smoke-tests the Idle path (the state every Escrow
-// occupies immediately after integrate). The remaining four leaves
-// (AtDutch, Retired, Occupied, Demand) are exercised structurally by
-// every execute_* migrated in C2-C9 once those routes go through the
-// bridge.
-
-#[test]
-fun roundtrip_idle_state_preserves_observable_views() {
-    let mut sc = setup();
-    let (mut escrow, cap) = integrate_and_take(&mut sc);
-
-    // Snapshot the observable views before the round-trip.
-    let asset_id_before        = escrow::asset_id(&escrow);
-    let owner_cap_id_before    = escrow::owner_cap_id(&escrow);
-    let is_idle_before         = escrow::is_idle(&escrow);
-    let is_at_dutch_before     = escrow::is_at_dutch_auction(&escrow);
-    let is_retired_before      = escrow::is_retired(&escrow);
-    let is_occupied_before     = escrow::is_occupied(&escrow);
-    let is_demand_before       = escrow::is_demand(&escrow);
-    let next_floor_before      = escrow::next_floor_price_mist(&escrow);
-
-    let ctx     = escrow::take_context_for_testing(&mut escrow);
-    let new_ctx = asset_context_state::roundtrip_for_testing(ctx);
-    escrow::put_context_for_testing(&mut escrow, new_ctx);
-
-    assert_eq!(escrow::asset_id(&escrow),               asset_id_before);
-    assert_eq!(escrow::owner_cap_id(&escrow),           owner_cap_id_before);
-    assert_eq!(escrow::is_idle(&escrow),                is_idle_before);
-    assert_eq!(escrow::is_at_dutch_auction(&escrow),    is_at_dutch_before);
-    assert_eq!(escrow::is_retired(&escrow),             is_retired_before);
-    assert_eq!(escrow::is_occupied(&escrow),            is_occupied_before);
-    assert_eq!(escrow::is_demand(&escrow),              is_demand_before);
-    assert_eq!(escrow::next_floor_price_mist(&escrow),  next_floor_before);
-    assert!(is_idle_before, 0);  // sanity: we were in Idle to begin with.
-
-    test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
-    sc.end();
-}
-
 // ─── execute_claim wrong-state aborts (C2) ───────────────────────────────────
 //
 // `execute_claim` accepts only `RetiredContext`. Calling the public

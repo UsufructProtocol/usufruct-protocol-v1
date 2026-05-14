@@ -162,23 +162,18 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
     Demand   { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: Timestamp, bidding_cycles: Cycles, retire: RetireCondition },
 }
 
-// ─── Sub-dispatchers for narrow contracts ─────────────────────────────────────
+// ─── Sub-dispatcher for narrow contracts ──────────────────────────────────────
 //
-// `RentingDispatch` narrows `AssetState` to the two states where a
-// tenancy is active (Occupied, Demand). Functions that only make sense on
-// a Renting state take this type — the wider storage enum cannot reach
-// them. `FirableDispatch` narrows to the three states that can fire an
-// APT transition (AtDutch, Occupied, Demand); Idle and Retired are absent
-// by construction, so `fire` cannot be called with a non-firable state.
+// `FirableDispatch` narrows `AssetState` to the three states that can
+// fire an APT transition (AtDutch, Occupied, Demand). Idle and Retired
+// are absent by construction, so `fire` cannot be called with a non-
+// firable state. The type mediates between `next_apt_step` (producer)
+// and `fire` (consumer) — both in this module, but living in a wider
+// type-state pipeline (`AptStep`).
 //
 // Variant shapes mirror `AssetState`'s respective variants 1:1;
-// translation between storage and a sub-dispatcher is one move per arm,
+// translation between storage and `FirableDispatch` is one move per arm,
 // no intermediate type.
-
-public enum RentingDispatch<Asset: key + store, phantom CoinType> {
-    Occupied { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, retire: RetireCondition },
-    Demand   { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: Timestamp, bidding_cycles: Cycles, retire: RetireCondition },
-}
 
 public enum FirableDispatch<Asset: key + store, phantom CoinType> {
     AtDutch  { asset: asset::AssetCustodyLocked<Asset>, last_acq_price: Price, phase_start: Timestamp, resolved_floor: Price, resolved_ceiling: Duration, resolved_handover: Duration, resolved_descent: Duration },
@@ -269,11 +264,6 @@ public struct AssetClaimed has copy, drop {
     timestamp_ms:   u64,
 }
 
-// === View Functions ===
-
-// ### RUNTIME PROJECTION FOR SDK ###
-// (AssetContext has store only — not directly observable by SDK; wrappers in runtime_projection.move)
-
 // === Public Functions ===
 
 // ─── Bootstrap → Idle ─────────────────────────────────────────────────────────
@@ -328,24 +318,6 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
         integrated_at_ms: phases::timestamp_ms(integrated_at),
     });
     (core, state, owner_cap)
-}
-
-// ─── Storage ↔ sub-dispatcher (RentingDispatch only) ─────────────────────────
-//
-// `widen_renting` lifts a `RentingDispatch` (Occupied | Demand) back into
-// the wider `AssetState`. Total by construction — every Renting
-// variant maps 1:1. Used by `execute_borrow` / `execute_return` to fold
-// the result of the narrow `*_renting` helper back into storage form.
-
-public(package) fun widen_renting<Asset: key + store, CoinType>(
-    r: RentingDispatch<Asset, CoinType>,
-): AssetState<Asset, CoinType> {
-    match (r) {
-        RentingDispatch::Occupied { asset, envelope, current, retire } =>
-            AssetState::Occupied { asset, envelope, current, retire },
-        RentingDispatch::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } =>
-            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire },
-    }
 }
 
 // ─── Core (owner + policy + identity) views ──────────────────────────────────
@@ -1065,31 +1037,35 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
 }
 
 /// Tenant-gated asset borrow. Narrow contract: only callable on a Renting
-/// state (Occupied or Demand). The type guarantees the lifecycle.
+/// Tenant-gated asset borrow. Lives here (not in escrow.move) because the
+/// wrong-state arms have to destructure `AssetState` before aborting, and
+/// Move 2024 restricts that destructure to the defining module. Escrow-
+/// binding is checked first (wrong cap → EWrongEscrowTenantCap before
+/// wrong state → EStaleTenantCap).
 ///
 /// Cap-authorization rules are state-specific:
 ///   · Occupied — only the current tenant's cap may borrow.
 ///   · Demand   — the current tenant may borrow; the pending bidder
 ///                must not (EPendingTenantCap); any other cap is stale.
-public(package) fun execute_borrow_renting<Asset: key + store, CoinType>(
-    r:          RentingDispatch<Asset, CoinType>,
+public(package) fun execute_borrow<Asset: key + store, CoinType>(
+    s:          AssetState<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
     tenant_cap: &TenantCap,
-): (RentingDispatch<Asset, CoinType>, Asset, AssetReceipt) {
+): (AssetState<Asset, CoinType>, Asset, AssetReceipt) {
     let escrow_identity = core.escrow_identity;
     assert!(tenant_cap::proj_escrow_identity(tenant_cap) == escrow_identity, EWrongEscrowTenantCap);
-    let cap_identity = tenant_cap::identity(tenant_cap);
+    let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
-    match (r) {
-        RentingDispatch::Occupied { mut asset, envelope, current, retire } => {
+    match (s) {
+        AssetState::Occupied { mut asset, envelope, current, retire } => {
             let current_cap = tenant::proj_cap_identity(tenant::proj_identity(&current));
             assert!(cap_identity == current_cap, EStaleTenantCap);
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            (RentingDispatch::Occupied { asset, envelope, current, retire }, u, receipt)
+            (AssetState::Occupied { asset, envelope, current, retire }, u, receipt)
         },
-        RentingDispatch::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+        AssetState::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
             let current_cap = tenant::proj_cap_identity(tenant::proj_identity(&current));
             let pending_cap = tenant::proj_cap_identity(tenant::proj_identity(&pending));
             if      (cap_identity == current_cap) {}
@@ -1098,29 +1074,7 @@ public(package) fun execute_borrow_renting<Asset: key + store, CoinType>(
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            (RentingDispatch::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }, u, receipt)
-        },
-    }
-}
-
-/// Entry-point dispatcher for borrow. Same module-pattern constraint as
-/// `execute_claim`: narrowing-or-abort must live here, not in escrow.move.
-/// Escrow-binding is checked first to preserve legacy abort-code ordering
-/// (wrong cap → EWrongEscrowTenantCap before wrong state → EStaleTenantCap).
-public(package) fun execute_borrow<Asset: key + store, CoinType>(
-    s:          AssetState<Asset, CoinType>,
-    core:       &EscrowCore<CoinType>,
-    tenant_cap: &TenantCap,
-): (AssetState<Asset, CoinType>, Asset, AssetReceipt) {
-    assert!(tenant_cap::proj_escrow_identity(tenant_cap) == core.escrow_identity, EWrongEscrowTenantCap);
-    match (s) {
-        AssetState::Occupied { asset, envelope, current, retire } => {
-            let (new_r, u, receipt) = execute_borrow_renting(RentingDispatch::Occupied { asset, envelope, current, retire }, core, tenant_cap);
-            (widen_renting(new_r), u, receipt)
-        },
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
-            let (new_r, u, receipt) = execute_borrow_renting(RentingDispatch::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }, core, tenant_cap);
-            (widen_renting(new_r), u, receipt)
+            (AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }, u, receipt)
         },
         AssetState::Idle    { asset: _a, .. } => abort EStaleTenantCap,
         AssetState::AtDutch { asset: _a, .. } => abort EStaleTenantCap,
@@ -1128,48 +1082,32 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     }
 }
 
-/// Tenant-gated asset return. Narrow contract: only callable on a Renting
-/// state. The AssetReceipt verifies the borrow lineage; no cap check needed.
-public(package) fun execute_return_renting<Asset: key + store, CoinType>(
-    r:          RentingDispatch<Asset, CoinType>,
-    core:       &EscrowCore<CoinType>,
-    asset_in:   Asset,
-    receipt_in: AssetReceipt,
-): RentingDispatch<Asset, CoinType> {
-    let escrow_identity = core.escrow_identity;
-    let raw_escrow_id   = escrow_identity::escrow_id(escrow_identity);
-    match (r) {
-        RentingDispatch::Occupied { mut asset, envelope, current, retire } => {
-            let cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
-            let tenant_addr  = tenant::proj_address(tenant::proj_identity(&current));
-            asset::put(&mut asset, asset_in, receipt_in);
-            event::emit(AssetReturned { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            RentingDispatch::Occupied { asset, envelope, current, retire }
-        },
-        RentingDispatch::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
-            let cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
-            let tenant_addr  = tenant::proj_address(tenant::proj_identity(&current));
-            asset::put(&mut asset, asset_in, receipt_in);
-            event::emit(AssetReturned { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            RentingDispatch::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }
-        },
-    }
-}
-
-/// Entry-point dispatcher for return. Waiting variants abort
+/// Tenant-gated asset return. Waiting variants abort
 /// `EReceiptEscrowMismatch`: the receipt cannot match an escrow that has
-/// no open custody.
+/// no open custody. The `AssetReceipt` verifies the borrow lineage on
+/// the Renting arms; no cap check is needed.
 public(package) fun execute_return<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
     asset_in:   Asset,
     receipt_in: AssetReceipt,
 ): AssetState<Asset, CoinType> {
+    let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
-        AssetState::Occupied { asset, envelope, current, retire } =>
-            widen_renting(execute_return_renting(RentingDispatch::Occupied { asset, envelope, current, retire }, core, asset_in, receipt_in)),
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } =>
-            widen_renting(execute_return_renting(RentingDispatch::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }, core, asset_in, receipt_in)),
+        AssetState::Occupied { mut asset, envelope, current, retire } => {
+            let cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
+            let tenant_addr  = tenant::proj_address(tenant::proj_identity(&current));
+            asset::put(&mut asset, asset_in, receipt_in);
+            event::emit(AssetReturned { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
+            AssetState::Occupied { asset, envelope, current, retire }
+        },
+        AssetState::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+            let cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
+            let tenant_addr  = tenant::proj_address(tenant::proj_identity(&current));
+            asset::put(&mut asset, asset_in, receipt_in);
+            event::emit(AssetReturned { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
+            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }
+        },
         AssetState::Idle    { asset: _a, .. } => abort EReceiptEscrowMismatch,
         AssetState::AtDutch { asset: _a, .. } => abort EReceiptEscrowMismatch,
         AssetState::Retired { asset: _a }     => abort EReceiptEscrowMismatch,
@@ -1345,8 +1283,6 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
         },
     }
 }
-
-// ─── Tenancy-state content (merged) ─────────────────────────────────────────
 
 // === Errors ===
 

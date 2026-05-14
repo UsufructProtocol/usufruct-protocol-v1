@@ -194,10 +194,10 @@ fun claim_asset_aborts_in_demand_state() {
 
 // ─── execute_borrow / execute_return wrong-state aborts (C3) ─────────────────
 //
-// `execute_borrow` accepts only Occupied/Demand via the narrow contract
-// `execute_borrow_renting`. The three Waiting variants (Idle, AtDutch,
-// Retired) abort `EStaleTenantCap` in the wrapper's dispatch arms —
-// reachable from the public API and individually tested here.
+// `execute_borrow` does the happy path on Occupied / Demand match arms.
+// The three Waiting variants (Idle, AtDutch, Retired) abort
+// `EStaleTenantCap` — reachable from the public API and individually
+// tested here.
 //
 // `execute_return` is symmetric: Waiting variants abort
 // `EReceiptEscrowMismatch`. The receipt is forged via

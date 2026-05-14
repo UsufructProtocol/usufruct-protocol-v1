@@ -17,9 +17,9 @@ use usufruct::phases::Timestamp;
 /// Unit enum — carries no per-variant data; boundary_ms lives in the
 /// Context-State wrapper PendingTransitionState.
 public enum PendingTransitionKind has copy, drop {
-    Handover,
-    TenureExpiry,
-    AuctionExpiry,
+    Demand,
+    Occupied,
+    Auction,
 }
 
 /// Lazy transition due at a given timestamp. The coordinator's APT
@@ -52,18 +52,18 @@ public struct PendingTransitionState has drop {
 // ### RUNTIME PROJECTION FOR SDK ###
 
 /// True iff this transition is the handover variant.
-public(package) fun proj_is_handover(t: &PendingTransitionState): bool {
-    match (&t.kind) { PendingTransitionKind::Handover => true, _ => false }
+public(package) fun proj_is_demand(t: &PendingTransitionState): bool {
+    match (&t.kind) { PendingTransitionKind::Demand => true, _ => false }
 }
 
 /// True iff this transition is the tenure-expiry variant.
-public(package) fun proj_is_tenure_expiry(t: &PendingTransitionState): bool {
-    match (&t.kind) { PendingTransitionKind::TenureExpiry => true, _ => false }
+public(package) fun proj_is_occupied(t: &PendingTransitionState): bool {
+    match (&t.kind) { PendingTransitionKind::Occupied => true, _ => false }
 }
 
 /// True iff this transition is the auction-expiry variant.
-public(package) fun proj_is_auction_expiry(t: &PendingTransitionState): bool {
-    match (&t.kind) { PendingTransitionKind::AuctionExpiry => true, _ => false }
+public(package) fun proj_is_auction(t: &PendingTransitionState): bool {
+    match (&t.kind) { PendingTransitionKind::Auction => true, _ => false }
 }
 
 /// Boundary timestamp the firing handler will stamp on the resulting state and event.
@@ -76,18 +76,18 @@ public(package) fun proj_boundary(t: &PendingTransitionState): Timestamp {
 // === Package Functions ===
 
 /// Construct a `Handover` pending transition at `boundary`.
-public(package) fun handover(boundary: Timestamp): PendingTransitionState {
-    PendingTransitionState { boundary, kind: PendingTransitionKind::Handover }
+public(package) fun demand(boundary: Timestamp): PendingTransitionState {
+    PendingTransitionState { boundary, kind: PendingTransitionKind::Demand }
 }
 
 /// Construct a `Tenure` pending transition at `boundary`.
-public(package) fun tenure(boundary: Timestamp): PendingTransitionState {
-    PendingTransitionState { boundary, kind: PendingTransitionKind::TenureExpiry }
+public(package) fun occupied(boundary: Timestamp): PendingTransitionState {
+    PendingTransitionState { boundary, kind: PendingTransitionKind::Occupied }
 }
 
 /// Construct an `AuctionExpiry` pending transition at `boundary`.
 public(package) fun auction(boundary: Timestamp): PendingTransitionState {
-    PendingTransitionState { boundary, kind: PendingTransitionKind::AuctionExpiry }
+    PendingTransitionState { boundary, kind: PendingTransitionKind::Auction }
 }
 
 // === Private Functions ===

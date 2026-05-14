@@ -1328,7 +1328,7 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     let pending = escrow::next_pending(&escrow, &clk);
     assert!(pending.is_some(), 0);
     let t = pending.destroy_some();
-    assert!(pending_transition_state::proj_is_tenure_expiry(&t), 1);
+    assert!(pending_transition_state::proj_is_occupied(&t), 1);
     // boundary_ms is exactly tenure_ceiling (phase_start was 0).
     assert_eq!(phases::timestamp_ms(pending_transition_state::proj_boundary(&t)), escrow_corpus::tenure_ceiling_const());
 
@@ -3628,7 +3628,7 @@ fun e2e_fin2_tenure_expiry_financial_conservation() {
 ///   expected protocol_fee = 1_000_000_000  (10 %)
 ///   expected owner_share  = 9_000_000_000  (90 %)
 ///
-/// Part B — Handover, independently computed value:
+/// Part B — Demand, independently computed value:
 ///   Linear curve (e=0) at t_mid = tenure_ceiling/2 gives exactly
 ///   used_credit = stake × t_mid / tenure_ceiling = min_price / 2
 ///   (exact integer arithmetic, no rounding). 10% of min_price/2 is

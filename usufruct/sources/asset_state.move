@@ -755,22 +755,22 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
         AssetState::Idle { .. }    => option::none(),
         AssetState::Retired { .. } => option::none(),
         AssetState::AtDutch { auction, cycle, .. } => {
-            if (proj_auction_expiry_is_due(auction, cycle, now)) {
+            if (proj_auction_is_firable(auction, cycle, now)) {
                 option::some(pending_transition_state::auction(
                     descent_policy_state::expiry_at(cycle.descent, auction.phase_start)
                 ))
             } else { option::none() }
         },
         AssetState::Occupied { terms, .. } => {
-            if (proj_tenure_expiry_is_due(terms, now)) {
-                option::some(pending_transition_state::tenure(
+            if (proj_occupied_is_firable(terms, now)) {
+                option::some(pending_transition_state::occupied(
                     phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total)
                 ))
             } else { option::none() }
         },
         AssetState::Demand { bid, .. } => {
-            if (proj_handover_is_due(bid, now)) {
-                option::some(pending_transition_state::handover(bid.handover.expiry))
+            if (proj_demand_is_firable(bid, now)) {
+                option::some(pending_transition_state::demand(bid.handover.expiry))
             } else { option::none() }
         },
     }
@@ -1613,15 +1613,15 @@ public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64         
 // Single source of truth for each transition's due condition.
 // Used by both next_pending (detection) and the step_* functions (firing).
 
-fun proj_handover_is_due<CoinType>(bid: &DemandTerms<CoinType>, now: Timestamp): bool {
+fun proj_demand_is_firable<CoinType>(bid: &DemandTerms<CoinType>, now: Timestamp): bool {
     phases::check_boundary(bid.handover.expiry, phases::zero(), now).is_crossed()
 }
 
-fun proj_tenure_expiry_is_due<CoinType>(terms: &OccupiedTerms<CoinType>, now: Timestamp): bool {
+fun proj_occupied_is_firable<CoinType>(terms: &OccupiedTerms<CoinType>, now: Timestamp): bool {
     phases::check_boundary(terms.schedule.phase_start, terms.schedule.ceiling_total, now).is_crossed()
 }
 
-fun proj_auction_expiry_is_due(auction: &AuctionTerms, cycle: &CycleParams, now: Timestamp): bool {
+fun proj_auction_is_firable(auction: &AuctionTerms, cycle: &CycleParams, now: Timestamp): bool {
     descent_policy_state::has_expired(cycle.descent, auction.phase_start, now).is_crossed()
 }
 
@@ -1635,7 +1635,7 @@ fun step_handover<Asset: key + store, CoinType>(
 ): AssetState<Asset, CoinType> {
     match (s) {
         AssetState::Demand { asset, terms, bid, cycle } => {
-            if (proj_handover_is_due(&bid, now)) {
+            if (proj_demand_is_firable(&bid, now)) {
                 let boundary = bid.handover.expiry;
                 do_handover(
                     asset, terms, bid, cycle,
@@ -1661,7 +1661,7 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
 ): AssetState<Asset, CoinType> {
     match (s) {
         AssetState::Occupied { asset, terms, cycle } => {
-            if (proj_tenure_expiry_is_due(&terms, now)) {
+            if (proj_occupied_is_firable(&terms, now)) {
                 let boundary = phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total);
                 do_tenure_expiry(
                     asset, terms, cycle,
@@ -1687,7 +1687,7 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
 ): AssetState<Asset, CoinType> {
     match (s) {
         AssetState::AtDutch { asset, auction, cycle } => {
-            if (proj_auction_expiry_is_due(&auction, &cycle, now)) {
+            if (proj_auction_is_firable(&auction, &cycle, now)) {
                 let boundary = descent_policy_state::expiry_at(cycle.descent, auction.phase_start);
                 let mut generator = sui::random::new_generator(random, ctx);
                 do_auction_expiry(asset, auction, &mut core.config, core.escrow_identity, boundary, &mut generator)

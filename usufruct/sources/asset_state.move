@@ -966,10 +966,23 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     }
 }
 
+/// Asserts that `cap` is allowed to borrow: must be the current tenant's cap.
+/// `pending` distinguishes a pending-bidder cap (EPendingTenantCap) from
+/// any other non-matching cap (EStaleTenantCap).
+fun assert_borrow_authorized(
+    cap:     TenantCapIdentity,
+    current: TenantCapIdentity,
+    pending: Option<TenantCapIdentity>,
+) {
+    if (cap == current) return;
+    if (option::contains(&pending, &cap)) abort EPendingTenantCap;
+    abort EStaleTenantCap;
+}
+
 /// Tenant-gated asset borrow. Auth and action fused into a single match:
-/// each renting arm checks the cap inline and takes the asset directly.
-/// The `_` arm covers Idle / AtDutch / Retired — states that carry no
-/// open custody and therefore have no cap to match.
+/// each renting arm authorizes via `assert_borrow_authorized` then takes
+/// the asset. The `_s` arm covers Idle / AtDutch / Retired — states that
+/// carry no open custody and therefore have no cap to match.
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
@@ -981,7 +994,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Occupied { mut asset, terms, cycle } => {
             let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
-            if (cap_identity != current) abort EStaleTenantCap;
+            assert_borrow_authorized(cap_identity, current, option::none());
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
@@ -990,9 +1003,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
         AssetState::Demand { mut asset, terms, bid, cycle } => {
             let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
             let pending = tenant::proj_cap_identity(tenant::proj_identity(&bid.pending));
-            if      (cap_identity == current) {}
-            else if (cap_identity == pending) abort EPendingTenantCap
-            else                              abort EStaleTenantCap;
+            assert_borrow_authorized(cap_identity, current, option::some(pending));
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });

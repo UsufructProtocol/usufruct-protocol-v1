@@ -127,6 +127,14 @@ public struct HandoverTerms has copy, drop, store {
     cycles: Cycles,
 }
 
+/// Dutch-auction context: the price the last tenant paid and when the
+/// auction started. Together they drive the descending price curve and
+/// the expiry boundary.
+public struct AuctionTerms has copy, drop, store {
+    last_acq_price: Price,
+    phase_start:    Timestamp,
+}
+
 /// Active tenancy data: who is renting, on what schedule, and whether retire is pending.
 /// Exists only when there is an active tenant (Occupied / Demand states).
 public struct OccupiedTerms<phantom CoinType> has store {
@@ -168,7 +176,7 @@ public struct EscrowCore<phantom CoinType> has store {
 
 public enum AssetState<Asset: key + store, phantom CoinType> has store {
     Idle    { asset: asset::AssetCustodyLocked<Asset>, cycle: CycleParams },
-    AtDutch { asset: asset::AssetCustodyLocked<Asset>, last_acq_price: Price, phase_start: Timestamp, cycle: CycleParams },
+    AtDutch { asset: asset::AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams },
     Retired { asset: asset::AssetCustodyLocked<Asset> },
     Occupied { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
     Demand   { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
@@ -494,8 +502,8 @@ public(package) fun proj_phase_start<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
             option::some(terms.schedule.phase_start),
-        AssetState::AtDutch { phase_start, .. } =>
-            option::some(*phase_start),
+        AssetState::AtDutch { auction, .. } =>
+            option::some(auction.phase_start),
         _ => option::none(),
     }
 }
@@ -585,7 +593,7 @@ public(package) fun proj_last_acq_price<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Price> {
     match (s) {
-        AssetState::AtDutch { last_acq_price, .. } => option::some(*last_acq_price),
+        AssetState::AtDutch { auction, .. } => option::some(auction.last_acq_price),
         _ => option::none(),
     }
 }
@@ -640,8 +648,8 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
 ): Price {
     match (s) {
         AssetState::Idle { cycle, .. } => cycle.floor,
-        AssetState::AtDutch { last_acq_price, phase_start, cycle, .. } => {
-            let ps = price_state::descending(*last_acq_price, *phase_start, cycle.floor, cycle.descent);
+        AssetState::AtDutch { auction, cycle, .. } => {
+            let ps = price_state::descending(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent);
             price_state::floor_price(&ps, &core.config, now)
         },
         AssetState::Retired { .. } => abort ERetiredNoBid,
@@ -735,9 +743,9 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Idle { .. }    => option::none(),
         AssetState::Retired { .. } => option::none(),
-        AssetState::AtDutch { phase_start, cycle, .. } => {
-            if (descent_policy_state::has_expired(cycle.descent, *phase_start, now).is_crossed()) {
-                option::some(pending_transition_state::auction(descent_policy_state::expiry_at(cycle.descent, *phase_start)))
+        AssetState::AtDutch { auction, cycle, .. } => {
+            if (descent_policy_state::has_expired(cycle.descent, auction.phase_start, now).is_crossed()) {
+                option::some(pending_transition_state::auction(descent_policy_state::expiry_at(cycle.descent, auction.phase_start)))
             } else {
                 option::none()
             }
@@ -820,8 +828,8 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_install(asset, cycle, cycles, escrow_identity, payment, floor, now, ctx)
         },
-        AssetState::AtDutch { asset, last_acq_price, phase_start, cycle } => {
-            let ps    = price_state::descending(last_acq_price, phase_start, cycle.floor, cycle.descent);
+        AssetState::AtDutch { asset, auction, cycle } => {
+            let ps    = price_state::descending(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent);
             let floor = price_state::floor_price(&ps, &core.config, now);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_install(asset, cycle, cycles, escrow_identity, payment, floor, now, ctx)
@@ -892,7 +900,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
         AssetState::Retired { asset: _retired } => abort EAlreadyRetired,
         AssetState::Idle { asset, cycle: _ } =>
             do_retire_immediately(asset, escrow_identity, now, ctx),
-        AssetState::AtDutch { asset, last_acq_price: _, phase_start: _, cycle: _ } =>
+        AssetState::AtDutch { asset, .. } =>
             do_retire_immediately(asset, escrow_identity, now, ctx),
         AssetState::Occupied { asset, terms, cycle } => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms: now_ms });
@@ -947,10 +955,10 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             let descent  = descent_policy_state::resolve(config::proj_descent(&core.config), &mut generator);
             AssetState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
         },
-        AssetState::AtDutch { asset, last_acq_price, phase_start, cycle } => {
+        AssetState::AtDutch { asset, auction, cycle } => {
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.pending_config = option::some(new_cfg);
-            AssetState::AtDutch { asset, last_acq_price, phase_start, cycle }
+            AssetState::AtDutch { asset, auction, cycle }
         },
         AssetState::Occupied { asset, terms, cycle } => {
             assert!(!retire_condition::proj_is_retiring(&terms.retire), ERetireAlreadyScheduled);
@@ -1404,9 +1412,8 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         // cycle.ceiling and cycle.handover are the per-cycle base values —
         // no rescaling needed. Pass cycle directly to the resulting AtDutch.
         AssetState::AtDutch {
-            asset:          locked,
-            last_acq_price: monetary::as_reference_price(principal),
-            phase_start:    boundary,
+            asset:   locked,
+            auction: AuctionTerms { last_acq_price: monetary::as_reference_price(principal), phase_start: boundary },
             cycle,
         }
     }
@@ -1656,13 +1663,13 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (s) {
-        AssetState::AtDutch { asset, last_acq_price, phase_start, cycle } => {
-            if (descent_policy_state::has_expired(cycle.descent, phase_start, now).is_crossed()) {
-                let boundary = descent_policy_state::expiry_at(cycle.descent, phase_start);
+        AssetState::AtDutch { asset, auction, cycle } => {
+            if (descent_policy_state::has_expired(cycle.descent, auction.phase_start, now).is_crossed()) {
+                let boundary = descent_policy_state::expiry_at(cycle.descent, auction.phase_start);
                 let mut generator = sui::random::new_generator(random, ctx);
-                do_auction_expiry(asset, last_acq_price, phase_start, &mut core.config, &mut core.pending_config, core.escrow_identity, boundary, &mut generator)
+                do_auction_expiry(asset, auction, &mut core.config, &mut core.pending_config, core.escrow_identity, boundary, &mut generator)
             } else {
-                AssetState::AtDutch { asset, last_acq_price, phase_start, cycle }
+                AssetState::AtDutch { asset, auction, cycle }
             }
         },
         s => s,
@@ -1725,15 +1732,14 @@ fun do_install<Asset: key + store, CoinType>(
 /// four resolves, so the new Idle reflects the new config.
 fun do_auction_expiry<Asset: key + store, CoinType>(
     asset:           asset::AssetCustodyLocked<Asset>,
-    last_acq_price:  Price,
-    phase_start:     Timestamp,
+    auction:         AuctionTerms,
     config:          &mut IntegrationConfig,
     pending_config:  &mut Option<IntegrationConfig>,
     escrow_identity: EscrowIdentity,
     boundary:        Timestamp,
     generator:       &mut RandomGenerator,
 ): AssetState<Asset, CoinType> {
-    event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(phase_start), last_acq_price: monetary::price_mist(last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
+    event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
     if (pending_config.is_some()) {
         let new_cfg = pending_config.extract();
         event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_cfg });
@@ -1813,8 +1819,8 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     generator: &mut RandomGenerator,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::AtDutch { asset, last_acq_price, phase_start, cycle: _ } =>
-            do_auction_expiry(asset, last_acq_price, phase_start, &mut core.config, &mut core.pending_config, core.escrow_identity, boundary, generator),
+        AssetState::AtDutch { asset, auction, .. } =>
+            do_auction_expiry(asset, auction, &mut core.config, &mut core.pending_config, core.escrow_identity, boundary, generator),
         AssetState::Idle     { asset: _a, .. } => abort ENotRented,
         AssetState::Retired  { asset: _a }      => abort ENotRented,
         AssetState::Occupied { asset: _a, terms: _t, .. } => abort ENotRented,
@@ -1893,9 +1899,8 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
             let refund = refund_state::from_departing(tenant, fee_share, owner_earnings);
             refund_state::destroy_for_testing(refund);
             AssetState::AtDutch {
-                asset:          asset::close_tenancy(asset),
-                last_acq_price: monetary::price(last_acq_price),
-                phase_start:    new_phase_start,
+                asset:   asset::close_tenancy(asset),
+                auction: AuctionTerms { last_acq_price: monetary::price(last_acq_price), phase_start: new_phase_start },
                 cycle,
             }
         },

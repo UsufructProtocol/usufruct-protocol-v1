@@ -10,7 +10,7 @@
 /// identities, integration metadata. Together they form the on-disk shape
 /// of a shared `Escrow`.
 ///
-/// `RentingDispatch` and `FirableDispatch` narrow `AssetState` to the
+/// `RentingDispatch` and `FirableState` narrow `AssetState` to the
 /// subsets where specific operations are valid (renting → borrow/return;
 /// firable → APT transitions). The non-drop fields (`Tenant<C>`,
 /// `AssetCustody*`) give hot-potato discipline for free — no separate
@@ -164,7 +164,7 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 
 // ─── Sub-dispatcher for narrow contracts ──────────────────────────────────────
 //
-// `FirableDispatch` narrows `AssetState` to the three states that can
+// `FirableState` narrows `AssetState` to the three states that can
 // fire an APT transition (AtDutch, Occupied, Demand). Idle and Retired
 // are absent by construction, so `fire` cannot be called with a non-
 // firable state. The type mediates between `next_apt_step` (producer)
@@ -172,10 +172,10 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 // type-state pipeline (`AptStep`).
 //
 // Variant shapes mirror `AssetState`'s respective variants 1:1;
-// translation between storage and `FirableDispatch` is one move per arm,
+// translation between storage and `FirableState` is one move per arm,
 // no intermediate type.
 
-public enum FirableDispatch<Asset: key + store, phantom CoinType> {
+public enum FirableState<Asset: key + store, phantom CoinType> {
     AtDutch  { asset: asset::AssetCustodyLocked<Asset>, last_acq_price: Price, phase_start: Timestamp, resolved_floor: Price, resolved_ceiling: Duration, resolved_handover: Duration, resolved_descent: Duration },
     Occupied { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, retire: RetireCondition },
     Demand   { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: Timestamp, bidding_cycles: Cycles, retire: RetireCondition },
@@ -183,15 +183,14 @@ public enum FirableDispatch<Asset: key + store, phantom CoinType> {
 
 /// Result of inspecting an `AssetState` for a due APT transition.
 /// `Settled` carries the storage back unchanged (no transition is due);
-/// `Pending` carries a `FirableDispatch` + the transition to fire. The
-/// hot-potato discipline guarantees the caller must consume exactly one
-/// branch — there is no path where the state silently disappears.
+/// `Pending` carries a `FirableState` whose variant alone encodes
+/// which transition fires — the boundary is derived from its fields
+/// inside `fire`. The hot-potato discipline guarantees the caller must
+/// consume exactly one branch — there is no path where the state
+/// silently disappears.
 public enum AptStep<Asset: key + store, phantom CoinType> {
     Settled { s: AssetState<Asset, CoinType> },
-    Pending {
-        firable:    FirableDispatch<Asset, CoinType>,
-        transition: PendingTransitionState,
-    },
+    Pending { firable: FirableState<Asset, CoinType> },
 }
 
 // === Events ===
@@ -781,11 +780,11 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
 /// Inspect a state and produce an APT step: either `Settled` (no
 /// transition due — caller keeps the state unchanged) or `Pending`
 /// (transition due — caller proceeds to `fire`, getting a typed
-/// `FirableDispatch` it cannot misuse on a non-firable state).
+/// `FirableState` it cannot misuse on a non-firable state).
 ///
 /// Idle and Retired always settle. AtDutch / Occupied / Demand settle
 /// when their boundary has not been crossed yet, and otherwise transfer
-/// into the Pending branch with a FirableDispatch of the same variant.
+/// into the Pending branch with a FirableState of the same variant.
 public(package) fun next_apt_step<Asset: key + store, CoinType>(
     s:     AssetState<Asset, CoinType>,
     clock: &Clock,
@@ -798,23 +797,17 @@ public(package) fun next_apt_step<Asset: key + store, CoinType>(
             AptStep::Settled { s: AssetState::Retired { asset } },
         AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
             if (descent_policy_state::has_expired(resolved_descent, phase_start, now).is_crossed()) {
-                let transition = pending_transition_state::auction(descent_policy_state::expiry_at(resolved_descent, phase_start));
                 AptStep::Pending {
-                    firable: FirableDispatch::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent },
-                    transition,
+                    firable: FirableState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent },
                 }
             } else {
                 AptStep::Settled { s: AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } }
             }
         },
         AssetState::Occupied { asset, envelope, current, retire } => {
-            let start   = envelope.phase_start;
-            let ceiling = envelope.resolved_ceiling;
-            if (phases::check_boundary(start, ceiling, now).is_crossed()) {
-                let transition = pending_transition_state::tenure(phases::boundary_at(start, ceiling));
+            if (phases::check_boundary(envelope.phase_start, envelope.resolved_ceiling, now).is_crossed()) {
                 AptStep::Pending {
-                    firable: FirableDispatch::Occupied { asset, envelope, current, retire },
-                    transition,
+                    firable: FirableState::Occupied { asset, envelope, current, retire },
                 }
             } else {
                 AptStep::Settled { s: AssetState::Occupied { asset, envelope, current, retire } }
@@ -822,10 +815,8 @@ public(package) fun next_apt_step<Asset: key + store, CoinType>(
         },
         AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
             if (phases::check_boundary(handover_expiry, phases::zero(), now).is_crossed()) {
-                let transition = pending_transition_state::handover(handover_expiry);
                 AptStep::Pending {
-                    firable: FirableDispatch::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire },
-                    transition,
+                    firable: FirableState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire },
                 }
             } else {
                 AptStep::Settled { s: AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } }
@@ -848,8 +839,8 @@ public(package) fun apply_pending_transition_states<Asset: key + store, CoinType
     loop {
         match (next_apt_step(current, clock)) {
             AptStep::Settled { s: settled } => return settled,
-            AptStep::Pending { firable, transition } => {
-                current = fire(firable, transition, core, random, ctx);
+            AptStep::Pending { firable } => {
+                current = fire(firable, core, random, ctx);
             },
         }
     }
@@ -1703,39 +1694,39 @@ public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64         
 
 // === Private Functions ===
 
-/// Fire one APT transition. The `FirableDispatch` precondition is encoded
+/// Fire one APT transition. The `FirableState` precondition is encoded
 /// in the type: Idle and Retired cannot reach this function. The output
 /// is a wider `AssetState` because the transition may leave the
 /// firable subset (Occupied tenure-expiry → Retired; AtDutch
 /// auction-expiry → Idle).
 ///
-/// Each arm dispatches to the action helper directly — no intermediate
-/// enum: the input variant already tells us which transition fires.
+/// Each arm derives its own boundary from the variant's fields and
+/// dispatches to the action helper directly — no intermediate transition
+/// value: the input variant already tells us which transition fires
+/// and where its boundary lies.
 fun fire<Asset: key + store, CoinType>(
-    firable:    FirableDispatch<Asset, CoinType>,
-    transition: PendingTransitionState,
-    core:       &mut EscrowCore<CoinType>,
-    random:     &Random,
-    ctx:        &mut TxContext,
+    firable: FirableState<Asset, CoinType>,
+    core:    &mut EscrowCore<CoinType>,
+    random:  &Random,
+    ctx:     &mut TxContext,
 ): AssetState<Asset, CoinType> {
-    let boundary = pending_transition_state::proj_boundary(&transition);
     match (firable) {
-        FirableDispatch::Demand { asset, envelope, current, pending, handover_expiry: _, bidding_cycles, retire } =>
+        FirableState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } =>
             do_handover(
                 asset, current, pending, envelope, bidding_cycles, retire,
                 &mut core.owner, &core.config,
                 core.escrow_identity, core.fee_inbox_identity,
-                boundary, ctx,
+                handover_expiry, ctx,
             ),
-        FirableDispatch::Occupied { asset, envelope, current, retire } => {
+        FirableState::Occupied { asset, envelope, current, retire } => {
+            let boundary = phases::boundary_at(envelope.phase_start, envelope.resolved_ceiling);
             let TenureExpiryResult { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover } = do_tenure_expiry(
                 asset, current, envelope,
                 &mut core.owner, core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             );
-            let boundary_ms = phases::timestamp_ms(boundary);
             if (retire_condition::proj_is_retiring(&retire)) {
-                event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(core.escrow_identity), timestamp_ms: boundary_ms });
+                event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(core.escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
                 core.pending_config = option::none();
                 AssetState::Retired { asset: locked }
             } else {
@@ -1744,7 +1735,8 @@ fun fire<Asset: key + store, CoinType>(
                 AssetState::AtDutch { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
             }
         },
-        FirableDispatch::AtDutch { asset, last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } => {
+        FirableState::AtDutch { asset, last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent } => {
+            let boundary = descent_policy_state::expiry_at(resolved_descent, phase_start);
             if (core.pending_config.is_some()) {
                 let new_cfg = core.pending_config.extract();
                 event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(core.escrow_identity), new_config: new_cfg });

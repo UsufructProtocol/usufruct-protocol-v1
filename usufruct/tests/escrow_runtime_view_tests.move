@@ -347,7 +347,7 @@ fun at_dutch_views_after_tenure_expiry() {
     // Now a Tenure transition is pending.
     assert!(escrow::has_pending_transition_states(&escrow, &clk));
     let pending = escrow::next_pending(&escrow, &clk).destroy_some();
-    assert!(usufruct::pending_transition_state::proj_is_tenure(&pending));
+    assert!(usufruct::pending_transition_state::proj_is_tenure_expiry(&pending));
     assert_eq!(escrow::next_transition_ms(&escrow, &clk).destroy_some(), expiry);
 
     // Fire the transition → state advances to AtDutch (descent=Window).
@@ -369,7 +369,7 @@ fun at_dutch_views_after_tenure_expiry() {
     // Advance clock past the descent window: an Auction transition becomes pending.
     clock::set_for_testing(&mut clk, expiry + escrow_corpus::descent_window_h1_const() + 1);
     let pending2 = escrow::next_pending(&escrow, &clk).destroy_some();
-    assert!(usufruct::pending_transition_state::proj_is_auction(&pending2));
+    assert!(usufruct::pending_transition_state::proj_is_auction_expiry(&pending2));
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
     clock::destroy_for_testing(clk);

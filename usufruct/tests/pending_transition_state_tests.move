@@ -14,8 +14,8 @@ use usufruct::phases;
 fun projectors_handover_variant() {
     let t = pending_transition_state::handover(phases::timestamp(100));
     assert!(t.proj_is_handover());
-    assert!(!t.proj_is_tenure());
-    assert!(!t.proj_is_auction());
+    assert!(!t.proj_is_tenure_expiry());
+    assert!(!t.proj_is_auction_expiry());
     assert_eq!(phases::timestamp_ms(t.proj_boundary()), 100);
 }
 
@@ -23,8 +23,8 @@ fun projectors_handover_variant() {
 fun projectors_tenure_variant() {
     let t = pending_transition_state::tenure(phases::timestamp(200));
     assert!(!t.proj_is_handover());
-    assert!(t.proj_is_tenure());
-    assert!(!t.proj_is_auction());
+    assert!(t.proj_is_tenure_expiry());
+    assert!(!t.proj_is_auction_expiry());
     assert_eq!(phases::timestamp_ms(t.proj_boundary()), 200);
 }
 
@@ -32,7 +32,7 @@ fun projectors_tenure_variant() {
 fun projectors_auction_variant() {
     let t = pending_transition_state::auction(phases::timestamp(300));
     assert!(!t.proj_is_handover());
-    assert!(!t.proj_is_tenure());
-    assert!(t.proj_is_auction());
+    assert!(!t.proj_is_tenure_expiry());
+    assert!(t.proj_is_auction_expiry());
     assert_eq!(phases::timestamp_ms(t.proj_boundary()), 300);
 }

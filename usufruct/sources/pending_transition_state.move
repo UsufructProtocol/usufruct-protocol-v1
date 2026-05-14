@@ -18,8 +18,8 @@ use usufruct::phases::Timestamp;
 /// Context-State wrapper PendingTransitionState.
 public enum PendingTransitionKind has copy, drop {
     Handover,
-    Tenure,
-    Auction,
+    TenureExpiry,
+    AuctionExpiry,
 }
 
 /// Lazy transition due at a given timestamp. The coordinator's APT
@@ -57,13 +57,13 @@ public(package) fun proj_is_handover(t: &PendingTransitionState): bool {
 }
 
 /// True iff this transition is the tenure-expiry variant.
-public(package) fun proj_is_tenure(t: &PendingTransitionState): bool {
-    match (&t.kind) { PendingTransitionKind::Tenure => true, _ => false }
+public(package) fun proj_is_tenure_expiry(t: &PendingTransitionState): bool {
+    match (&t.kind) { PendingTransitionKind::TenureExpiry => true, _ => false }
 }
 
 /// True iff this transition is the auction-expiry variant.
-public(package) fun proj_is_auction(t: &PendingTransitionState): bool {
-    match (&t.kind) { PendingTransitionKind::Auction => true, _ => false }
+public(package) fun proj_is_auction_expiry(t: &PendingTransitionState): bool {
+    match (&t.kind) { PendingTransitionKind::AuctionExpiry => true, _ => false }
 }
 
 /// Boundary timestamp the firing handler will stamp on the resulting state and event.
@@ -82,12 +82,12 @@ public(package) fun handover(boundary: Timestamp): PendingTransitionState {
 
 /// Construct a `Tenure` pending transition at `boundary`.
 public(package) fun tenure(boundary: Timestamp): PendingTransitionState {
-    PendingTransitionState { boundary, kind: PendingTransitionKind::Tenure }
+    PendingTransitionState { boundary, kind: PendingTransitionKind::TenureExpiry }
 }
 
-/// Construct an `Auction` pending transition at `boundary`.
+/// Construct an `AuctionExpiry` pending transition at `boundary`.
 public(package) fun auction(boundary: Timestamp): PendingTransitionState {
-    PendingTransitionState { boundary, kind: PendingTransitionKind::Auction }
+    PendingTransitionState { boundary, kind: PendingTransitionKind::AuctionExpiry }
 }
 
 // === Private Functions ===

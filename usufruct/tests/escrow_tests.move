@@ -1328,7 +1328,7 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     let pending = escrow::next_pending(&escrow, &clk);
     assert!(pending.is_some(), 0);
     let t = pending.destroy_some();
-    assert!(pending_transition_state::proj_is_tenure(&t), 1);
+    assert!(pending_transition_state::proj_is_tenure_expiry(&t), 1);
     // boundary_ms is exactly tenure_ceiling (phase_start was 0).
     assert_eq!(phases::timestamp_ms(pending_transition_state::proj_boundary(&t)), escrow_corpus::tenure_ceiling_const());
 

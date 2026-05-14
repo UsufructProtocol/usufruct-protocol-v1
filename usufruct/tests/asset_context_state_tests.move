@@ -102,10 +102,11 @@ fun retake_escrow_by_value(escrow: Escrow<DemoAsset, SUI>, sc: &mut Scenario): E
 
 // ─── execute_claim wrong-state aborts (C2) ───────────────────────────────────
 //
-// `execute_claim` accepts only `RetiredContext`. Calling the public
-// `claim_asset` entry on an escrow in any other lifecycle state must
-// abort `ENotRetired`. The four arms of the dispatcher destructure
-// their non-Retired contexts inline and abort — these aborts are
+// `execute_claim_retired` is the typed contract: it only accepts the
+// asset payload of the Retired variant. Calling the public `claim_asset`
+// entry on an escrow in any other lifecycle state must abort
+// `ENotRetired`. The four wrong-state arms of `execute_claim`
+// destructure their variants inline and abort — these aborts are
 // legitimate, reachable from the public API, and require explicit
 // `expected_failure` coverage.
 //
@@ -434,8 +435,8 @@ fun burn_live_pending_cap_in_demand_aborts() {
     // Burn the live pending cap — must abort. This case is distinct
     // from current: pending lives only in Demand. In the legacy form
     // both checks lived in the `cap_auth_for_tenancy` match; in the
-    // typed-states form `pending` is a direct field of DemandContext,
-    // so the assert is per-arm and per-field.
+    // typed-states form `pending` is a direct field of the Demand
+    // storage variant, so the assert is per-arm and per-field.
     escrow::burn_tenant_cap(&mut escrow, cap_t2, &rnd, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);

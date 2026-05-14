@@ -72,29 +72,6 @@ const ERetireAlreadyScheduled:  u64 = 16;
 
 // === Structs ===
 
-/// Role a `TenantCap` plays relative to the current lifecycle state.
-/// Co-resident with asset_state so match arms can branch on variants
-/// directly — Move restricts pattern access to the defining module.
-///
-///   · `Current` — cap belongs to the active tenant. May borrow.
-///   · `Pending` — cap belongs to the pending bidder (Demand). May not borrow.
-///   · `Stale`   — cap is superseded, former tenant, or no active rental.
-public enum CapAuthorizationState has drop {
-    Current,
-    Pending,
-    Stale,
-}
-
-public(package) fun proj_is_current(a: &CapAuthorizationState): bool {
-    match (a) { CapAuthorizationState::Current => true, _ => false }
-}
-public(package) fun proj_is_pending(a: &CapAuthorizationState): bool {
-    match (a) { CapAuthorizationState::Pending => true, _ => false }
-}
-public(package) fun proj_is_stale(a: &CapAuthorizationState): bool {
-    match (a) { CapAuthorizationState::Stale => true, _ => false }
-}
-
 /// Result of splitting a credit amount into owner earnings and protocol fee.
 /// Named fields prevent positional swap between the two semantically distinct
 /// monetary roles.
@@ -715,26 +692,36 @@ public(package) fun proj_tenure_settlement<Asset: key + store, CoinType>(
     (alloc.owner_share, alloc.protocol_fee)
 }
 
-// ─── Cap-authorization view ───────────────────────────────────────────────────
+// ─── Cap-authorization predicates ────────────────────────────────────────────
 
-public(package) fun cap_authorization_state<Asset: key + store, CoinType>(
-    s:            &AssetState<Asset, CoinType>,
-    cap_identity: TenantCapIdentity,
-): CapAuthorizationState {
+public(package) fun cap_is_current<Asset: key + store, CoinType>(
+    s:   &AssetState<Asset, CoinType>,
+    cap: TenantCapIdentity,
+): bool {
     match (s) {
-        AssetState::Occupied { terms, .. } => {
-            if (cap_identity == tenant::proj_cap_identity(tenant::proj_identity(&terms.current)))
-                CapAuthorizationState::Current
-            else
-                CapAuthorizationState::Stale
-        },
-        AssetState::Demand { terms, bid, .. } => {
-            if      (cap_identity == tenant::proj_cap_identity(tenant::proj_identity(&terms.current))) CapAuthorizationState::Current
-            else if (cap_identity == tenant::proj_cap_identity(tenant::proj_identity(&bid.pending)))   CapAuthorizationState::Pending
-            else CapAuthorizationState::Stale
-        },
-        _ => CapAuthorizationState::Stale,
+        AssetState::Occupied { terms, .. } |
+        AssetState::Demand   { terms, .. } =>
+            cap == tenant::proj_cap_identity(tenant::proj_identity(&terms.current)),
+        _ => false,
     }
+}
+
+public(package) fun cap_is_pending<Asset: key + store, CoinType>(
+    s:   &AssetState<Asset, CoinType>,
+    cap: TenantCapIdentity,
+): bool {
+    match (s) {
+        AssetState::Demand { bid, .. } =>
+            cap == tenant::proj_cap_identity(tenant::proj_identity(&bid.pending)),
+        _ => false,
+    }
+}
+
+public(package) fun cap_is_stale<Asset: key + store, CoinType>(
+    s:   &AssetState<Asset, CoinType>,
+    cap: TenantCapIdentity,
+): bool {
+    !cap_is_current(s, cap) && !cap_is_pending(s, cap)
 }
 
 // ─── APT and pending detection ────────────────────────────────────────────────
@@ -979,30 +966,33 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     }
 }
 
-/// Tenant-gated asset borrow. Cap authorization is delegated to
-/// `cap_authorization_state` — the single source of truth for
-/// Current / Pending / Stale classification.
+/// Tenant-gated asset borrow. Auth and action fused into a single match:
+/// each renting arm checks the cap inline and takes the asset directly.
+/// The `_` arm covers Idle / AtDutch / Retired — states that carry no
+/// open custody and therefore have no cap to match.
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
     tenant_cap: &TenantCap,
 ): (AssetState<Asset, CoinType>, Asset, AssetReceipt) {
     assert!(tenant_cap::proj_escrow_identity(tenant_cap) == core.escrow_identity, EWrongEscrowTenantCap);
-    let cap_identity = tenant_cap::identity(tenant_cap);
-    match (cap_authorization_state(&s, cap_identity)) {
-        CapAuthorizationState::Current => {},
-        CapAuthorizationState::Pending => abort EPendingTenantCap,
-        CapAuthorizationState::Stale   => abort EStaleTenantCap,
-    };
+    let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
         AssetState::Occupied { mut asset, terms, cycle } => {
+            let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
+            if (cap_identity != current) abort EStaleTenantCap;
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Occupied { asset, terms, cycle }, u, receipt)
         },
         AssetState::Demand { mut asset, terms, bid, cycle } => {
+            let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
+            let pending = tenant::proj_cap_identity(tenant::proj_identity(&bid.pending));
+            if      (cap_identity == current) {}
+            else if (cap_identity == pending) abort EPendingTenantCap
+            else                              abort EStaleTenantCap;
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
@@ -1059,9 +1049,8 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
 ///      live tenancy references are never destroyed.
 ///
 /// In Idle/AtDutch/Retired the second guard is satisfied structurally —
-/// Tenant-cap gas-recovery burn. Active caps (Current, Pending) abort
-/// `ETenantCapNotStale`; all stale caps burn unconditionally. Authorization
-/// is delegated to `cap_authorization_state`.
+/// Tenant-cap gas-recovery burn. Active caps (current or pending) abort
+/// `ETenantCapNotStale`; stale caps burn unconditionally.
 public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
     s:    AssetState<Asset, CoinType>,
     core: &EscrowCore<CoinType>,
@@ -1070,12 +1059,20 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
 ): AssetState<Asset, CoinType> {
     assert!(tenant_cap::proj_escrow_identity(&cap) == core.escrow_identity, EWrongEscrowTenantCap);
     let cap_identity = tenant_cap::identity(&cap);
-    match (cap_authorization_state(&s, cap_identity)) {
-        CapAuthorizationState::Current => abort ETenantCapNotStale,
-        CapAuthorizationState::Pending => abort ETenantCapNotStale,
-        CapAuthorizationState::Stale   => {},
+    match (&s) {
+        AssetState::Occupied { terms, .. } => {
+            let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
+            if (cap_identity == current) abort ETenantCapNotStale;
+        },
+        AssetState::Demand { terms, bid, .. } => {
+            let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
+            let pending = tenant::proj_cap_identity(tenant::proj_identity(&bid.pending));
+            if (cap_identity == current || cap_identity == pending) abort ETenantCapNotStale;
+        },
+        _ => {},
     };
-    match (s) { s => { tenant_cap::burn(cap, ctx); s } }
+    tenant_cap::burn(cap, ctx);
+    s
 }
 
 /// Owner-gated earnings withdrawal. Operates on the core handoff

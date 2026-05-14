@@ -18,7 +18,7 @@ use usufruct::{
     curve_shape_state::{Self as curve, CurveShapeState},
     cycles::Cycles,
     descent_policy_state,
-    asset_state::{Self, EscrowCore, AssetState, CapAuthorizationState},
+    asset_state::{Self, EscrowCore, AssetState},
     handover_policy_state,
     floor_price_policy_state,
     math,
@@ -530,11 +530,25 @@ public fun owner_cap_is_valid<Asset: key + store, CoinType>(
     asset_state::proj_owner_cap_id(read_core(escrow)) == object::id(owner_cap)
 }
 
-public fun tenant_cap_status<Asset: key + store, CoinType>(
+public fun tenant_cap_is_current<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
-): CapAuthorizationState {
-    asset_state::cap_authorization_state(read_state(escrow), tenant_cap::from_id(cap_id))
+): bool {
+    asset_state::cap_is_current(read_state(escrow), tenant_cap::from_id(cap_id))
+}
+
+public fun tenant_cap_is_pending<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+    cap_id: ID,
+): bool {
+    asset_state::cap_is_pending(read_state(escrow), tenant_cap::from_id(cap_id))
+}
+
+public fun tenant_cap_is_stale<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+    cap_id: ID,
+): bool {
+    asset_state::cap_is_stale(read_state(escrow), tenant_cap::from_id(cap_id))
 }
 
 

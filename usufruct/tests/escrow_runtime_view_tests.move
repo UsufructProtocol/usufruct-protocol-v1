@@ -229,8 +229,7 @@ fun idle_views_post_integrate() {
 
     // — Cap status with an unknown ID — Stale in non-Renting state —
     let foreign = object::id_from_address(@0xDEAD);
-    let status  = escrow::tenant_cap_status(&escrow, foreign);
-    assert!(asset_state::proj_is_stale(&status));
+    assert!(escrow::tenant_cap_is_stale(&escrow, foreign));
 
     dispose_escrow(escrow, cap);
     sc.end();
@@ -275,7 +274,7 @@ fun rented_views_post_rent() {
     assert!(escrow::credit_phase_start_ms(&escrow).is_some());
 
     // — Cap status on the actual tenant cap —
-    assert!(asset_state::proj_is_current(&escrow::tenant_cap_status(&escrow, object::id(&t_cap))));
+    assert!(escrow::tenant_cap_is_current(&escrow, object::id(&t_cap)));
 
     // — Owner balance: rent payment is collected and split; owner_balance ≥ 0 —
     let _bal = escrow::owner_balance(&escrow);
@@ -504,8 +503,8 @@ fun demand_views_after_handover_bid() {
     assert!(escrow::pending_stake(&escrow).is_some());
 
     // — Cap status: t1 current, t2 pending —
-    assert!(asset_state::proj_is_current(&escrow::tenant_cap_status(&escrow, object::id(&t1_cap))));
-    assert!(asset_state::proj_is_pending(&escrow::tenant_cap_status(&escrow, object::id(&t2_cap))));
+    assert!(escrow::tenant_cap_is_current(&escrow, object::id(&t1_cap)));
+    assert!(escrow::tenant_cap_is_pending(&escrow, object::id(&t2_cap)));
 
     // — Handover countdown is active; expiry is recorded —
     let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();

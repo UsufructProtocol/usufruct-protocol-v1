@@ -368,9 +368,6 @@ public(package) fun proj_is_active<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun proj_is_inactive<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): bool { !proj_is_active(s) }
 
 public(package) fun proj_is_idle<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,

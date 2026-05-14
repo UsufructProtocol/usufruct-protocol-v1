@@ -288,7 +288,7 @@ public fun is_active<Asset: key + store, CoinType>(
 public fun is_retired<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_state::proj_is_inactive(read_state(escrow))
+    asset_state::proj_is_retired(read_state(escrow))
 }
 
 public fun is_rented<Asset: key + store, CoinType>(

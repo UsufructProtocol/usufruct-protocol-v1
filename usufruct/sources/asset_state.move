@@ -29,7 +29,7 @@ use sui::{
     random::{Random, RandomGenerator},
 };
 use usufruct::{
-    asset::{Self},
+    asset::{Self, AssetIdentity},
     config::{Self, IntegrationConfig},
     cycles::{Self, Cycles},
     descent_policy_state,
@@ -75,13 +75,12 @@ const ERetireAlreadyScheduled:  u64 = 16;
 
 /// Proof of borrow — hot-potato, no abilities. Minted by `execute_borrow`
 /// after `asset::take` succeeds; consumed by `execute_return` before
-/// `asset::put`. Carries the escrow identity and asset ID so
-/// `execute_return` can verify that the correct asset is returned to the
-/// correct escrow. Receipt creation and verification are protocol concerns;
-/// the custody module (`asset.move`) is unaware of them.
+/// `asset::put`. Carries an `AssetIdentity` so `execute_return` can verify
+/// that the correct asset is returned to the correct escrow.
+/// Receipt creation and verification are protocol concerns; the custody
+/// module (`asset.move`) is unaware of them.
 public struct AssetReceipt {
-    escrow_identity: EscrowIdentity,
-    asset_id:        ID,
+    identity: AssetIdentity,
 }
 
 /// Result of splitting a credit amount into owner earnings and protocol fee.
@@ -1010,7 +1009,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
             let asset_id = asset::proj_asset_id(&asset);
             let u = asset::take(&mut asset);
-            let receipt = AssetReceipt { escrow_identity: core.escrow_identity, asset_id };
+            let receipt = AssetReceipt { identity: asset::new_identity(asset_id, core.escrow_identity) };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Occupied { asset, terms, cycle }, u, receipt)
         },
@@ -1021,7 +1020,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
             let asset_id = asset::proj_asset_id(&asset);
             let u = asset::take(&mut asset);
-            let receipt = AssetReceipt { escrow_identity: core.escrow_identity, asset_id };
+            let receipt = AssetReceipt { identity: asset::new_identity(asset_id, core.escrow_identity) };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Demand { asset, terms, bid, cycle }, u, receipt)
         },
@@ -1029,19 +1028,29 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     }
 }
 
+/// Two independent receipt checks — two distinct attacks:
+///   1. cross-escrow:  receipt issued by escrow A, presented to escrow B
+///   2. asset-swap:    correct receipt but a different physical object returned
+fun assert_return_valid<Asset: key + store>(
+    identity:  &AssetIdentity,
+    asset_in:  &Asset,
+    escrow_id: EscrowIdentity,
+) {
+    assert!(asset::identity_escrow_identity(identity) == escrow_id,        EReceiptEscrowMismatch);
+    assert!(object::id(asset_in) == asset::identity_asset_id(identity),    EReturnedDifferentAsset);
+}
+
 /// Tenant-gated asset return. Takes `&mut AssetState` — the variant does
 /// not change; only the open custody is mutated. Receipt verification is
-/// the protocol layer's responsibility: all three checks happen here
-/// before the mechanical `asset::put`.
+/// the protocol layer's responsibility.
 public(package) fun execute_return<Asset: key + store, CoinType>(
     s:          &mut AssetState<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
     asset_in:   Asset,
     receipt_in: AssetReceipt,
 ) {
-    let AssetReceipt { escrow_identity, asset_id } = receipt_in;
-    assert!(escrow_identity == core.escrow_identity,      EReceiptEscrowMismatch);
-    assert!(object::id(&asset_in) == asset_id,            EReturnedDifferentAsset);
+    let AssetReceipt { identity } = receipt_in;
+    assert_return_valid(&identity, &asset_in, core.escrow_identity);
     match (s) {
         AssetState::Occupied { asset, terms, .. } |
         AssetState::Demand   { asset, terms, .. } => {
@@ -2068,7 +2077,7 @@ public(package) fun config_updated_new_config(e: &ConfigUpdated): IntegrationCon
 
 #[test_only]
 public(package) fun forge_receipt_for_testing(escrow_identity: EscrowIdentity, asset_id: ID): AssetReceipt {
-    AssetReceipt { escrow_identity, asset_id }
+    AssetReceipt { identity: asset::new_identity(asset_id, escrow_identity) }
 }
 
 #[test_only]

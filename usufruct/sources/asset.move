@@ -5,6 +5,8 @@ module usufruct::asset;
 
 // === Imports ===
 
+use usufruct::escrow_identity::EscrowIdentity;
+
 // === Errors ===
 
 /// `unbundle` was called on a wrapper whose slot is empty (asset still
@@ -15,6 +17,14 @@ const E_ASSET_NOT_AVAILABLE: u64 = 4;
 // === Constants ===
 
 // === Structs ===
+
+/// Composite identity of an asset within the protocol. Pairs the asset's
+/// own UID with the escrow that holds it. Used by `AssetReceipt` in
+/// `asset_state` to verify returns against the issuing borrow.
+public struct AssetIdentity has copy, drop {
+    asset_id:        ID,
+    escrow_identity: EscrowIdentity,
+}
 
 /// Wrapper around an external `U` during active tenancy (Occupied / Demand).
 /// `available` is `Some` when the asset is in escrow custody and `None`
@@ -48,6 +58,12 @@ public struct AssetCustodyLocked<U: key + store> has store {
 public(package) fun proj_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID { object::id(&self.asset) }
 
 public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.asset_id }
+
+public(package) fun new_identity(asset_id: ID, escrow_identity: EscrowIdentity): AssetIdentity {
+    AssetIdentity { asset_id, escrow_identity }
+}
+public(package) fun identity_asset_id(id: &AssetIdentity): ID { id.asset_id }
+public(package) fun identity_escrow_identity(id: &AssetIdentity): EscrowIdentity { id.escrow_identity }
 public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool {
     self.available.is_some()
 }

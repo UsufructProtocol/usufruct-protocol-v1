@@ -925,6 +925,27 @@ public(package) fun resolved_descent_for_testing<Asset: key + store, CoinType>(
 }
 
 #[test_only]
+public(package) fun resolved_floor_for_testing<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): u64 {
+    monetary::price_mist(asset_state::proj_resolved_floor_for_testing(read_state(escrow)))
+}
+
+#[test_only]
+public(package) fun resolved_ceiling_for_testing<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): u64 {
+    phases::duration_ms(asset_state::proj_resolved_ceiling_for_testing(read_state(escrow)))
+}
+
+#[test_only]
+public(package) fun resolved_handover_for_testing<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): u64 {
+    phases::duration_ms(asset_state::proj_resolved_handover_for_testing(read_state(escrow)))
+}
+
+#[test_only]
 public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     escrow:         &mut Escrow<Asset, CoinType>,
     tenant:         usufruct::tenant::Tenant<CoinType>,

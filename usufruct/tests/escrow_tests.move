@@ -9128,3 +9128,154 @@ fun resolve_invariant_pending_config_applies_at_auction_expiry_then_redraws() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+/// §RI-5. No public action outside the three authorized draw sites
+/// (`execute_integrate`, `do_auction_expiry`, `execute_update_config`
+/// arm Idle) re-draws ANY `resolved_*`. The four values flow through
+/// the cycle as one quartet — this test checks the full quartet at
+/// every step.
+///
+/// Drives a complete cycle and exercises every public action against
+/// it: `rent` (Idle→Occupied, Occupied→Demand), `borrow_asset` /
+/// `return_asset`, `extend_commitment`, `update_config` while Renting
+/// (schedules), APT for `do_handover` (Demand→Occupied) and
+/// `do_tenure_expiry` (Occupied→AtDutch), `burn_tenant_cap` on a
+/// now-stale cap — asserting after each step that the four
+/// `resolved_*` (floor, ceiling, handover, descent) read identical to
+/// the values drawn at the initial Idle entry. Only the FINAL APT
+/// firing `do_auction_expiry` (AtDutch→Idle) is allowed to move them.
+///
+/// Uses `cycles::cycles(1)` throughout so the extended values stored
+/// in `TenancyEnvelope` (ceiling × cycles, handover × cycles) equal
+/// their base counterparts.
+///
+/// Negative invariant: a `*_policy_state::resolve(...)` introduced in
+/// any propagation helper would break at least one assertion.
+#[test]
+fun resolve_invariant_no_redraw_outside_three_authorized_sites() {
+    let mut sc = setup();
+    // h=2 → descent ∈ [10_000, 90_000].
+    let cfg_h2 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 2, 0));
+    // h=1 → descent = 100_000. Scheduled as pending so the final
+    // auction-expiry draw lands at a guaranteed-different value.
+    let cfg_h1 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
+        cfg_h2,
+        commitment_policy_state::new_deferred(phases::duration(50_000)),
+        &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // The quartet drawn at integrate-time. Every step below must preserve all four.
+    let floor_cycle    = escrow::resolved_floor_for_testing(&escrow);
+    let ceiling_cycle  = escrow::resolved_ceiling_for_testing(&escrow);
+    let handover_cycle = escrow::resolved_handover_for_testing(&escrow);
+    let descent_cycle  = escrow::resolved_descent_for_testing(&escrow);
+    assert!(descent_cycle >= escrow_corpus::descent_random_min_h2_const(), 0);
+    assert!(descent_cycle <= escrow_corpus::descent_random_max_h2_const(), 1);
+
+    // (1) Idle → Occupied via rent. Propagation only.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
+    );
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+
+    // (2) borrow_asset → return_asset. Custody flip, no state transition.
+    let (asset_out, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+    escrow::return_asset(&mut escrow, asset_out, receipt);
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+
+    // (3) extend_commitment. Orthogonal action on EscrowCore.commitment_*.
+    escrow::extend_commitment(
+        &mut escrow, &owner_cap,
+        commitment_policy_state::new_deferred(phases::duration(80_000)),
+        &clk,
+    );
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+
+    // (4) update_config while Occupied. Schedules cfg_h1 in pending_config.
+    escrow::update_config(&mut escrow, &owner_cap, cfg_h1, &random, &clk, sc.ctx());
+    assert!(escrow::has_pending_config_update(&escrow), 2);
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+
+    // (5) Occupied → Demand via rent (place bid).
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    let cap_t2 = escrow::rent(
+        &mut escrow, mk_payment(bid_floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
+    );
+    assert!(escrow::is_demand(&escrow), 3);
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+
+    // (6) Demand → Occupied via APT firing do_handover.
+    let handover_expiry = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow));
+    clock::set_for_testing(&mut clk, handover_expiry);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_occupied(&escrow), 4);
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+
+    // (7) burn_tenant_cap on the now-stale cap_t1. Gas recovery action.
+    escrow::burn_tenant_cap(&mut escrow, cap_t1, &random, &clk, sc.ctx());
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+
+    // (8) Occupied → AtDutch via APT firing do_tenure_expiry (Vacant arm).
+    //     This was the historical re-draw site for descent — now it must
+    //     propagate all four unchanged. Config still cfg_h2 (pending
+    //     applies at auction expiry, not tenure expiry).
+    let phase_start = *option::borrow(&escrow::phase_start_ms(&escrow));
+    clock::set_for_testing(&mut clk, phase_start + escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 5);
+    assert!(escrow::integration_config(&escrow) == cfg_h2, 6);
+    assert!(escrow::has_pending_config_update(&escrow), 7);
+    assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
+    assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
+    assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
+
+    // (9) AtDutch → Idle via APT firing do_auction_expiry. THIS is the
+    //     authorized third site. Pending cfg_h1 applies, then all four
+    //     re-draw from cfg_h1. Under cfg_h1 descent is fixed at the
+    //     ceiling const → guaranteed distinct from descent_cycle.
+    let atdutch_phase_start = *option::borrow(&escrow::phase_start_ms(&escrow));
+    clock::set_for_testing(&mut clk, atdutch_phase_start + descent_cycle + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 8);
+    assert!(escrow::integration_config(&escrow) == cfg_h1, 9);
+    assert!(!escrow::has_pending_config_update(&escrow), 10);
+    let descent_new_cycle = escrow::resolved_descent_for_testing(&escrow);
+    assert_eq!(descent_new_cycle, escrow_corpus::descent_window_h1_const());
+    assert!(descent_new_cycle != descent_cycle, 11);
+
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

@@ -2044,11 +2044,16 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     }
 }
 
-/// Test-only accessor: returns the `resolved_descent` of any non-Retired
-/// variant. The SDK view `proj_waiting_resolved_descent` deliberately
-/// exposes only Idle/AtDutch (the "auction descent" reading); this
-/// helper exists so invariant tests can verify that descent flows
-/// unchanged through Occupied/Demand as well.
+/// Test-only accessors: the four cycle-resident `resolved_*` values
+/// read from any non-Retired variant. The SDK views deliberately
+/// expose only the phase-appropriate readings (e.g.
+/// `proj_waiting_resolved_descent` returns Some only on Idle/AtDutch —
+/// the auction-descent semantic); these helpers exist so invariant
+/// tests can verify the four flow unchanged through Occupied/Demand.
+/// In Occupied/Demand the ceiling/handover values are read from
+/// `envelope`, which holds them in extended (committed_cycles ×) form.
+/// Tests that compare across Idle ↔ Renting must use `cycles::cycles(1)`
+/// so extended equals base.
 #[test_only]
 public(package) fun proj_resolved_descent_for_testing<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
@@ -2058,6 +2063,45 @@ public(package) fun proj_resolved_descent_for_testing<Asset: key + store, CoinTy
         AssetState::AtDutch { resolved_descent, .. } => *resolved_descent,
         AssetState::Occupied { resolved_descent, .. } => *resolved_descent,
         AssetState::Demand  { resolved_descent, .. } => *resolved_descent,
+        AssetState::Retired { .. } => abort 0,
+    }
+}
+
+#[test_only]
+public(package) fun proj_resolved_floor_for_testing<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): Price {
+    match (s) {
+        AssetState::Idle    { resolved_floor, .. } => *resolved_floor,
+        AssetState::AtDutch { resolved_floor, .. } => *resolved_floor,
+        AssetState::Occupied { envelope, .. } => envelope.resolved_floor,
+        AssetState::Demand  { envelope, .. } => envelope.resolved_floor,
+        AssetState::Retired { .. } => abort 0,
+    }
+}
+
+#[test_only]
+public(package) fun proj_resolved_ceiling_for_testing<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): Duration {
+    match (s) {
+        AssetState::Idle    { resolved_ceiling, .. } => *resolved_ceiling,
+        AssetState::AtDutch { resolved_ceiling, .. } => *resolved_ceiling,
+        AssetState::Occupied { envelope, .. } => envelope.resolved_ceiling,
+        AssetState::Demand  { envelope, .. } => envelope.resolved_ceiling,
+        AssetState::Retired { .. } => abort 0,
+    }
+}
+
+#[test_only]
+public(package) fun proj_resolved_handover_for_testing<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): Duration {
+    match (s) {
+        AssetState::Idle    { resolved_handover, .. } => *resolved_handover,
+        AssetState::AtDutch { resolved_handover, .. } => *resolved_handover,
+        AssetState::Occupied { envelope, .. } => envelope.resolved_handover,
+        AssetState::Demand  { envelope, .. } => envelope.resolved_handover,
         AssetState::Retired { .. } => abort 0,
     }
 }

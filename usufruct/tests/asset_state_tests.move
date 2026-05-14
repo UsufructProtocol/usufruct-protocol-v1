@@ -102,13 +102,13 @@ fun retake_escrow_by_value(escrow: Escrow<DemoAsset, SUI>, sc: &mut Scenario): E
 
 // ─── execute_claim wrong-state aborts (C2) ───────────────────────────────────
 //
-// `execute_claim_retired` is the typed contract: it only accepts the
-// asset payload of the Retired variant. Calling the public `claim_asset`
-// entry on an escrow in any other lifecycle state must abort
-// `ENotRetired`. The four wrong-state arms of `execute_claim`
-// destructure their variants inline and abort — these aborts are
-// legitimate, reachable from the public API, and require explicit
-// `expected_failure` coverage.
+// The Retired arm of `execute_claim` is the typed happy path:
+// the `match` extracts the locked asset from the Retired variant and
+// unwraps it. Calling the public `claim_asset` entry on an escrow in
+// any other lifecycle state must abort `ENotRetired`. The four wrong-
+// state arms destructure their variants inline and abort — these
+// aborts are legitimate, reachable from the public API, and require
+// explicit `expected_failure` coverage.
 //
 // The Idle case (claim immediately after integrate) is already covered
 // by `escrow_tests::claim_asset_when_not_retired_aborts`. The three

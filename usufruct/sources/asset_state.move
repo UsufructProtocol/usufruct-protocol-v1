@@ -249,8 +249,9 @@ public struct CommitmentExtended has copy, drop {
 
 /// Boundary lifecycle events: `AssetIntegrated` marks Bootstrap → Idle
 /// (one-shot, fired by `execute_integrate`); `AssetClaimed` marks
-/// Retired → Destroyed (terminal, fired by `execute_claim_retired`).
-/// They bracket the on-chain lifetime of the shared `Escrow` object.
+/// Retired → Destroyed (terminal, fired by `execute_claim`'s Retired
+/// arm). They bracket the on-chain lifetime of the shared `Escrow`
+/// object.
 public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
@@ -1291,47 +1292,18 @@ public(package) fun execute_extend_commitment<CoinType>(
     core.commitment_anchor = now;
 }
 
-/// Terminal action: unwrap a Retired state into the underlying asset and
-/// the swept owner earnings. The type guarantees the lifecycle state — no
-/// runtime assert on state needed. Emits `AssetClaimed` (Retired →
-/// Destroyed lifecycle boundary).
+/// Retired → Destroyed: the terminal claim action. The Retired arm
+/// unwraps the locked asset and the swept owner earnings, emits
+/// `AssetClaimed`, and returns. The other four arms abort `ENotRetired`
+/// after consuming the hot-potatoes inline — the abort is reachable
+/// from the public API (caller invoked claim while the escrow was in
+/// the wrong lifecycle state) and is what `expected_failure` tests
+/// exercise.
 ///
-/// The owner-cap → escrow binding check stays here: it is a precondition
-/// of the action ("this cap is allowed to claim from this escrow"), not a
-/// property of where the call comes from.
-public(package) fun execute_claim_retired<Asset: key + store, CoinType>(
-    asset:     asset::AssetCustodyLocked<Asset>,
-    core:      EscrowCore<CoinType>,
-    owner_cap: &OwnerCap,
-    clock:     &Clock,
-    ctx:       &mut TxContext,
-): (Asset, Coin<CoinType>) {
-    let EscrowCore { mut owner, escrow_identity, .. } = core;
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == escrow_identity, EWrongEscrowOwnerCap);
-    let coin           = owner::withdraw(&mut owner, owner_cap, ctx);
-    let swept_earnings = coin::value(&coin);
-    owner::destroy_empty(owner);
-    event::emit(AssetClaimed {
-        escrow_id:    escrow_identity::escrow_id(escrow_identity),
-        owner_cap_id: object::id(owner_cap),
-        owner:        ctx.sender(),
-        swept_earnings,
-        timestamp_ms: clock::timestamp_ms(clock),
-    });
-    (asset::unlock(asset), coin)
-}
-
-/// Entry-point dispatcher for claim. Lives here (not in escrow.move) because
-/// Move 2024 restricts pattern access to the defining module — the wrong-state
-/// arms have to destructure `AssetState` and `EscrowCore` before
-/// aborting, and that destructure must happen inside this module.
-///
-/// The happy path delegates to `execute_claim_retired`, which is the typed
-/// contract: it can only be called with a Retired asset. The other four
-/// arms abort `ENotRetired` after consuming the hot-potatoes inline — the
-/// abort is reachable from the public API (caller invoked claim while the
-/// escrow was in the wrong lifecycle state) and is what `expected_failure`
-/// tests exercise.
+/// Lives here (not in escrow.move) because Move 2024 restricts pattern
+/// access to the defining module — the wrong-state arms have to
+/// destructure `AssetState` and `EscrowCore` before aborting, and that
+/// destructure must happen inside this module.
 public(package) fun execute_claim<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
@@ -1340,8 +1312,21 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
     match (s) {
-        AssetState::Retired { asset } =>
-            execute_claim_retired(asset, core, owner_cap, clock, ctx),
+        AssetState::Retired { asset } => {
+            let EscrowCore { mut owner, escrow_identity, .. } = core;
+            assert!(owner_cap::proj_escrow_identity(owner_cap) == escrow_identity, EWrongEscrowOwnerCap);
+            let coin           = owner::withdraw(&mut owner, owner_cap, ctx);
+            let swept_earnings = coin::value(&coin);
+            owner::destroy_empty(owner);
+            event::emit(AssetClaimed {
+                escrow_id:    escrow_identity::escrow_id(escrow_identity),
+                owner_cap_id: object::id(owner_cap),
+                owner:        ctx.sender(),
+                swept_earnings,
+                timestamp_ms: clock::timestamp_ms(clock),
+            });
+            (asset::unlock(asset), coin)
+        },
         AssetState::Idle { asset: _a, .. } => {
             let EscrowCore { owner: _o, .. } = core;
             abort ENotRetired

@@ -480,6 +480,81 @@ fun return_with_receipt_from_wrong_escrow_aborts() {
     sc.end();
 }
 
+/// Two real escrows — borrow from A, present the authentic receipt to B.
+/// This is the production cross-escrow attack: the attacker holds a
+/// genuine receipt but targets the wrong escrow object.
+#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
+fun cross_escrow_return_with_authentic_receipt_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow_a, cap_a) = integrate_and_take(&mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take_with_cfg(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    // Rent on both escrows so they are in Occupied state.
+    let p_a = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let t_cap_a = escrow::rent(&mut escrow_a, p_a, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let p_b = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let t_cap_b = escrow::rent(&mut escrow_b, p_b, cycles::cycles(1), &rnd, &clk, sc.ctx());
+
+    // Borrow from A — receipt_a carries escrow_a's identity.
+    let (asset_a, receipt_a) = escrow::borrow_asset(&mut escrow_a, &t_cap_a, &rnd, &clk, sc.ctx());
+
+    // Attempt to return asset_a to escrow_b using receipt_a — must abort.
+    escrow::return_asset(&mut escrow_b, asset_a, receipt_a);
+
+    transfer::public_transfer(t_cap_a, OWNER);
+    transfer::public_transfer(t_cap_b, OWNER);
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    transfer::public_transfer(cap_a, OWNER);
+    transfer::public_transfer(cap_b, OWNER);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Two real escrows, two real borrows — cross-return with correct escrow
+/// but wrong asset. The attacker borrows asset_A from escrow_A (getting
+/// receipt_A) and asset_B from escrow_B (getting receipt_B), then tries
+/// to return asset_B to escrow_A using receipt_A. Escrow identity passes;
+/// the asset_id check catches the swap.
+#[test, expected_failure(abort_code = asset_state::EReturnedDifferentAsset, location = usufruct::asset_state)]
+fun cross_borrow_asset_swap_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow_a, cap_a) = integrate_and_take(&mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take_with_cfg(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    let p_a = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let t_cap_a = escrow::rent(&mut escrow_a, p_a, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let p_b = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let t_cap_b = escrow::rent(&mut escrow_b, p_b, cycles::cycles(1), &rnd, &clk, sc.ctx());
+
+    let (asset_a, receipt_a) = escrow::borrow_asset(&mut escrow_a, &t_cap_a, &rnd, &clk, sc.ctx());
+    let (asset_b, receipt_b) = escrow::borrow_asset(&mut escrow_b, &t_cap_b, &rnd, &clk, sc.ctx());
+
+    // Return asset_b to escrow_a with receipt_a:
+    //   receipt_a.escrow_id = A  == A          ← passes check 1
+    //   object::id(asset_b) = B_id ≠ A_id     ← fails check 2
+    asset_state::destroy_receipt_for_testing(receipt_b);
+    escrow::return_asset(&mut escrow_a, asset_b, receipt_a);
+
+    transfer::public_transfer(asset_a, OWNER);
+    transfer::public_transfer(t_cap_a, OWNER);
+    transfer::public_transfer(t_cap_b, OWNER);
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    transfer::public_transfer(cap_a, OWNER);
+    transfer::public_transfer(cap_b, OWNER);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 /// Asset-swap return: authentic receipt but the physically returned object
 /// is a different instance of the same type.
 #[test, expected_failure(abort_code = asset_state::EReturnedDifferentAsset, location = usufruct::asset_state)]

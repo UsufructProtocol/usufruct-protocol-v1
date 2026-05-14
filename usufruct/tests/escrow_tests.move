@@ -8930,3 +8930,201 @@ fun commitment_chain_same_floor_from_later_time_passes() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §RESOLVE-INVARIANT: resolve() runs only at Idle entry ────────────────────
+//
+// The lifecycle FSM draws policy values at exactly three sites, all of
+// them at the moment a state becomes `Idle`:
+//   1. `execute_integrate`                — Bootstrap → Idle.
+//   2. `do_auction_expiry`                — AtDutch  → Idle (after
+//      applying any `pending_config`).
+//   3. `execute_update_config` arm Idle   — owner reset → Idle (after
+//      applying the new config directly).
+// Once drawn, the four `resolved_*` (floor/ceiling/handover/descent)
+// flow through every variant of the cycle without re-draw. The tests
+// below pin down each part of that invariant. They focus on
+// `resolved_descent` — the field that newly joined the invariant — and
+// rely on h=1 (Window: deterministic descent = ceiling const) and h=2
+// (RandomInRange: descent ∈ [10_000, 90_000]) to make the values
+// observable without random-seed control.
+
+/// §RI-1. `resolved_descent` is constant across Idle / Occupied / Demand
+/// / AtDutch within a single cycle. The value drawn at Idle entry feeds
+/// every subsequent phase without re-draw. The SDK view
+/// `auction_descent_duration_ms` only surfaces Idle / AtDutch (the
+/// auction-descent reading), so a test-only accessor reads the value
+/// in Occupied / Demand to pin the through-cycle invariant.
+#[test]
+fun resolve_invariant_descent_constant_within_cycle() {
+    let mut sc = setup();
+    // h=2 (RandomInRange): the draw is somewhere in [10k, 90k]; pinning
+    // it across phases proves it is the same draw, not a re-draw that
+    // happened to coincide.
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 2, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let descent_idle = escrow::resolved_descent_for_testing(&escrow);
+
+    // Idle → Occupied (rent).
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
+    );
+    assert!(escrow::is_occupied(&escrow), 0);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow), descent_idle);
+
+    // Occupied → Demand (place bid). The ascending floor exceeds the
+    // current tenant's stake; pay exactly the floor.
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    let cap_t2 = escrow::rent(
+        &mut escrow, mk_payment(bid_floor, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
+    );
+    assert!(escrow::is_demand(&escrow), 1);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow), descent_idle);
+
+    // Demand → Occupied (handover).
+    let handover_expiry = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow));
+    clock::set_for_testing(&mut clk, handover_expiry);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_occupied(&escrow), 2);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow), descent_idle);
+
+    // Occupied → AtDutch (tenure expiry, no retire flag).
+    let phase_start = *option::borrow(&escrow::phase_start_ms(&escrow));
+    clock::set_for_testing(&mut clk, phase_start + escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 3);
+    assert_eq!(escrow::resolved_descent_for_testing(&escrow), descent_idle);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// §RI-2. `update_config` in Idle applies the new config immediately
+/// and then re-draws all four resolved values from it. The new
+/// `resolved_descent` must land in the new policy's range, and differ
+/// from the old (under h=1 → h=2: old=100k, new ∈ [10k, 90k]).
+#[test]
+fun resolve_invariant_update_config_in_idle_redraws_descent() {
+    let mut sc = setup();
+    let cfg_h1 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let cfg_h2 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 2, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_h1, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let descent_h1 = *option::borrow(&escrow::auction_descent_duration_ms(&escrow));
+    assert_eq!(descent_h1, escrow_corpus::descent_window_h1_const());
+
+    escrow::update_config(&mut escrow, &owner_cap, cfg_h2, &random, &clk, sc.ctx());
+
+    // Still Idle; config applied directly (no schedule).
+    assert!(escrow::is_idle(&escrow), 0);
+    assert!(escrow::integration_config(&escrow) == cfg_h2, 1);
+    assert!(!escrow::has_pending_config_update(&escrow), 2);
+
+    let descent_h2 = *option::borrow(&escrow::auction_descent_duration_ms(&escrow));
+    assert!(descent_h2 >= escrow_corpus::descent_random_min_h2_const(), 3);
+    assert!(descent_h2 <= escrow_corpus::descent_random_max_h2_const(), 4);
+    // h1's 100_000 lies outside h2's [10k, 90k] range — must differ.
+    assert!(descent_h2 != descent_h1, 5);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// §RI-3. `update_config` scheduled during Renting/AtDutch does NOT
+/// disturb the current cycle's `resolved_descent`. The value remains
+/// the one drawn at the previous Idle entry until the next AtDutch →
+/// Idle transition applies the pending config and re-draws.
+#[test]
+fun resolve_invariant_pending_config_leaves_active_descent_untouched() {
+    let mut sc = setup();
+    let cfg_h1 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let cfg_h2 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 2, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_h1, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
+    );
+    let descent_before = escrow::resolved_descent_for_testing(&escrow);
+
+    // Schedule cfg_h2 during Occupied (goes to pending_config).
+    escrow::update_config(&mut escrow, &owner_cap, cfg_h2, &random, &clk, sc.ctx());
+    assert!(escrow::has_pending_config_update(&escrow), 0);
+
+    // Descent in Occupied is unchanged — it belongs to the current cycle.
+    let descent_after = escrow::resolved_descent_for_testing(&escrow);
+    assert_eq!(descent_after, descent_before);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// §RI-4. The full pipeline: a config scheduled during Occupied lands
+/// at the next Idle entry (via AtDutch → Idle). Crucially the AtDutch
+/// of the *current* cycle still observes the old descent; only the
+/// fresh Idle reads from the new config. This nails the ordering
+/// "apply pending, THEN re-draw" inside `do_auction_expiry`.
+#[test]
+fun resolve_invariant_pending_config_applies_at_auction_expiry_then_redraws() {
+    let mut sc = setup();
+    let cfg_h1 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let cfg_h2 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 2, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg_h1, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let descent_h1 = *option::borrow(&escrow::auction_descent_duration_ms(&escrow));
+
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
+    );
+    escrow::update_config(&mut escrow, &owner_cap, cfg_h2, &random, &clk, sc.ctx());
+
+    // Tenure expiry: Occupied → AtDutch. Pending config still pending
+    // (cfg_h1 is the active one for this cycle's AtDutch).
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::integration_config(&escrow) == cfg_h1, 1);
+    assert!(escrow::has_pending_config_update(&escrow), 2);
+    let descent_atdutch = *option::borrow(&escrow::auction_descent_duration_ms(&escrow));
+    assert_eq!(descent_atdutch, descent_h1);
+
+    // Auction expiry: AtDutch → Idle. `do_auction_expiry` applies the
+    // pending config, then re-draws all four resolved values from it.
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + descent_h1 + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_idle(&escrow), 3);
+    assert!(escrow::integration_config(&escrow) == cfg_h2, 4);
+    assert!(!escrow::has_pending_config_update(&escrow), 5);
+
+    let descent_idle_new = *option::borrow(&escrow::auction_descent_duration_ms(&escrow));
+    assert!(descent_idle_new >= escrow_corpus::descent_random_min_h2_const(), 6);
+    assert!(descent_idle_new <= escrow_corpus::descent_random_max_h2_const(), 7);
+    // 100_000 is outside [10k, 90k]: the new draw cannot equal the old.
+    assert!(descent_idle_new != descent_h1, 8);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

@@ -2044,6 +2044,24 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     }
 }
 
+/// Test-only accessor: returns the `resolved_descent` of any non-Retired
+/// variant. The SDK view `proj_waiting_resolved_descent` deliberately
+/// exposes only Idle/AtDutch (the "auction descent" reading); this
+/// helper exists so invariant tests can verify that descent flows
+/// unchanged through Occupied/Demand as well.
+#[test_only]
+public(package) fun proj_resolved_descent_for_testing<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): Duration {
+    match (s) {
+        AssetState::Idle    { resolved_descent, .. } => *resolved_descent,
+        AssetState::AtDutch { resolved_descent, .. } => *resolved_descent,
+        AssetState::Occupied { resolved_descent, .. } => *resolved_descent,
+        AssetState::Demand  { resolved_descent, .. } => *resolved_descent,
+        AssetState::Retired { .. } => abort 0,
+    }
+}
+
 // ─── Test-only event accessors ────────────────────────────────────────────────
 
 #[test_only]

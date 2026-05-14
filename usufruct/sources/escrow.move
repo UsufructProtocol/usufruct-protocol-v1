@@ -918,6 +918,13 @@ public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
 }
 
 #[test_only]
+public(package) fun resolved_descent_for_testing<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): u64 {
+    phases::duration_ms(asset_state::proj_resolved_descent_for_testing(read_state(escrow)))
+}
+
+#[test_only]
 public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     escrow:         &mut Escrow<Asset, CoinType>,
     tenant:         usufruct::tenant::Tenant<CoinType>,

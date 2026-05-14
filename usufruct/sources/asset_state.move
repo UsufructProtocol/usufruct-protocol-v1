@@ -121,10 +121,15 @@ public struct TenancyEnvelope has copy, drop, store {
 /// the call site. The asset is already in `Locked` custody in both
 /// variants (tenure has ended; the borrow protocol is no longer
 /// applicable).
-///   · `Retired`   — the retire flag was set; the only field the caller
+///   · `Retired` — the retire flag was set; the only field the caller
 ///     needs is the locked asset to roll into `AssetState::Retired`.
-///   · `Vacant` — normal close-out; the per-cycle-normalized policy
-///     values plus `last_acq_price` seed the next `AssetState::AtDutch`.
+///   · `Vacant`  — normal close-out; carries every field the next
+///     `AssetState::AtDutch` needs. The four `resolved_*` were drawn
+///     in the previous Idle (the lifecycle invariant: resolves happen
+///     only at Idle entry); they flow through Occupied/Demand and arrive
+///     here unchanged. `resolved_ceiling`/`resolved_handover` are
+///     rescaled back to per-cycle base because the closed Occupied had
+///     them extended by `committed_cycles`.
 /// Named fields prevent positional swap between same-typed Price /
 /// Duration values.
 public enum TenureExpiryState<Asset: key + store> {
@@ -135,6 +140,7 @@ public enum TenureExpiryState<Asset: key + store> {
         resolved_floor:    Price,
         resolved_ceiling:  Duration,
         resolved_handover: Duration,
+        resolved_descent:  Duration,
     },
 }
 
@@ -164,11 +170,11 @@ public struct EscrowCore<phantom CoinType> has store {
 }
 
 public enum AssetState<Asset: key + store, phantom CoinType> has store {
-    Idle     { asset: asset::AssetCustodyLocked<Asset>, resolved_floor: Price, resolved_ceiling: Duration, resolved_handover: Duration },
+    Idle     { asset: asset::AssetCustodyLocked<Asset>, resolved_floor: Price, resolved_ceiling: Duration, resolved_handover: Duration, resolved_descent: Duration },
     AtDutch  { asset: asset::AssetCustodyLocked<Asset>, last_acq_price: Price, phase_start: Timestamp, resolved_floor: Price, resolved_ceiling: Duration, resolved_handover: Duration, resolved_descent: Duration },
     Retired  { asset: asset::AssetCustodyLocked<Asset> },
-    Occupied { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, retire: RetireCondition },
-    Demand   { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: Timestamp, bidding_cycles: Cycles, retire: RetireCondition },
+    Occupied { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, retire: RetireCondition, resolved_descent: Duration },
+    Demand   { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: Timestamp, bidding_cycles: Cycles, retire: RetireCondition, resolved_descent: Duration },
 }
 
 // ─── Sub-dispatcher for narrow contracts ──────────────────────────────────────
@@ -186,8 +192,8 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 
 public enum FirableState<Asset: key + store, phantom CoinType> {
     AtDutch  { asset: asset::AssetCustodyLocked<Asset>, last_acq_price: Price, phase_start: Timestamp, resolved_floor: Price, resolved_ceiling: Duration, resolved_handover: Duration, resolved_descent: Duration },
-    Occupied { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, retire: RetireCondition },
-    Demand   { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: Timestamp, bidding_cycles: Cycles, retire: RetireCondition },
+    Occupied { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, retire: RetireCondition, resolved_descent: Duration },
+    Demand   { asset: asset::AssetCustodyOpen<Asset>, envelope: TenancyEnvelope, current: Tenant<CoinType>, pending: Tenant<CoinType>, handover_expiry: Timestamp, bidding_cycles: Cycles, retire: RetireCondition, resolved_descent: Duration },
 }
 
 /// Result of inspecting an `AssetState` for a due APT transition.
@@ -301,6 +307,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let resolved_floor     = floor_price_policy_state::resolve(config::proj_min_rent_price(&config), generator);
     let resolved_ceiling   = tenure_policy_state::resolve(config::proj_tenure_ceiling(&config), generator);
     let resolved_handover  = handover_policy_state::resolve(config::proj_handover(&config), resolved_ceiling, generator);
+    let resolved_descent   = descent_policy_state::resolve(config::proj_descent(&config), generator);
     let core = EscrowCore {
         owner:              owner::new<CoinType>(owner_cap_identity),
         config,
@@ -316,6 +323,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
         resolved_floor,
         resolved_ceiling,
         resolved_handover,
+        resolved_descent,
     };
     event::emit(AssetIntegrated<Asset, CoinType> {
         escrow_id:        raw_escrow_id,
@@ -601,6 +609,7 @@ public(package) fun proj_waiting_resolved_descent<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {
     match (s) {
+        AssetState::Idle    { resolved_descent, .. } => option::some(*resolved_descent),
         AssetState::AtDutch { resolved_descent, .. } => option::some(*resolved_descent),
         _ => option::none(),
     }
@@ -800,8 +809,8 @@ public(package) fun next_apt_step<Asset: key + store, CoinType>(
 ): AptStep<Asset, CoinType> {
     let now = phases::now(clock);
     match (s) {
-        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover } =>
-            AptStep::Settled { s: AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover } },
+        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } =>
+            AptStep::Settled { s: AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } },
         AssetState::Retired { asset } =>
             AptStep::Settled { s: AssetState::Retired { asset } },
         AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
@@ -813,22 +822,22 @@ public(package) fun next_apt_step<Asset: key + store, CoinType>(
                 AptStep::Settled { s: AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } }
             }
         },
-        AssetState::Occupied { asset, envelope, current, retire } => {
+        AssetState::Occupied { asset, envelope, current, retire, resolved_descent } => {
             if (phases::check_boundary(envelope.phase_start, envelope.resolved_ceiling, now).is_crossed()) {
                 AptStep::Pending {
-                    firable: FirableState::Occupied { asset, envelope, current, retire },
+                    firable: FirableState::Occupied { asset, envelope, current, retire, resolved_descent },
                 }
             } else {
-                AptStep::Settled { s: AssetState::Occupied { asset, envelope, current, retire } }
+                AptStep::Settled { s: AssetState::Occupied { asset, envelope, current, retire, resolved_descent } }
             }
         },
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
             if (phases::check_boundary(handover_expiry, phases::zero(), now).is_crossed()) {
                 AptStep::Pending {
-                    firable: FirableState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire },
+                    firable: FirableState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent },
                 }
             } else {
-                AptStep::Settled { s: AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } }
+                AptStep::Settled { s: AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } }
             }
         },
     }
@@ -887,32 +896,32 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     let fee_inbox_identity = core.fee_inbox_identity;
     match (s) {
         AssetState::Retired { asset: _retired } => abort ERetiredNoBid,
-        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover } => {
+        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
             let floor = resolved_floor;
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
-            do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, escrow_identity, payment, floor, now, ctx)
+            do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent, cycles, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
             let ps    = price_state::descending(last_acq_price, phase_start, resolved_floor, resolved_descent);
             let floor = price_state::floor_price(&ps, &core.config, now);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
-            do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, cycles, escrow_identity, payment, floor, now, ctx)
+            do_install(asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent, cycles, escrow_identity, payment, floor, now, ctx)
         },
-        AssetState::Occupied { asset, envelope, current, retire } => {
+        AssetState::Occupied { asset, envelope, current, retire, resolved_descent } => {
             if (retire_condition::proj_is_retiring(&retire)) abort ERetireFlagBlocksBid;
             let stake = tenant::proj_stake_value(&current);
             let ps    = price_state::ascending(cycles::per_cycle_stake(stake, envelope.committed_cycles));
             let floor = price_state::floor_price(&ps, &core.config, now);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
-            do_place_bid(asset, current, envelope, cycles, escrow_identity, payment, floor, now, ctx)
+            do_place_bid(asset, current, envelope, resolved_descent, cycles, escrow_identity, payment, floor, now, ctx)
         },
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
             let stake = tenant::proj_stake_value(&pending);
             let ps    = price_state::ascending(cycles::per_cycle_stake(stake, bidding_cycles));
             let floor = price_state::floor_price(&ps, &core.config, now);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_supersede_bid(
-                asset, current, pending, handover_expiry, envelope, cycles, retire,
+                asset, current, pending, handover_expiry, envelope, cycles, retire, resolved_descent,
                 &mut core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
             )
         },
@@ -962,17 +971,17 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let now_ms          = phases::timestamp_ms(now);
     match (s) {
         AssetState::Retired { asset: _retired } => abort EAlreadyRetired,
-        AssetState::Idle { asset, resolved_floor: _, resolved_ceiling: _, resolved_handover: _ } =>
+        AssetState::Idle { asset, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } =>
             do_retire_immediately(asset, escrow_identity, now, ctx),
         AssetState::AtDutch { asset, last_acq_price: _, phase_start: _, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } =>
             do_retire_immediately(asset, escrow_identity, now, ctx),
-        AssetState::Occupied { asset, envelope, current, retire } => {
+        AssetState::Occupied { asset, envelope, current, retire, resolved_descent } => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms: now_ms });
-            AssetState::Occupied { asset, envelope, current, retire: retire_condition::set(retire) }
+            AssetState::Occupied { asset, envelope, current, retire: retire_condition::set(retire), resolved_descent }
         },
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms: now_ms });
-            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire: retire_condition::set(retire) }
+            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire: retire_condition::set(retire), resolved_descent }
         },
     }
 }
@@ -1006,32 +1015,33 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
         AssetState::Retired { asset: _retired } => abort EAlreadyRetired,
-        AssetState::Idle { asset, resolved_floor: _, resolved_ceiling: _, resolved_handover: _ } => {
-            let mut generator = sui::random::new_generator(random, ctx);
-            let new_floor     = floor_price_policy_state::resolve(config::proj_min_rent_price(&new_cfg), &mut generator);
-            let new_ceiling   = tenure_policy_state::resolve(config::proj_tenure_ceiling(&new_cfg), &mut generator);
-            let new_handover  = handover_policy_state::resolve(config::proj_handover(&new_cfg), new_ceiling, &mut generator);
+        AssetState::Idle { asset, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } => {
             event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.config = new_cfg;
             core.pending_config = option::none();
-            AssetState::Idle { asset, resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover }
+            let mut generator = sui::random::new_generator(random, ctx);
+            let new_floor     = floor_price_policy_state::resolve(config::proj_min_rent_price(&core.config), &mut generator);
+            let new_ceiling   = tenure_policy_state::resolve(config::proj_tenure_ceiling(&core.config), &mut generator);
+            let new_handover  = handover_policy_state::resolve(config::proj_handover(&core.config), new_ceiling, &mut generator);
+            let new_descent   = descent_policy_state::resolve(config::proj_descent(&core.config), &mut generator);
+            AssetState::Idle { asset, resolved_floor: new_floor, resolved_ceiling: new_ceiling, resolved_handover: new_handover, resolved_descent: new_descent }
         },
         AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.pending_config = option::some(new_cfg);
             AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
         },
-        AssetState::Occupied { asset, envelope, current, retire } => {
+        AssetState::Occupied { asset, envelope, current, retire, resolved_descent } => {
             assert!(!retire_condition::proj_is_retiring(&retire), ERetireAlreadyScheduled);
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.pending_config = option::some(new_cfg);
-            AssetState::Occupied { asset, envelope, current, retire }
+            AssetState::Occupied { asset, envelope, current, retire, resolved_descent }
         },
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
             assert!(!retire_condition::proj_is_retiring(&retire), ERetireAlreadyScheduled);
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.pending_config = option::some(new_cfg);
-            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }
+            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent }
         },
     }
 }
@@ -1057,15 +1067,15 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
     match (s) {
-        AssetState::Occupied { mut asset, envelope, current, retire } => {
+        AssetState::Occupied { mut asset, envelope, current, retire, resolved_descent } => {
             let current_cap = tenant::proj_cap_identity(tenant::proj_identity(&current));
             assert!(cap_identity == current_cap, EStaleTenantCap);
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            (AssetState::Occupied { asset, envelope, current, retire }, u, receipt)
+            (AssetState::Occupied { asset, envelope, current, retire, resolved_descent }, u, receipt)
         },
-        AssetState::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+        AssetState::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
             let current_cap = tenant::proj_cap_identity(tenant::proj_identity(&current));
             let pending_cap = tenant::proj_cap_identity(tenant::proj_identity(&pending));
             if      (cap_identity == current_cap) {}
@@ -1074,7 +1084,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&current));
             let (u, receipt) = asset::take(&mut asset);
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            (AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }, u, receipt)
+            (AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent }, u, receipt)
         },
         AssetState::Idle    { asset: _a, .. } => abort EStaleTenantCap,
         AssetState::AtDutch { asset: _a, .. } => abort EStaleTenantCap,
@@ -1094,19 +1104,19 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
 ): AssetState<Asset, CoinType> {
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
-        AssetState::Occupied { mut asset, envelope, current, retire } => {
+        AssetState::Occupied { mut asset, envelope, current, retire, resolved_descent } => {
             let cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
             let tenant_addr  = tenant::proj_address(tenant::proj_identity(&current));
             asset::put(&mut asset, asset_in, receipt_in);
             event::emit(AssetReturned { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            AssetState::Occupied { asset, envelope, current, retire }
+            AssetState::Occupied { asset, envelope, current, retire, resolved_descent }
         },
-        AssetState::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+        AssetState::Demand { mut asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
             let cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&current));
             let tenant_addr  = tenant::proj_address(tenant::proj_identity(&current));
             asset::put(&mut asset, asset_in, receipt_in);
             event::emit(AssetReturned { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }
+            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent }
         },
         AssetState::Idle    { asset: _a, .. } => abort EReceiptEscrowMismatch,
         AssetState::AtDutch { asset: _a, .. } => abort EReceiptEscrowMismatch,
@@ -1149,29 +1159,29 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
             tenant_cap::burn(cap, ctx);
             AssetState::Retired { asset }
         },
-        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover } => {
+        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
             tenant_cap::burn(cap, ctx);
-            AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover }
+            AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
         },
         AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
             tenant_cap::burn(cap, ctx);
             AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
         },
-        AssetState::Occupied { asset, envelope, current, retire } => {
+        AssetState::Occupied { asset, envelope, current, retire, resolved_descent } => {
             let cap_identity = tenant_cap::identity(&cap);
             let current_cap  = tenant::proj_cap_identity(tenant::proj_identity(&current));
             assert!(cap_identity != current_cap, ETenantCapNotStale);
             tenant_cap::burn(cap, ctx);
-            AssetState::Occupied { asset, envelope, current, retire }
+            AssetState::Occupied { asset, envelope, current, retire, resolved_descent }
         },
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } => {
+        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } => {
             let cap_identity = tenant_cap::identity(&cap);
             let current_cap  = tenant::proj_cap_identity(tenant::proj_identity(&current));
             let pending_cap  = tenant::proj_cap_identity(tenant::proj_identity(&pending));
             assert!(cap_identity != current_cap, ETenantCapNotStale);
             assert!(cap_identity != pending_cap, ETenantCapNotStale);
             tenant_cap::burn(cap, ctx);
-            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire }
+            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent }
         },
     }
 }
@@ -1411,6 +1421,7 @@ fun do_handover<Asset: key + store, CoinType>(
     mut envelope:       TenancyEnvelope,
     bidding_cycles:     Cycles,
     retire:             RetireCondition,
+    resolved_descent:   Duration,
     owner:              &mut Owner<CoinType>,
     config:             &IntegrationConfig,
     escrow_identity:    EscrowIdentity,
@@ -1465,19 +1476,21 @@ fun do_handover<Asset: key + store, CoinType>(
     envelope.resolved_handover = cycles::rescale_duration(envelope.resolved_handover, old_cycles, bidding_cycles);
     envelope.committed_cycles  = bidding_cycles;
     envelope.phase_start       = boundary;
-    AssetState::Occupied { asset, envelope, current: pending, retire }
+    AssetState::Occupied { asset, envelope, current: pending, retire, resolved_descent }
 }
 
 /// Consume an Occupied tenancy at tenure expiry. Distributes full stake
 /// to owner/protocol and decides the outcome from the retire condition:
-///   · flag set → `Retired` (the locked asset is all the caller needs).
-///   · flag unset → `Vacant` (per-cycle-normalized policy values
-///     plus `last_acq_price` to seed the next AtDutch cycle).
+///   · flag set   → `Retired` (the locked asset is all the caller needs).
+///   · flag unset → `Vacant`  (per-cycle-normalized ceiling/handover +
+///     unchanged floor + the descent inherited from the closed
+///     Occupied; all four feed the next AtDutch without re-draw).
 fun do_tenure_expiry<Asset: key + store, CoinType>(
     asset:        asset::AssetCustodyOpen<Asset>,
     tenant:       Tenant<CoinType>,
     envelope:     TenancyEnvelope,
     retire:       RetireCondition,
+    resolved_descent:   Duration,
     owner:        &mut Owner<CoinType>,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
@@ -1523,6 +1536,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
             resolved_floor:    envelope.resolved_floor,
             resolved_ceiling:  base_ceiling,
             resolved_handover: base_handover,
+            resolved_descent,
         }
     }
 }
@@ -1531,15 +1545,16 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
 
 /// Occupied → Demand.
 fun do_place_bid<Asset: key + store, CoinType>(
-    asset:           asset::AssetCustodyOpen<Asset>,
-    tenant:          Tenant<CoinType>,
-    envelope:        TenancyEnvelope,
-    cycles:          Cycles,
-    escrow_identity: EscrowIdentity,
-    payment:         Coin<CoinType>,
-    floor:           Price,
-    now:             Timestamp,
-    ctx:             &mut TxContext,
+    asset:            asset::AssetCustodyOpen<Asset>,
+    tenant:           Tenant<CoinType>,
+    envelope:         TenancyEnvelope,
+    resolved_descent: Duration,
+    cycles:           Cycles,
+    escrow_identity:  EscrowIdentity,
+    payment:          Coin<CoinType>,
+    floor:            Price,
+    now:              Timestamp,
+    ctx:              &mut TxContext,
 ): (AssetState<Asset, CoinType>, TenantCap) {
     let current_cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&tenant));
     let current_addr   = tenant::proj_address(tenant::proj_identity(&tenant));
@@ -1573,6 +1588,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
             handover_expiry: expiry,
             bidding_cycles: cycles,
             retire: retire_condition::new(),
+            resolved_descent,
         },
         cap,
     )
@@ -1587,6 +1603,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     envelope:           TenancyEnvelope,
     cycles:             Cycles,
     retire:             RetireCondition,
+    resolved_descent:   Duration,
     owner:              &mut Owner<CoinType>,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
@@ -1637,6 +1654,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
             handover_expiry,
             bidding_cycles: cycles,
             retire,
+            resolved_descent,
         },
         cap,
     )
@@ -1727,17 +1745,17 @@ fun fire<Asset: key + store, CoinType>(
     ctx:     &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (firable) {
-        FirableState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } =>
+        FirableState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } =>
             do_handover(
-                asset, current, pending, envelope, bidding_cycles, retire,
+                asset, current, pending, envelope, bidding_cycles, retire, resolved_descent,
                 &mut core.owner, &core.config,
                 core.escrow_identity, core.fee_inbox_identity,
                 handover_expiry, ctx,
             ),
-        FirableState::Occupied { asset, envelope, current, retire } => {
+        FirableState::Occupied { asset, envelope, current, retire, resolved_descent } => {
             let boundary = phases::boundary_at(envelope.phase_start, envelope.resolved_ceiling);
             match (do_tenure_expiry(
-                asset, current, envelope, retire,
+                asset, current, envelope, retire, resolved_descent,
                 &mut core.owner, core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             )) {
@@ -1746,22 +1764,14 @@ fun fire<Asset: key + store, CoinType>(
                     core.pending_config = option::none();
                     AssetState::Retired { asset: locked }
                 },
-                TenureExpiryState::Vacant { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover } => {
-                    let mut generator    = sui::random::new_generator(random, ctx);
-                    let resolved_descent = descent_policy_state::resolve(config::proj_descent(&core.config), &mut generator);
-                    AssetState::AtDutch { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
-                },
+                TenureExpiryState::Vacant { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } =>
+                    AssetState::AtDutch { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent },
             }
         },
         FirableState::AtDutch { asset, last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent } => {
             let boundary = descent_policy_state::expiry_at(resolved_descent, phase_start);
-            if (core.pending_config.is_some()) {
-                let new_cfg = core.pending_config.extract();
-                event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(core.escrow_identity), new_config: new_cfg });
-                core.config = new_cfg;
-            };
             let mut generator = sui::random::new_generator(random, ctx);
-            do_auction_expiry(asset, last_acq_price, phase_start, &core.config, core.escrow_identity, boundary, &mut generator)
+            do_auction_expiry(asset, last_acq_price, phase_start, &mut core.config, &mut core.pending_config, core.escrow_identity, boundary, &mut generator)
         },
     }
 }
@@ -1782,6 +1792,7 @@ fun do_install<Asset: key + store, CoinType>(
     resolved_floor:    Price,
     resolved_ceiling:  Duration,
     resolved_handover: Duration,
+    resolved_descent:  Duration,
     cycles:            Cycles,
     escrow_identity:   EscrowIdentity,
     payment:           Coin<CoinType>,
@@ -1804,23 +1815,35 @@ fun do_install<Asset: key + store, CoinType>(
         phase_start_ms: now_ms, price_paid, floor_price: monetary::price_mist(floor),
     });
     let envelope = new_tenancy_envelope(now, resolved_floor, extended_ceiling, extended_handover, cycles);
-    (AssetState::Occupied { asset: wrapped, envelope, current: t, retire: retire_condition::new() }, cap)
+    (AssetState::Occupied { asset: wrapped, envelope, current: t, retire: retire_condition::new(), resolved_descent }, cap)
 }
 
+/// AtDutch → Idle. The lifecycle invariant says all `resolved_*` are
+/// drawn at Idle entry; this is the auction-expiry instance of that
+/// rule. If `pending_config` was scheduled during the previous cycle it
+/// is applied now (emit `ConfigUpdated` → assign → clear) BEFORE the
+/// four resolves, so the new Idle reflects the new config.
 fun do_auction_expiry<Asset: key + store, CoinType>(
     asset:           asset::AssetCustodyLocked<Asset>,
     last_acq_price:  Price,
     phase_start:     Timestamp,
-    config:          &IntegrationConfig,
+    config:          &mut IntegrationConfig,
+    pending_config:  &mut Option<IntegrationConfig>,
     escrow_identity: EscrowIdentity,
     boundary:        Timestamp,
     generator:       &mut RandomGenerator,
 ): AssetState<Asset, CoinType> {
     event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(phase_start), last_acq_price: monetary::price_mist(last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
+    if (pending_config.is_some()) {
+        let new_cfg = pending_config.extract();
+        event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_cfg });
+        *config = new_cfg;
+    };
     let resolved_floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(config), generator);
     let resolved_ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(config), generator);
     let resolved_handover = handover_policy_state::resolve(config::proj_handover(config), resolved_ceiling, generator);
-    AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover }
+    let resolved_descent  = descent_policy_state::resolve(config::proj_descent(config), generator);
+    AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
 }
 
 fun do_retire_immediately<Asset: key + store, CoinType>(
@@ -1847,9 +1870,9 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     ctx:      &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry: _, bidding_cycles, retire } =>
+        AssetState::Demand { asset, envelope, current, pending, handover_expiry: _, bidding_cycles, retire, resolved_descent } =>
             do_handover(
-                asset, current, pending, envelope, bidding_cycles, retire,
+                asset, current, pending, envelope, bidding_cycles, retire, resolved_descent,
                 &mut core.owner, &core.config,
                 core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
@@ -1869,9 +1892,9 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     ctx:      &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, envelope: tenancy_env, current, retire } => {
+        AssetState::Occupied { asset, envelope: tenancy_env, current, retire, resolved_descent } => {
             match (do_tenure_expiry(
-                asset, current, tenancy_env, retire,
+                asset, current, tenancy_env, retire, resolved_descent,
                 &mut core.owner, core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             )) {
@@ -1880,10 +1903,8 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
                     core.pending_config = option::none();
                     AssetState::Retired { asset: locked }
                 },
-                TenureExpiryState::Vacant { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover } => {
-                    let resolved_descent = descent_policy_state::resolve(config::proj_descent(&core.config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8]));
-                    AssetState::AtDutch { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent }
-                },
+                TenureExpiryState::Vacant { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } =>
+                    AssetState::AtDutch { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent },
             }
         },
         AssetState::Idle    { asset: _a, .. } => abort ENotRented,
@@ -1896,13 +1917,13 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
 #[test_only]
 public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
     state:     AssetState<Asset, CoinType>,
-    core:      &EscrowCore<CoinType>,
+    core:      &mut EscrowCore<CoinType>,
     boundary:  Timestamp,
     generator: &mut RandomGenerator,
 ): AssetState<Asset, CoinType> {
     match (state) {
         AssetState::AtDutch { asset, last_acq_price, phase_start, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } =>
-            do_auction_expiry(asset, last_acq_price, phase_start, &core.config, core.escrow_identity, boundary, generator),
+            do_auction_expiry(asset, last_acq_price, phase_start, &mut core.config, &mut core.pending_config, core.escrow_identity, boundary, generator),
         AssetState::Idle     { asset: _a, .. } => abort ENotRented,
         AssetState::Retired  { asset: _a }      => abort ENotRented,
         AssetState::Occupied { asset: _a, current: _c, .. } => abort ENotRented,
@@ -1918,7 +1939,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     phase_start: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover } => {
+        AssetState::Idle { asset, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } => {
             let envelope = new_tenancy_envelope(phase_start, resolved_floor, resolved_ceiling, resolved_handover, cycles::cycles(1));
             // tenant_in is consumed only on the happy path; the abort arms
             // below leave it to drop with the divergent abort.
@@ -1927,6 +1948,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
                 envelope,
                 current: tenant_in,
                 retire:  retire_condition::new(),
+                resolved_descent,
             }
         },
         AssetState::AtDutch  { asset: _a, .. }                               => abort ENotRented,
@@ -1943,7 +1965,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     handover_countdown_expiry: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, envelope, current, retire } =>
+        AssetState::Occupied { asset, envelope, current, retire, resolved_descent } =>
             AssetState::Demand {
                 asset,
                 envelope,
@@ -1952,6 +1974,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
                 handover_expiry: handover_countdown_expiry,
                 bidding_cycles:  cycles::cycles(1),
                 retire,
+                resolved_descent,
             },
         AssetState::Idle    { asset: _a, .. }                               => abort ENotRented,
         AssetState::AtDutch { asset: _a, .. }                               => abort ENotRented,
@@ -1970,7 +1993,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     new_phase_start: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, envelope: tenancy_env, current: mut tenant, retire: _ } => {
+        AssetState::Occupied { asset, envelope: tenancy_env, current: mut tenant, retire: _, resolved_descent } => {
             let owner_earnings = tenant::take_owner_earnings(&mut tenant, monetary::stake(owner_amount));
             let fee_share      = tenant::take_fee_share(&mut tenant, monetary::stake(fee_amount), core.escrow_identity);
             let refund = refund_state::from_departing(tenant, fee_share, owner_earnings);
@@ -1982,7 +2005,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
                 resolved_floor:    tenancy_env.resolved_floor,
                 resolved_ceiling:  tenancy_env.resolved_ceiling,
                 resolved_handover: tenancy_env.resolved_handover,
-                resolved_descent:  descent_policy_state::resolve(config::proj_descent(&core.config), &mut sui::random::new_generator_from_seed_for_testing(vector[0u8])),
+                resolved_descent,
             }
         },
         AssetState::Idle    { asset: _a, .. }                           => abort ENotRented,
@@ -1997,7 +2020,7 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
     state: AssetState<Asset, CoinType>,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Idle { asset, resolved_floor: _, resolved_ceiling: _, resolved_handover: _ } =>
+        AssetState::Idle { asset, resolved_floor: _, resolved_ceiling: _, resolved_handover: _, resolved_descent: _ } =>
             AssetState::Retired { asset },
         AssetState::AtDutch  { asset: _a, .. }                              => abort ENotRented,
         AssetState::Retired  { asset: _a }                                  => abort ENotRented,
@@ -2011,10 +2034,10 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     state: AssetState<Asset, CoinType>,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, envelope, current, retire } =>
-            AssetState::Occupied { asset, envelope, current, retire: retire_condition::set_for_testing(retire) },
-        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire } =>
-            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire: retire_condition::set_for_testing(retire) },
+        AssetState::Occupied { asset, envelope, current, retire, resolved_descent } =>
+            AssetState::Occupied { asset, envelope, current, retire: retire_condition::set_for_testing(retire), resolved_descent },
+        AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire, resolved_descent } =>
+            AssetState::Demand { asset, envelope, current, pending, handover_expiry, bidding_cycles, retire: retire_condition::set_for_testing(retire), resolved_descent },
         AssetState::Idle    { asset: _a, .. } => abort ENotRented,
         AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
         AssetState::Retired { asset: _a }     => abort ENotRented,

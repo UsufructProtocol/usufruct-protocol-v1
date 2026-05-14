@@ -141,8 +141,10 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::next_tenure_ceiling_ms(escrow).is_some(),    in_waiting_with_resolved);
     assert_eq!(escrow::next_handover_duration_ms(escrow).is_some(), in_waiting_with_resolved);
 
-    // — AtDutch-only fields —
-    assert_eq!(escrow::auction_descent_duration_ms(escrow).is_some(), in_at_dutch);
+    // — Waiting-side descent: present in Idle (locked-in for next cycle)
+    //   and in AtDutch (descent in progress). Absent in Renting/Retired.
+    assert_eq!(escrow::auction_descent_duration_ms(escrow).is_some(), in_waiting_with_resolved);
+    // — AtDutch-only field —
     assert_eq!(escrow::last_acq_price(escrow).is_some(),              in_at_dutch);
 
     // — Demand-only fields (handover countdown active) —
@@ -202,13 +204,13 @@ fun idle_views_post_integrate() {
     assert!(escrow::compute_handover_expiry_at(&escrow, 1_000).is_none());
     assert!(escrow::last_acq_price(&escrow).is_none());
 
-    // — Waiting-side resolved values: present in Idle (locked-in for next bid) —
-    // The Idle variant stores resolved_floor/ceiling/handover at integration time;
-    // resolved_descent is exclusive to AtDutch.
+    // — Waiting-side resolved values: present in Idle (locked-in at
+    // integration time — `resolve()` runs only on Idle entry; the four
+    // policy draws then flow through the cycle without re-draw).
     assert!(escrow::next_floor_price_mist(&escrow).is_some());
     assert!(escrow::next_tenure_ceiling_ms(&escrow).is_some());
     assert!(escrow::next_handover_duration_ms(&escrow).is_some());
-    assert!(escrow::auction_descent_duration_ms(&escrow).is_none());
+    assert!(escrow::auction_descent_duration_ms(&escrow).is_some());
 
     // — Credit context — no tenancy → all none / false —
     assert!(!escrow::credit_is_accruing(&escrow));

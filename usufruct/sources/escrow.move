@@ -1005,6 +1005,6 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
 ) {
     let mut generator = sui::random::new_generator_from_seed_for_testing(vector[0u8, 1u8]);
     let state = escrow.state.extract();
-    let new_state = asset_state::fire_do_auction_expiry_for_testing(state, escrow.core.borrow(), boundary, &mut generator);
+    let new_state = asset_state::fire_do_auction_expiry_for_testing(state, escrow.core.borrow_mut(), boundary, &mut generator);
     escrow.state.fill(new_state);
 }

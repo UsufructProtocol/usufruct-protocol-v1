@@ -117,33 +117,6 @@ public struct TenancyEnvelope has copy, drop, store {
     committed_cycles:  Cycles,  // per-cycle rate = stake / committed_cycles
 }
 
-/// Typed outcome of `do_tenure_expiry`. Hot-potato — must be matched at
-/// the call site. The asset is already in `Locked` custody in both
-/// variants (tenure has ended; the borrow protocol is no longer
-/// applicable).
-///   · `Retired` — the retire flag was set; the only field the caller
-///     needs is the locked asset to roll into `AssetState::Retired`.
-///   · `Vacant`  — normal close-out; carries every field the next
-///     `AssetState::AtDutch` needs. The four `resolved_*` were drawn
-///     in the previous Idle (the lifecycle invariant: resolves happen
-///     only at Idle entry); they flow through Occupied/Demand and arrive
-///     here unchanged. `resolved_ceiling`/`resolved_handover` are
-///     rescaled back to per-cycle base because the closed Occupied had
-///     them extended by `committed_cycles`.
-/// Named fields prevent positional swap between same-typed Price /
-/// Duration values.
-public enum TenureExpiryState<Asset: key + store> {
-    Retired { asset: asset::AssetCustodyLocked<Asset> },
-    Vacant {
-        asset:             asset::AssetCustodyLocked<Asset>,
-        last_acq_price:    Price,
-        resolved_floor:    Price,
-        resolved_ceiling:  Duration,
-        resolved_handover: Duration,
-        resolved_descent:  Duration,
-    },
-}
-
 // ─── Storage types ────────────────────────────────────────────────────────────
 //
 // The on-disk shape of an integrated escrow. `EscrowCore` holds the fields
@@ -1409,20 +1382,21 @@ fun do_handover<Asset: key + store, CoinType>(
 ///     unchanged floor + the descent inherited from the closed
 ///     Occupied; all four feed the next AtDutch without re-draw).
 fun do_tenure_expiry<Asset: key + store, CoinType>(
-    asset:        asset::AssetCustodyOpen<Asset>,
-    tenant:       Tenant<CoinType>,
-    envelope:     TenancyEnvelope,
-    retire:       RetireCondition,
+    asset:              asset::AssetCustodyOpen<Asset>,
+    tenant:             Tenant<CoinType>,
+    envelope:           TenancyEnvelope,
+    retire:             RetireCondition,
     resolved_descent:   Duration,
-    owner:        &mut Owner<CoinType>,
+    owner:              &mut Owner<CoinType>,
+    pending_config:     &mut Option<IntegrationConfig>,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
-    boundary:     Timestamp,
-    ctx:          &mut TxContext,
-): TenureExpiryState<Asset> {
-    let principal      = tenant::proj_stake_value(&tenant);
+    boundary:           Timestamp,
+    ctx:                &mut TxContext,
+): AssetState<Asset, CoinType> {
+    let principal            = tenant::proj_stake_value(&tenant);
     let tenant_cap_identity  = tenant::proj_cap_identity(tenant::proj_identity(&tenant));
-    let tenant_addr    = tenant::proj_address(tenant::proj_identity(&tenant));
+    let tenant_addr          = tenant::proj_address(tenant::proj_identity(&tenant));
     let alloc = split_fee(principal);
 
     let mut departing  = tenant;
@@ -1433,8 +1407,8 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     refund_state::distribute(refund_state::nothing(fee_share, owner_earnings), owner, fee_inbox_identity, ctx);
 
     event::emit(TenureExpired {
-        escrow_id: escrow_identity::escrow_id(escrow_identity),
-        tenant_cap_id: tenant_cap::cap_id(tenant_cap_identity),
+        escrow_id:              escrow_identity::escrow_id(escrow_identity),
+        tenant_cap_id:          tenant_cap::cap_id(tenant_cap_identity),
         tenant:                 tenant_addr,
         phase_start_ms:         phases::timestamp_ms(envelope.phase_start),
         owner_share:            monetary::stake_mist(alloc.owner_share),
@@ -1447,15 +1421,18 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     // is actually present (not on loan) — the borrow protocol is over.
     let locked = asset::close_tenancy(asset);
     if (retire_condition::proj_is_retiring(&retire)) {
-        TenureExpiryState::Retired { asset: locked }
+        event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
+        *pending_config = option::none();
+        AssetState::Retired { asset: locked }
     } else {
         // Normalize extended ceiling/handover back to per-cycle base.
         // The AtDutch that follows belongs to the next tenant's cycle.
         let base_ceiling  = cycles::rescale_duration(envelope.resolved_ceiling,  envelope.committed_cycles, cycles::cycles(1));
         let base_handover = cycles::rescale_duration(envelope.resolved_handover, envelope.committed_cycles, cycles::cycles(1));
-        TenureExpiryState::Vacant {
+        AssetState::AtDutch {
             asset:             locked,
             last_acq_price:    monetary::as_reference_price(principal),
+            phase_start:       boundary,
             resolved_floor:    envelope.resolved_floor,
             resolved_ceiling:  base_ceiling,
             resolved_handover: base_handover,
@@ -1688,19 +1665,11 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
         AssetState::Occupied { asset, envelope, current, retire, resolved_descent } => {
             if (phases::check_boundary(envelope.phase_start, envelope.resolved_ceiling, now).is_crossed()) {
                 let boundary = phases::boundary_at(envelope.phase_start, envelope.resolved_ceiling);
-                match (do_tenure_expiry(
+                do_tenure_expiry(
                     asset, current, envelope, retire, resolved_descent,
-                    &mut core.owner, core.escrow_identity, core.fee_inbox_identity,
+                    &mut core.owner, &mut core.pending_config, core.escrow_identity, core.fee_inbox_identity,
                     boundary, ctx,
-                )) {
-                    TenureExpiryState::Retired { asset: locked } => {
-                        event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(core.escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
-                        core.pending_config = option::none();
-                        AssetState::Retired { asset: locked }
-                    },
-                    TenureExpiryState::Vacant { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } =>
-                        AssetState::AtDutch { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent },
-                }
+                )
             } else {
                 AssetState::Occupied { asset, envelope, current, retire, resolved_descent }
             }
@@ -1848,21 +1817,12 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     ctx:      &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, envelope: tenancy_env, current, retire, resolved_descent } => {
-            match (do_tenure_expiry(
+        AssetState::Occupied { asset, envelope: tenancy_env, current, retire, resolved_descent } =>
+            do_tenure_expiry(
                 asset, current, tenancy_env, retire, resolved_descent,
-                &mut core.owner, core.escrow_identity, core.fee_inbox_identity,
+                &mut core.owner, &mut core.pending_config, core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
-            )) {
-                TenureExpiryState::Retired { asset: locked } => {
-                    event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(core.escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
-                    core.pending_config = option::none();
-                    AssetState::Retired { asset: locked }
-                },
-                TenureExpiryState::Vacant { asset: locked, last_acq_price, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent } =>
-                    AssetState::AtDutch { asset: locked, last_acq_price, phase_start: boundary, resolved_floor, resolved_ceiling, resolved_handover, resolved_descent },
-            }
-        },
+            ),
         AssetState::Idle    { asset: _a, .. } => abort ENotRented,
         AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
         AssetState::Retired { asset: _a }      => abort ENotRented,

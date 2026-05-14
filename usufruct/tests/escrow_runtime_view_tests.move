@@ -320,6 +320,52 @@ fun settlement_views_in_rented_state() {
     sc.end();
 }
 
+/// Settlement views in Demand state: tenure_settlement and
+/// handover_settlement operate on the *current* tenant's stake (not the
+/// pending bidder's). Covers the Demand arm of `proj_current_stake_value`
+/// and `proj_tenure_settlement`.
+#[test]
+fun settlement_views_in_demand_state() {
+    let mut sc  = setup();
+    // c=1 Countdown — prevents APT from immediately resolving the handover
+    // inside the second rent call, keeping the escrow in Demand.
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    // First rent: Idle → Occupied. Current tenant stake = STAKE.
+    let payment1 = mk_payment(STAKE, sc.ctx());
+    let t_cap1   = escrow::rent(&mut escrow, payment1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Second rent: Occupied → Demand (places a bid).
+    let floor2   = escrow::compute_floor_price(&escrow, &clk);
+    let payment2 = mk_payment(floor2, sc.ctx());
+    let t_cap2   = escrow::rent(&mut escrow, payment2, cycles::cycles(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+    test_scenario::return_shared(random);
+
+    // tenure_settlement in Demand: (owner + fee) partitions the current
+    // tenant's stake.
+    let (t_owner, t_fee) = escrow::compute_tenure_settlement(&escrow);
+    assert_eq!(t_owner + t_fee, STAKE);
+
+    // handover_settlement in Demand: remaining + owner + fee partitions the
+    // current tenant's stake at the requested boundary.
+    let phase_start = escrow::phase_start_ms(&escrow).destroy_some();
+    let boundary    = phase_start + escrow_corpus::tenure_ceiling_const() / 2;
+    let (h_rem, h_owner, h_fee) = escrow::compute_handover_settlement(&escrow, boundary);
+    assert_eq!(h_rem + h_owner + h_fee, STAKE);
+
+    transfer::public_transfer(t_cap1, TENANT_ADDR);
+    transfer::public_transfer(t_cap2, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
 // ─── pending transitions and AtDutch entry ───────────────────────────────────
 
 #[test]

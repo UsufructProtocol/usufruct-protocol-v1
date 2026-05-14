@@ -1310,6 +1310,116 @@ fun next_pending_returns_none_in_steady_state() {
     sc.end();
 }
 
+/// next_pending returns None when the escrow is at AtDutch but the descent
+/// window has not yet closed. Covers the AtDutch-not-firable branch of
+/// `next_pending` (B4 in bytecode).
+#[test]
+fun next_pending_at_dutch_not_firable_returns_none() {
+    let mut sc = setup();
+    // h=1 Window descent — non-zero descent duration ensures the auction is
+    // not immediately firable at clock=0.
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Expire the tenure to enter AtDutch (h=1 → Window → stays in AtDutch).
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+
+    // Probe at clock just after tenure expiry — the descent window is not yet
+    // closed, so no pending transition.
+    let pending = escrow::next_pending(&escrow, &clk);
+    assert!(pending.is_none(), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// next_pending returns Some(Demand) with the handover expiry as boundary
+/// when the escrow is in Demand and the countdown has elapsed.
+/// Covers the Demand-firable branch of `next_pending` (B12 in bytecode).
+#[test]
+fun next_pending_demand_firable_returns_some() {
+    let mut sc = setup();
+    // c=1 Countdown — non-zero handover countdown so we can control timing.
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    let now2 = 5_000;
+    clock::set_for_testing(&mut clk, now2);
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2 = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+
+    // Advance past the countdown expiry without firing APT.
+    let countdown_expiry = now2 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, countdown_expiry + 1);
+
+    let pending = escrow::next_pending(&escrow, &clk);
+    assert!(pending.is_some(), 1);
+    let t = pending.destroy_some();
+    assert!(pending_transition_state::proj_is_demand(&t), 2);
+    assert_eq!(
+        phases::timestamp_ms(pending_transition_state::proj_boundary(&t)),
+        countdown_expiry,
+    );
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// next_pending returns None when the escrow is in Demand but the handover
+/// countdown has not yet elapsed. Covers the Demand-not-firable branch of
+/// `next_pending` (B13 in bytecode).
+#[test]
+fun next_pending_demand_not_firable_returns_none() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2     = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+
+    // Clock is 0 — the countdown expiry is in the future.
+    let pending = escrow::next_pending(&escrow, &clk);
+    assert!(pending.is_none(), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 /// next_pending returns Tenure with the boundary_ms when tenure has elapsed.
 #[test]
 fun next_pending_detects_tenure_with_correct_boundary() {
@@ -9410,6 +9520,89 @@ fun resolve_invariant_double_update_config_is_idempotent() {
     assert_eq!(escrow::resolved_descent_for_testing(&escrow),  escrow_corpus::descent_window_h1_const());
 
     transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// update_config called while the escrow is in Demand schedules a pending
+/// config update without disturbing the active tenancy or bid.
+/// Covers the Demand happy-path arm of `execute_update_config` (B14).
+#[test]
+fun update_config_demand_schedules_pending() {
+    let mut sc = setup();
+    // c=1 Countdown — prevents APT from immediately firing the handover
+    // inside update_config, keeping the escrow in Demand after the call.
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Rent T1: Idle → Occupied.
+    let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Rent T2: Occupied → Demand (places bid; c=1 keeps handover pending).
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2     = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+
+    // Schedule a config update while in Demand.
+    let new_cfg = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+
+    // State remains Demand; pending config is now set.
+    assert!(escrow::is_demand(&escrow), 1);
+    assert!(escrow::has_pending_config_update(&escrow), 2);
+    assert!(escrow::integration_config(&escrow) == cfg, 3);
+
+    let scheduled = event::events_by_type<ConfigUpdateScheduled>();
+    assert_eq!(scheduled.length(), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// update_config aborts with `ERetireAlreadyScheduled` when called in Demand
+/// state while the retire flag is set on the tenancy.
+/// Covers the Demand retire-guard branch of `execute_update_config` (B13).
+#[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
+fun update_config_demand_retiring_aborts() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Rent T1: Idle → Occupied.
+    let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Rent T2: Occupied → Demand (places bid; c=1 keeps handover pending).
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2     = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+
+    // Set retire flag while already in Demand — flag is preserved in the
+    // OccupiedTerms.retire field.
+    escrow::drive_to_retiring_flag_for_testing(&mut escrow);
+
+    // update_config must abort — retire flag blocks config changes in Demand.
+    let new_cfg = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+
+    // Unreachable — expected_failure captures the abort above.
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     test_scenario::return_shared(random);

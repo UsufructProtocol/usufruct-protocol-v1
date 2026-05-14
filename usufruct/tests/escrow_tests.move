@@ -1623,7 +1623,7 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &foreign_cap, &random, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
-    asset::destroy_receipt_for_testing(r);
+    asset_state::destroy_receipt_for_testing(r);
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(foreign_cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -1647,7 +1647,7 @@ fun borrow_asset_from_idle_aborts() {
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &cap, &random, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
-    asset::destroy_receipt_for_testing(r);
+    asset_state::destroy_receipt_for_testing(r);
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1676,7 +1676,7 @@ fun borrow_asset_with_pending_cap_aborts() {
     // cap_t2 is the pending bidder — cannot borrow.
     let (a, r) = escrow::borrow_asset(&mut escrow, &cap_t2, &random, &clk, sc.ctx());
     transfer::public_transfer(a, OWNER);
-    asset::destroy_receipt_for_testing(r);
+    asset_state::destroy_receipt_for_testing(r);
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
@@ -1686,7 +1686,7 @@ fun borrow_asset_with_pending_cap_aborts() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset::E_ASSET_WRONG_ESCROW, location = usufruct::asset)]
+#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
 fun return_asset_with_foreign_receipt_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
@@ -1700,10 +1700,12 @@ fun return_asset_with_foreign_receipt_aborts() {
 
     // Forge a receipt with a foreign escrow_id but the right asset_id.
     let asset_id   = object::id(&asset_out);
-    let foreign_rcpt = asset::forge_receipt_for_testing(asset_id, object::id_from_address(@0xDEAD));
+    let foreign_rcpt = asset_state::forge_receipt_for_testing(
+        escrow_identity::new(object::id_from_address(@0xDEAD)), asset_id,
+    );
     escrow::return_asset(&mut escrow, asset_out, foreign_rcpt);
 
-    asset::destroy_receipt_for_testing(_real_receipt);
+    asset_state::destroy_receipt_for_testing(_real_receipt);
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);

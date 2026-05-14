@@ -14,8 +14,8 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    asset::{Self, AssetReceipt},
-    asset_state,
+    asset::{Self},
+    asset_state::{Self, AssetReceipt},
     commitment_policy_state,
     cycles,
     escrow::{Self, Escrow},
@@ -233,7 +233,7 @@ fun borrow_asset_aborts_in_at_dutch_state() {
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &rnd, &clk, sc.ctx());
 
     transfer::public_transfer(asset, OWNER);
-    asset::destroy_receipt_for_testing(receipt);
+    asset_state::destroy_receipt_for_testing(receipt);
     transfer::public_transfer(foreign_cap, OWNER);
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -260,7 +260,7 @@ fun borrow_asset_aborts_in_retired_state() {
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &rnd, &clk, sc.ctx());
 
     transfer::public_transfer(asset, OWNER);
-    asset::destroy_receipt_for_testing(receipt);
+    asset_state::destroy_receipt_for_testing(receipt);
     transfer::public_transfer(foreign_cap, OWNER);
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -276,7 +276,7 @@ fun borrow_asset_aborts_in_retired_state() {
 fun mk_junk_asset_and_receipt(escrow_id: ID, sc: &mut Scenario): (DemoAsset, AssetReceipt) {
     let asset    = mk_demo_asset(sc.ctx());
     let asset_id = object::id(&asset);
-    let receipt  = asset::forge_receipt_for_testing(asset_id, escrow_id);
+    let receipt  = asset_state::forge_receipt_for_testing(escrow_identity::new(escrow_id), asset_id);
     (asset, receipt)
 }
 
@@ -446,3 +446,63 @@ fun burn_live_pending_cap_in_demand_aborts() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── execute_return — receipt verification (C4) ───────────────────────────────
+//
+// All three checks live in `asset_state::execute_return`. Forged receipts
+// drive each abort path independently.
+
+/// Cross-escrow return: receipt stamped with a foreign escrow identity,
+/// presented to an escrow it does not belong to.
+#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
+fun return_with_receipt_from_wrong_escrow_aborts() {
+    let mut sc = setup();
+    let (mut escrow, cap) = integrate_and_take(&mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    let p = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
+
+    let (asset, authentic) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
+    asset_state::destroy_receipt_for_testing(authentic);
+
+    // Forge a receipt that claims a different escrow.
+    let foreign_escrow = escrow_identity::new(object::id_from_address(@0xDEAD));
+    let forged = asset_state::forge_receipt_for_testing(foreign_escrow, object::id(&asset));
+    escrow::return_asset(&mut escrow, asset, forged);
+
+    transfer::public_transfer(t_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Asset-swap return: authentic receipt but the physically returned object
+/// is a different instance of the same type.
+#[test, expected_failure(abort_code = asset_state::EReturnedDifferentAsset, location = usufruct::asset_state)]
+fun return_with_swapped_asset_aborts() {
+    let mut sc = setup();
+    let (mut escrow, cap) = integrate_and_take(&mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    let p = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
+
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
+    // Sink the borrowed asset; present a fresh object with the authentic receipt.
+    transfer::public_transfer(asset, OWNER);
+    let swapped = mk_demo_asset(sc.ctx());
+    escrow::return_asset(&mut escrow, swapped, receipt);
+
+    transfer::public_transfer(t_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+

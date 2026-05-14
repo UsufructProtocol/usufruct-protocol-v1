@@ -13,12 +13,11 @@ use sui::{
     random::Random,
 };
 use usufruct::{
-    asset::AssetReceipt,
     config::{Self, IntegrationConfig},
     curve_shape_state::{Self as curve, CurveShapeState},
     cycles::Cycles,
     descent_policy_state,
-    asset_state::{Self, EscrowCore, AssetState},
+    asset_state::{Self, EscrowCore, AssetState, AssetReceipt},
     handover_policy_state,
     floor_price_policy_state,
     math,

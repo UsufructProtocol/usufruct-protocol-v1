@@ -29,7 +29,7 @@ use sui::{
     random::{Random, RandomGenerator},
 };
 use usufruct::{
-    asset::{Self, AssetReceipt},
+    asset::{Self},
     config::{Self, IntegrationConfig},
     cycles::{Self, Cycles},
     descent_policy_state,
@@ -65,12 +65,24 @@ const EAlreadyRetired:        u64 = 5;
 const EWrongEscrowTenantCap:  u64 = 6;
 const EWrongEscrowOwnerCap:   u64 = 11;
 const EStaleTenantCap:        u64 = 8;
-const EReceiptEscrowMismatch: u64 = 10;
-const ENotRetired:              u64 = 12;
+const EReceiptEscrowMismatch:  u64 = 10;
+const EReturnedDifferentAsset: u64 = 19;
+const ENotRetired:               u64 = 12;
 const ENoEarnings:              u64 = 13;
 const ERetireAlreadyScheduled:  u64 = 16;
 
 // === Structs ===
+
+/// Proof of borrow — hot-potato, no abilities. Minted by `execute_borrow`
+/// after `asset::take` succeeds; consumed by `execute_return` before
+/// `asset::put`. Carries the escrow identity and asset ID so
+/// `execute_return` can verify that the correct asset is returned to the
+/// correct escrow. Receipt creation and verification are protocol concerns;
+/// the custody module (`asset.move`) is unaware of them.
+public struct AssetReceipt {
+    escrow_identity: EscrowIdentity,
+    asset_id:        ID,
+}
 
 /// Result of splitting a credit amount into owner earnings and protocol fee.
 /// Named fields prevent positional swap between the two semantically distinct
@@ -996,7 +1008,9 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             let current = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
             assert_borrow_authorized(cap_identity, current, option::none());
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
-            let (u, receipt) = asset::take(&mut asset);
+            let asset_id = asset::proj_asset_id(&asset);
+            let u = asset::take(&mut asset);
+            let receipt = AssetReceipt { escrow_identity: core.escrow_identity, asset_id };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Occupied { asset, terms, cycle }, u, receipt)
         },
@@ -1005,7 +1019,9 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             let pending = tenant::proj_cap_identity(tenant::proj_identity(&bid.pending));
             assert_borrow_authorized(cap_identity, current, option::some(pending));
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
-            let (u, receipt) = asset::take(&mut asset);
+            let asset_id = asset::proj_asset_id(&asset);
+            let u = asset::take(&mut asset);
+            let receipt = AssetReceipt { escrow_identity: core.escrow_identity, asset_id };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (AssetState::Demand { asset, terms, bid, cycle }, u, receipt)
         },
@@ -1014,22 +1030,24 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
 }
 
 /// Tenant-gated asset return. Takes `&mut AssetState` — the variant does
-/// not change (Occupied stays Occupied, Demand stays Demand); only the
-/// open custody is mutated. The or-pattern collapses the two renting arms:
-/// both expose the same `asset` and `terms` fields. The `AssetReceipt`
-/// hot-potato is proof of borrow lineage; no explicit cap check is needed.
+/// not change; only the open custody is mutated. Receipt verification is
+/// the protocol layer's responsibility: all three checks happen here
+/// before the mechanical `asset::put`.
 public(package) fun execute_return<Asset: key + store, CoinType>(
     s:          &mut AssetState<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
     asset_in:   Asset,
     receipt_in: AssetReceipt,
 ) {
+    let AssetReceipt { escrow_identity, asset_id } = receipt_in;
+    assert!(escrow_identity == core.escrow_identity,      EReceiptEscrowMismatch);
+    assert!(object::id(&asset_in) == asset_id,            EReturnedDifferentAsset);
     match (s) {
         AssetState::Occupied { asset, terms, .. } |
         AssetState::Demand   { asset, terms, .. } => {
             let cap_id      = tenant::proj_cap_identity(tenant::proj_identity(&terms.current));
             let tenant_addr = tenant::proj_address(tenant::proj_identity(&terms.current));
-            asset::put(asset, asset_in, receipt_in);
+            asset::put(asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
                 tenant_cap_id: tenant_cap::cap_id(cap_id),
@@ -1727,7 +1745,7 @@ fun do_install<Asset: key + store, CoinType>(
     let cap           = tenant_cap::new(escrow_identity, tenant_addr, ctx);
     let cap_identity  = tenant_cap::identity(&cap);
     let t = tenant::new<CoinType>(cap_identity, tenant_addr, coin::into_balance(payment));
-    let wrapped = asset::open_tenancy(locked, escrow_identity);
+    let wrapped = asset::open_tenancy(locked);
     let schedule = TenancySchedule {
         phase_start:      now,
         ceiling_total:    cycles::total_duration(cycle.ceiling, cycles),
@@ -1868,7 +1886,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
             // tenant_in is consumed only on the happy path; the abort arms
             // below leave it to drop with the divergent abort.
             AssetState::Occupied {
-                asset: asset::open_tenancy(asset, core.escrow_identity),
+                asset: asset::open_tenancy(asset),
                 terms: OccupiedTerms { schedule, current: tenant_in, retire: retire_condition::new() },
                 cycle,
             }
@@ -2045,3 +2063,13 @@ public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64       
 
 #[test_only]
 public(package) fun config_updated_new_config(e: &ConfigUpdated): IntegrationConfig { e.new_config }
+
+// ─── AssetReceipt test helpers ────────────────────────────────────────────────
+
+#[test_only]
+public(package) fun forge_receipt_for_testing(escrow_identity: EscrowIdentity, asset_id: ID): AssetReceipt {
+    AssetReceipt { escrow_identity, asset_id }
+}
+
+#[test_only]
+public(package) fun destroy_receipt_for_testing(r: AssetReceipt) { let AssetReceipt { .. } = r; }

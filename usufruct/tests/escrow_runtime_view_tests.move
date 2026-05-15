@@ -15,7 +15,7 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    asset_context_state,
+    asset_state,
     commitment_policy_state,
     config::IntegrationConfig,
     cycles,
@@ -89,7 +89,7 @@ fun dispose_escrow(escrow: Escrow<DemoAsset, SUI>, cap: OwnerCap) {
 // `assert_projector_pattern` runs every Option/bool view in escrow.move
 // once and asserts the expected presence/absence for the given state.
 // The patterns are derived from the state machine projector definitions
-// in asset_context_state — see the per-state match arms there.
+// in asset_state — see the per-state match arms there.
 
 const STATE_IDLE:     u8 = 0;
 const STATE_AT_DUTCH: u8 = 1;
@@ -141,8 +141,10 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::next_tenure_ceiling_ms(escrow).is_some(),    in_waiting_with_resolved);
     assert_eq!(escrow::next_handover_duration_ms(escrow).is_some(), in_waiting_with_resolved);
 
-    // — AtDutch-only fields —
-    assert_eq!(escrow::auction_descent_duration_ms(escrow).is_some(), in_at_dutch);
+    // — Waiting-side descent: present in Idle (locked-in for next cycle)
+    //   and in AtDutch (descent in progress). Absent in Renting/Retired.
+    assert_eq!(escrow::auction_descent_duration_ms(escrow).is_some(), in_waiting_with_resolved);
+    // — AtDutch-only field —
     assert_eq!(escrow::last_acq_price(escrow).is_some(),              in_at_dutch);
 
     // — Demand-only fields (handover countdown active) —
@@ -202,13 +204,13 @@ fun idle_views_post_integrate() {
     assert!(escrow::compute_handover_expiry_at(&escrow, 1_000).is_none());
     assert!(escrow::last_acq_price(&escrow).is_none());
 
-    // — Waiting-side resolved values: present in Idle (locked-in for next bid) —
-    // The Idle variant stores resolved_floor/ceiling/handover at integration time;
-    // resolved_descent is exclusive to AtDutch.
+    // — Waiting-side resolved values: present in Idle (locked-in at
+    // integration time — `resolve()` runs only on Idle entry; the four
+    // policy draws then flow through the cycle without re-draw).
     assert!(escrow::next_floor_price_mist(&escrow).is_some());
     assert!(escrow::next_tenure_ceiling_ms(&escrow).is_some());
     assert!(escrow::next_handover_duration_ms(&escrow).is_some());
-    assert!(escrow::auction_descent_duration_ms(&escrow).is_none());
+    assert!(escrow::auction_descent_duration_ms(&escrow).is_some());
 
     // — Credit context — no tenancy → all none / false —
     assert!(!escrow::credit_is_accruing(&escrow));
@@ -227,8 +229,7 @@ fun idle_views_post_integrate() {
 
     // — Cap status with an unknown ID — Stale in non-Renting state —
     let foreign = object::id_from_address(@0xDEAD);
-    let status  = escrow::tenant_cap_status(&escrow, foreign);
-    assert!(asset_context_state::proj_is_stale(&status));
+    assert!(escrow::tenant_cap_is_stale(&escrow, foreign));
 
     dispose_escrow(escrow, cap);
     sc.end();
@@ -272,12 +273,8 @@ fun rented_views_post_rent() {
     assert!(escrow::credit_stake_mist(&escrow).is_some());
     assert!(escrow::credit_phase_start_ms(&escrow).is_some());
 
-    // — Cap predicates on the actual tenant cap —
-    assert!(escrow::tenant_cap_is_current(&escrow, &t_cap));
-    assert!(!escrow::tenant_cap_is_pending(&escrow, &t_cap));
-    assert!(!escrow::tenant_cap_is_stale(&escrow, &t_cap));
-    let status = escrow::tenant_cap_status(&escrow, object::id(&t_cap));
-    assert!(asset_context_state::proj_is_current(&status));
+    // — Cap status on the actual tenant cap —
+    assert!(escrow::tenant_cap_is_current(&escrow, object::id(&t_cap)));
 
     // — Owner balance: rent payment is collected and split; owner_balance ≥ 0 —
     let _bal = escrow::owner_balance(&escrow);
@@ -322,6 +319,52 @@ fun settlement_views_in_rented_state() {
     sc.end();
 }
 
+/// Settlement views in Demand state: tenure_settlement and
+/// handover_settlement operate on the *current* tenant's stake (not the
+/// pending bidder's). Covers the Demand arm of `proj_current_stake_value`
+/// and `proj_tenure_settlement`.
+#[test]
+fun settlement_views_in_demand_state() {
+    let mut sc  = setup();
+    // c=1 Countdown — prevents APT from immediately resolving the handover
+    // inside the second rent call, keeping the escrow in Demand.
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    // First rent: Idle → Occupied. Current tenant stake = STAKE.
+    let payment1 = mk_payment(STAKE, sc.ctx());
+    let t_cap1   = escrow::rent(&mut escrow, payment1, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    // Second rent: Occupied → Demand (places a bid).
+    let floor2   = escrow::compute_floor_price(&escrow, &clk);
+    let payment2 = mk_payment(floor2, sc.ctx());
+    let t_cap2   = escrow::rent(&mut escrow, payment2, cycles::cycles(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+    test_scenario::return_shared(random);
+
+    // tenure_settlement in Demand: (owner + fee) partitions the current
+    // tenant's stake.
+    let (t_owner, t_fee) = escrow::compute_tenure_settlement(&escrow);
+    assert_eq!(t_owner + t_fee, STAKE);
+
+    // handover_settlement in Demand: remaining + owner + fee partitions the
+    // current tenant's stake at the requested boundary.
+    let phase_start = escrow::phase_start_ms(&escrow).destroy_some();
+    let boundary    = phase_start + escrow_corpus::tenure_ceiling_const() / 2;
+    let (h_rem, h_owner, h_fee) = escrow::compute_handover_settlement(&escrow, boundary);
+    assert_eq!(h_rem + h_owner + h_fee, STAKE);
+
+    transfer::public_transfer(t_cap1, TENANT_ADDR);
+    transfer::public_transfer(t_cap2, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
 // ─── pending transitions and AtDutch entry ───────────────────────────────────
 
 #[test]
@@ -349,7 +392,7 @@ fun at_dutch_views_after_tenure_expiry() {
     // Now a Tenure transition is pending.
     assert!(escrow::has_pending_transition_states(&escrow, &clk));
     let pending = escrow::next_pending(&escrow, &clk).destroy_some();
-    assert!(usufruct::pending_transition_state::proj_is_tenure(&pending));
+    assert!(usufruct::pending_transition_state::proj_is_occupied(&pending));
     assert_eq!(escrow::next_transition_ms(&escrow, &clk).destroy_some(), expiry);
 
     // Fire the transition → state advances to AtDutch (descent=Window).
@@ -460,10 +503,8 @@ fun demand_views_after_handover_bid() {
     assert!(escrow::pending_stake(&escrow).is_some());
 
     // — Cap status: t1 current, t2 pending —
-    assert!(escrow::tenant_cap_is_current(&escrow, &t1_cap));
-    assert!(!escrow::tenant_cap_is_pending(&escrow, &t1_cap));
-    assert!(escrow::tenant_cap_is_pending(&escrow, &t2_cap));
-    assert!(!escrow::tenant_cap_is_current(&escrow, &t2_cap));
+    assert!(escrow::tenant_cap_is_current(&escrow, object::id(&t1_cap)));
+    assert!(escrow::tenant_cap_is_pending(&escrow, object::id(&t2_cap)));
 
     // — Handover countdown is active; expiry is recorded —
     let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
@@ -524,7 +565,7 @@ fun retiring_flag_views_after_retire_during_renting() {
 
 /// Builds an escrow in each of the 5 state-machine leaves and asserts the
 /// full projector vector via assert_projector_pattern. Closes the partial
-/// coverage in asset_context_state's per-state match arms — each projector
+/// coverage in asset_state's per-state match arms — each projector
 /// is exercised on every reachable state in a single test.
 #[test]
 fun cartesian_state_projector_matrix() {
@@ -598,5 +639,89 @@ fun cartesian_state_projector_matrix() {
     clock::destroy_for_testing(clk);
     dispose_escrow(escrow, cap);
 
+    sc.end();
+}
+
+// ─── cap_is_* false-arm coverage ─────────────────────────────────────────────
+//
+// tenant_cap_is_current/pending/stale call the internal cap_is_* predicates.
+// The `_ => false` arms for AtDutch and Retired were uncovered because existing
+// tests only used Idle or Renting states.
+
+#[test]
+fun tenant_cap_views_in_at_dutch_state() {
+    let mut sc  = setup();
+    // h=1 Window: tenure expires → AtDutch (does not immediately collapse).
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    test_scenario::return_shared(random);
+
+    // In AtDutch: no active tenancy — any cap is stale.
+    let cap_id = object::id(&t_cap);
+    assert!(!escrow::tenant_cap_is_current(&escrow, cap_id), 1);
+    assert!(!escrow::tenant_cap_is_pending(&escrow, cap_id), 2);
+    assert!(escrow::tenant_cap_is_stale(&escrow, cap_id),   3);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+#[test]
+fun tenant_cap_views_in_retired_state() {
+    let mut sc  = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(OWNER);
+    // Drive Idle → Retired directly (no tenancy needed).
+    escrow::drive_to_retired_for_testing(&mut escrow);
+
+    // Use a synthetic cap ID — no active tenancy means any cap is stale.
+    let synthetic_id = object::id_from_address(@0xCA1);
+    assert!(!escrow::tenant_cap_is_current(&escrow, synthetic_id), 0);
+    assert!(!escrow::tenant_cap_is_pending(&escrow, synthetic_id), 1);
+    assert!(escrow::tenant_cap_is_stale(&escrow, synthetic_id),   2);
+
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+/// cap_is_pending Occupied arm: Occupied has no pending cap, so
+/// tenant_cap_is_pending returns false (the _ => false branch for Occupied).
+#[test]
+fun tenant_cap_is_pending_in_occupied_returns_false() {
+    let mut sc  = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+    assert!(escrow::is_occupied(&escrow), 0);
+
+    // In Occupied there is a current cap but no pending — is_pending is false.
+    let cap_id = object::id(&t_cap);
+    assert!( escrow::tenant_cap_is_current(&escrow, cap_id), 1);
+    assert!(!escrow::tenant_cap_is_pending(&escrow, cap_id), 2);
+    assert!(!escrow::tenant_cap_is_stale(&escrow, cap_id),  3);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
     sc.end();
 }

@@ -14,12 +14,20 @@ use usufruct::phases::{Self, Duration};
 const EDurationZero: u64 = 0;
 const EMinNotLtMax:  u64 = 1;
 
+// === Constants ===
+
 // === Structs ===
+
+// === Enums ===
 
 public enum TenurePolicyState has copy, drop, store {
     Fixed { ceiling: Duration },
     RandomInRange { min: Duration, max: Duration },
 }
+
+// === Events ===
+
+// === Method Aliases ===
 
 // === Public Functions ===
 
@@ -67,6 +75,8 @@ public(package) fun proj_range_max(policy: &TenurePolicyState): Option<Duration>
     }
 }
 
+// === Admin Functions ===
+
 // === Package Functions ===
 
 /// Returns the minimum possible ceiling for SDK views and cross-field validation.
@@ -94,6 +104,8 @@ public(package) fun resolve(policy: &TenurePolicyState, generator: &mut RandomGe
         },
     }
 }
+
+// === Private Functions ===
 
 // === Test Functions ===
 

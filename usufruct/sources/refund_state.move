@@ -19,6 +19,8 @@ use usufruct::{
 
 // === Structs ===
 
+// === Enums ===
+
 /// Transition residue produced by a lifecycle boundary that touches a
 /// tenant's stake. Three variants encode the legal distribution shapes
 /// of the departing tenant's funds:

@@ -37,7 +37,15 @@ use usufruct::{
 
 const EAssetBorrowed: u64 = 20;
 
+// === Constants ===
+
 // === Structs ===
+
+// === Enums ===
+
+// === Events ===
+
+// === Method Aliases ===
 
 /// Central shared object. One per integrated asset.
 ///
@@ -880,6 +888,10 @@ public fun price_fn_compound_delta_bps<Asset: key + store, CoinType>(escrow: &Es
 public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
     price_function_state::proj_compound_delta_delta(config::proj_price_function_state(cfg(escrow))).map!(|v| monetary::price_mist(v))
 }
+
+// === Admin Functions ===
+
+// === Package Functions ===
 
 // === Private Functions ===
 

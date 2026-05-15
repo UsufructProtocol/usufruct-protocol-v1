@@ -15,6 +15,8 @@ const EMultiCycleNotAllowed: u64 = 0;
 
 // === Structs ===
 
+// === Enums ===
+
 public enum TenureCyclesPolicyState has copy, drop, store {
     Single,
     Multi,

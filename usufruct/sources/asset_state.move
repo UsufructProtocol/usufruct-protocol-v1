@@ -59,28 +59,27 @@ use usufruct::{
 
 const ENotRented:             u64 = 0;
 const EInsufficientPayment:   u64 = 1;
+const ERetireFlagBlocksBid:   u64 = 2;
 const ERetiredNoBid:          u64 = 3;
 const ECommitmentFloorNotElapsed: u64 = 4;
-const ECommitmentNotExtended:     u64 = 17;
 const EAlreadyRetired:        u64 = 5;
-const EWrongEscrowTenantCap:  u64 = 6;
 const EWrongEscrowOwnerCap:   u64 = 11;
+const EWrongEscrowTenantCap:  u64 = 6;
+const EPendingTenantCap:      u64 = 7;
 const EStaleTenantCap:        u64 = 8;
+const ETenantCapNotStale:     u64 = 9;
 const EReceiptEscrowMismatch:  u64 = 10;
-const EReturnedDifferentAsset: u64 = 19;
 const ENotRetired:               u64 = 12;
 const ENoEarnings:              u64 = 13;
 const ERetireAlreadyScheduled:  u64 = 16;
+const ECommitmentNotExtended:     u64 = 17;
+const EReturnedDifferentAsset: u64 = 19;
+
+// === Constants ===
+
+const PROTOCOL_FEE_BPS: u64 = 1_000;
 
 // === Structs ===
-
-/// The `Occupied | Demand` slice of `AssetState`. Travels inside
-/// `AssetReceipt` so that `execute_return` can match exhaustively —
-/// no `_ => abort` is needed. Hot-potato-like: no abilities.
-public enum RentingState<Asset: key + store, phantom CoinType> {
-    Occupied { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
-    Demand   { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
-}
 
 /// Proof of borrow — hot-potato, no abilities. Minted by `execute_borrow`
 /// and consumed by `execute_return`. Carries:
@@ -162,20 +161,6 @@ public struct DemandTerms<phantom CoinType> has store {
     handover: HandoverTerms,
 }
 
-// ─── Storage types ────────────────────────────────────────────────────────────
-//
-// The on-disk shape of an integrated escrow. `EscrowCore` holds the fields
-// orthogonal to the lifecycle state (owner ledger + policies + identities);
-// `AssetState` holds the lifecycle state as one of five variants. The two
-// slots are independent: ortho actions read/mutate `core` without touching
-// `state`, and APT/state transitions consume `state` without destructuring
-// `core`.
-//
-// `AssetState` is the single source of truth for the lifecycle state —
-// every `execute_*` consumes it by value and returns a fresh instance.
-// The non-drop fields (`Tenant`, `AssetCustody*`) give hot-potato
-// discipline without a separate operation-time enum.
-
 public struct EscrowCore<phantom CoinType> has store {
     owner:              Owner<CoinType>,
     config:             ConfigSlot,
@@ -185,6 +170,16 @@ public struct EscrowCore<phantom CoinType> has store {
     escrow_identity:    EscrowIdentity,
 }
 
+// === Enums ===
+
+/// The `Occupied | Demand` slice of `AssetState`. Travels inside
+/// `AssetReceipt` so that `execute_return` can match exhaustively —
+/// no `_ => abort` is needed. Hot-potato-like: no abilities.
+public enum RentingState<Asset: key + store, phantom CoinType> {
+    Occupied { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
+    Demand   { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
+}
+
 public enum AssetState<Asset: key + store, phantom CoinType> has store {
     Idle    { asset: asset::AssetCustodyLocked<Asset>, cycle: CycleParams },
     AtDutch { asset: asset::AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams },
@@ -192,7 +187,6 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
     Occupied { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
     Demand   { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
 }
-
 
 // === Events ===
 
@@ -264,60 +258,87 @@ public struct AssetClaimed has copy, drop {
     timestamp_ms:   u64,
 }
 
-// === Public Functions ===
-
-// ─── Bootstrap → Idle ─────────────────────────────────────────────────────────
-
-/// Bootstrap → Idle: the integration action. Mints the `OwnerCap`,
-/// builds the two on-disk slots (`EscrowCore` + `AssetState::Idle`),
-/// resolves the initial policy values, and emits both
-/// `IntegrationConfigRegistered` and `AssetIntegrated`. The caller
-/// (`escrow::integrate`) is left with the Sui-imposed boundary: create
-/// the `UID`, wrap the slots in the `Escrow` struct, and share it.
-public(package) fun execute_integrate<Asset: key + store, CoinType>(
-    asset:              Asset,
-    config:             IntegrationConfig,
-    commitment_policy:  CommitmentPolicyState,
-    fee_inbox_identity: FeeInboxIdentity,
-    escrow_identity:    EscrowIdentity,
-    integrated_at:      Timestamp,
-    generator:          &mut RandomGenerator,
-    ctx:                &mut TxContext,
-): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, OwnerCap) {
-    let owner_addr         = ctx.sender();
-    let owner_cap          = owner_cap::new(escrow_identity, owner_addr, ctx);
-    let owner_cap_identity = owner_cap::identity(&owner_cap);
-    let asset_id           = object::id(&asset);
-    let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
-    config::emit_registration(&config, raw_escrow_id);
-    let floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(&config), generator);
-    let ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(&config), generator);
-    let handover = handover_policy_state::resolve(config::proj_handover(&config), ceiling, generator);
-    let descent  = descent_policy_state::resolve(config::proj_descent(&config), generator);
-    let core = EscrowCore {
-        owner:              owner::new<CoinType>(owner_cap_identity),
-        config:             ConfigSlot { active: config, pending: option::none() },
-        fee_inbox_identity,
-        integrated_at,
-        commitment:         CommitmentSlot { policy: commitment_policy, anchor: integrated_at },
-        escrow_identity,
-    };
-    let state = AssetState::Idle {
-        asset: asset::lock(asset),
-        cycle: CycleParams { floor, ceiling, handover, descent },
-    };
-    event::emit(AssetIntegrated<Asset, CoinType> {
-        escrow_id:        raw_escrow_id,
-        owner_cap_id:     owner_cap::cap_id(owner_cap_identity),
-        owner:            owner_addr,
-        asset_id,
-        fee_inbox_id:     protocol_fee_ref::inbox_id(fee_inbox_identity),
-        integrated_at_ms: phases::timestamp_ms(integrated_at),
-    });
-    (core, state, owner_cap)
+public struct BidPlaced has copy, drop {
+    escrow_id:                 ID,
+    current_tenant_cap_id:     ID,
+    current_tenant_addr:       address,
+    current_tenant_stake:      u64,
+    current_phase_start_ms:    u64,
+    tenant_cap_id:             ID,
+    pending_tenant:            address,
+    bid_amount:                u64,
+    floor_price:               u64,
+    handover_countdown_expiry: u64,
+    timestamp_ms:              u64,
 }
 
-// ─── Core (owner + policy + identity) views ──────────────────────────────────
+public struct BidSuperseded has copy, drop {
+    escrow_id:                 ID,
+    protected_tenant_cap_id:   ID,
+    protected_tenant_addr:     address,
+    protected_tenant_stake:    u64,
+    protected_phase_start_ms:  u64,
+    displaced_tenant_cap_id:   ID,
+    new_tenant_cap_id:         ID,
+    displaced_bidder:          address,
+    refunded_amount:           u64,
+    new_bidder:                address,
+    new_bid_amount:            u64,
+    floor_price:               u64,
+    handover_countdown_expiry: u64,
+    timestamp_ms:              u64,
+}
+
+public struct HandoverCompleted has copy, drop {
+    escrow_id:                ID,
+    displaced_tenant_cap_id:  ID,
+    displaced_tenant:         address,
+    displaced_phase_start_ms: u64,
+    new_tenant_cap_id:        ID,
+    new_tenant_addr:          address,
+    new_tenant_stake:         u64,
+    used_credit:              u64,
+    owner_share:              u64,
+    protocol_fee:             u64,
+    remain_credit:            u64,
+    new_rent_price:           u64,
+    timestamp_ms:             u64,
+}
+
+public struct TenureExpired has copy, drop {
+    escrow_id:              ID,
+    tenant_cap_id:          ID,
+    tenant:                 address,
+    phase_start_ms:         u64,
+    owner_share:            u64,
+    protocol_fee:           u64,
+    last_acquisition_price: u64,
+    timestamp_ms:           u64,
+}
+
+public struct RetireFlagSet has copy, drop {
+    escrow_id:    ID,
+    owner:        address,
+    timestamp_ms: u64,
+}
+
+public struct AssetBorrowed has copy, drop {
+    escrow_id:     ID,
+    tenant_cap_id: ID,
+    tenant:        address,
+}
+
+public struct AssetReturned has copy, drop {
+    escrow_id:     ID,
+    tenant_cap_id: ID,
+    tenant:        address,
+}
+
+// === Method Aliases ===
+
+// === Public Functions ===
+
+// === View Functions ===
 
 public(package) fun proj_config<CoinType>(
     core: &EscrowCore<CoinType>,
@@ -355,8 +376,6 @@ public(package) fun proj_owner_cap_id<CoinType>(
 ): ID {
     owner_cap::cap_id(owner::proj_cap_identity(owner::proj_identity(&core.owner)))
 }
-
-// ─── State variant predicates ─────────────────────────────────────────────────
 
 public(package) fun proj_is_active<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
@@ -417,8 +436,6 @@ public(package) fun proj_is_retiring<Asset: key + store, CoinType>(
     }
 }
 
-// ─── Identity views ───────────────────────────────────────────────────────────
-
 public(package) fun proj_asset_id<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): ID {
@@ -430,8 +447,6 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
         AssetState::Demand   { asset, .. } => asset::proj_asset_id(asset),
     }
 }
-
-// ─── Tenant data views (Option variants — only present in Renting) ────────────
 
 public(package) fun proj_current_addr<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
@@ -646,8 +661,6 @@ public(package) fun proj_credit_expiry<Asset: key + store, CoinType>(
     }
 }
 
-// ─── Pricing views (state + envelope) ─────────────────────────────────────────
-
 public(package) fun floor_price_at<Asset: key + store, CoinType>(
     s:    &AssetState<Asset, CoinType>,
     core: &EscrowCore<CoinType>,
@@ -714,8 +727,6 @@ public(package) fun proj_tenure_settlement<Asset: key + store, CoinType>(
     (alloc.owner_share, alloc.protocol_fee)
 }
 
-// ─── Cap-authorization predicates ────────────────────────────────────────────
-
 public(package) fun cap_is_current<Asset: key + store, CoinType>(
     s:   &AssetState<Asset, CoinType>,
     cap: TenantCapIdentity,
@@ -745,8 +756,6 @@ public(package) fun cap_is_stale<Asset: key + store, CoinType>(
 ): bool {
     !cap_is_current(s, cap) && !cap_is_pending(s, cap)
 }
-
-// ─── APT and pending detection ────────────────────────────────────────────────
 
 /// Read-only peek: does the on-disk state have a transition due at `now`?
 /// Idle and Retired never produce a pending — they sit outside the APT
@@ -782,6 +791,62 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
     }
 }
 
+public(package) fun protocol_fee_bps(): u64 { PROTOCOL_FEE_BPS }
+public(package) fun bps_denominator():  u64 { math::bps_denominator() }
+
+// === Admin Functions ===
+
+// === Package Functions ===
+
+/// Bootstrap → Idle: the integration action. Mints the `OwnerCap`,
+/// builds the two on-disk slots (`EscrowCore` + `AssetState::Idle`),
+/// resolves the initial policy values, and emits both
+/// `IntegrationConfigRegistered` and `AssetIntegrated`. The caller
+/// (`escrow::integrate`) is left with the Sui-imposed boundary: create
+/// the `UID`, wrap the slots in the `Escrow` struct, and share it.
+public(package) fun execute_integrate<Asset: key + store, CoinType>(
+    asset:              Asset,
+    config:             IntegrationConfig,
+    commitment_policy:  CommitmentPolicyState,
+    fee_inbox_identity: FeeInboxIdentity,
+    escrow_identity:    EscrowIdentity,
+    integrated_at:      Timestamp,
+    generator:          &mut RandomGenerator,
+    ctx:                &mut TxContext,
+): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, OwnerCap) {
+    let owner_addr         = ctx.sender();
+    let owner_cap          = owner_cap::new(escrow_identity, owner_addr, ctx);
+    let owner_cap_identity = owner_cap::identity(&owner_cap);
+    let asset_id           = object::id(&asset);
+    let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
+    config::emit_registration(&config, raw_escrow_id);
+    let floor    = floor_price_policy_state::resolve(config::proj_min_rent_price(&config), generator);
+    let ceiling  = tenure_policy_state::resolve(config::proj_tenure_ceiling(&config), generator);
+    let handover = handover_policy_state::resolve(config::proj_handover(&config), ceiling, generator);
+    let descent  = descent_policy_state::resolve(config::proj_descent(&config), generator);
+    let core = EscrowCore {
+        owner:              owner::new<CoinType>(owner_cap_identity),
+        config:             ConfigSlot { active: config, pending: option::none() },
+        fee_inbox_identity,
+        integrated_at,
+        commitment:         CommitmentSlot { policy: commitment_policy, anchor: integrated_at },
+        escrow_identity,
+    };
+    let state = AssetState::Idle {
+        asset: asset::lock(asset),
+        cycle: CycleParams { floor, ceiling, handover, descent },
+    };
+    event::emit(AssetIntegrated<Asset, CoinType> {
+        escrow_id:        raw_escrow_id,
+        owner_cap_id:     owner_cap::cap_id(owner_cap_identity),
+        owner:            owner_addr,
+        asset_id,
+        fee_inbox_id:     protocol_fee_ref::inbox_id(fee_inbox_identity),
+        integrated_at_ms: phases::timestamp_ms(integrated_at),
+    });
+    (core, state, owner_cap)
+}
+
 /// Applies every APT transition whose boundary has been crossed,
 /// following the fixed acyclic chain:
 ///
@@ -803,8 +868,6 @@ public(package) fun execute_apply_pending_transition_states<Asset: key + store, 
     let s = step_tenure_expiry(s, core, now, ctx);
     step_auction_expiry(s, core, random, now, ctx)
 }
-
-// ─── Action executors ─────────────────────────────────────────────────────────
 
 /// Entry-point dispatcher for rent. Five arms, all reachable from the
 /// public API:
@@ -987,38 +1050,6 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     }
 }
 
-/// Asserts that `cap` is allowed to borrow: must be the current tenant's cap.
-fun assert_owner_cap_binds<CoinType>(cap: &OwnerCap, core: &EscrowCore<CoinType>) {
-    assert!(owner_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowOwnerCap)
-}
-
-fun assert_tenant_cap_binds<CoinType>(cap: &TenantCap, core: &EscrowCore<CoinType>) {
-    assert!(tenant_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowTenantCap)
-}
-
-fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {
-    assert!(
-        commitment_policy_state::is_unlocked(
-            commitment_policy_state::resolve(&core.commitment.policy),
-            core.commitment.anchor,
-            now,
-        ).is_crossed(),
-        ECommitmentFloorNotElapsed,
-    )
-}
-
-/// `pending` distinguishes a pending-bidder cap (EPendingTenantCap) from
-/// any other non-matching cap (EStaleTenantCap).
-fun assert_borrow_authorized(
-    cap:     TenantCapIdentity,
-    current: TenantCapIdentity,
-    pending: Option<TenantCapIdentity>,
-) {
-    if (cap == current) return;
-    if (option::contains(&pending, &cap)) abort EPendingTenantCap;
-    abort EStaleTenantCap;
-}
-
 /// Tenant-gated asset borrow. Auth and action fused into a single match:
 /// each renting arm authorizes via `assert_borrow_authorized` then takes
 /// the asset. The `_s` arm covers Idle / AtDutch / Retired — states that
@@ -1071,18 +1102,6 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
         },
         _s => abort EStaleTenantCap,
     }
-}
-
-/// Two independent receipt checks — two distinct attacks:
-///   1. cross-escrow:  receipt issued by escrow A, presented to escrow B
-///   2. asset-swap:    correct receipt but a different physical object returned
-fun assert_return_valid<Asset: key + store>(
-    identity:  &AssetIdentity,
-    asset_in:  &Asset,
-    escrow_id: EscrowIdentity,
-) {
-    assert!(asset::identity_escrow_identity(identity) == escrow_id,     EReceiptEscrowMismatch);
-    assert!(object::id(asset_in) == asset::identity_asset_id(identity), EReturnedDifferentAsset);
 }
 
 /// Reconstruct `AssetState` from the receipt's `RentingState`. The match
@@ -1279,97 +1298,50 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
     }
 }
 
-// === Errors ===
+// === Private Functions ===
 
-const ERetireFlagBlocksBid: u64 = 2;
-const EPendingTenantCap:    u64 = 7;
-const ETenantCapNotStale:   u64 = 9;
-
-// === Constants ===
-
-const PROTOCOL_FEE_BPS: u64 = 1_000;
-
-// === Events ===
-
-public struct BidPlaced has copy, drop {
-    escrow_id:                 ID,
-    current_tenant_cap_id:     ID,
-    current_tenant_addr:       address,
-    current_tenant_stake:      u64,
-    current_phase_start_ms:    u64,
-    tenant_cap_id:             ID,
-    pending_tenant:            address,
-    bid_amount:                u64,
-    floor_price:               u64,
-    handover_countdown_expiry: u64,
-    timestamp_ms:              u64,
+fun assert_owner_cap_binds<CoinType>(cap: &OwnerCap, core: &EscrowCore<CoinType>) {
+    assert!(owner_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowOwnerCap)
 }
 
-public struct BidSuperseded has copy, drop {
-    escrow_id:                 ID,
-    protected_tenant_cap_id:   ID,
-    protected_tenant_addr:     address,
-    protected_tenant_stake:    u64,
-    protected_phase_start_ms:  u64,
-    displaced_tenant_cap_id:   ID,
-    new_tenant_cap_id:         ID,
-    displaced_bidder:          address,
-    refunded_amount:           u64,
-    new_bidder:                address,
-    new_bid_amount:            u64,
-    floor_price:               u64,
-    handover_countdown_expiry: u64,
-    timestamp_ms:              u64,
+fun assert_tenant_cap_binds<CoinType>(cap: &TenantCap, core: &EscrowCore<CoinType>) {
+    assert!(tenant_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowTenantCap)
 }
 
-public struct HandoverCompleted has copy, drop {
-    escrow_id:                ID,
-    displaced_tenant_cap_id:  ID,
-    displaced_tenant:         address,
-    displaced_phase_start_ms: u64,
-    new_tenant_cap_id:        ID,
-    new_tenant_addr:          address,
-    new_tenant_stake:         u64,
-    used_credit:              u64,
-    owner_share:              u64,
-    protocol_fee:             u64,
-    remain_credit:            u64,
-    new_rent_price:           u64,
-    timestamp_ms:             u64,
+fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {
+    assert!(
+        commitment_policy_state::is_unlocked(
+            commitment_policy_state::resolve(&core.commitment.policy),
+            core.commitment.anchor,
+            now,
+        ).is_crossed(),
+        ECommitmentFloorNotElapsed,
+    )
 }
 
-public struct TenureExpired has copy, drop {
-    escrow_id:              ID,
-    tenant_cap_id:          ID,
-    tenant:                 address,
-    phase_start_ms:         u64,
-    owner_share:            u64,
-    protocol_fee:           u64,
-    last_acquisition_price: u64,
-    timestamp_ms:           u64,
+/// `pending` distinguishes a pending-bidder cap (EPendingTenantCap) from
+/// any other non-matching cap (EStaleTenantCap).
+fun assert_borrow_authorized(
+    cap:     TenantCapIdentity,
+    current: TenantCapIdentity,
+    pending: Option<TenantCapIdentity>,
+) {
+    if (cap == current) return;
+    if (option::contains(&pending, &cap)) abort EPendingTenantCap;
+    abort EStaleTenantCap;
 }
 
-public struct RetireFlagSet has copy, drop {
-    escrow_id:    ID,
-    owner:        address,
-    timestamp_ms: u64,
+/// Two independent receipt checks — two distinct attacks:
+///   1. cross-escrow:  receipt issued by escrow A, presented to escrow B
+///   2. asset-swap:    correct receipt but a different physical object returned
+fun assert_return_valid<Asset: key + store>(
+    identity:  &AssetIdentity,
+    asset_in:  &Asset,
+    escrow_id: EscrowIdentity,
+) {
+    assert!(asset::identity_escrow_identity(identity) == escrow_id,     EReceiptEscrowMismatch);
+    assert!(object::id(asset_in) == asset::identity_asset_id(identity), EReturnedDifferentAsset);
 }
-
-public struct AssetBorrowed has copy, drop {
-    escrow_id:     ID,
-    tenant_cap_id: ID,
-    tenant:        address,
-}
-
-public struct AssetReturned has copy, drop {
-    escrow_id:     ID,
-    tenant_cap_id: ID,
-    tenant:        address,
-}
-
-// === Public Functions ===
-
-// ─── Fee helpers ──────────────────────────────────────────────────────────────
 
 fun split_fee(amount: Stake): FeeAllocation {
     let mist         = monetary::stake_mist(amount);
@@ -1379,11 +1351,6 @@ fun split_fee(amount: Stake): FeeAllocation {
         protocol_fee: monetary::stake(protocol_fee),
     }
 }
-
-public(package) fun protocol_fee_bps(): u64 { PROTOCOL_FEE_BPS }
-public(package) fun bps_denominator():  u64 { math::bps_denominator() }
-
-// ─── Tenancy-internal transitions ─────────────────────────────────────────────
 
 /// Demand → Occupied: fire the handover transition at `boundary_ms`.
 /// Distributes used credit to owner; retiring flag propagates to new Occupied.
@@ -1504,8 +1471,6 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         config.pending = option::none();
         AssetState::Retired { asset: locked }
     } else {
-        // cycle.ceiling and cycle.handover are the per-cycle base values —
-        // no rescaling needed. Pass cycle directly to the resulting AtDutch.
         AssetState::AtDutch {
             asset:   locked,
             auction: AuctionTerms { last_acq_price: monetary::as_reference_price(principal), phase_start: boundary },
@@ -1513,8 +1478,6 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         }
     }
 }
-
-// === Private Functions ===
 
 /// Occupied → Demand.
 fun do_place_bid<Asset: key + store, CoinType>(
@@ -1628,78 +1591,6 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         cap,
     )
 }
-
-// === Test Functions ===
-
-#[test_only]
-public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
-    let alloc = split_fee(monetary::stake(amount));
-    (monetary::stake_mist(alloc.owner_share), monetary::stake_mist(alloc.protocol_fee))
-}
-
-// ─── Test-only event accessors ────────────────────────────────────────────────
-
-#[test_only]
-public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
-#[test_only]
-public(package) fun bid_placed_bid_amount(e: &BidPlaced): u64                    { e.bid_amount }
-#[test_only]
-public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                   { e.floor_price }
-#[test_only]
-public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64     { e.handover_countdown_expiry }
-
-#[test_only]
-public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID           { e.displaced_tenant_cap_id }
-#[test_only]
-public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID                 { e.new_tenant_cap_id }
-#[test_only]
-public(package) fun bid_superseded_displaced_bidder(e: &BidSuperseded): address      { e.displaced_bidder }
-#[test_only]
-public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64           { e.refunded_amount }
-#[test_only]
-public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address            { e.new_bidder }
-#[test_only]
-public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64            { e.new_bid_amount }
-
-#[test_only]
-public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): address      { e.displaced_tenant }
-#[test_only]
-public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                 { e.new_tenant_cap_id }
-#[test_only]
-public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64               { e.used_credit }
-#[test_only]
-public(package) fun handover_completed_owner_share(e: &HandoverCompleted): u64               { e.owner_share }
-#[test_only]
-public(package) fun handover_completed_protocol_fee(e: &HandoverCompleted): u64              { e.protocol_fee }
-#[test_only]
-public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64             { e.remain_credit }
-#[test_only]
-public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u64            { e.new_rent_price }
-#[test_only]
-public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64              { e.timestamp_ms }
-
-#[test_only]
-public(package) fun tenure_expired_owner_share(e: &TenureExpired): u64               { e.owner_share }
-#[test_only]
-public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64              { e.protocol_fee }
-#[test_only]
-public(package) fun tenure_expired_last_acq_price(e: &TenureExpired): u64            { e.last_acquisition_price }
-
-
-#[test_only]
-public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID              { e.tenant_cap_id }
-
-#[test_only]
-public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID              { e.tenant_cap_id }
-
-#[test_only]
-public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64              { e.swept_earnings }
-
-// === Private Functions ===
-
-// ─── APT boundary predicates ─────────────────────────────────────────────────
-// Single source of truth for each transition's due condition.
-// Used by both next_pending (detection) and the step_* functions (firing).
 
 fun proj_demand_is_firable<CoinType>(bid: &DemandTerms<CoinType>, now: Timestamp): bool {
     phases::check_boundary(bid.handover.expiry, phases::zero(), now).is_crossed()
@@ -1877,6 +1768,67 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
 
 // === Test Functions ===
 
+#[test_only]
+public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
+    let alloc = split_fee(monetary::stake(amount));
+    (monetary::stake_mist(alloc.owner_share), monetary::stake_mist(alloc.protocol_fee))
+}
+
+#[test_only]
+public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
+#[test_only]
+public(package) fun bid_placed_bid_amount(e: &BidPlaced): u64                    { e.bid_amount }
+#[test_only]
+public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                   { e.floor_price }
+#[test_only]
+public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64     { e.handover_countdown_expiry }
+
+#[test_only]
+public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID           { e.displaced_tenant_cap_id }
+#[test_only]
+public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID                 { e.new_tenant_cap_id }
+#[test_only]
+public(package) fun bid_superseded_displaced_bidder(e: &BidSuperseded): address      { e.displaced_bidder }
+#[test_only]
+public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64           { e.refunded_amount }
+#[test_only]
+public(package) fun bid_superseded_new_bidder(e: &BidSuperseded): address            { e.new_bidder }
+#[test_only]
+public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64            { e.new_bid_amount }
+
+#[test_only]
+public(package) fun handover_completed_displaced_tenant(e: &HandoverCompleted): address      { e.displaced_tenant }
+#[test_only]
+public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                 { e.new_tenant_cap_id }
+#[test_only]
+public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64               { e.used_credit }
+#[test_only]
+public(package) fun handover_completed_owner_share(e: &HandoverCompleted): u64               { e.owner_share }
+#[test_only]
+public(package) fun handover_completed_protocol_fee(e: &HandoverCompleted): u64              { e.protocol_fee }
+#[test_only]
+public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64             { e.remain_credit }
+#[test_only]
+public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u64            { e.new_rent_price }
+#[test_only]
+public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64              { e.timestamp_ms }
+
+#[test_only]
+public(package) fun tenure_expired_owner_share(e: &TenureExpired): u64               { e.owner_share }
+#[test_only]
+public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64              { e.protocol_fee }
+#[test_only]
+public(package) fun tenure_expired_last_acq_price(e: &TenureExpired): u64            { e.last_acquisition_price }
+
+
+#[test_only]
+public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID              { e.tenant_cap_id }
+
+#[test_only]
+public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID              { e.tenant_cap_id }
+
+#[test_only]
+public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64              { e.swept_earnings }
 
 #[test_only]
 public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
@@ -2115,8 +2067,6 @@ public(package) fun proj_resolved_handover_for_testing<Asset: key + store, CoinT
     }
 }
 
-// ─── Test-only event accessors ────────────────────────────────────────────────
-
 #[test_only]
 public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID              { e.tenant_cap_id }
 #[test_only]
@@ -2133,8 +2083,6 @@ public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64       
 
 #[test_only]
 public(package) fun config_updated_new_config(e: &ConfigUpdated): IntegrationConfig { e.new_config }
-
-// ─── AssetReceipt test helpers ────────────────────────────────────────────────
 
 #[test_only]
 public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(

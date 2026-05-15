@@ -15,13 +15,21 @@ const EDescentCeilingZero:     u64 = 0;
 const EMinNotLtMax:            u64 = 2;
 #[test_only] const EDescentSkippedNoWindow: u64 = 1;
 
+// === Constants ===
+
 // === Structs ===
+
+// === Enums ===
 
 public enum DescentPolicyState has copy, drop, store {
     Skipped,
     Window        { ceiling: Duration },
     RandomInRange { min: Duration, max: Duration },
 }
+
+// === Events ===
+
+// === Method Aliases ===
 
 // === Public Functions ===
 
@@ -70,6 +78,8 @@ public(package) fun proj_range_max(policy: &DescentPolicyState): Option<Duration
     }
 }
 
+// === Admin Functions ===
+
 // === Package Functions ===
 
 /// Resolve the policy to a concrete Duration (the descent window).
@@ -103,6 +113,8 @@ public(package) fun expiry_at(
     phases::boundary_at(phase_start, resolved)
 }
 
+
+// === Private Functions ===
 
 // === Test Functions ===
 

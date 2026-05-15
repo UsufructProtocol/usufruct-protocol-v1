@@ -13,9 +13,25 @@ module usufruct::escrow_identity;
 
 // === Imports ===
 
+// === Errors ===
+
+// === Constants ===
+
 // === Structs ===
 
 public struct EscrowIdentity has copy, drop, store { id: ID }
+
+// === Enums ===
+
+// === Events ===
+
+// === Method Aliases ===
+
+// === Public Functions ===
+
+// === View Functions ===
+
+// === Admin Functions ===
 
 // === Package Functions ===
 
@@ -24,3 +40,7 @@ public(package) fun new(id: ID): EscrowIdentity { EscrowIdentity { id } }
 
 /// Extract the raw `ID` from an `EscrowIdentity`.
 public(package) fun escrow_id(e: EscrowIdentity): ID { e.id }
+
+// === Private Functions ===
+
+// === Test Functions ===

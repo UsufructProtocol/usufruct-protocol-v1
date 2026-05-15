@@ -5,12 +5,34 @@
 /// NotRetiring → Retiring is the only legal transition; the reverse aborts.
 module usufruct::retire_condition;
 
+// === Imports ===
+
+// === Errors ===
+
 const EAlreadyRetiring: u64 = 0;
+
+// === Constants ===
+
+// === Structs ===
+
+// === Enums ===
 
 public enum RetireCondition has store, drop {
     NotRetiring,
     Retiring,
 }
+
+// === Events ===
+
+// === Method Aliases ===
+
+// === Public Functions ===
+
+// === View Functions ===
+
+// === Admin Functions ===
+
+// === Package Functions ===
 
 public(package) fun new(): RetireCondition { RetireCondition::NotRetiring }
 
@@ -24,6 +46,10 @@ public(package) fun set(r: RetireCondition): RetireCondition {
         RetireCondition::Retiring    => abort EAlreadyRetiring,
     }
 }
+
+// === Private Functions ===
+
+// === Test Functions ===
 
 #[test_only]
 public(package) fun set_for_testing(_r: RetireCondition): RetireCondition {

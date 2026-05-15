@@ -14,7 +14,11 @@ use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 const EHandoverFloorZero: u64 = 0;
 const EMinNotLtMax:       u64 = 1;
 
+// === Constants ===
+
 // === Structs ===
+
+// === Enums ===
 
 public enum HandoverPolicyState has copy, drop, store {
     Instant,
@@ -22,6 +26,10 @@ public enum HandoverPolicyState has copy, drop, store {
     Countdown      { floor: Duration },
     RandomInRange  { min: Duration, max: Duration },
 }
+
+// === Events ===
+
+// === Method Aliases ===
 
 // === Public Functions ===
 
@@ -73,6 +81,8 @@ public(package) fun proj_range_max(policy: &HandoverPolicyState): Option<Duratio
         _ => option::none(),
     }
 }
+
+// === Admin Functions ===
 
 // === Package Functions ===
 
@@ -143,6 +153,8 @@ public(package) fun expiry_at(
         phases::boundary_at(phase_start, resolved_ceiling),
     )
 }
+
+// === Private Functions ===
 
 // === Test Functions ===
 

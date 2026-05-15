@@ -14,12 +14,20 @@ use usufruct::monetary::{Self, Price};
 const EPriceZero:   u64 = 0;
 const EMinNotLtMax: u64 = 1;
 
+// === Constants ===
+
 // === Structs ===
+
+// === Enums ===
 
 public enum FloorPricePolicyState has copy, drop, store {
     Fixed { price: Price },
     RandomInRange { min: Price, max: Price },
 }
+
+// === Events ===
+
+// === Method Aliases ===
 
 // === Public Functions ===
 
@@ -67,6 +75,8 @@ public(package) fun proj_range_max(policy: &FloorPricePolicyState): Option<Price
     }
 }
 
+// === Admin Functions ===
+
 // === Package Functions ===
 
 /// Returns the floor price for SDK views and Dutch auction descent bottom.
@@ -93,6 +103,8 @@ public(package) fun resolve(policy: &FloorPricePolicyState, generator: &mut Rand
         },
     }
 }
+
+// === Private Functions ===
 
 // === Test Functions ===
 

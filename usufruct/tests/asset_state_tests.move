@@ -15,7 +15,7 @@ use sui::{
 };
 use usufruct::{
     asset::{Self},
-    asset_state::{Self, AssetReceipt},
+    asset_state::{Self},
     commitment_policy_state,
     cycles,
     escrow::{Self, Escrow},
@@ -192,19 +192,15 @@ fun claim_asset_aborts_in_demand_state() {
     sc.end();
 }
 
-// ─── execute_borrow / execute_return wrong-state aborts (C3) ─────────────────
+// ─── execute_borrow wrong-state aborts (C3) ──────────────────────────────────
 //
 // `execute_borrow` does the happy path on Occupied / Demand match arms.
 // The three Waiting variants (Idle, AtDutch, Retired) abort
 // `EStaleTenantCap` — reachable from the public API and individually
 // tested here.
 //
-// `execute_return` is symmetric: Waiting variants abort
-// `EReceiptEscrowMismatch`. The receipt is forged via
-// `asset::forge_receipt_for_testing`; in production no caller could
-// obtain a receipt while the escrow is in a Waiting state, but a hostile
-// or buggy caller could forge one — the abort path is the protocol's
-// final guard.
+// `execute_return` no longer has a wrong-state arm: `RentingState` in
+// `AssetReceipt` limits the return match to `Occupied | Demand` by type.
 //
 // The Idle case for borrow is already covered by
 // `escrow_tests::borrow_asset_from_idle_aborts`; the two missing
@@ -266,71 +262,6 @@ fun borrow_asset_aborts_in_retired_state() {
     test_scenario::return_shared(escrow);
     test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
-    sc.end();
-}
-
-/// Build a junk asset + receipt pair targeting `escrow_id` for the
-/// wrong-state-return tests. The receipt would not be valid in production
-/// (the escrow is not in Renting and the asset is a fresh object), but
-/// the dispatch arm aborts EReceiptEscrowMismatch before it is validated.
-fun mk_junk_asset_and_receipt(escrow_id: ID, sc: &mut Scenario): (DemoAsset, AssetReceipt) {
-    let asset    = mk_demo_asset(sc.ctx());
-    let asset_id = object::id(&asset);
-    let receipt  = asset_state::forge_receipt_for_testing(escrow_identity::new(escrow_id), asset_id);
-    (asset, receipt)
-}
-
-#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
-fun return_asset_aborts_in_idle_state() {
-    let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
-
-    let escrow_id = object::id(&escrow);
-    let (junk_asset, junk_receipt) = mk_junk_asset_and_receipt(escrow_id, &mut sc);
-
-    escrow::return_asset(&mut escrow, junk_asset, junk_receipt);
-
-    transfer::public_transfer(owner_cap, OWNER);
-    test_scenario::return_shared(escrow);
-    sc.end();
-}
-
-#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
-fun return_asset_aborts_in_at_dutch_state() {
-    let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
-
-    escrow::drive_to_rented_for_testing(
-        &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
-        0,
-    );
-    escrow::drive_to_at_dutch_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
-
-    let escrow_id = object::id(&escrow);
-    let (junk_asset, junk_receipt) = mk_junk_asset_and_receipt(escrow_id, &mut sc);
-
-    escrow::return_asset(&mut escrow, junk_asset, junk_receipt);
-
-    transfer::public_transfer(owner_cap, OWNER);
-    test_scenario::return_shared(escrow);
-    sc.end();
-}
-
-#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
-fun return_asset_aborts_in_retired_state() {
-    let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
-
-    escrow::drive_to_retired_for_testing(&mut escrow);
-
-    let escrow_id = object::id(&escrow);
-    let (junk_asset, junk_receipt) = mk_junk_asset_and_receipt(escrow_id, &mut sc);
-
-    escrow::return_asset(&mut escrow, junk_asset, junk_receipt);
-
-    transfer::public_transfer(owner_cap, OWNER);
-    test_scenario::return_shared(escrow);
     sc.end();
 }
 
@@ -449,11 +380,11 @@ fun burn_live_pending_cap_in_demand_aborts() {
 
 // ─── execute_borrow — double borrow (C3b) ────────────────────────────────────
 //
-// Attempting to borrow an asset that is already on loan must abort
-// `EAssetNotAvailable`. The check lives in `execute_borrow` in `asset_state`
-// before `asset::take` is called.
+// Attempting to borrow while the receipt is outstanding aborts
+// `EAssetBorrowed`. After the first borrow, `escrow.state` is `None`
+// (the state travels in the receipt); the guard lives in `escrow::borrow_asset`.
 
-#[test, expected_failure(abort_code = asset_state::EAssetAlreadyBorrowed, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
 fun double_borrow_aborts() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(&mut sc);
@@ -466,7 +397,7 @@ fun double_borrow_aborts() {
     // First borrow — succeeds, slot is now empty.
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
 
-    // Second borrow — must abort EAssetAlreadyBorrowed.
+    // Second borrow — must abort EAssetBorrowed.
     let (asset2, receipt2) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
 
     // Unreachable — consumed only to satisfy the type checker.
@@ -482,36 +413,10 @@ fun double_borrow_aborts() {
 
 // ─── execute_return — receipt verification (C4) ───────────────────────────────
 //
-// All three checks live in `asset_state::execute_return`. Forged receipts
-// drive each abort path independently.
-
-/// Cross-escrow return: receipt stamped with a foreign escrow identity,
-/// presented to an escrow it does not belong to.
-#[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
-fun return_with_receipt_from_wrong_escrow_aborts() {
-    let mut sc = setup();
-    let (mut escrow, cap) = integrate_and_take(&mut sc);
-    let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
-
-    let p = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
-
-    let (asset, authentic) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
-    asset_state::destroy_receipt_for_testing(authentic);
-
-    // Forge a receipt that claims a different escrow.
-    let foreign_escrow = escrow_identity::new(object::id_from_address(@0xDEAD));
-    let forged = asset_state::forge_receipt_for_testing(foreign_escrow, object::id(&asset));
-    escrow::return_asset(&mut escrow, asset, forged);
-
-    transfer::public_transfer(t_cap, OWNER);
-    test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
-    test_scenario::return_shared(rnd);
-    clock::destroy_for_testing(clk);
-    sc.end();
-}
+// Two checks live in `assert_return_valid`, called from `execute_return`.
+// Both are exercised via real borrows (authentic receipts) — forge is not
+// needed because `RentingState` in the receipt makes wrong-state returns
+// impossible to represent.
 
 /// Two real escrows — borrow from A, present the authentic receipt to B.
 /// This is the production cross-escrow attack: the attacker holds a

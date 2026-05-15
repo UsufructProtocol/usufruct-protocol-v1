@@ -376,6 +376,55 @@ When adding a new dimension to the system, do not start with the new behaviour. 
 
 ---
 
+## 21. Carry state in the receipt — cross-object invariants belong in types
+
+**Level: cross-object protocol invariants**
+
+When a protocol spans two object accesses — a "borrow" and a "return" — the return function will have an unreachable `_ => abort`. The compiler cannot verify the invariant ("if you have a receipt, the escrow is in renting state") because the proof requires observing a different object. The abort is not a missing case: it is the signature of a cross-object invariant that has not been given a type yet.
+
+The fix: carry the relevant state inside the hot-potato receipt. The return match is now over a type (`RentingState`) that only has the valid variants — exhaustive by construction.
+
+```move
+// Before — receipt carries only identity; execute_return matches AssetState
+// and has an unreachable abort for non-renting variants
+public struct AssetReceipt { identity: AssetIdentity }
+
+fun execute_return(s: &mut AssetState<A,C>, receipt: AssetReceipt, asset: A) {
+    match (s) {
+        AssetState::Occupied { .. } | AssetState::Demand { .. } => { ... },
+        _ => abort EReceiptStateMismatch,  // unreachable in production; compiler can't know
+    }
+}
+
+// After — receipt carries RentingState; execute_return is exhaustive, no abort
+public struct AssetReceipt<Asset, CoinType> {
+    identity: AssetIdentity,
+    renting:  RentingState<Asset, CoinType>,  // Occupied | Demand — no other variant exists
+}
+
+fun execute_return(receipt: AssetReceipt<A,C>, asset: A, ...) → AssetState<A,C> {
+    let AssetReceipt { identity, renting } = receipt;
+    assert_return_valid(&identity, &asset, ...);
+    match (renting) {
+        RentingState::Occupied { mut asset, terms, cycle } => { ... AssetState::Occupied { ... } },
+        RentingState::Demand   { mut asset, terms, bid, cycle } => { ... AssetState::Demand { ... } },
+        // No _ arm needed — RentingState has exactly these two variants
+    }
+}
+```
+
+**Emergent invariant:** carrying the state in the receipt leaves `escrow.state = None` until the receipt is consumed. The escrow and the asset are coupled at the type level: the lifecycle state is accessible only while the asset is in custody. Any attempt to read or mutate the escrow state between borrow and return aborts `EAssetBorrowed`. The invariant was always implicit in the domain — the type now makes it explicit and enforceable.
+
+**Why `None` is safe:** Sui PTBs commit their effects atomically. No external transaction observes intermediate state. The `None` gap between borrow and return is invisible to everyone except code in the same PTB — and calling other escrow functions in the same PTB between borrow and return is not a valid use of the protocol (the hot-potato receipt must be consumed before the PTB can do anything else meaningful with the escrow).
+
+**Diagnostic:** a `_ => abort` in an exhaustive match on the *return* side of a borrow/return pair is the smell. Following "make illegal states unrepresentable" to its conclusion converts that abort into a missing type. Following "no code that serves no function" to 100% coverage is what reveals the abort in the first place.
+
+**How this principle was discovered:** pursuing 100% coverage exposed the unreachable `_ => abort` in `execute_return`. Investigating why it was unreachable revealed the cross-object invariant. Encoding that invariant into `RentingState` eliminated the abort — and simultaneously produced a new, stronger invariant (escrow locked during borrow) that was not the original goal. The design converged on a stricter guarantee than the one being sought.
+
+**Canonical example** (`83bb56b → f3a109f → 7780a51 → d4dda27 → 28eb709`): `AssetReceipt` was parameterized to carry `RentingState<Asset, CoinType>`. `execute_borrow` extracts the renting state into the receipt and leaves `escrow.state = None`; `execute_return` reconstructs `AssetState` from the receipt — no `_ => abort` needed. The subsequent commit removed two now-unreachable `EAssetBorrowed` checks in APT and test helpers. The final commits introduced `take_state`/`read_state` helpers that surface `EAssetBorrowed` on any post-borrow access, and four `expected_failure` tests that assert the invariant explicitly.
+
+---
+
 ## Applied checklist
 
 When writing or reviewing code in this codebase:
@@ -389,3 +438,4 @@ When writing or reviewing code in this codebase:
 - [ ] Are all match sites exhaustive — would adding a new variant cause a compile error at every branch?
 - [ ] Does any computation function accept `&*PolicyState`? If so, `resolve()` is missing and the policy crossed the resolution boundary.
 - [ ] Does any `proj_*` that returns a policy type appear outside a `resolve()` call site? Policy projectors must flow directly into `resolve()` — never into computation functions.
+- [ ] Does any "return" function have a `_ => abort` in an exhaustive match on the object it is returning to? If so, the invariant belongs in the receipt type — carry the state, don't re-verify it.

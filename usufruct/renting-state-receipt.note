@@ -1,0 +1,56 @@
+# Idea: AssetReceipt<Asset, CoinType> carrying RentingState
+
+## Motivación
+
+`execute_return` tiene un `_ => abort EInvariantViolation` estructuralmente
+inalcanzable. La invariante (receipt → estado renting) está garantizada por el
+hot-potato en runtime, pero Move no puede expresarla en compile-time porque
+cruza fronteras de objetos.
+
+## La idea
+
+Parametrizar `AssetReceipt` con el tipo del asset y hacer que lleve el
+`RentingState` consigo:
+
+```move
+public struct AssetReceipt<Asset: key+store, phantom CoinType> {
+    identity: AssetIdentity,
+    renting:  RentingState<Asset, CoinType>,
+}
+
+enum RentingState<Asset: key+store, phantom CoinType> {
+    Occupied { asset: AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
+    Demand   { asset: AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
+}
+```
+
+## Flujo resultante
+
+```
+execute_borrow(AssetState) → (Asset, AssetReceipt<Asset, CoinType>)
+  - el estado se extrae del escrow y viaja dentro del receipt
+  - escrow.state queda None (bloqueado mientras el asset está prestado)
+  - _s => abort EStaleTenantCap permanece (error de protocolo reachable)
+
+execute_return(AssetReceipt<Asset, CoinType>, Asset) → RentingState
+  - extrae renting del receipt, opera, devuelve
+  - NO hay _ => abort — el tipo garantiza que es Occupied o Demand
+  - el caller (escrow::return_asset) llena escrow.state con renting_to_state()
+```
+
+## Lo que se gana
+
+- El único `_ => abort` unreachable desaparece completamente de execute_return
+- El receipt es la prueba tipada de que el estado era renting al momento del borrow
+- escrow.state = None entre borrow y return es semánticamente honesto:
+  el escrow está "bloqueado" mientras el asset está fuera
+
+## Coste
+
+- AssetReceipt pasa de tipo no-paramétrico a AssetReceipt<Asset, CoinType>
+- Cambio en la API pública de borrow_asset / return_asset
+- Las views sobre el escrow durante el período borrowed fallarían (state = None)
+
+## Rama
+
+`worktree-renting-state-receipt` — creada desde el head de worktree-demand-state-coverage

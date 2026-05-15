@@ -35,6 +35,8 @@ use usufruct::{
 
 // === Errors ===
 
+const EAssetBorrowed: u64 = 20;
+
 // === Structs ===
 
 /// Central shared object. One per integrated asset.
@@ -99,7 +101,7 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Coin<CoinType> {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let new_state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
     let coin = asset_state::execute_withdraw_earnings(core, owner_cap, clock, ctx);
@@ -136,7 +138,7 @@ public fun retire<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
     let new_state = asset_state::execute_retire(state, core, owner_cap, clock, ctx);
@@ -162,7 +164,7 @@ public fun update_config<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
     let new_state = asset_state::execute_update_config(state, core, owner_cap, new_cfg, random, ctx);
@@ -178,7 +180,7 @@ public fun rent<Asset: key + store, CoinType>(
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): TenantCap {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
     let (new_state, cap) = asset_state::execute_rent(state, core, payment, cycles, clock, ctx);
@@ -187,30 +189,34 @@ public fun rent<Asset: key + store, CoinType>(
 }
 
 /// Tenant-side asset borrow.
+///
+/// `escrow.state` is left `None` after this call — the `RentingState`
+/// travels inside the returned `AssetReceipt` until `return_asset` puts
+/// it back. The gap is invisible to external observers: borrow + return
+/// are atomic within a single PTB (hot-potato discipline).
 public fun borrow_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     tenant_cap: &TenantCap,
     random:     &Random,
     clock:      &Clock,
     ctx:        &mut TxContext,
-): (Asset, AssetReceipt) {
-    let state = escrow.state.extract();
-    let core = escrow.core.borrow_mut();
+): (Asset, AssetReceipt<Asset, CoinType>) {
+    let state = take_state(escrow);
+    let core  = escrow.core.borrow_mut();
     let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
-    let (new_state, asset, receipt) = asset_state::execute_borrow(state, core, tenant_cap);
-    escrow.state.fill(new_state);
-    (asset, receipt)
+    asset_state::execute_borrow(state, core, tenant_cap)
 }
 
-/// Tenant-side asset return.
+/// Tenant-side asset return. Reconstructs `AssetState` from the receipt's
+/// `RentingState` and fills `escrow.state` back to `Some`.
 public fun return_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     asset:      Asset,
-    receipt_in: AssetReceipt,
+    receipt_in: AssetReceipt<Asset, CoinType>,
 ) {
-    let state = escrow.state.borrow_mut();
-    let core  = escrow.core.borrow();
-    asset_state::execute_return(state, core, asset, receipt_in);
+    let core      = escrow.core.borrow();
+    let new_state = asset_state::execute_return(receipt_in, core, asset);
+    escrow.state.fill(new_state);
 }
 
 /// Burn a stale `TenantCap` for gas recovery.
@@ -221,7 +227,7 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
     let new_state = asset_state::execute_burn_tenant_cap(state, core, cap, ctx);
@@ -235,7 +241,7 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let new_state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
     escrow.state.fill(new_state);
@@ -877,9 +883,21 @@ public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &
 
 // === Private Functions ===
 
+/// Extract the lifecycle state for mutation. Aborts `EAssetBorrowed`
+/// if the state is `None` (i.e. the asset is currently on loan), giving a
+/// meaningful error instead of an opaque `EOPTION_NOT_SET` abort.
+fun take_state<Asset: key + store, CoinType>(
+    escrow: &mut Escrow<Asset, CoinType>,
+): AssetState<Asset, CoinType> {
+    assert!(escrow.state.is_some(), EAssetBorrowed);
+    escrow.state.extract()
+}
+
+/// Borrow the lifecycle state for reading. Same guard as `take_state`.
 fun read_state<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &AssetState<Asset, CoinType> {
+    assert!(escrow.state.is_some(), EAssetBorrowed);
     escrow.state.borrow()
 }
 
@@ -943,7 +961,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     tenant:         usufruct::tenant::Tenant<CoinType>,
     phase_start_ms: u64,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let new_state = asset_state::drive_to_rented_for_testing(
         state, escrow.core.borrow(), tenant, phases::timestamp(phase_start_ms),
     );
@@ -956,7 +974,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     tenant:                    usufruct::tenant::Tenant<CoinType>,
     handover_countdown_expiry: u64,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let new_state = asset_state::drive_to_demand_for_testing(
         state, tenant, phases::timestamp(handover_countdown_expiry),
     );
@@ -971,7 +989,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     last_acq_price:     u64,
     new_phase_start_ms: u64,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let new_state = asset_state::drive_to_at_dutch_for_testing(
         state, escrow.core.borrow(), owner_amount, fee_amount, last_acq_price, phases::timestamp(new_phase_start_ms),
     );
@@ -982,7 +1000,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
 public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let new_state = asset_state::drive_to_retired_for_testing(state);
     escrow.state.fill(new_state);
 }
@@ -991,7 +1009,7 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
 public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let new_state = asset_state::drive_to_retiring_flag_for_testing(state);
     escrow.state.fill(new_state);
 }
@@ -1002,7 +1020,7 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     boundary: phases::Timestamp,
     ctx:      &mut TxContext,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let new_state = asset_state::fire_do_handover_for_testing(state, escrow.core.borrow_mut(), boundary, ctx);
     escrow.state.fill(new_state);
 }
@@ -1013,7 +1031,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     boundary: phases::Timestamp,
     ctx:      &mut TxContext,
 ) {
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let new_state = asset_state::fire_do_tenure_expiry_for_testing(state, escrow.core.borrow_mut(), boundary, ctx);
     escrow.state.fill(new_state);
 }
@@ -1024,7 +1042,7 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     boundary: phases::Timestamp,
 ) {
     let mut generator = sui::random::new_generator_from_seed_for_testing(vector[0u8, 1u8]);
-    let state = escrow.state.extract();
+    let state = take_state(escrow);
     let new_state = asset_state::fire_do_auction_expiry_for_testing(state, escrow.core.borrow_mut(), boundary, &mut generator);
     escrow.state.fill(new_state);
 }

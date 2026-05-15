@@ -18,7 +18,7 @@ use usufruct::{
 
 // === Errors ===
 
-const EHandoverFloorExceedsTenure: u64 = 2;   // Countdown.floor_ms >= tenure_ceiling
+const EHandoverFloorExceedsTenure: u64 = 2;
 
 // === Constants ===
 
@@ -56,12 +56,6 @@ public fun new_config(
     descent_curve:   CurveShapeState,
     price_function_state: PriceFunctionState,
 ): IntegrationConfig {
-    // Cross-field validation: Countdown.floor_ms < tenure_ceiling.
-    // Equality is the FixedTime variant. Intra-variant invariants
-    // (e.g. floor_ms > 0) are owned by the policy module's
-    // constructors. The variant-level check is encapsulated in
-    // `handover_policy_state::countdown_floor_lt` since pattern-matching
-    // on an enum variant is restricted to the defining module.
     assert!(
         handover_policy_state::countdown_floor_lt(&handover, tenure_policy_state::min_ceiling(&tenure_ceiling)),
         EHandoverFloorExceedsTenure,
@@ -79,8 +73,6 @@ public fun new_config(
 }
 
 // === View Functions ===
-
-// ### RUNTIME PROJECTION FOR SDK ###
 
 public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):        &FloorPricePolicyState      { &cfg.min_rent_price }
 public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):         &TenurePolicyState          { &cfg.tenure_ceiling }
@@ -107,3 +99,4 @@ public(package) fun emit_registration(cfg: &IntegrationConfig, escrow_id: ID) {
 public fun registered_escrow_id(e: &IntegrationConfigRegistered): ID { e.escrow_id }
 #[test_only]
 public fun registered_config(e: &IntegrationConfigRegistered): IntegrationConfig { e.config }
+

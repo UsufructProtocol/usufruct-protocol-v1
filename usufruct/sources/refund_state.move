@@ -21,24 +21,6 @@ use usufruct::{
 
 // === Enums ===
 
-/// Transition residue produced by a lifecycle boundary that touches a
-/// tenant's stake. Three variants encode the legal distribution shapes
-/// of the departing tenant's funds:
-///
-///   · `Nothing`  — full stake consumed by owner+fee; tenant receives
-///                   nothing back. No identity: there is no recipient,
-///                   so carrying one would be a lie.
-///   · `Parcial`  — stake split: owner + fee + remainder refunded to
-///                   the tenant. Carries `identity` — the remainder has
-///                   a recipient and the type must name them.
-///   · `Total`    — full stake refunded to the tenant; no owner share,
-///                   no fee. Carries `identity` — same reason as Parcial.
-///
-/// Hot potato: no abilities. Must be consumed in the same PTB it is
-/// produced — by a `match` at the boundary, never stored. This makes
-/// the legal-distribution shape unforgettable at the type level: a
-/// caller cannot accidentally drop fees, lose a refund, or forget to
-/// route the owner's share, because the enum cannot be discarded.
 public enum RefundState<phantom CoinType> {
     Nothing {
         fee_share:      FeeShare<CoinType>,
@@ -64,8 +46,6 @@ public enum RefundState<phantom CoinType> {
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_nothing<C>(rs: &RefundState<C>): bool {
     match (rs) { RefundState::Nothing { .. } => true, _ => false }
 }
@@ -80,8 +60,6 @@ public(package) fun proj_is_total<C>(rs: &RefundState<C>): bool {
 
 // === Package Functions ===
 
-/// Construct `Nothing` — fee and owner shares routed to their consumers;
-/// no remainder, no recipient.
 public(package) fun nothing<C>(
     fee_share:      FeeShare<C>,
     owner_earnings: OwnerEarnings<C>,
@@ -89,8 +67,6 @@ public(package) fun nothing<C>(
     RefundState::Nothing { fee_share, owner_earnings }
 }
 
-/// Construct `Parcial` — three-way split. The carried `stake` holds
-/// the remainder destined for the tenant via `tenant::liquidate`.
 public(package) fun parcial<C>(
     identity:       TenantIdentity,
     stake:          TenantStake<C>,
@@ -100,8 +76,6 @@ public(package) fun parcial<C>(
     RefundState::Parcial { identity, stake, fee_share, owner_earnings }
 }
 
-/// Construct `Total` — full stake returns to the tenant; no owner or
-/// fee involvement (e.g. displaced bid in `supersede_bid`).
 public(package) fun total<C>(
     identity: TenantIdentity,
     stake:    TenantStake<C>,
@@ -109,19 +83,11 @@ public(package) fun total<C>(
     RefundState::Total { identity, stake }
 }
 
-/// Construct `Total` from a superseded bidder whose full stake is
-/// returned with no owner or fee involvement.
 public(package) fun from_superseded<C>(pending: Tenant<C>): RefundState<C> {
     let (identity, stake) = tenant::unbundle(pending);
     total(identity, stake)
 }
 
-/// Construct `Parcial` or `Nothing` from a departing `Tenant` whose
-/// owner and fee shares have already been extracted. If the remaining
-/// stake is non-zero the tenant gets a partial refund (`Parcial`);
-/// otherwise the stake is empty and destroyed (`Nothing`). The
-/// classification belongs here — the defining module — rather than at
-/// every call site that produces a boundary refund.
 public(package) fun from_departing<C>(
     departing:      Tenant<C>,
     fee_share:      FeeShare<C>,
@@ -137,13 +103,6 @@ public(package) fun from_departing<C>(
     }
 }
 
-/// Route all three terminal operations for the departing tenant's
-/// funds. Exhaustive match over the three variants; lives here (the
-/// defining module) so it can see variant internals directly.
-///
-///   Nothing — no recipient; deposit owner share, post fee.
-///   Parcial — split stake; deposit + post + liquidate remainder to identity.
-///   Total   — full stake refunded to identity; no owner/fee.
 public(package) fun distribute<C>(
     rs:                 RefundState<C>,
     owner:              &mut Owner<C>,
@@ -170,8 +129,6 @@ public(package) fun distribute<C>(
 
 // === Test Functions ===
 
-/// Consume a `RefundState` in tests, destroying any inner balance via
-/// the test_only destructors of each component module. State-agnostic.
 #[test_only]
 public fun destroy_for_testing<C>(rs: RefundState<C>) {
     match (rs) {
@@ -189,3 +146,4 @@ public fun destroy_for_testing<C>(rs: RefundState<C>) {
         },
     }
 }
+

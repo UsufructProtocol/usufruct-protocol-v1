@@ -26,18 +26,9 @@ const SCALE_SQ:   u128 = 1_000_000_000_000_000_000;
 const SCALE_CB:   u128 = 1_000_000_000_000_000_000_000_000_000;
 
 const LOGISTIC_K: u64 = 12;
-// Algorithm-derived (§9). Pinned via the bootstrap procedure documented in the
-// `bootstrap_constants_match_pinned` regression test in `curve_shape_state_tests`:
-// run `exp_scaled_pos` over the inputs the spec specifies, fix the outputs as
-// these literals. Re-derive whenever §7 (Taylor K, rounding) changes.
 const LOGISTIC_DENOM: u64 = 995_054_753;
 const LOGISTIC_SIGMA_FLOOR: u128 = (SCALE_U128 - (LOGISTIC_DENOM as u128)) / 2;
 
-// Algorithm-derived (§8). Pinned via the same bootstrap as LOGISTIC_DENOM:
-// EXP_A_NORM_{a}_POS = exp_scaled(a, 1, false) − TAYLOR_SCALE
-// EXP_A_NORM_{a}_NEG = TAYLOR_SCALE − exp_scaled(a, 1, true)
-// Re-derive whenever §7 changes; the regression test in curve_shape_state_tests
-// guards against silent drift.
 const EXP_A_NORM_1_POS: u128 =     1_718_281_828_459_045_226;
 const EXP_A_NORM_2_POS: u128 =     6_389_056_098_930_650_216;
 const EXP_A_NORM_3_POS: u128 =    19_085_536_923_187_667_729;
@@ -57,9 +48,6 @@ const EXP_A_NORM_8_NEG: u128 = 999_664_537_372_086_775;
 
 // === Structs ===
 
-/// A normalized curve output in `[0, SCALE]`.
-/// Only constructable by `evaluate_curve` — callers receive it and apply
-/// it to an amount via `apply`, never manipulate the raw value directly.
 public struct CurveHeight has copy, drop { h: u64 }
 
 public enum CurveShapeState has copy, drop, store {
@@ -106,8 +94,6 @@ public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapeState {
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_linear(s: &CurveShapeState):     bool { match (s) { CurveShapeState::Linear      => true, _ => false } }
 public(package) fun proj_is_smoothstep(s: &CurveShapeState): bool { match (s) { CurveShapeState::Smoothstep  => true, _ => false } }
 public(package) fun proj_is_logistic(s: &CurveShapeState):   bool { match (s) { CurveShapeState::Logistic    => true, _ => false } }
@@ -131,14 +117,8 @@ public(package) fun proj_exponential_alpha_neg(s: &CurveShapeState): Option<bool
 
 // === Package Functions ===
 
-/// Raw `u64` value of a `CurveHeight`. For SDK projection and test
-/// assertions — domain code should use `apply` instead.
 public(package) fun height_value(h: CurveHeight): u64 { h.h }
 
-/// Evaluate the curve at progress `t` out of `t_max`.
-/// Returns a `CurveHeight` in `[0, SCALE]`.
-/// `t` and `t_max` are generic progress values (e.g. elapsed ms and
-/// window ceiling ms) — this module does not know their domain.
 public(package) fun evaluate_curve(shape: &CurveShapeState, t: u64, t_max: u64): CurveHeight {
     let h = if (t == 0)     { 0 }
             else if (t >= t_max) { SCALE }
@@ -152,9 +132,6 @@ public(package) fun evaluate_curve(shape: &CurveShapeState, t: u64, t_max: u64):
     CurveHeight { h }
 }
 
-/// Apply a curve height to an amount: `amount × h / SCALE`.
-/// This is the only correct way to use a `CurveHeight` against a value —
-/// it keeps the SCALE denominator encapsulated here where it belongs.
 public(package) fun apply(amount: u64, height: CurveHeight): u64 {
     math::mul_div(amount, height.h, SCALE)
 }
@@ -220,8 +197,6 @@ fun exp_scaled(y_num: u64, y_den: u64, neg: bool): u128 {
     if (neg) { TAYLOR_SCALE_SQ / pos } else { pos }
 }
 
-// Taylor series for e^(y_num/y_den) · TAYLOR_SCALE, K=32 terms.
-// Caller guarantees y_den > 0; division by zero would otherwise abort.
 fun exp_scaled_pos(y_num: u64, y_den: u64): u128 {
     let y_num_128: u128 = y_num as u128;
     let y_den_128: u128 = y_den as u128;
@@ -237,7 +212,6 @@ fun exp_scaled_pos(y_num: u64, y_den: u64): u128 {
     acc
 }
 
-// Pure dispatcher over the 16 EXP_A_NORM_{1..8}_{POS,NEG} module constants.
 fun exp_a_norm(alpha_abs: u8, alpha_neg: bool): u128 {
     match (alpha_neg) {
         false => match (alpha_abs) {
@@ -263,7 +237,6 @@ fun exp_a_norm(alpha_abs: u8, alpha_neg: bool): u128 {
     }
 }
 
-// Iterative Euclidean gcd. Move has no recursion.
 fun gcd_u8(a: u8, b: u8): u8 {
     let mut x = a;
     let mut y = b;
@@ -332,8 +305,6 @@ public fun logistic_denom_for_testing(): u64 { LOGISTIC_DENOM }
 #[test_only]
 public fun scale_for_testing(): u64 { SCALE }
 
-// Destructure helper for new_power_law tests — only way to verify gcd
-// normalization without leaking enum field access publicly.
 #[test_only]
 public fun power_law_fields_for_testing(shape: &CurveShapeState): (u8, u8) {
     match (shape) {
@@ -341,3 +312,4 @@ public fun power_law_fields_for_testing(shape: &CurveShapeState): (u8, u8) {
         _ => abort ENotPowerLaw,
     }
 }
+

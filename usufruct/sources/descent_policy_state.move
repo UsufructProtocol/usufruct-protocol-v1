@@ -48,8 +48,6 @@ public fun new_descent_random_in_range(min: Duration, max: Duration): DescentPol
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_skipped(policy: &DescentPolicyState): bool {
     match (policy) { DescentPolicyState::Skipped => true, _ => false }
 }
@@ -82,10 +80,6 @@ public(package) fun proj_range_max(policy: &DescentPolicyState): Option<Duration
 
 // === Package Functions ===
 
-/// Resolve the policy to a concrete Duration (the descent window).
-///   Skipped         → Duration(0)      collapses immediately at phase_start
-///   Window          → ceiling          collapses at phase_start + ceiling
-///   RandomInRange   → draw[min, max]   collapses at phase_start + draw
 public(package) fun resolve(policy: &DescentPolicyState, generator: &mut RandomGenerator): Duration {
     match (policy) {
         DescentPolicyState::Skipped                    => phases::zero(),
@@ -96,7 +90,6 @@ public(package) fun resolve(policy: &DescentPolicyState, generator: &mut RandomG
     }
 }
 
-/// Whether the descent window has expired — called with the resolved window Duration.
 public(package) fun has_expired(
     resolved:    Duration,
     phase_start: Timestamp,
@@ -105,7 +98,6 @@ public(package) fun has_expired(
     phases::check_boundary(phase_start, resolved, now)
 }
 
-/// Canonical auction-collapse boundary — called with the resolved window Duration.
 public(package) fun expiry_at(
     resolved:    Duration,
     phase_start: Timestamp,
@@ -123,9 +115,6 @@ public fun e_descent_ceiling_zero(): u64 { EDescentCeilingZero }
 #[test_only]
 public fun e_min_not_lt_max(): u64 { EMinNotLtMax }
 
-/// Width of the descent window. Aborts on Skipped and RandomInRange —
-/// only valid for the Window variant. Test-only; production uses
-/// `proj_window_ceiling` which returns `Option<Duration>` instead.
 #[test_only]
 public fun window_ceiling(policy: &DescentPolicyState): Duration {
     match (policy) {
@@ -134,3 +123,4 @@ public fun window_ceiling(policy: &DescentPolicyState): Duration {
         | DescentPolicyState::RandomInRange { .. }    => abort EDescentSkippedNoWindow,
     }
 }
+

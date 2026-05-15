@@ -41,39 +41,20 @@ const EAssetBorrowed: u64 = 20;
 
 // === Structs ===
 
-// === Enums ===
-
-// === Events ===
-
-// === Method Aliases ===
-
-/// Central shared object. One per integrated asset.
-///
-/// Storage is split into two `Option` slots:
-///   · `core`  — owner ledger + protocol envelope, orthogonal to lifecycle
-///     state. Ortho actions (withdraw_earnings, extend_commitment) only
-///     touch this slot.
-///   · `state` — the lifecycle-state variant (Idle / AtDutch / Retired /
-///     Occupied / Demand). APT and state transitions consume only this
-///     slot.
-///
-/// The two `Option`s let entry functions extract `state` by value (for
-/// the `execute_*` call) while keeping a `&mut` borrow into `core` —
-/// physically disjoint borrows that the type system enforces.
 public struct Escrow<Asset: key + store, phantom CoinType> has key {
     id:    UID,
     core:  Option<EscrowCore<CoinType>>,
     state: Option<AssetState<Asset, CoinType>>,
 }
 
+// === Enums ===
+
+// === Events ===
+
+// === Method Aliases ===
+
 // === Public Functions ===
 
-/// Create and share an `Escrow`. Mints the `OwnerCap` and returns it to
-/// the caller. The lifecycle work (resolving policy values, building the
-/// core, minting the cap, emitting events) lives in
-/// `asset_state::execute_integrate`; this entry only handles the Sui
-/// boundary that the `Escrow`-defining module must own: minting the
-/// `UID` and sharing the wrapping struct.
 public fun integrate<Asset: key + store, CoinType>(
     asset:      Asset,
     cfg:        IntegrationConfig,
@@ -101,7 +82,6 @@ public fun integrate<Asset: key + store, CoinType>(
     owner_cap
 }
 
-/// Owner-gated earnings withdrawal.
 public fun withdraw_earnings<Asset: key + store, CoinType>(
     escrow:    &mut Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -116,11 +96,6 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     coin
 }
 
-/// Owner-gated terminal claim. Consumes the escrow by value. The
-/// lifecycle work (APT settle, asset unlock, earnings withdrawal,
-/// `AssetClaimed` emission) lives in `asset_state::execute_claim`; this
-/// entry only handles the Sui boundary: unwrapping the `Escrow`,
-/// burning the `OwnerCap`, deleting the `UID`.
 public fun claim_asset<Asset: key + store, CoinType>(
     escrow:    Escrow<Asset, CoinType>,
     owner_cap: OwnerCap,
@@ -136,7 +111,6 @@ public fun claim_asset<Asset: key + store, CoinType>(
     (asset, earnings)
 }
 
-/// Owner-gated retire entry.
 public fun retire<Asset: key + store, CoinType>(
     escrow:    &mut Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -150,7 +124,6 @@ public fun retire<Asset: key + store, CoinType>(
     put_state(escrow, new_state);
 }
 
-/// Owner-gated commitment extension. New expiry must be ≥ current expiry.
 public fun extend_commitment<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     owner_cap:  &OwnerCap,
@@ -160,7 +133,6 @@ public fun extend_commitment<Asset: key + store, CoinType>(
     asset_state::execute_extend_commitment(escrow.core.borrow_mut(), owner_cap, new_policy, clock);
 }
 
-/// Owner-gated operational parameter reset.
 public fun update_config<Asset: key + store, CoinType>(
     escrow:    &mut Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -175,7 +147,6 @@ public fun update_config<Asset: key + store, CoinType>(
     put_state(escrow, new_state);
 }
 
-/// Single entry point to become tenant or place a bid.
 public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut Escrow<Asset, CoinType>,
     payment: Coin<CoinType>,
@@ -191,12 +162,6 @@ public fun rent<Asset: key + store, CoinType>(
     cap
 }
 
-/// Tenant-side asset borrow.
-///
-/// `escrow.state` is left `None` after this call — the `RentingState`
-/// travels inside the returned `AssetReceipt` until `return_asset` puts
-/// it back. The gap is invisible to external observers: borrow + return
-/// are atomic within a single PTB (hot-potato discipline).
 public fun borrow_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     tenant_cap: &TenantCap,
@@ -209,8 +174,6 @@ public fun borrow_asset<Asset: key + store, CoinType>(
     asset_state::execute_borrow(state, core, tenant_cap, random, clock, ctx)
 }
 
-/// Tenant-side asset return. Reconstructs `AssetState` from the receipt's
-/// `RentingState` and fills `escrow.state` back to `Some`.
 public fun return_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     asset:      Asset,
@@ -221,8 +184,6 @@ public fun return_asset<Asset: key + store, CoinType>(
     put_state(escrow, new_state);
 }
 
-/// Checked burn: cap must belong to this escrow and must be stale (not
-/// current or pending). Use for gas recovery while the escrow still exists.
 public fun soft_burn_tenant_cap<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
     cap:    TenantCap,
@@ -236,13 +197,10 @@ public fun soft_burn_tenant_cap<Asset: key + store, CoinType>(
     put_state(escrow, new_state);
 }
 
-/// Unconditional burn. No escrow needed — use for gas recovery after
-/// `claim_asset` destroys the escrow, leaving caps orphaned.
 public fun hard_burn_tenant_cap(cap: TenantCap, ctx: &mut TxContext) {
     tenant_cap::burn(cap, ctx)
 }
 
-/// Permissionless settler.
 public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
     random: &Random,
@@ -255,7 +213,6 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     put_state(escrow, new_state);
 }
 
-/// Detect the single transition that is due at `now`, if any.
 public fun next_pending<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
@@ -264,8 +221,6 @@ public fun next_pending<Asset: key + store, CoinType>(
 }
 
 // === View Functions ===
-
-// ─── State predicates ────────────────────────────────────────────────────────
 
 public fun is_idle<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
@@ -357,8 +312,6 @@ public fun is_retiring<Asset: key + store, CoinType>(
     asset_state::proj_is_retiring(read_state(escrow))
 }
 
-// ─── Identity views ──────────────────────────────────────────────────────────
-
 public fun asset_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
@@ -407,8 +360,6 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
     asset_state::proj_pending_cap_id(read_state(escrow))
 }
 
-// ─── Stake views ─────────────────────────────────────────────────────────────
-
 public fun current_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
@@ -420,8 +371,6 @@ public fun pending_stake<Asset: key + store, CoinType>(
 ): Option<u64> {
     asset_state::proj_pending_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
-
-// ─── Temporal views ───────────────────────────────────────────────────────────
 
 public fun phase_start_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
@@ -533,8 +482,6 @@ public fun commitment_remaining_ms<Asset: key + store, CoinType>(
     if (now_ms >= unlocks) 0 else unlocks - now_ms
 }
 
-// ─── Cap views ───────────────────────────────────────────────────────────────
-
 public fun owner_cap_is_valid<Asset: key + store, CoinType>(
     escrow:    &Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
@@ -564,8 +511,6 @@ public fun tenant_cap_is_stale<Asset: key + store, CoinType>(
 }
 
 
-// ─── Timing views ────────────────────────────────────────────────────────────
-
 public fun has_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
@@ -579,8 +524,6 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
 ): Option<u64> {
     next_pending(escrow, clock).map!(|v| phases::timestamp_ms(pending_transition_state::proj_boundary(&v)))
 }
-
-// ─── Pricing views ───────────────────────────────────────────────────────────
 
 public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
@@ -623,8 +566,6 @@ public fun last_acq_price<Asset: key + store, CoinType>(
     asset_state::proj_last_acq_price(read_state(escrow)).map!(|v| monetary::price_mist(v))
 }
 
-// ─── Credit context views ─────────────────────────────────────────────────────
-
 public fun credit_is_accruing<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
@@ -655,8 +596,6 @@ public fun credit_expiry_ms<Asset: key + store, CoinType>(
     asset_state::proj_credit_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
-// ─── Settlement views ────────────────────────────────────────────────────────
-
 public fun compute_handover_settlement<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     boundary_ms: u64,
@@ -674,15 +613,11 @@ public fun compute_tenure_settlement<Asset: key + store, CoinType>(
     (monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
-// ─── Earnings views ──────────────────────────────────────────────────────────
-
 public fun owner_balance<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     monetary::stake_mist(asset_state::proj_owner_balance(read_core(escrow)))
 }
-
-// ─── Config views ────────────────────────────────────────────────────────────
 
 public fun integration_config<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
@@ -747,8 +682,6 @@ public fun ascending_price_function_state<Asset: key + store, CoinType>(
     *config::proj_price_function_state(cfg(escrow))
 }
 
-// ─── Tenure policy views ──────────────────────────────────────────────────────
-
 public fun tenure_ceiling_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
     tenure_policy_state::proj_is_fixed(config::proj_tenure_ceiling(cfg(escrow)))
 }
@@ -769,8 +702,6 @@ public fun tenure_ceiling_range_max_ms<Asset: key + store, CoinType>(escrow: &Es
     tenure_policy_state::proj_range_max(config::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
-// ─── Floor price policy views ─────────────────────────────────────────────────
-
 public fun min_rent_price_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
     floor_price_policy_state::proj_is_fixed(config::proj_min_rent_price(cfg(escrow)))
 }
@@ -790,8 +721,6 @@ public fun min_rent_price_range_min_mist<Asset: key + store, CoinType>(escrow: &
 public fun min_rent_price_range_max_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
     floor_price_policy_state::proj_range_max(config::proj_min_rent_price(cfg(escrow))).map!(|v| monetary::price_mist(v))
 }
-
-// ─── Credit curve views ───────────────────────────────────────────────────────
 
 public fun credit_curve_is_linear<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
     curve::proj_is_linear(config::proj_credit_curve(cfg(escrow)))
@@ -829,8 +758,6 @@ public fun credit_curve_exponential_alpha_neg<Asset: key + store, CoinType>(escr
     curve::proj_exponential_alpha_neg(config::proj_credit_curve(cfg(escrow)))
 }
 
-// ─── Descent curve views ──────────────────────────────────────────────────────
-
 public fun descent_curve_is_linear<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
     curve::proj_is_linear(config::proj_descent_curve(cfg(escrow)))
 }
@@ -867,8 +794,6 @@ public fun descent_curve_exponential_alpha_neg<Asset: key + store, CoinType>(esc
     curve::proj_exponential_alpha_neg(config::proj_descent_curve(cfg(escrow)))
 }
 
-// ─── Price function views ─────────────────────────────────────────────────────
-
 public fun price_fn_is_fixed_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
     price_function_state::proj_is_fixed_delta(config::proj_price_function_state(cfg(escrow)))
 }
@@ -895,9 +820,6 @@ public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &
 
 // === Private Functions ===
 
-/// Extract the lifecycle state for mutation. Aborts `EAssetBorrowed`
-/// if the state is `None` (i.e. the asset is currently on loan), giving a
-/// meaningful error instead of an opaque `EOPTION_NOT_SET` abort.
 fun take_state<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
 ): AssetState<Asset, CoinType> {
@@ -912,7 +834,6 @@ fun put_state<Asset: key + store, CoinType>(
     escrow.state.fill(new_state)
 }
 
-/// Borrow the lifecycle state for reading. Same guard as `take_state`.
 fun read_state<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &AssetState<Asset, CoinType> {
@@ -1065,3 +986,4 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     let new_state = asset_state::fire_do_auction_expiry_for_testing(state, escrow.core.borrow_mut(), boundary, &mut generator);
     put_state(escrow, new_state);
 }
+

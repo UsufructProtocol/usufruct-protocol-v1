@@ -52,8 +52,6 @@ public fun new_compound_delta(bps: BasisPoints, delta: Price): PriceFunctionStat
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_fixed_delta(p: &PriceFunctionState): bool {
     match (p) { PriceFunctionState::FixedDelta { .. } => true, _ => false }
 }
@@ -89,19 +87,12 @@ public(package) fun evaluate_price_fn(
 
 // === Private Functions ===
 
-/// Guards against EMulDivOverflow: mul_div(price, denom + bps, denom) overflows
-/// when price = u64::MAX and bps ≥ 1. Upper bound = u64::MAX − BPS_DENOMINATOR.
 fun bps_upper(): u64 { u64::max_value!() - math::bps_denominator() }
 
 fun eval_fixed_delta(price: Price, delta: Price): Price {
     monetary::price_add(price, delta)
 }
 
-/// price × (1 + bps/10_000) + delta  =  mul_div(price, 10_000 + bps, 10_000) + delta
-///
-/// Uses mul_div so that overflow detection happens inside math (EMulDivOverflow) rather
-/// than as an arithmetic trap in this module. The overflow site must be in math for the
-/// test contract to hold — math::mul_div asserts res ≤ u64::MAX before casting.
 fun eval_compound_delta(price: Price, bps: BasisPoints, delta: Price): Price {
     let denom = math::bps_denominator();
     let scaled = math::mul_div(monetary::price_mist(price), denom + math::bps_value(bps), denom);
@@ -138,3 +129,4 @@ public fun compound_delta_fields_for_testing(price_fn: &PriceFunctionState): (u6
         _ => abort ENotCompoundDelta,
     }
 }
+

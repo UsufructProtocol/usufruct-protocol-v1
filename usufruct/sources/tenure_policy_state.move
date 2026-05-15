@@ -44,8 +44,6 @@ public fun new_random_in_range(min: Duration, max: Duration): TenurePolicyState 
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_fixed(policy: &TenurePolicyState): bool {
     match (policy) { TenurePolicyState::Fixed { .. } => true, _ => false }
 }
@@ -79,9 +77,6 @@ public(package) fun proj_range_max(policy: &TenurePolicyState): Option<Duration>
 
 // === Package Functions ===
 
-/// Returns the minimum possible ceiling for SDK views and cross-field validation.
-/// Fixed: the fixed ceiling. RandomInRange: the minimum of the range (conservative).
-/// Countdown handover floor must be < min_ceiling to hold for all draws.
 public(package) fun min_ceiling(policy: &TenurePolicyState): Duration {
     match (policy) {
         TenurePolicyState::Fixed { ceiling }           => *ceiling,
@@ -89,9 +84,6 @@ public(package) fun min_ceiling(policy: &TenurePolicyState): Duration {
     }
 }
 
-/// Resolves the policy to a concrete Duration.
-/// Fixed: returns the fixed ceiling (generator unused).
-/// RandomInRange: draws uniformly from [min, max].
 public(package) fun resolve(policy: &TenurePolicyState, generator: &mut RandomGenerator): Duration {
     match (policy) {
         TenurePolicyState::Fixed { ceiling } => *ceiling,
@@ -113,3 +105,4 @@ public(package) fun resolve(policy: &TenurePolicyState, generator: &mut RandomGe
 public fun e_duration_zero(): u64 { EDurationZero }
 #[test_only]
 public fun e_min_not_lt_max(): u64 { EMinNotLtMax }
+

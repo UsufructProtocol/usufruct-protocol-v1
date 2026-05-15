@@ -18,9 +18,6 @@ const BPS_DENOMINATOR: u64 = 10_000;
 
 // === Structs ===
 
-/// A rate expressed in basis points (1/10_000 units).
-/// Generic mathematical concept — one basis point = 0.01%.
-/// Domain modules validate their own invariants before constructing.
 public struct BasisPoints has copy, drop, store { bps: u64 }
 
 // === Events ===
@@ -35,17 +32,12 @@ public struct BasisPoints has copy, drop, store { bps: u64 }
 
 // === Package Functions ===
 
-/// Construct a `BasisPoints` from a raw value. No range validation —
-/// domain modules assert their own invariants before constructing.
 public(package) fun bps(value: u64): BasisPoints { BasisPoints { bps: value } }
 
-/// Raw basis point value — for SDK projection and test assertions.
 public(package) fun bps_value(rate: BasisPoints): u64 { rate.bps }
 
-/// The fixed denominator for all basis point calculations.
 public(package) fun bps_denominator(): u64 { BPS_DENOMINATOR }
 
-/// Apply a basis point rate to an amount: `amount × rate / 10_000`.
 public(package) fun apply_bps(amount: u64, rate: BasisPoints): u64 {
     mul_div(amount, rate.bps, BPS_DENOMINATOR)
 }
@@ -58,7 +50,6 @@ public(package) fun mul_div(a: u64, b: u64, c: u64): u64 {
 }
 
 public(package) fun nth_root_u128(n: u128, d: u32): u128 {
-    // Overflow analysis covers d ∈ {2,3,4} only; d ≥ 5 silently returns floor(n^(1/4)).
     assert!(d >= 2 && d <= 4, ENthRootBadDegree);
     if (n == 0) return 0;
     if (n == 1) return 1;
@@ -84,8 +75,6 @@ public(package) fun nth_root_u128(n: u128, d: u32): u128 {
 
 // === Private Functions ===
 
-// Number of bits needed to represent x (= floor(log2(x)) + 1 for x >= 1).
-// Only called for x >= 2; the +1 at the end is always valid.
 fun bit_length(x: u128): u32 {
     let mut len: u32 = 0;
     let mut v = x;
@@ -100,3 +89,4 @@ fun bit_length(x: u128): u32 {
 }
 
 // === Test Functions ===
+

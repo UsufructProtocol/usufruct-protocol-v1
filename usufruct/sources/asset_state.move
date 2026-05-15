@@ -1,24 +1,6 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-/// Lifecycle FSM for an integrated escrow.
-///
-/// `AssetState` is a 5-variant enum (`Idle` / `AtDutch` / `Retired` /
-/// `Occupied` / `Demand`) carrying exactly the fields each state needs —
-/// "make illegal states unrepresentable" at the storage layer. `EscrowCore`
-/// holds everything orthogonal to the lifecycle: owner ledger, policies,
-/// identities, integration metadata. Together they form the on-disk shape
-/// of a shared `Escrow`.
-///
-/// `RentingState` narrows `AssetState` to the `Occupied | Demand` subset
-/// where borrowing is valid. It travels inside `AssetReceipt` between
-/// `execute_borrow` and `execute_return`, so the compiler can guarantee
-/// the return match is exhaustive — no `_ => abort` needed.
-/// The non-drop fields (`Tenant<C>`, `AssetCustody*`) give hot-potato
-/// discipline for free — no separate operation-time enum is needed.
-///
-/// All nested enum types must co-reside: Move 2024 restricts pattern
-/// access to the defining module.
 module usufruct::asset_state;
 
 // === Imports ===
@@ -81,28 +63,16 @@ const PROTOCOL_FEE_BPS: u64 = 1_000;
 
 // === Structs ===
 
-/// Proof of borrow — hot-potato, no abilities. Minted by `execute_borrow`
-/// and consumed by `execute_return`. Carries:
-///   · `identity`  — escrow + asset IDs for cross-object verification
-///   · `renting`   — the `Occupied | Demand` state extracted from the escrow,
-///                   so `execute_return` is exhaustively typed; no `_ => abort`.
-/// Receipt creation and verification are protocol concerns; `asset.move`
-/// (pure custody) is unaware of them.
 public struct AssetReceipt<Asset: key + store, phantom CoinType> {
     identity: AssetIdentity,
     renting:  RentingState<Asset, CoinType>,
 }
 
-/// Result of splitting a credit amount into owner earnings and protocol fee.
-/// Named fields prevent positional swap between the two semantically distinct
-/// monetary roles.
 public struct FeeAllocation has drop {
     owner_share:  Stake,
     protocol_fee: Stake,
 }
 
-/// The 4 resolved parameters drawn at Idle entry. Travel as an immutable
-/// unit through the cycle until the next Idle entry re-draws them.
 public struct CycleParams has copy, drop, store {
     floor:    Price,
     ceiling:  Duration,
@@ -110,8 +80,6 @@ public struct CycleParams has copy, drop, store {
     descent:  Duration,
 }
 
-/// Scheduled time allocation for the active tenancy.
-/// ceiling_total and handover_total are cycle.ceiling/handover × committed_cycles.
 public struct TenancySchedule has copy, drop, store {
     phase_start:      Timestamp,
     ceiling_total:    Duration,
@@ -119,43 +87,32 @@ public struct TenancySchedule has copy, drop, store {
     committed_cycles: Cycles,
 }
 
-/// Handover window terms for a pending bid.
 public struct HandoverTerms has copy, drop, store {
     expiry: Timestamp,
     cycles: Cycles,
 }
 
-/// Dutch-auction context: the price the last tenant paid and when the
-/// auction started. Together they drive the descending price curve and
-/// the expiry boundary.
 public struct AuctionTerms has copy, drop, store {
     last_acq_price: Price,
     phase_start:    Timestamp,
 }
 
-/// Active integration config plus any pending replacement scheduled for
-/// the next Idle entry. Pending is applied and cleared in do_auction_expiry.
 public struct ConfigSlot has drop, store {
     active:  IntegrationConfig,
     pending: Option<IntegrationConfig>,
 }
 
-/// Commitment policy bound to its anchor timestamp. Both fields are
-/// required to evaluate whether the commitment floor has elapsed.
 public struct CommitmentSlot has copy, drop, store {
     policy: CommitmentPolicyState,
     anchor: Timestamp,
 }
 
-/// Active tenancy data: who is renting, on what schedule, and whether retire is pending.
-/// Exists only when there is an active tenant (Occupied / Demand states).
 public struct OccupiedTerms<phantom CoinType> has store {
     schedule: TenancySchedule,
     current:  Tenant<CoinType>,
     retire:   RetireCondition,
 }
 
-/// Pending bid data: who is bidding and when they take over.
 public struct DemandTerms<phantom CoinType> has store {
     pending:  Tenant<CoinType>,
     handover: HandoverTerms,
@@ -172,9 +129,6 @@ public struct EscrowCore<phantom CoinType> has store {
 
 // === Enums ===
 
-/// The `Occupied | Demand` slice of `AssetState`. Travels inside
-/// `AssetReceipt` so that `execute_return` can match exhaustively —
-/// no `_ => abort` is needed. Hot-potato-like: no abilities.
 public enum RentingState<Asset: key + store, phantom CoinType> {
     Occupied { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
     Demand   { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
@@ -236,11 +190,6 @@ public struct CommitmentExtended has copy, drop {
     timestamp_ms:  u64,
 }
 
-/// Boundary lifecycle events: `AssetIntegrated` marks Bootstrap → Idle
-/// (one-shot, fired by `execute_integrate`); `AssetClaimed` marks
-/// Retired → Destroyed (terminal, fired by `execute_claim`'s Retired
-/// arm). They bracket the on-chain lifetime of the shared `Escrow`
-/// object.
 public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
@@ -539,7 +488,6 @@ public(package) fun proj_handover_expiry<Asset: key + store, CoinType>(
     }
 }
 
-/// Returns the total (scaled) ceiling duration for the active tenancy.
 public(package) fun proj_resolved_ceiling<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {
@@ -550,7 +498,6 @@ public(package) fun proj_resolved_ceiling<Asset: key + store, CoinType>(
     }
 }
 
-/// Returns the total (scaled) handover duration for the active tenancy.
 public(package) fun proj_resolved_handover<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {
@@ -702,7 +649,6 @@ public(package) fun used_credit_at<Asset: key + store, CoinType>(
     }
 }
 
-/// Typed settlement for a handover boundary: (remaining_credit, owner_share, protocol_fee).
 public(package) fun proj_handover_settlement<Asset: key + store, CoinType>(
     s:    &AssetState<Asset, CoinType>,
     core: &EscrowCore<CoinType>,
@@ -718,7 +664,6 @@ public(package) fun proj_handover_settlement<Asset: key + store, CoinType>(
     )
 }
 
-/// Typed settlement for a tenure expiry: (owner_share, protocol_fee).
 public(package) fun proj_tenure_settlement<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): (Stake, Stake) {
@@ -757,10 +702,6 @@ public(package) fun cap_is_stale<Asset: key + store, CoinType>(
     !cap_is_current(s, cap) && !cap_is_pending(s, cap)
 }
 
-/// Read-only peek: does the on-disk state have a transition due at `now`?
-/// Idle and Retired never produce a pending — they sit outside the APT
-/// machinery by construction. Used for the SDK view in escrow.move which
-/// only borrows the state.
 public(package) fun next_pending<Asset: key + store, CoinType>(
     s:     &AssetState<Asset, CoinType>,
     clock: &Clock,
@@ -798,12 +739,6 @@ public(package) fun bps_denominator():  u64 { math::bps_denominator() }
 
 // === Package Functions ===
 
-/// Bootstrap → Idle: the integration action. Mints the `OwnerCap`,
-/// builds the two on-disk slots (`EscrowCore` + `AssetState::Idle`),
-/// resolves the initial policy values, and emits both
-/// `IntegrationConfigRegistered` and `AssetIntegrated`. The caller
-/// (`escrow::integrate`) is left with the Sui-imposed boundary: create
-/// the `UID`, wrap the slots in the `Escrow` struct, and share it.
 public(package) fun execute_integrate<Asset: key + store, CoinType>(
     asset:              Asset,
     config:             IntegrationConfig,
@@ -847,15 +782,6 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     (core, state, owner_cap)
 }
 
-/// Applies every APT transition whose boundary has been crossed,
-/// following the fixed acyclic chain:
-///
-///   Demand → Occupied → AtDutch | Retired → Idle
-///
-/// Each step fires at most once; at most three transitions execute per
-/// call. Termination is structural: the chain has no cycles and each
-/// step recognises only its own source variant, passing all others
-/// through unchanged.
 public(package) fun execute_apply_pending_transition_states<Asset: key + store, CoinType>(
     s:      AssetState<Asset, CoinType>,
     core:   &mut EscrowCore<CoinType>,
@@ -869,22 +795,6 @@ public(package) fun execute_apply_pending_transition_states<Asset: key + store, 
     step_auction_expiry(s, core, random, now, ctx)
 }
 
-/// Entry-point dispatcher for rent. Five arms, all reachable from the
-/// public API:
-///   · Retired → abort `ERetiredNoBid` (was structurally unreachable in
-///     the legacy form because `floor_price_at` aborted first; now floor
-///     is computed per-arm and the abort is the genuine consequence of
-///     calling rent on a retired escrow).
-///   · Idle    → install (`do_install`) → Occupied.
-///   · AtDutch → install (`do_install`) → Occupied. Floor is the
-///     descending Dutch price at `now`.
-///   · Occupied → place bid (`do_place_bid`) → Demand. Aborts
-///     `ERetireFlagBlocksBid` if the tenancy is flagged for retirement.
-///   · Demand   → supersede bid (`do_supersede_bid`) → Demand. Mutates
-///     `core.owner` to distribute the displaced bidder's refund.
-///
-/// Cycle validation against the integration config is the first check —
-/// it does not depend on lifecycle state.
 public(package) fun execute_rent<Asset: key + store, CoinType>(
     s:       AssetState<Asset, CoinType>,
     core:    &mut EscrowCore<CoinType>,
@@ -933,26 +843,6 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     }
 }
 
-/// Entry-point dispatcher for retire. Five arms, all reachable from the
-/// public API:
-///   · Retired  → abort `EAlreadyRetired`.
-///   · Idle     → `do_retire_immediately` on the locked custody → Retired.
-///   · AtDutch  → `do_retire_immediately` on the locked custody → Retired.
-///                The descending-auction parameters are dropped — they
-///                belong to a tenancy cycle that ends with this action.
-///   · Occupied → set retiring flag → Occupied. The asset can still be
-///                borrowed/returned during the grace period; the flag
-///                prevents new bids and triggers Retired at the next
-///                tenure expiry.
-///   · Demand   → set retiring flag → Demand. Same semantics; the
-///                active handover countdown is unaffected.
-///
-/// Owner-cap binding is checked first. The commitment policy must be
-/// unlocked (`ECommitmentFloorNotElapsed`) regardless of state — it is a
-/// property of the owner's permanence commitment, not the lifecycle.
-///
-/// `pending_config` is cleared unconditionally: any scheduled config
-/// change is abandoned by the decision to retire.
 public(package) fun execute_retire<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      &mut EscrowCore<CoinType>,
@@ -988,23 +878,6 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     }
 }
 
-/// Entry-point dispatcher for update_config. Five arms, all reachable
-/// from the public API:
-///   · Retired  → abort `EAlreadyRetired`.
-///   · Idle     → apply the new config immediately: re-resolve floor /
-///                ceiling / handover with fresh randomness and replace
-///                the Idle resolutions. Emits `ConfigUpdated`.
-///   · AtDutch  → schedule the new config (`pending_config`); the
-///                descending auction in flight is allowed to complete
-///                under the old parameters. Emits `ConfigUpdateScheduled`.
-///   · Occupied → schedule the new config. Aborts
-///                `ERetireAlreadyScheduled` if the retire flag is set —
-///                a pending retire takes precedence over a pending
-///                config change.
-///   · Demand   → schedule the new config. Same retire-flag guard.
-///
-/// `random` is only consumed in the Idle arm (the only place that
-/// re-resolves policy values immediately).
 public(package) fun execute_update_config<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      &mut EscrowCore<CoinType>,
@@ -1050,15 +923,6 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     }
 }
 
-/// Tenant-gated asset borrow. Auth and action fused into a single match:
-/// each renting arm authorizes via `assert_borrow_authorized` then takes
-/// the asset. The `_s` arm covers Idle / AtDutch / Retired — states that
-/// carry no open custody and therefore have no cap to match.
-/// Extract the `RentingState` into the receipt so `execute_return`
-/// can match exhaustively. `escrow.state` is left `None` by the
-/// caller (`escrow::borrow_asset`) until `execute_return` fills it back;
-/// the gap is invisible to external observers because borrow+return are
-/// atomic within a single PTB.
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       &mut EscrowCore<CoinType>,
@@ -1104,10 +968,6 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     }
 }
 
-/// Reconstruct `AssetState` from the receipt's `RentingState`. The match
-/// is exhaustive — no `_ => abort`. The compiler guarantees that if the
-/// caller holds an `AssetReceipt<Asset, CoinType>`, the renting state is
-/// either `Occupied` or `Demand`; no other branch is representable.
 public(package) fun execute_return<Asset: key + store, CoinType>(
     receipt_in: AssetReceipt<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
@@ -1141,23 +1001,6 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     }
 }
 
-/// Entry-point dispatcher for burning a stale TenantCap (gas recovery).
-///
-/// Two invariants are enforced together — neither alone is sufficient:
-///
-///   1. The cap must have been issued by THIS escrow
-///      (`EWrongEscrowTenantCap`). Without this guard, a Retired escrow
-///      could be used as a "burn machine" for caps issued by other
-///      escrows, including caps that are still `current`/`pending`
-///      there — silently breaking invariant 2 on a foreign escrow.
-///
-///   2. The cap must not be `current` or `pending` of an active tenancy
-///      (`ETenantCapNotStale`). Only stale caps may be burned, so that
-///      live tenancy references are never destroyed.
-///
-/// In Idle/AtDutch/Retired the second guard is satisfied structurally —
-/// Tenant-cap gas-recovery burn. Active caps (current or pending) abort
-/// `ETenantCapNotStale`; stale caps burn unconditionally.
 public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
     s:      AssetState<Asset, CoinType>,
     core:   &mut EscrowCore<CoinType>,
@@ -1185,10 +1028,6 @@ public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
     s
 }
 
-/// Owner-gated earnings withdrawal. Operates on the core handoff
-/// (owner + envelope) — orthogonal to the lifecycle state, so no
-/// dispatch match is needed. The caller is responsible for routing
-/// `core` from the dispatch boundary.
 public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      &mut EscrowCore<CoinType>,
@@ -1207,11 +1046,6 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     (s, coin)
 }
 
-/// Extend the owner's permanence commitment. The new expiry must be ≥ the
-/// current expiry — the commitment can only grow, never shrink.
-///
-/// Operates on the core handoff: commitment_policy + commitment_anchor
-/// live in the envelope, orthogonal to the lifecycle state.
 public(package) fun execute_extend_commitment<CoinType>(
     core:       &mut EscrowCore<CoinType>,
     owner_cap:  &OwnerCap,
@@ -1242,18 +1076,6 @@ public(package) fun execute_extend_commitment<CoinType>(
     core.commitment.anchor = now;
 }
 
-/// Retired → Destroyed: the terminal claim action. The Retired arm
-/// unwraps the locked asset and the swept owner earnings, emits
-/// `AssetClaimed`, and returns. The other four arms abort `ENotRetired`
-/// after consuming the hot-potatoes inline — the abort is reachable
-/// from the public API (caller invoked claim while the escrow was in
-/// the wrong lifecycle state) and is what `expected_failure` tests
-/// exercise.
-///
-/// Lives here (not in escrow.move) because Move 2024 restricts pattern
-/// access to the defining module — the wrong-state arms have to
-/// destructure `AssetState` and `EscrowCore` before aborting, and that
-/// destructure must happen inside this module.
 public(package) fun execute_claim<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     mut core:  EscrowCore<CoinType>,
@@ -1319,8 +1141,6 @@ fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timest
     )
 }
 
-/// `pending` distinguishes a pending-bidder cap (EPendingTenantCap) from
-/// any other non-matching cap (EStaleTenantCap).
 fun assert_borrow_authorized(
     cap:     TenantCapIdentity,
     current: TenantCapIdentity,
@@ -1331,9 +1151,6 @@ fun assert_borrow_authorized(
     abort EStaleTenantCap;
 }
 
-/// Two independent receipt checks — two distinct attacks:
-///   1. cross-escrow:  receipt issued by escrow A, presented to escrow B
-///   2. asset-swap:    correct receipt but a different physical object returned
 fun assert_return_valid<Asset: key + store>(
     identity:  &AssetIdentity,
     asset_in:  &Asset,
@@ -1352,8 +1169,6 @@ fun split_fee(amount: Stake): FeeAllocation {
     }
 }
 
-/// Demand → Occupied: fire the handover transition at `boundary_ms`.
-/// Distributes used credit to owner; retiring flag propagates to new Occupied.
 fun do_handover<Asset: key + store, CoinType>(
     asset:              asset::AssetCustodyOpen<Asset>,
     terms:              OccupiedTerms<CoinType>,
@@ -1424,11 +1239,6 @@ fun do_handover<Asset: key + store, CoinType>(
     }
 }
 
-/// Consume an Occupied tenancy at tenure expiry. Distributes full stake
-/// to owner/protocol and decides the outcome from the retire condition:
-///   · flag set   → `Retired` (the locked asset is all the caller needs).
-///   · flag unset → `AtDutch` (cycle params carried unchanged; no rescaling
-///     needed since cycle.ceiling/handover are already per-cycle base values).
 fun do_tenure_expiry<Asset: key + store, CoinType>(
     asset:              asset::AssetCustodyOpen<Asset>,
     terms:              OccupiedTerms<CoinType>,
@@ -1479,7 +1289,6 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     }
 }
 
-/// Occupied → Demand.
 fun do_place_bid<Asset: key + store, CoinType>(
     asset:           asset::AssetCustodyOpen<Asset>,
     terms:           OccupiedTerms<CoinType>,
@@ -1528,7 +1337,6 @@ fun do_place_bid<Asset: key + store, CoinType>(
     )
 }
 
-/// Demand → Demand: displace the existing pending bidder.
 fun do_supersede_bid<Asset: key + store, CoinType>(
     asset:              asset::AssetCustodyOpen<Asset>,
     terms:              OccupiedTerms<CoinType>,
@@ -1604,8 +1412,6 @@ fun proj_auction_is_firable(auction: &AuctionTerms, cycle: &CycleParams, now: Ti
     descent_policy_state::has_expired(cycle.descent, auction.phase_start, now).is_crossed()
 }
 
-/// Step 1 of 3: Demand → Occupied if the handover countdown has elapsed.
-/// Every other variant passes through unchanged.
 fun step_handover<Asset: key + store, CoinType>(
     s:    AssetState<Asset, CoinType>,
     core: &mut EscrowCore<CoinType>,
@@ -1630,8 +1436,6 @@ fun step_handover<Asset: key + store, CoinType>(
     }
 }
 
-/// Step 2 of 3: Occupied → AtDutch | Retired if the tenure ceiling has elapsed.
-/// Every other variant passes through unchanged.
 fun step_tenure_expiry<Asset: key + store, CoinType>(
     s:    AssetState<Asset, CoinType>,
     core: &mut EscrowCore<CoinType>,
@@ -1655,8 +1459,6 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
     }
 }
 
-/// Step 3 of 3: AtDutch → Idle if the descent window has elapsed.
-/// Every other variant passes through unchanged.
 fun step_auction_expiry<Asset: key + store, CoinType>(
     s:      AssetState<Asset, CoinType>,
     core:   &mut EscrowCore<CoinType>,
@@ -1727,11 +1529,6 @@ fun do_install<Asset: key + store, CoinType>(
     )
 }
 
-/// AtDutch → Idle. The lifecycle invariant says all `resolved_*` are
-/// drawn at Idle entry; this is the auction-expiry instance of that
-/// rule. If `pending_config` was scheduled during the previous cycle it
-/// is applied now (emit `ConfigUpdated` → assign → clear) BEFORE the
-/// four resolves, so the new Idle reflects the new config.
 fun do_auction_expiry<Asset: key + store, CoinType>(
     asset:           asset::AssetCustodyLocked<Asset>,
     auction:         AuctionTerms,
@@ -1905,8 +1702,6 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
                 handover_total:   cycle.handover,
                 committed_cycles: cycles::cycles(1),
             };
-            // tenant_in is consumed only on the happy path; the abort arms
-            // below leave it to drop with the divergent abort.
             AssetState::Occupied {
                 asset: asset::open_tenancy(asset),
                 terms: OccupiedTerms { schedule, current: tenant_in, retire: retire_condition::new() },
@@ -2006,15 +1801,6 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     }
 }
 
-/// Test-only accessors: the four cycle-resident `resolved_*` values
-/// read from any non-Retired variant. The SDK views deliberately
-/// expose only the phase-appropriate readings (e.g.
-/// `proj_waiting_resolved_descent` returns Some only on Idle/AtDutch —
-/// the auction-descent semantic); these helpers exist so invariant
-/// tests can verify the four flow unchanged through Occupied/Demand.
-/// In Occupied/Demand the ceiling/handover values are read from
-/// `cycle` (per-cycle base). Tests that compare across Idle ↔ Renting
-/// use `cycles::cycles(1)` so the scaled total equals the base.
 #[test_only]
 public(package) fun proj_resolved_descent_for_testing<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
@@ -2090,3 +1876,4 @@ public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(
 ) {
     sui::test_utils::destroy(r);
 }
+

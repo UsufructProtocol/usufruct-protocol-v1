@@ -49,8 +49,6 @@ public fun new_handover_random_in_range(min: Duration, max: Duration): HandoverP
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_instant(policy: &HandoverPolicyState): bool {
     match (policy) { HandoverPolicyState::Instant => true, _ => false }
 }
@@ -86,8 +84,6 @@ public(package) fun proj_range_max(policy: &HandoverPolicyState): Option<Duratio
 
 // === Package Functions ===
 
-/// Cross-field guard: the maximum possible handover floor must be < tenure ceiling,
-/// so the constraint holds for every possible draw.
 public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: Duration): bool {
     match (policy) {
         HandoverPolicyState::Countdown { floor }       => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
@@ -96,13 +92,6 @@ public(package) fun countdown_floor_lt(policy: &HandoverPolicyState, ceiling: Du
     }
 }
 
-/// Resolve the policy to a concrete Duration (the effective handover floor).
-/// Stored once per Idle cycle in TenancyContext; never re-read from config during a tenancy.
-///
-///   Instant          → Duration(0)   expiry = min(bid + 0,       ...) = bid_time
-///   FixedTime        → ceiling       expiry = min(bid + C, t₀ + C) = t₀ + C
-///   Countdown(f)     → f             expiry = min(bid + f, t₀ + C)
-///   RandomInRange    → draw[min,max] expiry = min(bid + draw, t₀ + C)
 public(package) fun resolve(
     policy:    &HandoverPolicyState,
     ceiling:   Duration,
@@ -121,9 +110,6 @@ public(package) fun resolve(
     }
 }
 
-/// Whether the handover countdown has expired — called with the resolved floor
-/// drawn at Idle entry. Uniform formula across all policy variants:
-///   expiry = min(bid_time + resolved_floor, phase_start + resolved_ceiling)
 public(package) fun has_expired(
     resolved_floor:   Duration,
     resolved_ceiling: Duration,
@@ -141,7 +127,6 @@ public(package) fun has_expired(
     )
 }
 
-/// Canonical handover boundary timestamp — called with the resolved floor.
 public(package) fun expiry_at(
     resolved_floor:   Duration,
     resolved_ceiling: Duration,
@@ -162,3 +147,4 @@ public(package) fun expiry_at(
 public fun e_handover_floor_zero(): u64 { EHandoverFloorZero }
 #[test_only]
 public fun e_min_not_lt_max(): u64 { EMinNotLtMax }
+

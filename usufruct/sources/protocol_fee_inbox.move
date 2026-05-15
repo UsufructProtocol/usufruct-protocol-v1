@@ -29,8 +29,6 @@ public struct ProtocolFeeInbox has key, store {
 
 // === Package Functions ===
 
-/// Exposes `&mut UID` of `ProtocolFeeInbox` so `fee_message` can call
-/// `transfer::receive` against it.
 public(package) fun uid_mut(inbox: &mut ProtocolFeeInbox): &mut UID {
     &mut inbox.id
 }
@@ -49,3 +47,4 @@ fun init(ctx: &mut TxContext) {
 public fun init_for_testing(ctx: &mut TxContext) {
     init(ctx)
 }
+

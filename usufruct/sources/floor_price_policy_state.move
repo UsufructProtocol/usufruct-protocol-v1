@@ -44,8 +44,6 @@ public fun new_random_in_range(min: Price, max: Price): FloorPricePolicyState {
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_fixed(policy: &FloorPricePolicyState): bool {
     match (policy) { FloorPricePolicyState::Fixed { .. } => true, _ => false }
 }
@@ -79,8 +77,6 @@ public(package) fun proj_range_max(policy: &FloorPricePolicyState): Option<Price
 
 // === Package Functions ===
 
-/// Returns the floor price for SDK views and Dutch auction descent bottom.
-/// Fixed: the fixed price. RandomInRange: the minimum of the range (conservative).
 public(package) fun floor_for_view(policy: &FloorPricePolicyState): Price {
     match (policy) {
         FloorPricePolicyState::Fixed { price }           => *price,
@@ -88,9 +84,6 @@ public(package) fun floor_for_view(policy: &FloorPricePolicyState): Price {
     }
 }
 
-/// Resolves the policy to a concrete Price.
-/// Fixed: returns the fixed price (generator unused).
-/// RandomInRange: draws uniformly from [min, max].
 public(package) fun resolve(policy: &FloorPricePolicyState, generator: &mut RandomGenerator): Price {
     match (policy) {
         FloorPricePolicyState::Fixed { price } => *price,
@@ -110,3 +103,4 @@ public(package) fun resolve(policy: &FloorPricePolicyState, generator: &mut Rand
 
 #[test_only]
 public fun destroy_for_testing(_policy: FloorPricePolicyState) {}
+

@@ -19,7 +19,6 @@ public struct TenantCap has key, store {
     escrow_identity: EscrowIdentity,
 }
 
-/// Typed identity of a `TenantCap` object — wraps its on-chain `ID`.
 public struct TenantCapIdentity has copy, drop, store { id: ID }
 
 // === Events ===
@@ -42,7 +41,6 @@ public struct TenantCapBurned has copy, drop {
 
 // === View Functions ===
 
-/// Returns the ID of the `RentalEscrow` this cap was minted for (SDK boundary).
 public fun proj_escrow_id(cap: &TenantCap): ID {
     escrow_identity::escrow_id(cap.escrow_identity)
 }
@@ -51,24 +49,18 @@ public fun proj_escrow_id(cap: &TenantCap): ID {
 
 // === Package Functions ===
 
-/// Produce a typed `TenantCapIdentity` from a live cap reference.
 public(package) fun identity(cap: &TenantCap): TenantCapIdentity {
     TenantCapIdentity { id: object::id(cap) }
 }
 
-/// Extract the raw `ID` from a `TenantCapIdentity`.
 public(package) fun cap_id(t: TenantCapIdentity): ID { t.id }
 
-/// Wrap a raw `ID` known to belong to a `TenantCap` into a typed identity.
-/// Used at SDK boundary entry points that receive raw IDs from callers.
 public(package) fun from_id(id: ID): TenantCapIdentity { TenantCapIdentity { id } }
 
-/// Package-internal: return the `EscrowIdentity` this cap is bound to.
 public(package) fun proj_escrow_identity(cap: &TenantCap): EscrowIdentity {
     cap.escrow_identity
 }
 
-/// Pure constructor. Builds the cap, emits `TenantCapMinted`, returns cap by value.
 public(package) fun new(
     escrow_identity: EscrowIdentity,
     tenant:          address,
@@ -80,7 +72,6 @@ public(package) fun new(
     cap
 }
 
-/// Destroys `cap` by value and emits `TenantCapBurned`.
 public(package) fun burn(cap: TenantCap, ctx: &TxContext) {
     let TenantCap { id, escrow_identity } = cap;
     let tenant_cap_id = object::uid_to_inner(&id);
@@ -111,3 +102,4 @@ public fun burned_tenant(e: &TenantCapBurned): address { e.tenant }
 public fun mint_then_burn_for_testing(escrow_identity: EscrowIdentity, tenant: address, ctx: &mut TxContext) {
     burn(new(escrow_identity, tenant, ctx), ctx);
 }
+

@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-/// One-way retire flag embedded in Renting-phase tenancy variants.
-/// NotRetiring → Retiring is the only legal transition; the reverse aborts.
 module usufruct::retire_condition;
 
 // === Imports ===
@@ -55,3 +53,4 @@ public(package) fun set(r: RetireCondition): RetireCondition {
 public(package) fun set_for_testing(_r: RetireCondition): RetireCondition {
     RetireCondition::Retiring
 }
+

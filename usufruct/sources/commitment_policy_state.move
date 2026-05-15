@@ -35,8 +35,6 @@ public fun new_deferred(floor: Duration): CommitmentPolicyState {
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_immediate(policy: &CommitmentPolicyState): bool {
     match (policy) { CommitmentPolicyState::Immediate => true, _ => false }
 }
@@ -54,9 +52,6 @@ public(package) fun proj_floor_ms(policy: &CommitmentPolicyState): Option<Durati
 
 // === Package Functions ===
 
-/// Resolve the policy to a concrete Duration (the unlock floor).
-///   Immediate → Duration(0)    available from integration time
-///   Deferred  → floor          available at anchor + floor
 public(package) fun resolve(policy: &CommitmentPolicyState): Duration {
     match (policy) {
         CommitmentPolicyState::Immediate          => phases::zero(),
@@ -64,12 +59,10 @@ public(package) fun resolve(policy: &CommitmentPolicyState): Duration {
     }
 }
 
-/// Absolute timestamp at which `retire()` becomes available.
 public(package) fun unlock_at(resolved: Duration, at: Timestamp): Timestamp {
     phases::boundary_at(at, resolved)
 }
 
-/// Whether `retire()` may proceed.
 public(package) fun is_unlocked(resolved: Duration, at: Timestamp, now: Timestamp): Boundary {
     phases::check_boundary(at, resolved, now)
 }
@@ -77,3 +70,4 @@ public(package) fun is_unlocked(resolved: Duration, at: Timestamp, now: Timestam
 // === Private Functions ===
 
 // === Test Functions ===
+

@@ -40,3 +40,4 @@ fun init(otw: USUFRUCT, ctx: &mut TxContext) {
 public fun init_for_testing(ctx: &mut TxContext) {
     init(USUFRUCT {}, ctx)
 }
+

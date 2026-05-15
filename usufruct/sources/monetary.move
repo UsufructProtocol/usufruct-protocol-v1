@@ -15,11 +15,8 @@ const EPriceAddOverflow: u64 = 0;
 
 // === Structs ===
 
-/// A monetary value not yet paid — a reference price, floor, or configured increment.
 public struct Price has copy, drop, store { mist: u64 }
 
-/// A monetary value already paid — collateral held by a tenant.
-/// Semantically distinct from Price: a Stake is a Price that has been actualized.
 public struct Stake has copy, drop, store { mist: u64 }
 
 // === Events ===
@@ -40,8 +37,6 @@ public(package) fun stake(mist: u64): Stake { Stake { mist } }
 public(package) fun price_mist(p: Price): u64 { p.mist }
 public(package) fun stake_mist(s: Stake): u64 { s.mist }
 
-/// Tenure expiry: the Stake paid by the last tenant becomes the acquisition
-/// reference price for the Dutch auction descent.
 public(package) fun as_reference_price(s: Stake): Price { Price { mist: s.mist } }
 
 public(package) fun price_add(a: Price, b: Price): Price {
@@ -55,3 +50,4 @@ public(package) fun stake_sub(a: Stake, b: Stake): Stake { Stake { mist: a.mist 
 // === Private Functions ===
 
 // === Test Functions ===
+

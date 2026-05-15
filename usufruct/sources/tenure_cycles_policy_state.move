@@ -33,8 +33,6 @@ public fun new_multi():  TenureCyclesPolicyState { TenureCyclesPolicyState::Mult
 
 // === View Functions ===
 
-// ### RUNTIME PROJECTION FOR SDK ###
-
 public(package) fun proj_is_single(policy: &TenureCyclesPolicyState): bool {
     match (policy) { TenureCyclesPolicyState::Single => true, _ => false }
 }
@@ -47,7 +45,6 @@ public(package) fun proj_is_multi(policy: &TenureCyclesPolicyState): bool {
 
 // === Package Functions ===
 
-/// Aborts if the owner only allows single-cycle tenancy and `cycles` > 1.
 public(package) fun validate(policy: &TenureCyclesPolicyState, cycles: Cycles) {
     match (policy) {
         TenureCyclesPolicyState::Single => assert!(cycles::is_single(cycles), EMultiCycleNotAllowed),
@@ -61,3 +58,4 @@ public(package) fun validate(policy: &TenureCyclesPolicyState, cycles: Cycles) {
 
 #[test_only]
 public fun e_multi_cycle_not_allowed(): u64 { EMultiCycleNotAllowed }
+

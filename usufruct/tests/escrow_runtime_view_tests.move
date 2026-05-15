@@ -641,3 +641,59 @@ fun cartesian_state_projector_matrix() {
 
     sc.end();
 }
+
+// ─── cap_is_* false-arm coverage ─────────────────────────────────────────────
+//
+// tenant_cap_is_current/pending/stale call the internal cap_is_* predicates.
+// The `_ => false` arms for AtDutch and Retired were uncovered because existing
+// tests only used Idle or Renting states.
+
+#[test]
+fun tenant_cap_views_in_at_dutch_state() {
+    let mut sc  = setup();
+    // h=1 Window: tenure expires → AtDutch (does not immediately collapse).
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    test_scenario::return_shared(random);
+
+    // In AtDutch: no active tenancy — any cap is stale.
+    let cap_id = object::id(&t_cap);
+    assert!(!escrow::tenant_cap_is_current(&escrow, cap_id), 1);
+    assert!(!escrow::tenant_cap_is_pending(&escrow, cap_id), 2);
+    assert!(escrow::tenant_cap_is_stale(&escrow, cap_id),   3);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+#[test]
+fun tenant_cap_views_in_retired_state() {
+    let mut sc  = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(OWNER);
+    // Drive Idle → Retired directly (no tenancy needed).
+    escrow::drive_to_retired_for_testing(&mut escrow);
+
+    // Use a synthetic cap ID — no active tenancy means any cap is stale.
+    let synthetic_id = object::id_from_address(@0xCA1);
+    assert!(!escrow::tenant_cap_is_current(&escrow, synthetic_id), 0);
+    assert!(!escrow::tenant_cap_is_pending(&escrow, synthetic_id), 1);
+    assert!(escrow::tenant_cap_is_stale(&escrow, synthetic_id),   2);
+
+    dispose_escrow(escrow, cap);
+    sc.end();
+}

@@ -104,7 +104,7 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let (new_state, coin) = asset_state::execute_withdraw_earnings(state, core, owner_cap, random, clock, ctx);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
     coin
 }
 
@@ -139,7 +139,7 @@ public fun retire<Asset: key + store, CoinType>(
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let new_state = asset_state::execute_retire(state, core, owner_cap, random, clock, ctx);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 /// Owner-gated commitment extension. New expiry must be ≥ current expiry.
@@ -164,7 +164,7 @@ public fun update_config<Asset: key + store, CoinType>(
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let new_state = asset_state::execute_update_config(state, core, owner_cap, new_cfg, random, clock, ctx);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 /// Single entry point to become tenant or place a bid.
@@ -179,7 +179,7 @@ public fun rent<Asset: key + store, CoinType>(
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let (new_state, cap) = asset_state::execute_rent(state, core, payment, cycles, random, clock, ctx);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
     cap
 }
 
@@ -210,7 +210,7 @@ public fun return_asset<Asset: key + store, CoinType>(
 ) {
     let core      = escrow.core.borrow();
     let new_state = asset_state::execute_return(receipt_in, core, asset);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 /// Burn a stale `TenantCap` for gas recovery.
@@ -224,7 +224,7 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let new_state = asset_state::execute_burn_tenant_cap(state, core, cap, random, clock, ctx);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 /// Permissionless settler.
@@ -237,7 +237,7 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
     let new_state = asset_state::execute_apply_pending_transition_states(state, core, random, clock, ctx);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 /// Detect the single transition that is due at `now`, if any.
@@ -886,6 +886,13 @@ fun take_state<Asset: key + store, CoinType>(
     escrow.state.extract()
 }
 
+fun put_state<Asset: key + store, CoinType>(
+    escrow:    &mut Escrow<Asset, CoinType>,
+    new_state: AssetState<Asset, CoinType>,
+) {
+    escrow.state.fill(new_state)
+}
+
 /// Borrow the lifecycle state for reading. Same guard as `take_state`.
 fun read_state<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
@@ -958,7 +965,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     let new_state = asset_state::drive_to_rented_for_testing(
         state, escrow.core.borrow(), tenant, phases::timestamp(phase_start_ms),
     );
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 #[test_only]
@@ -971,7 +978,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     let new_state = asset_state::drive_to_demand_for_testing(
         state, tenant, phases::timestamp(handover_countdown_expiry),
     );
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 #[test_only]
@@ -986,7 +993,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     let new_state = asset_state::drive_to_at_dutch_for_testing(
         state, escrow.core.borrow(), owner_amount, fee_amount, last_acq_price, phases::timestamp(new_phase_start_ms),
     );
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 #[test_only]
@@ -995,7 +1002,7 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let new_state = asset_state::drive_to_retired_for_testing(state);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 #[test_only]
@@ -1004,7 +1011,7 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
 ) {
     let state = take_state(escrow);
     let new_state = asset_state::drive_to_retiring_flag_for_testing(state);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 #[test_only]
@@ -1015,7 +1022,7 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let new_state = asset_state::fire_do_handover_for_testing(state, escrow.core.borrow_mut(), boundary, ctx);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 #[test_only]
@@ -1026,7 +1033,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
 ) {
     let state = take_state(escrow);
     let new_state = asset_state::fire_do_tenure_expiry_for_testing(state, escrow.core.borrow_mut(), boundary, ctx);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }
 
 #[test_only]
@@ -1037,5 +1044,5 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     let mut generator = sui::random::new_generator_from_seed_for_testing(vector[0u8, 1u8]);
     let state = take_state(escrow);
     let new_state = asset_state::fire_do_auction_expiry_for_testing(state, escrow.core.borrow_mut(), boundary, &mut generator);
-    escrow.state.fill(new_state);
+    put_state(escrow, new_state);
 }

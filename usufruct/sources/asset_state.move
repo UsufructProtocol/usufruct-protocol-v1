@@ -1139,7 +1139,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
 /// In Idle/AtDutch/Retired the second guard is satisfied structurally —
 /// Tenant-cap gas-recovery burn. Active caps (current or pending) abort
 /// `ETenantCapNotStale`; stale caps burn unconditionally.
-public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
+public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
     s:      AssetState<Asset, CoinType>,
     core:   &mut EscrowCore<CoinType>,
     cap:    TenantCap,

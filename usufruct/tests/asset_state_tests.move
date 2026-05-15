@@ -265,7 +265,7 @@ fun borrow_asset_aborts_in_retired_state() {
     sc.end();
 }
 
-// ─── execute_burn_tenant_cap invariants (C7) ─────────────────────────────────
+// ─── execute_soft_burn_tenant_cap invariants (C7) ─────────────────────────────────
 //
 // Two invariants travel together; neither alone is sufficient:
 //
@@ -306,7 +306,7 @@ fun burn_foreign_cap_in_retired_aborts() {
         sc.ctx(),
     );
 
-    escrow::burn_tenant_cap(&mut escrow, foreign, &rnd, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, foreign, &rnd, &clk, sc.ctx());
 
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
@@ -319,7 +319,7 @@ fun burn_foreign_cap_in_retired_aborts() {
 fun burn_live_current_cap_in_demand_aborts() {
     let mut sc = setup();
     // Countdown handover (c=1) — without this, the Instant handover (c=0)
-    // would fire on APT at the start of burn_tenant_cap and Demand would
+    // would fire on APT at the start of soft_burn_tenant_cap and Demand would
     // collapse to Occupied with cap_t2 as the new current, making cap_t1
     // legitimately stale.
     let (mut escrow, owner_cap) = integrate_and_take_with_cfg(
@@ -338,7 +338,7 @@ fun burn_live_current_cap_in_demand_aborts() {
     let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &rnd, &clk, sc.ctx());
 
     // Burn the live current cap — must abort.
-    escrow::burn_tenant_cap(&mut escrow, cap_t1, &rnd, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &rnd, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(owner_cap, OWNER);
@@ -368,7 +368,7 @@ fun burn_live_pending_cap_in_demand_aborts() {
     // both checks lived in the `cap_auth_for_tenancy` match; in the
     // typed-states form `pending` is a direct field of the Demand
     // storage variant, so the assert is per-arm and per-field.
-    escrow::burn_tenant_cap(&mut escrow, cap_t2, &rnd, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &rnd, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(owner_cap, OWNER);

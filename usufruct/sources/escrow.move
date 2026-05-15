@@ -213,8 +213,9 @@ public fun return_asset<Asset: key + store, CoinType>(
     put_state(escrow, new_state);
 }
 
-/// Burn a stale `TenantCap` for gas recovery.
-public fun burn_tenant_cap<Asset: key + store, CoinType>(
+/// Checked burn: cap must belong to this escrow and must be stale (not
+/// current or pending). Use for gas recovery while the escrow still exists.
+public fun soft_burn_tenant_cap<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
     cap:    TenantCap,
     random: &Random,
@@ -223,8 +224,14 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let new_state = asset_state::execute_burn_tenant_cap(state, core, cap, random, clock, ctx);
+    let new_state = asset_state::execute_soft_burn_tenant_cap(state, core, cap, random, clock, ctx);
     put_state(escrow, new_state);
+}
+
+/// Unconditional burn. No escrow needed — use for gas recovery after
+/// `claim_asset` destroys the escrow, leaving caps orphaned.
+public fun hard_burn_tenant_cap(cap: TenantCap, ctx: &mut TxContext) {
+    tenant_cap::burn(cap, ctx)
 }
 
 /// Permissionless settler.

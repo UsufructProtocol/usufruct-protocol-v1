@@ -1686,11 +1686,11 @@ fun borrow_asset_with_pending_cap_aborts() {
     sc.end();
 }
 
-// ─── §15.2 burn_tenant_cap ───────────────────────────────────────────────────
+// ─── §15.2 soft_burn_tenant_cap ───────────────────────────────────────────────────
 
 /// Stale cap (from a superseded bid) burns cleanly. Live caps abort.
 #[test]
-fun burn_tenant_cap_burns_displaced_bidder_cap() {
+fun soft_burn_tenant_cap_burns_displaced_bidder_cap() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
@@ -1710,7 +1710,7 @@ fun burn_tenant_cap_burns_displaced_bidder_cap() {
     let cap_t3 = escrow::rent(&mut escrow, p3, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Burn the stale cap_t2.
-    escrow::burn_tenant_cap(&mut escrow, cap_t2, &random, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
@@ -1722,7 +1722,7 @@ fun burn_tenant_cap_burns_displaced_bidder_cap() {
 }
 
 #[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
-fun burn_tenant_cap_on_live_current_cap_aborts() {
+fun soft_burn_tenant_cap_on_live_current_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
@@ -1732,7 +1732,7 @@ fun burn_tenant_cap_on_live_current_cap_aborts() {
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
     // cap_t1 is the live current — burn must abort.
-    escrow::burn_tenant_cap(&mut escrow, cap_t1, &random, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &random, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -1742,7 +1742,7 @@ fun burn_tenant_cap_on_live_current_cap_aborts() {
 }
 
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
-fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
+fun soft_burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
@@ -1750,7 +1750,7 @@ fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     let random = sc.take_shared<Random>();
     let foreign = tenant_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), TENANT_ADDR_1, sc.ctx());
 
-    escrow::burn_tenant_cap(&mut escrow, foreign, &random, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, foreign, &random, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -2634,7 +2634,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
     // T2's cap is stale — burn it.
-    escrow::burn_tenant_cap(&mut escrow, cap_t2, &random, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
@@ -3260,7 +3260,7 @@ fun e2e_f2_fixed_time_T3_supersedes_T2_wins_at_tenure_boundary() {
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
     // T2's cap is stale — T3 won, T2 was superseded.
-    escrow::burn_tenant_cap(&mut escrow, cap_t2, &random, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
@@ -9319,7 +9319,7 @@ fun resolve_invariant_pending_config_applies_at_auction_expiry_then_redraws() {
 /// it: `rent` (Idle→Occupied, Occupied→Demand), `borrow_asset` /
 /// `return_asset`, `extend_commitment`, `update_config` while Renting
 /// (schedules), APT for `do_handover` (Demand→Occupied) and
-/// `do_tenure_expiry` (Occupied→AtDutch), `burn_tenant_cap` on a
+/// `do_tenure_expiry` (Occupied→AtDutch), `soft_burn_tenant_cap` on a
 /// now-stale cap — asserting after each step that the four
 /// `resolved_*` (floor, ceiling, handover, descent) read identical to
 /// the values drawn at the initial Idle entry. Only the FINAL APT
@@ -9414,8 +9414,8 @@ fun resolve_invariant_no_redraw_outside_three_authorized_sites() {
     assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
     assert_eq!(escrow::resolved_descent_for_testing(&escrow),  descent_cycle);
 
-    // (7) burn_tenant_cap on the now-stale cap_t1. Gas recovery action.
-    escrow::burn_tenant_cap(&mut escrow, cap_t1, &random, &clk, sc.ctx());
+    // (7) soft_burn_tenant_cap on the now-stale cap_t1. Gas recovery action.
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &random, &clk, sc.ctx());
     assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
     assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
     assert_eq!(escrow::resolved_handover_for_testing(&escrow), handover_cycle);
@@ -9683,14 +9683,14 @@ fun update_config_demand_retiring_aborts() {
 // Targeted tests for abort paths and state/cap combinations that were not
 // covered by prior sections.
 
-// ── execute_burn_tenant_cap: non-renting happy path ───────────────────────────
+// ── execute_soft_burn_tenant_cap: non-renting happy path ───────────────────────────
 //
 // In Idle/AtDutch/Retired, any cap belonging to this escrow is stale by
 // construction (no active tenancy). The match `_ => {}` passes through and
 // the cap is burned unconditionally.
 
 /// Burn a stale TenantCap in Idle state after the tenancy has ended.
-/// Covers the Idle arm (`_ => {}`) of execute_burn_tenant_cap.
+/// Covers the Idle arm (`_ => {}`) of execute_soft_burn_tenant_cap.
 #[test]
 fun burn_stale_cap_in_idle_succeeds() {
     let mut sc = setup();
@@ -9709,7 +9709,7 @@ fun burn_stale_cap_in_idle_succeeds() {
     assert!(escrow::is_idle(&escrow), 0);
 
     // cap_t1 is now stale — burn it from Idle state.
-    escrow::burn_tenant_cap(&mut escrow, cap_t1, &random, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &random, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9963,7 +9963,7 @@ fun borrow_asset_aborts_in_at_dutch_with_window_descent() {
     sc.end();
 }
 
-/// execute_burn_tenant_cap in AtDutch: _ => {} passthrough (any cap is stale).
+/// execute_soft_burn_tenant_cap in AtDutch: _ => {} passthrough (any cap is stale).
 #[test]
 fun burn_stale_cap_in_at_dutch_succeeds() {
     let mut sc = setup();
@@ -9978,7 +9978,7 @@ fun burn_stale_cap_in_at_dutch_succeeds() {
     escrow::apply_pending_transition_states(&mut escrow, &rnd, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
 
-    escrow::burn_tenant_cap(&mut escrow, cap_t1, &rnd, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &rnd, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9987,7 +9987,7 @@ fun burn_stale_cap_in_at_dutch_succeeds() {
     sc.end();
 }
 
-/// execute_burn_tenant_cap in Retired: _ => {} passthrough.
+/// execute_soft_burn_tenant_cap in Retired: _ => {} passthrough.
 /// Drive Idle → Retired directly; burn a synthetic cap for this escrow —
 /// any cap is stale in Retired (no active tenancy).
 #[test]
@@ -10002,7 +10002,7 @@ fun burn_stale_cap_in_retired_succeeds() {
     let stale_cap = tenant_cap::new(
         escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx(),
     );
-    escrow::burn_tenant_cap(&mut escrow, stale_cap, &rnd, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, stale_cap, &rnd, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);

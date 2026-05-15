@@ -9860,3 +9860,121 @@ fun compute_handover_settlement_aborts_on_idle() {
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
+
+// ── Remaining variant gaps ─────────────────────────────────────────────────────
+
+/// execute_borrow in AtDutch: use h=1 (Window) so APT does not collapse
+/// AtDutch→Idle before execute_borrow runs. The _s => abort arm fires on AtDutch.
+#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
+fun borrow_asset_aborts_in_at_dutch_with_window_descent() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &rnd, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+
+    // Borrow with a cap that has the correct escrow identity — APT will not
+    // fire because the descent window is not yet closed.
+    let foreign_cap = tenant_cap::new(
+        escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx(),
+    );
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &rnd, &clk, sc.ctx());
+
+    transfer::public_transfer(asset, OWNER);
+    asset_state::destroy_receipt_for_testing(receipt);
+    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// execute_burn_tenant_cap in AtDutch: _ => {} passthrough (any cap is stale).
+#[test]
+fun burn_stale_cap_in_at_dutch_succeeds() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &rnd, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+
+    escrow::burn_tenant_cap(&mut escrow, cap_t1, &rnd, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// execute_burn_tenant_cap in Retired: _ => {} passthrough.
+/// Drive Idle → Retired directly; burn a synthetic cap for this escrow —
+/// any cap is stale in Retired (no active tenancy).
+#[test]
+fun burn_stale_cap_in_retired_succeeds() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+
+    escrow::drive_to_retired_for_testing(&mut escrow);
+    let stale_cap = tenant_cap::new(
+        escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx(),
+    );
+    escrow::burn_tenant_cap(&mut escrow, stale_cap, &rnd, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(rnd);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// proj_current_stake_value: Retired abort via compute_handover_settlement.
+#[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
+fun compute_handover_settlement_aborts_on_retired() {
+    let mut sc = setup();
+    let (mut escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    escrow::drive_to_retired_for_testing(&mut escrow);
+    let (_, _, _) = escrow::compute_handover_settlement(&escrow, 0);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// proj_current_stake_value: AtDutch abort via compute_handover_settlement.
+#[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
+fun compute_handover_settlement_aborts_on_at_dutch() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let rnd = sc.take_shared<Random>();
+    let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &rnd, &clk, sc.ctx());
+    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    test_scenario::return_shared(rnd);
+    let (_, _, _) = escrow::compute_handover_settlement(&escrow, 0);
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

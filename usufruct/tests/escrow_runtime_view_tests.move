@@ -697,3 +697,31 @@ fun tenant_cap_views_in_retired_state() {
     dispose_escrow(escrow, cap);
     sc.end();
 }
+
+/// cap_is_pending Occupied arm: Occupied has no pending cap, so
+/// tenant_cap_is_pending returns false (the _ => false branch for Occupied).
+#[test]
+fun tenant_cap_is_pending_in_occupied_returns_false() {
+    let mut sc  = setup();
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    test_scenario::return_shared(random);
+    assert!(escrow::is_occupied(&escrow), 0);
+
+    // In Occupied there is a current cap but no pending — is_pending is false.
+    let cap_id = object::id(&t_cap);
+    assert!( escrow::tenant_cap_is_current(&escrow, cap_id), 1);
+    assert!(!escrow::tenant_cap_is_pending(&escrow, cap_id), 2);
+    assert!(!escrow::tenant_cap_is_stale(&escrow, cap_id),  3);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}

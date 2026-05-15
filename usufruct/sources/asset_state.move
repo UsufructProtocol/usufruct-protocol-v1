@@ -1469,7 +1469,6 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         timestamp_ms:           phases::timestamp_ms(boundary),
     });
 
-    assert!(asset::proj_is_available(&asset), EAssetAlreadyBorrowed);
     let locked = asset::close_tenancy(asset);
     if (retire_condition::proj_is_retiring(&retire)) {
         event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
@@ -1980,7 +1979,6 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
             let fee_share      = tenant::take_fee_share(&mut tenant, monetary::stake(fee_amount), core.escrow_identity);
             let refund = refund_state::from_departing(tenant, fee_share, owner_earnings);
             refund_state::destroy_for_testing(refund);
-            assert!(asset::proj_is_available(&asset), EAssetAlreadyBorrowed);
             AssetState::AtDutch {
                 asset:   asset::close_tenancy(asset),
                 auction: AuctionTerms { last_acq_price: monetary::price(last_acq_price), phase_start: new_phase_start },

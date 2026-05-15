@@ -103,8 +103,7 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
 ): Coin<CoinType> {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let new_state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
-    let coin = asset_state::execute_withdraw_earnings(core, owner_cap, clock, ctx);
+    let (new_state, coin) = asset_state::execute_withdraw_earnings(state, core, owner_cap, random, clock, ctx);
     escrow.state.fill(new_state);
     coin
 }
@@ -122,9 +121,8 @@ public fun claim_asset<Asset: key + store, CoinType>(
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
     let Escrow { id, core, state } = escrow;
-    let mut core_val      = core.destroy_some();
-    let new_state         = asset_state::apply_pending_transition_states(state.destroy_some(), &mut core_val, random, clock, ctx);
-    let (asset, earnings) = asset_state::execute_claim(new_state, core_val, &owner_cap, clock, ctx);
+    let core_val          = core.destroy_some();
+    let (asset, earnings) = asset_state::execute_claim(state.destroy_some(), core_val, &owner_cap, random, clock, ctx);
     owner_cap::burn(owner_cap, ctx.sender());
     id.delete();
     (asset, earnings)
@@ -140,8 +138,7 @@ public fun retire<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
-    let new_state = asset_state::execute_retire(state, core, owner_cap, clock, ctx);
+    let new_state = asset_state::execute_retire(state, core, owner_cap, random, clock, ctx);
     escrow.state.fill(new_state);
 }
 
@@ -166,8 +163,7 @@ public fun update_config<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
-    let new_state = asset_state::execute_update_config(state, core, owner_cap, new_cfg, random, ctx);
+    let new_state = asset_state::execute_update_config(state, core, owner_cap, new_cfg, random, clock, ctx);
     escrow.state.fill(new_state);
 }
 
@@ -182,8 +178,7 @@ public fun rent<Asset: key + store, CoinType>(
 ): TenantCap {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
-    let (new_state, cap) = asset_state::execute_rent(state, core, payment, cycles, clock, ctx);
+    let (new_state, cap) = asset_state::execute_rent(state, core, payment, cycles, random, clock, ctx);
     escrow.state.fill(new_state);
     cap
 }
@@ -203,8 +198,7 @@ public fun borrow_asset<Asset: key + store, CoinType>(
 ): (Asset, AssetReceipt<Asset, CoinType>) {
     let state = take_state(escrow);
     let core  = escrow.core.borrow_mut();
-    let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
-    asset_state::execute_borrow(state, core, tenant_cap)
+    asset_state::execute_borrow(state, core, tenant_cap, random, clock, ctx)
 }
 
 /// Tenant-side asset return. Reconstructs `AssetState` from the receipt's
@@ -229,8 +223,7 @@ public fun burn_tenant_cap<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
-    let new_state = asset_state::execute_burn_tenant_cap(state, core, cap, ctx);
+    let new_state = asset_state::execute_burn_tenant_cap(state, core, cap, random, clock, ctx);
     escrow.state.fill(new_state);
 }
 

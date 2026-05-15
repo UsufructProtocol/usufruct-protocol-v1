@@ -1759,6 +1759,110 @@ fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     sc.end();
 }
 
+// ─── §15.3 escrow locked while asset borrowed ────────────────────────────────
+//
+// While `escrow.state` is `None` (asset on loan), every call that
+// touches the lifecycle state — mutating or view — aborts `EAssetBorrowed`.
+// The invariant: the escrow state is accessible only while the asset is
+// in custody. Borrow + return are atomic within a PTB; nothing may observe
+// or modify the state in between.
+//
+// Representative cases:
+//   · apply_pending_transition_states — permissionless, anyone may chain it
+//   · rent                            — tenant side, mutating
+//   · retire                          — owner side, mutating
+//   · is_occupied                     — read-only view
+
+#[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
+fun apply_pending_transitions_aborts_while_asset_borrowed() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
+
+    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
+
+    escrow::return_asset(&mut escrow, asset, receipt);
+    transfer::public_transfer(cap_t1, OWNER);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
+fun rent_aborts_while_asset_borrowed() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
+
+    let p2     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+
+    escrow::return_asset(&mut escrow, asset, receipt);
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
+fun retire_aborts_while_asset_borrowed() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
+
+    escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
+
+    escrow::return_asset(&mut escrow, asset, receipt);
+    transfer::public_transfer(cap_t1, OWNER);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
+fun is_occupied_view_aborts_while_asset_borrowed() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
+
+    escrow::is_occupied(&escrow);
+
+    escrow::return_asset(&mut escrow, asset, receipt);
+    transfer::public_transfer(cap_t1, OWNER);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §16. withdraw_earnings ──────────────────────────────────────────────────
 
 /// Happy path: drive a tenure expiry → owner accumulates 90% → withdraw

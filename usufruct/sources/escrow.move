@@ -35,6 +35,8 @@ use usufruct::{
 
 // === Errors ===
 
+const EAssetAlreadyBorrowed: u64 = 20;
+
 // === Structs ===
 
 /// Central shared object. One per integrated asset.
@@ -187,30 +189,35 @@ public fun rent<Asset: key + store, CoinType>(
 }
 
 /// Tenant-side asset borrow.
+///
+/// `escrow.state` is left `None` after this call — the `RentingState`
+/// travels inside the returned `AssetReceipt` until `return_asset` puts
+/// it back. The gap is invisible to external observers: borrow + return
+/// are atomic within a single PTB (hot-potato discipline).
 public fun borrow_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     tenant_cap: &TenantCap,
     random:     &Random,
     clock:      &Clock,
     ctx:        &mut TxContext,
-): (Asset, AssetReceipt) {
+): (Asset, AssetReceipt<Asset, CoinType>) {
+    assert!(escrow.state.is_some(), EAssetAlreadyBorrowed);
     let state = escrow.state.extract();
-    let core = escrow.core.borrow_mut();
+    let core  = escrow.core.borrow_mut();
     let state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
-    let (new_state, asset, receipt) = asset_state::execute_borrow(state, core, tenant_cap);
-    escrow.state.fill(new_state);
-    (asset, receipt)
+    asset_state::execute_borrow(state, core, tenant_cap)
 }
 
-/// Tenant-side asset return.
+/// Tenant-side asset return. Reconstructs `AssetState` from the receipt's
+/// `RentingState` and fills `escrow.state` back to `Some`.
 public fun return_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     asset:      Asset,
-    receipt_in: AssetReceipt,
+    receipt_in: AssetReceipt<Asset, CoinType>,
 ) {
-    let state = escrow.state.borrow_mut();
-    let core  = escrow.core.borrow();
-    asset_state::execute_return(state, core, asset, receipt_in);
+    let core      = escrow.core.borrow();
+    let new_state = asset_state::execute_return(receipt_in, core, asset);
+    escrow.state.fill(new_state);
 }
 
 /// Burn a stale `TenantCap` for gas recovery.

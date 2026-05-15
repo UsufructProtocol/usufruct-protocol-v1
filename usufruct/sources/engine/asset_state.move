@@ -15,15 +15,16 @@ use usufruct::{
     asset::{Self, AssetIdentity},
     config::{Self, IntegrationConfig},
     cycles::{Self, Cycles},
+    curve_shape_state,
     descent_policy_state,
     floor_price_policy_state,
+    price_function_state,
     tenure_policy_state,
     tenure_cycles_policy_state,
     monetary::{Self, Price, Stake},
     owner::{Self, Owner},
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
-    price_state,
     commitment_policy_state::{Self, CommitmentPolicyState},
     credit_context_state::{Self as credit_state},
     handover_policy_state,
@@ -616,17 +617,14 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Idle { cycle, .. } => cycle.floor,
         AssetState::AtDutch { auction, cycle, .. } => {
-            let ps = price_state::descending(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent);
-            price_state::floor_price(&ps, &core.config.active, now)
+            descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.config.active, now)
         },
         AssetState::Retired { .. } => abort ERetiredNoBid,
         AssetState::Occupied { terms, .. } => {
-            let ps = price_state::ascending(cycles::per_cycle_stake(tenant::proj_stake_value(&terms.current), terms.schedule.committed_cycles));
-            price_state::floor_price(&ps, &core.config.active, now)
+            ascending_floor_price(cycles::per_cycle_stake(tenant::proj_stake_value(&terms.current), terms.schedule.committed_cycles), &core.config.active)
         },
         AssetState::Demand { bid, .. } => {
-            let ps = price_state::ascending(cycles::per_cycle_stake(tenant::proj_stake_value(&bid.pending), bid.handover.cycles));
-            price_state::floor_price(&ps, &core.config.active, now)
+            ascending_floor_price(cycles::per_cycle_stake(tenant::proj_stake_value(&bid.pending), bid.handover.cycles), &core.config.active)
         },
     }
 }
@@ -817,23 +815,20 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
             do_install(asset, cycle, cycles, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::AtDutch { asset, auction, cycle } => {
-            let ps    = price_state::descending(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent);
-            let floor = price_state::floor_price(&ps, &core.config.active, now);
+            let floor = descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.config.active, now);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_install(asset, cycle, cycles, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Occupied { asset, terms, cycle } => {
             if (retire_condition::proj_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = tenant::proj_stake_value(&terms.current);
-            let ps    = price_state::ascending(cycles::per_cycle_stake(stake, terms.schedule.committed_cycles));
-            let floor = price_state::floor_price(&ps, &core.config.active, now);
+            let floor = ascending_floor_price(cycles::per_cycle_stake(stake, terms.schedule.committed_cycles), &core.config.active);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, cycles, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Demand { asset, terms, bid, cycle } => {
             let stake = tenant::proj_stake_value(&bid.pending);
-            let ps    = price_state::ascending(cycles::per_cycle_stake(stake, bid.handover.cycles));
-            let floor = price_state::floor_price(&ps, &core.config.active, now);
+            let floor = ascending_floor_price(cycles::per_cycle_stake(stake, bid.handover.cycles), &core.config.active);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
             do_supersede_bid(
                 asset, terms, bid, cycle, cycles,
@@ -1204,10 +1199,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let new_cap_identity = tenant::proj_cap_identity(tenant::proj_identity(&pending));
     let new_addr         = tenant::proj_address(tenant::proj_identity(&pending));
     let new_stake        = tenant::proj_stake_value(&pending);
-    let new_rent_price = monetary::price_mist({
-        let ps = price_state::ascending(new_stake);
-        price_state::floor_price(&ps, config, boundary)
-    });
+    let new_rent_price = monetary::price_mist(ascending_floor_price(new_stake, config));
     let boundary_ms = phases::timestamp_ms(boundary);
 
     event::emit(HandoverCompleted {
@@ -1563,6 +1555,32 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
     AssetState::Retired { asset }
 }
 
+fun ascending_floor_price(stake: Stake, cfg: &IntegrationConfig): Price {
+    price_function_state::evaluate_price_fn(
+        config::proj_price_function_state(cfg),
+        monetary::as_reference_price(stake),
+    )
+}
+
+fun descending_floor_price(
+    last_acq_price:   Price,
+    phase_start:      Timestamp,
+    resolved_floor:   Price,
+    resolved_descent: Duration,
+    cfg:              &IntegrationConfig,
+    now:              Timestamp,
+): Price {
+    let elapsed  = phases::elapsed_since(phase_start, now);
+    let h        = curve_shape_state::evaluate_curve(
+        config::proj_descent_curve(cfg),
+        phases::duration_ms(elapsed),
+        phases::duration_ms(resolved_descent),
+    );
+    let spread   = monetary::price_mist(monetary::price_sub(last_acq_price, resolved_floor));
+    let consumed = curve_shape_state::apply(spread, h);
+    monetary::price_sub(last_acq_price, monetary::price(consumed))
+}
+
 // === Test Functions ===
 
 #[test_only]
@@ -1875,5 +1893,22 @@ public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(
     r: AssetReceipt<Asset, CoinType>,
 ) {
     sui::test_utils::destroy(r);
+}
+
+#[test_only]
+public(package) fun ascending_floor_price_for_testing(stake: Stake, cfg: &IntegrationConfig): Price {
+    ascending_floor_price(stake, cfg)
+}
+
+#[test_only]
+public(package) fun descending_floor_price_for_testing(
+    last_acq_price:   Price,
+    phase_start:      Timestamp,
+    resolved_floor:   Price,
+    resolved_descent: Duration,
+    cfg:              &IntegrationConfig,
+    now:              Timestamp,
+): Price {
+    descending_floor_price(last_acq_price, phase_start, resolved_floor, resolved_descent, cfg, now)
 }
 

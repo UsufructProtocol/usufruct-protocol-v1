@@ -223,7 +223,7 @@ fun idle_views_post_integrate() {
     let clk = clock::create_for_testing(sc.ctx());
     assert!(!escrow::has_pending_transition_states(&escrow, &clk));
     assert!(escrow::next_transition_ms(&escrow, &clk).is_none());
-    assert!(escrow::next_pending(&escrow, &clk).is_none());
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk));
     assert!(!escrow::has_pending_config_update(&escrow));
     clock::destroy_for_testing(clk);
 
@@ -382,7 +382,7 @@ fun at_dutch_views_after_tenure_expiry() {
     let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
 
     // Before tenure_expiry: no pending transition.
-    assert!(escrow::next_pending(&escrow, &clk).is_none());
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk));
     assert!(!escrow::has_pending_transition_states(&escrow, &clk));
 
     // Advance clock to tenure_expiry boundary.
@@ -391,8 +391,7 @@ fun at_dutch_views_after_tenure_expiry() {
 
     // Now a Tenure transition is pending.
     assert!(escrow::has_pending_transition_states(&escrow, &clk));
-    let pending = escrow::next_pending(&escrow, &clk).destroy_some();
-    assert!(usufruct::pending_transition_state::proj_is_occupied(&pending));
+    assert!(escrow::is_occupied(&escrow));
     assert_eq!(escrow::next_transition_ms(&escrow, &clk).destroy_some(), expiry);
 
     // Fire the transition → state advances to AtDutch (descent=Window).
@@ -413,8 +412,7 @@ fun at_dutch_views_after_tenure_expiry() {
 
     // Advance clock past the descent window: an Auction transition becomes pending.
     clock::set_for_testing(&mut clk, expiry + escrow_corpus::descent_window_h1_const() + 1);
-    let pending2 = escrow::next_pending(&escrow, &clk).destroy_some();
-    assert!(usufruct::pending_transition_state::proj_is_auction(&pending2));
+    assert!(escrow::is_at_dutch_auction(&escrow));
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
     clock::destroy_for_testing(clk);
@@ -453,7 +451,7 @@ fun retired_views_after_retire_from_idle() {
     assert!(escrow::phase_start_ms(&escrow).is_none());
     assert!(escrow::tenure_expiry_ms(&escrow).is_none());
     assert!(escrow::next_floor_price_mist(&escrow).is_none()); // Retired has no resolved-for-next
-    assert!(escrow::next_pending(&escrow, &clk).is_none());
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk));
 
     clock::destroy_for_testing(clk);
     dispose_escrow(escrow, cap);

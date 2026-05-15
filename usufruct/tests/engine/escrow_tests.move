@@ -45,7 +45,6 @@ use usufruct::{
     commitment_policy_state::{Self, CommitmentPolicyState},
     tenure_cycles_policy_state,
     tenure_policy_state,
-    pending_transition_state,
     escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
@@ -1301,7 +1300,7 @@ fun next_pending_returns_none_in_steady_state() {
     // Idle escrow — nothing pending at any clock.
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
-    assert!(escrow::next_pending(&escrow, &clk).is_none(), 0);
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk), 0);
     test_scenario::return_shared(random);
     clock::destroy_for_testing(clk);
 
@@ -1333,8 +1332,7 @@ fun next_pending_at_dutch_not_firable_returns_none() {
 
     // Probe at clock just after tenure expiry — the descent window is not yet
     // closed, so no pending transition.
-    let pending = escrow::next_pending(&escrow, &clk);
-    assert!(pending.is_none(), 1);
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk), 1);
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -1370,14 +1368,8 @@ fun next_pending_demand_firable_returns_some() {
     let countdown_expiry = now2 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, countdown_expiry + 1);
 
-    let pending = escrow::next_pending(&escrow, &clk);
-    assert!(pending.is_some(), 1);
-    let t = pending.destroy_some();
-    assert!(pending_transition_state::proj_is_demand(&t), 2);
-    assert_eq!(
-        phases::timestamp_ms(pending_transition_state::proj_boundary(&t)),
-        countdown_expiry,
-    );
+    assert!(escrow::is_demand(&escrow), 1);
+    assert_eq!(escrow::next_transition_ms(&escrow, &clk).destroy_some(), countdown_expiry);
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -1408,8 +1400,7 @@ fun next_pending_demand_not_firable_returns_none() {
     assert!(escrow::is_demand(&escrow), 0);
 
     // Clock is 0 — the countdown expiry is in the future.
-    let pending = escrow::next_pending(&escrow, &clk);
-    assert!(pending.is_none(), 1);
+    assert!(!escrow::has_pending_transition_states(&escrow, &clk), 1);
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -1435,12 +1426,8 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     // Probe at clock just past the tenure boundary — Tenure is pending.
     let probe_ms = escrow_corpus::tenure_ceiling_const() + 1;
     clock::set_for_testing(&mut clk, probe_ms);
-    let pending = escrow::next_pending(&escrow, &clk);
-    assert!(pending.is_some(), 0);
-    let t = pending.destroy_some();
-    assert!(pending_transition_state::proj_is_occupied(&t), 1);
-    // boundary_ms is exactly tenure_ceiling (phase_start was 0).
-    assert_eq!(phases::timestamp_ms(pending_transition_state::proj_boundary(&t)), escrow_corpus::tenure_ceiling_const());
+    assert!(escrow::is_occupied(&escrow), 0);
+    assert_eq!(escrow::next_transition_ms(&escrow, &clk).destroy_some(), escrow_corpus::tenure_ceiling_const());
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);

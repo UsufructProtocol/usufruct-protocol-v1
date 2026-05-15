@@ -24,7 +24,6 @@ use usufruct::{
     tenure_policy_state,
     monetary,
     owner_cap::{Self, OwnerCap},
-    pending_transition_state::{Self, PendingTransitionState},
     phases,
     price_function_state::{Self, PriceFunctionState},
     escrow_identity,
@@ -211,13 +210,6 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     let core = escrow.core.borrow_mut();
     let new_state = asset_state::execute_apply_pending_transition_states(state, core, random, clock, ctx);
     put_state(escrow, new_state);
-}
-
-public fun next_pending<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
-): Option<PendingTransitionState> {
-    asset_state::next_pending(read_state(escrow), clock)
 }
 
 // === View Functions ===
@@ -515,14 +507,15 @@ public fun has_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): bool {
-    next_pending(escrow, clock).is_some()
+    asset_state::next_pending(read_state(escrow), clock).is_some()
 }
 
 public fun next_transition_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     clock:  &Clock,
 ): Option<u64> {
-    next_pending(escrow, clock).map!(|v| phases::timestamp_ms(pending_transition_state::proj_boundary(&v)))
+    asset_state::next_pending(read_state(escrow), clock)
+        .map!(|t| phases::timestamp_ms(t))
 }
 
 public fun compute_used_credit<Asset: key + store, CoinType>(

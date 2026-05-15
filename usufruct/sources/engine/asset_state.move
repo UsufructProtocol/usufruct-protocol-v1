@@ -24,7 +24,6 @@ use usufruct::{
     monetary::{Self, Price, Stake},
     owner::{Self, Owner},
     owner_cap::{Self, OwnerCap},
-    pending_transition_state::{Self, PendingTransitionState},
     commitment_policy_state::{Self, CommitmentPolicyState},
     handover_policy_state,
     math,
@@ -700,29 +699,24 @@ public(package) fun cap_is_stale<Asset: key + store, CoinType>(
 public(package) fun next_pending<Asset: key + store, CoinType>(
     s:     &AssetState<Asset, CoinType>,
     clock: &Clock,
-): Option<PendingTransitionState> {
+): Option<Timestamp> {
     let now = phases::now(clock);
     match (s) {
         AssetState::Idle { .. }    => option::none(),
         AssetState::Retired { .. } => option::none(),
         AssetState::AtDutch { auction, cycle, .. } => {
             if (proj_auction_is_firable(auction, cycle, now)) {
-                option::some(pending_transition_state::auction(
-                    descent_policy_state::expiry_at(cycle.descent, auction.phase_start)
-                ))
+                option::some(descent_policy_state::expiry_at(cycle.descent, auction.phase_start))
             } else { option::none() }
         },
         AssetState::Occupied { terms, .. } => {
             if (proj_occupied_is_firable(terms, now)) {
-                option::some(pending_transition_state::occupied(
-                    phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total)
-                ))
+                option::some(phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total))
             } else { option::none() }
         },
         AssetState::Demand { bid, .. } => {
-            if (proj_demand_is_firable(bid, now)) {
-                option::some(pending_transition_state::demand(bid.handover.expiry))
-            } else { option::none() }
+            if (proj_demand_is_firable(bid, now)) { option::some(bid.handover.expiry) }
+            else { option::none() }
         },
     }
 }

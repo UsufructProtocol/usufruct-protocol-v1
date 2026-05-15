@@ -2726,15 +2726,15 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
     sc.end();
 }
 
-// ─── §B1. Five successive PTBs — each chains rent+APT(Instant)+borrow ────────
+// ─── §B1. Five successive PTBs — each chains rent+borrow (Instant) ───────────
 
 /// Five successive PTBs with a representative c=0 config. Each PTB atomically
-/// chains rent() → APT(Instant) → borrow_asset(). Demonstrates chain depth:
-/// every successive tenant (5 total) can borrow immediately after being crowned
-/// via an Instant handover. tag(0,0,0,0,0) is the canonical representative.
+/// chains rent() → borrow_asset(). Demonstrates chain depth: every successive
+/// tenant (5 total) can borrow immediately after being crowned via an Instant
+/// handover. tag(0,0,0,0,0) is the canonical representative.
 ///
 /// PTB 1: T1 rents from Idle — immediately current, no APT needed.
-/// PTBs 2–5: Tn bids → APT fires → Tn current → Tn borrows+returns.
+/// PTBs 2–5: Tn bids → APT inside borrow_asset fires Instant → Tn current → borrows+returns.
 #[test]
 fun e2e_b1_five_ptbs_borrow_chain() {
     let mut sc  = setup();
@@ -2765,7 +2765,6 @@ fun e2e_b1_five_ptbs_borrow_chain() {
         clock::set_for_testing(&mut clk, t);
         let floor = escrow::compute_floor_price(&escrow, &clk);
         let cap = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), cycles::cycles(1), &random_ptb, &clk, sc.ctx());
-        escrow::apply_pending_transition_states(&mut escrow, &random_ptb, &clk, sc.ctx());
         let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap, &random_ptb, &clk, sc.ctx());
         escrow::return_asset(&mut escrow, asset, receipt);
         assert!(escrow::is_occupied(&escrow), tag);
@@ -2846,13 +2845,12 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
 
-    // T2 bids → APT Instant → T1 stale.
+    // T2 bids → state becomes Demand. APT inside borrow_asset fires Instant handover → T1 stale.
     clock::set_for_testing(&mut clk, 1_000);
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx());
-    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
-    // T1's cap is now stale — borrow must abort.
+    // T1's cap is now stale (handover fires inside borrow_asset) — borrow must abort.
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &random, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
     transfer::public_transfer(cap_t1, OWNER);
@@ -5990,8 +5988,8 @@ fun extend_commitment_retire_aborts_before_floor() {
 }
 
 // Test BD-7: Instant handover lets T2 borrow immediately after bidding ─────────
-/// With Instant policy T2's cap becomes Current after execute_apply_pending_transition_states,
-/// allowing borrow_asset to succeed.
+/// With Instant policy T2's cap becomes Current via APT inside borrow_asset,
+/// allowing borrow_asset to succeed in the same PTB as rent — no prior explicit APT needed.
 #[test]
 fun update_config_behavior_handover_instant_borrow_succeeds() {
     let mut sc = setup();
@@ -6005,16 +6003,13 @@ fun update_config_behavior_handover_instant_borrow_succeeds() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
-    // T2 bids — with Instant policy, handover fires immediately via APT.
+    // T2 bids — Demand state. APT inside borrow_asset fires Instant handover → T2 current.
     let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t2 = escrow::rent(
         &mut escrow, mk_payment(floor_t2, sc.ctx()), cycles::cycles(1), &random, &clk, sc.ctx(),
     );
 
-    // Fire the Instant handover.
-    escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
-
-    // T2 is now current; borrow_asset succeeds (no abort).
+    // T2 is now current (handover fires inside borrow_asset); borrow_asset succeeds (no abort).
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t2, &random, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
 

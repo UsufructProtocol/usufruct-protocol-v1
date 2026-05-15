@@ -68,7 +68,6 @@ const EWrongEscrowOwnerCap:   u64 = 11;
 const EStaleTenantCap:        u64 = 8;
 const EReceiptEscrowMismatch:  u64 = 10;
 const EReturnedDifferentAsset: u64 = 19;
-const EAssetAlreadyBorrowed:   u64 = 20;
 const ENotRetired:               u64 = 12;
 const ENoEarnings:              u64 = 13;
 const ERetireAlreadyScheduled:  u64 = 16;

@@ -381,10 +381,10 @@ fun burn_live_pending_cap_in_demand_aborts() {
 // ─── execute_borrow — double borrow (C3b) ────────────────────────────────────
 //
 // Attempting to borrow while the receipt is outstanding aborts
-// `EAssetAlreadyBorrowed`. After the first borrow, `escrow.state` is `None`
+// `EAssetBorrowed`. After the first borrow, `escrow.state` is `None`
 // (the state travels in the receipt); the guard lives in `escrow::borrow_asset`.
 
-#[test, expected_failure(abort_code = asset_state::EAssetAlreadyBorrowed, location = usufruct::escrow)]
+#[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
 fun double_borrow_aborts() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(&mut sc);
@@ -397,7 +397,7 @@ fun double_borrow_aborts() {
     // First borrow — succeeds, slot is now empty.
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
 
-    // Second borrow — must abort EAssetAlreadyBorrowed.
+    // Second borrow — must abort EAssetBorrowed.
     let (asset2, receipt2) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
 
     // Unreachable — consumed only to satisfy the type checker.

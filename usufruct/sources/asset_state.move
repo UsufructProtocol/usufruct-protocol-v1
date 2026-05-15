@@ -898,16 +898,9 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): AssetState<Asset, CoinType> {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
+    assert_owner_cap_binds(owner_cap, core);
     let now = phases::now(clock);
-    assert!(
-        commitment_policy_state::is_unlocked(
-            commitment_policy_state::resolve(&core.commitment.policy),
-            core.commitment.anchor,
-            now,
-        ).is_crossed(),
-        ECommitmentFloorNotElapsed,
-    );
+    assert_commitment_elapsed(core, now);
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     core.config.pending = option::none();
     let escrow_identity = core.escrow_identity;
@@ -958,7 +951,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): AssetState<Asset, CoinType> {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
+    assert_owner_cap_binds(owner_cap, core);
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
@@ -995,6 +988,25 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
 }
 
 /// Asserts that `cap` is allowed to borrow: must be the current tenant's cap.
+fun assert_owner_cap_binds<CoinType>(cap: &OwnerCap, core: &EscrowCore<CoinType>) {
+    assert!(owner_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowOwnerCap)
+}
+
+fun assert_tenant_cap_binds<CoinType>(cap: &TenantCap, core: &EscrowCore<CoinType>) {
+    assert!(tenant_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowTenantCap)
+}
+
+fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {
+    assert!(
+        commitment_policy_state::is_unlocked(
+            commitment_policy_state::resolve(&core.commitment.policy),
+            core.commitment.anchor,
+            now,
+        ).is_crossed(),
+        ECommitmentFloorNotElapsed,
+    )
+}
+
 /// `pending` distinguishes a pending-bidder cap (EPendingTenantCap) from
 /// any other non-matching cap (EStaleTenantCap).
 fun assert_borrow_authorized(
@@ -1024,7 +1036,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt<Asset, CoinType>) {
-    assert!(tenant_cap::proj_escrow_identity(tenant_cap) == core.escrow_identity, EWrongEscrowTenantCap);
+    assert_tenant_cap_binds(tenant_cap, core);
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
@@ -1135,7 +1147,7 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
     clock:  &Clock,
     ctx:    &mut TxContext,
 ): AssetState<Asset, CoinType> {
-    assert!(tenant_cap::proj_escrow_identity(&cap) == core.escrow_identity, EWrongEscrowTenantCap);
+    assert_tenant_cap_binds(&cap, core);
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let cap_identity = tenant_cap::identity(&cap);
     match (&s) {
@@ -1166,7 +1178,7 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (AssetState<Asset, CoinType>, Coin<CoinType>) {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
+    assert_owner_cap_binds(owner_cap, core);
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
@@ -1187,7 +1199,7 @@ public(package) fun execute_extend_commitment<CoinType>(
     new_policy: CommitmentPolicyState,
     clock:      &Clock,
 ) {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
+    assert_owner_cap_binds(owner_cap, core);
     let now         = phases::now(clock);
     let old_expiry  = commitment_policy_state::unlock_at(
         commitment_policy_state::resolve(&core.commitment.policy),
@@ -1231,7 +1243,7 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
-    assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
+    assert_owner_cap_binds(owner_cap, &core);
     let s = execute_apply_pending_transition_states(s, &mut core, random, clock, ctx);
     match (s) {
         AssetState::Retired { asset } => {

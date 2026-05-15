@@ -26,7 +26,6 @@ use usufruct::{
     owner_cap::{Self, OwnerCap},
     pending_transition_state::{Self, PendingTransitionState},
     commitment_policy_state::{Self, CommitmentPolicyState},
-    credit_context_state::{Self as credit_state},
     handover_policy_state,
     math,
     phases::{Self, Timestamp, Duration},
@@ -636,12 +635,10 @@ public(package) fun used_credit_at<Asset: key + store, CoinType>(
 ): Stake {
     match (s) {
         AssetState::Occupied { terms, .. } => {
-            let cs = credit_state::accruing(tenant::proj_stake_value(&terms.current), terms.schedule.phase_start);
-            credit_state::used_credit(&cs, &core.config.active, terms.schedule.ceiling_total, now)
+            accruing_used_credit(tenant::proj_stake_value(&terms.current), terms.schedule.phase_start, &core.config.active, terms.schedule.ceiling_total, now)
         },
         AssetState::Demand { terms, bid, .. } => {
-            let cs = credit_state::capped(tenant::proj_stake_value(&terms.current), terms.schedule.phase_start, bid.handover.expiry);
-            credit_state::used_credit(&cs, &core.config.active, terms.schedule.ceiling_total, now)
+            capped_used_credit(tenant::proj_stake_value(&terms.current), terms.schedule.phase_start, bid.handover.expiry, &core.config.active, terms.schedule.ceiling_total, now)
         },
         _ => abort ENotRented,
     }
@@ -1180,10 +1177,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let DemandTerms { pending, handover: HandoverTerms { expiry: _, cycles: incoming_cycles } } = bid;
 
     let principal   = tenant::proj_stake_value(&current);
-    let used_credit = {
-        let cs = credit_state::capped(principal, schedule.phase_start, boundary);
-        credit_state::used_credit(&cs, config, schedule.ceiling_total, boundary)
-    };
+    let used_credit = capped_used_credit(principal, schedule.phase_start, boundary, config, schedule.ceiling_total, boundary);
     let alloc         = split_fee(used_credit);
     let remain_credit = monetary::stake_sub(principal, used_credit);
 
@@ -1555,6 +1549,40 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
     AssetState::Retired { asset }
 }
 
+fun accruing_used_credit(
+    stake:            Stake,
+    phase_start:      Timestamp,
+    cfg:              &IntegrationConfig,
+    resolved_ceiling: Duration,
+    now:              Timestamp,
+): Stake {
+    let elapsed = phases::elapsed_since(phase_start, now);
+    let g = curve_shape_state::evaluate_curve(
+        config::proj_credit_curve(cfg),
+        phases::duration_ms(elapsed),
+        phases::duration_ms(resolved_ceiling),
+    );
+    monetary::stake(curve_shape_state::apply(monetary::stake_mist(stake), g))
+}
+
+fun capped_used_credit(
+    stake:            Stake,
+    phase_start:      Timestamp,
+    expiry:           Timestamp,
+    cfg:              &IntegrationConfig,
+    resolved_ceiling: Duration,
+    now:              Timestamp,
+): Stake {
+    let effective = phases::earliest(now, expiry);
+    let elapsed   = phases::elapsed_since(phase_start, effective);
+    let g = curve_shape_state::evaluate_curve(
+        config::proj_credit_curve(cfg),
+        phases::duration_ms(elapsed),
+        phases::duration_ms(resolved_ceiling),
+    );
+    monetary::stake(curve_shape_state::apply(monetary::stake_mist(stake), g))
+}
+
 fun ascending_floor_price(stake: Stake, cfg: &IntegrationConfig): Price {
     price_function_state::evaluate_price_fn(
         config::proj_price_function_state(cfg),
@@ -1893,6 +1921,29 @@ public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(
     r: AssetReceipt<Asset, CoinType>,
 ) {
     sui::test_utils::destroy(r);
+}
+
+#[test_only]
+public(package) fun accruing_used_credit_for_testing(
+    stake:            Stake,
+    phase_start:      Timestamp,
+    cfg:              &IntegrationConfig,
+    resolved_ceiling: Duration,
+    now:              Timestamp,
+): Stake {
+    accruing_used_credit(stake, phase_start, cfg, resolved_ceiling, now)
+}
+
+#[test_only]
+public(package) fun capped_used_credit_for_testing(
+    stake:            Stake,
+    phase_start:      Timestamp,
+    expiry:           Timestamp,
+    cfg:              &IntegrationConfig,
+    resolved_ceiling: Duration,
+    now:              Timestamp,
+): Stake {
+    capped_used_credit(stake, phase_start, expiry, cfg, resolved_ceiling, now)
 }
 
 #[test_only]

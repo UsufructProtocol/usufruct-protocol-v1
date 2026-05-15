@@ -1759,6 +1759,49 @@ fun soft_burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     sc.end();
 }
 
+// ─── §15.2b hard_burn_tenant_cap ─────────────────────────────────────────────
+
+/// `hard_burn_tenant_cap` destroys a TenantCap unconditionally with no escrow
+/// reference. Canonical use: the escrow has been claimed and deleted, leaving
+/// the former tenant's cap orphaned. `soft_burn_tenant_cap` would be
+/// impossible at that point — the shared object no longer exists.
+///
+/// A cap bound to the escrow identity is created, then the escrow is driven
+/// to Retired and claimed (object consumed). `hard_burn_tenant_cap` burns the
+/// now-orphaned cap — verified by `TenantCapBurned` event and `sc.end()`.
+#[test]
+fun hard_burn_tenant_cap_destroys_orphaned_cap_post_claim() {
+    let mut sc = setup();
+    let cfg = escrow_corpus::by_tag(0);
+    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Create a cap bound to this escrow (simulates a former tenant's cap).
+    let orphaned_cap = tenant_cap::new(
+        escrow_identity::new(object::id(&escrow_handle)), TENANT_ADDR_1, sc.ctx(),
+    );
+
+    // Drive Idle → Retired, then claim — Escrow object is consumed and deleted.
+    escrow::drive_to_retired_for_testing(&mut escrow_handle);
+    test_scenario::return_shared(escrow_handle);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
+    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &random, &clk, sc.ctx());
+
+    // The escrow is gone — hard_burn_tenant_cap needs no escrow reference.
+    escrow::hard_burn_tenant_cap(orphaned_cap, sc.ctx());
+
+    let burned = event::events_by_type<tenant_cap::TenantCapBurned>();
+    assert_eq!(burned.length(), 1);
+
+    coin::destroy_zero(earnings);
+    transfer::public_transfer(asset, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §15.3 escrow locked while asset borrowed ────────────────────────────────
 //
 // While `escrow.state` is `None` (asset on loan), every call that

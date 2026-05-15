@@ -236,7 +236,7 @@ public fun apply_pending_transition_states<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let new_state = asset_state::apply_pending_transition_states(state, core, random, clock, ctx);
+    let new_state = asset_state::execute_apply_pending_transition_states(state, core, random, clock, ctx);
     escrow.state.fill(new_state);
 }
 

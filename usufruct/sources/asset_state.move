@@ -791,7 +791,7 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
 /// call. Termination is structural: the chain has no cycles and each
 /// step recognises only its own source variant, passing all others
 /// through unchanged.
-public(package) fun apply_pending_transition_states<Asset: key + store, CoinType>(
+public(package) fun execute_apply_pending_transition_states<Asset: key + store, CoinType>(
     s:      AssetState<Asset, CoinType>,
     core:   &mut EscrowCore<CoinType>,
     random: &Random,
@@ -831,7 +831,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): (AssetState<Asset, CoinType>, TenantCap) {
-    let s = apply_pending_transition_states(s, core, random, clock, ctx);
+    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     tenure_cycles_policy_state::validate(config::proj_tenure_cycles(&core.config.active), cycles);
     let now                = phases::now(clock);
     let escrow_identity    = core.escrow_identity;
@@ -908,7 +908,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
         ).is_crossed(),
         ECommitmentFloorNotElapsed,
     );
-    let s = apply_pending_transition_states(s, core, random, clock, ctx);
+    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     core.config.pending = option::none();
     let escrow_identity = core.escrow_identity;
     let raw_escrow_id   = escrow_identity::escrow_id(escrow_identity);
@@ -959,7 +959,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     ctx:       &mut TxContext,
 ): AssetState<Asset, CoinType> {
     assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
-    let s = apply_pending_transition_states(s, core, random, clock, ctx);
+    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
         AssetState::Retired { asset: _retired } => abort EAlreadyRetired,
@@ -1025,7 +1025,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt<Asset, CoinType>) {
     assert!(tenant_cap::proj_escrow_identity(tenant_cap) == core.escrow_identity, EWrongEscrowTenantCap);
-    let s = apply_pending_transition_states(s, core, random, clock, ctx);
+    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
@@ -1136,7 +1136,7 @@ public(package) fun execute_burn_tenant_cap<Asset: key + store, CoinType>(
     ctx:    &mut TxContext,
 ): AssetState<Asset, CoinType> {
     assert!(tenant_cap::proj_escrow_identity(&cap) == core.escrow_identity, EWrongEscrowTenantCap);
-    let s = apply_pending_transition_states(s, core, random, clock, ctx);
+    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let cap_identity = tenant_cap::identity(&cap);
     match (&s) {
         AssetState::Occupied { terms, .. } => {
@@ -1167,7 +1167,7 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     ctx:       &mut TxContext,
 ): (AssetState<Asset, CoinType>, Coin<CoinType>) {
     assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
-    let s = apply_pending_transition_states(s, core, random, clock, ctx);
+    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
@@ -1232,7 +1232,7 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
     assert!(owner_cap::proj_escrow_identity(owner_cap) == core.escrow_identity, EWrongEscrowOwnerCap);
-    let s = apply_pending_transition_states(s, &mut core, random, clock, ctx);
+    let s = execute_apply_pending_transition_states(s, &mut core, random, clock, ctx);
     match (s) {
         AssetState::Retired { asset } => {
             let EscrowCore { mut owner, escrow_identity, .. } = core;

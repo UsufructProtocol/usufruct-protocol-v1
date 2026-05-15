@@ -1450,7 +1450,7 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     sc.end();
 }
 
-// ─── §15. apply_pending_transition_states ──────────────────────────────────────────
+// ─── §15. execute_apply_pending_transition_states ──────────────────────────────────────────
 
 /// APT no-ops when nothing is due. Tag unchanged after the call.
 #[test]
@@ -1768,7 +1768,7 @@ fun burn_tenant_cap_with_foreign_escrow_cap_aborts() {
 // or modify the state in between.
 //
 // Representative cases:
-//   · apply_pending_transition_states — permissionless, anyone may chain it
+//   · execute_apply_pending_transition_states — permissionless, anyone may chain it
 //   · rent                            — tenant side, mutating
 //   · retire                          — owner side, mutating
 //   · is_occupied                     — read-only view
@@ -3161,7 +3161,7 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
 
 // ─── §A1. APT fires at exact tenure boundary (>= inclusivity) ────────────────
 
-/// apply_pending_transition_states with clock == tenure_boundary_ms fires the
+/// execute_apply_pending_transition_states with clock == tenure_boundary_ms fires the
 /// tenure expiry transition. Verifies the >= guard in phases::has_passed.
 #[test]
 fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
@@ -3192,7 +3192,7 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
 
 // ─── §A2. APT does not fire one ms before tenure boundary ────────────────────
 
-/// apply_pending_transition_states with clock == tenure_boundary_ms - 1 does not
+/// execute_apply_pending_transition_states with clock == tenure_boundary_ms - 1 does not
 /// fire — state stays Occupied. Verifies the >= guard is not >.
 #[test]
 fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
@@ -4072,7 +4072,7 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
 
 // ─── §APT-1. APT idempotency — double call at same clock is a no-op ──────────
 
-/// apply_pending_transition_states is permissionless and may be called many times.
+/// execute_apply_pending_transition_states is permissionless and may be called many times.
 /// The protocol guarantees it is idempotent: once the state has settled at
 /// a given timestamp, a second call emits no additional events and leaves
 /// the state unchanged.
@@ -5990,7 +5990,7 @@ fun extend_commitment_retire_aborts_before_floor() {
 }
 
 // Test BD-7: Instant handover lets T2 borrow immediately after bidding ─────────
-/// With Instant policy T2's cap becomes Current after apply_pending_transition_states,
+/// With Instant policy T2's cap becomes Current after execute_apply_pending_transition_states,
 /// allowing borrow_asset to succeed.
 #[test]
 fun update_config_behavior_handover_instant_borrow_succeeds() {

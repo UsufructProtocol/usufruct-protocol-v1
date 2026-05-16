@@ -34,7 +34,7 @@ use usufruct::{
         ConfigUpdateScheduled,
     },
     retire_condition,
-    config,
+    policy_ensemble,
     curve_shape_policy,
     cycles,
     descent_policy,
@@ -110,7 +110,7 @@ fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {
 /// Integrate, share, then take the shared escrow back. Returns the
 /// escrow + cap. Uses Immediate commitment (no retire floor) by default.
 fun integrate_and_take(
-    cfg: usufruct::config::IntegrationConfig,
+    cfg: usufruct::policy_ensemble::PolicyEnsemble,
     sc:  &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
     integrate_and_take_with_commitment(cfg, commitment_policy::new_immediate(), sc)
@@ -118,7 +118,7 @@ fun integrate_and_take(
 
 /// escrow + cap with an explicit CommitmentPolicy.
 fun integrate_and_take_with_commitment(
-    cfg:        usufruct::config::IntegrationConfig,
+    cfg:        usufruct::policy_ensemble::PolicyEnsemble,
     commitment: CommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
@@ -5049,7 +5049,7 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 
 // ─── §update_config ────────────────────────────────────────────────────────────
 //
-// update_config allows the owner to swap the IntegrationConfig of an escrow at
+// update_config allows the owner to swap the PolicyEnsemble of an escrow at
 // runtime. When the escrow is Idle the change takes effect immediately. When
 // the escrow is occupied (Renting or AtDutchAuction) the new config is
 // buffered as a pending reset and applied at the next natural boundary
@@ -7074,11 +7074,11 @@ fun random_ceiling_different_per_cycle() {
 
 // ─── §Multi-cycle tenancy ─────────────────────────────────────────────────────
 
-// Helper: build an IntegrationConfig with Multi tenure_cycles policy.
-fun multi_cycle_cfg(): config::IntegrationConfig {
+// Helper: build an PolicyEnsemble with Multi tenure_cycles policy.
+fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
     let tenure  = escrow_corpus::tenure_ceiling_const();
     let floor   = escrow_corpus::min_rent_price_const();
-    config::new_config(
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(floor)),
         tenure_policy::new_fixed(phases::duration(tenure)),
         tenure_cycles_policy::new_multi(),
@@ -7225,11 +7225,11 @@ fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
 }
 
 // Helper: Multi + HandoverCountdown.
-fun multi_cycle_cfg_countdown(): config::IntegrationConfig {
+fun multi_cycle_cfg_countdown(): policy_ensemble::PolicyEnsemble {
     let tenure    = escrow_corpus::tenure_ceiling_const();
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
-    config::new_config(
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(floor)),
         tenure_policy::new_fixed(phases::duration(tenure)),
         tenure_cycles_policy::new_multi(),
@@ -8028,10 +8028,10 @@ fun multi_cycle_handover_remain_credit_returned_to_tenant() {
 // ─── §Handover scaling invariants ────────────────────────────────────────────
 
 // Helper: Multi + HandoverInstant.
-fun multi_cycle_cfg_instant(): config::IntegrationConfig {
+fun multi_cycle_cfg_instant(): policy_ensemble::PolicyEnsemble {
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
-    config::new_config(
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(floor)),
         tenure_policy::new_fixed(phases::duration(tenure)),
         tenure_cycles_policy::new_multi(),
@@ -8741,7 +8741,7 @@ fun commitment_update_config_does_not_change_policy() {
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
-    // update_config with a different IntegrationConfig (h=1 descent axis differs).
+    // update_config with a different PolicyEnsemble (h=1 descent axis differs).
     let new_cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
 

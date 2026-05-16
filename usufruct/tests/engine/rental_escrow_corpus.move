@@ -7,7 +7,7 @@ module usufruct::rental_escrow_corpus;
 // === Imports ===
 
 use usufruct::{
-    config::{Self, IntegrationConfig},
+    policy_ensemble::{Self, PolicyEnsemble},
     curve_shape_policy::{Self, CurveShapePolicy},
     descent_policy::{Self, DescentPolicy},
     handover_policy::{Self, HandoverPolicy},
@@ -43,7 +43,7 @@ const COMPOUND_DELTA_VALUE:  u64 = 1;
 // === Structs ===
 
 public struct CorpusEntry has copy, drop, store {
-    cfg: IntegrationConfig,
+    cfg: PolicyEnsemble,
     c:   u8,   // 0..2  HandoverPolicy
     d:   u8,   // 0..1  PriceFunctionPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
@@ -93,9 +93,9 @@ public(package) fun all(): vector<CorpusEntry> {
 }
 
 /// Single-config lookup by τ2 tag. Validates each decoded axis and returns
-/// IntegrationConfig directly — the wrapper carries no new info when the
+/// PolicyEnsemble directly — the wrapper carries no new info when the
 /// caller already holds the tag.
-public(package) fun by_tag(tag: u64): IntegrationConfig {
+public(package) fun by_tag(tag: u64): PolicyEnsemble {
     let f = (tag % 10) as u8;
     let h = ((tag / 10) % 10) as u8;
     let e = ((tag / 100) % 10) as u8;
@@ -175,7 +175,7 @@ public(package) fun compound_delta_value_const():  u64 { COMPOUND_DELTA_VALUE }
 
 // --- Method alias backing functions ---
 
-public(package) fun entry_cfg(entry: &CorpusEntry): &IntegrationConfig { &entry.cfg }
+public(package) fun entry_cfg(entry: &CorpusEntry): &PolicyEnsemble { &entry.cfg }
 public(package) fun entry_tag(entry: &CorpusEntry): u64                { entry.tag }
 public(package) fun entry_c(entry: &CorpusEntry):   u8                 { entry.c }
 public(package) fun entry_d(entry: &CorpusEntry):   u8                 { entry.d }
@@ -197,9 +197,9 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8): CorpusEntry {
     }
 }
 
-fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8): IntegrationConfig {
+fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8): PolicyEnsemble {
     let curve = make_curve(e);
-    config::new_config(
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN_RENT_PRICE)),
         tenure_policy::new_fixed(phases::duration(TENURE_CEILING)),
         tenure_cycles_policy::new_single(),

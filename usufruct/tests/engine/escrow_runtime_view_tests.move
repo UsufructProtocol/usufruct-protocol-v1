@@ -17,7 +17,7 @@ use sui::{
 use usufruct::{
     asset_state,
     commitment_policy,
-    config::IntegrationConfig,
+    policy_ensemble::PolicyEnsemble,
     cycles,
     escrow::{Self, Escrow},
     escrow_corpus,
@@ -50,7 +50,7 @@ fun setup(): Scenario {
     sc
 }
 
-fun build_escrow(cfg: IntegrationConfig, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
+fun build_escrow(cfg: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());

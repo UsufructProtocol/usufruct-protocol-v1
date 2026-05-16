@@ -13,7 +13,7 @@ use sui::{
 };
 use usufruct::{
     commitment_policy::{Self, CommitmentPolicy},
-    config::IntegrationConfig,
+    policy_ensemble::PolicyEnsemble,
     escrow::{Self, Escrow},
     escrow_corpus,
     owner_cap::{Self, OwnerCap},
@@ -39,12 +39,12 @@ fun setup(): Scenario {
     sc
 }
 
-fun build_escrow(cfg: IntegrationConfig, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
+fun build_escrow(cfg: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
     build_escrow_with_commitment(cfg, commitment_policy::new_immediate(), sc)
 }
 
 fun build_escrow_with_commitment(
-    cfg:        IntegrationConfig,
+    cfg:        PolicyEnsemble,
     commitment: CommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {

@@ -7,7 +7,7 @@ module usufruct::escrow_corpus;
 // === Imports ===
 
 use usufruct::{
-    config::{Self, IntegrationConfig},
+    policy_ensemble::{Self, PolicyEnsemble},
     curve_shape_policy::{Self, CurveShapePolicy},
     descent_policy::{Self, DescentPolicy},
     handover_policy::{Self, HandoverPolicy},
@@ -48,7 +48,7 @@ const COMPOUND_DELTA_VALUE:   u64 = 1;
 // === Structs ===
 
 public struct CorpusEntry has copy, drop, store {
-    cfg: IntegrationConfig,
+    cfg: PolicyEnsemble,
     c:   u8,   // 0..3  HandoverPolicy
     d:   u8,   // 0..1  PriceFunctionPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
@@ -100,9 +100,9 @@ public(package) fun all_random_descent():        vector<CorpusEntry> { filter_h(
 public(package) fun all_random_descent_multi():  vector<CorpusEntry> { filter_h(all_multi(),  2) }
 
 /// Single-config lookup by τ2 tag. Validates each decoded axis and returns
-/// IntegrationConfig directly — the wrapper carries no new info when the
+/// PolicyEnsemble directly — the wrapper carries no new info when the
 /// caller already holds the tag.
-public(package) fun by_tag(tag: u64): IntegrationConfig {
+public(package) fun by_tag(tag: u64): PolicyEnsemble {
     let f = (tag % 10) as u8;
     let h = ((tag / 10) % 10) as u8;
     let e = ((tag / 100) % 10) as u8;
@@ -167,72 +167,72 @@ public(package) fun with_cycles_single():       vector<CorpusEntry> { all() }
 public(package) fun with_cycles_multi():        vector<CorpusEntry> { all_multi() }
 
 /// Rebuild `cfg` with a different `min_rent_price` (Fixed policy). All other fields unchanged.
-public(package) fun with_min_rent_price(cfg: IntegrationConfig, price_mist: u64): IntegrationConfig {
-    config::new_config(
+public(package) fun with_min_rent_price(cfg: PolicyEnsemble, price_mist: u64): PolicyEnsemble {
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(price_mist)),
-        *config::proj_tenure_ceiling(&cfg),
-        *config::proj_tenure_cycles(&cfg),
-        *config::proj_handover(&cfg),
-        *config::proj_descent(&cfg),
-        *config::proj_credit_curve(&cfg),
-        *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_tenure_ceiling(&cfg),
+        *policy_ensemble::proj_tenure_cycles(&cfg),
+        *policy_ensemble::proj_handover(&cfg),
+        *policy_ensemble::proj_descent(&cfg),
+        *policy_ensemble::proj_credit_curve(&cfg),
+        *policy_ensemble::proj_descent_curve(&cfg),
+        *policy_ensemble::proj_price_function_policy(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a random-in-range `min_rent_price`. All other fields unchanged.
-public(package) fun with_random_min_rent_price(cfg: IntegrationConfig, min_mist: u64, max_mist: u64): IntegrationConfig {
-    config::new_config(
+public(package) fun with_random_min_rent_price(cfg: PolicyEnsemble, min_mist: u64, max_mist: u64): PolicyEnsemble {
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
-        *config::proj_tenure_ceiling(&cfg),
-        *config::proj_tenure_cycles(&cfg),
-        *config::proj_handover(&cfg),
-        *config::proj_descent(&cfg),
-        *config::proj_credit_curve(&cfg),
-        *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_tenure_ceiling(&cfg),
+        *policy_ensemble::proj_tenure_cycles(&cfg),
+        *policy_ensemble::proj_handover(&cfg),
+        *policy_ensemble::proj_descent(&cfg),
+        *policy_ensemble::proj_credit_curve(&cfg),
+        *policy_ensemble::proj_descent_curve(&cfg),
+        *policy_ensemble::proj_price_function_policy(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a different `tenure_ceiling` (Fixed policy). All other fields unchanged.
-public(package) fun with_tenure_ceiling(cfg: IntegrationConfig, ceiling_ms: u64): IntegrationConfig {
-    config::new_config(
-        *config::proj_min_rent_price(&cfg),
+public(package) fun with_tenure_ceiling(cfg: PolicyEnsemble, ceiling_ms: u64): PolicyEnsemble {
+    policy_ensemble::new_ensemble(
+        *policy_ensemble::proj_min_rent_price(&cfg),
         tenure_policy::new_fixed(phases::duration(ceiling_ms)),
-        *config::proj_tenure_cycles(&cfg),
-        *config::proj_handover(&cfg),
-        *config::proj_descent(&cfg),
-        *config::proj_credit_curve(&cfg),
-        *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_tenure_cycles(&cfg),
+        *policy_ensemble::proj_handover(&cfg),
+        *policy_ensemble::proj_descent(&cfg),
+        *policy_ensemble::proj_credit_curve(&cfg),
+        *policy_ensemble::proj_descent_curve(&cfg),
+        *policy_ensemble::proj_price_function_policy(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a random-in-range `tenure_ceiling`. All other fields unchanged.
-public(package) fun with_random_tenure_ceiling(cfg: IntegrationConfig, min_ms: u64, max_ms: u64): IntegrationConfig {
-    config::new_config(
-        *config::proj_min_rent_price(&cfg),
+public(package) fun with_random_tenure_ceiling(cfg: PolicyEnsemble, min_ms: u64, max_ms: u64): PolicyEnsemble {
+    policy_ensemble::new_ensemble(
+        *policy_ensemble::proj_min_rent_price(&cfg),
         tenure_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
-        *config::proj_tenure_cycles(&cfg),
-        *config::proj_handover(&cfg),
-        *config::proj_descent(&cfg),
-        *config::proj_credit_curve(&cfg),
-        *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_tenure_cycles(&cfg),
+        *policy_ensemble::proj_handover(&cfg),
+        *policy_ensemble::proj_descent(&cfg),
+        *policy_ensemble::proj_credit_curve(&cfg),
+        *policy_ensemble::proj_descent_curve(&cfg),
+        *policy_ensemble::proj_price_function_policy(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a different `tenure_cycles` policy. All other fields unchanged.
-public(package) fun with_tenure_cycles(cfg: IntegrationConfig, policy: TenureCyclesPolicy): IntegrationConfig {
-    config::new_config(
-        *config::proj_min_rent_price(&cfg),
-        *config::proj_tenure_ceiling(&cfg),
+public(package) fun with_tenure_cycles(cfg: PolicyEnsemble, policy: TenureCyclesPolicy): PolicyEnsemble {
+    policy_ensemble::new_ensemble(
+        *policy_ensemble::proj_min_rent_price(&cfg),
+        *policy_ensemble::proj_tenure_ceiling(&cfg),
         policy,
-        *config::proj_handover(&cfg),
-        *config::proj_descent(&cfg),
-        *config::proj_credit_curve(&cfg),
-        *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_handover(&cfg),
+        *policy_ensemble::proj_descent(&cfg),
+        *policy_ensemble::proj_credit_curve(&cfg),
+        *policy_ensemble::proj_descent_curve(&cfg),
+        *policy_ensemble::proj_price_function_policy(&cfg),
     )
 }
 
@@ -278,7 +278,7 @@ public(package) fun compound_delta_value_const():     u64 { COMPOUND_DELTA_VALUE
 
 // --- Method alias backing functions ---
 
-public(package) fun entry_cfg(entry: &CorpusEntry): &IntegrationConfig { &entry.cfg }
+public(package) fun entry_cfg(entry: &CorpusEntry): &PolicyEnsemble { &entry.cfg }
 public(package) fun entry_tag(entry: &CorpusEntry): u64                { entry.tag }
 public(package) fun entry_c(entry: &CorpusEntry):   u8                 { entry.c }
 public(package) fun entry_d(entry: &CorpusEntry):   u8                 { entry.d }
@@ -355,9 +355,9 @@ public(package) fun commitment_by_tag(tag: u64): CommitmentPolicy {
     make_commitment((tag % 10) as u8)
 }
 
-fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8, m: u8): IntegrationConfig {
+fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8, m: u8): PolicyEnsemble {
     let curve = make_curve(e);
-    config::new_config(
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN_RENT_PRICE)),
         tenure_policy::new_fixed(phases::duration(TENURE_CEILING)),
         make_tenure_cycles(m),

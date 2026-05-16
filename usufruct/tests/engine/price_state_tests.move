@@ -6,7 +6,7 @@ module usufruct::price_state_tests;
 
 use usufruct::{
     asset_state,
-    config,
+    policy_ensemble,
     curve_shape_policy,
     descent_policy,
     handover_policy,
@@ -26,8 +26,8 @@ const STAKE:  u64 = 15_000_000_000;
 const LAST:   u64 = 20_000_000_000;
 const T0:     u64 = 1_000_000;
 
-fun base_cfg(descent: bool): config::IntegrationConfig {
-    config::new_config(
+fun base_cfg(descent: bool): policy_ensemble::PolicyEnsemble {
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
         tenure_cycles_policy::new_single(),
         handover_policy::new_handover_instant(),
@@ -50,14 +50,14 @@ fun ascending_is_time_independent() {
 #[test]
 fun ascending_agrees_with_price_function_state() {
     let cfg      = base_cfg(false);
-    let expected = monetary::price_mist(price_function_policy::evaluate_price_fn(config::proj_price_function_policy(&cfg), monetary::price(STAKE)));
+    let expected = monetary::price_mist(price_function_policy::evaluate_price_fn(policy_ensemble::proj_price_function_policy(&cfg), monetary::price(STAKE)));
     assert!(monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &cfg)) == expected, 0);
 }
 
 #[test]
 fun ascending_fixed_delta_adds_delta() {
     let delta = MIN;
-    let cfg   = config::new_config(
+    let cfg   = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
         tenure_cycles_policy::new_single(),
         handover_policy::new_handover_instant(),
@@ -73,7 +73,7 @@ fun ascending_fixed_delta_adds_delta() {
 
 #[test]
 fun ascending_compound_delta_raises_price() {
-    let cfg = config::new_config(
+    let cfg = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
         tenure_cycles_policy::new_single(),
         handover_policy::new_handover_instant(),
@@ -163,7 +163,7 @@ fun descending_various_curves_respect_bounds() {
     let mut i = 0;
     while (i < curves.length()) {
         let curve = *curves.borrow(i);
-        let cfg = config::new_config(
+        let cfg = policy_ensemble::new_ensemble(
             floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
             tenure_cycles_policy::new_single(),
             handover_policy::new_handover_instant(),

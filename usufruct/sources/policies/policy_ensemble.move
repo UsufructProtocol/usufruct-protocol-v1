@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::config;
+module usufruct::policy_ensemble;
 
 // === Imports ===
 
@@ -24,7 +24,7 @@ const EHandoverFloorExceedsTenure: u64 = 2;
 
 // === Structs ===
 
-public struct IntegrationConfig has copy, drop, store {
+public struct PolicyEnsemble has copy, drop, store {
     min_rent_price:   FloorPricePolicy,
     tenure_ceiling:   TenurePolicy,
     tenure_cycles:    TenureCyclesPolicy,
@@ -37,16 +37,16 @@ public struct IntegrationConfig has copy, drop, store {
 
 // === Events ===
 
-public struct IntegrationConfigRegistered has copy, drop {
+public struct PolicyEnsembleRegistered has copy, drop {
     escrow_id: ID,
-    config:    IntegrationConfig,
+    ensemble: PolicyEnsemble,
 }
 
 // === Method Aliases ===
 
 // === Public Functions ===
 
-public fun new_config(
+public fun new_ensemble(
     min_rent_price:  FloorPricePolicy,
     tenure_ceiling:  TenurePolicy,
     tenure_cycles:   TenureCyclesPolicy,
@@ -55,12 +55,12 @@ public fun new_config(
     credit_curve:    CurveShapePolicy,
     descent_curve:   CurveShapePolicy,
     price_function_policy: PriceFunctionPolicy,
-): IntegrationConfig {
+): PolicyEnsemble {
     assert!(
         handover_policy::countdown_floor_lt(&handover, tenure_policy::min_ceiling(&tenure_ceiling)),
         EHandoverFloorExceedsTenure,
     );
-    IntegrationConfig {
+    PolicyEnsemble {
         min_rent_price,
         tenure_ceiling,
         tenure_cycles,
@@ -68,27 +68,27 @@ public fun new_config(
         descent,
         credit_curve,
         descent_curve,
-        price_function_policy: price_function_policy,
+        price_function_policy,
     }
 }
 
 // === View Functions ===
 
-public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):        &FloorPricePolicy      { &cfg.min_rent_price }
-public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):         &TenurePolicy          { &cfg.tenure_ceiling }
-public(package) fun proj_tenure_cycles(cfg: &IntegrationConfig):          &TenureCyclesPolicy    { &cfg.tenure_cycles }
-public(package) fun proj_handover(cfg: &IntegrationConfig):               &HandoverPolicy         { &cfg.handover }
-public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicy   { &cfg.descent }
-public(package) fun proj_credit_curve(cfg: &IntegrationConfig):          &CurveShapePolicy      { &cfg.credit_curve }
-public(package) fun proj_descent_curve(cfg: &IntegrationConfig):         &CurveShapePolicy      { &cfg.descent_curve }
-public(package) fun proj_price_function_policy(cfg: &IntegrationConfig): &PriceFunctionPolicy   { &cfg.price_function_policy }
+public(package) fun proj_min_rent_price(cfg: &PolicyEnsemble):        &FloorPricePolicy      { &cfg.min_rent_price }
+public(package) fun proj_tenure_ceiling(cfg: &PolicyEnsemble):         &TenurePolicy          { &cfg.tenure_ceiling }
+public(package) fun proj_tenure_cycles(cfg: &PolicyEnsemble):          &TenureCyclesPolicy    { &cfg.tenure_cycles }
+public(package) fun proj_handover(cfg: &PolicyEnsemble):               &HandoverPolicy         { &cfg.handover }
+public(package) fun proj_descent(cfg: &PolicyEnsemble):               &DescentPolicy   { &cfg.descent }
+public(package) fun proj_credit_curve(cfg: &PolicyEnsemble):          &CurveShapePolicy      { &cfg.credit_curve }
+public(package) fun proj_descent_curve(cfg: &PolicyEnsemble):         &CurveShapePolicy      { &cfg.descent_curve }
+public(package) fun proj_price_function_policy(cfg: &PolicyEnsemble): &PriceFunctionPolicy   { &cfg.price_function_policy }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun emit_registration(cfg: &IntegrationConfig, escrow_id: ID) {
-    event::emit(IntegrationConfigRegistered { escrow_id, config: *cfg });
+public(package) fun emit_registration(cfg: &PolicyEnsemble, escrow_id: ID) {
+    event::emit(PolicyEnsembleRegistered { escrow_id, ensemble: *cfg });
 }
 
 // === Private Functions ===
@@ -96,7 +96,7 @@ public(package) fun emit_registration(cfg: &IntegrationConfig, escrow_id: ID) {
 // === Test Functions ===
 
 #[test_only]
-public fun registered_escrow_id(e: &IntegrationConfigRegistered): ID { e.escrow_id }
+public fun registered_escrow_id(e: &PolicyEnsembleRegistered): ID { e.escrow_id }
 #[test_only]
-public fun registered_config(e: &IntegrationConfigRegistered): IntegrationConfig { e.config }
+public fun registered_ensemble(e: &PolicyEnsembleRegistered): PolicyEnsemble { e.ensemble }
 

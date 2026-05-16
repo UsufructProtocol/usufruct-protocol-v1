@@ -6,7 +6,7 @@ module usufruct::credit_context_state_tests;
 
 use usufruct::{
     asset_state,
-    config,
+    policy_ensemble,
     curve_shape_policy,
     descent_policy,
     handover_policy,
@@ -24,8 +24,8 @@ const STAKE:  u64 = 30_000_000_000;
 const T0:     u64 = 1_000_000;
 const EXPIRY: u64 = T0 + 25_000;
 
-fun base_cfg(): config::IntegrationConfig {
-    config::new_config(
+fun base_cfg(): policy_ensemble::PolicyEnsemble {
+    policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN)),
         tenure_policy::new_fixed(phases::duration(TENURE)),
         tenure_cycles_policy::new_single(),
@@ -98,7 +98,7 @@ fun accruing_various_curves_stay_in_bounds() {
     let mut i = 0;
     while (i < curves.length()) {
         let curve = *curves.borrow(i);
-        let cfg = config::new_config(
+        let cfg = policy_ensemble::new_ensemble(
             floor_price_policy::new_fixed(monetary::price(MIN)),
             tenure_policy::new_fixed(phases::duration(TENURE)),
             tenure_cycles_policy::new_single(),

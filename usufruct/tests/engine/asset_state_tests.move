@@ -60,7 +60,7 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
 /// Integrate an escrow with the given config and immediately take it
 /// back as a shared object. Returns (escrow, owner_cap).
 fun integrate_and_take_with_cfg(
-    cfg: usufruct::config::IntegrationConfig,
+    cfg: usufruct::policy_ensemble::PolicyEnsemble,
     sc:  &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);

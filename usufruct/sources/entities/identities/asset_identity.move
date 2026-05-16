@@ -13,7 +13,7 @@ use usufruct::escrow_identity::EscrowIdentity;
 
 // === Structs ===
 
-public struct AssetIdentity has copy, drop {
+public struct AssetIdentity has copy, drop, store {
     asset_id:        ID,
     escrow_identity: EscrowIdentity,
 }

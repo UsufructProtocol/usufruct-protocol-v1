@@ -6,13 +6,20 @@ module usufruct::asset_custody_tests;
 
 use std::unit_test::assert_eq;
 use sui::test_scenario;
-use usufruct::asset_custody::{Self, AssetCustodyOpen};
+use usufruct::{
+    asset_custody::{Self, AssetCustodyOpen},
+    escrow_identity,
+};
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 public struct TestAsset has key, store { id: UID }
 
 const SINK: address = @0x0;
+
+fun fake_ei(): escrow_identity::EscrowIdentity {
+    escrow_identity::new(object::id_from_address(@0xEC))
+}
 
 fun new_test_asset(ctx: &mut TxContext): TestAsset { TestAsset { id: object::new(ctx) } }
 
@@ -32,7 +39,7 @@ fun new_stamps_asset_id() {
     {
         let u   = new_test_asset(sc.ctx());
         let uid = object::id(&u);
-        let w   = asset_custody::new(u);
+        let w   = asset_custody::new(u, fake_ei());
         assert_eq!(asset_custody::proj_asset_id(&w), uid);
         assert!(asset_custody::proj_is_available(&w));
         dispose_wrapper(w);
@@ -49,7 +56,7 @@ fun take_extracts_u_and_marks_slot_unavailable() {
     {
         let u   = new_test_asset(sc.ctx());
         let uid = object::id(&u);
-        let mut w = asset_custody::new(u);
+        let mut w = asset_custody::new(u, fake_ei());
 
         let out = asset_custody::take(&mut w);
         assert_eq!(object::id(&out), uid);
@@ -70,7 +77,7 @@ fun put_restores_availability() {
     sc.next_tx(@0xA);
     {
         let u   = new_test_asset(sc.ctx());
-        let mut w = asset_custody::new(u);
+        let mut w = asset_custody::new(u, fake_ei());
 
         let out = asset_custody::take(&mut w);
         assert!(!asset_custody::proj_is_available(&w));
@@ -91,7 +98,7 @@ fun unbundle_when_available_returns_inner_u() {
     {
         let u   = new_test_asset(sc.ctx());
         let uid = object::id(&u);
-        let w   = asset_custody::new(u);
+        let w   = asset_custody::new(u, fake_ei());
         let out = asset_custody::unbundle(w);
         assert_eq!(object::id(&out), uid);
         transfer::public_transfer(out, SINK);

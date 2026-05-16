@@ -5,6 +5,11 @@ module usufruct::asset_custody;
 
 // === Imports ===
 
+use usufruct::{
+    asset_identity::{Self, AssetIdentity},
+    escrow_identity::EscrowIdentity,
+};
+
 // === Errors ===
 
 // === Constants ===
@@ -12,7 +17,7 @@ module usufruct::asset_custody;
 // === Structs ===
 
 public struct AssetCustodyOpen<U: key + store> has store {
-    asset_id:  ID,
+    identity:  AssetIdentity,
     available: Option<U>,
 }
 
@@ -31,15 +36,16 @@ public struct AssetCustodyLocked<U: key + store> has store {
 // === View Functions ===
 
 public(package) fun proj_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID { object::id(&self.asset) }
-public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>):    ID { self.asset_id }
+public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>):    ID { asset_identity::identity_asset_id(&self.identity) }
 public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool { self.available.is_some() }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun new<U: key + store>(u: U): AssetCustodyOpen<U> {
-    AssetCustodyOpen { asset_id: object::id(&u), available: option::some(u) }
+public(package) fun new<U: key + store>(u: U, escrow_identity: EscrowIdentity): AssetCustodyOpen<U> {
+    let identity = asset_identity::new_identity(object::id(&u), escrow_identity);
+    AssetCustodyOpen { identity, available: option::some(u) }
 }
 
 public(package) fun lock<U: key + store>(u: U): AssetCustodyLocked<U> {
@@ -68,9 +74,9 @@ public(package) fun close_tenancy<U: key + store>(self: AssetCustodyOpen<U>): As
     lock(unbundle(self))
 }
 
-public(package) fun open_tenancy<U: key + store>(self: AssetCustodyLocked<U>): AssetCustodyOpen<U> {
+public(package) fun open_tenancy<U: key + store>(self: AssetCustodyLocked<U>, escrow_identity: EscrowIdentity): AssetCustodyOpen<U> {
     let AssetCustodyLocked { asset } = self;
-    new(asset)
+    new(asset, escrow_identity)
 }
 
 // === Private Functions ===

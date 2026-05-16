@@ -1497,7 +1497,7 @@ fun do_install<Asset: key + store, CoinType>(
     let cap           = tenant_cap::new(escrow_identity, tenant_addr, ctx);
     let cap_identity  = tenant_cap::identity(&cap);
     let t = tenant_seat::new<CoinType>(cap_identity, tenant_addr, coin::into_balance(payment));
-    let wrapped = asset_custody::open_tenancy(locked);
+    let wrapped = asset_custody::open_tenancy(locked, escrow_identity);
     let schedule = TenancySchedule {
         phase_start:      now,
         ceiling_total:    tenures::total_duration(cycle.ceiling, tenures),
@@ -1765,7 +1765,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
                 committed_tenures: tenures::tenures(1),
             };
             AssetState::Occupied {
-                asset: asset_custody::open_tenancy(asset),
+                asset: asset_custody::open_tenancy(asset, core.escrow_identity),
                 terms: OccupiedTerms { schedule, current: tenant_in, retire: retire_condition_new() },
                 cycle,
             }

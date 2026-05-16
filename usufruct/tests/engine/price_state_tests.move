@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::price_state_tests;
+module usufruct::asset_state_price_tests;
 
 use usufruct::{
     asset_state,

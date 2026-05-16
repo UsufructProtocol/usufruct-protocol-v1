@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::asset_tests;
+module usufruct::asset_custody_tests;
 
 use std::unit_test::assert_eq;
 use sui::test_scenario;

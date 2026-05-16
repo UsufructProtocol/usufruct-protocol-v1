@@ -11,6 +11,7 @@ use usufruct::{
     fee_message::{Self, FeeShare},
     monetary::Stake,
     owner_earning::{Self, OwnerEarnings},
+    refund_address,
     tenant_cap::TenantCapIdentity,
     tenant_identity::{Self, TenantIdentity},
     tenant_stake::{Self, TenantStake},
@@ -50,7 +51,7 @@ public(package) fun new<C>(
     balance:      Balance<C>,
 ): TenantSeat<C> {
     TenantSeat {
-        identity: tenant_identity::new(cap_identity, address),
+        identity: tenant_identity::new(cap_identity, refund_address::new(address)),
         stake:    tenant_stake::new(balance),
     }
 }

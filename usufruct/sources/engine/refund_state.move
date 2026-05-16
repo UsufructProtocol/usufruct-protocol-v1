@@ -11,6 +11,7 @@ use usufruct::{
     owner_seat::{Self, OwnerSeat},
     owner_earning::{Self, OwnerEarnings},
     protocol_fee_ref::FeeInboxIdentity,
+    refund_address,
     tenant_seat::{Self, TenantSeat},
     tenant_identity,
     tenant_stake,
@@ -110,14 +111,14 @@ public(package) fun distribute<C>(
             fee_message::post(fee_share, fee_inbox_identity, ctx);
         },
         RefundState::Parcial { seat, fee_share, owner_earnings } => {
-            let addr = tenant_identity::proj_address(tenant_seat::proj_identity(&seat));
+            let addr = refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(&seat)));
             let (_, stake) = tenant_seat::unbundle(seat);
             owner_seat::deposit(owner, owner_earnings);
             fee_message::post(fee_share, fee_inbox_identity, ctx);
             tenant_stake::liquidate(stake, addr, ctx);
         },
         RefundState::Total { seat } => {
-            let addr = tenant_identity::proj_address(tenant_seat::proj_identity(&seat));
+            let addr = refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(&seat)));
             let (_, stake) = tenant_seat::unbundle(seat);
             tenant_stake::liquidate(stake, addr, ctx);
         },

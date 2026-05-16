@@ -5,7 +5,10 @@ module usufruct::tenant_identity;
 
 // === Imports ===
 
-use usufruct::tenant_cap::TenantCapIdentity;
+use usufruct::{
+    refund_address::RefundAddress,
+    tenant_cap::TenantCapIdentity,
+};
 
 // === Errors ===
 
@@ -15,7 +18,7 @@ use usufruct::tenant_cap::TenantCapIdentity;
 
 public struct TenantIdentity has copy, drop, store {
     cap_identity: TenantCapIdentity,
-    address:      address,
+    address:      RefundAddress,
 }
 
 // === Enums ===
@@ -29,13 +32,13 @@ public struct TenantIdentity has copy, drop, store {
 // === View Functions ===
 
 public(package) fun proj_cap_identity(id: &TenantIdentity): TenantCapIdentity { id.cap_identity }
-public(package) fun proj_address(id: &TenantIdentity):      address            { id.address }
+public(package) fun proj_address(id: &TenantIdentity):      RefundAddress      { id.address }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun new(cap_identity: TenantCapIdentity, address: address): TenantIdentity {
+public(package) fun new(cap_identity: TenantCapIdentity, address: RefundAddress): TenantIdentity {
     TenantIdentity { cap_identity, address }
 }
 

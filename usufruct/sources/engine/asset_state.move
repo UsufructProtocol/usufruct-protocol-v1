@@ -33,6 +33,7 @@ use usufruct::{
     escrow_identity::{Self, EscrowIdentity},
     protocol_fee_ref::{Self, FeeInboxIdentity},
     tenant_cap::{Self, TenantCap, TenantCapIdentity},
+    refund_address,
     refund_state,
     tenant_seat::{Self, TenantSeat},
     tenant_identity,
@@ -410,7 +411,7 @@ public(package) fun proj_current_addr<Asset: key + store, CoinType>(
 ): Option<address> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current))),
+            option::some(tenant_addr(&terms.current)),
         _ => option::none(),
     }
 }
@@ -430,7 +431,7 @@ public(package) fun proj_pending_addr<Asset: key + store, CoinType>(
 ): Option<address> {
     match (s) {
         AssetState::Renting(RentingState::Demand { bid, .. }) =>
-            option::some(tenant_identity::proj_address(tenant_seat::proj_identity(&bid.pending))),
+            option::some(tenant_addr(&bid.pending)),
         _ => option::none(),
     }
 }
@@ -939,7 +940,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             assert_borrow_authorized(cap_identity,
                 tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)),
                 option::none());
-            let tenant_addr = tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current));
+            let tenant_addr = tenant_addr(&terms.current);
             let asset_id    = asset_custody::proj_asset_id(&asset);
             let u           = asset_custody::take(&mut asset);
             let receipt     = AssetReceipt {
@@ -953,7 +954,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             assert_borrow_authorized(cap_identity,
                 tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)),
                 option::some(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending))));
-            let tenant_addr = tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current));
+            let tenant_addr = tenant_addr(&terms.current);
             let asset_id    = asset_custody::proj_asset_id(&asset);
             let u           = asset_custody::take(&mut asset);
             let receipt     = AssetReceipt {
@@ -977,7 +978,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     match (renting) {
         RentingState::Occupied { mut asset, terms, cycle } => {
             let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-            let tenant_addr = tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current));
+            let tenant_addr = tenant_addr(&terms.current);
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
@@ -988,7 +989,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
         },
         RentingState::Demand { mut asset, terms, bid, cycle } => {
             let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-            let tenant_addr = tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current));
+            let tenant_addr = tenant_addr(&terms.current);
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
@@ -1115,6 +1116,10 @@ fun assert_tenant_cap_binds<CoinType>(cap: &TenantCap, core: &EscrowCore<CoinTyp
     assert!(tenant_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowTenantCap)
 }
 
+fun tenant_addr<C>(seat: &TenantSeat<C>): address {
+    refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(seat)))
+}
+
 fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {
     assert!(
         commitment_policy::is_unlocked(
@@ -1175,7 +1180,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let remain_credit = monetary::stake_sub(principal, used_credit);
 
     let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&current));
-    let displaced_addr   = tenant_identity::proj_address(tenant_seat::proj_identity(&current));
+    let displaced_addr   = tenant_addr(&current);
 
     let mut departing  = current;
     let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, alloc.owner_share);
@@ -1184,7 +1189,7 @@ fun do_handover<Asset: key + store, CoinType>(
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
     let new_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&pending));
-    let new_addr         = tenant_identity::proj_address(tenant_seat::proj_identity(&pending));
+    let new_addr         = tenant_addr(&pending);
     let new_stake        = tenant_seat::proj_stake_value(&pending);
     let new_rent_price = monetary::price_mist(ascending_floor_price(new_stake, config));
     let boundary_ms = phases::timestamp_ms(boundary);
@@ -1233,7 +1238,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
 
     let principal            = tenant_seat::proj_stake_value(&tenant);
     let tenant_cap_identity  = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&tenant));
-    let tenant_addr          = tenant_identity::proj_address(tenant_seat::proj_identity(&tenant));
+    let tenant_addr          = tenant_addr(&tenant);
     let alloc = split_fee(principal);
 
     let mut departing  = tenant;
@@ -1280,7 +1285,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     ctx:             &mut TxContext,
 ): (RentingState<Asset, CoinType>, TenantCap) {
     let current_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-    let current_addr   = tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current));
+    let current_addr   = tenant_addr(&terms.current);
     let current_stake  = tenant_seat::proj_stake_value(&terms.current);
     let expiry         = handover_policy::expiry_at(terms.schedule.handover_total, terms.schedule.ceiling_total, now, terms.schedule.phase_start);
     let pending_addr   = ctx.sender();
@@ -1333,10 +1338,10 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let DemandTerms { pending, handover: HandoverTerms { expiry: handover_expiry, tenures: _ } } = bid;
 
     let protected_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-    let protected_addr   = tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current));
+    let protected_addr   = tenant_addr(&terms.current);
     let protected_stake  = tenant_seat::proj_stake_value(&terms.current);
     let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&pending));
-    let displaced_addr   = tenant_identity::proj_address(tenant_seat::proj_identity(&pending));
+    let displaced_addr   = tenant_addr(&pending);
     let refunded_amount  = tenant_seat::proj_stake_value(&pending);
 
     let raw_escrow_id  = escrow_identity::escrow_id(escrow_identity);

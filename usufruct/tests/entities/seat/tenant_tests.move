@@ -14,6 +14,7 @@ use usufruct::{
     fee_message,
     monetary,
     escrow_identity,
+    refund_address,
     tenant_seat::{Self, TenantSeat},
     tenant_identity::{Self},
     tenant_stake,
@@ -41,7 +42,7 @@ fun new_constructs_tenant_with_expected_identity_and_stake() {
     let t = t1();
     let id = tenant_seat::proj_identity(&t);
     assert_eq!(tenant_identity::proj_cap_identity(id),  cap_t1());
-    assert_eq!(tenant_identity::proj_address(id), ADDR_T1);
+    assert_eq!(tenant_identity::proj_address(id), refund_address::new(ADDR_T1));
     assert_eq!(tenant_seat::proj_stake_value(&t), monetary::stake(STAKE_T1));
     tenant_seat::destroy_for_testing(t);
 }
@@ -61,7 +62,7 @@ fun unbundle_returns_identity_and_stake() {
     let t = t1();
     let (id, stake) = tenant_seat::unbundle(t);
     assert_eq!(tenant_identity::proj_cap_identity(&id),     cap_t1());
-    assert_eq!(tenant_identity::proj_address(&id),    ADDR_T1);
+    assert_eq!(tenant_identity::proj_address(&id), refund_address::new(ADDR_T1));
     assert_eq!(tenant_stake::proj_value(&stake), monetary::stake(STAKE_T1));
     tenant_stake::destroy_for_testing(stake);
 }

@@ -137,7 +137,7 @@ public enum RetireCondition has store, drop {
     Retiring,
 }
 
-public enum RentingState<Asset: key + store, phantom CoinType> {
+public enum RentingState<Asset: key + store, phantom CoinType> has store {
     Occupied { asset: asset_custody::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
     Demand   { asset: asset_custody::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
 }
@@ -146,8 +146,7 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
     Idle    { asset: asset_custody::AssetCustodyLocked<Asset>, cycle: CycleParams },
     AtDutch { asset: asset_custody::AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams },
     Retired { asset: asset_custody::AssetCustodyLocked<Asset> },
-    Occupied { asset: asset_custody::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
-    Demand   { asset: asset_custody::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
+    Renting(RentingState<Asset, CoinType>),
 }
 
 // === Events ===
@@ -365,29 +364,26 @@ public(package) fun proj_is_retired<Asset: key + store, CoinType>(
 public(package) fun proj_is_rented<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
-    match (s) {
-        AssetState::Occupied { .. } | AssetState::Demand { .. } => true,
-        _ => false,
-    }
+    match (s) { AssetState::Renting(_) => true, _ => false }
 }
 
 public(package) fun proj_is_occupied<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
-    match (s) { AssetState::Occupied { .. } => true, _ => false }
+    match (s) { AssetState::Renting(RentingState::Occupied { .. }) => true, _ => false }
 }
 
 public(package) fun proj_is_demand<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
-    match (s) { AssetState::Demand { .. } => true, _ => false }
+    match (s) { AssetState::Renting(RentingState::Demand { .. }) => true, _ => false }
 }
 
 public(package) fun proj_is_retiring<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             retire_condition_is_retiring(&terms.retire),
         _ => false,
     }
@@ -400,8 +396,8 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
         AssetState::Idle    { asset, .. } => asset_custody::proj_locked_id(asset),
         AssetState::AtDutch { asset, .. } => asset_custody::proj_locked_id(asset),
         AssetState::Retired { asset }     => asset_custody::proj_locked_id(asset),
-        AssetState::Occupied { asset, .. } => asset_custody::proj_asset_id(asset),
-        AssetState::Demand   { asset, .. } => asset_custody::proj_asset_id(asset),
+        AssetState::Renting(RentingState::Occupied { asset, .. } | RentingState::Demand { asset, .. }) =>
+            asset_custody::proj_asset_id(asset),
     }
 }
 
@@ -409,7 +405,7 @@ public(package) fun proj_current_addr<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<address> {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current))),
         _ => option::none(),
     }
@@ -419,7 +415,7 @@ public(package) fun proj_current_cap_id<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<ID> {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(tenant_cap::cap_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)))),
         _ => option::none(),
     }
@@ -429,7 +425,7 @@ public(package) fun proj_pending_addr<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<address> {
     match (s) {
-        AssetState::Demand { bid, .. } =>
+        AssetState::Renting(RentingState::Demand { bid, .. }) =>
             option::some(tenant_identity::proj_address(tenant_seat::proj_identity(&bid.pending))),
         _ => option::none(),
     }
@@ -439,7 +435,7 @@ public(package) fun proj_pending_cap_id<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<ID> {
     match (s) {
-        AssetState::Demand { bid, .. } =>
+        AssetState::Renting(RentingState::Demand { bid, .. }) =>
             option::some(tenant_cap::cap_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending)))),
         _ => option::none(),
     }
@@ -449,7 +445,7 @@ public(package) fun proj_current_stake<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Stake> {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(tenant_seat::proj_stake_value(&terms.current)),
         _ => option::none(),
     }
@@ -459,7 +455,7 @@ public(package) fun proj_current_stake_value<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Stake {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             tenant_seat::proj_stake_value(&terms.current),
         _ => abort ENotRented,
     }
@@ -469,7 +465,7 @@ public(package) fun proj_pending_stake<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Stake> {
     match (s) {
-        AssetState::Demand { bid, .. } =>
+        AssetState::Renting(RentingState::Demand { bid, .. }) =>
             option::some(tenant_seat::proj_stake_value(&bid.pending)),
         _ => option::none(),
     }
@@ -479,7 +475,7 @@ public(package) fun proj_phase_start<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Timestamp> {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(terms.schedule.phase_start),
         AssetState::AtDutch { auction, .. } =>
             option::some(auction.phase_start),
@@ -491,7 +487,7 @@ public(package) fun proj_handover_expiry<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Timestamp> {
     match (s) {
-        AssetState::Demand { bid, .. } => option::some(bid.handover.expiry),
+        AssetState::Renting(RentingState::Demand { bid, .. }) => option::some(bid.handover.expiry),
         _ => option::none(),
     }
 }
@@ -500,7 +496,7 @@ public(package) fun proj_resolved_ceiling<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(terms.schedule.ceiling_total),
         _ => option::none(),
     }
@@ -510,7 +506,7 @@ public(package) fun proj_resolved_handover<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(terms.schedule.handover_total),
         _ => option::none(),
     }
@@ -520,7 +516,7 @@ public(package) fun proj_resolved_floor<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Price> {
     match (s) {
-        AssetState::Occupied { cycle, .. } | AssetState::Demand { cycle, .. } =>
+        AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) =>
             option::some(cycle.floor),
         _ => option::none(),
     }
@@ -579,7 +575,7 @@ public(package) fun proj_credit_stake<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Stake> {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(tenant_seat::proj_stake_value(&terms.current)),
         _ => option::none(),
     }
@@ -589,7 +585,7 @@ public(package) fun proj_credit_phase_start<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Timestamp> {
     match (s) {
-        AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(terms.schedule.phase_start),
         _ => option::none(),
     }
@@ -598,20 +594,20 @@ public(package) fun proj_credit_phase_start<Asset: key + store, CoinType>(
 public(package) fun proj_credit_is_accruing<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
-    match (s) { AssetState::Occupied { .. } => true, _ => false }
+    match (s) { AssetState::Renting(RentingState::Occupied { .. }) => true, _ => false }
 }
 
 public(package) fun proj_credit_is_capped<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
-    match (s) { AssetState::Demand { .. } => true, _ => false }
+    match (s) { AssetState::Renting(RentingState::Demand { .. }) => true, _ => false }
 }
 
 public(package) fun proj_credit_expiry<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Timestamp> {
     match (s) {
-        AssetState::Demand { bid, .. } => option::some(bid.handover.expiry),
+        AssetState::Renting(RentingState::Demand { bid, .. }) => option::some(bid.handover.expiry),
         _ => option::none(),
     }
 }
@@ -627,10 +623,10 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
             descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.ensemble.active, now)
         },
         AssetState::Retired { .. } => abort ERetiredNoBid,
-        AssetState::Occupied { terms, .. } => {
+        AssetState::Renting(RentingState::Occupied { terms, .. }) => {
             ascending_floor_price(tenures::per_tenure_stake(tenant_seat::proj_stake_value(&terms.current), terms.schedule.committed_tenures), &core.ensemble.active)
         },
-        AssetState::Demand { bid, .. } => {
+        AssetState::Renting(RentingState::Demand { bid, .. }) => {
             ascending_floor_price(tenures::per_tenure_stake(tenant_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
         },
     }
@@ -642,10 +638,10 @@ public(package) fun used_credit_at<Asset: key + store, CoinType>(
     now:  Timestamp,
 ): Stake {
     match (s) {
-        AssetState::Occupied { terms, .. } => {
+        AssetState::Renting(RentingState::Occupied { terms, .. }) => {
             accruing_used_credit(tenant_seat::proj_stake_value(&terms.current), terms.schedule.phase_start, &core.ensemble.active, terms.schedule.ceiling_total, now)
         },
-        AssetState::Demand { terms, bid, .. } => {
+        AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
             capped_used_credit(tenant_seat::proj_stake_value(&terms.current), terms.schedule.phase_start, bid.handover.expiry, &core.ensemble.active, terms.schedule.ceiling_total, now)
         },
         _ => abort ENotRented,
@@ -680,8 +676,7 @@ public(package) fun cap_is_current<Asset: key + store, CoinType>(
     cap: TenantCapIdentity,
 ): bool {
     match (s) {
-        AssetState::Occupied { terms, .. } |
-        AssetState::Demand   { terms, .. } =>
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             cap == tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)),
         _ => false,
     }
@@ -692,7 +687,7 @@ public(package) fun cap_is_pending<Asset: key + store, CoinType>(
     cap: TenantCapIdentity,
 ): bool {
     match (s) {
-        AssetState::Demand { bid, .. } =>
+        AssetState::Renting(RentingState::Demand { bid, .. }) =>
             cap == tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending)),
         _ => false,
     }
@@ -718,12 +713,12 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
                 option::some(descent_policy::expiry_at(cycle.descent, auction.phase_start))
             } else { option::none() }
         },
-        AssetState::Occupied { terms, .. } => {
+        AssetState::Renting(RentingState::Occupied { terms, .. }) => {
             if (proj_occupied_is_firable(terms, now)) {
                 option::some(phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total))
             } else { option::none() }
         },
-        AssetState::Demand { bid, .. } => {
+        AssetState::Renting(RentingState::Demand { bid, .. }) => {
             if (proj_demand_is_firable(bid, now)) { option::some(bid.handover.expiry) }
             else { option::none() }
         },
@@ -819,14 +814,14 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
             do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
-        AssetState::Occupied { asset, terms, cycle } => {
+        AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = tenant_seat::proj_stake_value(&terms.current);
             let floor = ascending_floor_price(tenures::per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
-        AssetState::Demand { asset, terms, bid, cycle } => {
+        AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             let stake = tenant_seat::proj_stake_value(&bid.pending);
             let floor = ascending_floor_price(tenures::per_tenure_stake(stake, bid.handover.tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
@@ -860,15 +855,15 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
             do_retire_immediately(asset, escrow_identity, now, ctx),
         AssetState::AtDutch { asset, .. } =>
             do_retire_immediately(asset, escrow_identity, now, ctx),
-        AssetState::Occupied { asset, terms, cycle } => {
+        AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, cycle }
+            AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, cycle })
         },
-        AssetState::Demand { asset, terms, bid, cycle } => {
+        AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, bid, cycle }
+            AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, bid, cycle })
         },
     }
 }
@@ -889,7 +884,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
         AssetState::Retired { asset: _retired } => abort EAlreadyRetired,
         AssetState::Idle { asset, cycle: _ } => {
             event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.ensemble.active = new_cfg;
+            core.ensemble.active  = new_cfg;
             core.ensemble.pending = option::none();
             let mut generator = sui::random::new_generator(random, ctx);
             let floor    = floor_price_policy::resolve(policy_ensemble::proj_min_rent_price(&core.ensemble.active), &mut generator);
@@ -903,17 +898,17 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             core.ensemble.pending = option::some(new_cfg);
             AssetState::AtDutch { asset, auction, cycle }
         },
-        AssetState::Occupied { asset, terms, cycle } => {
+        AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.ensemble.pending = option::some(new_cfg);
-            AssetState::Occupied { asset, terms, cycle }
+            AssetState::Renting(RentingState::Occupied { asset, terms, cycle })
         },
-        AssetState::Demand { asset, terms, bid, cycle } => {
+        AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.ensemble.pending = option::some(new_cfg);
-            AssetState::Demand { asset, terms, bid, cycle }
+            AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle })
         },
     }
 }
@@ -931,7 +926,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
-        AssetState::Occupied { mut asset, terms, cycle } => {
+        AssetState::Renting(RentingState::Occupied { mut asset, terms, cycle }) => {
             assert_borrow_authorized(cap_identity,
                 tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)),
                 option::none());
@@ -945,7 +940,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
             (u, receipt)
         },
-        AssetState::Demand { mut asset, terms, bid, cycle } => {
+        AssetState::Renting(RentingState::Demand { mut asset, terms, bid, cycle }) => {
             assert_borrow_authorized(cap_identity,
                 tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)),
                 option::some(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending))));
@@ -980,7 +975,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
                 tenant_cap_id: tenant_cap::cap_id(cap_id),
                 tenant:        tenant_addr,
             });
-            AssetState::Occupied { asset, terms, cycle }
+            AssetState::Renting(RentingState::Occupied { asset, terms, cycle })
         },
         RentingState::Demand { mut asset, terms, bid, cycle } => {
             let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
@@ -991,7 +986,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
                 tenant_cap_id: tenant_cap::cap_id(cap_id),
                 tenant:        tenant_addr,
             });
-            AssetState::Demand { asset, terms, bid, cycle }
+            AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle })
         },
     }
 }
@@ -1008,11 +1003,11 @@ public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let cap_identity = tenant_cap::identity(&cap);
     match (&s) {
-        AssetState::Occupied { terms, .. } => {
+        AssetState::Renting(RentingState::Occupied { terms, .. }) => {
             let current = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
             if (cap_identity == current) abort ETenantCapNotStale;
         },
-        AssetState::Demand { terms, bid, .. } => {
+        AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
             let current = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
             let pending = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending));
             if (cap_identity == current || cap_identity == pending) abort ETenantCapNotStale;
@@ -1096,22 +1091,9 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
             });
             (asset_custody::unlock(asset), coin)
         },
-        AssetState::Idle { asset: _a, .. } => {
-            let EscrowCore { owner: _o, .. } = core;
-            abort ENotRetired
-        },
-        AssetState::AtDutch { asset: _a, .. } => {
-            let EscrowCore { owner: _o, .. } = core;
-            abort ENotRetired
-        },
-        AssetState::Occupied { asset: _a, terms: _t, .. } => {
-            let EscrowCore { owner: _o, .. } = core;
-            abort ENotRetired
-        },
-        AssetState::Demand { asset: _a, terms: _t, bid: _b, .. } => {
-            let EscrowCore { owner: _o, .. } = core;
-            abort ENotRetired
-        },
+        AssetState::Idle    { asset: _a, .. }    => { let EscrowCore { owner: _o, .. } = core; abort ENotRetired },
+        AssetState::AtDutch { asset: _a, .. }    => { let EscrowCore { owner: _o, .. } = core; abort ENotRetired },
+        AssetState::Renting(_rs)                 => { let EscrowCore { owner: _o, .. } = core; abort ENotRetired },
     }
 }
 
@@ -1221,11 +1203,11 @@ fun do_handover<Asset: key + store, CoinType>(
         handover_total:   tenures::rescale_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures),
         committed_tenures: incoming_tenures,
     };
-    AssetState::Occupied {
+    AssetState::Renting(RentingState::Occupied {
         asset,
         terms: OccupiedTerms { schedule: new_schedule, current: pending, retire },
         cycle,
-    }
+    })
 }
 
 fun do_tenure_expiry<Asset: key + store, CoinType>(
@@ -1313,7 +1295,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
-        AssetState::Demand {
+        AssetState::Renting(RentingState::Demand {
             asset,
             terms,
             bid: DemandTerms {
@@ -1321,7 +1303,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
                 handover: HandoverTerms { expiry, tenures },
             },
             cycle,
-        },
+        }),
         cap,
     )
 }
@@ -1376,7 +1358,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
-        AssetState::Demand {
+        AssetState::Renting(RentingState::Demand {
             asset,
             terms,
             bid: DemandTerms {
@@ -1384,7 +1366,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
                 handover: HandoverTerms { expiry: handover_expiry, tenures: incoming_tenures },
             },
             cycle,
-        },
+        }),
         cap,
     )
 }
@@ -1408,7 +1390,7 @@ fun step_handover<Asset: key + store, CoinType>(
     ctx:  &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (s) {
-        AssetState::Demand { asset, terms, bid, cycle } => {
+        AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             if (proj_demand_is_firable(&bid, now)) {
                 let boundary = bid.handover.expiry;
                 do_handover(
@@ -1418,7 +1400,7 @@ fun step_handover<Asset: key + store, CoinType>(
                     boundary, ctx,
                 )
             } else {
-                AssetState::Demand { asset, terms, bid, cycle }
+                AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle })
             }
         },
         s => s,
@@ -1432,7 +1414,7 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
     ctx:  &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (s) {
-        AssetState::Occupied { asset, terms, cycle } => {
+        AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (proj_occupied_is_firable(&terms, now)) {
                 let boundary = phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total);
                 do_tenure_expiry(
@@ -1441,7 +1423,7 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
                     boundary, ctx,
                 )
             } else {
-                AssetState::Occupied { asset, terms, cycle }
+                AssetState::Renting(RentingState::Occupied { asset, terms, cycle })
             }
         },
         s => s,
@@ -1509,11 +1491,11 @@ fun do_install<Asset: key + store, CoinType>(
         phase_start_ms: now_ms, price_paid, floor_price: monetary::price_mist(floor),
     });
     (
-        AssetState::Occupied {
+        AssetState::Renting(RentingState::Occupied {
             asset: wrapped,
             terms: OccupiedTerms { schedule, current: t, retire: retire_condition_new() },
             cycle,
-        },
+        }),
         cap,
     )
 }
@@ -1697,17 +1679,17 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     ctx:      &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Demand { asset, terms, bid, cycle } =>
+        AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) =>
             do_handover(
                 asset, terms, bid, cycle,
                 &mut core.owner, &core.ensemble.active,
                 core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             ),
-        AssetState::Idle    { asset: _a, .. } => abort ENotRented,
-        AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
-        AssetState::Retired { asset: _a }      => abort ENotRented,
-        AssetState::Occupied { asset: _a, terms: _t, .. } => abort ENotRented,
+        AssetState::Idle    { asset: _a, .. }    => abort ENotRented,
+        AssetState::AtDutch { asset: _a, .. }    => abort ENotRented,
+        AssetState::Retired { asset: _a }        => abort ENotRented,
+        AssetState::Renting(_rs)                 => abort ENotRented,
     }
 }
 
@@ -1719,16 +1701,16 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
     ctx:      &mut TxContext,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, terms, cycle } =>
+        AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) =>
             do_tenure_expiry(
                 asset, terms, cycle,
                 &mut core.owner, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             ),
-        AssetState::Idle    { asset: _a, .. } => abort ENotRented,
-        AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
-        AssetState::Retired { asset: _a }      => abort ENotRented,
-        AssetState::Demand  { asset: _a, terms: _t, bid: _b, .. } => abort ENotRented,
+        AssetState::Idle    { asset: _a, .. }    => abort ENotRented,
+        AssetState::AtDutch { asset: _a, .. }    => abort ENotRented,
+        AssetState::Retired { asset: _a }        => abort ENotRented,
+        AssetState::Renting(_rs)                 => abort ENotRented,
     }
 }
 
@@ -1742,10 +1724,9 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     match (state) {
         AssetState::AtDutch { asset, auction, .. } =>
             do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary, generator),
-        AssetState::Idle     { asset: _a, .. } => abort ENotRented,
-        AssetState::Retired  { asset: _a }      => abort ENotRented,
-        AssetState::Occupied { asset: _a, terms: _t, .. } => abort ENotRented,
-        AssetState::Demand   { asset: _a, terms: _t, bid: _b, .. } => abort ENotRented,
+        AssetState::Idle    { asset: _a, .. } => abort ENotRented,
+        AssetState::Retired { asset: _a }     => abort ENotRented,
+        AssetState::Renting(_rs)              => abort ENotRented,
     }
 }
 
@@ -1764,16 +1745,15 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
                 handover_total:   cycle.handover,
                 committed_tenures: tenures::tenures(1),
             };
-            AssetState::Occupied {
+            AssetState::Renting(RentingState::Occupied {
                 asset: asset_custody::open_tenancy(asset, core.escrow_identity),
                 terms: OccupiedTerms { schedule, current: tenant_in, retire: retire_condition_new() },
                 cycle,
-            }
+            })
         },
-        AssetState::AtDutch  { asset: _a, .. }                               => abort ENotRented,
-        AssetState::Retired  { asset: _a }                                   => abort ENotRented,
-        AssetState::Occupied { asset: _a, terms: _t, .. }                    => abort ENotRented,
-        AssetState::Demand   { asset: _a, terms: _t, bid: _b, .. }           => abort ENotRented,
+        AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
+        AssetState::Retired { asset: _a }     => abort ENotRented,
+        AssetState::Renting(_rs)              => abort ENotRented,
     }
 }
 
@@ -1784,8 +1764,8 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     handover_countdown_expiry: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, terms, cycle } =>
-            AssetState::Demand {
+        AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) =>
+            AssetState::Renting(RentingState::Demand {
                 asset,
                 terms,
                 bid: DemandTerms {
@@ -1793,11 +1773,11 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
                     handover: HandoverTerms { expiry: handover_countdown_expiry, tenures: tenures::tenures(1) },
                 },
                 cycle,
-            },
-        AssetState::Idle    { asset: _a, .. }                               => abort ENotRented,
-        AssetState::AtDutch { asset: _a, .. }                               => abort ENotRented,
-        AssetState::Retired { asset: _a }                                   => abort ENotRented,
-        AssetState::Demand  { asset: _a, terms: _t, bid: _b, .. }           => abort ENotRented,
+            }),
+        AssetState::Idle    { asset: _a, .. } => abort ENotRented,
+        AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
+        AssetState::Retired { asset: _a }     => abort ENotRented,
+        AssetState::Renting(_rs)              => abort ENotRented,
     }
 }
 
@@ -1811,7 +1791,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     new_phase_start: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, terms, cycle } => {
+        AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             let OccupiedTerms { schedule: _, current: mut tenant, retire: _ } = terms;
             let owner_earnings = tenant_seat::take_owner_earnings(&mut tenant, monetary::stake(owner_amount));
             let fee_share      = tenant_seat::take_fee_share(&mut tenant, monetary::stake(fee_amount), core.escrow_identity);
@@ -1823,10 +1803,10 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
                 cycle,
             }
         },
-        AssetState::Idle    { asset: _a, .. }                           => abort ENotRented,
-        AssetState::AtDutch { asset: _a, .. }                           => abort ENotRented,
-        AssetState::Retired { asset: _a }                               => abort ENotRented,
-        AssetState::Demand  { asset: _a, terms: _t, bid: _b, .. }       => abort ENotRented,
+        AssetState::Idle    { asset: _a, .. } => abort ENotRented,
+        AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
+        AssetState::Retired { asset: _a }     => abort ENotRented,
+        AssetState::Renting(_rs)              => abort ENotRented,
     }
 }
 
@@ -1835,12 +1815,10 @@ public(package) fun drive_to_retired_for_testing<Asset: key + store, CoinType>(
     state: AssetState<Asset, CoinType>,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Idle { asset, cycle: _ } =>
-            AssetState::Retired { asset },
-        AssetState::AtDutch  { asset: _a, .. }                              => abort ENotRented,
-        AssetState::Retired  { asset: _a }                                  => abort ENotRented,
-        AssetState::Occupied { asset: _a, terms: _t, .. }                   => abort ENotRented,
-        AssetState::Demand   { asset: _a, terms: _t, bid: _b, .. }          => abort ENotRented,
+        AssetState::Idle    { asset, cycle: _ } => AssetState::Retired { asset },
+        AssetState::AtDutch { asset: _a, .. }   => abort ENotRented,
+        AssetState::Retired { asset: _a }        => abort ENotRented,
+        AssetState::Renting(_rs)                 => abort ENotRented,
     }
 }
 
@@ -1849,13 +1827,13 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     state: AssetState<Asset, CoinType>,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Occupied { asset, terms, cycle } => {
+        AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set_for_testing(retire) }, cycle }
+            AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set_for_testing(retire) }, cycle })
         },
-        AssetState::Demand { asset, terms, bid, cycle } => {
+        AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set_for_testing(retire) }, bid, cycle }
+            AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set_for_testing(retire) }, bid, cycle })
         },
         AssetState::Idle    { asset: _a, .. } => abort ENotRented,
         AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
@@ -1870,8 +1848,7 @@ public(package) fun proj_resolved_descent_for_testing<Asset: key + store, CoinTy
     match (s) {
         AssetState::Idle     { cycle, .. } => cycle.descent,
         AssetState::AtDutch  { cycle, .. } => cycle.descent,
-        AssetState::Occupied { cycle, .. } => cycle.descent,
-        AssetState::Demand   { cycle, .. } => cycle.descent,
+        AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) => cycle.descent,
         AssetState::Retired { .. } => abort 0,
     }
 }
@@ -1883,8 +1860,7 @@ public(package) fun proj_resolved_floor_for_testing<Asset: key + store, CoinType
     match (s) {
         AssetState::Idle     { cycle, .. } => cycle.floor,
         AssetState::AtDutch  { cycle, .. } => cycle.floor,
-        AssetState::Occupied { cycle, .. } => cycle.floor,
-        AssetState::Demand   { cycle, .. } => cycle.floor,
+        AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) => cycle.floor,
         AssetState::Retired { .. } => abort 0,
     }
 }
@@ -1896,8 +1872,7 @@ public(package) fun proj_resolved_ceiling_for_testing<Asset: key + store, CoinTy
     match (s) {
         AssetState::Idle     { cycle, .. } => cycle.ceiling,
         AssetState::AtDutch  { cycle, .. } => cycle.ceiling,
-        AssetState::Occupied { terms, .. } => terms.schedule.ceiling_total,
-        AssetState::Demand   { terms, .. } => terms.schedule.ceiling_total,
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) => terms.schedule.ceiling_total,
         AssetState::Retired { .. } => abort 0,
     }
 }
@@ -1909,8 +1884,7 @@ public(package) fun proj_resolved_handover_for_testing<Asset: key + store, CoinT
     match (s) {
         AssetState::Idle     { cycle, .. } => cycle.handover,
         AssetState::AtDutch  { cycle, .. } => cycle.handover,
-        AssetState::Occupied { terms, .. } => terms.schedule.handover_total,
-        AssetState::Demand   { terms, .. } => terms.schedule.handover_total,
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) => terms.schedule.handover_total,
         AssetState::Retired { .. } => abort 0,
     }
 }

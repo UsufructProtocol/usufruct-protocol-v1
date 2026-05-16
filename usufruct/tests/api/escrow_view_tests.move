@@ -187,7 +187,7 @@ fun descent_views_match_variants() {
     sc.end();
 }
 
-// ─── credit_curve and descent_curve views (corpus uses same e for both) ──────
+// ─── credit_shape and auction_shape views (corpus uses same e for both) ──────
 
 #[test]
 fun curve_views_match_variants() {
@@ -197,55 +197,55 @@ fun curve_views_match_variants() {
         let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, e, 0, 0));
         let (escrow, cap) = build_escrow(cfg, &mut sc);
 
-        assert_eq!(escrow::credit_curve_is_linear(&escrow),      e == 0);
-        assert_eq!(escrow::credit_curve_is_smoothstep(&escrow),  e == 1);
-        assert_eq!(escrow::credit_curve_is_logistic(&escrow),    e == 2);
-        assert_eq!(escrow::credit_curve_is_power_law(&escrow),   e == 3 || e == 4);
-        assert_eq!(escrow::credit_curve_is_exponential(&escrow), e == 5 || e == 6);
+        assert_eq!(escrow::credit_shape_is_linear(&escrow),      e == 0);
+        assert_eq!(escrow::credit_shape_is_smoothstep(&escrow),  e == 1);
+        assert_eq!(escrow::credit_shape_is_logistic(&escrow),    e == 2);
+        assert_eq!(escrow::credit_shape_is_power_law(&escrow),   e == 3 || e == 4);
+        assert_eq!(escrow::credit_shape_is_exponential(&escrow), e == 5 || e == 6);
 
-        assert_eq!(escrow::descent_curve_is_linear(&escrow),      e == 0);
-        assert_eq!(escrow::descent_curve_is_smoothstep(&escrow),  e == 1);
-        assert_eq!(escrow::descent_curve_is_logistic(&escrow),    e == 2);
-        assert_eq!(escrow::descent_curve_is_power_law(&escrow),   e == 3 || e == 4);
-        assert_eq!(escrow::descent_curve_is_exponential(&escrow), e == 5 || e == 6);
+        assert_eq!(escrow::auction_shape_is_linear(&escrow),      e == 0);
+        assert_eq!(escrow::auction_shape_is_smoothstep(&escrow),  e == 1);
+        assert_eq!(escrow::auction_shape_is_logistic(&escrow),    e == 2);
+        assert_eq!(escrow::auction_shape_is_power_law(&escrow),   e == 3 || e == 4);
+        assert_eq!(escrow::auction_shape_is_exponential(&escrow), e == 5 || e == 6);
 
         // Field projectors per variant — see escrow_corpus::make_curve for the mapping
         // e=3 → PowerLaw(1,2), e=4 → PowerLaw(2,1)
         // e=5 → Exponential(2,true), e=6 → Exponential(2,false)
         if (e == 3) {
-            assert_eq!(escrow::credit_curve_power_law_alpha_num(&escrow).destroy_some(), 1);
-            assert_eq!(escrow::credit_curve_power_law_alpha_den(&escrow).destroy_some(), 2);
-            assert_eq!(escrow::descent_curve_power_law_alpha_num(&escrow).destroy_some(), 1);
-            assert_eq!(escrow::descent_curve_power_law_alpha_den(&escrow).destroy_some(), 2);
-            assert!(escrow::credit_curve_exponential_alpha_abs(&escrow).is_none());
-            assert!(escrow::descent_curve_exponential_alpha_abs(&escrow).is_none());
+            assert_eq!(escrow::credit_shape_power_law_alpha_num(&escrow).destroy_some(), 1);
+            assert_eq!(escrow::credit_shape_power_law_alpha_den(&escrow).destroy_some(), 2);
+            assert_eq!(escrow::auction_shape_power_law_alpha_num(&escrow).destroy_some(), 1);
+            assert_eq!(escrow::auction_shape_power_law_alpha_den(&escrow).destroy_some(), 2);
+            assert!(escrow::credit_shape_exponential_alpha_abs(&escrow).is_none());
+            assert!(escrow::auction_shape_exponential_alpha_abs(&escrow).is_none());
         } else if (e == 4) {
-            assert_eq!(escrow::credit_curve_power_law_alpha_num(&escrow).destroy_some(), 2);
-            assert_eq!(escrow::credit_curve_power_law_alpha_den(&escrow).destroy_some(), 1);
-            assert_eq!(escrow::descent_curve_power_law_alpha_num(&escrow).destroy_some(), 2);
-            assert_eq!(escrow::descent_curve_power_law_alpha_den(&escrow).destroy_some(), 1);
+            assert_eq!(escrow::credit_shape_power_law_alpha_num(&escrow).destroy_some(), 2);
+            assert_eq!(escrow::credit_shape_power_law_alpha_den(&escrow).destroy_some(), 1);
+            assert_eq!(escrow::auction_shape_power_law_alpha_num(&escrow).destroy_some(), 2);
+            assert_eq!(escrow::auction_shape_power_law_alpha_den(&escrow).destroy_some(), 1);
         } else if (e == 5) {
-            assert!(escrow::credit_curve_power_law_alpha_num(&escrow).is_none());
-            assert!(escrow::descent_curve_power_law_alpha_num(&escrow).is_none());
-            assert_eq!(escrow::credit_curve_exponential_alpha_abs(&escrow).destroy_some(), 2);
-            assert_eq!(escrow::credit_curve_exponential_alpha_neg(&escrow).destroy_some(), true);
-            assert_eq!(escrow::descent_curve_exponential_alpha_abs(&escrow).destroy_some(), 2);
-            assert_eq!(escrow::descent_curve_exponential_alpha_neg(&escrow).destroy_some(), true);
+            assert!(escrow::credit_shape_power_law_alpha_num(&escrow).is_none());
+            assert!(escrow::auction_shape_power_law_alpha_num(&escrow).is_none());
+            assert_eq!(escrow::credit_shape_exponential_alpha_abs(&escrow).destroy_some(), 2);
+            assert_eq!(escrow::credit_shape_exponential_alpha_neg(&escrow).destroy_some(), true);
+            assert_eq!(escrow::auction_shape_exponential_alpha_abs(&escrow).destroy_some(), 2);
+            assert_eq!(escrow::auction_shape_exponential_alpha_neg(&escrow).destroy_some(), true);
         } else if (e == 6) {
-            assert_eq!(escrow::credit_curve_exponential_alpha_abs(&escrow).destroy_some(), 2);
-            assert_eq!(escrow::credit_curve_exponential_alpha_neg(&escrow).destroy_some(), false);
-            assert_eq!(escrow::descent_curve_exponential_alpha_abs(&escrow).destroy_some(), 2);
-            assert_eq!(escrow::descent_curve_exponential_alpha_neg(&escrow).destroy_some(), false);
+            assert_eq!(escrow::credit_shape_exponential_alpha_abs(&escrow).destroy_some(), 2);
+            assert_eq!(escrow::credit_shape_exponential_alpha_neg(&escrow).destroy_some(), false);
+            assert_eq!(escrow::auction_shape_exponential_alpha_abs(&escrow).destroy_some(), 2);
+            assert_eq!(escrow::auction_shape_exponential_alpha_neg(&escrow).destroy_some(), false);
         } else {
             // Linear, Smoothstep, Logistic — no fields on either curve
-            assert!(escrow::credit_curve_power_law_alpha_num(&escrow).is_none());
-            assert!(escrow::credit_curve_power_law_alpha_den(&escrow).is_none());
-            assert!(escrow::credit_curve_exponential_alpha_abs(&escrow).is_none());
-            assert!(escrow::credit_curve_exponential_alpha_neg(&escrow).is_none());
-            assert!(escrow::descent_curve_power_law_alpha_num(&escrow).is_none());
-            assert!(escrow::descent_curve_power_law_alpha_den(&escrow).is_none());
-            assert!(escrow::descent_curve_exponential_alpha_abs(&escrow).is_none());
-            assert!(escrow::descent_curve_exponential_alpha_neg(&escrow).is_none());
+            assert!(escrow::credit_shape_power_law_alpha_num(&escrow).is_none());
+            assert!(escrow::credit_shape_power_law_alpha_den(&escrow).is_none());
+            assert!(escrow::credit_shape_exponential_alpha_abs(&escrow).is_none());
+            assert!(escrow::credit_shape_exponential_alpha_neg(&escrow).is_none());
+            assert!(escrow::auction_shape_power_law_alpha_num(&escrow).is_none());
+            assert!(escrow::auction_shape_power_law_alpha_den(&escrow).is_none());
+            assert!(escrow::auction_shape_exponential_alpha_abs(&escrow).is_none());
+            assert!(escrow::auction_shape_exponential_alpha_neg(&escrow).is_none());
         };
 
         dispose(escrow, cap);
@@ -330,11 +330,11 @@ fun whole_struct_view_getters_return_configured_objects() {
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (escrow, cap) = build_escrow(cfg, &mut sc);
 
-    assert_eq!(escrow::credit_curve(&escrow),  usufruct::curve_shape_policy::new_linear());
-    assert_eq!(escrow::descent_curve(&escrow), usufruct::curve_shape_policy::new_linear());
+    assert_eq!(escrow::credit_shape(&escrow),  usufruct::curve_shape_policy::new_linear());
+    assert_eq!(escrow::auction_shape(&escrow), usufruct::curve_shape_policy::new_linear());
     assert_eq!(
         escrow::ascending_price_function_state(&escrow),
-        usufruct::price_function_policy::new_fixed_delta(usufruct::monetary::price(escrow_corpus::fixed_delta_value_const())),
+        usufruct::price_escalation_policy::new_fixed_delta(usufruct::monetary::price(escrow_corpus::fixed_delta_value_const())),
     );
 
     dispose(escrow, cap);

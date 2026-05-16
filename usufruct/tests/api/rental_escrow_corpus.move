@@ -9,7 +9,7 @@ module usufruct::rental_escrow_corpus;
 use usufruct::{
     policy_ensemble::{Self, PolicyEnsemble},
     curve_shape_policy::{Self, CurveShapePolicy},
-    descent_policy::{Self, DescentPolicy},
+    auction_window_policy::{Self, AuctionWindowPolicy},
     handover_policy::{Self, HandoverPolicy},
     math,
     floor_price_policy,
@@ -17,7 +17,7 @@ use usufruct::{
     tenure_duration_policy,
     monetary,
     phases,
-    price_function_policy::{Self, PriceFunctionPolicy},
+    price_escalation_policy::{Self, PriceEscalationPolicy},
     commitment_policy::{Self, CommitmentPolicy},
 };
 
@@ -45,9 +45,9 @@ const COMPOUND_DELTA_VALUE:  u64 = 1;
 public struct CorpusEntry has copy, drop, store {
     cfg: PolicyEnsemble,
     c:   u8,   // 0..2  HandoverPolicy
-    d:   u8,   // 0..1  PriceFunctionPolicy
+    d:   u8,   // 0..1  PriceEscalationPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
-    h:   u8,   // 0..1  DescentPolicy
+    h:   u8,   // 0..1  AuctionWindowPolicy
     f:   u8,   // 0..1  CommitmentPolicy
     tag: u64,  // c·10_000 + d·1_000 + e·100 + h·10 + f
 }
@@ -225,9 +225,9 @@ fun make_handover(c: u8): HandoverPolicy {
     else             { handover_policy::new_handover_fixed_time() }
 }
 
-fun make_price_function_state(d: u8): PriceFunctionPolicy {
-    if (d == 0) { price_function_policy::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
-    else        { price_function_policy::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
+fun make_price_function_state(d: u8): PriceEscalationPolicy {
+    if (d == 0) { price_escalation_policy::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
+    else        { price_escalation_policy::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
 }
 
 fun make_curve(e: u8): CurveShapePolicy {
@@ -240,9 +240,9 @@ fun make_curve(e: u8): CurveShapePolicy {
     else             { curve_shape_policy::new_exponential(2, false) }
 }
 
-fun make_descent(h: u8): DescentPolicy {
-    if (h == 0) { descent_policy::new_descent_skipped() }
-    else        { descent_policy::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
+fun make_descent(h: u8): AuctionWindowPolicy {
+    if (h == 0) { auction_window_policy::new_descent_skipped() }
+    else        { auction_window_policy::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
 }
 
 fun make_commitment(f: u8): CommitmentPolicy {

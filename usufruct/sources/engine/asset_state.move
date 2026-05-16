@@ -17,9 +17,9 @@ use usufruct::{
     policy_ensemble::{Self, PolicyEnsemble},
     tenures::{Self, Tenures},
     curve_shape_policy,
-    descent_policy,
+    auction_window_policy,
     floor_price_policy,
-    price_function_policy,
+    price_escalation_policy,
     tenure_duration_policy,
     tenure_extend_policy,
     monetary::{Self, Price, Stake},
@@ -713,7 +713,7 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Idle { .. } | WaitingState::Retired { .. }) => option::none(),
         AssetState::Waiting(WaitingState::AtDutch { auction, cycle, .. }) => {
             if (proj_auction_is_firable(auction, cycle, now)) {
-                option::some(descent_policy::expiry_at(cycle.descent, auction.phase_start))
+                option::some(auction_window_policy::expiry_at(cycle.descent, auction.phase_start))
             } else { option::none() }
         },
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
@@ -760,7 +760,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&ensemble), generator);
     let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&ensemble), generator);
     let handover = handover_policy::resolve(policy_ensemble::proj_handover(&ensemble), ceiling, generator);
-    let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&ensemble), generator);
+    let descent  = auction_window_policy::resolve(policy_ensemble::proj_auction_window(&ensemble), generator);
     let core = EscrowCore {
         owner:              owner_seat::new<CoinType>(owner_cap_identity),
         ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
@@ -899,7 +899,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&core.ensemble.active), &mut generator);
             let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&core.ensemble.active), &mut generator);
             let handover = handover_policy::resolve(policy_ensemble::proj_handover(&core.ensemble.active), ceiling, &mut generator);
-            let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&core.ensemble.active), &mut generator);
+            let descent  = auction_window_policy::resolve(policy_ensemble::proj_auction_window(&core.ensemble.active), &mut generator);
             AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
         },
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
@@ -1388,7 +1388,7 @@ fun proj_occupied_is_firable<CoinType>(terms: &OccupiedTerms<CoinType>, now: Tim
 }
 
 fun proj_auction_is_firable(auction: &AuctionTerms, cycle: &CycleParams, now: Timestamp): bool {
-    descent_policy::has_expired(cycle.descent, auction.phase_start, now).is_crossed()
+    auction_window_policy::has_expired(cycle.descent, auction.phase_start, now).is_crossed()
 }
 
 fun step_handover<Asset: key + store, CoinType>(
@@ -1448,7 +1448,7 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
             if (proj_auction_is_firable(&auction, &cycle, now)) {
-                let boundary = descent_policy::expiry_at(cycle.descent, auction.phase_start);
+                let boundary = auction_window_policy::expiry_at(cycle.descent, auction.phase_start);
                 let mut generator = sui::random::new_generator(random, ctx);
                 AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary, &mut generator))
             } else {
@@ -1525,7 +1525,7 @@ fun do_auction_expiry<Asset: key + store>(
     let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&ensemble.active), generator);
     let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&ensemble.active), generator);
     let handover = handover_policy::resolve(policy_ensemble::proj_handover(&ensemble.active), ceiling, generator);
-    let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&ensemble.active), generator);
+    let descent  = auction_window_policy::resolve(policy_ensemble::proj_auction_window(&ensemble.active), generator);
     WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
 }
 
@@ -1564,7 +1564,7 @@ fun accruing_used_credit(
 ): Stake {
     let elapsed = phases::elapsed_since(phase_start, now);
     let g = curve_shape_policy::evaluate_curve(
-        policy_ensemble::proj_credit_curve(cfg),
+        policy_ensemble::proj_credit_shape(cfg),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_ceiling),
     );
@@ -1582,7 +1582,7 @@ fun capped_used_credit(
     let effective = phases::earliest(now, expiry);
     let elapsed   = phases::elapsed_since(phase_start, effective);
     let g = curve_shape_policy::evaluate_curve(
-        policy_ensemble::proj_credit_curve(cfg),
+        policy_ensemble::proj_credit_shape(cfg),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_ceiling),
     );
@@ -1590,8 +1590,8 @@ fun capped_used_credit(
 }
 
 fun ascending_floor_price(stake: Stake, cfg: &PolicyEnsemble): Price {
-    price_function_policy::evaluate_price_fn(
-        policy_ensemble::proj_price_function(cfg),
+    price_escalation_policy::evaluate_price_fn(
+        policy_ensemble::proj_price_escalation(cfg),
         monetary::as_reference_price(stake),
     )
 }
@@ -1606,7 +1606,7 @@ fun descending_floor_price(
 ): Price {
     let elapsed  = phases::elapsed_since(phase_start, now);
     let h        = curve_shape_policy::evaluate_curve(
-        policy_ensemble::proj_descent_curve(cfg),
+        policy_ensemble::proj_auction_shape(cfg),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_descent),
     );

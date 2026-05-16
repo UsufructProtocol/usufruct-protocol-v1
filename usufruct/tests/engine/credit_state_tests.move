@@ -8,14 +8,14 @@ use usufruct::{
     asset_state,
     policy_ensemble,
     curve_shape_policy,
-    descent_policy,
+    auction_window_policy,
     handover_policy,
     floor_price_policy,
     tenure_extend_policy,
     tenure_duration_policy,
     monetary,
     phases,
-    price_function_policy,
+    price_escalation_policy,
 };
 
 const MIN:    u64 = 10_000_000_000;
@@ -30,10 +30,10 @@ fun base_cfg(): policy_ensemble::PolicyEnsemble {
         tenure_duration_policy::new_fixed(phases::duration(TENURE)),
         tenure_extend_policy::new_single(),
         handover_policy::new_handover_instant(),
-        descent_policy::new_descent_skipped(),
+        auction_window_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
-        price_function_policy::new_fixed_delta(monetary::price(MIN)),
+        price_escalation_policy::new_fixed_delta(monetary::price(MIN)),
     )
 }
 
@@ -103,10 +103,10 @@ fun accruing_various_curves_stay_in_bounds() {
             tenure_duration_policy::new_fixed(phases::duration(TENURE)),
             tenure_extend_policy::new_single(),
             handover_policy::new_handover_instant(),
-            descent_policy::new_descent_skipped(),
+            auction_window_policy::new_descent_skipped(),
             curve,
             curve_shape_policy::new_linear(),
-            price_function_policy::new_fixed_delta(monetary::price(MIN)),
+            price_escalation_policy::new_fixed_delta(monetary::price(MIN)),
         );
         let c = monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
             monetary::stake(STAKE), phases::timestamp(T0), &cfg, phases::duration(TENURE), phases::timestamp(mid)

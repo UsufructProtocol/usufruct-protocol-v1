@@ -9,7 +9,7 @@ module usufruct::escrow_corpus;
 use usufruct::{
     policy_ensemble::{Self, PolicyEnsemble},
     curve_shape_policy::{Self, CurveShapePolicy},
-    descent_policy::{Self, DescentPolicy},
+    auction_window_policy::{Self, AuctionWindowPolicy},
     handover_policy::{Self, HandoverPolicy},
     math,
     floor_price_policy,
@@ -17,7 +17,7 @@ use usufruct::{
     tenure_duration_policy,
     monetary,
     phases,
-    price_function_policy::{Self, PriceFunctionPolicy},
+    price_escalation_policy::{Self, PriceEscalationPolicy},
     commitment_policy::{Self, CommitmentPolicy},
 };
 
@@ -50,9 +50,9 @@ const COMPOUND_DELTA_VALUE:   u64 = 1;
 public struct CorpusEntry has copy, drop, store {
     cfg: PolicyEnsemble,
     c:   u8,   // 0..3  HandoverPolicy
-    d:   u8,   // 0..1  PriceFunctionPolicy
+    d:   u8,   // 0..1  PriceEscalationPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
-    h:   u8,   // 0..2  DescentPolicy
+    h:   u8,   // 0..2  AuctionWindowPolicy
     f:   u8,   // 0..1  CommitmentPolicy
     m:   u8,   // 0..1  TenureExtendPolicy
     tag: u64,  // m·100_000 + c·10_000 + d·1_000 + e·100 + h·10 + f
@@ -74,9 +74,9 @@ public use fun entry_m   as CorpusEntry.m;
 /// Full deterministic corpus — 672 entries, one per (m,c,d,e,h,f) tuple.
 ///   m: 0..1  TenureExtendPolicy (Single, Multi)
 ///   c: 0..3  HandoverPolicy     (Instant, Countdown, FixedTime, RandomInRange)
-///   d: 0..1  PriceFunctionPolicy      (FixedDelta, CompoundDelta)
+///   d: 0..1  PriceEscalationPolicy      (FixedDelta, CompoundDelta)
 ///   e: 0..6  CurveShapePolicy pair    (Linear..Exponential)
-///   h: 0..2  DescentPolicy      (Skipped, Window, RandomInRange)
+///   h: 0..2  AuctionWindowPolicy      (Skipped, Window, RandomInRange)
 ///   f: 0..1  CommitmentPolicy       (Immediate, Deferred)
 ///
 /// Requires --gas-limit ≥ 100_000_000.
@@ -173,10 +173,10 @@ public(package) fun with_min_rent_price(cfg: PolicyEnsemble, price_mist: u64): P
         *policy_ensemble::proj_tenure_duration(&cfg),
         *policy_ensemble::proj_tenure_extend(&cfg),
         *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_descent(&cfg),
-        *policy_ensemble::proj_credit_curve(&cfg),
-        *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function(&cfg),
+        *policy_ensemble::proj_auction_window(&cfg),
+        *policy_ensemble::proj_credit_shape(&cfg),
+        *policy_ensemble::proj_auction_shape(&cfg),
+        *policy_ensemble::proj_price_escalation(&cfg),
     )
 }
 
@@ -187,10 +187,10 @@ public(package) fun with_random_min_rent_price(cfg: PolicyEnsemble, min_mist: u6
         *policy_ensemble::proj_tenure_duration(&cfg),
         *policy_ensemble::proj_tenure_extend(&cfg),
         *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_descent(&cfg),
-        *policy_ensemble::proj_credit_curve(&cfg),
-        *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function(&cfg),
+        *policy_ensemble::proj_auction_window(&cfg),
+        *policy_ensemble::proj_credit_shape(&cfg),
+        *policy_ensemble::proj_auction_shape(&cfg),
+        *policy_ensemble::proj_price_escalation(&cfg),
     )
 }
 
@@ -201,10 +201,10 @@ public(package) fun with_tenure_ceiling(cfg: PolicyEnsemble, ceiling_ms: u64): P
         tenure_duration_policy::new_fixed(phases::duration(ceiling_ms)),
         *policy_ensemble::proj_tenure_extend(&cfg),
         *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_descent(&cfg),
-        *policy_ensemble::proj_credit_curve(&cfg),
-        *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function(&cfg),
+        *policy_ensemble::proj_auction_window(&cfg),
+        *policy_ensemble::proj_credit_shape(&cfg),
+        *policy_ensemble::proj_auction_shape(&cfg),
+        *policy_ensemble::proj_price_escalation(&cfg),
     )
 }
 
@@ -215,10 +215,10 @@ public(package) fun with_random_tenure_ceiling(cfg: PolicyEnsemble, min_ms: u64,
         tenure_duration_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
         *policy_ensemble::proj_tenure_extend(&cfg),
         *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_descent(&cfg),
-        *policy_ensemble::proj_credit_curve(&cfg),
-        *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function(&cfg),
+        *policy_ensemble::proj_auction_window(&cfg),
+        *policy_ensemble::proj_credit_shape(&cfg),
+        *policy_ensemble::proj_auction_shape(&cfg),
+        *policy_ensemble::proj_price_escalation(&cfg),
     )
 }
 
@@ -229,10 +229,10 @@ public(package) fun with_tenure_cycles(cfg: PolicyEnsemble, policy: TenureExtend
         *policy_ensemble::proj_tenure_duration(&cfg),
         policy,
         *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_descent(&cfg),
-        *policy_ensemble::proj_credit_curve(&cfg),
-        *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function(&cfg),
+        *policy_ensemble::proj_auction_window(&cfg),
+        *policy_ensemble::proj_credit_shape(&cfg),
+        *policy_ensemble::proj_auction_shape(&cfg),
+        *policy_ensemble::proj_price_escalation(&cfg),
     )
 }
 
@@ -385,9 +385,9 @@ fun make_handover(c: u8): HandoverPolicy {
     else             { handover_policy::new_handover_random_in_range(phases::duration(HANDOVER_RANDOM_MIN_C3), phases::duration(HANDOVER_RANDOM_MAX_C3)) }
 }
 
-fun make_price_function_state(d: u8): PriceFunctionPolicy {
-    if (d == 0) { price_function_policy::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
-    else        { price_function_policy::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
+fun make_price_function_state(d: u8): PriceEscalationPolicy {
+    if (d == 0) { price_escalation_policy::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
+    else        { price_escalation_policy::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
 }
 
 fun make_curve(e: u8): CurveShapePolicy {
@@ -400,10 +400,10 @@ fun make_curve(e: u8): CurveShapePolicy {
     else             { curve_shape_policy::new_exponential(2, false) }
 }
 
-fun make_descent(h: u8): DescentPolicy {
-    if (h == 0)      { descent_policy::new_descent_skipped() }
-    else if (h == 1) { descent_policy::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
-    else             { descent_policy::new_descent_random_in_range(phases::duration(DESCENT_RANDOM_MIN_H2), phases::duration(DESCENT_RANDOM_MAX_H2)) }
+fun make_descent(h: u8): AuctionWindowPolicy {
+    if (h == 0)      { auction_window_policy::new_descent_skipped() }
+    else if (h == 1) { auction_window_policy::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
+    else             { auction_window_policy::new_descent_random_in_range(phases::duration(DESCENT_RANDOM_MIN_H2), phases::duration(DESCENT_RANDOM_MAX_H2)) }
 }
 
 fun make_tenure_cycles(m: u8): TenureExtendPolicy {

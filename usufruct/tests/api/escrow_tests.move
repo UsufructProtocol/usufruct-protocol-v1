@@ -37,11 +37,11 @@ use usufruct::{
     policy_ensemble,
     curve_shape_policy,
     tenures,
-    descent_policy,
+    auction_window_policy,
     floor_price_policy,
     handover_policy,
     monetary,
-    price_function_policy,
+    price_escalation_policy,
     commitment_policy::{Self, CommitmentPolicy},
     tenure_extend_policy,
     tenure_duration_policy,
@@ -309,7 +309,7 @@ fun floor_price_idle_returns_min_rent_price() {
 }
 
 /// Occupied returns `f_next_rent_price(current_stake)`. Sweeps
-/// the D axis (PriceFunctionPolicy): d=0 (FixedDelta) and d=1 (CompoundDelta)
+/// the D axis (PriceEscalationPolicy): d=0 (FixedDelta) and d=1 (CompoundDelta)
 /// — the only axis compute_next_rent_price actually consumes.
 #[test]
 fun floor_price_handover_open_escalates_current_stake() {
@@ -485,7 +485,7 @@ fun floor_price_aborts_on_retired() {
 
 // ─── §6. compute_used_credit ─────────────────────────────────────────────────
 
-/// At elapsed=0 (timestamp == phase_start), every credit_curve
+/// At elapsed=0 (timestamp == phase_start), every credit_shape
 /// evaluates to 0 → used_credit = 0. Sweeps E (curve dimension) — the
 /// boundary g(0)=0 is universal.
 #[test]
@@ -521,7 +521,7 @@ fun used_credit_at_phase_start_is_zero_for_all_curves() {
     sc.end();
 }
 
-/// At elapsed=tenure_ceiling, every credit_curve saturates to SCALE →
+/// At elapsed=tenure_ceiling, every credit_shape saturates to SCALE →
 /// used_credit = principal (full stake consumed). Sweeps E.
 #[test]
 fun used_credit_at_tenure_ceiling_equals_principal_for_all_curves() {
@@ -4048,7 +4048,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 
 // ─── §Skipped descent — price resets to min_rent_price at tenure boundary ────
 
-/// With DescentPolicy::Skipped (h=0), tenure expiry triggers the M6b cascade:
+/// With AuctionWindowPolicy::Skipped (h=0), tenure expiry triggers the M6b cascade:
 /// Occupied → AtDutchAuction → Idle fires in a single APT step because
 /// the descent window is zero. The entry price resets to min_rent_price at
 /// the exact tenure boundary, regardless of what the departing tenant paid.
@@ -4925,7 +4925,7 @@ fun e2e_corpus_gap_deferred_retire_from_handover_open_after_floor() {
 
 /// §RETIRE tests (RETIRE-3/4/5/6) all use h=0 (Skipped). This verifies
 /// that the retiring flag correctly bypasses AtDutchAuction even when
-/// DescentPolicy is Window (h=1): tenure expiry → Retired directly,
+/// AuctionWindowPolicy is Window (h=1): tenure expiry → Retired directly,
 /// NOT AtDutch. The Window policy only affects the descent duration when
 /// there is NO retiring flag; the flag unconditionally collapses to Retired.
 #[test]
@@ -5829,7 +5829,7 @@ fun update_config_behavior_tenure_ceiling_apt_detection() {
 /// After update_config from Skip→Window, the NEXT tenure expiry (T2) routes
 /// through AtDutch. Under the old Skip policy it would have been Idle.
 #[test]
-fun update_config_behavior_descent_policy_atdutch_presence() {
+fun update_config_behavior_auction_window_policy_atdutch_presence() {
     let mut sc = setup();
     // cfg_skip: h=0 Skip — tenure expiry → Idle
     let cfg_skip   = escrow_corpus::by_tag(0);
@@ -5878,7 +5878,7 @@ fun update_config_behavior_descent_policy_atdutch_presence() {
 /// Linear and Smoothstep curves yield different used-credit at 25% of tenure.
 /// Proves the active credit curve is used in credit accounting.
 #[test]
-fun update_config_behavior_credit_curve_used_credit_changes() {
+fun update_config_behavior_credit_shape_used_credit_changes() {
     let mut sc = setup();
     let cfg_linear     = escrow_corpus::by_tag(0);
     // e=1 → Smoothstep curve
@@ -7085,10 +7085,10 @@ fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
         handover_policy::new_handover_fixed_time(),
-        descent_policy::new_descent_skipped(),
+        auction_window_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
-        price_function_policy::new_fixed_delta(monetary::price(floor)),
+        price_escalation_policy::new_fixed_delta(monetary::price(floor)),
     )
 }
 
@@ -7236,10 +7236,10 @@ fun multi_cycle_cfg_countdown(): policy_ensemble::PolicyEnsemble {
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
         handover_policy::new_handover_countdown(phases::duration(countdown)),
-        descent_policy::new_descent_skipped(),
+        auction_window_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
-        price_function_policy::new_fixed_delta(monetary::price(floor)),
+        price_escalation_policy::new_fixed_delta(monetary::price(floor)),
     )
 }
 
@@ -7781,7 +7781,7 @@ fun multi_cycle_handover_earnings_proportional_to_extended_ceiling() {
 
     // Handover at t = countdown = 25k.
     // elapsed = 25k out of 300k = 8.33%.
-    // used_credit = credit_curve(25k/300k) × principal.
+    // used_credit = credit_shape(25k/300k) × principal.
     let boundary = countdown;
     let used_credit = escrow::compute_used_credit_at_ms(&escrow, boundary);
     let owner_before = escrow::owner_value_for_testing(&escrow);
@@ -8038,10 +8038,10 @@ fun multi_cycle_cfg_instant(): policy_ensemble::PolicyEnsemble {
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
         handover_policy::new_handover_instant(),
-        descent_policy::new_descent_skipped(),
+        auction_window_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
-        price_function_policy::new_fixed_delta(monetary::price(floor)),
+        price_escalation_policy::new_fixed_delta(monetary::price(floor)),
     )
 }
 

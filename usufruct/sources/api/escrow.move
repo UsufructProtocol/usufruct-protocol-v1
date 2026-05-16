@@ -259,13 +259,13 @@ public fun is_rented<Asset: key + store, CoinType>(
 public fun is_descent_skipped<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    auction_window_policy::proj_is_skipped(policy_ensemble::proj_auction_window(cfg(escrow)))
+    auction_window_policy::proj_is_skipped(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
 public fun is_descent_window<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    auction_window_policy::proj_is_window(policy_ensemble::proj_auction_window(cfg(escrow)))
+    auction_window_policy::proj_is_window(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
 public fun is_commitment_immediate<Asset: key + store, CoinType>(
@@ -283,19 +283,19 @@ public fun is_commitment_deferred<Asset: key + store, CoinType>(
 public fun is_handover_instant<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy::proj_is_instant(policy_ensemble::proj_handover(cfg(escrow)))
+    handover_policy::proj_is_instant(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
 public fun is_handover_fixed_time<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy::proj_is_fixed_time(policy_ensemble::proj_handover(cfg(escrow)))
+    handover_policy::proj_is_fixed_time(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
 public fun is_handover_countdown<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy::proj_is_countdown(policy_ensemble::proj_handover(cfg(escrow)))
+    handover_policy::proj_is_countdown(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
 public fun is_retiring<Asset: key + store, CoinType>(
@@ -443,7 +443,7 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    phases::duration_ms(tenure_duration_policy::min_ceiling(policy_ensemble::proj_tenure_duration(cfg(escrow))))
+    phases::duration_ms(tenure_duration_policy::min_ceiling(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))))
 }
 
 public fun integrated_at_ms<Asset: key + store, CoinType>(
@@ -550,7 +550,7 @@ public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
     escrow:     &Escrow<Asset, CoinType>,
     bid_amount: u64,
 ): u64 {
-    monetary::price_mist(price_escalation_policy::evaluate_price_fn(policy_ensemble::proj_price_escalation(cfg(escrow)), monetary::price(bid_amount)))
+    monetary::price_mist(price_escalation_policy::evaluate_price_fn(policy_ensemble::proj_price_escalation(read_ensemble(escrow)), monetary::price(bid_amount)))
 }
 
 public fun last_acq_price<Asset: key + store, CoinType>(
@@ -615,7 +615,7 @@ public fun owner_balance<Asset: key + store, CoinType>(
 public fun integration_config<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): PolicyEnsemble {
-    *cfg(escrow)
+    *read_ensemble(escrow)
 }
 
 public fun fee_inbox_id<Asset: key + store, CoinType>(
@@ -636,19 +636,19 @@ public fun bps_denominator():  u64 { asset_state::bps_denominator() }
 public fun min_rent_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(cfg(escrow))))
+    monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(read_ensemble(escrow))))
 }
 
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    auction_window_policy::proj_window_ceiling(policy_ensemble::proj_auction_window(cfg(escrow))).map!(|v| phases::duration_ms(v))
+    auction_window_policy::proj_window_ceiling(policy_ensemble::proj_auction_window(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    handover_policy::proj_countdown_floor_ms(policy_ensemble::proj_handover(cfg(escrow))).map!(|v| phases::duration_ms(v))
+    handover_policy::proj_countdown_floor_ms(policy_ensemble::proj_handover(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun commitment_floor_ms<Asset: key + store, CoinType>(
@@ -660,151 +660,151 @@ public fun commitment_floor_ms<Asset: key + store, CoinType>(
 public fun credit_shape<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): CurveShapePolicy {
-    *policy_ensemble::proj_credit_shape(cfg(escrow))
+    *policy_ensemble::proj_credit_shape(read_ensemble(escrow))
 }
 
 public fun auction_shape<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): CurveShapePolicy {
-    *policy_ensemble::proj_auction_shape(cfg(escrow))
+    *policy_ensemble::proj_auction_shape(read_ensemble(escrow))
 }
 
 public fun ascending_price_function_state<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): PriceEscalationPolicy {
-    *policy_ensemble::proj_price_escalation(cfg(escrow))
+    *policy_ensemble::proj_price_escalation(read_ensemble(escrow))
 }
 
 public fun tenure_ceiling_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_duration(cfg(escrow)))
+    tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
 }
 
 public fun tenure_ceiling_is_random_in_range<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    tenure_duration_policy::proj_is_random_in_range(policy_ensemble::proj_tenure_duration(cfg(escrow)))
+    tenure_duration_policy::proj_is_random_in_range(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
 }
 
 public fun tenure_ceiling_fixed_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_duration(cfg(escrow))).map!(|v| phases::duration_ms(v))
+    tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun tenure_ceiling_range_min_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    tenure_duration_policy::proj_range_min(policy_ensemble::proj_tenure_duration(cfg(escrow))).map!(|v| phases::duration_ms(v))
+    tenure_duration_policy::proj_range_min(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun tenure_ceiling_range_max_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    tenure_duration_policy::proj_range_max(policy_ensemble::proj_tenure_duration(cfg(escrow))).map!(|v| phases::duration_ms(v))
+    tenure_duration_policy::proj_range_max(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun min_rent_price_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    floor_price_policy::proj_is_fixed(policy_ensemble::proj_floor_price(cfg(escrow)))
+    floor_price_policy::proj_is_fixed(policy_ensemble::proj_floor_price(read_ensemble(escrow)))
 }
 
 public fun min_rent_price_is_random_in_range<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    floor_price_policy::proj_is_random_in_range(policy_ensemble::proj_floor_price(cfg(escrow)))
+    floor_price_policy::proj_is_random_in_range(policy_ensemble::proj_floor_price(read_ensemble(escrow)))
 }
 
 public fun min_rent_price_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    floor_price_policy::proj_fixed_price(policy_ensemble::proj_floor_price(cfg(escrow))).map!(|v| monetary::price_mist(v))
+    floor_price_policy::proj_fixed_price(policy_ensemble::proj_floor_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun min_rent_price_range_min_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    floor_price_policy::proj_range_min(policy_ensemble::proj_floor_price(cfg(escrow))).map!(|v| monetary::price_mist(v))
+    floor_price_policy::proj_range_min(policy_ensemble::proj_floor_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun min_rent_price_range_max_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    floor_price_policy::proj_range_max(policy_ensemble::proj_floor_price(cfg(escrow))).map!(|v| monetary::price_mist(v))
+    floor_price_policy::proj_range_max(policy_ensemble::proj_floor_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun credit_shape_is_linear<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_linear(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_is_linear(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun credit_shape_is_smoothstep<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_smoothstep(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_is_smoothstep(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun credit_shape_is_logistic<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_logistic(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_is_logistic(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun credit_shape_is_power_law<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_power_law(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_is_power_law(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun credit_shape_is_exponential<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_exponential(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_is_exponential(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun credit_shape_power_law_alpha_num<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
-    curve::proj_power_law_alpha_num(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_power_law_alpha_num(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun credit_shape_power_law_alpha_den<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
-    curve::proj_power_law_alpha_den(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_power_law_alpha_den(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun credit_shape_exponential_alpha_abs<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
-    curve::proj_exponential_alpha_abs(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_exponential_alpha_abs(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun credit_shape_exponential_alpha_neg<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<bool> {
-    curve::proj_exponential_alpha_neg(policy_ensemble::proj_credit_shape(cfg(escrow)))
+    curve::proj_exponential_alpha_neg(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_is_linear<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_linear(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_is_linear(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_is_smoothstep<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_smoothstep(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_is_smoothstep(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_is_logistic<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_logistic(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_is_logistic(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_is_power_law<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_power_law(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_is_power_law(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_is_exponential<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    curve::proj_is_exponential(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_is_exponential(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_power_law_alpha_num<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
-    curve::proj_power_law_alpha_num(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_power_law_alpha_num(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_power_law_alpha_den<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
-    curve::proj_power_law_alpha_den(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_power_law_alpha_den(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_exponential_alpha_abs<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u8> {
-    curve::proj_exponential_alpha_abs(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_exponential_alpha_abs(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun auction_shape_exponential_alpha_neg<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<bool> {
-    curve::proj_exponential_alpha_neg(policy_ensemble::proj_auction_shape(cfg(escrow)))
+    curve::proj_exponential_alpha_neg(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
 }
 
 public fun price_fn_is_fixed_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    price_escalation_policy::proj_is_fixed_delta(policy_ensemble::proj_price_escalation(cfg(escrow)))
+    price_escalation_policy::proj_is_fixed_delta(policy_ensemble::proj_price_escalation(read_ensemble(escrow)))
 }
 
 public fun price_fn_is_compound_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    price_escalation_policy::proj_is_compound_delta(policy_ensemble::proj_price_escalation(cfg(escrow)))
+    price_escalation_policy::proj_is_compound_delta(policy_ensemble::proj_price_escalation(read_ensemble(escrow)))
 }
 
 public fun price_fn_fixed_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    price_escalation_policy::proj_fixed_delta(policy_ensemble::proj_price_escalation(cfg(escrow))).map!(|v| monetary::price_mist(v))
+    price_escalation_policy::proj_fixed_delta(policy_ensemble::proj_price_escalation(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun price_fn_compound_delta_bps<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    price_escalation_policy::proj_compound_delta_bps(policy_ensemble::proj_price_escalation(cfg(escrow))).map!(|v| math::bps_value(v))
+    price_escalation_policy::proj_compound_delta_bps(policy_ensemble::proj_price_escalation(read_ensemble(escrow))).map!(|v| math::bps_value(v))
 }
 
 public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    price_escalation_policy::proj_compound_delta_delta(policy_ensemble::proj_price_escalation(cfg(escrow))).map!(|v| monetary::price_mist(v))
+    price_escalation_policy::proj_compound_delta_delta(policy_ensemble::proj_price_escalation(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 // === Admin Functions ===
@@ -840,7 +840,7 @@ fun read_core<Asset: key + store, CoinType>(
     escrow.core.borrow()
 }
 
-fun cfg<Asset: key + store, CoinType>(
+fun read_ensemble<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &PolicyEnsemble {
     asset_state::proj_config(read_core(escrow))

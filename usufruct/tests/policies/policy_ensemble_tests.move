@@ -17,6 +17,7 @@ use usufruct::{
     },
     curve_shape_policy,
     descent_policy::{Self, DescentPolicy},
+    escrow_identity,
     handover_policy::{Self, HandoverPolicy},
     math,
     floor_price_policy,
@@ -204,13 +205,13 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             c.price_function_policy,
         );
         // §7.3 P5 predicate: getter(new_config(..., f, ...)) == f for each field
-        assert_eq!(monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_min_rent_price(&cfg))),  c.min_rent_price);
-        assert_eq!(*policy_ensemble::proj_tenure_ceiling(&cfg),  c.tenure_ceiling);
+        assert_eq!(monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(&cfg))),  c.min_rent_price);
+        assert_eq!(*policy_ensemble::proj_tenure_duration(&cfg),  c.tenure_ceiling);
         assert_eq!(*policy_ensemble::proj_handover(&cfg),        c.handover);
         assert_eq!(*policy_ensemble::proj_descent(&cfg),         c.descent);
         assert_eq!(*policy_ensemble::proj_credit_curve(&cfg),    c.credit_curve);
         assert_eq!(*policy_ensemble::proj_descent_curve(&cfg),   c.descent_curve);
-        assert_eq!(*policy_ensemble::proj_price_function_policy(&cfg), c.price_function_policy);
+        assert_eq!(*policy_ensemble::proj_price_function(&cfg), c.price_function_policy);
     });
 }
 
@@ -226,7 +227,7 @@ fun getter_roundtrip_r1_min_rent_price_max() {
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_min_rent_price(&cfg))), 18_446_744_073_709_551_615);
+    assert_eq!(monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(&cfg))), 18_446_744_073_709_551_615);
 }
 
 #[test]
@@ -239,8 +240,8 @@ fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_ceiling(&cfg)), true);
-    assert_eq!(phases::duration_ms(*option::borrow(&tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_ceiling(&cfg)))), 86_400_000);
+    assert_eq!(tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_duration(&cfg)), true);
+    assert_eq!(phases::duration_ms(*option::borrow(&tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_duration(&cfg)))), 86_400_000);
 }
 
 #[test]
@@ -331,7 +332,7 @@ fun getter_roundtrip_r7_price_function_state_compound_delta() {
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         pf,
     );
-    assert_eq!(*policy_ensemble::proj_price_function_policy(&cfg), pf);
+    assert_eq!(*policy_ensemble::proj_price_function(&cfg), pf);
 }
 
 // ─── §7.2 — Invalid inputs (one function each) ────────────────────────────────
@@ -423,14 +424,14 @@ fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
 #[test]
 fun emit_registration_e1_full_snapshot() {
     let cfg        = v2_config();
-    let escrow_id  = object::id_from_address(@0xE5C1);
+    let ei = escrow_identity::new(object::id_from_address(@0xE5C1));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&cfg, escrow_id);
+        policy_ensemble::emit_registration(&cfg, ei);
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 1);
-        assert_eq!(policy_ensemble::registered_escrow_id(&events[0]), escrow_id);
+        assert_eq!(policy_ensemble::registered_escrow_identity(&events[0]), ei);
         assert_eq!(policy_ensemble::registered_ensemble(&events[0]),    cfg);
     };
     scenario.end();
@@ -446,11 +447,11 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
         curve_shape_policy::new_power_law(6, 3),
         price_function_policy::new_fixed_delta(monetary::price(1)),
     );
-    let escrow_id = object::id_from_address(@0xE5C1);
+    let ei = escrow_identity::new(object::id_from_address(@0xE5C1));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&cfg, escrow_id);
+        policy_ensemble::emit_registration(&cfg, ei);
         let events  = event::events_by_type<PolicyEnsembleRegistered>();
         let payload = policy_ensemble::registered_ensemble(&events[0]);
         // stored values are the reduced (gcd-normalized) forms
@@ -467,16 +468,16 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
 #[test]
 fun emit_registration_e3_not_idempotent_caller_contract() {
     let cfg        = v2_config();
-    let escrow_id  = object::id_from_address(@0xE5C1);
+    let ei = escrow_identity::new(object::id_from_address(@0xE5C1));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&cfg, escrow_id);
-        policy_ensemble::emit_registration(&cfg, escrow_id);
+        policy_ensemble::emit_registration(&cfg, ei);
+        policy_ensemble::emit_registration(&cfg, ei);
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 2);
         assert_eq!(policy_ensemble::registered_ensemble(&events[0]), policy_ensemble::registered_ensemble(&events[1]));
-        assert_eq!(policy_ensemble::registered_escrow_id(&events[0]), policy_ensemble::registered_escrow_id(&events[1]));
+        assert_eq!(policy_ensemble::registered_escrow_identity(&events[0]), policy_ensemble::registered_escrow_identity(&events[1]));
     };
     scenario.end();
 }

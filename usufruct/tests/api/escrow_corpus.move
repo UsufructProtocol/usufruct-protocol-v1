@@ -170,13 +170,13 @@ public(package) fun with_cycles_multi():        vector<CorpusEntry> { all_multi(
 public(package) fun with_min_rent_price(cfg: PolicyEnsemble, price_mist: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(price_mist)),
-        *policy_ensemble::proj_tenure_ceiling(&cfg),
-        *policy_ensemble::proj_tenures(&cfg),
+        *policy_ensemble::proj_tenure_duration(&cfg),
+        *policy_ensemble::proj_tenure_extend(&cfg),
         *policy_ensemble::proj_handover(&cfg),
         *policy_ensemble::proj_descent(&cfg),
         *policy_ensemble::proj_credit_curve(&cfg),
         *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_price_function(&cfg),
     )
 }
 
@@ -184,55 +184,55 @@ public(package) fun with_min_rent_price(cfg: PolicyEnsemble, price_mist: u64): P
 public(package) fun with_random_min_rent_price(cfg: PolicyEnsemble, min_mist: u64, max_mist: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         floor_price_policy::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
-        *policy_ensemble::proj_tenure_ceiling(&cfg),
-        *policy_ensemble::proj_tenures(&cfg),
+        *policy_ensemble::proj_tenure_duration(&cfg),
+        *policy_ensemble::proj_tenure_extend(&cfg),
         *policy_ensemble::proj_handover(&cfg),
         *policy_ensemble::proj_descent(&cfg),
         *policy_ensemble::proj_credit_curve(&cfg),
         *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_price_function(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a different `tenure_ceiling` (Fixed policy). All other fields unchanged.
 public(package) fun with_tenure_ceiling(cfg: PolicyEnsemble, ceiling_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_min_rent_price(&cfg),
+        *policy_ensemble::proj_floor_price(&cfg),
         tenure_duration_policy::new_fixed(phases::duration(ceiling_ms)),
-        *policy_ensemble::proj_tenures(&cfg),
+        *policy_ensemble::proj_tenure_extend(&cfg),
         *policy_ensemble::proj_handover(&cfg),
         *policy_ensemble::proj_descent(&cfg),
         *policy_ensemble::proj_credit_curve(&cfg),
         *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_price_function(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a random-in-range `tenure_ceiling`. All other fields unchanged.
 public(package) fun with_random_tenure_ceiling(cfg: PolicyEnsemble, min_ms: u64, max_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_min_rent_price(&cfg),
+        *policy_ensemble::proj_floor_price(&cfg),
         tenure_duration_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
-        *policy_ensemble::proj_tenures(&cfg),
+        *policy_ensemble::proj_tenure_extend(&cfg),
         *policy_ensemble::proj_handover(&cfg),
         *policy_ensemble::proj_descent(&cfg),
         *policy_ensemble::proj_credit_curve(&cfg),
         *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_price_function(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a different `tenure_cycles` policy. All other fields unchanged.
 public(package) fun with_tenure_cycles(cfg: PolicyEnsemble, policy: TenureExtendPolicy): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_min_rent_price(&cfg),
-        *policy_ensemble::proj_tenure_ceiling(&cfg),
+        *policy_ensemble::proj_floor_price(&cfg),
+        *policy_ensemble::proj_tenure_duration(&cfg),
         policy,
         *policy_ensemble::proj_handover(&cfg),
         *policy_ensemble::proj_descent(&cfg),
         *policy_ensemble::proj_credit_curve(&cfg),
         *policy_ensemble::proj_descent_curve(&cfg),
-        *policy_ensemble::proj_price_function_policy(&cfg),
+        *policy_ensemble::proj_price_function(&cfg),
     )
 }
 

@@ -9,6 +9,7 @@ use sui::event;
 use usufruct::{
     curve_shape_policy::CurveShapePolicy,
     descent_policy::DescentPolicy,
+    escrow_identity::EscrowIdentity,
     handover_policy::{Self, HandoverPolicy},
     floor_price_policy::FloorPricePolicy,
     tenure_duration_policy::{Self as tenure_duration_policy, TenureDurationPolicy},
@@ -25,21 +26,21 @@ const EHandoverFloorExceedsTenure: u64 = 2;
 // === Structs ===
 
 public struct PolicyEnsemble has copy, drop, store {
-    min_rent_price:   FloorPricePolicy,
-    tenure_ceiling:   TenureDurationPolicy,
-    tenures:    TenureExtendPolicy,
+    floor_price:      FloorPricePolicy,
+    tenure_duration:  TenureDurationPolicy,
+    tenure_extend:    TenureExtendPolicy,
     handover:         HandoverPolicy,
     descent:          DescentPolicy,
     credit_curve:     CurveShapePolicy,
     descent_curve:    CurveShapePolicy,
-    price_function_policy: PriceFunctionPolicy,
+    price_function:   PriceFunctionPolicy,
 }
 
 // === Events ===
 
 public struct PolicyEnsembleRegistered has copy, drop {
-    escrow_id: ID,
-    ensemble: PolicyEnsemble,
+    escrow_identity: EscrowIdentity,
+    ensemble:        PolicyEnsemble,
 }
 
 // === Method Aliases ===
@@ -47,48 +48,48 @@ public struct PolicyEnsembleRegistered has copy, drop {
 // === Public Functions ===
 
 public fun new_ensemble(
-    min_rent_price:  FloorPricePolicy,
-    tenure_ceiling:  TenureDurationPolicy,
-    tenures:   TenureExtendPolicy,
-    handover:        HandoverPolicy,
-    descent:         DescentPolicy,
-    credit_curve:    CurveShapePolicy,
-    descent_curve:   CurveShapePolicy,
-    price_function_policy: PriceFunctionPolicy,
+    floor_price:      FloorPricePolicy,
+    tenure_duration:  TenureDurationPolicy,
+    tenure_extend:    TenureExtendPolicy,
+    handover:         HandoverPolicy,
+    descent:          DescentPolicy,
+    credit_curve:     CurveShapePolicy,
+    descent_curve:    CurveShapePolicy,
+    price_function:   PriceFunctionPolicy,
 ): PolicyEnsemble {
     assert!(
-        handover_policy::countdown_floor_lt(&handover, tenure_duration_policy::min_ceiling(&tenure_ceiling)),
+        handover_policy::countdown_floor_lt(&handover, tenure_duration_policy::min_ceiling(&tenure_duration)),
         EHandoverFloorExceedsTenure,
     );
     PolicyEnsemble {
-        min_rent_price,
-        tenure_ceiling,
-        tenures,
+        floor_price,
+        tenure_duration,
+        tenure_extend,
         handover,
         descent,
         credit_curve,
         descent_curve,
-        price_function_policy,
+        price_function,
     }
 }
 
 // === View Functions ===
 
-public(package) fun proj_min_rent_price(cfg: &PolicyEnsemble):        &FloorPricePolicy      { &cfg.min_rent_price }
-public(package) fun proj_tenure_ceiling(cfg: &PolicyEnsemble):         &TenureDurationPolicy          { &cfg.tenure_ceiling }
-public(package) fun proj_tenures(cfg: &PolicyEnsemble):          &TenureExtendPolicy    { &cfg.tenures }
-public(package) fun proj_handover(cfg: &PolicyEnsemble):               &HandoverPolicy         { &cfg.handover }
-public(package) fun proj_descent(cfg: &PolicyEnsemble):               &DescentPolicy   { &cfg.descent }
-public(package) fun proj_credit_curve(cfg: &PolicyEnsemble):          &CurveShapePolicy      { &cfg.credit_curve }
-public(package) fun proj_descent_curve(cfg: &PolicyEnsemble):         &CurveShapePolicy      { &cfg.descent_curve }
-public(package) fun proj_price_function_policy(cfg: &PolicyEnsemble): &PriceFunctionPolicy   { &cfg.price_function_policy }
+public(package) fun proj_floor_price(cfg: &PolicyEnsemble):     &FloorPricePolicy      { &cfg.floor_price }
+public(package) fun proj_tenure_duration(cfg: &PolicyEnsemble): &TenureDurationPolicy  { &cfg.tenure_duration }
+public(package) fun proj_tenure_extend(cfg: &PolicyEnsemble):   &TenureExtendPolicy    { &cfg.tenure_extend }
+public(package) fun proj_handover(cfg: &PolicyEnsemble):        &HandoverPolicy        { &cfg.handover }
+public(package) fun proj_descent(cfg: &PolicyEnsemble):         &DescentPolicy         { &cfg.descent }
+public(package) fun proj_credit_curve(cfg: &PolicyEnsemble):    &CurveShapePolicy      { &cfg.credit_curve }
+public(package) fun proj_descent_curve(cfg: &PolicyEnsemble):   &CurveShapePolicy      { &cfg.descent_curve }
+public(package) fun proj_price_function(cfg: &PolicyEnsemble):  &PriceFunctionPolicy   { &cfg.price_function }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun emit_registration(cfg: &PolicyEnsemble, escrow_id: ID) {
-    event::emit(PolicyEnsembleRegistered { escrow_id, ensemble: *cfg });
+public(package) fun emit_registration(cfg: &PolicyEnsemble, escrow_identity: EscrowIdentity) {
+    event::emit(PolicyEnsembleRegistered { escrow_identity, ensemble: *cfg });
 }
 
 // === Private Functions ===
@@ -96,7 +97,7 @@ public(package) fun emit_registration(cfg: &PolicyEnsemble, escrow_id: ID) {
 // === Test Functions ===
 
 #[test_only]
-public fun registered_escrow_id(e: &PolicyEnsembleRegistered): ID { e.escrow_id }
+public fun registered_escrow_identity(e: &PolicyEnsembleRegistered): EscrowIdentity { e.escrow_identity }
 #[test_only]
 public fun registered_ensemble(e: &PolicyEnsembleRegistered): PolicyEnsemble { e.ensemble }
 

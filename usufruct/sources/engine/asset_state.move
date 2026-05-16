@@ -756,9 +756,9 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let owner_cap_identity = owner_cap::identity(&owner_cap);
     let asset_id           = object::id(&asset);
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
-    policy_ensemble::emit_registration(&ensemble, raw_escrow_id);
-    let floor    = floor_price_policy::resolve(policy_ensemble::proj_min_rent_price(&ensemble), generator);
-    let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_ceiling(&ensemble), generator);
+    policy_ensemble::emit_registration(&ensemble, escrow_identity);
+    let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&ensemble), generator);
+    let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&ensemble), generator);
     let handover = handover_policy::resolve(policy_ensemble::proj_handover(&ensemble), ceiling, generator);
     let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&ensemble), generator);
     let core = EscrowCore {
@@ -807,7 +807,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     ctx:     &mut TxContext,
 ): (RentingState<Asset, CoinType>, TenantCap) {
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
-    tenure_extend_policy::validate(policy_ensemble::proj_tenures(&core.ensemble.active), tenures);
+    tenure_extend_policy::validate(policy_ensemble::proj_tenure_extend(&core.ensemble.active), tenures);
     let now                = phases::now(clock);
     let escrow_identity    = core.escrow_identity;
     let fee_inbox_identity = core.fee_inbox_identity;
@@ -896,8 +896,8 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             core.ensemble.active  = new_cfg;
             core.ensemble.pending = option::none();
             let mut generator = sui::random::new_generator(random, ctx);
-            let floor    = floor_price_policy::resolve(policy_ensemble::proj_min_rent_price(&core.ensemble.active), &mut generator);
-            let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_ceiling(&core.ensemble.active), &mut generator);
+            let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&core.ensemble.active), &mut generator);
+            let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&core.ensemble.active), &mut generator);
             let handover = handover_policy::resolve(policy_ensemble::proj_handover(&core.ensemble.active), ceiling, &mut generator);
             let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&core.ensemble.active), &mut generator);
             AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
@@ -1522,8 +1522,8 @@ fun do_auction_expiry<Asset: key + store>(
         event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_cfg });
         ensemble.active = new_cfg;
     };
-    let floor    = floor_price_policy::resolve(policy_ensemble::proj_min_rent_price(&ensemble.active), generator);
-    let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_ceiling(&ensemble.active), generator);
+    let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&ensemble.active), generator);
+    let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&ensemble.active), generator);
     let handover = handover_policy::resolve(policy_ensemble::proj_handover(&ensemble.active), ceiling, generator);
     let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&ensemble.active), generator);
     WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
@@ -1591,7 +1591,7 @@ fun capped_used_credit(
 
 fun ascending_floor_price(stake: Stake, cfg: &PolicyEnsemble): Price {
     price_function_policy::evaluate_price_fn(
-        policy_ensemble::proj_price_function_policy(cfg),
+        policy_ensemble::proj_price_function(cfg),
         monetary::as_reference_price(stake),
     )
 }

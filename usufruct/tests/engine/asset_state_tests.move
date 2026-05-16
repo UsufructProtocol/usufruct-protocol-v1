@@ -62,7 +62,7 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
 /// Integrate an escrow with the given config and immediately take it
 /// back as a shared object. Returns (escrow, owner_cap).
 fun integrate_and_take_with_cfg(
-    cfg: usufruct::policy_ensemble::PolicyEnsemble,
+    ensemble: usufruct::policy_ensemble::PolicyEnsemble,
     sc:  &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
@@ -72,7 +72,7 @@ fun integrate_and_take_with_cfg(
     let rnd     = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset,
-        cfg,
+        ensemble,
         commitment_policy::new_immediate(),
         &fee_ref, &rnd, &clk, sc.ctx(),
     );
@@ -426,9 +426,9 @@ fun double_borrow_aborts() {
 #[test, expected_failure(abort_code = asset_state::EReceiptEscrowMismatch, location = usufruct::asset_state)]
 fun cross_escrow_return_with_authentic_receipt_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (mut escrow_a, cap_a) = integrate_and_take(&mut sc);
-    let (mut escrow_b, cap_b) = integrate_and_take_with_cfg(cfg, &mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take_with_cfg(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let rnd = sc.take_shared<Random>();
 
@@ -463,9 +463,9 @@ fun cross_escrow_return_with_authentic_receipt_aborts() {
 #[test, expected_failure(abort_code = asset_state::EReturnedDifferentAsset, location = usufruct::asset_state)]
 fun cross_borrow_asset_swap_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (mut escrow_a, cap_a) = integrate_and_take(&mut sc);
-    let (mut escrow_b, cap_b) = integrate_and_take_with_cfg(cfg, &mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take_with_cfg(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let rnd = sc.take_shared<Random>();
 

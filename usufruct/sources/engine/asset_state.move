@@ -881,7 +881,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      &mut EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
-    new_cfg:   PolicyEnsemble,
+    new_ensemble:   PolicyEnsemble,
     random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
@@ -892,8 +892,8 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, cycle }) => {
-            event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.ensemble.active  = new_cfg;
+            event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_ensemble });
+            core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
             let mut generator = sui::random::new_generator(random, ctx);
             let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&core.ensemble.active), &mut generator);
@@ -903,20 +903,20 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
         },
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
-            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.ensemble.pending = option::some(new_cfg);
+            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_ensemble });
+            core.ensemble.pending = option::some(new_ensemble);
             AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle })
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
-            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.ensemble.pending = option::some(new_cfg);
+            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_ensemble });
+            core.ensemble.pending = option::some(new_ensemble);
             AssetState::Renting(RentingState::Occupied { asset, terms, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
-            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
-            core.ensemble.pending = option::some(new_cfg);
+            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_ensemble });
+            core.ensemble.pending = option::some(new_ensemble);
             AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle })
         },
     }
@@ -1518,9 +1518,9 @@ fun do_auction_expiry<Asset: key + store>(
 ): WaitingState<Asset> {
     event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
     if (ensemble.pending.is_some()) {
-        let new_cfg = ensemble.pending.extract();
-        event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_cfg });
-        ensemble.active = new_cfg;
+        let new_ensemble = ensemble.pending.extract();
+        event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_ensemble });
+        ensemble.active = new_ensemble;
     };
     let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&ensemble.active), generator);
     let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&ensemble.active), generator);
@@ -1558,13 +1558,13 @@ fun retire_condition_set(r: RetireCondition): RetireCondition {
 fun accruing_used_credit(
     stake:            Stake,
     phase_start:      Timestamp,
-    cfg:              &PolicyEnsemble,
+    ensemble:              &PolicyEnsemble,
     resolved_ceiling: Duration,
     now:              Timestamp,
 ): Stake {
     let elapsed = phases::elapsed_since(phase_start, now);
     let g = curve_shape_policy::evaluate_curve(
-        policy_ensemble::proj_credit_shape(cfg),
+        policy_ensemble::proj_credit_shape(ensemble),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_ceiling),
     );
@@ -1575,23 +1575,23 @@ fun capped_used_credit(
     stake:            Stake,
     phase_start:      Timestamp,
     expiry:           Timestamp,
-    cfg:              &PolicyEnsemble,
+    ensemble:              &PolicyEnsemble,
     resolved_ceiling: Duration,
     now:              Timestamp,
 ): Stake {
     let effective = phases::earliest(now, expiry);
     let elapsed   = phases::elapsed_since(phase_start, effective);
     let g = curve_shape_policy::evaluate_curve(
-        policy_ensemble::proj_credit_shape(cfg),
+        policy_ensemble::proj_credit_shape(ensemble),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_ceiling),
     );
     monetary::stake(curve_shape_policy::apply(monetary::stake_mist(stake), g))
 }
 
-fun ascending_floor_price(stake: Stake, cfg: &PolicyEnsemble): Price {
+fun ascending_floor_price(stake: Stake, ensemble: &PolicyEnsemble): Price {
     price_escalation_policy::evaluate_price_fn(
-        policy_ensemble::proj_price_escalation(cfg),
+        policy_ensemble::proj_price_escalation(ensemble),
         monetary::as_reference_price(stake),
     )
 }
@@ -1601,12 +1601,12 @@ fun descending_floor_price(
     phase_start:      Timestamp,
     resolved_floor:   Price,
     resolved_descent: Duration,
-    cfg:              &PolicyEnsemble,
+    ensemble:              &PolicyEnsemble,
     now:              Timestamp,
 ): Price {
     let elapsed  = phases::elapsed_since(phase_start, now);
     let h        = curve_shape_policy::evaluate_curve(
-        policy_ensemble::proj_auction_shape(cfg),
+        policy_ensemble::proj_auction_shape(ensemble),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_descent),
     );
@@ -1909,11 +1909,11 @@ public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(
 public(package) fun accruing_used_credit_for_testing(
     stake:            Stake,
     phase_start:      Timestamp,
-    cfg:              &PolicyEnsemble,
+    ensemble:              &PolicyEnsemble,
     resolved_ceiling: Duration,
     now:              Timestamp,
 ): Stake {
-    accruing_used_credit(stake, phase_start, cfg, resolved_ceiling, now)
+    accruing_used_credit(stake, phase_start, ensemble, resolved_ceiling, now)
 }
 
 #[test_only]
@@ -1921,16 +1921,16 @@ public(package) fun capped_used_credit_for_testing(
     stake:            Stake,
     phase_start:      Timestamp,
     expiry:           Timestamp,
-    cfg:              &PolicyEnsemble,
+    ensemble:              &PolicyEnsemble,
     resolved_ceiling: Duration,
     now:              Timestamp,
 ): Stake {
-    capped_used_credit(stake, phase_start, expiry, cfg, resolved_ceiling, now)
+    capped_used_credit(stake, phase_start, expiry, ensemble, resolved_ceiling, now)
 }
 
 #[test_only]
-public(package) fun ascending_floor_price_for_testing(stake: Stake, cfg: &PolicyEnsemble): Price {
-    ascending_floor_price(stake, cfg)
+public(package) fun ascending_floor_price_for_testing(stake: Stake, ensemble: &PolicyEnsemble): Price {
+    ascending_floor_price(stake, ensemble)
 }
 
 #[test_only]
@@ -1939,10 +1939,10 @@ public(package) fun descending_floor_price_for_testing(
     phase_start:      Timestamp,
     resolved_floor:   Price,
     resolved_descent: Duration,
-    cfg:              &PolicyEnsemble,
+    ensemble:              &PolicyEnsemble,
     now:              Timestamp,
 ): Price {
-    descending_floor_price(last_acq_price, phase_start, resolved_floor, resolved_descent, cfg, now)
+    descending_floor_price(last_acq_price, phase_start, resolved_floor, resolved_descent, ensemble, now)
 }
 
 #[test_only]

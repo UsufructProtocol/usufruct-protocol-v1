@@ -43,7 +43,7 @@ const COMPOUND_DELTA_VALUE:  u64 = 1;
 // === Structs ===
 
 public struct CorpusEntry has copy, drop, store {
-    cfg: PolicyEnsemble,
+    ensemble: PolicyEnsemble,
     c:   u8,   // 0..2  HandoverPolicy
     d:   u8,   // 0..1  PriceEscalationPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
@@ -54,7 +54,7 @@ public struct CorpusEntry has copy, drop, store {
 
 // === Method Aliases ===
 
-public use fun entry_cfg as CorpusEntry.cfg;
+public use fun entry_cfg as CorpusEntry.ensemble;
 public use fun entry_tag as CorpusEntry.tag;
 public use fun entry_c   as CorpusEntry.c;
 public use fun entry_d   as CorpusEntry.d;
@@ -175,7 +175,7 @@ public(package) fun compound_delta_value_const():  u64 { COMPOUND_DELTA_VALUE }
 
 // --- Method alias backing functions ---
 
-public(package) fun entry_cfg(entry: &CorpusEntry): &PolicyEnsemble { &entry.cfg }
+public(package) fun entry_cfg(entry: &CorpusEntry): &PolicyEnsemble { &entry.ensemble }
 public(package) fun entry_tag(entry: &CorpusEntry): u64                { entry.tag }
 public(package) fun entry_c(entry: &CorpusEntry):   u8                 { entry.c }
 public(package) fun entry_d(entry: &CorpusEntry):   u8                 { entry.d }
@@ -187,7 +187,7 @@ public(package) fun entry_f(entry: &CorpusEntry):   u8                 { entry.f
 
 fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8): CorpusEntry {
     CorpusEntry {
-        cfg: build_config(c, d, e, h, f),
+        ensemble: build_config(c, d, e, h, f),
         c,
         d,
         e,

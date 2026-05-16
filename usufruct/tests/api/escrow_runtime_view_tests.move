@@ -50,14 +50,14 @@ fun setup(): Scenario {
     sc
 }
 
-fun build_escrow(cfg: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
+fun build_escrow(ensemble: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let random  = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, cfg, commitment_policy::new_immediate(),
+        asset, ensemble, commitment_policy::new_immediate(),
         &fee_ref, &random, &clk, sc.ctx(),
     );
     test_scenario::return_shared(random);
@@ -163,8 +163,8 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
 #[test]
 fun idle_views_post_integrate() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
     // — Identity / static —
     // asset_id and owner_cap_id stamp the Escrow at integration; never change.
@@ -240,8 +240,8 @@ fun idle_views_post_integrate() {
 #[test]
 fun rented_views_post_rent() {
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     // Rent — pay min_rent_price as the tenant.
     sc.next_tx(TENANT_ADDR);
@@ -291,8 +291,8 @@ fun rented_views_post_rent() {
 #[test]
 fun settlement_views_in_rented_state() {
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let clk     = clock::create_for_testing(sc.ctx());
@@ -328,8 +328,8 @@ fun settlement_views_in_demand_state() {
     let mut sc  = setup();
     // c=1 Countdown — prevents APT from immediately resolving the handover
     // inside the second rent call, keeping the escrow in Demand.
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let clk     = clock::create_for_testing(sc.ctx());
@@ -372,8 +372,8 @@ fun at_dutch_views_after_tenure_expiry() {
     let mut sc  = setup();
     // h=1 → Descent::Window; ensures the escrow enters AtDutch on tenure expiry
     // instead of collapsing back to Idle (which Descent::Skipped would do).
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -425,8 +425,8 @@ fun at_dutch_views_after_tenure_expiry() {
 #[test]
 fun retired_views_after_retire_from_idle() {
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(OWNER);
     let clk    = clock::create_for_testing(sc.ctx());
@@ -464,8 +464,8 @@ fun retired_views_after_retire_from_idle() {
 fun demand_views_after_handover_bid() {
     let mut sc  = setup();
     // c=1 → handover=Countdown; second rent enters Demand (not Instant fire-through).
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -526,8 +526,8 @@ fun demand_views_after_handover_bid() {
 fun retiring_flag_views_after_retire_during_renting() {
     let mut sc  = setup();
     // c=1 → Countdown handover; rules out Instant fire-through on retire.
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     // Rent.
     sc.next_tx(TENANT_ADDR);
@@ -568,17 +568,17 @@ fun retiring_flag_views_after_retire_during_renting() {
 #[test]
 fun cartesian_state_projector_matrix() {
     let mut sc = setup();
-    let cfg           = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let ensemble           = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let cfg_countdown = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let cfg_window    = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
 
     // — Idle —
-    let (escrow, cap) = build_escrow(cfg, &mut sc);
+    let (escrow, cap) = build_escrow(ensemble, &mut sc);
     assert_projector_pattern(&escrow, STATE_IDLE);
     dispose_escrow(escrow, cap);
 
     // — Retired (retire from Idle) —
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
     sc.next_tx(OWNER);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -589,7 +589,7 @@ fun cartesian_state_projector_matrix() {
     dispose_escrow(escrow, cap);
 
     // — Occupied (rent from Idle) —
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
     sc.next_tx(TENANT_ADDR);
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
@@ -650,8 +650,8 @@ fun cartesian_state_projector_matrix() {
 fun tenant_cap_views_in_at_dutch_state() {
     let mut sc  = setup();
     // h=1 Window: tenure expires → AtDutch (does not immediately collapse).
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -679,8 +679,8 @@ fun tenant_cap_views_in_at_dutch_state() {
 #[test]
 fun tenant_cap_views_in_retired_state() {
     let mut sc  = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(OWNER);
     // Drive Idle → Retired directly (no tenancy needed).
@@ -701,8 +701,8 @@ fun tenant_cap_views_in_retired_state() {
 #[test]
 fun tenant_cap_is_pending_in_occupied_returns_false() {
     let mut sc  = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let clk     = clock::create_for_testing(sc.ctx());
@@ -735,8 +735,8 @@ fun tenant_cap_is_pending_in_occupied_returns_false() {
 fun views_flip_across_tenure_expiry_to_idle() {
     // Occupied → Idle: tenure expires with descent=Skipped.
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -794,8 +794,8 @@ fun views_flip_across_tenure_expiry_to_idle() {
 fun views_flip_across_tenure_expiry_to_at_dutch() {
     // Occupied → AtDutch: tenure expires with descent=Window.
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -852,8 +852,8 @@ fun views_flip_across_tenure_expiry_to_at_dutch() {
 fun views_flip_across_auction_expiry_to_idle() {
     // AtDutch → Idle: descent window expires.
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -901,8 +901,8 @@ fun views_flip_across_handover_countdown_expiry() {
     // Demand → Occupied: handover countdown expires, pending tenant becomes current.
     // Uses c=1 (Countdown handover) so a second rent enters Demand state.
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
     let t1_addr: address = @0xA1;
     let t2_addr: address = @0xA2;

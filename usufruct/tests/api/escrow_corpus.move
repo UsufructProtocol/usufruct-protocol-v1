@@ -48,7 +48,7 @@ const COMPOUND_DELTA_VALUE:   u64 = 1;
 // === Structs ===
 
 public struct CorpusEntry has copy, drop, store {
-    cfg: PolicyEnsemble,
+    ensemble: PolicyEnsemble,
     c:   u8,   // 0..3  HandoverPolicy
     d:   u8,   // 0..1  PriceEscalationPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
@@ -60,7 +60,7 @@ public struct CorpusEntry has copy, drop, store {
 
 // === Method Aliases ===
 
-public use fun entry_cfg as CorpusEntry.cfg;
+public use fun entry_cfg as CorpusEntry.ensemble;
 public use fun entry_tag as CorpusEntry.tag;
 public use fun entry_c   as CorpusEntry.c;
 public use fun entry_d   as CorpusEntry.d;
@@ -166,73 +166,73 @@ public(package) fun with_compound_pricing():    vector<CorpusEntry> { filter_d(a
 public(package) fun with_cycles_single():       vector<CorpusEntry> { all() }
 public(package) fun with_cycles_multi():        vector<CorpusEntry> { all_multi() }
 
-/// Rebuild `cfg` with a different `min_rent_price` (Fixed policy). All other fields unchanged.
-public(package) fun with_min_rent_price(cfg: PolicyEnsemble, price_mist: u64): PolicyEnsemble {
+/// Rebuild `ensemble` with a different `min_rent_price` (Fixed policy). All other fields unchanged.
+public(package) fun with_min_rent_price(ensemble: PolicyEnsemble, price_mist: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(price_mist)),
-        *policy_ensemble::proj_tenure_duration(&cfg),
-        *policy_ensemble::proj_tenure_extend(&cfg),
-        *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_auction_window(&cfg),
-        *policy_ensemble::proj_credit_shape(&cfg),
-        *policy_ensemble::proj_auction_shape(&cfg),
-        *policy_ensemble::proj_price_escalation(&cfg),
+        *policy_ensemble::proj_tenure_duration(&ensemble),
+        *policy_ensemble::proj_tenure_extend(&ensemble),
+        *policy_ensemble::proj_handover(&ensemble),
+        *policy_ensemble::proj_auction_window(&ensemble),
+        *policy_ensemble::proj_credit_shape(&ensemble),
+        *policy_ensemble::proj_auction_shape(&ensemble),
+        *policy_ensemble::proj_price_escalation(&ensemble),
     )
 }
 
-/// Rebuild `cfg` with a random-in-range `min_rent_price`. All other fields unchanged.
-public(package) fun with_random_min_rent_price(cfg: PolicyEnsemble, min_mist: u64, max_mist: u64): PolicyEnsemble {
+/// Rebuild `ensemble` with a random-in-range `min_rent_price`. All other fields unchanged.
+public(package) fun with_random_min_rent_price(ensemble: PolicyEnsemble, min_mist: u64, max_mist: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         floor_price_policy::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
-        *policy_ensemble::proj_tenure_duration(&cfg),
-        *policy_ensemble::proj_tenure_extend(&cfg),
-        *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_auction_window(&cfg),
-        *policy_ensemble::proj_credit_shape(&cfg),
-        *policy_ensemble::proj_auction_shape(&cfg),
-        *policy_ensemble::proj_price_escalation(&cfg),
+        *policy_ensemble::proj_tenure_duration(&ensemble),
+        *policy_ensemble::proj_tenure_extend(&ensemble),
+        *policy_ensemble::proj_handover(&ensemble),
+        *policy_ensemble::proj_auction_window(&ensemble),
+        *policy_ensemble::proj_credit_shape(&ensemble),
+        *policy_ensemble::proj_auction_shape(&ensemble),
+        *policy_ensemble::proj_price_escalation(&ensemble),
     )
 }
 
-/// Rebuild `cfg` with a different `tenure_ceiling` (Fixed policy). All other fields unchanged.
-public(package) fun with_tenure_ceiling(cfg: PolicyEnsemble, ceiling_ms: u64): PolicyEnsemble {
+/// Rebuild `ensemble` with a different `tenure_ceiling` (Fixed policy). All other fields unchanged.
+public(package) fun with_tenure_ceiling(ensemble: PolicyEnsemble, ceiling_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_floor_price(&cfg),
+        *policy_ensemble::proj_floor_price(&ensemble),
         tenure_duration_policy::new_fixed(phases::duration(ceiling_ms)),
-        *policy_ensemble::proj_tenure_extend(&cfg),
-        *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_auction_window(&cfg),
-        *policy_ensemble::proj_credit_shape(&cfg),
-        *policy_ensemble::proj_auction_shape(&cfg),
-        *policy_ensemble::proj_price_escalation(&cfg),
+        *policy_ensemble::proj_tenure_extend(&ensemble),
+        *policy_ensemble::proj_handover(&ensemble),
+        *policy_ensemble::proj_auction_window(&ensemble),
+        *policy_ensemble::proj_credit_shape(&ensemble),
+        *policy_ensemble::proj_auction_shape(&ensemble),
+        *policy_ensemble::proj_price_escalation(&ensemble),
     )
 }
 
-/// Rebuild `cfg` with a random-in-range `tenure_ceiling`. All other fields unchanged.
-public(package) fun with_random_tenure_ceiling(cfg: PolicyEnsemble, min_ms: u64, max_ms: u64): PolicyEnsemble {
+/// Rebuild `ensemble` with a random-in-range `tenure_ceiling`. All other fields unchanged.
+public(package) fun with_random_tenure_ceiling(ensemble: PolicyEnsemble, min_ms: u64, max_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_floor_price(&cfg),
+        *policy_ensemble::proj_floor_price(&ensemble),
         tenure_duration_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
-        *policy_ensemble::proj_tenure_extend(&cfg),
-        *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_auction_window(&cfg),
-        *policy_ensemble::proj_credit_shape(&cfg),
-        *policy_ensemble::proj_auction_shape(&cfg),
-        *policy_ensemble::proj_price_escalation(&cfg),
+        *policy_ensemble::proj_tenure_extend(&ensemble),
+        *policy_ensemble::proj_handover(&ensemble),
+        *policy_ensemble::proj_auction_window(&ensemble),
+        *policy_ensemble::proj_credit_shape(&ensemble),
+        *policy_ensemble::proj_auction_shape(&ensemble),
+        *policy_ensemble::proj_price_escalation(&ensemble),
     )
 }
 
-/// Rebuild `cfg` with a different `tenure_cycles` policy. All other fields unchanged.
-public(package) fun with_tenure_cycles(cfg: PolicyEnsemble, policy: TenureExtendPolicy): PolicyEnsemble {
+/// Rebuild `ensemble` with a different `tenure_cycles` policy. All other fields unchanged.
+public(package) fun with_tenure_cycles(ensemble: PolicyEnsemble, policy: TenureExtendPolicy): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_floor_price(&cfg),
-        *policy_ensemble::proj_tenure_duration(&cfg),
+        *policy_ensemble::proj_floor_price(&ensemble),
+        *policy_ensemble::proj_tenure_duration(&ensemble),
         policy,
-        *policy_ensemble::proj_handover(&cfg),
-        *policy_ensemble::proj_auction_window(&cfg),
-        *policy_ensemble::proj_credit_shape(&cfg),
-        *policy_ensemble::proj_auction_shape(&cfg),
-        *policy_ensemble::proj_price_escalation(&cfg),
+        *policy_ensemble::proj_handover(&ensemble),
+        *policy_ensemble::proj_auction_window(&ensemble),
+        *policy_ensemble::proj_credit_shape(&ensemble),
+        *policy_ensemble::proj_auction_shape(&ensemble),
+        *policy_ensemble::proj_price_escalation(&ensemble),
     )
 }
 
@@ -278,7 +278,7 @@ public(package) fun compound_delta_value_const():     u64 { COMPOUND_DELTA_VALUE
 
 // --- Method alias backing functions ---
 
-public(package) fun entry_cfg(entry: &CorpusEntry): &PolicyEnsemble { &entry.cfg }
+public(package) fun entry_cfg(entry: &CorpusEntry): &PolicyEnsemble { &entry.ensemble }
 public(package) fun entry_tag(entry: &CorpusEntry): u64                { entry.tag }
 public(package) fun entry_c(entry: &CorpusEntry):   u8                 { entry.c }
 public(package) fun entry_d(entry: &CorpusEntry):   u8                 { entry.d }
@@ -305,7 +305,7 @@ fun assert_by_tag_roundtrips(entries: vector<CorpusEntry>) {
     let mut i = 0;
     while (i < n) {
         let entry = entries.borrow(i);
-        assert!(by_tag(entry.tag) == *entry.cfg(), entry.tag);
+        assert!(by_tag(entry.tag) == *entry.ensemble(), entry.tag);
         i = i + 1;
     };
 }
@@ -339,7 +339,7 @@ fun make_full_slice(m: u8): vector<CorpusEntry> {
 
 fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): CorpusEntry {
     CorpusEntry {
-        cfg: build_config(c, d, e, h, f, m),
+        ensemble: build_config(c, d, e, h, f, m),
         c,
         d,
         e,

@@ -112,15 +112,15 @@ fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {
 /// Integrate, share, then take the shared escrow back. Returns the
 /// escrow + cap. Uses Immediate commitment (no retire floor) by default.
 fun integrate_and_take(
-    cfg: usufruct::policy_ensemble::PolicyEnsemble,
+    ensemble: usufruct::policy_ensemble::PolicyEnsemble,
     sc:  &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    integrate_and_take_with_commitment(cfg, commitment_policy::new_immediate(), sc)
+    integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), sc)
 }
 
 /// escrow + cap with an explicit CommitmentPolicy.
 fun integrate_and_take_with_commitment(
-    cfg:        usufruct::policy_ensemble::PolicyEnsemble,
+    ensemble:        usufruct::policy_ensemble::PolicyEnsemble,
     commitment: CommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
@@ -130,7 +130,7 @@ fun integrate_and_take_with_commitment(
     let asset   = mk_demo_asset(sc.ctx());
     let random  = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, cfg, commitment, &fee_ref, &random, &clk, sc.ctx(),
+        asset, ensemble, commitment, &fee_ref, &random, &clk, sc.ctx(),
     );
     test_scenario::return_shared(random);
     let escrow_id = owner_cap::proj_escrow_id(&cap);
@@ -148,14 +148,14 @@ fun integrate_creates_idle_escrow_smoke() {
     let mut sc = setup();
     sc.next_tx(OWNER);
 
-    let cfg     = escrow_corpus::by_tag(0); // c=0 instant, d=0 fixed, e=0 linear, h=0 skipped, f=0 immediate
+    let ensemble     = escrow_corpus::by_tag(0); // c=0 instant, d=0 fixed, e=0 linear, h=0 skipped, f=0 immediate
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
 
     let random = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, cfg, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
+        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
     );
     test_scenario::return_shared(random);
     let escrow_id = owner_cap::proj_escrow_id(&cap);
@@ -179,7 +179,7 @@ fun integrate_creates_idle_escrow_smoke() {
 /// Verifies the post-condition `state_tag == Idle` for each.
 ///
 /// The full 168-config corpus is unnecessary here: integrate does not
-/// branch on policy / curve / price values; it only stores the cfg.
+/// branch on policy / curve / price values; it only stores the ensemble.
 /// A C-axis sweep is the minimum projection that exercises the named
 /// protocol modes (per the corpus operational rule: "Default to the
 /// minimum projection, not all_configs()"). Cross-axis sweeps belong
@@ -195,7 +195,7 @@ fun integrate_idle_across_handover_modes() {
         let mut c: u8 = 0;
         while (c <= 2) {
             let tag = escrow_corpus::tag_with_cycles(c, 0, 0, 0, 0, m);
-            let cfg = escrow_corpus::by_tag(tag);
+            let ensemble = escrow_corpus::by_tag(tag);
 
             let fee_ref = sc.take_immutable<ProtocolFeeRef>();
             let clk     = clock::create_for_testing(sc.ctx());
@@ -203,7 +203,7 @@ fun integrate_idle_across_handover_modes() {
 
             let random = sc.take_shared<Random>();
             let cap = escrow::integrate<DemoAsset, SUI>(
-                asset, cfg, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
+                asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
             );
             test_scenario::return_shared(random);
             let escrow_id = owner_cap::proj_escrow_id(&cap);
@@ -235,13 +235,13 @@ fun integrate_leaves_escrow_idle() {
     let mut sc = setup();
     sc.next_tx(OWNER);
 
-    let cfg     = escrow_corpus::by_tag(0);
+    let ensemble     = escrow_corpus::by_tag(0);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
 
     let random = sc.take_shared<Random>();
-    let cap       = escrow::integrate<DemoAsset, SUI>(asset, cfg, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx());
+    let cap       = escrow::integrate<DemoAsset, SUI>(asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
@@ -297,8 +297,8 @@ fun split_fee_exact_threshold_yields_one_fee() {
 #[test]
 fun floor_price_idle_returns_min_rent_price() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (escrow, cap) = integrate_and_take(ensemble, &mut sc);
     let clock = clock::create_for_testing(sc.ctx());
     let price = escrow::compute_floor_price(&escrow, &clock);
     clock::destroy_for_testing(clock);
@@ -319,8 +319,8 @@ fun floor_price_handover_open_escalates_current_stake() {
         let mut d: u8 = 0;
         while (d <= 1) {
             let tag = escrow_corpus::tag_with_cycles(0, d, 0, 0, 0, m);
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
 
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
@@ -355,8 +355,8 @@ fun floor_price_handover_confirmed_escalates_pending_stake() {
         let mut d: u8 = 0;
         while (d <= 1) {
             let tag = escrow_corpus::tag_with_cycles(0, d, 0, 0, 0, m);
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
 
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
@@ -395,8 +395,8 @@ fun floor_price_at_dutch_at_t0_equals_last_acq_price() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m);
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
 
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
@@ -438,8 +438,8 @@ fun floor_price_at_dutch_at_full_descent_equals_min_rent_price() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m);
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
 
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
@@ -472,8 +472,8 @@ fun floor_price_at_dutch_at_full_descent_equals_min_rent_price() {
 #[test, expected_failure(abort_code = asset_state::ERetiredNoBid, location = usufruct::asset_state)]
 fun floor_price_aborts_on_retired() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
     escrow::drive_to_retired_for_testing(&mut escrow);
     let clock = clock::create_for_testing(sc.ctx());
     let _ = escrow::compute_floor_price(&escrow, &clock);
@@ -496,8 +496,8 @@ fun used_credit_at_phase_start_is_zero_for_all_curves() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 0, 0, m);
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
 
             let phase_start = 1_000_000;
             escrow::drive_to_rented_for_testing(
@@ -531,8 +531,8 @@ fun used_credit_at_tenure_ceiling_equals_principal_for_all_curves() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 0, 0, m);
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
 
             let phase_start = 1_000_000;
             escrow::drive_to_rented_for_testing(
@@ -564,8 +564,8 @@ fun used_credit_at_tenure_ceiling_equals_principal_for_all_curves() {
 #[test]
 fun used_credit_handover_confirmed_clamps_at_expiry() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)); // c=1 Countdown
-    let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)); // c=1 Countdown
+    let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
 
     let phase_start = 1_000_000;
     escrow::drive_to_rented_for_testing(
@@ -596,8 +596,8 @@ fun used_credit_handover_confirmed_clamps_at_expiry() {
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
 fun used_credit_aborts_on_idle() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (escrow, cap) = integrate_and_take(ensemble, &mut sc);
     let clock = clock::create_for_testing(sc.ctx());
     let _ = escrow::compute_used_credit(&escrow, &clock);
     clock::destroy_for_testing(clock);
@@ -609,8 +609,8 @@ fun used_credit_aborts_on_idle() {
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
 fun used_credit_aborts_on_at_dutch() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
     escrow::drive_to_rented_for_testing(
         &mut escrow,
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
@@ -630,8 +630,8 @@ fun used_credit_aborts_on_at_dutch() {
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
 fun used_credit_aborts_on_retired() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
     escrow::drive_to_retired_for_testing(&mut escrow);
     let clock = clock::create_for_testing(sc.ctx());
     let _ = escrow::compute_used_credit(&escrow, &clock);
@@ -648,8 +648,8 @@ fun used_credit_aborts_on_retired() {
 #[test]
 fun rent_from_idle_installs_new_tenant() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -678,8 +678,8 @@ fun rent_from_idle_installs_new_tenant() {
 #[test]
 fun rent_from_at_dutch_installs_new_tenant() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));  // h=1 for non-zero descent window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));  // h=1 for non-zero descent window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -729,8 +729,8 @@ fun rent_from_handover_open_places_bid() {
         let mut c: u8 = 0;
         while (c <= 2) {
             let tag_cfg = escrow_corpus::tag_with_cycles(c, 0, 0, 0, 0, m);
-            let cfg     = escrow_corpus::by_tag(tag_cfg);
-            let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble     = escrow_corpus::by_tag(tag_cfg);
+            let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
             let random = sc.take_shared<Random>();
 
@@ -772,8 +772,8 @@ fun rent_from_handover_open_places_bid() {
 #[test, expected_failure(abort_code = asset_state::ERetireFlagBlocksBid, location = usufruct::asset_state)]
 fun rent_from_handover_open_aborts_when_retiring_flag_set() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -809,8 +809,8 @@ fun rent_from_handover_confirmed_supersedes_bid() {
     let mut sc = setup();
     // c=1 (Countdown) — non-zero handover-countdown so APT does NOT
     // fire handover at the third rent before supersede can run.
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -852,8 +852,8 @@ fun rent_from_handover_confirmed_supersedes_bid() {
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
 fun rent_below_floor_aborts() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -871,8 +871,8 @@ fun rent_below_floor_aborts() {
 #[test, expected_failure(abort_code = asset_state::ERetiredNoBid, location = usufruct::asset_state)]
 fun rent_from_retired_aborts() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     escrow::drive_to_retired_for_testing(&mut escrow);
@@ -899,8 +899,8 @@ fun rent_from_retired_aborts() {
 #[test]
 fun do_handover_routes_funds_and_emits_event_parcial() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -965,8 +965,8 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
 #[test]
 fun do_tenure_expiry_tenant_receives_no_refund() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1005,8 +1005,8 @@ fun do_tenure_expiry_tenant_receives_no_refund() {
 #[test]
 fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1055,8 +1055,8 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
 #[test]
 fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1096,8 +1096,8 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
 #[test]
 fun retire_from_idle_collapses_to_retired() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0); // f=0 immediate
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0); // f=0 immediate
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1122,8 +1122,8 @@ fun retire_from_idle_collapses_to_retired() {
 #[test]
 fun retire_from_at_dutch_collapses_to_retired() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1155,8 +1155,8 @@ fun retire_from_at_dutch_collapses_to_retired() {
 #[test]
 fun retire_from_handover_open_only_lifts_flag() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1183,8 +1183,8 @@ fun retire_from_handover_open_only_lifts_flag() {
 #[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
 fun retire_when_already_retired_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     escrow::drive_to_retired_for_testing(&mut escrow);
@@ -1199,8 +1199,8 @@ fun retire_when_already_retired_aborts() {
 #[test, expected_failure(abort_code = E_ALREADY_RETIRING, location = usufruct::asset_state)]
 fun retire_when_already_retiring_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1221,8 +1221,8 @@ fun retire_when_already_retiring_aborts() {
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
 fun retire_with_wrong_cap_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1242,8 +1242,8 @@ fun retire_with_wrong_cap_aborts() {
 fun retire_before_floor_aborts_under_deferred_policy() {
     let mut sc = setup();
     let tag = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 deferred
-    let cfg = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(cfg, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let ensemble = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     // clock at 0 is far below the deferred floor (10_000_000).
@@ -1263,8 +1263,8 @@ fun retire_before_floor_aborts_under_deferred_policy() {
 #[test]
 fun do_auction_expiry_returns_to_idle() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
 
     // Drive Idle → Occupied → AtDutch via test helpers.
     escrow::drive_to_rented_for_testing(
@@ -1296,8 +1296,8 @@ fun do_auction_expiry_returns_to_idle() {
 #[test]
 fun next_pending_returns_none_in_steady_state() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
 
     // Idle escrow — nothing pending at any clock.
     let clk = clock::create_for_testing(sc.ctx());
@@ -1319,8 +1319,8 @@ fun next_pending_at_dutch_not_firable_returns_none() {
     let mut sc = setup();
     // h=1 Window descent — non-zero descent duration ensures the auction is
     // not immediately firable at clock=0.
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
@@ -1351,8 +1351,8 @@ fun next_pending_at_dutch_not_firable_returns_none() {
 fun next_pending_demand_firable_returns_some() {
     let mut sc = setup();
     // c=1 Countdown — non-zero handover countdown so we can control timing.
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
@@ -1388,8 +1388,8 @@ fun next_pending_demand_firable_returns_some() {
 #[test]
 fun next_pending_demand_not_firable_returns_none() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1417,8 +1417,8 @@ fun next_pending_demand_not_firable_returns_none() {
 #[test]
 fun next_pending_detects_tenure_with_correct_boundary() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1445,8 +1445,8 @@ fun next_pending_detects_tenure_with_correct_boundary() {
 #[test]
 fun apt_noop_when_nothing_due() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1467,8 +1467,8 @@ fun apt_noop_when_nothing_due() {
 #[test]
 fun apt_fires_handover_when_countdown_expires() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1506,8 +1506,8 @@ fun apt_fires_handover_when_countdown_expires() {
 #[test]
 fun apt_fires_tenure_expiry_when_elapsed() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1540,8 +1540,8 @@ fun apt_fires_tenure_expiry_when_elapsed() {
 #[test]
 fun apt_cascade_tenure_then_auction_skipped() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)); // h=0 Skipped
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)); // h=0 Skipped
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1574,8 +1574,8 @@ fun apt_cascade_tenure_then_auction_skipped() {
 #[test]
 fun borrow_asset_then_return_completes_cycle() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1601,8 +1601,8 @@ fun borrow_asset_then_return_completes_cycle() {
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
 fun borrow_asset_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1625,8 +1625,8 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
 #[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
 fun borrow_asset_from_idle_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1650,8 +1650,8 @@ fun borrow_asset_with_pending_cap_aborts() {
     let mut sc = setup();
     // c=1 Countdown so place_bid stamps a future expiry (no APT
     // handover before borrow).
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1681,8 +1681,8 @@ fun borrow_asset_with_pending_cap_aborts() {
 #[test]
 fun soft_burn_tenant_cap_burns_displaced_bidder_cap() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1713,8 +1713,8 @@ fun soft_burn_tenant_cap_burns_displaced_bidder_cap() {
 #[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
 fun soft_burn_tenant_cap_on_live_current_cap_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1733,8 +1733,8 @@ fun soft_burn_tenant_cap_on_live_current_cap_aborts() {
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
 fun soft_burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     let foreign = tenant_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), TENANT_ADDR_1, sc.ctx());
@@ -1761,8 +1761,8 @@ fun soft_burn_tenant_cap_with_foreign_escrow_cap_aborts() {
 #[test]
 fun hard_burn_tenant_cap_destroys_orphaned_cap_post_claim() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1902,8 +1902,8 @@ fun is_occupied_view_aborts_while_asset_borrowed() {
 #[test]
 fun withdraw_earnings_drains_owner_balance() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -1938,8 +1938,8 @@ fun withdraw_earnings_drains_owner_balance() {
 #[test, expected_failure(abort_code = asset_state::ENoEarnings, location = usufruct::asset_state)]
 fun withdraw_earnings_with_zero_balance_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     let coin = escrow::withdraw_earnings(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
@@ -1954,8 +1954,8 @@ fun withdraw_earnings_with_zero_balance_aborts() {
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
 fun withdraw_earnings_with_wrong_cap_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     let foreign = owner_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
@@ -1977,8 +1977,8 @@ fun withdraw_earnings_with_wrong_cap_aborts() {
 #[test]
 fun claim_asset_returns_asset_and_earnings_and_deletes_escrow() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2009,8 +2009,8 @@ fun claim_asset_returns_asset_and_earnings_and_deletes_escrow() {
 #[test]
 fun claim_asset_sweeps_owner_earnings() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2046,8 +2046,8 @@ fun claim_asset_sweeps_owner_earnings() {
 #[test, expected_failure(abort_code = asset_state::ENotRetired, location = usufruct::asset_state)]
 fun claim_asset_when_not_retired_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     // Idle, not Retired.
@@ -2062,8 +2062,8 @@ fun claim_asset_when_not_retired_aborts() {
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
 fun claim_asset_with_wrong_cap_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
@@ -2089,8 +2089,8 @@ fun claim_asset_with_wrong_cap_aborts() {
 #[test]
 fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FixedTime, h=0 Skipped
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FixedTime, h=0 Skipped
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2147,7 +2147,7 @@ fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenari
         let entry      = &entries[i];
         let tag        = entry.tag();
         let t1_cycles  = (entry.m() as u64) + 1;
-        let (mut escrow, owner_cap) = integrate_and_take(*entry.cfg(), &mut sc);
+        let (mut escrow, owner_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
         let escrow_id  = owner_cap::proj_escrow_id(&owner_cap);
         let mut clk    = clock::create_for_testing(sc.ctx());
         let random     = sc.take_shared<Random>();
@@ -2243,8 +2243,8 @@ fun e2e_full_cycle_all_ch_m() {
 #[test]
 fun e2e_full_rental_cycle_with_bid_and_handover() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2319,8 +2319,8 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let cfg_tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m);
-            let cfg     = escrow_corpus::by_tag(cfg_tag);
-            let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble     = escrow_corpus::by_tag(cfg_tag);
+            let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
             let random = sc.take_shared<Random>();
 
@@ -2364,8 +2364,8 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
 #[test]
 fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2417,8 +2417,8 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
 fun e2e_two_tenant_successions_price_escalates() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // c=0 d=0 e=0 h=0 f=0
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2499,8 +2499,8 @@ fun e2e_two_tenant_successions_price_escalates() {
 fun e2e_auction_winner_rents_at_mid_descent() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // c=0 h=1
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2562,8 +2562,8 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 fun e2e_deferred_retire_aborts_before_floor() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(cfg, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
     // Clock at 0; retire_floor = 10_000_000 — gate is closed.
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -2581,8 +2581,8 @@ fun e2e_deferred_retire_aborts_before_floor() {
 fun e2e_deferred_retire_succeeds_after_floor() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(cfg, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2619,8 +2619,8 @@ fun e2e_deferred_retire_succeeds_after_floor() {
 fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2697,8 +2697,8 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m); // c=0 h=1, vary e
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
             let random = sc.take_shared<Random>();
 
@@ -2771,8 +2771,8 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
 fun e2e_b1_five_ptbs_borrow_chain() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let min_price = escrow_corpus::min_rent_price_const();
 
     // PTB 1: T1 rents from Idle — immediately current.
@@ -2839,9 +2839,9 @@ fun e2e_b1_instant_borrow_across_curve_shape_states() {
     let mut i     = 0;
     while (i < n) {
         let entry = entries.borrow(i);
-        let cfg   = *entry.cfg();
+        let ensemble   = *entry.ensemble();
         let tag   = entry.tag();
-        let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+        let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
         let clk = clock::create_for_testing(sc.ctx());
         let random = sc.take_shared<Random>();
 
@@ -2869,8 +2869,8 @@ fun e2e_b1_instant_borrow_across_curve_shape_states() {
 fun e2e_b3_stale_tenant_cap_borrow_aborts() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2905,8 +2905,8 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
 fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -2954,8 +2954,8 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
 fun e2e_b6_same_ptb_repeated_borrow_return_cycles() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
@@ -2992,8 +2992,8 @@ fun e2e_b6_same_ptb_repeated_borrow_return_cycles() {
 fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 1, 0, 0, 0); // d=1 CompoundDelta
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
@@ -3036,8 +3036,8 @@ fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
 fun e2e_p2_fixed_delta_gap_is_constant_across_re_prices() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // d=0 FixedDelta
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let delta   = escrow_corpus::fixed_delta_value_const();
@@ -3078,8 +3078,8 @@ fun e2e_p2_fixed_delta_gap_is_constant_across_re_prices() {
 fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // c=0 h=0
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -3140,8 +3140,8 @@ fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
 fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -3197,8 +3197,8 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
 fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // h=0 Skipped → Idle
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -3228,8 +3228,8 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
 fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -3261,8 +3261,8 @@ fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
 fun e2e_f2_fixed_time_T3_supersedes_T2_wins_at_tenure_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(2, 0, 0, 1, 0); // c=2 FixedTime, h=1
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -3324,8 +3324,8 @@ fun e2e_f2_fixed_time_T3_supersedes_T2_wins_at_tenure_boundary() {
 fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
 
     // PTB 1: T1 rents from Idle — immediately current — borrows.
     let clk    = clock::create_for_testing(sc.ctx());
@@ -3397,8 +3397,8 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     // With c=1 the countdown hasn't elapsed at t=2_000, so the supersede path
     // is reachable.
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     let min_price = escrow_corpus::min_rent_price_const();
@@ -3465,8 +3465,8 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
 fun e2e_current_tenant_defends_against_challenger() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     let min_price = escrow_corpus::min_rent_price_const();
@@ -3536,8 +3536,8 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     // so APT fires the handover before reaching do_supersede_bid in HC state.
     // h=1 (Window) makes AtDutchAuction observable.
     let tag       = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Countdown, h=1 Window
-    let cfg       = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble       = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk   = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let min_price = escrow_corpus::min_rent_price_const();
@@ -3632,8 +3632,8 @@ fun e2e_overpay_accepted_elevates_next_floor() {
 fun e2e_hc_floor_uses_pending_stake_not_current_stake() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let min_price = escrow_corpus::min_rent_price_const();
@@ -3702,7 +3702,7 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
     while (i < entries.length()) {
         let entry = &entries[i];
         let tag   = entry.tag();
-        let (mut escrow, owner_cap) = integrate_and_take(*entry.cfg(), &mut sc);
+        let (mut escrow, owner_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
         let mut clk = clock::create_for_testing(sc.ctx());
         let random  = sc.take_shared<Random>();
 
@@ -3795,8 +3795,8 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
 fun e2e_fin2_tenure_expiry_financial_conservation() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0);
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -3953,8 +3953,8 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m); // h=1 Window, vary e
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
             let random = sc.take_shared<Random>();
 
@@ -4013,8 +4013,8 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 0, 0, m); // vary e: all 7 curve shapes
-            let cfg = escrow_corpus::by_tag(tag);
-            let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+            let ensemble = escrow_corpus::by_tag(tag);
+            let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx()); // t = 0
             let random = sc.take_shared<Random>();
 
@@ -4062,8 +4062,8 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // h=0 Skipped
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
     let min_price = escrow_corpus::min_rent_price_const();
@@ -4122,8 +4122,8 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
 fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Countdown, h=1 Window
-    let cfg     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -4220,7 +4220,7 @@ fun apt_idempotency_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Sc
         let entry          = &entries[i];
         let tag            = entry.tag();
         let t1_cycle_count = (entry.m() as u64) + 1; // 1 for Single, 2 for Multi
-        let (mut escrow, owner_cap) = integrate_and_take(*entry.cfg(), &mut sc);
+        let (mut escrow, owner_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
         let mut clk = clock::create_for_testing(sc.ctx());
         let random  = sc.take_shared<Random>();
 
@@ -5064,16 +5064,16 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 #[test]
 fun update_config_idle_applies_immediately() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0); // c=0,d=0,e=0,h=0,f=0
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0); // c=0,d=0,e=0,h=0,f=0
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
-    let new_cfg = escrow_corpus::by_tag(1); // f=1 — differs from tag-0
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1); // f=1 — differs from tag-0
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 0);
-    assert!(escrow::integration_config(&escrow) == new_cfg, 1);
+    assert!(escrow::integration_config(&escrow) == new_ensemble, 1);
     assert!(!escrow::has_pending_config_update(&escrow), 2);
 
     let resets = event::events_by_type<ConfigUpdated>();
@@ -5094,8 +5094,8 @@ fun update_config_idle_applies_immediately() {
 #[test]
 fun update_config_at_dutch_schedules_without_cancelling() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -5112,12 +5112,12 @@ fun update_config_at_dutch_schedules_without_cancelling() {
         0,
     );
 
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) != new_cfg, 2);
+    assert!(escrow::integration_config(&escrow) != new_ensemble, 2);
 
     let scheduled = event::events_by_type<ConfigUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);
@@ -5137,17 +5137,17 @@ fun update_config_at_dutch_schedules_without_cancelling() {
 #[test]
 fun update_config_renting_schedules_without_interrupting() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let original_cfg = cfg;
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let original_cfg = ensemble;
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     assert!(escrow::is_rented(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
@@ -5173,16 +5173,16 @@ fun update_config_renting_schedules_without_interrupting() {
 #[test]
 fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     // Tenure expiry → AtDutch. pending_config survives; old config still active.
     escrow::fire_do_tenure_expiry_for_testing(
@@ -5190,7 +5190,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
     );
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) == cfg, 2);
+    assert!(escrow::integration_config(&escrow) == ensemble, 2);
 
     let resets_mid = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets_mid.length(), 0);
@@ -5201,7 +5201,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
 
     assert!(escrow::is_idle(&escrow), 3);
     assert!(!escrow::has_pending_config_update(&escrow), 4);
-    assert!(escrow::integration_config(&escrow) == new_cfg, 5);
+    assert!(escrow::integration_config(&escrow) == new_ensemble, 5);
 
     let resets = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets.length(), 1);
@@ -5222,9 +5222,9 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
 #[test]
 fun update_config_handover_preserves_pending_does_not_apply() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let original_cfg = cfg;
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let original_cfg = ensemble;
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -5233,8 +5233,8 @@ fun update_config_handover_preserves_pending_does_not_apply() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
     // Schedule config reset.
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     // T2 bids → Demand, then drive to Demand.
     escrow::drive_to_demand_for_testing(
@@ -5266,22 +5266,22 @@ fun update_config_handover_preserves_pending_does_not_apply() {
 }
 
 // Test 6: handover then tenure expiry then auction expiry applies pending reset ─
-/// Chain: rent T1 → update_config(new_cfg) → drive to Demand → handover →
+/// Chain: rent T1 → update_config(new_ensemble) → drive to Demand → handover →
 /// T2 tenure expiry → AtDutch → auction expiry → Idle with new config.
 /// The reset is applied only at auction expiry, not at tenure expiry.
 #[test]
 fun update_config_chain_handover_then_auction_expiry_applies() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     escrow::drive_to_demand_for_testing(
         &mut escrow,
@@ -5307,7 +5307,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
     clock::set_for_testing(&mut clk, 2 * escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 2);
-    assert!(escrow::integration_config(&escrow) == new_cfg, 3);
+    assert!(escrow::integration_config(&escrow) == new_ensemble, 3);
 
     let resets = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets.length(), 1);
@@ -5329,8 +5329,8 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
 #[test]
 fun update_config_override_last_write_wins() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -5383,17 +5383,17 @@ fun update_config_override_last_write_wins() {
 #[test]
 fun update_config_retire_wins_discards_pending_silently() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let original_cfg = cfg;
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let original_cfg = ensemble;
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
-    let new_cfg = escrow_corpus::by_tag(10); // h=1 differs from original h=0
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(10); // h=1 differs from original h=0
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     // retire() sets the retiring flag and discards the pending reset.
     escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
@@ -5408,7 +5408,7 @@ fun update_config_retire_wins_discards_pending_silently() {
     );
 
     assert!(escrow::is_retired(&escrow), 2);
-    assert!(escrow::integration_config(&escrow) != new_cfg, 3);
+    assert!(escrow::integration_config(&escrow) != new_ensemble, 3);
     assert!(escrow::integration_config(&escrow) == original_cfg, 4);
 
     let resets = event::events_by_type<ConfigUpdated>();
@@ -5426,15 +5426,15 @@ fun update_config_retire_wins_discards_pending_silently() {
 #[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
 fun update_config_on_retired_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
     escrow::drive_to_retired_for_testing(&mut escrow);
 
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -5447,8 +5447,8 @@ fun update_config_on_retired_aborts() {
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
 fun update_config_on_retiring_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -5459,8 +5459,8 @@ fun update_config_on_retiring_aborts() {
     escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
 
     // update_config must abort — retiring flag blocks the schedule path.
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -5477,8 +5477,8 @@ fun update_config_on_retiring_aborts() {
 #[test]
 fun update_config_at_dutch_natural_expiry_applies_pending() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -5495,8 +5495,8 @@ fun update_config_at_dutch_natural_expiry_applies_pending() {
         0,
     );
 
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     assert!(escrow::has_pending_config_update(&escrow), 0);
 
@@ -5507,7 +5507,7 @@ fun update_config_at_dutch_natural_expiry_applies_pending() {
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) == new_cfg, 2);
+    assert!(escrow::integration_config(&escrow) == new_ensemble, 2);
     assert!(!escrow::has_pending_config_update(&escrow), 3);
 
     let resets = event::events_by_type<ConfigUpdated>();
@@ -5535,18 +5535,18 @@ fun update_config_at_dutch_natural_expiry_applies_pending() {
 #[test]
 fun update_config_pending_survives_multiple_handovers() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
-    let original_cfg = cfg;
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let original_cfg = ensemble;
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
-    let new_cfg = escrow_corpus::by_tag(1);
+    let new_ensemble = escrow_corpus::by_tag(1);
     let tenure   = escrow_corpus::tenure_ceiling_const();
 
     // T1 is current tenant; reset scheduled.
     escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     // First handover: T1 → T2.
     escrow::drive_to_demand_for_testing(&mut escrow, mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()), tenure / 4);
@@ -5581,9 +5581,9 @@ fun update_config_pending_survives_multiple_handovers() {
 #[test]
 fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
-    let original_cfg = cfg;
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let original_cfg = ensemble;
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -5597,8 +5597,8 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     assert!(escrow::integration_config(&escrow) == original_cfg, 0);
     assert!(!escrow::has_pending_config_update(&escrow), 1);
 
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     // Still at AtDutch; old config still active.
     assert!(escrow::is_at_dutch_auction(&escrow), 2);
@@ -5611,7 +5611,7 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 5);
-    assert!(escrow::integration_config(&escrow) == new_cfg, 6);
+    assert!(escrow::integration_config(&escrow) == new_ensemble, 6);
     assert!(!escrow::has_pending_config_update(&escrow), 7);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 1);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
@@ -5630,8 +5630,8 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
 #[test]
 fun update_config_at_dutch_overrides_renting_pending() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -5679,8 +5679,8 @@ fun update_config_at_dutch_overrides_renting_pending() {
 #[test]
 fun update_config_state_clean_after_application() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -5965,9 +5965,9 @@ fun update_config_behavior_price_function_floor_escalation() {
 #[test]
 fun commitment_floor_observable_at_integrate_and_after_extend() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
+    let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        cfg, commitment_policy::new_immediate(), &mut sc,
+        ensemble, commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
@@ -5998,8 +5998,8 @@ fun commitment_floor_observable_at_integrate_and_after_extend() {
 #[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
 fun extend_commitment_retire_aborts_before_floor() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6328,10 +6328,10 @@ const RANDOM_MAX: u64 = 15_000_000_000;
 #[test]
 fun random_floor_resolves_in_range_at_integrate() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6353,11 +6353,11 @@ fun random_floor_resolves_in_range_at_integrate() {
 fun random_floor_resolves_in_range_after_auction_expiry() {
     let mut sc = setup();
     // h=1 Window so AtDutch occurs after tenure expiry
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6391,11 +6391,11 @@ fun random_floor_resolves_in_range_after_auction_expiry() {
 #[test]
 fun random_floor_resolves_in_range_after_tenure_expiry() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6450,10 +6450,10 @@ fun random_floor_resolves_in_range_after_update_config_from_idle() {
 #[test]
 fun bid_at_max_always_succeeds_with_random_policy() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6473,10 +6473,10 @@ fun bid_at_max_always_succeeds_with_random_policy() {
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
 fun bid_below_min_always_fails_with_random_policy() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6497,10 +6497,10 @@ fun bid_below_min_always_fails_with_random_policy() {
 #[test]
 fun min_rent_price_view_returns_policy_min_not_resolved_floor() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
     );
-    let (escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6527,10 +6527,10 @@ fun min_rent_price_view_returns_policy_min_not_resolved_floor() {
 #[test]
 fun random_floor_stable_within_idle_cycle() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6557,11 +6557,11 @@ fun random_floor_stable_within_idle_cycle() {
 fun e2e_random_two_cycles_atdutch_collapses_at_own_resolved_floor() {
     let mut sc = setup();
     // h=1 Window so AtDutch has a measurable descent
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6626,11 +6626,11 @@ fun e2e_random_two_cycles_atdutch_collapses_at_own_resolved_floor() {
 #[test]
 fun e2e_random_atdutch_descent_bottom_is_cycle_resolved_floor() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_min_rent_price(
+    let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6726,9 +6726,9 @@ fun e2e_random_update_config_changes_range_for_next_cycle() {
 fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     let mut sc = setup();
     // h=1 Window, all other axes at default — fixed min_rent_price (corpus default)
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let fixed_price = escrow_corpus::min_rent_price_const();
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6819,10 +6819,10 @@ fun new_random_ceiling_min_greater_max_aborts() {
 #[test]
 fun random_ceiling_resolves_in_range_after_integrate() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_tenure_ceiling(
+    let ensemble = escrow_corpus::with_random_tenure_ceiling(
         escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6845,11 +6845,11 @@ fun random_ceiling_resolves_in_range_after_integrate() {
 fun random_ceiling_resolves_in_range_after_auction_expiry() {
     let mut sc = setup();
     // h=1 Window to produce AtDutch → Idle cycle
-    let cfg = escrow_corpus::with_random_tenure_ceiling(
+    let ensemble = escrow_corpus::with_random_tenure_ceiling(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         CEILING_RAND_MIN, CEILING_RAND_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6890,10 +6890,10 @@ fun random_ceiling_resolves_in_range_after_auction_expiry() {
 #[test]
 fun tenure_ceiling_view_returns_policy_min_not_resolved() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_tenure_ceiling(
+    let ensemble = escrow_corpus::with_random_tenure_ceiling(
         escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6922,10 +6922,10 @@ fun tenure_ceiling_view_returns_policy_min_not_resolved() {
 #[test]
 fun random_ceiling_apt_fires_at_resolved_ceiling() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_tenure_ceiling(
+    let ensemble = escrow_corpus::with_random_tenure_ceiling(
         escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6955,10 +6955,10 @@ fun random_ceiling_apt_fires_at_resolved_ceiling() {
 #[test]
 fun random_ceiling_stable_within_rental_cycle() {
     let mut sc = setup();
-    let cfg = escrow_corpus::with_random_tenure_ceiling(
+    let ensemble = escrow_corpus::with_random_tenure_ceiling(
         escrow_corpus::by_tag(0), CEILING_RAND_MIN, CEILING_RAND_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -7035,11 +7035,11 @@ fun random_ceiling_update_config_changes_range() {
 fun random_ceiling_different_per_cycle() {
     let mut sc = setup();
     // h=1 Window so AtDutch occurs between cycles
-    let cfg = escrow_corpus::with_random_tenure_ceiling(
+    let ensemble = escrow_corpus::with_random_tenure_ceiling(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         CEILING_RAND_MIN, CEILING_RAND_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -7096,8 +7096,8 @@ fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
 #[test, expected_failure(abort_code = tenure_extend_policy::EMultiCycleNotAllowed, location = usufruct::tenure_extend_policy)]
 fun multi_cycle_single_policy_rejects_cycles_two() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0); // Single (default corpus)
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0); // Single (default corpus)
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -7863,10 +7863,10 @@ fun multi_cycle_tenure_expiry_fires_at_extended_ceiling() {
 #[test]
 fun multi_cycle_rent_from_at_dutch_extends_ceiling() {
     let mut sc = setup();
-    let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent
+    let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent
     // Override tenure_cycles to Multi so we can rent with cycles(3).
-    let cfg = escrow_corpus::with_tenure_cycles(cfg, tenure_extend_policy::new_multi());
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::with_tenure_cycles(ensemble, tenure_extend_policy::new_multi());
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -8604,11 +8604,11 @@ fun at_dutch_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     let tenure  = escrow_corpus::tenure_ceiling_const();
     let floor   = escrow_corpus::min_rent_price_const();
     let descent = escrow_corpus::descent_window_h1_const();
-    let cfg = escrow_corpus::with_tenure_cycles(
+    let ensemble = escrow_corpus::with_tenure_cycles(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), // h=1 descent window
         tenure_extend_policy::new_multi(),
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -8668,8 +8668,8 @@ const E_COMMITMENT_NOT_EXTENDED:      u64 = 17;  // asset_state::ECommitmentNotE
 #[test]
 fun commitment_init_anchor_equals_integrated_at() {
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take_with_commitment(cfg, commitment_policy::new_immediate(), &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (escrow, cap) = integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
 
     assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
 
@@ -8682,8 +8682,8 @@ fun commitment_init_anchor_equals_integrated_at() {
 #[test]
 fun commitment_init_immediate_floor_ms_is_none() {
     let mut sc  = setup();
-    let cfg     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take_with_commitment(cfg, commitment_policy::new_immediate(), &mut sc);
+    let ensemble     = escrow_corpus::by_tag(0);
+    let (escrow, cap) = integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
 
     assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
     assert!(escrow::is_commitment_immediate(&escrow), 1);
@@ -8744,8 +8744,8 @@ fun commitment_update_config_does_not_change_policy() {
     let random = sc.take_shared<Random>();
 
     // update_config with a different PolicyEnsemble (h=1 descent axis differs).
-    let new_cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     // Commitment is still Deferred(floor) — update_config cannot change it.
     assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
@@ -8774,8 +8774,8 @@ fun commitment_update_config_does_not_change_anchor() {
 
     // Advance clock and reset config — anchor must not move.
     clock::set_for_testing(&mut clk, 500);
-    let new_cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), unlocks_before);
     // integrated_at == 0 (clock was 0 at integrate), floor unchanged.
@@ -9172,8 +9172,8 @@ fun resolve_invariant_descent_constant_within_cycle() {
     // h=2 (RandomInRange): the draw is somewhere in [10k, 90k]; pinning
     // it across phases proves it is the same draw, not a re-draw that
     // happened to coincide.
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 2, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 2, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9501,8 +9501,8 @@ fun resolve_invariant_no_redraw_outside_three_authorized_sites() {
 fun resolve_invariant_no_pending_redraws_from_current_config() {
     let mut sc = setup();
     // c=3 (random handover [10k,75k]), h=2 (random descent [10k,90k])
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(3, 0, 0, 2, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(3, 0, 0, 2, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9532,7 +9532,7 @@ fun resolve_invariant_no_pending_redraws_from_current_config() {
     );
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 5);
-    assert!(escrow::integration_config(&escrow) == cfg, 6);
+    assert!(escrow::integration_config(&escrow) == ensemble, 6);
     assert!(!escrow::has_pending_config_update(&escrow), 7);
 
     // Floor and ceiling are fixed policies: re-draw returns exact constants.
@@ -9635,8 +9635,8 @@ fun update_config_demand_schedules_pending() {
     let mut sc = setup();
     // c=1 Countdown — prevents APT from immediately firing the handover
     // inside update_config, keeping the escrow in Demand after the call.
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9651,13 +9651,13 @@ fun update_config_demand_schedules_pending() {
     assert!(escrow::is_demand(&escrow), 0);
 
     // Schedule a config update while in Demand.
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     // State remains Demand; pending config is now set.
     assert!(escrow::is_demand(&escrow), 1);
     assert!(escrow::has_pending_config_update(&escrow), 2);
-    assert!(escrow::integration_config(&escrow) == cfg, 3);
+    assert!(escrow::integration_config(&escrow) == ensemble, 3);
 
     let scheduled = event::events_by_type<ConfigUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);
@@ -9677,8 +9677,8 @@ fun update_config_demand_schedules_pending() {
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
 fun update_config_demand_retiring_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9697,8 +9697,8 @@ fun update_config_demand_retiring_aborts() {
     escrow::drive_to_retiring_flag_for_testing(&mut escrow);
 
     // update_config must abort — retire flag blocks config changes in Demand.
-    let new_cfg = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_cfg, &random, &clk, sc.ctx());
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     // Unreachable — expected_failure captures the abort above.
     transfer::public_transfer(cap_t1, OWNER);
@@ -9727,8 +9727,8 @@ fun update_config_demand_retiring_aborts() {
 fun burn_stale_cap_in_idle_succeeds() {
     let mut sc = setup();
     // h=0 Skipped descent: tenure expires → AtDutch → immediately Idle via APT.
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9756,8 +9756,8 @@ fun burn_stale_cap_in_idle_succeeds() {
 fun rent_with_insufficient_payment_in_at_dutch_aborts() {
     let mut sc = setup();
     // h=1 Window: tenure expires → AtDutch (stays there, no immediate collapse).
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9784,8 +9784,8 @@ fun rent_with_insufficient_payment_in_at_dutch_aborts() {
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
 fun rent_with_insufficient_payment_in_occupied_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9810,8 +9810,8 @@ fun rent_with_insufficient_payment_in_occupied_aborts() {
 fun rent_with_insufficient_payment_in_demand_aborts() {
     let mut sc = setup();
     // c=1 Countdown: prevents handover from firing immediately on second rent.
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9841,8 +9841,8 @@ fun rent_with_insufficient_payment_in_demand_aborts() {
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
 fun update_config_with_wrong_cap_aborts() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(0);
-    let (mut escrow, _owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, _owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -9909,8 +9909,8 @@ fun extend_commitment_non_monotonic_aborts() {
 #[test, expected_failure(abort_code = asset_state::ENotRetired, location = usufruct::asset_state)]
 fun claim_asset_aborts_in_at_dutch_with_window_descent() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let rnd = sc.take_shared<Random>();
 
@@ -9966,8 +9966,8 @@ fun compute_handover_settlement_aborts_on_idle() {
 #[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
 fun borrow_asset_aborts_in_at_dutch_with_window_descent() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let rnd = sc.take_shared<Random>();
 
@@ -9999,8 +9999,8 @@ fun borrow_asset_aborts_in_at_dutch_with_window_descent() {
 #[test]
 fun burn_stale_cap_in_at_dutch_succeeds() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let rnd = sc.take_shared<Random>();
 
@@ -10025,8 +10025,8 @@ fun burn_stale_cap_in_at_dutch_succeeds() {
 #[test]
 fun burn_stale_cap_in_retired_succeeds() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let rnd = sc.take_shared<Random>();
 
@@ -10059,8 +10059,8 @@ fun compute_handover_settlement_aborts_on_retired() {
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
 fun compute_handover_settlement_aborts_on_at_dutch() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, cap) = integrate_and_take(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let rnd = sc.take_shared<Random>();
     let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());

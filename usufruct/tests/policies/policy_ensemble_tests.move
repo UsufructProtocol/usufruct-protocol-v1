@@ -194,7 +194,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
     ];
 
     cases.do_ref!(|c| {
-        let cfg = policy_ensemble::new_ensemble(
+        let ensemble = policy_ensemble::new_ensemble(
             floor_price_policy::new_fixed(monetary::price(c.min_rent_price)),
             c.tenure_ceiling,
             tenure_extend_policy::new_single(),
@@ -205,13 +205,13 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             c.price_escalation_policy,
         );
         // §7.3 P5 predicate: getter(new_config(..., f, ...)) == f for each field
-        assert_eq!(monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(&cfg))),  c.min_rent_price);
-        assert_eq!(*policy_ensemble::proj_tenure_duration(&cfg),  c.tenure_ceiling);
-        assert_eq!(*policy_ensemble::proj_handover(&cfg),        c.handover);
-        assert_eq!(*policy_ensemble::proj_auction_window(&cfg),         c.descent);
-        assert_eq!(*policy_ensemble::proj_credit_shape(&cfg),    c.credit_shape);
-        assert_eq!(*policy_ensemble::proj_auction_shape(&cfg),   c.auction_shape);
-        assert_eq!(*policy_ensemble::proj_price_escalation(&cfg), c.price_escalation_policy);
+        assert_eq!(monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(&ensemble))),  c.min_rent_price);
+        assert_eq!(*policy_ensemble::proj_tenure_duration(&ensemble),  c.tenure_ceiling);
+        assert_eq!(*policy_ensemble::proj_handover(&ensemble),        c.handover);
+        assert_eq!(*policy_ensemble::proj_auction_window(&ensemble),         c.descent);
+        assert_eq!(*policy_ensemble::proj_credit_shape(&ensemble),    c.credit_shape);
+        assert_eq!(*policy_ensemble::proj_auction_shape(&ensemble),   c.auction_shape);
+        assert_eq!(*policy_ensemble::proj_price_escalation(&ensemble), c.price_escalation_policy);
     });
 }
 
@@ -221,18 +221,18 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
 
 #[test]
 fun getter_roundtrip_r1_min_rent_price_max() {
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(18_446_744_073_709_551_615)),
         tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(&cfg))), 18_446_744_073_709_551_615);
+    assert_eq!(monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(&ensemble))), 18_446_744_073_709_551_615);
 }
 
 #[test]
 fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(86_400_000)),
         tenure_extend_policy::new_single(),
@@ -240,14 +240,14 @@ fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_duration(&cfg)), true);
-    assert_eq!(phases::duration_ms(*option::borrow(&tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_duration(&cfg)))), 86_400_000);
+    assert_eq!(tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_duration(&ensemble)), true);
+    assert_eq!(phases::duration_ms(*option::borrow(&tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_duration(&ensemble)))), 86_400_000);
 }
 
 #[test]
 fun getter_roundtrip_r3_handover_instant() {
     let h   = handover_policy::new_handover_instant();
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
         tenure_extend_policy::new_single(),
         h,
@@ -255,14 +255,14 @@ fun getter_roundtrip_r3_handover_instant() {
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(*policy_ensemble::proj_handover(&cfg), h);
+    assert_eq!(*policy_ensemble::proj_handover(&ensemble), h);
 }
 
 #[test]
 fun getter_roundtrip_r3b_handover_fixed_time() {
     // Companion to R3 covering the upper-saturation variant.
     let h   = handover_policy::new_handover_fixed_time();
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
         tenure_extend_policy::new_single(),
         h,
@@ -270,32 +270,32 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(*policy_ensemble::proj_handover(&cfg), h);
+    assert_eq!(*policy_ensemble::proj_handover(&ensemble), h);
 }
 
 #[test]
 fun getter_roundtrip_r4_descent_window_one() {
     let d   = auction_window_policy::new_descent_window(phases::duration(1));
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
         d,
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(*policy_ensemble::proj_auction_window(&cfg), d);
+    assert_eq!(*policy_ensemble::proj_auction_window(&ensemble), d);
 }
 
 #[test]
 fun getter_roundtrip_r4b_descent_skipped() {
     // Companion to R4 covering the auction-skipped variant.
     let d   = auction_window_policy::new_descent_skipped();
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
         d,
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(*policy_ensemble::proj_auction_window(&cfg), d);
+    assert_eq!(*policy_ensemble::proj_auction_window(&ensemble), d);
 }
 
 #[test]
@@ -303,36 +303,36 @@ fun getter_roundtrip_r5_credit_shape_power_law_gcd_normalized() {
     // new_power_law(2,4) normalizes to stored PowerLaw{1,2}.
     // Getter returns the reduced form — normalization is upstream in curve_shape_state.
     let raw = curve_shape_policy::new_power_law(2, 4);
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         raw,
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(*policy_ensemble::proj_credit_shape(&cfg), raw);
+    assert_eq!(*policy_ensemble::proj_credit_shape(&ensemble), raw);
 }
 
 #[test]
 fun getter_roundtrip_r6_auction_shape_logistic() {
     let g = curve_shape_policy::new_logistic();
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(),
         g,
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(*policy_ensemble::proj_auction_shape(&cfg), g);
+    assert_eq!(*policy_ensemble::proj_auction_shape(&ensemble), g);
 }
 
 #[test]
 fun getter_roundtrip_r7_price_function_state_compound_delta() {
     let pf = price_escalation_policy::new_compound_delta(math::bps(500), monetary::price(100));
-    let cfg = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         pf,
     );
-    assert_eq!(*policy_ensemble::proj_price_escalation(&cfg), pf);
+    assert_eq!(*policy_ensemble::proj_price_escalation(&ensemble), pf);
 }
 
 // ─── §7.2 — Invalid inputs (one function each) ────────────────────────────────
@@ -423,16 +423,16 @@ fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
 // E1: full config snapshot is captured in the event; escrow_id matches.
 #[test]
 fun emit_registration_e1_full_snapshot() {
-    let cfg        = v2_config();
+    let ensemble        = v2_config();
     let ei = escrow_identity::new(object::id_from_address(@0xE5C1));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&cfg, ei);
+        policy_ensemble::emit_registration(&ensemble, ei);
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 1);
         assert_eq!(policy_ensemble::registered_escrow_identity(&events[0]), ei);
-        assert_eq!(policy_ensemble::registered_ensemble(&events[0]),    cfg);
+        assert_eq!(policy_ensemble::registered_ensemble(&events[0]),    ensemble);
     };
     scenario.end();
 }
@@ -441,7 +441,7 @@ fun emit_registration_e1_full_snapshot() {
 #[test]
 fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
     // new_power_law(2,4) → stored PowerLaw{1,2}; getter returns the reduced form.
-    let cfg       = policy_ensemble::new_ensemble(
+    let ensemble       = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_power_law(2, 4),
         curve_shape_policy::new_power_law(6, 3),
@@ -451,7 +451,7 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&cfg, ei);
+        policy_ensemble::emit_registration(&ensemble, ei);
         let events  = event::events_by_type<PolicyEnsembleRegistered>();
         let payload = policy_ensemble::registered_ensemble(&events[0]);
         // stored values are the reduced (gcd-normalized) forms
@@ -467,13 +467,13 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
 //     not a module-side guard.
 #[test]
 fun emit_registration_e3_not_idempotent_caller_contract() {
-    let cfg        = v2_config();
+    let ensemble        = v2_config();
     let ei = escrow_identity::new(object::id_from_address(@0xE5C1));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&cfg, ei);
-        policy_ensemble::emit_registration(&cfg, ei);
+        policy_ensemble::emit_registration(&ensemble, ei);
+        policy_ensemble::emit_registration(&ensemble, ei);
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 2);
         assert_eq!(policy_ensemble::registered_ensemble(&events[0]), policy_ensemble::registered_ensemble(&events[1]));

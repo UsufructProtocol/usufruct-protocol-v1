@@ -39,12 +39,12 @@ fun setup(): Scenario {
     sc
 }
 
-fun build_escrow(cfg: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    build_escrow_with_commitment(cfg, commitment_policy::new_immediate(), sc)
+fun build_escrow(ensemble: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
+    build_escrow_with_commitment(ensemble, commitment_policy::new_immediate(), sc)
 }
 
 fun build_escrow_with_commitment(
-    cfg:        PolicyEnsemble,
+    ensemble:        PolicyEnsemble,
     commitment: CommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
@@ -54,7 +54,7 @@ fun build_escrow_with_commitment(
     let asset   = mk_demo_asset(sc.ctx());
     let random  = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, cfg, commitment, &fee_ref, &random, &clk, sc.ctx(),
+        asset, ensemble, commitment, &fee_ref, &random, &clk, sc.ctx(),
     );
     test_scenario::return_shared(random);
     let escrow_id = owner_cap::proj_escrow_id(&cap);
@@ -141,8 +141,8 @@ fun handover_views_match_variants() {
     let mut sc = setup();
     let mut c: u8 = 0;
     while (c <= 3) {
-        let cfg = escrow_corpus::by_tag(escrow_corpus::tag(c, 0, 0, 0, 0));
-        let (escrow, cap) = build_escrow(cfg, &mut sc);
+        let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(c, 0, 0, 0, 0));
+        let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
         assert_eq!(escrow::is_handover_instant(&escrow),     c == 0);
         assert_eq!(escrow::is_handover_countdown(&escrow),   c == 1);
@@ -168,8 +168,8 @@ fun descent_views_match_variants() {
     let mut sc = setup();
     let mut h: u8 = 0;
     while (h <= 2) {
-        let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, h, 0));
-        let (escrow, cap) = build_escrow(cfg, &mut sc);
+        let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, h, 0));
+        let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
         assert_eq!(escrow::is_descent_skipped(&escrow), h == 0);
         assert_eq!(escrow::is_descent_window(&escrow),  h == 1);
@@ -194,8 +194,8 @@ fun curve_views_match_variants() {
     let mut sc = setup();
     let mut e: u8 = 0;
     while (e <= 6) {
-        let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, e, 0, 0));
-        let (escrow, cap) = build_escrow(cfg, &mut sc);
+        let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, e, 0, 0));
+        let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
         assert_eq!(escrow::credit_shape_is_linear(&escrow),      e == 0);
         assert_eq!(escrow::credit_shape_is_smoothstep(&escrow),  e == 1);
@@ -288,10 +288,10 @@ fun price_function_views_match_variants() {
 #[test]
 fun commitment_policy_views_match_variants() {
     let mut sc = setup();
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
 
     // Immediate
-    let (escrow, cap) = build_escrow_with_commitment(cfg, commitment_policy::new_immediate(), &mut sc);
+    let (escrow, cap) = build_escrow_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
     assert!(escrow::is_commitment_immediate(&escrow));
     assert!(!escrow::is_commitment_deferred(&escrow));
     assert!(escrow::commitment_floor_ms(&escrow).is_none());
@@ -300,7 +300,7 @@ fun commitment_policy_views_match_variants() {
     // Deferred — use the corpus default deferred floor
     let deferred_floor = escrow_corpus::retire_deferred_f1_const();
     let commitment = commitment_policy::new_deferred(usufruct::phases::duration(deferred_floor));
-    let (escrow, cap) = build_escrow_with_commitment(cfg, commitment, &mut sc);
+    let (escrow, cap) = build_escrow_with_commitment(ensemble, commitment, &mut sc);
     assert!(!escrow::is_commitment_immediate(&escrow));
     assert!(escrow::is_commitment_deferred(&escrow));
     assert_eq!(escrow::commitment_floor_ms(&escrow).destroy_some(), deferred_floor);
@@ -327,8 +327,8 @@ fun whole_struct_view_getters_return_configured_objects() {
     // callers that want to round-trip the full enum.
     let mut sc = setup();
     // e=0 → Linear curves on both credit and descent; d=0 → FixedDelta price fn.
-    let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (escrow, cap) = build_escrow(cfg, &mut sc);
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
     assert_eq!(escrow::credit_shape(&escrow),  usufruct::curve_shape_policy::new_linear());
     assert_eq!(escrow::auction_shape(&escrow), usufruct::curve_shape_policy::new_linear());

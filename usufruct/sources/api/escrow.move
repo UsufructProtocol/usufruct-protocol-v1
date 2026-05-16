@@ -56,7 +56,7 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 
 public fun integrate<Asset: key + store, CoinType>(
     asset:      Asset,
-    cfg:        PolicyEnsemble,
+    ensemble:        PolicyEnsemble,
     commitment: CommitmentPolicy,
     fee_ref:    &ProtocolFeeRef,
     random:     &Random,
@@ -66,7 +66,7 @@ public fun integrate<Asset: key + store, CoinType>(
     let uid           = object::new(ctx);
     let mut generator = sui::random::new_generator(random, ctx);
     let (core, state, owner_cap) = asset_state::execute_integrate<Asset, CoinType>(
-        asset, cfg, commitment,
+        asset, ensemble, commitment,
         protocol_fee_ref::proj_inbox_identity(fee_ref),
         escrow_identity::new(object::uid_to_inner(&uid)),
         phases::now(clock),
@@ -135,14 +135,14 @@ public fun extend_commitment<Asset: key + store, CoinType>(
 public fun update_config<Asset: key + store, CoinType>(
     escrow:    &mut Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
-    new_cfg:   PolicyEnsemble,
+    new_ensemble:   PolicyEnsemble,
     random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let new_state = asset_state::execute_update_config(state, core, owner_cap, new_cfg, random, clock, ctx);
+    let new_state = asset_state::execute_update_config(state, core, owner_cap, new_ensemble, random, clock, ctx);
     put_state(escrow, new_state);
 }
 

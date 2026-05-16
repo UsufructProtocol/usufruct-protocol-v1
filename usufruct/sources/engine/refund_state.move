@@ -12,8 +12,8 @@ use usufruct::{
     owner_earning::{Self, OwnerEarnings},
     protocol_fee_ref::FeeInboxIdentity,
     tenant_seat::{Self, TenantSeat},
-    tenant_identity::{Self, TenantIdentity},
-    tenant_stake::{Self, TenantStake},
+    tenant_identity,
+    tenant_stake,
 };
 
 // === Errors ===
@@ -30,14 +30,12 @@ public enum RefundState<phantom CoinType> {
         owner_earnings: OwnerEarnings<CoinType>,
     },
     Parcial {
-        identity:       TenantIdentity,
-        stake:          TenantStake<CoinType>,
+        seat:           TenantSeat<CoinType>,
         fee_share:      FeeShare<CoinType>,
         owner_earnings: OwnerEarnings<CoinType>,
     },
     Total {
-        identity: TenantIdentity,
-        stake:    TenantStake<CoinType>,
+        seat: TenantSeat<CoinType>,
     },
 }
 
@@ -75,13 +73,11 @@ public(package) fun parcial<C>(
     fee_share:      FeeShare<C>,
     owner_earnings: OwnerEarnings<C>,
 ): RefundState<C> {
-    let (identity, stake) = tenant_seat::unbundle(seat);
-    RefundState::Parcial { identity, stake, fee_share, owner_earnings }
+    RefundState::Parcial { seat, fee_share, owner_earnings }
 }
 
 public(package) fun total<C>(seat: TenantSeat<C>): RefundState<C> {
-    let (identity, stake) = tenant_seat::unbundle(seat);
-    RefundState::Total { identity, stake }
+    RefundState::Total { seat }
 }
 
 public(package) fun from_superseded<C>(pending: TenantSeat<C>): RefundState<C> {
@@ -113,13 +109,17 @@ public(package) fun distribute<C>(
             owner_seat::deposit(owner, owner_earnings);
             fee_message::post(fee_share, fee_inbox_identity, ctx);
         },
-        RefundState::Parcial { identity, stake, fee_share, owner_earnings } => {
+        RefundState::Parcial { seat, fee_share, owner_earnings } => {
+            let addr = tenant_identity::proj_address(tenant_seat::proj_identity(&seat));
+            let (_, stake) = tenant_seat::unbundle(seat);
             owner_seat::deposit(owner, owner_earnings);
             fee_message::post(fee_share, fee_inbox_identity, ctx);
-            tenant_stake::liquidate(stake, tenant_identity::proj_address(&identity), ctx);
+            tenant_stake::liquidate(stake, addr, ctx);
         },
-        RefundState::Total { identity, stake } => {
-            tenant_stake::liquidate(stake, tenant_identity::proj_address(&identity), ctx);
+        RefundState::Total { seat } => {
+            let addr = tenant_identity::proj_address(tenant_seat::proj_identity(&seat));
+            let (_, stake) = tenant_seat::unbundle(seat);
+            tenant_stake::liquidate(stake, addr, ctx);
         },
     }
 }
@@ -135,13 +135,13 @@ public fun destroy_for_testing<C>(rs: RefundState<C>) {
             fee_message::destroy_share_for_testing(fee_share);
             owner_earning::destroy_for_testing(owner_earnings);
         },
-        RefundState::Parcial { stake, fee_share, owner_earnings, .. } => {
-            tenant_stake::destroy_for_testing(stake);
+        RefundState::Parcial { seat, fee_share, owner_earnings } => {
+            tenant_seat::destroy_for_testing(seat);
             fee_message::destroy_share_for_testing(fee_share);
             owner_earning::destroy_for_testing(owner_earnings);
         },
-        RefundState::Total { stake, .. } => {
-            tenant_stake::destroy_for_testing(stake);
+        RefundState::Total { seat } => {
+            tenant_seat::destroy_for_testing(seat);
         },
     }
 }

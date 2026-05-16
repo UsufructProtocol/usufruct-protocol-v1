@@ -16,7 +16,7 @@ use sui::{
 };
 use usufruct::{
     asset_state,
-    commitment_policy_state,
+    commitment_policy,
     config::IntegrationConfig,
     cycles,
     escrow::{Self, Escrow},
@@ -57,7 +57,7 @@ fun build_escrow(cfg: IntegrationConfig, sc: &mut Scenario): (Escrow<DemoAsset, 
     let asset   = mk_demo_asset(sc.ctx());
     let random  = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, cfg, commitment_policy_state::new_immediate(),
+        asset, cfg, commitment_policy::new_immediate(),
         &fee_ref, &random, &clk, sc.ctx(),
     );
     test_scenario::return_shared(random);

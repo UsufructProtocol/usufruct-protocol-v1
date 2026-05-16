@@ -2,32 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::handover_policy_state_tests;
+module usufruct::handover_policy_tests;
 
 use std::unit_test::assert_eq;
-use usufruct::handover_policy_state::{Self, HandoverPolicyState};
+use usufruct::handover_policy::{Self, HandoverPolicy};
 use usufruct::phases;
 
 // ─── constructors — abort guards ──────────────────────────────────────────────
 
-#[test, expected_failure(abort_code = handover_policy_state::EHandoverFloorZero, location = usufruct::handover_policy_state)]
+#[test, expected_failure(abort_code = handover_policy::EHandoverFloorZero, location = usufruct::handover_policy)]
 fun new_handover_countdown_rejects_zero() {
-    handover_policy_state::new_handover_countdown(phases::duration(0));
+    handover_policy::new_handover_countdown(phases::duration(0));
 }
 
-#[test, expected_failure(abort_code = handover_policy_state::EHandoverFloorZero, location = usufruct::handover_policy_state)]
+#[test, expected_failure(abort_code = handover_policy::EHandoverFloorZero, location = usufruct::handover_policy)]
 fun new_handover_random_in_range_rejects_zero_min() {
-    handover_policy_state::new_handover_random_in_range(phases::duration(0), phases::duration(100));
+    handover_policy::new_handover_random_in_range(phases::duration(0), phases::duration(100));
 }
 
-#[test, expected_failure(abort_code = handover_policy_state::EMinNotLtMax, location = usufruct::handover_policy_state)]
+#[test, expected_failure(abort_code = handover_policy::EMinNotLtMax, location = usufruct::handover_policy)]
 fun new_handover_random_in_range_rejects_min_eq_max() {
-    handover_policy_state::new_handover_random_in_range(phases::duration(50), phases::duration(50));
+    handover_policy::new_handover_random_in_range(phases::duration(50), phases::duration(50));
 }
 
-#[test, expected_failure(abort_code = handover_policy_state::EMinNotLtMax, location = usufruct::handover_policy_state)]
+#[test, expected_failure(abort_code = handover_policy::EMinNotLtMax, location = usufruct::handover_policy)]
 fun new_handover_random_in_range_rejects_min_gt_max() {
-    handover_policy_state::new_handover_random_in_range(phases::duration(100), phases::duration(50));
+    handover_policy::new_handover_random_in_range(phases::duration(100), phases::duration(50));
 }
 
 // ─── resolve — deterministic variants ────────────────────────────────────────
@@ -35,8 +35,8 @@ fun new_handover_random_in_range_rejects_min_gt_max() {
 #[test]
 fun resolve_instant_returns_zero() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-    let result = handover_policy_state::resolve(
-        &handover_policy_state::new_handover_instant(),
+    let result = handover_policy::resolve(
+        &handover_policy::new_handover_instant(),
         phases::duration(100),
         &mut gen,
     );
@@ -47,8 +47,8 @@ fun resolve_instant_returns_zero() {
 fun resolve_fixed_time_returns_ceiling() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
     let ceiling = phases::duration(200);
-    let result = handover_policy_state::resolve(
-        &handover_policy_state::new_handover_fixed_time(),
+    let result = handover_policy::resolve(
+        &handover_policy::new_handover_fixed_time(),
         ceiling,
         &mut gen,
     );
@@ -58,8 +58,8 @@ fun resolve_fixed_time_returns_ceiling() {
 #[test]
 fun resolve_countdown_returns_floor() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-    let result = handover_policy_state::resolve(
-        &handover_policy_state::new_handover_countdown(phases::duration(42)),
+    let result = handover_policy::resolve(
+        &handover_policy::new_handover_countdown(phases::duration(42)),
         phases::duration(100),
         &mut gen,
     );
@@ -70,7 +70,7 @@ fun resolve_countdown_returns_floor() {
 fun resolve_random_in_range_draws_in_bounds() {
     let min: u64 = 10;
     let max: u64 = 50;
-    let policy = handover_policy_state::new_handover_random_in_range(
+    let policy = handover_policy::new_handover_random_in_range(
         phases::duration(min),
         phases::duration(max),
     );
@@ -80,7 +80,7 @@ fun resolve_random_in_range_draws_in_bounds() {
     let mut i = 0;
     while (i < seeds.length()) {
         let mut gen = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
-        let result = handover_policy_state::resolve(&policy, phases::duration(200), &mut gen);
+        let result = handover_policy::resolve(&policy, phases::duration(200), &mut gen);
         let ms = phases::duration_ms(result);
         assert!(ms >= min && ms <= max, 0);
         i = i + 1;
@@ -91,7 +91,7 @@ fun resolve_random_in_range_draws_in_bounds() {
 
 #[test_only]
 public struct CountdownFloorLtCase has drop {
-    policy:   HandoverPolicyState,
+    policy:   HandoverPolicy,
     ceiling:  u64,
     expected: bool,
 }
@@ -99,21 +99,21 @@ public struct CountdownFloorLtCase has drop {
 #[test]
 fun countdown_floor_lt_table() {
     let cases = vector[
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_instant(),     ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_instant(),     ceiling: 0,   expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_fixed_time(),  ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_fixed_time(),  ceiling: 0,   expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(50)),  ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(99)),  ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(100)), ceiling: 100, expected: false },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_countdown(phases::duration(101)), ceiling: 100, expected: false },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 100, expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 0,   expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_fixed_time(),  ceiling: 100, expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_fixed_time(),  ceiling: 0,   expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(50)),  ceiling: 100, expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(99)),  ceiling: 100, expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(100)), ceiling: 100, expected: false },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(101)), ceiling: 100, expected: false },
         // RandomInRange — uses max for conservative validation
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_random_in_range(phases::duration(10), phases::duration(50)), ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_random_in_range(phases::duration(10), phases::duration(99)), ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy_state::new_handover_random_in_range(phases::duration(10), phases::duration(100)), ceiling: 100, expected: false },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(50)), ceiling: 100, expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(99)), ceiling: 100, expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100)), ceiling: 100, expected: false },
     ];
     cases.do_ref!(|c| {
-        assert_eq!(handover_policy_state::countdown_floor_lt(&c.policy, phases::duration(c.ceiling)), c.expected);
+        assert_eq!(handover_policy::countdown_floor_lt(&c.policy, phases::duration(c.ceiling)), c.expected);
     });
 }
 
@@ -158,7 +158,7 @@ fun has_expired_table() {
     ];
     cases.do_ref!(|c| {
         assert_eq!(
-            handover_policy_state::has_expired(
+            handover_policy::has_expired(
                 phases::duration(c.resolved_floor),
                 phases::duration(c.resolved_ceiling),
                 phases::timestamp(c.bid_time),
@@ -202,7 +202,7 @@ fun expiry_at_table() {
     ];
     cases.do_ref!(|c| {
         assert_eq!(
-            phases::timestamp_ms(handover_policy_state::expiry_at(
+            phases::timestamp_ms(handover_policy::expiry_at(
                 phases::duration(c.resolved_floor),
                 phases::duration(c.resolved_ceiling),
                 phases::timestamp(c.bid_time),
@@ -248,14 +248,14 @@ fun has_expired_iff_now_ge_expiry_at() {
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, now: 150 },
     ];
     cases.do_ref!(|c| {
-        let bool_view = handover_policy_state::has_expired(
+        let bool_view = handover_policy::has_expired(
             phases::duration(c.resolved_floor),
             phases::duration(c.resolved_ceiling),
             phases::timestamp(c.bid_time),
             phases::timestamp(c.phase_start),
             phases::timestamp(c.now),
         ).is_crossed();
-        let u64_view = c.now >= phases::timestamp_ms(handover_policy_state::expiry_at(
+        let u64_view = c.now >= phases::timestamp_ms(handover_policy::expiry_at(
             phases::duration(c.resolved_floor),
             phases::duration(c.resolved_ceiling),
             phases::timestamp(c.bid_time),
@@ -278,7 +278,7 @@ fun has_expired_monotone_in_now() {
     let mut n: u64 = 0;
     let mut crossed = false;
     while (n <= 200) {
-        let cur = handover_policy_state::has_expired(
+        let cur = handover_policy::has_expired(
             phases::duration(resolved_floor),
             phases::duration(resolved_ceiling),
             phases::timestamp(bid_time),
@@ -295,7 +295,7 @@ fun has_expired_monotone_in_now() {
 
 #[test]
 fun projectors_instant_variant() {
-    let p = handover_policy_state::new_handover_instant();
+    let p = handover_policy::new_handover_instant();
     assert!(p.proj_is_instant());
     assert!(!p.proj_is_fixed_time());
     assert!(!p.proj_is_countdown());
@@ -307,7 +307,7 @@ fun projectors_instant_variant() {
 
 #[test]
 fun projectors_fixed_time_variant() {
-    let p = handover_policy_state::new_handover_fixed_time();
+    let p = handover_policy::new_handover_fixed_time();
     assert!(!p.proj_is_instant());
     assert!(p.proj_is_fixed_time());
     assert!(!p.proj_is_countdown());
@@ -319,7 +319,7 @@ fun projectors_fixed_time_variant() {
 
 #[test]
 fun projectors_countdown_variant() {
-    let p = handover_policy_state::new_handover_countdown(phases::duration(42));
+    let p = handover_policy::new_handover_countdown(phases::duration(42));
     assert!(!p.proj_is_instant());
     assert!(!p.proj_is_fixed_time());
     assert!(p.proj_is_countdown());
@@ -331,7 +331,7 @@ fun projectors_countdown_variant() {
 
 #[test]
 fun projectors_random_in_range_variant() {
-    let p = handover_policy_state::new_handover_random_in_range(phases::duration(10), phases::duration(100));
+    let p = handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100));
     assert!(!p.proj_is_instant());
     assert!(!p.proj_is_fixed_time());
     assert!(!p.proj_is_countdown());

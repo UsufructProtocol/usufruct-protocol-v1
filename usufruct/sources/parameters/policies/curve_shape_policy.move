@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::curve_shape_state;
+module usufruct::curve_shape_policy;
 
 // === Imports ===
 
@@ -50,7 +50,7 @@ const EXP_A_NORM_8_NEG: u128 = 999_664_537_372_086_775;
 
 public struct CurveHeight has copy, drop { h: u64 }
 
-public enum CurveShapeState has copy, drop, store {
+public enum CurveShapePolicy has copy, drop, store {
     Linear,
     Smoothstep,
     PowerLaw {
@@ -70,47 +70,47 @@ public enum CurveShapeState has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_linear(): CurveShapeState { CurveShapeState::Linear }
+public fun new_linear(): CurveShapePolicy { CurveShapePolicy::Linear }
 
-public fun new_smoothstep(): CurveShapeState { CurveShapeState::Smoothstep }
+public fun new_smoothstep(): CurveShapePolicy { CurveShapePolicy::Smoothstep }
 
-public fun new_logistic(): CurveShapeState { CurveShapeState::Logistic }
+public fun new_logistic(): CurveShapePolicy { CurveShapePolicy::Logistic }
 
-public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShapeState {
+public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShapePolicy {
     assert!(alpha_num >= 1 && alpha_num <= 8, EAlphaNumRange);
     assert!(alpha_den >= 1 && alpha_den <= 4, EAlphaDenRange);
     assert!(alpha_num != alpha_den,           EDegenerateLinear);
     let g = gcd_u8(alpha_num, alpha_den);
-    CurveShapeState::PowerLaw {
+    CurveShapePolicy::PowerLaw {
         alpha_num: alpha_num / g,
         alpha_den: alpha_den / g,
     }
 }
 
-public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapeState {
+public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapePolicy {
     assert!(alpha_abs >= 1 && alpha_abs <= 8, EAlphaAbsRange);
-    CurveShapeState::Exponential { alpha_abs, alpha_neg }
+    CurveShapePolicy::Exponential { alpha_abs, alpha_neg }
 }
 
 // === View Functions ===
 
-public(package) fun proj_is_linear(s: &CurveShapeState):     bool { match (s) { CurveShapeState::Linear      => true, _ => false } }
-public(package) fun proj_is_smoothstep(s: &CurveShapeState): bool { match (s) { CurveShapeState::Smoothstep  => true, _ => false } }
-public(package) fun proj_is_logistic(s: &CurveShapeState):   bool { match (s) { CurveShapeState::Logistic    => true, _ => false } }
-public(package) fun proj_is_power_law(s: &CurveShapeState):  bool { match (s) { CurveShapeState::PowerLaw    { .. } => true, _ => false } }
-public(package) fun proj_is_exponential(s: &CurveShapeState): bool { match (s) { CurveShapeState::Exponential { .. } => true, _ => false } }
+public(package) fun proj_is_linear(s: &CurveShapePolicy):     bool { match (s) { CurveShapePolicy::Linear      => true, _ => false } }
+public(package) fun proj_is_smoothstep(s: &CurveShapePolicy): bool { match (s) { CurveShapePolicy::Smoothstep  => true, _ => false } }
+public(package) fun proj_is_logistic(s: &CurveShapePolicy):   bool { match (s) { CurveShapePolicy::Logistic    => true, _ => false } }
+public(package) fun proj_is_power_law(s: &CurveShapePolicy):  bool { match (s) { CurveShapePolicy::PowerLaw    { .. } => true, _ => false } }
+public(package) fun proj_is_exponential(s: &CurveShapePolicy): bool { match (s) { CurveShapePolicy::Exponential { .. } => true, _ => false } }
 
-public(package) fun proj_power_law_alpha_num(s: &CurveShapeState): Option<u8> {
-    match (s) { CurveShapeState::PowerLaw { alpha_num, .. } => option::some(*alpha_num), _ => option::none() }
+public(package) fun proj_power_law_alpha_num(s: &CurveShapePolicy): Option<u8> {
+    match (s) { CurveShapePolicy::PowerLaw { alpha_num, .. } => option::some(*alpha_num), _ => option::none() }
 }
-public(package) fun proj_power_law_alpha_den(s: &CurveShapeState): Option<u8> {
-    match (s) { CurveShapeState::PowerLaw { alpha_den, .. } => option::some(*alpha_den), _ => option::none() }
+public(package) fun proj_power_law_alpha_den(s: &CurveShapePolicy): Option<u8> {
+    match (s) { CurveShapePolicy::PowerLaw { alpha_den, .. } => option::some(*alpha_den), _ => option::none() }
 }
-public(package) fun proj_exponential_alpha_abs(s: &CurveShapeState): Option<u8> {
-    match (s) { CurveShapeState::Exponential { alpha_abs, .. } => option::some(*alpha_abs), _ => option::none() }
+public(package) fun proj_exponential_alpha_abs(s: &CurveShapePolicy): Option<u8> {
+    match (s) { CurveShapePolicy::Exponential { alpha_abs, .. } => option::some(*alpha_abs), _ => option::none() }
 }
-public(package) fun proj_exponential_alpha_neg(s: &CurveShapeState): Option<bool> {
-    match (s) { CurveShapeState::Exponential { alpha_neg, .. } => option::some(*alpha_neg), _ => option::none() }
+public(package) fun proj_exponential_alpha_neg(s: &CurveShapePolicy): Option<bool> {
+    match (s) { CurveShapePolicy::Exponential { alpha_neg, .. } => option::some(*alpha_neg), _ => option::none() }
 }
 
 // === Admin Functions ===
@@ -119,15 +119,15 @@ public(package) fun proj_exponential_alpha_neg(s: &CurveShapeState): Option<bool
 
 public(package) fun height_value(h: CurveHeight): u64 { h.h }
 
-public(package) fun evaluate_curve(shape: &CurveShapeState, t: u64, t_max: u64): CurveHeight {
+public(package) fun evaluate_curve(shape: &CurveShapePolicy, t: u64, t_max: u64): CurveHeight {
     let h = if (t == 0)     { 0 }
             else if (t >= t_max) { SCALE }
             else match (shape) {
-                CurveShapeState::Linear                               => eval_linear(t, t_max),
-                CurveShapeState::Smoothstep                           => eval_smoothstep(t, t_max),
-                CurveShapeState::PowerLaw { alpha_num, alpha_den }    => eval_power_law(t, t_max, *alpha_num, *alpha_den),
-                CurveShapeState::Exponential { alpha_abs, alpha_neg } => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
-                CurveShapeState::Logistic                             => eval_logistic(t, t_max),
+                CurveShapePolicy::Linear                               => eval_linear(t, t_max),
+                CurveShapePolicy::Smoothstep                           => eval_smoothstep(t, t_max),
+                CurveShapePolicy::PowerLaw { alpha_num, alpha_den }    => eval_power_law(t, t_max, *alpha_num, *alpha_den),
+                CurveShapePolicy::Exponential { alpha_abs, alpha_neg } => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
+                CurveShapePolicy::Logistic                             => eval_logistic(t, t_max),
             };
     CurveHeight { h }
 }
@@ -306,9 +306,9 @@ public fun logistic_denom_for_testing(): u64 { LOGISTIC_DENOM }
 public fun scale_for_testing(): u64 { SCALE }
 
 #[test_only]
-public fun power_law_fields_for_testing(shape: &CurveShapeState): (u8, u8) {
+public fun power_law_fields_for_testing(shape: &CurveShapePolicy): (u8, u8) {
     match (shape) {
-        CurveShapeState::PowerLaw { alpha_num, alpha_den } => (*alpha_num, *alpha_den),
+        CurveShapePolicy::PowerLaw { alpha_num, alpha_den } => (*alpha_num, *alpha_den),
         _ => abort ENotPowerLaw,
     }
 }

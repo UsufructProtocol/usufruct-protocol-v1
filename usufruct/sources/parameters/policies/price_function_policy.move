@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::price_function_state;
+module usufruct::price_function_policy;
 
 // === Imports ===
 
@@ -22,7 +22,7 @@ const EBpsRange:  u64 = 1;
 
 // === Structs ===
 
-public enum PriceFunctionState has copy, drop, store {
+public enum PriceFunctionPolicy has copy, drop, store {
     FixedDelta {
         delta: Price,
     },
@@ -38,37 +38,37 @@ public enum PriceFunctionState has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_fixed_delta(delta: Price): PriceFunctionState {
+public fun new_fixed_delta(delta: Price): PriceFunctionPolicy {
     assert!(monetary::price_mist(delta) > 0, EDeltaZero);
-    PriceFunctionState::FixedDelta { delta }
+    PriceFunctionPolicy::FixedDelta { delta }
 }
 
-public fun new_compound_delta(bps: BasisPoints, delta: Price): PriceFunctionState {
+public fun new_compound_delta(bps: BasisPoints, delta: Price): PriceFunctionPolicy {
     let bps_val = math::bps_value(bps);
     assert!(bps_val >= 1 && bps_val <= bps_upper(), EBpsRange);
     assert!(monetary::price_mist(delta) > 0, EDeltaZero);
-    PriceFunctionState::CompoundDelta { bps, delta }
+    PriceFunctionPolicy::CompoundDelta { bps, delta }
 }
 
 // === View Functions ===
 
-public(package) fun proj_is_fixed_delta(p: &PriceFunctionState): bool {
-    match (p) { PriceFunctionState::FixedDelta { .. } => true, _ => false }
+public(package) fun proj_is_fixed_delta(p: &PriceFunctionPolicy): bool {
+    match (p) { PriceFunctionPolicy::FixedDelta { .. } => true, _ => false }
 }
-public(package) fun proj_is_compound_delta(p: &PriceFunctionState): bool {
-    match (p) { PriceFunctionState::CompoundDelta { .. } => true, _ => false }
+public(package) fun proj_is_compound_delta(p: &PriceFunctionPolicy): bool {
+    match (p) { PriceFunctionPolicy::CompoundDelta { .. } => true, _ => false }
 }
-public(package) fun proj_fixed_delta(p: &PriceFunctionState): Option<Price> {
-    match (p) { PriceFunctionState::FixedDelta { delta } => option::some(*delta), _ => option::none() }
+public(package) fun proj_fixed_delta(p: &PriceFunctionPolicy): Option<Price> {
+    match (p) { PriceFunctionPolicy::FixedDelta { delta } => option::some(*delta), _ => option::none() }
 }
-public(package) fun proj_compound_delta_bps(p: &PriceFunctionState): Option<BasisPoints> {
+public(package) fun proj_compound_delta_bps(p: &PriceFunctionPolicy): Option<BasisPoints> {
     match (p) {
-        PriceFunctionState::CompoundDelta { bps, .. } => option::some(*bps),
+        PriceFunctionPolicy::CompoundDelta { bps, .. } => option::some(*bps),
         _ => option::none(),
     }
 }
-public(package) fun proj_compound_delta_delta(p: &PriceFunctionState): Option<Price> {
-    match (p) { PriceFunctionState::CompoundDelta { delta, .. } => option::some(*delta), _ => option::none() }
+public(package) fun proj_compound_delta_delta(p: &PriceFunctionPolicy): Option<Price> {
+    match (p) { PriceFunctionPolicy::CompoundDelta { delta, .. } => option::some(*delta), _ => option::none() }
 }
 
 // === Admin Functions ===
@@ -76,12 +76,12 @@ public(package) fun proj_compound_delta_delta(p: &PriceFunctionState): Option<Pr
 // === Package Functions ===
 
 public(package) fun evaluate_price_fn(
-    price_fn: &PriceFunctionState,
+    price_fn: &PriceFunctionPolicy,
     price:    Price,
 ): Price {
     match (price_fn) {
-        PriceFunctionState::FixedDelta    { delta }      => eval_fixed_delta(price, *delta),
-        PriceFunctionState::CompoundDelta { bps, delta } => eval_compound_delta(price, *bps, *delta),
+        PriceFunctionPolicy::FixedDelta    { delta }      => eval_fixed_delta(price, *delta),
+        PriceFunctionPolicy::CompoundDelta { bps, delta } => eval_compound_delta(price, *bps, *delta),
     }
 }
 
@@ -115,17 +115,17 @@ public fun eval_compound_delta_for_testing(price: u64, bps: u64, delta: u64): u6
 public fun bps_per_unit_for_testing(): u64 { math::bps_denominator() }
 
 #[test_only]
-public fun fixed_delta_fields_for_testing(price_fn: &PriceFunctionState): u64 {
+public fun fixed_delta_fields_for_testing(price_fn: &PriceFunctionPolicy): u64 {
     match (price_fn) {
-        PriceFunctionState::FixedDelta { delta } => monetary::price_mist(*delta),
+        PriceFunctionPolicy::FixedDelta { delta } => monetary::price_mist(*delta),
         _ => abort ENotFixedDelta,
     }
 }
 
 #[test_only]
-public fun compound_delta_fields_for_testing(price_fn: &PriceFunctionState): (u64, u64) {
+public fun compound_delta_fields_for_testing(price_fn: &PriceFunctionPolicy): (u64, u64) {
     match (price_fn) {
-        PriceFunctionState::CompoundDelta { bps, delta } => (math::bps_value(*bps), monetary::price_mist(*delta)),
+        PriceFunctionPolicy::CompoundDelta { bps, delta } => (math::bps_value(*bps), monetary::price_mist(*delta)),
         _ => abort ENotCompoundDelta,
     }
 }

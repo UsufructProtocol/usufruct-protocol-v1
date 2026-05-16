@@ -197,7 +197,7 @@ fun nth_root_u128_non_power_of_2_roundtrip() {
 fun nth_root_u128_scaled_irrationals() {
     // Verifies floor(k^(1/d) × SCALE) for non-trivial bases at the protocol's
     // fixed-point scale. Expected values computed externally with arbitrary-
-    // precision arithmetic; SCALE = 10^9 matches curve_shape_state::SCALE and is the
+    // precision arithmetic; SCALE = 10^9 matches curve_shape_policy::SCALE and is the
     // largest common scale that fits u128 for d ∈ {2,3,4}.
     let s2: u128 = 1_000_000_000_000_000_000;                            // 10^18
     let s3: u128 = 1_000_000_000_000_000_000_000_000_000;                // 10^27

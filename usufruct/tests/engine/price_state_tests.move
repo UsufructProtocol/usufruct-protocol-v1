@@ -7,17 +7,17 @@ module usufruct::price_state_tests;
 use usufruct::{
     asset_state,
     config,
-    curve_shape_state,
-    descent_policy_state,
-    handover_policy_state,
+    curve_shape_policy,
+    descent_policy,
+    handover_policy,
     math,
-    floor_price_policy_state,
-    tenure_cycles_policy_state,
-    tenure_policy_state,
+    floor_price_policy,
+    tenure_cycles_policy,
+    tenure_policy,
     monetary,
     phases,
-    price_function_state,
-    commitment_policy_state,
+    price_function_policy,
+    commitment_policy,
 };
 
 const MIN:    u64 = 10_000_000_000;
@@ -28,14 +28,14 @@ const T0:     u64 = 1_000_000;
 
 fun base_cfg(descent: bool): config::IntegrationConfig {
     config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(MIN)), tenure_policy_state::new_fixed(phases::duration(TENURE)),
-        tenure_cycles_policy_state::new_single(),
-        handover_policy_state::new_handover_instant(),
-        if (descent) { descent_policy_state::new_descent_window(phases::duration(TENURE)) }
-        else         { descent_policy_state::new_descent_skipped()       },
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(monetary::price(MIN)),
+        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
+        tenure_cycles_policy::new_single(),
+        handover_policy::new_handover_instant(),
+        if (descent) { descent_policy::new_descent_window(phases::duration(TENURE)) }
+        else         { descent_policy::new_descent_skipped()       },
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        price_function_policy::new_fixed_delta(monetary::price(MIN)),
     )
 }
 
@@ -50,7 +50,7 @@ fun ascending_is_time_independent() {
 #[test]
 fun ascending_agrees_with_price_function_state() {
     let cfg      = base_cfg(false);
-    let expected = monetary::price_mist(price_function_state::evaluate_price_fn(config::proj_price_function_state(&cfg), monetary::price(STAKE)));
+    let expected = monetary::price_mist(price_function_policy::evaluate_price_fn(config::proj_price_function_policy(&cfg), monetary::price(STAKE)));
     assert!(monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &cfg)) == expected, 0);
 }
 
@@ -58,13 +58,13 @@ fun ascending_agrees_with_price_function_state() {
 fun ascending_fixed_delta_adds_delta() {
     let delta = MIN;
     let cfg   = config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(MIN)), tenure_policy_state::new_fixed(phases::duration(TENURE)),
-        tenure_cycles_policy_state::new_single(),
-        handover_policy_state::new_handover_instant(),
-        descent_policy_state::new_descent_skipped(),
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(monetary::price(delta)),
+        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
+        tenure_cycles_policy::new_single(),
+        handover_policy::new_handover_instant(),
+        descent_policy::new_descent_skipped(),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        price_function_policy::new_fixed_delta(monetary::price(delta)),
     );
     let floor = monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &cfg));
     assert!(floor > STAKE, 0);
@@ -74,13 +74,13 @@ fun ascending_fixed_delta_adds_delta() {
 #[test]
 fun ascending_compound_delta_raises_price() {
     let cfg = config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(MIN)), tenure_policy_state::new_fixed(phases::duration(TENURE)),
-        tenure_cycles_policy_state::new_single(),
-        handover_policy_state::new_handover_instant(),
-        descent_policy_state::new_descent_skipped(),
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_linear(),
-        price_function_state::new_compound_delta(math::bps(1_000), monetary::price(1)),
+        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
+        tenure_cycles_policy::new_single(),
+        handover_policy::new_handover_instant(),
+        descent_policy::new_descent_skipped(),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        price_function_policy::new_compound_delta(math::bps(1_000), monetary::price(1)),
     );
     let floor = monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &cfg));
     assert!(floor > STAKE, 0);
@@ -151,26 +151,26 @@ fun descending_saturates_past_window() {
 #[test]
 fun descending_various_curves_respect_bounds() {
     let curves = vector[
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_smoothstep(),
-        curve_shape_state::new_logistic(),
-        curve_shape_state::new_power_law(1, 2),
-        curve_shape_state::new_power_law(2, 1),
-        curve_shape_state::new_exponential(2, true),
-        curve_shape_state::new_exponential(2, false),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_smoothstep(),
+        curve_shape_policy::new_logistic(),
+        curve_shape_policy::new_power_law(1, 2),
+        curve_shape_policy::new_power_law(2, 1),
+        curve_shape_policy::new_exponential(2, true),
+        curve_shape_policy::new_exponential(2, false),
     ];
     let mid = T0 + TENURE / 2;
     let mut i = 0;
     while (i < curves.length()) {
         let curve = *curves.borrow(i);
         let cfg = config::new_config(
-            floor_price_policy_state::new_fixed(monetary::price(MIN)), tenure_policy_state::new_fixed(phases::duration(TENURE)),
-            tenure_cycles_policy_state::new_single(),
-            handover_policy_state::new_handover_instant(),
-            descent_policy_state::new_descent_window(phases::duration(TENURE)),
-            curve_shape_state::new_linear(),
+            floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
+            tenure_cycles_policy::new_single(),
+            handover_policy::new_handover_instant(),
+            descent_policy::new_descent_window(phases::duration(TENURE)),
+            curve_shape_policy::new_linear(),
             curve,
-            price_function_state::new_fixed_delta(monetary::price(MIN)),
+            price_function_policy::new_fixed_delta(monetary::price(MIN)),
         );
         let p = monetary::price_mist(asset_state::descending_floor_price_for_testing(
             monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE),

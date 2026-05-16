@@ -16,7 +16,7 @@ use sui::{
 use usufruct::{
     asset::{Self},
     asset_state::{Self},
-    commitment_policy_state,
+    commitment_policy,
     cycles,
     escrow::{Self, Escrow},
     escrow_corpus,
@@ -71,7 +71,7 @@ fun integrate_and_take_with_cfg(
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset,
         cfg,
-        commitment_policy_state::new_immediate(),
+        commitment_policy::new_immediate(),
         &fee_ref, &rnd, &clk, sc.ctx(),
     );
     test_scenario::return_shared(rnd);

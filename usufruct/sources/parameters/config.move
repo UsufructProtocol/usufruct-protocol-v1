@@ -7,13 +7,13 @@ module usufruct::config;
 
 use sui::event;
 use usufruct::{
-    curve_shape_state::CurveShapeState,
-    descent_policy_state::DescentPolicyState,
-    handover_policy_state::{Self, HandoverPolicyState},
-    floor_price_policy_state::FloorPricePolicyState,
-    tenure_policy_state::{Self as tenure_policy_state, TenurePolicyState},
-    tenure_cycles_policy_state::TenureCyclesPolicyState,
-    price_function_state::PriceFunctionState,
+    curve_shape_policy::CurveShapePolicy,
+    descent_policy::DescentPolicy,
+    handover_policy::{Self, HandoverPolicy},
+    floor_price_policy::FloorPricePolicy,
+    tenure_policy::{Self as tenure_policy, TenurePolicy},
+    tenure_cycles_policy::TenureCyclesPolicy,
+    price_function_policy::PriceFunctionPolicy,
 };
 
 // === Errors ===
@@ -25,14 +25,14 @@ const EHandoverFloorExceedsTenure: u64 = 2;
 // === Structs ===
 
 public struct IntegrationConfig has copy, drop, store {
-    min_rent_price:   FloorPricePolicyState,
-    tenure_ceiling:   TenurePolicyState,
-    tenure_cycles:    TenureCyclesPolicyState,
-    handover:         HandoverPolicyState,
-    descent:          DescentPolicyState,
-    credit_curve:     CurveShapeState,
-    descent_curve:    CurveShapeState,
-    price_function_state:  PriceFunctionState,
+    min_rent_price:   FloorPricePolicy,
+    tenure_ceiling:   TenurePolicy,
+    tenure_cycles:    TenureCyclesPolicy,
+    handover:         HandoverPolicy,
+    descent:          DescentPolicy,
+    credit_curve:     CurveShapePolicy,
+    descent_curve:    CurveShapePolicy,
+    price_function_policy: PriceFunctionPolicy,
 }
 
 // === Events ===
@@ -47,17 +47,17 @@ public struct IntegrationConfigRegistered has copy, drop {
 // === Public Functions ===
 
 public fun new_config(
-    min_rent_price:  FloorPricePolicyState,
-    tenure_ceiling:  TenurePolicyState,
-    tenure_cycles:   TenureCyclesPolicyState,
-    handover:        HandoverPolicyState,
-    descent:         DescentPolicyState,
-    credit_curve:    CurveShapeState,
-    descent_curve:   CurveShapeState,
-    price_function_state: PriceFunctionState,
+    min_rent_price:  FloorPricePolicy,
+    tenure_ceiling:  TenurePolicy,
+    tenure_cycles:   TenureCyclesPolicy,
+    handover:        HandoverPolicy,
+    descent:         DescentPolicy,
+    credit_curve:    CurveShapePolicy,
+    descent_curve:   CurveShapePolicy,
+    price_function_policy: PriceFunctionPolicy,
 ): IntegrationConfig {
     assert!(
-        handover_policy_state::countdown_floor_lt(&handover, tenure_policy_state::min_ceiling(&tenure_ceiling)),
+        handover_policy::countdown_floor_lt(&handover, tenure_policy::min_ceiling(&tenure_ceiling)),
         EHandoverFloorExceedsTenure,
     );
     IntegrationConfig {
@@ -68,20 +68,20 @@ public fun new_config(
         descent,
         credit_curve,
         descent_curve,
-        price_function_state,
+        price_function_policy: price_function_policy,
     }
 }
 
 // === View Functions ===
 
-public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):        &FloorPricePolicyState      { &cfg.min_rent_price }
-public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):         &TenurePolicyState          { &cfg.tenure_ceiling }
-public(package) fun proj_tenure_cycles(cfg: &IntegrationConfig):          &TenureCyclesPolicyState    { &cfg.tenure_cycles }
-public(package) fun proj_handover(cfg: &IntegrationConfig):               &HandoverPolicyState         { &cfg.handover }
-public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicyState   { &cfg.descent }
-public(package) fun proj_credit_curve(cfg: &IntegrationConfig):          &CurveShapeState      { &cfg.credit_curve }
-public(package) fun proj_descent_curve(cfg: &IntegrationConfig):         &CurveShapeState      { &cfg.descent_curve }
-public(package) fun proj_price_function_state(cfg: &IntegrationConfig):  &PriceFunctionState   { &cfg.price_function_state }
+public(package) fun proj_min_rent_price(cfg: &IntegrationConfig):        &FloorPricePolicy      { &cfg.min_rent_price }
+public(package) fun proj_tenure_ceiling(cfg: &IntegrationConfig):         &TenurePolicy          { &cfg.tenure_ceiling }
+public(package) fun proj_tenure_cycles(cfg: &IntegrationConfig):          &TenureCyclesPolicy    { &cfg.tenure_cycles }
+public(package) fun proj_handover(cfg: &IntegrationConfig):               &HandoverPolicy         { &cfg.handover }
+public(package) fun proj_descent(cfg: &IntegrationConfig):               &DescentPolicy   { &cfg.descent }
+public(package) fun proj_credit_curve(cfg: &IntegrationConfig):          &CurveShapePolicy      { &cfg.credit_curve }
+public(package) fun proj_descent_curve(cfg: &IntegrationConfig):         &CurveShapePolicy      { &cfg.descent_curve }
+public(package) fun proj_price_function_policy(cfg: &IntegrationConfig): &PriceFunctionPolicy   { &cfg.price_function_policy }
 
 // === Admin Functions ===
 

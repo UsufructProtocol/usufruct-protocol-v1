@@ -35,16 +35,16 @@ use usufruct::{
     },
     retire_condition,
     config,
-    curve_shape_state,
+    curve_shape_policy,
     cycles,
-    descent_policy_state,
-    floor_price_policy_state,
-    handover_policy_state,
+    descent_policy,
+    floor_price_policy,
+    handover_policy,
     monetary,
-    price_function_state,
-    commitment_policy_state::{Self, CommitmentPolicyState},
-    tenure_cycles_policy_state,
-    tenure_policy_state,
+    price_function_policy,
+    commitment_policy::{Self, CommitmentPolicy},
+    tenure_cycles_policy,
+    tenure_policy,
     escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
@@ -113,13 +113,13 @@ fun integrate_and_take(
     cfg: usufruct::config::IntegrationConfig,
     sc:  &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    integrate_and_take_with_commitment(cfg, commitment_policy_state::new_immediate(), sc)
+    integrate_and_take_with_commitment(cfg, commitment_policy::new_immediate(), sc)
 }
 
-/// escrow + cap with an explicit CommitmentPolicyState.
+/// escrow + cap with an explicit CommitmentPolicy.
 fun integrate_and_take_with_commitment(
     cfg:        usufruct::config::IntegrationConfig,
-    commitment: CommitmentPolicyState,
+    commitment: CommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
@@ -153,7 +153,7 @@ fun integrate_creates_idle_escrow_smoke() {
 
     let random = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, cfg, commitment_policy_state::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
+        asset, cfg, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
     );
     test_scenario::return_shared(random);
     let escrow_id = owner_cap::proj_escrow_id(&cap);
@@ -172,7 +172,7 @@ fun integrate_creates_idle_escrow_smoke() {
 // ─── §2. integrate — corpus projection ───────────────────────────────────────
 
 /// §10.1 — integrate is universally applicable. Sweeps the C axis
-/// (HandoverPolicyState ∈ {Instant, Countdown, FixedTime}) — three
+/// (HandoverPolicy ∈ {Instant, Countdown, FixedTime}) — three
 /// behaviorally distinct handover modes — at fixed (d=0, e=0, h=0, f=0).
 /// Verifies the post-condition `state_tag == Idle` for each.
 ///
@@ -201,7 +201,7 @@ fun integrate_idle_across_handover_modes() {
 
             let random = sc.take_shared<Random>();
             let cap = escrow::integrate<DemoAsset, SUI>(
-                asset, cfg, commitment_policy_state::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
+                asset, cfg, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
             );
             test_scenario::return_shared(random);
             let escrow_id = owner_cap::proj_escrow_id(&cap);
@@ -239,7 +239,7 @@ fun integrate_leaves_escrow_idle() {
     let asset   = mk_demo_asset(sc.ctx());
 
     let random = sc.take_shared<Random>();
-    let cap       = escrow::integrate<DemoAsset, SUI>(asset, cfg, commitment_policy_state::new_immediate(), &fee_ref, &random, &clk, sc.ctx());
+    let cap       = escrow::integrate<DemoAsset, SUI>(asset, cfg, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
@@ -307,7 +307,7 @@ fun floor_price_idle_returns_min_rent_price() {
 }
 
 /// Occupied returns `f_next_rent_price(current_stake)`. Sweeps
-/// the D axis (PriceFunctionState): d=0 (FixedDelta) and d=1 (CompoundDelta)
+/// the D axis (PriceFunctionPolicy): d=0 (FixedDelta) and d=1 (CompoundDelta)
 /// — the only axis compute_next_rent_price actually consumes.
 #[test]
 fun floor_price_handover_open_escalates_current_stake() {
@@ -718,7 +718,7 @@ fun rent_from_at_dutch_installs_new_tenant() {
 
 /// Occupied → Demand via rent. BidPlaced carries
 /// the pre-computed handover_countdown_expiry. Sweeps the C axis
-/// (HandoverPolicyState) since handover_policy_state::expiry_at depends on it.
+/// (HandoverPolicy) since handover_policy::expiry_at depends on it.
 #[test]
 fun rent_from_handover_open_places_bid() {
     let mut sc = setup();
@@ -2548,7 +2548,7 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 
 // ─── §3. Deferred retire floor gate ───────────────────────────────────────────
 
-/// With CommitmentPolicyState::Deferred, retire() aborts if the clock has not
+/// With CommitmentPolicy::Deferred, retire() aborts if the clock has not
 /// reached integrated_at_ms + retire_floor. integrated_at_ms = 0
 /// (clock at integration time), retire_floor = 10_000_000.
 ///
@@ -4046,7 +4046,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 
 // ─── §Skipped descent — price resets to min_rent_price at tenure boundary ────
 
-/// With DescentPolicyState::Skipped (h=0), tenure expiry triggers the M6b cascade:
+/// With DescentPolicy::Skipped (h=0), tenure expiry triggers the M6b cascade:
 /// Occupied → AtDutchAuction → Idle fires in a single APT step because
 /// the descent window is zero. The entry price resets to min_rent_price at
 /// the exact tenure boundary, regardless of what the departing tenant paid.
@@ -4795,7 +4795,7 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
 
 // ── Gap 1: c=2 (FixedTime) — handover fires at tenure boundary, full credit ──
 
-/// With HandoverPolicyState::FixedTime, the handover countdown expiry is always
+/// With HandoverPolicy::FixedTime, the handover countdown expiry is always
 /// phase_start + tenure_ceiling — the handover fires exactly at the tenure
 /// boundary. At that moment elapsed == tenure_ceiling, so evaluate_curve
 /// short-circuits to SCALE for every curve shape. This means:
@@ -4923,7 +4923,7 @@ fun e2e_corpus_gap_deferred_retire_from_handover_open_after_floor() {
 
 /// §RETIRE tests (RETIRE-3/4/5/6) all use h=0 (Skipped). This verifies
 /// that the retiring flag correctly bypasses AtDutchAuction even when
-/// DescentPolicyState is Window (h=1): tenure expiry → Retired directly,
+/// DescentPolicy is Window (h=1): tenure expiry → Retired directly,
 /// NOT AtDutch. The Window policy only affects the descent duration when
 /// there is NO retiring flag; the flag unconditionally collapses to Retired.
 #[test]
@@ -5958,14 +5958,14 @@ fun update_config_behavior_price_function_floor_escalation() {
 }
 
 // Test BD-6: commitment floor observable at integrate and after extend ─────────
-/// commitment_floor_ms reflects the CommitmentPolicyState set at integration
+/// commitment_floor_ms reflects the CommitmentPolicy set at integration
 /// and updated by extend_commitment. update_config does not affect it.
 #[test]
 fun commitment_floor_observable_at_integrate_and_after_extend() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        cfg, commitment_policy_state::new_immediate(), &mut sc,
+        cfg, commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
@@ -5975,7 +5975,7 @@ fun commitment_floor_observable_at_integrate_and_after_extend() {
     // Extend to Deferred.
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
+        commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
         &clk,
     );
 
@@ -6003,7 +6003,7 @@ fun extend_commitment_retire_aborts_before_floor() {
 
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
+        commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
         &clk,
     );
 
@@ -6208,7 +6208,7 @@ fun e2e_ev3_borrow_return_cap_id_consistency() {
 // ── EV-4: BidPlaced.handover_countdown_expiry accuracy per policy ─────────────
 
 /// The handover_countdown_expiry stamped in BidPlaced must match the value
-/// computed by handover_policy_state::expiry_at for each HandoverPolicyState variant.
+/// computed by handover_policy::expiry_at for each HandoverPolicy variant.
 ///
 /// With phase_start=0, tenure_ceiling=100_000, bid at t=1_000:
 ///   c=0 Instant:  expiry = bid_time                              = 1_000
@@ -6268,49 +6268,49 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
     sc.end();
 }
 
-// ─── §RandomInRange — FloorPricePolicyState policy tests ─────────────────────────
+// ─── §RandomInRange — FloorPricePolicy policy tests ─────────────────────────
 //
-// Tests for the RandomInRange variant of FloorPricePolicyState.
+// Tests for the RandomInRange variant of FloorPricePolicy.
 // Constructors validate invariants; resolution tests verify the drawn floor
 // always falls within [min, max]; bid tests verify the bidder strategy.
 
 // ── Constructor validation ────────────────────────────────────────────────────
 
-#[test, expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy::EPriceZero, location = usufruct::floor_price_policy)]
 fun new_fixed_zero_price_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = floor_price_policy_state::new_fixed(usufruct::monetary::price(0));
+    let _p = floor_price_policy::new_fixed(usufruct::monetary::price(0));
     sc.end();
 }
 
-#[test, expected_failure(abort_code = floor_price_policy_state::EPriceZero, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy::EPriceZero, location = usufruct::floor_price_policy)]
 fun new_random_in_range_zero_min_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = floor_price_policy_state::new_random_in_range(
+    let _p = floor_price_policy::new_random_in_range(
         usufruct::monetary::price(0),
         usufruct::monetary::price(10_000_000_000),
     );
     sc.end();
 }
 
-#[test, expected_failure(abort_code = floor_price_policy_state::EMinNotLtMax, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy::EMinNotLtMax, location = usufruct::floor_price_policy)]
 fun new_random_in_range_min_equals_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = floor_price_policy_state::new_random_in_range(
+    let _p = floor_price_policy::new_random_in_range(
         usufruct::monetary::price(10_000_000_000),
         usufruct::monetary::price(10_000_000_000),
     );
     sc.end();
 }
 
-#[test, expected_failure(abort_code = floor_price_policy_state::EMinNotLtMax, location = usufruct::floor_price_policy_state)]
+#[test, expected_failure(abort_code = floor_price_policy::EMinNotLtMax, location = usufruct::floor_price_policy)]
 fun new_random_in_range_min_greater_than_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = floor_price_policy_state::new_random_in_range(
+    let _p = floor_price_policy::new_random_in_range(
         usufruct::monetary::price(15_000_000_000),
         usufruct::monetary::price(10_000_000_000),
     );
@@ -6759,9 +6759,9 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     sc.end();
 }
 
-// ─── §TenurePolicyState — policy tests ──────────────────────────────────────
+// ─── §TenurePolicy — policy tests ──────────────────────────────────────
 //
-// Mirrors the FloorPricePolicyState test suite for TenurePolicyState.
+// Mirrors the FloorPricePolicy test suite for TenurePolicy.
 // The observable of resolved_ceiling is tenure_expiry_ms():
 //   tenure_expiry_ms = phase_start + resolved_ceiling
 // At phase_start = 0, tenure_expiry_ms == resolved_ceiling_ms.
@@ -6771,41 +6771,41 @@ const CEILING_RAND_MAX: u64 = 150_000;  // 150k ms
 
 // ── Constructor validation ────────────────────────────────────────────────────
 
-#[test, expected_failure(abort_code = tenure_policy_state::EDurationZero, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = tenure_policy::EDurationZero, location = usufruct::tenure_policy)]
 fun new_fixed_zero_ceiling_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_policy_state::new_fixed(phases::duration(0));
+    let _p = tenure_policy::new_fixed(phases::duration(0));
     sc.end();
 }
 
-#[test, expected_failure(abort_code = tenure_policy_state::EDurationZero, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = tenure_policy::EDurationZero, location = usufruct::tenure_policy)]
 fun new_random_ceiling_zero_min_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_policy_state::new_random_in_range(
+    let _p = tenure_policy::new_random_in_range(
         phases::duration(0),
         phases::duration(100_000),
     );
     sc.end();
 }
 
-#[test, expected_failure(abort_code = tenure_policy_state::EMinNotLtMax, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = tenure_policy::EMinNotLtMax, location = usufruct::tenure_policy)]
 fun new_random_ceiling_min_equals_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_policy_state::new_random_in_range(
+    let _p = tenure_policy::new_random_in_range(
         phases::duration(100_000),
         phases::duration(100_000),
     );
     sc.end();
 }
 
-#[test, expected_failure(abort_code = tenure_policy_state::EMinNotLtMax, location = usufruct::tenure_policy_state)]
+#[test, expected_failure(abort_code = tenure_policy::EMinNotLtMax, location = usufruct::tenure_policy)]
 fun new_random_ceiling_min_greater_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_policy_state::new_random_in_range(
+    let _p = tenure_policy::new_random_in_range(
         phases::duration(200_000),
         phases::duration(100_000),
     );
@@ -7079,19 +7079,19 @@ fun multi_cycle_cfg(): config::IntegrationConfig {
     let tenure  = escrow_corpus::tenure_ceiling_const();
     let floor   = escrow_corpus::min_rent_price_const();
     config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(floor)),
-        tenure_policy_state::new_fixed(phases::duration(tenure)),
-        tenure_cycles_policy_state::new_multi(),
-        handover_policy_state::new_handover_fixed_time(),
-        descent_policy_state::new_descent_skipped(),
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(monetary::price(floor)),
+        floor_price_policy::new_fixed(monetary::price(floor)),
+        tenure_policy::new_fixed(phases::duration(tenure)),
+        tenure_cycles_policy::new_multi(),
+        handover_policy::new_handover_fixed_time(),
+        descent_policy::new_descent_skipped(),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        price_function_policy::new_fixed_delta(monetary::price(floor)),
     )
 }
 
 /// Single policy + cycles(2) → EMultiCycleNotAllowed.
-#[test, expected_failure(abort_code = tenure_cycles_policy_state::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy_state)]
+#[test, expected_failure(abort_code = tenure_cycles_policy::EMultiCycleNotAllowed, location = usufruct::tenure_cycles_policy)]
 fun multi_cycle_single_policy_rejects_cycles_two() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0); // Single (default corpus)
@@ -7230,14 +7230,14 @@ fun multi_cycle_cfg_countdown(): config::IntegrationConfig {
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
     config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(floor)),
-        tenure_policy_state::new_fixed(phases::duration(tenure)),
-        tenure_cycles_policy_state::new_multi(),
-        handover_policy_state::new_handover_countdown(phases::duration(countdown)),
-        descent_policy_state::new_descent_skipped(),
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(monetary::price(floor)),
+        floor_price_policy::new_fixed(monetary::price(floor)),
+        tenure_policy::new_fixed(phases::duration(tenure)),
+        tenure_cycles_policy::new_multi(),
+        handover_policy::new_handover_countdown(phases::duration(countdown)),
+        descent_policy::new_descent_skipped(),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        price_function_policy::new_fixed_delta(monetary::price(floor)),
     )
 }
 
@@ -7863,7 +7863,7 @@ fun multi_cycle_rent_from_at_dutch_extends_ceiling() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent
     // Override tenure_cycles to Multi so we can rent with cycles(3).
-    let cfg = escrow_corpus::with_tenure_cycles(cfg, tenure_cycles_policy_state::new_multi());
+    let cfg = escrow_corpus::with_tenure_cycles(cfg, tenure_cycles_policy::new_multi());
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -8032,14 +8032,14 @@ fun multi_cycle_cfg_instant(): config::IntegrationConfig {
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
     config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(floor)),
-        tenure_policy_state::new_fixed(phases::duration(tenure)),
-        tenure_cycles_policy_state::new_multi(),
-        handover_policy_state::new_handover_instant(),
-        descent_policy_state::new_descent_skipped(),
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(monetary::price(floor)),
+        floor_price_policy::new_fixed(monetary::price(floor)),
+        tenure_policy::new_fixed(phases::duration(tenure)),
+        tenure_cycles_policy::new_multi(),
+        handover_policy::new_handover_instant(),
+        descent_policy::new_descent_skipped(),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        price_function_policy::new_fixed_delta(monetary::price(floor)),
     )
 }
 
@@ -8604,7 +8604,7 @@ fun at_dutch_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     let descent = escrow_corpus::descent_window_h1_const();
     let cfg = escrow_corpus::with_tenure_cycles(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), // h=1 descent window
-        tenure_cycles_policy_state::new_multi(),
+        tenure_cycles_policy::new_multi(),
     );
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
@@ -8667,7 +8667,7 @@ const E_COMMITMENT_NOT_EXTENDED:      u64 = 17;  // asset_state::ECommitmentNotE
 fun commitment_init_anchor_equals_integrated_at() {
     let mut sc  = setup();
     let cfg     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take_with_commitment(cfg, commitment_policy_state::new_immediate(), &mut sc);
+    let (escrow, cap) = integrate_and_take_with_commitment(cfg, commitment_policy::new_immediate(), &mut sc);
 
     assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
 
@@ -8681,7 +8681,7 @@ fun commitment_init_anchor_equals_integrated_at() {
 fun commitment_init_immediate_floor_ms_is_none() {
     let mut sc  = setup();
     let cfg     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take_with_commitment(cfg, commitment_policy_state::new_immediate(), &mut sc);
+    let (escrow, cap) = integrate_and_take_with_commitment(cfg, commitment_policy::new_immediate(), &mut sc);
 
     assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
     assert!(escrow::is_commitment_immediate(&escrow), 1);
@@ -8794,14 +8794,14 @@ fun commitment_extend_valid_increases_unlocks_at() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
     let before = escrow::commitment_unlocks_at_ms(&escrow);
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(floor)),
+        commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
     let after = escrow::commitment_unlocks_at_ms(&escrow);
@@ -8828,7 +8828,7 @@ fun commitment_extend_reduce_floor_aborts() {
     // Clock at t=0; old_expiry = 0 + floor; new_expiry = 0 + 0 = 0 < old_expiry.
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy_state::new_immediate(), &clk);
+    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -8850,7 +8850,7 @@ fun commitment_extend_immediate_after_expiry_passes() {
     // Advance past old_expiry (anchor=0, floor=FLOOR_MS).
     clock::set_for_testing(&mut clk, floor + 1);
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy_state::new_immediate(), &clk);
+    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
 
     // After extend to Immediate with anchor = floor+1, unlocks = floor+1.
     assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor + 1);
@@ -8867,13 +8867,13 @@ fun commitment_extend_immediate_to_deferred_always_passes() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(floor)),
+        commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -8894,7 +8894,7 @@ fun commitment_extend_anchor_moves_to_now() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
@@ -8902,7 +8902,7 @@ fun commitment_extend_anchor_moves_to_now() {
     clock::set_for_testing(&mut clk, 1_000);
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(floor)),
+        commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -8924,7 +8924,7 @@ fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
     let floor     = escrow_corpus::retire_deferred_f1_const();
     let half_floor = floor / 2;
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor + 1); // now > old_expiry, so any extend is valid
@@ -8932,7 +8932,7 @@ fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
     // Extend to Deferred(half_floor) — floor_ms reflects the policy floor, not the anchor.
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(half_floor)),
+        commitment_policy::new_deferred(phases::duration(half_floor)),
         &clk,
     );
 
@@ -8952,7 +8952,7 @@ fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
 fun commitment_gate_immediate_retire_at_zero() {
     let mut sc  = setup();
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
     );
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -9020,7 +9020,7 @@ fun commitment_gate_extend_reopens_gate_aborts_immediately_after() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
@@ -9029,7 +9029,7 @@ fun commitment_gate_extend_reopens_gate_aborts_immediately_after() {
     clock::set_for_testing(&mut clk, 100);
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(floor)),
+        commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9048,7 +9048,7 @@ fun commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
@@ -9057,7 +9057,7 @@ fun commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     clock::set_for_testing(&mut clk, 100);
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(floor)),
+        commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9081,14 +9081,14 @@ fun commitment_chain_two_extensions_both_valid() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy_state::new_immediate(), &mut sc,
+        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
     // First extend: Immediate → Deferred(floor). new_expiry = 0 + floor.
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(floor)),
+        commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
     let after_first = escrow::commitment_unlocks_at_ms(&escrow);
@@ -9097,7 +9097,7 @@ fun commitment_chain_two_extensions_both_valid() {
     // Second extend: Deferred(floor) → Deferred(floor*2). new_expiry = 0 + floor*2 >= floor.
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(floor * 2)),
+        commitment_policy::new_deferred(phases::duration(floor * 2)),
         &clk,
     );
     let after_second = escrow::commitment_unlocks_at_ms(&escrow);
@@ -9128,7 +9128,7 @@ fun commitment_chain_same_floor_from_later_time_passes() {
     clock::set_for_testing(&mut clk, 500);
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(floor)),
+        commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9371,7 +9371,7 @@ fun resolve_invariant_no_redraw_outside_three_authorized_sites() {
     let cfg_h1 = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
         cfg_h2,
-        commitment_policy_state::new_deferred(phases::duration(50_000)),
+        commitment_policy::new_deferred(phases::duration(50_000)),
         &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -9407,7 +9407,7 @@ fun resolve_invariant_no_redraw_outside_three_authorized_sites() {
     // (3) extend_commitment. Orthogonal action on EscrowCore.commitment_*.
     escrow::extend_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy_state::new_deferred(phases::duration(80_000)),
+        commitment_policy::new_deferred(phases::duration(80_000)),
         &clk,
     );
     assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
@@ -9869,7 +9869,7 @@ fun extend_commitment_with_wrong_cap_aborts() {
     let foreign_cap = owner_cap::new(
         escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx(),
     );
-    escrow::extend_commitment(&mut escrow, &foreign_cap, commitment_policy_state::new_immediate(), &clk);
+    escrow::extend_commitment(&mut escrow, &foreign_cap, commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(foreign_cap, OWNER);
@@ -9884,13 +9884,13 @@ fun extend_commitment_non_monotonic_aborts() {
     let floor = escrow_corpus::retire_deferred_f1_const();
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
         escrow_corpus::by_tag(0),
-        commitment_policy_state::new_deferred(phases::duration(floor)),
+        commitment_policy::new_deferred(phases::duration(floor)),
         &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
     // New policy has a shorter (immediate) expiry — not monotonic.
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy_state::new_immediate(), &clk);
+    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);

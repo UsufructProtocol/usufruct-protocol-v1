@@ -12,7 +12,7 @@ use sui::{
     sui::SUI,
 };
 use usufruct::{
-    commitment_policy_state::{Self, CommitmentPolicyState},
+    commitment_policy::{Self, CommitmentPolicy},
     config::IntegrationConfig,
     escrow::{Self, Escrow},
     escrow_corpus,
@@ -40,12 +40,12 @@ fun setup(): Scenario {
 }
 
 fun build_escrow(cfg: IntegrationConfig, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    build_escrow_with_commitment(cfg, commitment_policy_state::new_immediate(), sc)
+    build_escrow_with_commitment(cfg, commitment_policy::new_immediate(), sc)
 }
 
 fun build_escrow_with_commitment(
     cfg:        IntegrationConfig,
-    commitment: CommitmentPolicyState,
+    commitment: CommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
@@ -291,7 +291,7 @@ fun commitment_policy_views_match_variants() {
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
 
     // Immediate
-    let (escrow, cap) = build_escrow_with_commitment(cfg, commitment_policy_state::new_immediate(), &mut sc);
+    let (escrow, cap) = build_escrow_with_commitment(cfg, commitment_policy::new_immediate(), &mut sc);
     assert!(escrow::is_commitment_immediate(&escrow));
     assert!(!escrow::is_commitment_deferred(&escrow));
     assert!(escrow::commitment_floor_ms(&escrow).is_none());
@@ -299,7 +299,7 @@ fun commitment_policy_views_match_variants() {
 
     // Deferred — use the corpus default deferred floor
     let deferred_floor = escrow_corpus::retire_deferred_f1_const();
-    let commitment = commitment_policy_state::new_deferred(usufruct::phases::duration(deferred_floor));
+    let commitment = commitment_policy::new_deferred(usufruct::phases::duration(deferred_floor));
     let (escrow, cap) = build_escrow_with_commitment(cfg, commitment, &mut sc);
     assert!(!escrow::is_commitment_immediate(&escrow));
     assert!(escrow::is_commitment_deferred(&escrow));
@@ -330,11 +330,11 @@ fun whole_struct_view_getters_return_configured_objects() {
     let cfg = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (escrow, cap) = build_escrow(cfg, &mut sc);
 
-    assert_eq!(escrow::credit_curve(&escrow),  usufruct::curve_shape_state::new_linear());
-    assert_eq!(escrow::descent_curve(&escrow), usufruct::curve_shape_state::new_linear());
+    assert_eq!(escrow::credit_curve(&escrow),  usufruct::curve_shape_policy::new_linear());
+    assert_eq!(escrow::descent_curve(&escrow), usufruct::curve_shape_policy::new_linear());
     assert_eq!(
         escrow::ascending_price_function_state(&escrow),
-        usufruct::price_function_state::new_fixed_delta(usufruct::monetary::price(escrow_corpus::fixed_delta_value_const())),
+        usufruct::price_function_policy::new_fixed_delta(usufruct::monetary::price(escrow_corpus::fixed_delta_value_const())),
     );
 
     dispose(escrow, cap);

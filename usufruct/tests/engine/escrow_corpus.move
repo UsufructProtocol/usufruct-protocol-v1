@@ -8,17 +8,17 @@ module usufruct::escrow_corpus;
 
 use usufruct::{
     config::{Self, IntegrationConfig},
-    curve_shape_state::{Self, CurveShapeState},
-    descent_policy_state::{Self, DescentPolicyState},
-    handover_policy_state::{Self, HandoverPolicyState},
+    curve_shape_policy::{Self, CurveShapePolicy},
+    descent_policy::{Self, DescentPolicy},
+    handover_policy::{Self, HandoverPolicy},
     math,
-    floor_price_policy_state,
-    tenure_cycles_policy_state::{Self, TenureCyclesPolicyState},
-    tenure_policy_state,
+    floor_price_policy,
+    tenure_cycles_policy::{Self, TenureCyclesPolicy},
+    tenure_policy,
     monetary,
     phases,
-    price_function_state::{Self, PriceFunctionState},
-    commitment_policy_state::{Self, CommitmentPolicyState},
+    price_function_policy::{Self, PriceFunctionPolicy},
+    commitment_policy::{Self, CommitmentPolicy},
 };
 
 // === Errors ===
@@ -49,12 +49,12 @@ const COMPOUND_DELTA_VALUE:   u64 = 1;
 
 public struct CorpusEntry has copy, drop, store {
     cfg: IntegrationConfig,
-    c:   u8,   // 0..3  HandoverPolicyState
-    d:   u8,   // 0..1  PriceFunctionState
-    e:   u8,   // 0..6  CurveShapeState pair
-    h:   u8,   // 0..2  DescentPolicyState
-    f:   u8,   // 0..1  CommitmentPolicyState
-    m:   u8,   // 0..1  TenureCyclesPolicyState
+    c:   u8,   // 0..3  HandoverPolicy
+    d:   u8,   // 0..1  PriceFunctionPolicy
+    e:   u8,   // 0..6  CurveShapePolicy pair
+    h:   u8,   // 0..2  DescentPolicy
+    f:   u8,   // 0..1  CommitmentPolicy
+    m:   u8,   // 0..1  TenureCyclesPolicy
     tag: u64,  // m·100_000 + c·10_000 + d·1_000 + e·100 + h·10 + f
 }
 
@@ -72,12 +72,12 @@ public use fun entry_m   as CorpusEntry.m;
 // === Package Functions ===
 
 /// Full deterministic corpus — 672 entries, one per (m,c,d,e,h,f) tuple.
-///   m: 0..1  TenureCyclesPolicyState (Single, Multi)
-///   c: 0..3  HandoverPolicyState     (Instant, Countdown, FixedTime, RandomInRange)
-///   d: 0..1  PriceFunctionState      (FixedDelta, CompoundDelta)
-///   e: 0..6  CurveShapeState pair    (Linear..Exponential)
-///   h: 0..2  DescentPolicyState      (Skipped, Window, RandomInRange)
-///   f: 0..1  CommitmentPolicyState       (Immediate, Deferred)
+///   m: 0..1  TenureCyclesPolicy (Single, Multi)
+///   c: 0..3  HandoverPolicy     (Instant, Countdown, FixedTime, RandomInRange)
+///   d: 0..1  PriceFunctionPolicy      (FixedDelta, CompoundDelta)
+///   e: 0..6  CurveShapePolicy pair    (Linear..Exponential)
+///   h: 0..2  DescentPolicy      (Skipped, Window, RandomInRange)
+///   f: 0..1  CommitmentPolicy       (Immediate, Deferred)
 ///
 /// Requires --gas-limit ≥ 100_000_000.
 /// Call once per test and bind to a local; never inside the iteration loop.
@@ -169,28 +169,28 @@ public(package) fun with_cycles_multi():        vector<CorpusEntry> { all_multi(
 /// Rebuild `cfg` with a different `min_rent_price` (Fixed policy). All other fields unchanged.
 public(package) fun with_min_rent_price(cfg: IntegrationConfig, price_mist: u64): IntegrationConfig {
     config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(price_mist)),
+        floor_price_policy::new_fixed(monetary::price(price_mist)),
         *config::proj_tenure_ceiling(&cfg),
         *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_state(&cfg),
+        *config::proj_price_function_policy(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a random-in-range `min_rent_price`. All other fields unchanged.
 public(package) fun with_random_min_rent_price(cfg: IntegrationConfig, min_mist: u64, max_mist: u64): IntegrationConfig {
     config::new_config(
-        floor_price_policy_state::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
+        floor_price_policy::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
         *config::proj_tenure_ceiling(&cfg),
         *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_state(&cfg),
+        *config::proj_price_function_policy(&cfg),
     )
 }
 
@@ -198,13 +198,13 @@ public(package) fun with_random_min_rent_price(cfg: IntegrationConfig, min_mist:
 public(package) fun with_tenure_ceiling(cfg: IntegrationConfig, ceiling_ms: u64): IntegrationConfig {
     config::new_config(
         *config::proj_min_rent_price(&cfg),
-        tenure_policy_state::new_fixed(phases::duration(ceiling_ms)),
+        tenure_policy::new_fixed(phases::duration(ceiling_ms)),
         *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_state(&cfg),
+        *config::proj_price_function_policy(&cfg),
     )
 }
 
@@ -212,18 +212,18 @@ public(package) fun with_tenure_ceiling(cfg: IntegrationConfig, ceiling_ms: u64)
 public(package) fun with_random_tenure_ceiling(cfg: IntegrationConfig, min_ms: u64, max_ms: u64): IntegrationConfig {
     config::new_config(
         *config::proj_min_rent_price(&cfg),
-        tenure_policy_state::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
+        tenure_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
         *config::proj_tenure_cycles(&cfg),
         *config::proj_handover(&cfg),
         *config::proj_descent(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_state(&cfg),
+        *config::proj_price_function_policy(&cfg),
     )
 }
 
 /// Rebuild `cfg` with a different `tenure_cycles` policy. All other fields unchanged.
-public(package) fun with_tenure_cycles(cfg: IntegrationConfig, policy: TenureCyclesPolicyState): IntegrationConfig {
+public(package) fun with_tenure_cycles(cfg: IntegrationConfig, policy: TenureCyclesPolicy): IntegrationConfig {
     config::new_config(
         *config::proj_min_rent_price(&cfg),
         *config::proj_tenure_ceiling(&cfg),
@@ -232,7 +232,7 @@ public(package) fun with_tenure_cycles(cfg: IntegrationConfig, policy: TenureCyc
         *config::proj_descent(&cfg),
         *config::proj_credit_curve(&cfg),
         *config::proj_descent_curve(&cfg),
-        *config::proj_price_function_state(&cfg),
+        *config::proj_price_function_policy(&cfg),
     )
 }
 
@@ -350,16 +350,16 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): CorpusEntry {
     }
 }
 
-/// CommitmentPolicyState for the given tag (f axis: 0=Immediate, 1=Deferred).
-public(package) fun commitment_by_tag(tag: u64): CommitmentPolicyState {
+/// CommitmentPolicy for the given tag (f axis: 0=Immediate, 1=Deferred).
+public(package) fun commitment_by_tag(tag: u64): CommitmentPolicy {
     make_commitment((tag % 10) as u8)
 }
 
 fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8, m: u8): IntegrationConfig {
     let curve = make_curve(e);
     config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(MIN_RENT_PRICE)),
-        tenure_policy_state::new_fixed(phases::duration(TENURE_CEILING)),
+        floor_price_policy::new_fixed(monetary::price(MIN_RENT_PRICE)),
+        tenure_policy::new_fixed(phases::duration(TENURE_CEILING)),
         make_tenure_cycles(m),
         make_handover(c),
         make_descent(h),
@@ -378,42 +378,42 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): u64 {
     (f as u64)
 }
 
-fun make_handover(c: u8): HandoverPolicyState {
-    if (c == 0)      { handover_policy_state::new_handover_instant() }
-    else if (c == 1) { handover_policy_state::new_handover_countdown(phases::duration(HANDOVER_COUNTDOWN_C1)) }
-    else if (c == 2) { handover_policy_state::new_handover_fixed_time() }
-    else             { handover_policy_state::new_handover_random_in_range(phases::duration(HANDOVER_RANDOM_MIN_C3), phases::duration(HANDOVER_RANDOM_MAX_C3)) }
+fun make_handover(c: u8): HandoverPolicy {
+    if (c == 0)      { handover_policy::new_handover_instant() }
+    else if (c == 1) { handover_policy::new_handover_countdown(phases::duration(HANDOVER_COUNTDOWN_C1)) }
+    else if (c == 2) { handover_policy::new_handover_fixed_time() }
+    else             { handover_policy::new_handover_random_in_range(phases::duration(HANDOVER_RANDOM_MIN_C3), phases::duration(HANDOVER_RANDOM_MAX_C3)) }
 }
 
-fun make_price_function_state(d: u8): PriceFunctionState {
-    if (d == 0) { price_function_state::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
-    else        { price_function_state::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
+fun make_price_function_state(d: u8): PriceFunctionPolicy {
+    if (d == 0) { price_function_policy::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
+    else        { price_function_policy::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
 }
 
-fun make_curve(e: u8): CurveShapeState {
-    if (e == 0)      { curve_shape_state::new_linear() }
-    else if (e == 1) { curve_shape_state::new_smoothstep() }
-    else if (e == 2) { curve_shape_state::new_logistic() }
-    else if (e == 3) { curve_shape_state::new_power_law(1, 2) }
-    else if (e == 4) { curve_shape_state::new_power_law(2, 1) }
-    else if (e == 5) { curve_shape_state::new_exponential(2, true) }
-    else             { curve_shape_state::new_exponential(2, false) }
+fun make_curve(e: u8): CurveShapePolicy {
+    if (e == 0)      { curve_shape_policy::new_linear() }
+    else if (e == 1) { curve_shape_policy::new_smoothstep() }
+    else if (e == 2) { curve_shape_policy::new_logistic() }
+    else if (e == 3) { curve_shape_policy::new_power_law(1, 2) }
+    else if (e == 4) { curve_shape_policy::new_power_law(2, 1) }
+    else if (e == 5) { curve_shape_policy::new_exponential(2, true) }
+    else             { curve_shape_policy::new_exponential(2, false) }
 }
 
-fun make_descent(h: u8): DescentPolicyState {
-    if (h == 0)      { descent_policy_state::new_descent_skipped() }
-    else if (h == 1) { descent_policy_state::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
-    else             { descent_policy_state::new_descent_random_in_range(phases::duration(DESCENT_RANDOM_MIN_H2), phases::duration(DESCENT_RANDOM_MAX_H2)) }
+fun make_descent(h: u8): DescentPolicy {
+    if (h == 0)      { descent_policy::new_descent_skipped() }
+    else if (h == 1) { descent_policy::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
+    else             { descent_policy::new_descent_random_in_range(phases::duration(DESCENT_RANDOM_MIN_H2), phases::duration(DESCENT_RANDOM_MAX_H2)) }
 }
 
-fun make_tenure_cycles(m: u8): TenureCyclesPolicyState {
-    if (m == 0) { tenure_cycles_policy_state::new_single() }
-    else        { tenure_cycles_policy_state::new_multi() }
+fun make_tenure_cycles(m: u8): TenureCyclesPolicy {
+    if (m == 0) { tenure_cycles_policy::new_single() }
+    else        { tenure_cycles_policy::new_multi() }
 }
 
-fun make_commitment(f: u8): CommitmentPolicyState {
-    if (f == 0) { commitment_policy_state::new_immediate() }
-    else        { commitment_policy_state::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
+fun make_commitment(f: u8): CommitmentPolicy {
+    if (f == 0) { commitment_policy::new_immediate() }
+    else        { commitment_policy::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
 }
 
 // --- Filter helpers (called after axis validation in filter_*) ---

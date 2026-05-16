@@ -8,17 +8,17 @@ module usufruct::rental_escrow_corpus;
 
 use usufruct::{
     config::{Self, IntegrationConfig},
-    curve_shape_state::{Self, CurveShapeState},
-    descent_policy_state::{Self, DescentPolicyState},
-    handover_policy_state::{Self, HandoverPolicyState},
+    curve_shape_policy::{Self, CurveShapePolicy},
+    descent_policy::{Self, DescentPolicy},
+    handover_policy::{Self, HandoverPolicy},
     math,
-    floor_price_policy_state,
-    tenure_cycles_policy_state,
-    tenure_policy_state,
+    floor_price_policy,
+    tenure_cycles_policy,
+    tenure_policy,
     monetary,
     phases,
-    price_function_state::{Self, PriceFunctionState},
-    commitment_policy_state::{Self, CommitmentPolicyState},
+    price_function_policy::{Self, PriceFunctionPolicy},
+    commitment_policy::{Self, CommitmentPolicy},
 };
 
 // === Errors ===
@@ -44,11 +44,11 @@ const COMPOUND_DELTA_VALUE:  u64 = 1;
 
 public struct CorpusEntry has copy, drop, store {
     cfg: IntegrationConfig,
-    c:   u8,   // 0..2  HandoverPolicyState
-    d:   u8,   // 0..1  PriceFunctionState
-    e:   u8,   // 0..6  CurveShapeState pair
-    h:   u8,   // 0..1  DescentPolicyState
-    f:   u8,   // 0..1  CommitmentPolicyState
+    c:   u8,   // 0..2  HandoverPolicy
+    d:   u8,   // 0..1  PriceFunctionPolicy
+    e:   u8,   // 0..6  CurveShapePolicy pair
+    h:   u8,   // 0..1  DescentPolicy
+    f:   u8,   // 0..1  CommitmentPolicy
     tag: u64,  // c·10_000 + d·1_000 + e·100 + h·10 + f
 }
 
@@ -200,9 +200,9 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8): CorpusEntry {
 fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8): IntegrationConfig {
     let curve = make_curve(e);
     config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(MIN_RENT_PRICE)),
-        tenure_policy_state::new_fixed(phases::duration(TENURE_CEILING)),
-        tenure_cycles_policy_state::new_single(),
+        floor_price_policy::new_fixed(monetary::price(MIN_RENT_PRICE)),
+        tenure_policy::new_fixed(phases::duration(TENURE_CEILING)),
+        tenure_cycles_policy::new_single(),
         make_handover(c),
         make_descent(h),
         curve,
@@ -219,35 +219,35 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64 {
     (f as u64)
 }
 
-fun make_handover(c: u8): HandoverPolicyState {
-    if (c == 0)      { handover_policy_state::new_handover_instant() }
-    else if (c == 1) { handover_policy_state::new_handover_countdown(phases::duration(HANDOVER_COUNTDOWN_C1)) }
-    else             { handover_policy_state::new_handover_fixed_time() }
+fun make_handover(c: u8): HandoverPolicy {
+    if (c == 0)      { handover_policy::new_handover_instant() }
+    else if (c == 1) { handover_policy::new_handover_countdown(phases::duration(HANDOVER_COUNTDOWN_C1)) }
+    else             { handover_policy::new_handover_fixed_time() }
 }
 
-fun make_price_function_state(d: u8): PriceFunctionState {
-    if (d == 0) { price_function_state::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
-    else        { price_function_state::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
+fun make_price_function_state(d: u8): PriceFunctionPolicy {
+    if (d == 0) { price_function_policy::new_fixed_delta(monetary::price(FIXED_DELTA_VALUE)) }
+    else        { price_function_policy::new_compound_delta(math::bps(COMPOUND_DELTA_BPS), monetary::price(COMPOUND_DELTA_VALUE)) }
 }
 
-fun make_curve(e: u8): CurveShapeState {
-    if (e == 0)      { curve_shape_state::new_linear() }
-    else if (e == 1) { curve_shape_state::new_smoothstep() }
-    else if (e == 2) { curve_shape_state::new_logistic() }
-    else if (e == 3) { curve_shape_state::new_power_law(1, 2) }
-    else if (e == 4) { curve_shape_state::new_power_law(2, 1) }
-    else if (e == 5) { curve_shape_state::new_exponential(2, true) }
-    else             { curve_shape_state::new_exponential(2, false) }
+fun make_curve(e: u8): CurveShapePolicy {
+    if (e == 0)      { curve_shape_policy::new_linear() }
+    else if (e == 1) { curve_shape_policy::new_smoothstep() }
+    else if (e == 2) { curve_shape_policy::new_logistic() }
+    else if (e == 3) { curve_shape_policy::new_power_law(1, 2) }
+    else if (e == 4) { curve_shape_policy::new_power_law(2, 1) }
+    else if (e == 5) { curve_shape_policy::new_exponential(2, true) }
+    else             { curve_shape_policy::new_exponential(2, false) }
 }
 
-fun make_descent(h: u8): DescentPolicyState {
-    if (h == 0) { descent_policy_state::new_descent_skipped() }
-    else        { descent_policy_state::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
+fun make_descent(h: u8): DescentPolicy {
+    if (h == 0) { descent_policy::new_descent_skipped() }
+    else        { descent_policy::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
 }
 
-fun make_commitment(f: u8): CommitmentPolicyState {
-    if (f == 0) { commitment_policy_state::new_immediate() }
-    else        { commitment_policy_state::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
+fun make_commitment(f: u8): CommitmentPolicy {
+    if (f == 0) { commitment_policy::new_immediate() }
+    else        { commitment_policy::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
 }
 
 // --- Filter helpers (called after axis validation in filter_*) ---

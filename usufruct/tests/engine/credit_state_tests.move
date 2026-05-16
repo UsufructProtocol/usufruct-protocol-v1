@@ -7,15 +7,15 @@ module usufruct::credit_context_state_tests;
 use usufruct::{
     asset_state,
     config,
-    curve_shape_state,
-    descent_policy_state,
-    handover_policy_state,
-    floor_price_policy_state,
-    tenure_cycles_policy_state,
-    tenure_policy_state,
+    curve_shape_policy,
+    descent_policy,
+    handover_policy,
+    floor_price_policy,
+    tenure_cycles_policy,
+    tenure_policy,
     monetary,
     phases,
-    price_function_state,
+    price_function_policy,
 };
 
 const MIN:    u64 = 10_000_000_000;
@@ -26,14 +26,14 @@ const EXPIRY: u64 = T0 + 25_000;
 
 fun base_cfg(): config::IntegrationConfig {
     config::new_config(
-        floor_price_policy_state::new_fixed(monetary::price(MIN)),
-        tenure_policy_state::new_fixed(phases::duration(TENURE)),
-        tenure_cycles_policy_state::new_single(),
-        handover_policy_state::new_handover_instant(),
-        descent_policy_state::new_descent_skipped(),
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_linear(),
-        price_function_state::new_fixed_delta(monetary::price(MIN)),
+        floor_price_policy::new_fixed(monetary::price(MIN)),
+        tenure_policy::new_fixed(phases::duration(TENURE)),
+        tenure_cycles_policy::new_single(),
+        handover_policy::new_handover_instant(),
+        descent_policy::new_descent_skipped(),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        price_function_policy::new_fixed_delta(monetary::price(MIN)),
     )
 }
 
@@ -86,27 +86,27 @@ fun accruing_is_monotone_non_decreasing() {
 #[test]
 fun accruing_various_curves_stay_in_bounds() {
     let curves = vector[
-        curve_shape_state::new_linear(),
-        curve_shape_state::new_smoothstep(),
-        curve_shape_state::new_logistic(),
-        curve_shape_state::new_power_law(1, 2),
-        curve_shape_state::new_power_law(2, 1),
-        curve_shape_state::new_exponential(2, true),
-        curve_shape_state::new_exponential(2, false),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_smoothstep(),
+        curve_shape_policy::new_logistic(),
+        curve_shape_policy::new_power_law(1, 2),
+        curve_shape_policy::new_power_law(2, 1),
+        curve_shape_policy::new_exponential(2, true),
+        curve_shape_policy::new_exponential(2, false),
     ];
     let mid = T0 + TENURE / 2;
     let mut i = 0;
     while (i < curves.length()) {
         let curve = *curves.borrow(i);
         let cfg = config::new_config(
-            floor_price_policy_state::new_fixed(monetary::price(MIN)),
-            tenure_policy_state::new_fixed(phases::duration(TENURE)),
-            tenure_cycles_policy_state::new_single(),
-            handover_policy_state::new_handover_instant(),
-            descent_policy_state::new_descent_skipped(),
+            floor_price_policy::new_fixed(monetary::price(MIN)),
+            tenure_policy::new_fixed(phases::duration(TENURE)),
+            tenure_cycles_policy::new_single(),
+            handover_policy::new_handover_instant(),
+            descent_policy::new_descent_skipped(),
             curve,
-            curve_shape_state::new_linear(),
-            price_function_state::new_fixed_delta(monetary::price(MIN)),
+            curve_shape_policy::new_linear(),
+            price_function_policy::new_fixed_delta(monetary::price(MIN)),
         );
         let c = monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
             monetary::stake(STAKE), phases::timestamp(T0), &cfg, phases::duration(TENURE), phases::timestamp(mid)

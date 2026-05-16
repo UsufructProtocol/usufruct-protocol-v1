@@ -41,15 +41,15 @@ public fun tenures_count(c: Tenures): u64 { c.count }
 public(package) fun is_single(c: Tenures): bool { c.count == 1 }
 
 public(package) fun total_price(floor: Price, c: Tenures): Price {
-    monetary::price(monetary::price_mist(floor) * c.count)
+    monetary::price(math::mul_div(monetary::price_mist(floor), c.count, 1))
 }
 
 public(package) fun per_tenure_stake(stake: Stake, c: Tenures): Stake {
-    monetary::stake(monetary::stake_mist(stake) / c.count)
+    monetary::stake(math::mul_div(monetary::stake_mist(stake), 1, c.count))
 }
 
 public(package) fun total_duration(d: Duration, c: Tenures): Duration {
-    phases::duration(phases::duration_ms(d) * c.count)
+    phases::duration(math::mul_div(phases::duration_ms(d), c.count, 1))
 }
 
 public(package) fun rescale_duration(d: Duration, from: Tenures, to: Tenures): Duration {

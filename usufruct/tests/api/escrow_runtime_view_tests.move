@@ -18,7 +18,7 @@ use usufruct::{
     asset_state,
     commitment_policy,
     policy_ensemble::PolicyEnsemble,
-    cycles,
+    tenures,
     escrow::{Self, Escrow},
     escrow_corpus,
     owner_cap::{Self, OwnerCap},
@@ -248,7 +248,7 @@ fun rented_views_post_rent() {
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let payment = mk_payment(STAKE, sc.ctx());
-    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
 
     // — Tenant slots — current populated, pending still empty —
@@ -298,7 +298,7 @@ fun settlement_views_in_rented_state() {
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let payment = mk_payment(STAKE, sc.ctx());
-    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
 
     // tenure_settlement: aborts unless rented; here it succeeds and the
@@ -337,12 +337,12 @@ fun settlement_views_in_demand_state() {
 
     // First rent: Idle → Occupied. Current tenant stake = STAKE.
     let payment1 = mk_payment(STAKE, sc.ctx());
-    let t_cap1   = escrow::rent(&mut escrow, payment1, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap1   = escrow::rent(&mut escrow, payment1, tenures::tenures(1), &random, &clk, sc.ctx());
 
     // Second rent: Occupied → Demand (places a bid).
     let floor2   = escrow::compute_floor_price(&escrow, &clk);
     let payment2 = mk_payment(floor2, sc.ctx());
-    let t_cap2   = escrow::rent(&mut escrow, payment2, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap2   = escrow::rent(&mut escrow, payment2, tenures::tenures(1), &random, &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), 0);
     test_scenario::return_shared(random);
 
@@ -379,7 +379,7 @@ fun at_dutch_views_after_tenure_expiry() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let payment = mk_payment(STAKE, sc.ctx());
-    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &random, &clk, sc.ctx());
 
     // Before tenure_expiry: no pending transition.
     assert!(!escrow::has_pending_transition_states(&escrow, &clk));
@@ -473,7 +473,7 @@ fun demand_views_after_handover_bid() {
 
     // First rent: Idle → Occupied at min_rent_price.
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let t1_cap = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t1_cap = escrow::rent(&mut escrow, p1, tenures::tenures(1), &random, &clk, sc.ctx());
 
     // Second rent at a later time: Occupied → Demand. floor escalates by
     // state (compute_floor_price returns the right value for either state).
@@ -482,7 +482,7 @@ fun demand_views_after_handover_bid() {
     clock::set_for_testing(&mut clk, 5_000);
     let floor2 = escrow::compute_floor_price(&escrow, &clk);
     let p2     = mk_payment(floor2, sc.ctx());
-    let t2_cap = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t2_cap = escrow::rent(&mut escrow, p2, tenures::tenures(1), &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
 
     // — State predicates —
@@ -534,7 +534,7 @@ fun retiring_flag_views_after_retire_during_renting() {
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let payment = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &random, &clk, sc.ctx());
 
     // Owner sets retire flag while in Occupied — flag is set, state remains
     // Occupied until tenure expiry handles it.
@@ -594,7 +594,7 @@ fun cartesian_state_projector_matrix() {
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let payment = mk_payment(STAKE, sc.ctx());
-    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
     assert_projector_pattern(&escrow, STATE_OCCUPIED);
     transfer::public_transfer(t_cap, TENANT_ADDR);
@@ -607,13 +607,13 @@ fun cartesian_state_projector_matrix() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let t1_cap = escrow::rent(&mut escrow, p1, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t1_cap = escrow::rent(&mut escrow, p1, tenures::tenures(1), &random, &clk, sc.ctx());
     let second_tenant: address = @0xA2;
     sc.next_tx(second_tenant);
     clock::set_for_testing(&mut clk, 5_000);
     let floor2 = escrow::compute_floor_price(&escrow, &clk);
     let p2     = mk_payment(floor2, sc.ctx());
-    let t2_cap = escrow::rent(&mut escrow, p2, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t2_cap = escrow::rent(&mut escrow, p2, tenures::tenures(1), &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
     assert_projector_pattern(&escrow, STATE_DEMAND);
     transfer::public_transfer(t1_cap, TENANT_ADDR);
@@ -627,7 +627,7 @@ fun cartesian_state_projector_matrix() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let payment = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
-    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &random, &clk, sc.ctx());
     let expiry  = escrow::tenure_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, expiry);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -657,7 +657,7 @@ fun tenant_cap_views_in_at_dutch_state() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let payment = mk_payment(STAKE, sc.ctx());
-    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &random, &clk, sc.ctx());
 
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -708,7 +708,7 @@ fun tenant_cap_is_pending_in_occupied_returns_false() {
     let clk     = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
     let payment = mk_payment(STAKE, sc.ctx());
-    let t_cap   = escrow::rent(&mut escrow, payment, cycles::cycles(1), &random, &clk, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
     assert!(escrow::is_occupied(&escrow), 0);
 

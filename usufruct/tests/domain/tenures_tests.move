@@ -2,36 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::cycles_tests;
+module usufruct::tenures_tests;
 
 use std::unit_test::assert_eq;
 use usufruct::{
-    cycles,
+    tenures,
     monetary,
 };
 
 // ─── cycles() — abort ─────────────────────────────────────────────────────────
 
-#[test, expected_failure(abort_code = cycles::ECyclesZero, location = usufruct::cycles)]
+#[test, expected_failure(abort_code = tenures::ETenuresZero, location = usufruct::tenures)]
 fun cycles_zero_aborts() {
-    cycles::cycles(0);
+    tenures::tenures(0);
 }
 
 // ─── is_single ────────────────────────────────────────────────────────────────
 
 #[test]
 fun is_single_true_for_one() {
-    assert!(cycles::is_single(cycles::cycles(1)), 0);
+    assert!(tenures::is_single(tenures::tenures(1)), 0);
 }
 
 #[test]
 fun is_single_false_for_two() {
-    assert!(!cycles::is_single(cycles::cycles(2)), 0);
+    assert!(!tenures::is_single(tenures::tenures(2)), 0);
 }
 
 #[test]
 fun is_single_false_for_large() {
-    assert!(!cycles::is_single(cycles::cycles(100)), 0);
+    assert!(!tenures::is_single(tenures::tenures(100)), 0);
 }
 
 // ─── total_price ──────────────────────────────────────────────────────────────
@@ -56,16 +56,16 @@ fun total_price_table() {
         TotalPriceCase { floor_mist: 1, n: 7, expected: 7 },
     ];
     cases.do_ref!(|c| {
-        let result = monetary::price_mist(cycles::total_price(monetary::price(c.floor_mist), cycles::cycles(c.n)));
+        let result = monetary::price_mist(tenures::total_price(monetary::price(c.floor_mist), tenures::tenures(c.n)));
         assert_eq!(result, c.expected);
     });
 }
 
-// ─── cycles_count extractor ───────────────────────────────────────────────────
+// ─── tenures_count extractor ───────────────────────────────────────────────────
 
 #[test]
-fun cycles_count_roundtrips() {
-    assert_eq!(cycles::cycles_count(cycles::cycles(1)),   1);
-    assert_eq!(cycles::cycles_count(cycles::cycles(5)),   5);
-    assert_eq!(cycles::cycles_count(cycles::cycles(100)), 100);
+fun tenures_count_roundtrips() {
+    assert_eq!(tenures::tenures_count(tenures::tenures(1)),   1);
+    assert_eq!(tenures::tenures_count(tenures::tenures(5)),   5);
+    assert_eq!(tenures::tenures_count(tenures::tenures(100)), 100);
 }

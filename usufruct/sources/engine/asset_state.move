@@ -15,13 +15,13 @@ use usufruct::{
     asset_custody,
     asset_identity::{Self, AssetIdentity},
     policy_ensemble::{Self, PolicyEnsemble},
-    cycles::{Self, Cycles},
+    tenures::{Self, Tenures},
     curve_shape_policy,
     descent_policy,
     floor_price_policy,
     price_function_policy,
     tenure_policy,
-    tenure_cycles_policy,
+    tenures_policy,
     monetary::{Self, Price, Stake},
     owner_seat::{Self, OwnerSeat},
     owner_identity,
@@ -87,12 +87,12 @@ public struct TenancySchedule has copy, drop, store {
     phase_start:      Timestamp,
     ceiling_total:    Duration,
     handover_total:   Duration,
-    committed_cycles: Cycles,
+    committed_tenures: Tenures,
 }
 
 public struct HandoverTerms has copy, drop, store {
     expiry: Timestamp,
-    cycles: Cycles,
+    tenures: Tenures,
 }
 
 public struct AuctionTerms has copy, drop, store {
@@ -628,10 +628,10 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
         },
         AssetState::Retired { .. } => abort ERetiredNoBid,
         AssetState::Occupied { terms, .. } => {
-            ascending_floor_price(cycles::per_cycle_stake(tenant_seat::proj_stake_value(&terms.current), terms.schedule.committed_cycles), &core.ensemble.active)
+            ascending_floor_price(tenures::per_tenure_stake(tenant_seat::proj_stake_value(&terms.current), terms.schedule.committed_tenures), &core.ensemble.active)
         },
         AssetState::Demand { bid, .. } => {
-            ascending_floor_price(cycles::per_cycle_stake(tenant_seat::proj_stake_value(&bid.pending), bid.handover.cycles), &core.ensemble.active)
+            ascending_floor_price(tenures::per_tenure_stake(tenant_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
         },
     }
 }
@@ -797,13 +797,13 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     s:       AssetState<Asset, CoinType>,
     core:    &mut EscrowCore<CoinType>,
     payment: Coin<CoinType>,
-    cycles:  Cycles,
+    tenures: Tenures,
     random:  &Random,
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): (AssetState<Asset, CoinType>, TenantCap) {
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
-    tenure_cycles_policy::validate(policy_ensemble::proj_tenure_cycles(&core.ensemble.active), cycles);
+    tenures_policy::validate(policy_ensemble::proj_tenures(&core.ensemble.active), tenures);
     let now                = phases::now(clock);
     let escrow_identity    = core.escrow_identity;
     let fee_inbox_identity = core.fee_inbox_identity;
@@ -811,27 +811,27 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         AssetState::Retired { asset: _retired } => abort ERetiredNoBid,
         AssetState::Idle { asset, cycle } => {
             let floor = cycle.floor;
-            assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
-            do_install(asset, cycle, cycles, escrow_identity, payment, floor, now, ctx)
+            assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
+            do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::AtDutch { asset, auction, cycle } => {
             let floor = descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.ensemble.active, now);
-            assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
-            do_install(asset, cycle, cycles, escrow_identity, payment, floor, now, ctx)
+            assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
+            do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Occupied { asset, terms, cycle } => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = tenant_seat::proj_stake_value(&terms.current);
-            let floor = ascending_floor_price(cycles::per_cycle_stake(stake, terms.schedule.committed_cycles), &core.ensemble.active);
-            assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
-            do_place_bid(asset, terms, cycle, cycles, escrow_identity, payment, floor, now, ctx)
+            let floor = ascending_floor_price(tenures::per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
+            assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
+            do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Demand { asset, terms, bid, cycle } => {
             let stake = tenant_seat::proj_stake_value(&bid.pending);
-            let floor = ascending_floor_price(cycles::per_cycle_stake(stake, bid.handover.cycles), &core.ensemble.active);
-            assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
+            let floor = ascending_floor_price(tenures::per_tenure_stake(stake, bid.handover.tenures), &core.ensemble.active);
+            assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
             do_supersede_bid(
-                asset, terms, bid, cycle, cycles,
+                asset, terms, bid, cycle, tenures,
                 &mut core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
             )
         },
@@ -1177,7 +1177,7 @@ fun do_handover<Asset: key + store, CoinType>(
     ctx:                &mut TxContext,
 ): AssetState<Asset, CoinType> {
     let OccupiedTerms { schedule, current, retire } = terms;
-    let DemandTerms { pending, handover: HandoverTerms { expiry: _, cycles: incoming_cycles } } = bid;
+    let DemandTerms { pending, handover: HandoverTerms { expiry: _, tenures: incoming_tenures } } = bid;
 
     let principal   = tenant_seat::proj_stake_value(&current);
     let used_credit = capped_used_credit(principal, schedule.phase_start, boundary, config, schedule.ceiling_total, boundary);
@@ -1217,9 +1217,9 @@ fun do_handover<Asset: key + store, CoinType>(
 
     let new_schedule = TenancySchedule {
         phase_start:      boundary,
-        ceiling_total:    cycles::rescale_duration(schedule.ceiling_total, schedule.committed_cycles, incoming_cycles),
-        handover_total:   cycles::rescale_duration(schedule.handover_total, schedule.committed_cycles, incoming_cycles),
-        committed_cycles: incoming_cycles,
+        ceiling_total:    tenures::rescale_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures),
+        handover_total:   tenures::rescale_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures),
+        committed_tenures: incoming_tenures,
     };
     AssetState::Occupied {
         asset,
@@ -1282,7 +1282,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     asset:           asset_custody::AssetCustodyOpen<Asset>,
     terms:           OccupiedTerms<CoinType>,
     cycle:           CycleParams,
-    cycles:          Cycles,
+    tenures:         Tenures,
     escrow_identity: EscrowIdentity,
     payment:         Coin<CoinType>,
     floor:           Price,
@@ -1318,7 +1318,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
             terms,
             bid: DemandTerms {
                 pending:  t,
-                handover: HandoverTerms { expiry, cycles },
+                handover: HandoverTerms { expiry, tenures },
             },
             cycle,
         },
@@ -1331,7 +1331,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     terms:              OccupiedTerms<CoinType>,
     bid:                DemandTerms<CoinType>,
     cycle:              CycleParams,
-    incoming_cycles:    Cycles,
+    incoming_tenures:  Tenures,
     owner:              &mut OwnerSeat<CoinType>,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
@@ -1340,7 +1340,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     now:                Timestamp,
     ctx:                &mut TxContext,
 ): (AssetState<Asset, CoinType>, TenantCap) {
-    let DemandTerms { pending, handover: HandoverTerms { expiry: handover_expiry, cycles: _ } } = bid;
+    let DemandTerms { pending, handover: HandoverTerms { expiry: handover_expiry, tenures: _ } } = bid;
 
     let protected_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
     let protected_addr   = tenant_identity::proj_address(tenant_seat::proj_identity(&terms.current));
@@ -1381,7 +1381,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
             terms,
             bid: DemandTerms {
                 pending:  t,
-                handover: HandoverTerms { expiry: handover_expiry, cycles: incoming_cycles },
+                handover: HandoverTerms { expiry: handover_expiry, tenures: incoming_tenures },
             },
             cycle,
         },
@@ -1483,7 +1483,7 @@ fun do_withdraw<CoinType>(
 fun do_install<Asset: key + store, CoinType>(
     locked:          asset_custody::AssetCustodyLocked<Asset>,
     cycle:           CycleParams,
-    cycles:          Cycles,
+    tenures:         Tenures,
     escrow_identity: EscrowIdentity,
     payment:         Coin<CoinType>,
     floor:           Price,
@@ -1500,9 +1500,9 @@ fun do_install<Asset: key + store, CoinType>(
     let wrapped = asset_custody::open_tenancy(locked);
     let schedule = TenancySchedule {
         phase_start:      now,
-        ceiling_total:    cycles::total_duration(cycle.ceiling, cycles),
-        handover_total:   cycles::total_duration(cycle.handover, cycles),
-        committed_cycles: cycles,
+        ceiling_total:    tenures::total_duration(cycle.ceiling, tenures),
+        handover_total:   tenures::total_duration(cycle.handover, tenures),
+        committed_tenures: tenures,
     };
     event::emit(RentStarted {
         escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr,
@@ -1762,7 +1762,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
                 phase_start,
                 ceiling_total:    cycle.ceiling,
                 handover_total:   cycle.handover,
-                committed_cycles: cycles::cycles(1),
+                committed_tenures: tenures::tenures(1),
             };
             AssetState::Occupied {
                 asset: asset_custody::open_tenancy(asset),
@@ -1790,7 +1790,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
                 terms,
                 bid: DemandTerms {
                     pending:  tenant_in,
-                    handover: HandoverTerms { expiry: handover_countdown_expiry, cycles: cycles::cycles(1) },
+                    handover: HandoverTerms { expiry: handover_countdown_expiry, tenures: tenures::tenures(1) },
                 },
                 cycle,
             },

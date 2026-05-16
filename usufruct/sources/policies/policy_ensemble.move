@@ -12,7 +12,7 @@ use usufruct::{
     handover_policy::{Self, HandoverPolicy},
     floor_price_policy::FloorPricePolicy,
     tenure_policy::{Self as tenure_policy, TenurePolicy},
-    tenure_cycles_policy::TenureCyclesPolicy,
+    tenures_policy::TenuresPolicy,
     price_function_policy::PriceFunctionPolicy,
 };
 
@@ -27,7 +27,7 @@ const EHandoverFloorExceedsTenure: u64 = 2;
 public struct PolicyEnsemble has copy, drop, store {
     min_rent_price:   FloorPricePolicy,
     tenure_ceiling:   TenurePolicy,
-    tenure_cycles:    TenureCyclesPolicy,
+    tenures:    TenuresPolicy,
     handover:         HandoverPolicy,
     descent:          DescentPolicy,
     credit_curve:     CurveShapePolicy,
@@ -49,7 +49,7 @@ public struct PolicyEnsembleRegistered has copy, drop {
 public fun new_ensemble(
     min_rent_price:  FloorPricePolicy,
     tenure_ceiling:  TenurePolicy,
-    tenure_cycles:   TenureCyclesPolicy,
+    tenures:   TenuresPolicy,
     handover:        HandoverPolicy,
     descent:         DescentPolicy,
     credit_curve:    CurveShapePolicy,
@@ -63,7 +63,7 @@ public fun new_ensemble(
     PolicyEnsemble {
         min_rent_price,
         tenure_ceiling,
-        tenure_cycles,
+        tenures,
         handover,
         descent,
         credit_curve,
@@ -76,7 +76,7 @@ public fun new_ensemble(
 
 public(package) fun proj_min_rent_price(cfg: &PolicyEnsemble):        &FloorPricePolicy      { &cfg.min_rent_price }
 public(package) fun proj_tenure_ceiling(cfg: &PolicyEnsemble):         &TenurePolicy          { &cfg.tenure_ceiling }
-public(package) fun proj_tenure_cycles(cfg: &PolicyEnsemble):          &TenureCyclesPolicy    { &cfg.tenure_cycles }
+public(package) fun proj_tenures(cfg: &PolicyEnsemble):          &TenuresPolicy    { &cfg.tenures }
 public(package) fun proj_handover(cfg: &PolicyEnsemble):               &HandoverPolicy         { &cfg.handover }
 public(package) fun proj_descent(cfg: &PolicyEnsemble):               &DescentPolicy   { &cfg.descent }
 public(package) fun proj_credit_curve(cfg: &PolicyEnsemble):          &CurveShapePolicy      { &cfg.credit_curve }

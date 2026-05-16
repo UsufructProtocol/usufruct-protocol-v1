@@ -15,7 +15,7 @@ use sui::{
 use usufruct::{
     policy_ensemble::{Self, PolicyEnsemble},
     curve_shape_policy::{Self as curve, CurveShapePolicy},
-    cycles::Cycles,
+    tenures::Tenures,
     descent_policy,
     asset_state::{Self, EscrowCore, AssetState, AssetReceipt},
     handover_policy,
@@ -149,7 +149,7 @@ public fun update_config<Asset: key + store, CoinType>(
 public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut Escrow<Asset, CoinType>,
     payment: Coin<CoinType>,
-    cycles:  Cycles,
+    cycles:  Tenures,
     random:  &Random,
     clock:   &Clock,
     ctx:     &mut TxContext,

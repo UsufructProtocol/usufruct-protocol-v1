@@ -17,7 +17,7 @@ use usufruct::{
     asset_custody::{Self},
     asset_state::{Self},
     commitment_policy,
-    cycles,
+    tenures,
     escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
@@ -333,11 +333,11 @@ fun burn_live_current_cap_in_demand_aborts() {
 
     // Rent #1: Idle → Occupied. cap_t1 becomes current.
     let p1     = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &rnd, &clk, sc.ctx());
     // Rent #2: Occupied → Demand (place_bid). cap_t2 becomes pending,
     // cap_t1 stays current.
     let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::compute_floor_price(&escrow, &clk)), sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &rnd, &clk, sc.ctx());
 
     // Burn the live current cap — must abort.
     escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &rnd, &clk, sc.ctx());
@@ -361,9 +361,9 @@ fun burn_live_pending_cap_in_demand_aborts() {
     let rnd = sc.take_shared<Random>();
 
     let p1     = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &rnd, &clk, sc.ctx());
     let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::compute_floor_price(&escrow, &clk)), sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &rnd, &clk, sc.ctx());
 
     // Burn the live pending cap — must abort. This case is distinct
     // from current: pending lives only in Demand. In the legacy form
@@ -394,7 +394,7 @@ fun double_borrow_aborts() {
     let rnd = sc.take_shared<Random>();
 
     let p = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, p, tenures::tenures(1), &rnd, &clk, sc.ctx());
 
     // First borrow — succeeds, slot is now empty.
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
@@ -434,9 +434,9 @@ fun cross_escrow_return_with_authentic_receipt_aborts() {
 
     // Rent on both escrows so they are in Occupied state.
     let p_a = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap_a = escrow::rent(&mut escrow_a, p_a, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let t_cap_a = escrow::rent(&mut escrow_a, p_a, tenures::tenures(1), &rnd, &clk, sc.ctx());
     let p_b = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap_b = escrow::rent(&mut escrow_b, p_b, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let t_cap_b = escrow::rent(&mut escrow_b, p_b, tenures::tenures(1), &rnd, &clk, sc.ctx());
 
     // Borrow from A — receipt_a carries escrow_a's identity.
     let (asset_a, receipt_a) = escrow::borrow_asset(&mut escrow_a, &t_cap_a, &rnd, &clk, sc.ctx());
@@ -470,9 +470,9 @@ fun cross_borrow_asset_swap_aborts() {
     let rnd = sc.take_shared<Random>();
 
     let p_a = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap_a = escrow::rent(&mut escrow_a, p_a, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let t_cap_a = escrow::rent(&mut escrow_a, p_a, tenures::tenures(1), &rnd, &clk, sc.ctx());
     let p_b = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap_b = escrow::rent(&mut escrow_b, p_b, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let t_cap_b = escrow::rent(&mut escrow_b, p_b, tenures::tenures(1), &rnd, &clk, sc.ctx());
 
     let (asset_a, receipt_a) = escrow::borrow_asset(&mut escrow_a, &t_cap_a, &rnd, &clk, sc.ctx());
     let (asset_b, receipt_b) = escrow::borrow_asset(&mut escrow_b, &t_cap_b, &rnd, &clk, sc.ctx());
@@ -505,7 +505,7 @@ fun return_with_swapped_asset_aborts() {
     let rnd = sc.take_shared<Random>();
 
     let p = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap = escrow::rent(&mut escrow, p, cycles::cycles(1), &rnd, &clk, sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, p, tenures::tenures(1), &rnd, &clk, sc.ctx());
 
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
     // Sink the borrowed asset; present a fresh object with the authentic receipt.

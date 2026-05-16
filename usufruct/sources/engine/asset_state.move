@@ -32,7 +32,6 @@ use usufruct::{
     protocol_fee_ref::{Self, FeeInboxIdentity},
     tenant_cap::{Self, TenantCap, TenantCapIdentity},
     refund_state,
-    retire_condition::{Self, RetireCondition},
     tenant::{Self, Tenant},
 };
 
@@ -55,6 +54,7 @@ const ENoEarnings:              u64 = 13;
 const ERetireAlreadyScheduled:  u64 = 16;
 const ECommitmentNotExtended:     u64 = 17;
 const EReturnedDifferentAsset: u64 = 19;
+const EAlreadyRetiring:        u64 = 20;
 
 // === Constants ===
 
@@ -127,6 +127,11 @@ public struct EscrowCore<phantom CoinType> has store {
 }
 
 // === Enums ===
+
+public enum RetireCondition has store, drop {
+    NotRetiring,
+    Retiring,
+}
 
 public enum RentingState<Asset: key + store, phantom CoinType> {
     Occupied { asset: asset::AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
@@ -379,7 +384,7 @@ public(package) fun proj_is_retiring<Asset: key + store, CoinType>(
 ): bool {
     match (s) {
         AssetState::Occupied { terms, .. } | AssetState::Demand { terms, .. } =>
-            retire_condition::proj_is_retiring(&terms.retire),
+            retire_condition_is_retiring(&terms.retire),
         _ => false,
     }
 }
@@ -811,7 +816,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
             do_install(asset, cycle, cycles, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Occupied { asset, terms, cycle } => {
-            if (retire_condition::proj_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
+            if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = tenant::proj_stake_value(&terms.current);
             let floor = ascending_floor_price(cycles::per_cycle_stake(stake, terms.schedule.committed_cycles), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(cycles::total_price(floor, cycles)), EInsufficientPayment);
@@ -854,12 +859,12 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
         AssetState::Occupied { asset, terms, cycle } => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition::set(retire) }, cycle }
+            AssetState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, cycle }
         },
         AssetState::Demand { asset, terms, bid, cycle } => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition::set(retire) }, bid, cycle }
+            AssetState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, bid, cycle }
         },
     }
 }
@@ -895,13 +900,13 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             AssetState::AtDutch { asset, auction, cycle }
         },
         AssetState::Occupied { asset, terms, cycle } => {
-            assert!(!retire_condition::proj_is_retiring(&terms.retire), ERetireAlreadyScheduled);
+            assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.ensemble.pending = option::some(new_cfg);
             AssetState::Occupied { asset, terms, cycle }
         },
         AssetState::Demand { asset, terms, bid, cycle } => {
-            assert!(!retire_condition::proj_is_retiring(&terms.retire), ERetireAlreadyScheduled);
+            assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_cfg });
             core.ensemble.pending = option::some(new_cfg);
             AssetState::Demand { asset, terms, bid, cycle }
@@ -1256,7 +1261,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     });
 
     let locked = asset::close_tenancy(asset);
-    if (retire_condition::proj_is_retiring(&retire)) {
+    if (retire_condition_is_retiring(&retire)) {
         event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
         config.pending = option::none();
         AssetState::Retired { asset: locked }
@@ -1502,7 +1507,7 @@ fun do_install<Asset: key + store, CoinType>(
     (
         AssetState::Occupied {
             asset: wrapped,
-            terms: OccupiedTerms { schedule, current: t, retire: retire_condition::new() },
+            terms: OccupiedTerms { schedule, current: t, retire: retire_condition_new() },
             cycle,
         },
         cap,
@@ -1541,6 +1546,19 @@ fun do_retire_immediately<Asset: key + store, CoinType>(
     event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms });
     event::emit(AssetRetired { escrow_id: raw_escrow_id, timestamp_ms });
     AssetState::Retired { asset }
+}
+
+fun retire_condition_new(): RetireCondition { RetireCondition::NotRetiring }
+
+fun retire_condition_is_retiring(r: &RetireCondition): bool {
+    match (r) { RetireCondition::Retiring => true, RetireCondition::NotRetiring => false }
+}
+
+fun retire_condition_set(r: RetireCondition): RetireCondition {
+    match (r) {
+        RetireCondition::NotRetiring => RetireCondition::Retiring,
+        RetireCondition::Retiring    => abort EAlreadyRetiring,
+    }
 }
 
 fun accruing_used_credit(
@@ -1744,7 +1762,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
             };
             AssetState::Occupied {
                 asset: asset::open_tenancy(asset),
-                terms: OccupiedTerms { schedule, current: tenant_in, retire: retire_condition::new() },
+                terms: OccupiedTerms { schedule, current: tenant_in, retire: retire_condition_new() },
                 cycle,
             }
         },
@@ -1829,11 +1847,11 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
     match (state) {
         AssetState::Occupied { asset, terms, cycle } => {
             let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition::set_for_testing(retire) }, cycle }
+            AssetState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set_for_testing(retire) }, cycle }
         },
         AssetState::Demand { asset, terms, bid, cycle } => {
             let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition::set_for_testing(retire) }, bid, cycle }
+            AssetState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set_for_testing(retire) }, bid, cycle }
         },
         AssetState::Idle    { asset: _a, .. } => abort ENotRented,
         AssetState::AtDutch { asset: _a, .. } => abort ENotRented,
@@ -1955,5 +1973,11 @@ public(package) fun descending_floor_price_for_testing(
     now:              Timestamp,
 ): Price {
     descending_floor_price(last_acq_price, phase_start, resolved_floor, resolved_descent, cfg, now)
+}
+
+#[test_only]
+public(package) fun retire_condition_set_for_testing(r: RetireCondition): RetireCondition {
+    let _ = r;
+    RetireCondition::Retiring
 }
 

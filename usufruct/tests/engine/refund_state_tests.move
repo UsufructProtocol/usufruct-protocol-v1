@@ -11,9 +11,9 @@ use usufruct::{
     owner_earning::{Self, OwnerEarnings},
     escrow_identity,
     refund_state,
-    tenant_seat,
-    tenant_identity::{Self, TenantIdentity},
-    tenant_stake::{Self, TenantStake},
+    tenant_seat::{Self, TenantSeat},
+    tenant_identity,
+    tenant_stake,
     tenant_cap,
 };
 
@@ -26,12 +26,8 @@ const ADDR_T1: address = @0xA1;
 fun cap_t1(): ID { object::id_from_address(@0xCA1) }
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 
-/// Build a fresh `(TenantIdentity, TenantStake)` pair via the tenant
-/// constructor + unbundle — the only public path to producing these
-/// types from tests.
-fun id_and_stake(amount: u64): (TenantIdentity, TenantStake<TEST_COIN>) {
-    let t = tenant_seat::new<TEST_COIN>(tenant_cap::from_id(cap_t1()), ADDR_T1, balance::create_for_testing(amount));
-    tenant_seat::unbundle(t)
+fun mk_seat(amount: u64): TenantSeat<TEST_COIN> {
+    tenant_seat::new<TEST_COIN>(tenant_cap::from_id(cap_t1()), ADDR_T1, balance::create_for_testing(amount))
 }
 
 fun fee_share(amount: u64): FeeShare<TEST_COIN> {
@@ -46,8 +42,6 @@ fun owner_earnings(amount: u64): OwnerEarnings<TEST_COIN> {
 
 #[test]
 fun nothing_constructs_nothing_variant() {
-    let (_, stake) = id_and_stake(0);
-    tenant_stake::destroy_zero(stake);
     let rs = refund_state::nothing<TEST_COIN>(fee_share(50), owner_earnings(450));
     assert!(refund_state::proj_is_nothing(&rs));
     assert!(!refund_state::proj_is_parcial(&rs));
@@ -57,8 +51,7 @@ fun nothing_constructs_nothing_variant() {
 
 #[test]
 fun parcial_constructs_parcial_variant() {
-    let (id, stake) = id_and_stake(300);
-    let rs = refund_state::parcial<TEST_COIN>(id, stake, fee_share(50), owner_earnings(450));
+    let rs = refund_state::parcial<TEST_COIN>(mk_seat(300), fee_share(50), owner_earnings(450));
     assert!(refund_state::proj_is_parcial(&rs));
     assert!(!refund_state::proj_is_nothing(&rs));
     assert!(!refund_state::proj_is_total(&rs));
@@ -67,8 +60,7 @@ fun parcial_constructs_parcial_variant() {
 
 #[test]
 fun total_constructs_total_variant() {
-    let (id, stake) = id_and_stake(1_000);
-    let rs = refund_state::total<TEST_COIN>(id, stake);
+    let rs = refund_state::total<TEST_COIN>(mk_seat(1_000));
     assert!(refund_state::proj_is_total(&rs));
     assert!(!refund_state::proj_is_nothing(&rs));
     assert!(!refund_state::proj_is_parcial(&rs));
@@ -83,17 +75,13 @@ fun total_constructs_total_variant() {
 // three arms without leaks.
 #[test]
 fun destroy_for_testing_handles_all_three_variants() {
-    let (_, stake_n) = id_and_stake(0);
-    tenant_stake::destroy_zero(stake_n);
     let nothing = refund_state::nothing<TEST_COIN>(fee_share(10), owner_earnings(20));
     refund_state::destroy_for_testing(nothing);
 
-    let (id_p, stake_p) = id_and_stake(100);
-    let parcial = refund_state::parcial<TEST_COIN>(id_p, stake_p, fee_share(10), owner_earnings(20));
+    let parcial = refund_state::parcial<TEST_COIN>(mk_seat(100), fee_share(10), owner_earnings(20));
     refund_state::destroy_for_testing(parcial);
 
-    let (id_t, stake_t) = id_and_stake(1_000);
-    let total = refund_state::total<TEST_COIN>(id_t, stake_t);
+    let total = refund_state::total<TEST_COIN>(mk_seat(1_000));
     refund_state::destroy_for_testing(total);
 }
 
@@ -105,9 +93,9 @@ fun destroy_for_testing_handles_all_three_variants() {
 // a guard against future regression if TenantIdentity ever loses copy.
 #[test]
 fun identity_passed_into_variant_is_independent_of_caller_copy() {
-    let (id, stake) = id_and_stake(100);
-    let id_copy_before = id;
-    let _ = tenant_identity::proj_cap_identity(&id_copy_before);
-    let rs = refund_state::parcial<TEST_COIN>(id, stake, fee_share(10), owner_earnings(20));
+    let seat = mk_seat(100);
+    let id_copy = *tenant_seat::proj_identity(&seat);
+    let _ = tenant_identity::proj_cap_identity(&id_copy);
+    let rs = refund_state::parcial<TEST_COIN>(seat, fee_share(10), owner_earnings(20));
     refund_state::destroy_for_testing(rs);
 }

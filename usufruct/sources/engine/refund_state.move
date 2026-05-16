@@ -71,24 +71,21 @@ public(package) fun nothing<C>(
 }
 
 public(package) fun parcial<C>(
-    identity:       TenantIdentity,
-    stake:          TenantStake<C>,
+    seat:           TenantSeat<C>,
     fee_share:      FeeShare<C>,
     owner_earnings: OwnerEarnings<C>,
 ): RefundState<C> {
+    let (identity, stake) = tenant_seat::unbundle(seat);
     RefundState::Parcial { identity, stake, fee_share, owner_earnings }
 }
 
-public(package) fun total<C>(
-    identity: TenantIdentity,
-    stake:    TenantStake<C>,
-): RefundState<C> {
+public(package) fun total<C>(seat: TenantSeat<C>): RefundState<C> {
+    let (identity, stake) = tenant_seat::unbundle(seat);
     RefundState::Total { identity, stake }
 }
 
 public(package) fun from_superseded<C>(pending: TenantSeat<C>): RefundState<C> {
-    let (identity, stake) = tenant_seat::unbundle(pending);
-    total(identity, stake)
+    total(pending)
 }
 
 public(package) fun from_departing<C>(
@@ -97,8 +94,7 @@ public(package) fun from_departing<C>(
     owner_earnings: OwnerEarnings<C>,
 ): RefundState<C> {
     if (monetary::stake_mist(tenant_seat::proj_stake_value(&departing)) > 0) {
-        let (identity, stake) = tenant_seat::unbundle(departing);
-        parcial(identity, stake, fee_share, owner_earnings)
+        parcial(departing, fee_share, owner_earnings)
     } else {
         let (_, stake) = tenant_seat::unbundle(departing);
         tenant_stake::destroy_zero(stake);

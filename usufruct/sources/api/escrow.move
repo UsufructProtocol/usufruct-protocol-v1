@@ -156,8 +156,8 @@ public fun rent<Asset: key + store, CoinType>(
 ): TenantCap {
     let state = take_state(escrow);
     let core = escrow.core.borrow_mut();
-    let (new_state, cap) = asset_state::execute_rent(state, core, payment, cycles, random, clock, ctx);
-    put_state(escrow, new_state);
+    let (rs, cap) = asset_state::execute_rent(state, core, payment, cycles, random, clock, ctx);
+    put_state(escrow, asset_state::renting_into_state(rs));
     cap
 }
 
@@ -179,8 +179,8 @@ public fun return_asset<Asset: key + store, CoinType>(
     receipt_in: AssetReceipt<Asset, CoinType>,
 ) {
     let core      = escrow.core.borrow();
-    let new_state = asset_state::execute_return(receipt_in, core, asset);
-    put_state(escrow, new_state);
+    let rs = asset_state::execute_return(receipt_in, core, asset);
+    put_state(escrow, asset_state::renting_into_state(rs));
 }
 
 public fun soft_burn_tenant_cap<Asset: key + store, CoinType>(

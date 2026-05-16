@@ -735,6 +735,12 @@ public(package) fun bps_denominator():  u64 { math::bps_denominator() }
 
 // === Package Functions ===
 
+public(package) fun renting_into_state<Asset: key + store, CoinType>(
+    rs: RentingState<Asset, CoinType>,
+): AssetState<Asset, CoinType> {
+    AssetState::Renting(rs)
+}
+
 public(package) fun execute_integrate<Asset: key + store, CoinType>(
     asset:              Asset,
     ensemble:           PolicyEnsemble,
@@ -799,7 +805,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     random:  &Random,
     clock:   &Clock,
     ctx:     &mut TxContext,
-): (AssetState<Asset, CoinType>, TenantCap) {
+): (RentingState<Asset, CoinType>, TenantCap) {
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     tenures_policy::validate(policy_ensemble::proj_tenures(&core.ensemble.active), tenures);
     let now                = phases::now(clock);
@@ -810,32 +816,28 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Idle { asset, cycle }) => {
             let floor = cycle.floor;
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
-            let (rs, cap) = do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx);
-            (AssetState::Renting(rs), cap)
+            do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
             let floor = descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.ensemble.active, now);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
-            let (rs, cap) = do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx);
-            (AssetState::Renting(rs), cap)
+            do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = tenant_seat::proj_stake_value(&terms.current);
             let floor = ascending_floor_price(tenures::per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
-            let (rs, cap) = do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx);
-            (AssetState::Renting(rs), cap)
+            do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             let stake = tenant_seat::proj_stake_value(&bid.pending);
             let floor = ascending_floor_price(tenures::per_tenure_stake(stake, bid.handover.tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
-            let (rs, cap) = do_supersede_bid(
+            do_supersede_bid(
                 asset, terms, bid, cycle, tenures,
                 &mut core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
-            );
-            (AssetState::Renting(rs), cap)
+            )
         },
     }
 }
@@ -969,7 +971,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     receipt_in: AssetReceipt<Asset, CoinType>,
     core:       &EscrowCore<CoinType>,
     asset_in:   Asset,
-): AssetState<Asset, CoinType> {
+): RentingState<Asset, CoinType> {
     let AssetReceipt { identity, renting } = receipt_in;
     assert_return_valid(&identity, &asset_in, core.escrow_identity);
     match (renting) {
@@ -982,7 +984,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
                 tenant_cap_id: tenant_cap::cap_id(cap_id),
                 tenant:        tenant_addr,
             });
-            AssetState::Renting(RentingState::Occupied { asset, terms, cycle })
+            RentingState::Occupied { asset, terms, cycle }
         },
         RentingState::Demand { mut asset, terms, bid, cycle } => {
             let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
@@ -993,7 +995,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
                 tenant_cap_id: tenant_cap::cap_id(cap_id),
                 tenant:        tenant_addr,
             });
-            AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle })
+            RentingState::Demand { asset, terms, bid, cycle }
         },
     }
 }

@@ -11,8 +11,8 @@ use usufruct::{
     descent_policy,
     handover_policy,
     floor_price_policy,
-    tenures_policy,
-    tenure_policy,
+    tenure_extend_policy,
+    tenure_duration_policy,
     monetary,
     phases,
     price_function_policy,
@@ -27,8 +27,8 @@ const EXPIRY: u64 = T0 + 25_000;
 fun base_cfg(): policy_ensemble::PolicyEnsemble {
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN)),
-        tenure_policy::new_fixed(phases::duration(TENURE)),
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+        tenure_extend_policy::new_single(),
         handover_policy::new_handover_instant(),
         descent_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
@@ -100,8 +100,8 @@ fun accruing_various_curves_stay_in_bounds() {
         let curve = *curves.borrow(i);
         let cfg = policy_ensemble::new_ensemble(
             floor_price_policy::new_fixed(monetary::price(MIN)),
-            tenure_policy::new_fixed(phases::duration(TENURE)),
-            tenures_policy::new_single(),
+            tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+            tenure_extend_policy::new_single(),
             handover_policy::new_handover_instant(),
             descent_policy::new_descent_skipped(),
             curve,

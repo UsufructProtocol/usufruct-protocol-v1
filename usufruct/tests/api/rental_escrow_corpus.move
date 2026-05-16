@@ -13,8 +13,8 @@ use usufruct::{
     handover_policy::{Self, HandoverPolicy},
     math,
     floor_price_policy,
-    tenures_policy,
-    tenure_policy,
+    tenure_extend_policy,
+    tenure_duration_policy,
     monetary,
     phases,
     price_function_policy::{Self, PriceFunctionPolicy},
@@ -201,8 +201,8 @@ fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8): PolicyEnsemble {
     let curve = make_curve(e);
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(TENURE_CEILING)),
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(TENURE_CEILING)),
+        tenure_extend_policy::new_single(),
         make_handover(c),
         make_descent(h),
         curve,

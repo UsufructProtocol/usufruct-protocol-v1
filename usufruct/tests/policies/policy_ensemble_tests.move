@@ -20,8 +20,8 @@ use usufruct::{
     handover_policy::{Self, HandoverPolicy},
     math,
     floor_price_policy,
-    tenures_policy,
-    tenure_policy::{Self, TenurePolicy},
+    tenure_extend_policy,
+    tenure_duration_policy::{Self, TenureDurationPolicy},
     monetary,
     phases,
     price_function_policy,
@@ -41,8 +41,8 @@ fun v2_descent():  DescentPolicy  { descent_policy::new_descent_window(phases::d
 fun v2_config(): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
+        tenure_extend_policy::new_single(),
         v2_handover(),
         v2_descent(),
         curve_shape_policy::new_linear(),
@@ -59,7 +59,7 @@ fun v2_config(): PolicyEnsemble {
 // round-trip assertion compares structurally typed values, not raw u64s.
 public struct Case has drop {
     min_rent_price: u64,
-    tenure_ceiling: TenurePolicy,
+    tenure_ceiling: TenureDurationPolicy,
     handover:       HandoverPolicy,
     descent:        DescentPolicy,
     credit_curve:   curve_shape_policy::CurveShapePolicy,
@@ -73,7 +73,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V1 — minimal valid; HandoverPolicy::Instant
         Case {
             min_rent_price: 1,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(1)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1)),
             handover:       handover_policy::new_handover_instant(),
             descent:        descent_policy::new_descent_window(phases::duration(1)),
             credit_curve:   curve_shape_policy::new_linear(),
@@ -83,7 +83,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V2 — typical: 1h handover countdown in 24h tenure, 12h auction window
         Case {
             min_rent_price: 1_000_000,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(86_400_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(86_400_000)),
             handover:       handover_policy::new_handover_countdown(phases::duration(3_600_000)),
             descent:        descent_policy::new_descent_window(phases::duration(43_200_000)),
             credit_curve:   curve_shape_policy::new_linear(),
@@ -93,7 +93,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V3 — Smoothstep curves
         Case {
             min_rent_price: 100,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(10_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(10_000)),
             handover:       handover_policy::new_handover_countdown(phases::duration(5_000)),
             descent:        descent_policy::new_descent_window(phases::duration(10_000)),
             credit_curve:   curve_shape_policy::new_smoothstep(),
@@ -103,7 +103,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V4 — Instant handover (no bidding window); PowerLaw credit
         Case {
             min_rent_price: 50,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(100_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(100_000)),
             handover:       handover_policy::new_handover_instant(),
             descent:        descent_policy::new_descent_window(phases::duration(50_000)),
             credit_curve:   curve_shape_policy::new_power_law(1, 2),
@@ -113,7 +113,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V5 — u64::MAX min_rent_price; mixed Exp curves
         Case {
             min_rent_price: 18_446_744_073_709_551_615,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(1_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),
             handover:       handover_policy::new_handover_countdown(phases::duration(500)),
             descent:        descent_policy::new_descent_window(phases::duration(1_000)),
             credit_curve:   curve_shape_policy::new_exponential(3, false),
@@ -123,7 +123,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V6 — no upper bound on time params; Window(u64::MAX)
         Case {
             min_rent_price: 1,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(18_446_744_073_709_551_615)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(18_446_744_073_709_551_615)),
             handover:       handover_policy::new_handover_countdown(phases::duration(1)),
             descent:        descent_policy::new_descent_window(phases::duration(18_446_744_073_709_551_615)),
             credit_curve:   curve_shape_policy::new_logistic(),
@@ -133,7 +133,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V7 — CompoundDelta price function: 5% + 100 base units per cycle
         Case {
             min_rent_price: 1_000,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(86_400_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(86_400_000)),
             handover:       handover_policy::new_handover_countdown(phases::duration(3_600_000)),
             descent:        descent_policy::new_descent_window(phases::duration(43_200_000)),
             credit_curve:   curve_shape_policy::new_linear(),
@@ -143,7 +143,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V8 — HandoverPolicy::FixedTime
         Case {
             min_rent_price: 1,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(1_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),
             handover:       handover_policy::new_handover_fixed_time(),
             descent:        descent_policy::new_descent_window(phases::duration(1)),
             credit_curve:   curve_shape_policy::new_linear(),
@@ -153,7 +153,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V9 — FixedTime at u64-extreme tenure_ceiling (independent of magnitude)
         Case {
             min_rent_price: 1,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(18_446_744_073_709_551_615)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(18_446_744_073_709_551_615)),
             handover:       handover_policy::new_handover_fixed_time(),
             descent:        descent_policy::new_descent_window(phases::duration(1)),
             credit_curve:   curve_shape_policy::new_linear(),
@@ -163,7 +163,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V10 — PowerLaw inputs requiring gcd normalization
         Case {
             min_rent_price: 1,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(1_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),
             handover:       handover_policy::new_handover_instant(),
             descent:        descent_policy::new_descent_window(phases::duration(1)),
             credit_curve:   curve_shape_policy::new_power_law(2, 4),
@@ -173,7 +173,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V11 — extreme α values (min convex, max concave) + minimum CompoundDelta
         Case {
             min_rent_price: 1,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(1_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),
             handover:       handover_policy::new_handover_countdown(phases::duration(500)),
             descent:        descent_policy::new_descent_window(phases::duration(1)),
             credit_curve:   curve_shape_policy::new_exponential(1, false),
@@ -183,7 +183,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         // V12 — DescentPolicy::Skipped ("AtDutchAuction unobservable" mode, M6b)
         Case {
             min_rent_price: 1,
-            tenure_ceiling: tenure_policy::new_fixed(phases::duration(1_000)),
+            tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),
             handover:       handover_policy::new_handover_instant(),
             descent:        descent_policy::new_descent_skipped(),
             credit_curve:   curve_shape_policy::new_linear(),
@@ -196,7 +196,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         let cfg = policy_ensemble::new_ensemble(
             floor_price_policy::new_fixed(monetary::price(c.min_rent_price)),
             c.tenure_ceiling,
-            tenures_policy::new_single(),
+            tenure_extend_policy::new_single(),
             c.handover,
             c.descent,
             c.credit_curve,
@@ -222,7 +222,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
 fun getter_roundtrip_r1_min_rent_price_max() {
     let cfg = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(18_446_744_073_709_551_615)),
-        tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenures_policy::new_single(), v2_handover(), v2_descent(),
+        tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
     );
@@ -233,22 +233,22 @@ fun getter_roundtrip_r1_min_rent_price_max() {
 fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
     let cfg = policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(86_400_000)),
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(86_400_000)),
+        tenure_extend_policy::new_single(),
         v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(tenure_policy::proj_is_fixed(policy_ensemble::proj_tenure_ceiling(&cfg)), true);
-    assert_eq!(phases::duration_ms(*option::borrow(&tenure_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_ceiling(&cfg)))), 86_400_000);
+    assert_eq!(tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_ceiling(&cfg)), true);
+    assert_eq!(phases::duration_ms(*option::borrow(&tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_ceiling(&cfg)))), 86_400_000);
 }
 
 #[test]
 fun getter_roundtrip_r3_handover_instant() {
     let h   = handover_policy::new_handover_instant();
     let cfg = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
-        tenures_policy::new_single(),
+        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
+        tenure_extend_policy::new_single(),
         h,
         v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
@@ -262,8 +262,8 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
     // Companion to R3 covering the upper-saturation variant.
     let h   = handover_policy::new_handover_fixed_time();
     let cfg = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
-        tenures_policy::new_single(),
+        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
+        tenure_extend_policy::new_single(),
         h,
         v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
@@ -276,7 +276,7 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
 fun getter_roundtrip_r4_descent_window_one() {
     let d   = descent_policy::new_descent_window(phases::duration(1));
     let cfg = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenures_policy::new_single(), v2_handover(),
+        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
         d,
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
@@ -289,7 +289,7 @@ fun getter_roundtrip_r4b_descent_skipped() {
     // Companion to R4 covering the auction-skipped variant.
     let d   = descent_policy::new_descent_skipped();
     let cfg = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenures_policy::new_single(), v2_handover(),
+        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
         d,
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
@@ -303,7 +303,7 @@ fun getter_roundtrip_r5_credit_curve_power_law_gcd_normalized() {
     // Getter returns the reduced form — normalization is upstream in curve_shape_state.
     let raw = curve_shape_policy::new_power_law(2, 4);
     let cfg = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenures_policy::new_single(), v2_handover(), v2_descent(),
+        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         raw,
         curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
@@ -315,7 +315,7 @@ fun getter_roundtrip_r5_credit_curve_power_law_gcd_normalized() {
 fun getter_roundtrip_r6_descent_curve_logistic() {
     let g = curve_shape_policy::new_logistic();
     let cfg = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenures_policy::new_single(), v2_handover(), v2_descent(),
+        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(),
         g,
         price_function_policy::new_fixed_delta(monetary::price(1)),
@@ -327,7 +327,7 @@ fun getter_roundtrip_r6_descent_curve_logistic() {
 fun getter_roundtrip_r7_price_function_state_compound_delta() {
     let pf = price_function_policy::new_compound_delta(math::bps(500), monetary::price(100));
     let cfg = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenures_policy::new_single(), v2_handover(), v2_descent(),
+        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         pf,
     );
@@ -341,18 +341,18 @@ fun new_config_rejects_min_rent_price_zero() {
     // Validation moved to FloorPricePolicy constructor; new_fixed(0) aborts before new_config.
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(0)),
-        tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenures_policy::new_single(), v2_handover(), v2_descent(),
+        tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
     );
 }
 
-#[test, expected_failure(abort_code = 0, location = usufruct::tenure_policy)]
+#[test, expected_failure(abort_code = 0, location = usufruct::tenure_duration_policy)]
 fun new_config_rejects_tenure_ceiling_zero() {
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(0)),
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(0)),
+        tenure_extend_policy::new_single(),
         v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_function_policy::new_fixed_delta(monetary::price(1)),
@@ -364,8 +364,8 @@ fun new_config_rejects_countdown_floor_gt_tenure_ceiling() {
     // I3: Countdown(100) with tenure_ceiling=50
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(50)),
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(50)),
+        tenure_extend_policy::new_single(),
         handover_policy::new_handover_countdown(phases::duration(100)),
         v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
@@ -378,8 +378,8 @@ fun new_config_rejects_countdown_floor_tenure_ceiling_plus_one() {
     // I4: smallest strictly-greater case — guards off-by-one on the < check
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(1_000)),
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(1_000)),
+        tenure_extend_policy::new_single(),
         handover_policy::new_handover_countdown(phases::duration(1_001)),
         v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
@@ -392,8 +392,8 @@ fun new_config_rejects_countdown_floor_u64_max_tenure_ceiling_max_minus_one() {
     // I5: u64-saturated boundary; confirms plain unsigned compare (no arithmetic overflow)
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(18_446_744_073_709_551_614)), // u64::MAX - 1
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(18_446_744_073_709_551_614)), // u64::MAX - 1
+        tenure_extend_policy::new_single(),
         handover_policy::new_handover_countdown(phases::duration(18_446_744_073_709_551_615)), // u64::MAX
         v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
@@ -408,8 +408,8 @@ fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
     // tenure_ceiling=1_000 — caller must use new_handover_fixed_time() instead.
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(1_000)),
-        tenures_policy::new_single(),
+        tenure_duration_policy::new_fixed(phases::duration(1_000)),
+        tenure_extend_policy::new_single(),
         handover_policy::new_handover_countdown(phases::duration(1_000)),
         v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
@@ -441,7 +441,7 @@ fun emit_registration_e1_full_snapshot() {
 fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
     // new_power_law(2,4) → stored PowerLaw{1,2}; getter returns the reduced form.
     let cfg       = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenures_policy::new_single(), v2_handover(), v2_descent(),
+        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_power_law(2, 4),
         curve_shape_policy::new_power_law(6, 3),
         price_function_policy::new_fixed_delta(monetary::price(1)),

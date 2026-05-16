@@ -13,8 +13,8 @@ use usufruct::{
     handover_policy::{Self, HandoverPolicy},
     math,
     floor_price_policy,
-    tenures_policy::{Self, TenuresPolicy},
-    tenure_policy,
+    tenure_extend_policy::{Self, TenureExtendPolicy},
+    tenure_duration_policy,
     monetary,
     phases,
     price_function_policy::{Self, PriceFunctionPolicy},
@@ -54,7 +54,7 @@ public struct CorpusEntry has copy, drop, store {
     e:   u8,   // 0..6  CurveShapePolicy pair
     h:   u8,   // 0..2  DescentPolicy
     f:   u8,   // 0..1  CommitmentPolicy
-    m:   u8,   // 0..1  TenuresPolicy
+    m:   u8,   // 0..1  TenureExtendPolicy
     tag: u64,  // m·100_000 + c·10_000 + d·1_000 + e·100 + h·10 + f
 }
 
@@ -72,7 +72,7 @@ public use fun entry_m   as CorpusEntry.m;
 // === Package Functions ===
 
 /// Full deterministic corpus — 672 entries, one per (m,c,d,e,h,f) tuple.
-///   m: 0..1  TenuresPolicy (Single, Multi)
+///   m: 0..1  TenureExtendPolicy (Single, Multi)
 ///   c: 0..3  HandoverPolicy     (Instant, Countdown, FixedTime, RandomInRange)
 ///   d: 0..1  PriceFunctionPolicy      (FixedDelta, CompoundDelta)
 ///   e: 0..6  CurveShapePolicy pair    (Linear..Exponential)
@@ -198,7 +198,7 @@ public(package) fun with_random_min_rent_price(cfg: PolicyEnsemble, min_mist: u6
 public(package) fun with_tenure_ceiling(cfg: PolicyEnsemble, ceiling_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         *policy_ensemble::proj_min_rent_price(&cfg),
-        tenure_policy::new_fixed(phases::duration(ceiling_ms)),
+        tenure_duration_policy::new_fixed(phases::duration(ceiling_ms)),
         *policy_ensemble::proj_tenures(&cfg),
         *policy_ensemble::proj_handover(&cfg),
         *policy_ensemble::proj_descent(&cfg),
@@ -212,7 +212,7 @@ public(package) fun with_tenure_ceiling(cfg: PolicyEnsemble, ceiling_ms: u64): P
 public(package) fun with_random_tenure_ceiling(cfg: PolicyEnsemble, min_ms: u64, max_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         *policy_ensemble::proj_min_rent_price(&cfg),
-        tenure_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
+        tenure_duration_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
         *policy_ensemble::proj_tenures(&cfg),
         *policy_ensemble::proj_handover(&cfg),
         *policy_ensemble::proj_descent(&cfg),
@@ -223,7 +223,7 @@ public(package) fun with_random_tenure_ceiling(cfg: PolicyEnsemble, min_ms: u64,
 }
 
 /// Rebuild `cfg` with a different `tenure_cycles` policy. All other fields unchanged.
-public(package) fun with_tenure_cycles(cfg: PolicyEnsemble, policy: TenuresPolicy): PolicyEnsemble {
+public(package) fun with_tenure_cycles(cfg: PolicyEnsemble, policy: TenureExtendPolicy): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         *policy_ensemble::proj_min_rent_price(&cfg),
         *policy_ensemble::proj_tenure_ceiling(&cfg),
@@ -359,7 +359,7 @@ fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8, m: u8): PolicyEnsemble {
     let curve = make_curve(e);
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(MIN_RENT_PRICE)),
-        tenure_policy::new_fixed(phases::duration(TENURE_CEILING)),
+        tenure_duration_policy::new_fixed(phases::duration(TENURE_CEILING)),
         make_tenure_cycles(m),
         make_handover(c),
         make_descent(h),
@@ -406,9 +406,9 @@ fun make_descent(h: u8): DescentPolicy {
     else             { descent_policy::new_descent_random_in_range(phases::duration(DESCENT_RANDOM_MIN_H2), phases::duration(DESCENT_RANDOM_MAX_H2)) }
 }
 
-fun make_tenure_cycles(m: u8): TenuresPolicy {
-    if (m == 0) { tenures_policy::new_single() }
-    else        { tenures_policy::new_multi() }
+fun make_tenure_cycles(m: u8): TenureExtendPolicy {
+    if (m == 0) { tenure_extend_policy::new_single() }
+    else        { tenure_extend_policy::new_multi() }
 }
 
 fun make_commitment(f: u8): CommitmentPolicy {

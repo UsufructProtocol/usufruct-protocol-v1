@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::tenure_policy_tests;
+module usufruct::tenure_duration_policy_tests;
 
 use std::unit_test::assert_eq;
-use usufruct::tenure_policy;
+use usufruct::tenure_duration_policy;
 use usufruct::phases;
 
 // ─── projectors — Fixed variant ──────────────────────────────────────────────
 
 #[test]
 fun projectors_fixed_variant() {
-    let p = tenure_policy::new_fixed(phases::duration(100));
+    let p = tenure_duration_policy::new_fixed(phases::duration(100));
     assert!(p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
     assert_eq!(phases::duration_ms(p.proj_fixed_ceiling().destroy_some()), 100);
@@ -24,7 +24,7 @@ fun projectors_fixed_variant() {
 
 #[test]
 fun projectors_random_in_range_variant() {
-    let p = tenure_policy::new_random_in_range(phases::duration(50), phases::duration(200));
+    let p = tenure_duration_policy::new_random_in_range(phases::duration(50), phases::duration(200));
     assert!(!p.proj_is_fixed());
     assert!(p.proj_is_random_in_range());
     assert!(p.proj_fixed_ceiling().is_none());

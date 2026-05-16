@@ -43,8 +43,8 @@ use usufruct::{
     monetary,
     price_function_policy,
     commitment_policy::{Self, CommitmentPolicy},
-    tenures_policy,
-    tenure_policy,
+    tenure_extend_policy,
+    tenure_duration_policy,
     escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
@@ -6761,9 +6761,9 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     sc.end();
 }
 
-// ─── §TenurePolicy — policy tests ──────────────────────────────────────
+// ─── §TenureDurationPolicy — policy tests ──────────────────────────────────────
 //
-// Mirrors the FloorPricePolicy test suite for TenurePolicy.
+// Mirrors the FloorPricePolicy test suite for TenureDurationPolicy.
 // The observable of resolved_ceiling is tenure_expiry_ms():
 //   tenure_expiry_ms = phase_start + resolved_ceiling
 // At phase_start = 0, tenure_expiry_ms == resolved_ceiling_ms.
@@ -6773,41 +6773,41 @@ const CEILING_RAND_MAX: u64 = 150_000;  // 150k ms
 
 // ── Constructor validation ────────────────────────────────────────────────────
 
-#[test, expected_failure(abort_code = tenure_policy::EDurationZero, location = usufruct::tenure_policy)]
+#[test, expected_failure(abort_code = tenure_duration_policy::EDurationZero, location = usufruct::tenure_duration_policy)]
 fun new_fixed_zero_ceiling_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_policy::new_fixed(phases::duration(0));
+    let _p = tenure_duration_policy::new_fixed(phases::duration(0));
     sc.end();
 }
 
-#[test, expected_failure(abort_code = tenure_policy::EDurationZero, location = usufruct::tenure_policy)]
+#[test, expected_failure(abort_code = tenure_duration_policy::EDurationZero, location = usufruct::tenure_duration_policy)]
 fun new_random_ceiling_zero_min_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_policy::new_random_in_range(
+    let _p = tenure_duration_policy::new_random_in_range(
         phases::duration(0),
         phases::duration(100_000),
     );
     sc.end();
 }
 
-#[test, expected_failure(abort_code = tenure_policy::EMinNotLtMax, location = usufruct::tenure_policy)]
+#[test, expected_failure(abort_code = tenure_duration_policy::EMinNotLtMax, location = usufruct::tenure_duration_policy)]
 fun new_random_ceiling_min_equals_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_policy::new_random_in_range(
+    let _p = tenure_duration_policy::new_random_in_range(
         phases::duration(100_000),
         phases::duration(100_000),
     );
     sc.end();
 }
 
-#[test, expected_failure(abort_code = tenure_policy::EMinNotLtMax, location = usufruct::tenure_policy)]
+#[test, expected_failure(abort_code = tenure_duration_policy::EMinNotLtMax, location = usufruct::tenure_duration_policy)]
 fun new_random_ceiling_min_greater_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = tenure_policy::new_random_in_range(
+    let _p = tenure_duration_policy::new_random_in_range(
         phases::duration(200_000),
         phases::duration(100_000),
     );
@@ -7082,8 +7082,8 @@ fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
     let floor   = escrow_corpus::min_rent_price_const();
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(floor)),
-        tenure_policy::new_fixed(phases::duration(tenure)),
-        tenures_policy::new_multi(),
+        tenure_duration_policy::new_fixed(phases::duration(tenure)),
+        tenure_extend_policy::new_multi(),
         handover_policy::new_handover_fixed_time(),
         descent_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
@@ -7093,7 +7093,7 @@ fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
 }
 
 /// Single policy + cycles(2) → EMultiCycleNotAllowed.
-#[test, expected_failure(abort_code = tenures_policy::EMultiCycleNotAllowed, location = usufruct::tenures_policy)]
+#[test, expected_failure(abort_code = tenure_extend_policy::EMultiCycleNotAllowed, location = usufruct::tenure_extend_policy)]
 fun multi_cycle_single_policy_rejects_cycles_two() {
     let mut sc = setup();
     let cfg = escrow_corpus::by_tag(0); // Single (default corpus)
@@ -7233,8 +7233,8 @@ fun multi_cycle_cfg_countdown(): policy_ensemble::PolicyEnsemble {
     let countdown = escrow_corpus::handover_countdown_c1_const();
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(floor)),
-        tenure_policy::new_fixed(phases::duration(tenure)),
-        tenures_policy::new_multi(),
+        tenure_duration_policy::new_fixed(phases::duration(tenure)),
+        tenure_extend_policy::new_multi(),
         handover_policy::new_handover_countdown(phases::duration(countdown)),
         descent_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
@@ -7865,7 +7865,7 @@ fun multi_cycle_rent_from_at_dutch_extends_ceiling() {
     let mut sc = setup();
     let cfg     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent
     // Override tenure_cycles to Multi so we can rent with cycles(3).
-    let cfg = escrow_corpus::with_tenure_cycles(cfg, tenures_policy::new_multi());
+    let cfg = escrow_corpus::with_tenure_cycles(cfg, tenure_extend_policy::new_multi());
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -8035,8 +8035,8 @@ fun multi_cycle_cfg_instant(): policy_ensemble::PolicyEnsemble {
     let floor  = escrow_corpus::min_rent_price_const();
     policy_ensemble::new_ensemble(
         floor_price_policy::new_fixed(monetary::price(floor)),
-        tenure_policy::new_fixed(phases::duration(tenure)),
-        tenures_policy::new_multi(),
+        tenure_duration_policy::new_fixed(phases::duration(tenure)),
+        tenure_extend_policy::new_multi(),
         handover_policy::new_handover_instant(),
         descent_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
@@ -8606,7 +8606,7 @@ fun at_dutch_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     let descent = escrow_corpus::descent_window_h1_const();
     let cfg = escrow_corpus::with_tenure_cycles(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), // h=1 descent window
-        tenures_policy::new_multi(),
+        tenure_extend_policy::new_multi(),
     );
     let (mut escrow, owner_cap) = integrate_and_take(cfg, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());

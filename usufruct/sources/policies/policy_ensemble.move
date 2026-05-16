@@ -11,8 +11,8 @@ use usufruct::{
     descent_policy::DescentPolicy,
     handover_policy::{Self, HandoverPolicy},
     floor_price_policy::FloorPricePolicy,
-    tenure_policy::{Self as tenure_policy, TenurePolicy},
-    tenures_policy::TenuresPolicy,
+    tenure_duration_policy::{Self as tenure_duration_policy, TenureDurationPolicy},
+    tenure_extend_policy::TenureExtendPolicy,
     price_function_policy::PriceFunctionPolicy,
 };
 
@@ -26,8 +26,8 @@ const EHandoverFloorExceedsTenure: u64 = 2;
 
 public struct PolicyEnsemble has copy, drop, store {
     min_rent_price:   FloorPricePolicy,
-    tenure_ceiling:   TenurePolicy,
-    tenures:    TenuresPolicy,
+    tenure_ceiling:   TenureDurationPolicy,
+    tenures:    TenureExtendPolicy,
     handover:         HandoverPolicy,
     descent:          DescentPolicy,
     credit_curve:     CurveShapePolicy,
@@ -48,8 +48,8 @@ public struct PolicyEnsembleRegistered has copy, drop {
 
 public fun new_ensemble(
     min_rent_price:  FloorPricePolicy,
-    tenure_ceiling:  TenurePolicy,
-    tenures:   TenuresPolicy,
+    tenure_ceiling:  TenureDurationPolicy,
+    tenures:   TenureExtendPolicy,
     handover:        HandoverPolicy,
     descent:         DescentPolicy,
     credit_curve:    CurveShapePolicy,
@@ -57,7 +57,7 @@ public fun new_ensemble(
     price_function_policy: PriceFunctionPolicy,
 ): PolicyEnsemble {
     assert!(
-        handover_policy::countdown_floor_lt(&handover, tenure_policy::min_ceiling(&tenure_ceiling)),
+        handover_policy::countdown_floor_lt(&handover, tenure_duration_policy::min_ceiling(&tenure_ceiling)),
         EHandoverFloorExceedsTenure,
     );
     PolicyEnsemble {
@@ -75,8 +75,8 @@ public fun new_ensemble(
 // === View Functions ===
 
 public(package) fun proj_min_rent_price(cfg: &PolicyEnsemble):        &FloorPricePolicy      { &cfg.min_rent_price }
-public(package) fun proj_tenure_ceiling(cfg: &PolicyEnsemble):         &TenurePolicy          { &cfg.tenure_ceiling }
-public(package) fun proj_tenures(cfg: &PolicyEnsemble):          &TenuresPolicy    { &cfg.tenures }
+public(package) fun proj_tenure_ceiling(cfg: &PolicyEnsemble):         &TenureDurationPolicy          { &cfg.tenure_ceiling }
+public(package) fun proj_tenures(cfg: &PolicyEnsemble):          &TenureExtendPolicy    { &cfg.tenures }
 public(package) fun proj_handover(cfg: &PolicyEnsemble):               &HandoverPolicy         { &cfg.handover }
 public(package) fun proj_descent(cfg: &PolicyEnsemble):               &DescentPolicy   { &cfg.descent }
 public(package) fun proj_credit_curve(cfg: &PolicyEnsemble):          &CurveShapePolicy      { &cfg.credit_curve }

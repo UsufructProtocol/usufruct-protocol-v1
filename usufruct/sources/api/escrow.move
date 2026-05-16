@@ -21,7 +21,7 @@ use usufruct::{
     handover_policy,
     floor_price_policy,
     math,
-    tenure_policy,
+    tenure_duration_policy,
     monetary,
     owner_cap::{Self, OwnerCap},
     phases,
@@ -443,7 +443,7 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    phases::duration_ms(tenure_policy::min_ceiling(policy_ensemble::proj_tenure_ceiling(cfg(escrow))))
+    phases::duration_ms(tenure_duration_policy::min_ceiling(policy_ensemble::proj_tenure_ceiling(cfg(escrow))))
 }
 
 public fun integrated_at_ms<Asset: key + store, CoinType>(
@@ -676,23 +676,23 @@ public fun ascending_price_function_state<Asset: key + store, CoinType>(
 }
 
 public fun tenure_ceiling_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    tenure_policy::proj_is_fixed(policy_ensemble::proj_tenure_ceiling(cfg(escrow)))
+    tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_ceiling(cfg(escrow)))
 }
 
 public fun tenure_ceiling_is_random_in_range<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    tenure_policy::proj_is_random_in_range(policy_ensemble::proj_tenure_ceiling(cfg(escrow)))
+    tenure_duration_policy::proj_is_random_in_range(policy_ensemble::proj_tenure_ceiling(cfg(escrow)))
 }
 
 public fun tenure_ceiling_fixed_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    tenure_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
+    tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun tenure_ceiling_range_min_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    tenure_policy::proj_range_min(policy_ensemble::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
+    tenure_duration_policy::proj_range_min(policy_ensemble::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun tenure_ceiling_range_max_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    tenure_policy::proj_range_max(policy_ensemble::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
+    tenure_duration_policy::proj_range_max(policy_ensemble::proj_tenure_ceiling(cfg(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun min_rent_price_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {

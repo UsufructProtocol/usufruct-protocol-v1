@@ -12,8 +12,8 @@ use usufruct::{
     handover_policy,
     math,
     floor_price_policy,
-    tenures_policy,
-    tenure_policy,
+    tenure_extend_policy,
+    tenure_duration_policy,
     monetary,
     phases,
     price_function_policy,
@@ -28,8 +28,8 @@ const T0:     u64 = 1_000_000;
 
 fun base_cfg(descent: bool): policy_ensemble::PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
-        tenures_policy::new_single(),
+        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+        tenure_extend_policy::new_single(),
         handover_policy::new_handover_instant(),
         if (descent) { descent_policy::new_descent_window(phases::duration(TENURE)) }
         else         { descent_policy::new_descent_skipped()       },
@@ -58,8 +58,8 @@ fun ascending_agrees_with_price_function_state() {
 fun ascending_fixed_delta_adds_delta() {
     let delta = MIN;
     let cfg   = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
-        tenures_policy::new_single(),
+        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+        tenure_extend_policy::new_single(),
         handover_policy::new_handover_instant(),
         descent_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
@@ -74,8 +74,8 @@ fun ascending_fixed_delta_adds_delta() {
 #[test]
 fun ascending_compound_delta_raises_price() {
     let cfg = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
-        tenures_policy::new_single(),
+        floor_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+        tenure_extend_policy::new_single(),
         handover_policy::new_handover_instant(),
         descent_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
@@ -164,8 +164,8 @@ fun descending_various_curves_respect_bounds() {
     while (i < curves.length()) {
         let curve = *curves.borrow(i);
         let cfg = policy_ensemble::new_ensemble(
-            floor_price_policy::new_fixed(monetary::price(MIN)), tenure_policy::new_fixed(phases::duration(TENURE)),
-            tenures_policy::new_single(),
+            floor_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+            tenure_extend_policy::new_single(),
             handover_policy::new_handover_instant(),
             descent_policy::new_descent_window(phases::duration(TENURE)),
             curve_shape_policy::new_linear(),

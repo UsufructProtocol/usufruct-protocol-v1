@@ -20,8 +20,8 @@ use usufruct::{
     descent_policy,
     floor_price_policy,
     price_function_policy,
-    tenure_policy,
-    tenures_policy,
+    tenure_duration_policy,
+    tenure_extend_policy,
     monetary::{Self, Price, Stake},
     owner_seat::{Self, OwnerSeat},
     owner_identity,
@@ -758,7 +758,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
     policy_ensemble::emit_registration(&ensemble, raw_escrow_id);
     let floor    = floor_price_policy::resolve(policy_ensemble::proj_min_rent_price(&ensemble), generator);
-    let ceiling  = tenure_policy::resolve(policy_ensemble::proj_tenure_ceiling(&ensemble), generator);
+    let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_ceiling(&ensemble), generator);
     let handover = handover_policy::resolve(policy_ensemble::proj_handover(&ensemble), ceiling, generator);
     let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&ensemble), generator);
     let core = EscrowCore {
@@ -807,7 +807,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     ctx:     &mut TxContext,
 ): (RentingState<Asset, CoinType>, TenantCap) {
     let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
-    tenures_policy::validate(policy_ensemble::proj_tenures(&core.ensemble.active), tenures);
+    tenure_extend_policy::validate(policy_ensemble::proj_tenures(&core.ensemble.active), tenures);
     let now                = phases::now(clock);
     let escrow_identity    = core.escrow_identity;
     let fee_inbox_identity = core.fee_inbox_identity;
@@ -897,7 +897,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             core.ensemble.pending = option::none();
             let mut generator = sui::random::new_generator(random, ctx);
             let floor    = floor_price_policy::resolve(policy_ensemble::proj_min_rent_price(&core.ensemble.active), &mut generator);
-            let ceiling  = tenure_policy::resolve(policy_ensemble::proj_tenure_ceiling(&core.ensemble.active), &mut generator);
+            let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_ceiling(&core.ensemble.active), &mut generator);
             let handover = handover_policy::resolve(policy_ensemble::proj_handover(&core.ensemble.active), ceiling, &mut generator);
             let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&core.ensemble.active), &mut generator);
             AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
@@ -1523,7 +1523,7 @@ fun do_auction_expiry<Asset: key + store>(
         ensemble.active = new_cfg;
     };
     let floor    = floor_price_policy::resolve(policy_ensemble::proj_min_rent_price(&ensemble.active), generator);
-    let ceiling  = tenure_policy::resolve(policy_ensemble::proj_tenure_ceiling(&ensemble.active), generator);
+    let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_ceiling(&ensemble.active), generator);
     let handover = handover_policy::resolve(policy_ensemble::proj_handover(&ensemble.active), ceiling, generator);
     let descent  = descent_policy::resolve(policy_ensemble::proj_descent(&ensemble.active), generator);
     WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }

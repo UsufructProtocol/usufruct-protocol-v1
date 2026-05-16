@@ -15,7 +15,7 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    asset,
+    asset_custody,
     asset_state::{
         Self,
         RentStarted,
@@ -53,7 +53,9 @@ use usufruct::{
     phases,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
-    tenant::{Self, Tenant},
+    tenant_seat::{Self, TenantSeat},
+    tenant_identity::{Self},
+    tenant_stake,
     tenant_cap,
 };
 
@@ -99,8 +101,8 @@ const STAKE_T2:      u64     = 2_000_000_000;   // 2 SUI
 fun cap_id_1(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA1)) }
 fun cap_id_2(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA2)) }
 
-fun mk_tenant(stake: u64, addr: address, cap: tenant_cap::TenantCapIdentity): Tenant<SUI> {
-    tenant::new(cap, addr, balance::create_for_testing<SUI>(stake))
+fun mk_tenant(stake: u64, addr: address, cap: tenant_cap::TenantCapIdentity): TenantSeat<SUI> {
+    tenant_seat::new(cap, addr, balance::create_for_testing<SUI>(stake))
 }
 
 fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {

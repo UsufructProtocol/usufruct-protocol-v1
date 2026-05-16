@@ -6,7 +6,7 @@ module usufruct::asset_tests;
 
 use std::unit_test::assert_eq;
 use sui::test_scenario;
-use usufruct::asset::{Self, AssetCustodyOpen};
+use usufruct::asset_custody::{Self, AssetCustodyOpen};
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -19,7 +19,7 @@ fun new_test_asset(ctx: &mut TxContext): TestAsset { TestAsset { id: object::new
 /// Compose new + unwrap-via-unbundle to dispose a wrapped Asset in
 /// the success path of a test. Aborts if `available == None`.
 fun dispose_wrapper(w: AssetCustodyOpen<TestAsset>) {
-    let u = asset::unbundle(w);
+    let u = asset_custody::unbundle(w);
     transfer::public_transfer(u, SINK);
 }
 
@@ -32,9 +32,9 @@ fun new_stamps_asset_id() {
     {
         let u   = new_test_asset(sc.ctx());
         let uid = object::id(&u);
-        let w   = asset::new(u);
-        assert_eq!(asset::proj_asset_id(&w), uid);
-        assert!(asset::proj_is_available(&w));
+        let w   = asset_custody::new(u);
+        assert_eq!(asset_custody::proj_asset_id(&w), uid);
+        assert!(asset_custody::proj_is_available(&w));
         dispose_wrapper(w);
     };
     sc.end();
@@ -49,14 +49,14 @@ fun take_extracts_u_and_marks_slot_unavailable() {
     {
         let u   = new_test_asset(sc.ctx());
         let uid = object::id(&u);
-        let mut w = asset::new(u);
+        let mut w = asset_custody::new(u);
 
-        let out = asset::take(&mut w);
+        let out = asset_custody::take(&mut w);
         assert_eq!(object::id(&out), uid);
-        assert!(!asset::proj_is_available(&w));
+        assert!(!asset_custody::proj_is_available(&w));
 
         // Restore so the wrapper can be disposed via unbundle.
-        asset::put(&mut w, out);
+        asset_custody::put(&mut w, out);
         dispose_wrapper(w);
     };
     sc.end();
@@ -70,12 +70,12 @@ fun put_restores_availability() {
     sc.next_tx(@0xA);
     {
         let u   = new_test_asset(sc.ctx());
-        let mut w = asset::new(u);
+        let mut w = asset_custody::new(u);
 
-        let out = asset::take(&mut w);
-        assert!(!asset::proj_is_available(&w));
-        asset::put(&mut w, out);
-        assert!(asset::proj_is_available(&w));
+        let out = asset_custody::take(&mut w);
+        assert!(!asset_custody::proj_is_available(&w));
+        asset_custody::put(&mut w, out);
+        assert!(asset_custody::proj_is_available(&w));
 
         dispose_wrapper(w);
     };
@@ -91,8 +91,8 @@ fun unbundle_when_available_returns_inner_u() {
     {
         let u   = new_test_asset(sc.ctx());
         let uid = object::id(&u);
-        let w   = asset::new(u);
-        let out = asset::unbundle(w);
+        let w   = asset_custody::new(u);
+        let out = asset_custody::unbundle(w);
         assert_eq!(object::id(&out), uid);
         transfer::public_transfer(out, SINK);
     };
@@ -109,9 +109,9 @@ fun proj_locked_id_returns_inner_asset_id() {
     {
         let u      = new_test_asset(sc.ctx());
         let uid    = object::id(&u);
-        let locked = asset::lock(u);
-        assert_eq!(asset::proj_locked_id(&locked), uid);
-        transfer::public_transfer(asset::unlock(locked), SINK);
+        let locked = asset_custody::lock(u);
+        assert_eq!(asset_custody::proj_locked_id(&locked), uid);
+        transfer::public_transfer(asset_custody::unlock(locked), SINK);
     };
     sc.end();
 }

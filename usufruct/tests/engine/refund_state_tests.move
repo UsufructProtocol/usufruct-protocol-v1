@@ -7,10 +7,13 @@ module usufruct::refund_state_tests;
 use sui::balance;
 use usufruct::{
     fee_message::{Self, FeeShare},
-    owner::{Self, OwnerEarnings},
+    owner_seat,
+    owner_earning::{Self, OwnerEarnings},
     escrow_identity,
     refund_state,
-    tenant::{Self, TenantIdentity, TenantStake},
+    tenant_seat,
+    tenant_identity::{Self, TenantIdentity},
+    tenant_stake::{Self, TenantStake},
     tenant_cap,
 };
 
@@ -27,8 +30,8 @@ fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 /// constructor + unbundle — the only public path to producing these
 /// types from tests.
 fun id_and_stake(amount: u64): (TenantIdentity, TenantStake<TEST_COIN>) {
-    let t = tenant::new<TEST_COIN>(tenant_cap::from_id(cap_t1()), ADDR_T1, balance::create_for_testing(amount));
-    tenant::unbundle(t)
+    let t = tenant_seat::new<TEST_COIN>(tenant_cap::from_id(cap_t1()), ADDR_T1, balance::create_for_testing(amount));
+    tenant_seat::unbundle(t)
 }
 
 fun fee_share(amount: u64): FeeShare<TEST_COIN> {
@@ -36,7 +39,7 @@ fun fee_share(amount: u64): FeeShare<TEST_COIN> {
 }
 
 fun owner_earnings(amount: u64): OwnerEarnings<TEST_COIN> {
-    owner::new_earnings(balance::create_for_testing<TEST_COIN>(amount))
+    owner_earning::new(balance::create_for_testing<TEST_COIN>(amount))
 }
 
 // ─── §1. Constructors → variant identity ──────────────────────────────────────
@@ -44,7 +47,7 @@ fun owner_earnings(amount: u64): OwnerEarnings<TEST_COIN> {
 #[test]
 fun nothing_constructs_nothing_variant() {
     let (_, stake) = id_and_stake(0);
-    tenant::destroy_empty_stake(stake);
+    tenant_stake::destroy_zero(stake);
     let rs = refund_state::nothing<TEST_COIN>(fee_share(50), owner_earnings(450));
     assert!(refund_state::proj_is_nothing(&rs));
     assert!(!refund_state::proj_is_parcial(&rs));
@@ -81,7 +84,7 @@ fun total_constructs_total_variant() {
 #[test]
 fun destroy_for_testing_handles_all_three_variants() {
     let (_, stake_n) = id_and_stake(0);
-    tenant::destroy_empty_stake(stake_n);
+    tenant_stake::destroy_zero(stake_n);
     let nothing = refund_state::nothing<TEST_COIN>(fee_share(10), owner_earnings(20));
     refund_state::destroy_for_testing(nothing);
 
@@ -104,7 +107,7 @@ fun destroy_for_testing_handles_all_three_variants() {
 fun identity_passed_into_variant_is_independent_of_caller_copy() {
     let (id, stake) = id_and_stake(100);
     let id_copy_before = id;
-    let _ = tenant::proj_cap_identity(&id_copy_before);
+    let _ = tenant_identity::proj_cap_identity(&id_copy_before);
     let rs = refund_state::parcial<TEST_COIN>(id, stake, fee_share(10), owner_earnings(20));
     refund_state::destroy_for_testing(rs);
 }

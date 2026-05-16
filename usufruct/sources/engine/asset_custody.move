@@ -1,22 +1,15 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::asset;
+module usufruct::asset_custody;
 
 // === Imports ===
-
-use usufruct::escrow_identity::EscrowIdentity;
 
 // === Errors ===
 
 // === Constants ===
 
 // === Structs ===
-
-public struct AssetIdentity has copy, drop {
-    asset_id:        ID,
-    escrow_identity: EscrowIdentity,
-}
 
 public struct AssetCustodyOpen<U: key + store> has store {
     asset_id:  ID,
@@ -27,6 +20,8 @@ public struct AssetCustodyLocked<U: key + store> has store {
     asset: U,
 }
 
+// === Enums ===
+
 // === Events ===
 
 // === Method Aliases ===
@@ -36,17 +31,8 @@ public struct AssetCustodyLocked<U: key + store> has store {
 // === View Functions ===
 
 public(package) fun proj_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID { object::id(&self.asset) }
-
-public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>): ID { self.asset_id }
-
-public(package) fun new_identity(asset_id: ID, escrow_identity: EscrowIdentity): AssetIdentity {
-    AssetIdentity { asset_id, escrow_identity }
-}
-public(package) fun identity_asset_id(id: &AssetIdentity): ID { id.asset_id }
-public(package) fun identity_escrow_identity(id: &AssetIdentity): EscrowIdentity { id.escrow_identity }
-public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool {
-    self.available.is_some()
-}
+public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>):    ID { self.asset_id }
+public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool { self.available.is_some() }
 
 // === Admin Functions ===
 
@@ -90,4 +76,3 @@ public(package) fun open_tenancy<U: key + store>(self: AssetCustodyLocked<U>): A
 // === Private Functions ===
 
 // === Test Functions ===
-

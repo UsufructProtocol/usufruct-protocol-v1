@@ -891,7 +891,7 @@ public(package) fun resolved_handover_for_testing<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     escrow:         &mut Escrow<Asset, CoinType>,
-    tenant:         usufruct::tenant::Tenant<CoinType>,
+    tenant:         usufruct::tenant_seat::TenantSeat<CoinType>,
     phase_start_ms: u64,
 ) {
     let state = take_state(escrow);
@@ -904,7 +904,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     escrow:                    &mut Escrow<Asset, CoinType>,
-    tenant:                    usufruct::tenant::Tenant<CoinType>,
+    tenant:                    usufruct::tenant_seat::TenantSeat<CoinType>,
     handover_countdown_expiry: u64,
 ) {
     let state = take_state(escrow);

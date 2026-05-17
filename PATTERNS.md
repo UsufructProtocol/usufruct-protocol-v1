@@ -8,12 +8,30 @@ This document is not a tutorial. It is the *generative principle* behind every p
 
 ---
 
+## 0. What is usufruct
+
+**usufruct** is an on-chain finite-state machine that governs time-bounded access to any Sui object with `key + store` abilities, with rent paid in any coin type the owner chooses at `integrate()`.
+
+An owner integrates their object into an `Escrow<Asset: key + store, CoinType>`. The FSM takes over from there, managing the full lifecycle across five states:
+
+- `Waiting::Idle` — price rests at its floor; no active tenant.
+- `Waiting::AtDutch` — price self-regulates downward until a tenant bids.
+- `Waiting::Retired` — owner has exercised the right to reclaim the asset.
+- `Renting::Occupied` — asset is in use; `borrow_asset` is callable.
+- `Renting::Demand` — asset is in use and price is escalating; a challenger has bid.
+
+Transitions are governed by a `PolicyEnsemble` the owner configures at integration time — eight policies that set the terms under which tenants acquire, hold, and release the right of access: `floor_price`, `tenure_duration`, `tenure_extend`, `handover`, `auction_window`, `auction_shape`, `credit_shape`, and `price_escalation`.
+
+The protocol enforces custody, economics, and lifecycle. What the tenant *does* with the asset during the rental window is outside the protocol's concern — it is defined entirely by the asset's own interface. That is the subject of this document.
+
+---
+
 ## 1. The substrate, not the product
 
 The usufruct protocol is a finite-state machine over time-bounded custody of opaque `key + store` objects, with built-in fee accrual, Dutch auctions, handovers, and tenure extension. That is the protocol's *surface*. The point of this document is what is deliberately *absent* from that surface:
 
 - The protocol does not know what an "asset" is. Its generic bound `<Asset: key + store, CoinType>` accepts *any* wrapper an integrator chooses to define. It verifies only UID-identity at borrow and return.
-- The protocol does not know what "use the asset" means. Between `borrow_asset` and `return_asset`, the asset is in the tenant's address; what the tenant does with it is opaque to the protocol.
+- The protocol does not know what "use the asset" means. Between `borrow_asset` and `return_asset`, the asset is in the tenant's transactional possession — a Move value within the PTB body, not a persisted Sui object at any address; what the tenant does with it is opaque to the protocol.
 - The protocol does not know about composition. Between borrow and return, arbitrary code can run — including borrows from other contracts, calls into other DeFi primitives, and other layers of the same protocol pattern.
 
 These three not-knows are not omissions. They are *the abstraction*. Every pattern in this document blooms from the deliberate emptiness of those three slots. The protocol is the substrate; the patterns are what grows on top.
@@ -40,13 +58,13 @@ public fun return_asset<Asset: key + store, CoinType>(
 );
 ```
 
-`borrow_asset()` **extracts** the asset from escrow. `return_asset()` **refills** it. By construction, the two functions form an *opening/closing pair* — one removes state, the other restores it. The proof that a runtime window exists between them is purely structural: if one function extracts and the other refills, then between them there must be a code section in user-space. The protocol hands control back to the caller and waits for it to come back.
+`borrow_asset()` **extracts** the asset from escrow. `return_asset()` **refills** it. By construction, the two functions form an *opening/closing pair* — one extracts, the other refills. The proof that a runtime window exists between them is purely structural: if one function extracts and the other refills, then between them there must be a code section in user-space. The protocol hands control back to the caller and waits for it to come back.
 
 That code section is the runtime window.
 
 ### What lives in the window
 
-The Move type system enforces only two things across it:
+usufruct enforces only two things across it — via the Move type system:
 
 1. The same `Asset` (verified by UID, not by internal state) must reach `return_asset` before the TX ends.
 2. The `AssetReceipt<Asset, CoinType>` — a hot-potato with no `drop`, no `store`, no `copy` — must be consumed by `return_asset` in the same TX.
@@ -55,7 +73,7 @@ Everything else is *open*. Inside the window, the tenant's PTB body may:
 
 - Call any contract on Sui.
 - Pass the borrowed asset to any function that accepts its type.
-- Open hot-potatoes from arbitrary integrations layered on top of the asset (see §5).
+- Open hot-potatoes from arbitrary integrations layered on top of the asset (see §6).
 - Nest into other instances of the protocol — rent another asset, recursively, in the same TX.
 - Run any arithmetic, branching, or control flow that Move permits.
 
@@ -65,11 +83,40 @@ The remainder of this document maps the design space that lives in that window.
 
 ---
 
-## 3. The asset is whatever you wrap as `key + store`
+## 3. The asset is the interface between usufruct and the protocol that defines its use
 
-The protocol accepts an `Asset: key + store` at `integrate()`. Anything that satisfies that bound is a valid asset. The structure of the wrapper is the integrator's territory.
+usufruct accepts an `Asset: key + store` at `integrate()` and manages its custody. It does not know what the asset does, what functions operate on it, or what "using" it means.
 
-For NFTs, the wrapper *is* the NFT — the abstraction collapses to identity. For everything else, the integrator defines a thin wrapper that holds the underlying material:
+That knowledge lives in the protocol that *issued* the asset. When a protocol issues a `key + store` object to represent a position, a right, or an authority in its own ecosystem, that object carries the protocol's interface: any function in that protocol that accepts `&Asset` or `&mut Asset` works exactly the same whether the caller holds the asset legitimately or obtained it via usufruct for a tenure.
+
+This means: **any protocol that already issues `key + store` objects to govern use in its ecosystem is automatically compatible with usufruct**. No adapter code. No permission from the issuing protocol. The object is the interface; usufruct holds it; the tenant pay for use it.
+
+```move
+// Protocol X issues this object to its users.
+public struct Position has key, store {
+    id: UID,
+    // ... fields ...
+}
+
+// Protocol X's functions accept &Position to authenticate the caller.
+public fun claim_rewards(pos: &Position, ctx: &mut TxContext): Coin<X> { ... }
+public fun cast_vote(pos: &Position, proposal: ID, support: bool) { ... }
+public fun execute_privileged(pos: &mut Position, params: Params) { ... }
+```
+
+The owner integrates the `Position` into usufruct. A tenant rents it. During the borrow window the tenant calls protocol X's functions exactly as any legitimate holder would — protocol X sees no difference.
+
+```move
+let (position, asset_receipt) =
+    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+// ── runtime window ─────────────────────────────────────────────────────────
+    let rewards = protocol_x::claim_rewards(&position, ctx);
+    protocol_x::cast_vote(&position, proposal_id, true);
+// ── end of runtime ──────────────────────────────────────────────────────────
+usufruct::return_asset(&mut escrow, position, asset_receipt);
+```
+
+**The wrapper only appears when the underlying material is not yet a `key + store` object.** A `Balance<C>` has no `key`; to integrate it into usufruct, the integrator defines a thin carrier:
 
 ```move
 public struct Vault<phantom C> has key, store {
@@ -78,64 +125,189 @@ public struct Vault<phantom C> has key, store {
 }
 ```
 
-To the protocol, a `Vault<USDC>` is indistinguishable from any NFT. It enters escrow, traverses the lifecycle FSM, is handed to a tenant at borrow, and returns at return — same code, same guarantees, same fee accrual.
+The wrapper gives `Balance<C>` an identity (a UID) that usufruct can track, and a surface (functions like `take`/`put`) that defines what "using" the balance means. That surface is the integrator's design problem, not usufruct's.
 
-What the wrapper *lets the tenant do* — that is where the design space opens.
+Two cases, one principle: *the asset is the interface*. When the interface already exists, the integration is free. When it does not, the integrator writes it.
 
 ---
 
 ## 4. The taxonomy of "use"
 
-Four structural categories cover every wrapper imaginable. Each one drives a different shape of internal API.
+Four structural categories describe what the tenant does during the borrow window. In most cases, the issuing protocol already defined this pattern through the functions it exposes on its `key + store` object — the tenant calls them directly, no wrapper needed.
 
 ### A) Extract-return loops, intra-TX
 
-The asset does not change between TXs. The tenant runs N atomic operations, each one extract → use → return inside a single TX.
+The tenant extracts material from the asset, uses it, and returns it — all within a single TX. **This is the case where a wrapper is typically needed**: when the underlying material (e.g., `Balance<C>`) has no `key` and cannot be integrated into usufruct directly. The wrapper creates the identity and the extract-return interface.
 
-Canonical example: **flash-loanable balance vault** (§5).
+```move
+// Balance<C> has no `key` — it cannot be integrated directly.
+// The wrapper gives it a UID and an extract-return interface.
+public struct Vault<phantom C> has key, store { id: UID, balance: Balance<C> }
+public struct VaultBorrow { vault_id: ID, amount_owed: u64 } // no abilities → hot-potato
+
+public fun take(v: &mut Vault<C>, amount: u64, ctx: &mut TxContext): (Coin<C>, VaultBorrow)
+public fun put(v: &mut Vault<C>, repayment: Coin<C>, receipt: VaultBorrow)
+```
+
+```move
+let (vault, asset_receipt) =
+    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+// ── runtime window ─────────────────────────────────────────────────────────
+    let (coin, borrow_receipt) = vault::take(&mut vault, 1_000_000, ctx);
+    let coin = some_dex::swap(coin, ...);   // arbitrage, MEV, anything
+    vault::put(&mut vault, coin, borrow_receipt);
+// ── end of runtime ──────────────────────────────────────────────────────────
+usufruct::return_asset(&mut escrow, vault, asset_receipt);
+```
+
+The vault comes back with the same balance or more. Everything between the two usufruct calls is the runtime.
 
 Other examples:
-- Oracle access cap — pay per read, rate-limited inside the tenure window.
-- AI model inference cap — pay per query, model NFT remains untouched.
-- Privileged AMM route — priority access to a liquidity pool during the tenure.
+- Lending backstop vault — wraps a `Balance<USDC>` insurance reserve; tenant flash-borrows it to execute liquidations and returns it whole.
+- Paired AMM reserve vault — wraps two correlated `Balance` types (`Balance<A>` + `Balance<B>`); tenant flash-borrows both for atomic cross-pool arbitrage.
+- Quota vault — wraps a numeric spending limit or rate-limit counter; tenant consumes the allowance across operations in the TX and must return the remainder.
 
 ### B) Held with passive accrual
 
-The tenant holds the wrapper; something accrues on its own while held. The wrapper decides who keeps the accrual.
+Something accrues into the asset on its own while held. The tenant decides when to collect. No wrapper needed — the issuing protocol already emitted the position as a `key + store` object with its own collection functions.
+
+```move
+// some_dex already issued Position<A, B> has key, store.
+// The owner integrates it into usufruct directly — no wrapper needed.
+
+let (position, asset_receipt) =
+    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+// ── runtime window ─────────────────────────────────────────────────────────
+    some_dex::collect_fees(&mut position, ctx); // fees come out
+// ── end of runtime ──────────────────────────────────────────────────────────
+usufruct::return_asset(&mut escrow, position, asset_receipt);
+```
+
+The DEX does not know or care that usufruct is holding the position. The position returns to escrow and keeps accumulating until the tenant opens the next runtime window.
 
 - LP position — trading fees stream while held.
 - Staking position — staking rewards accrue.
 - Bonding curve seat — fees from buys and sells.
 - Vesting position — time accrues toward unlock; tenant uses pre-unlock rights.
-- RWA yield-bearing NFT — interest or coupon accrues.
+- RWA yield-bearing object — interest or coupon accrues.
 
-Variants of the wrapper: *yield-to-tenant* (the rent price already prices it in) vs *yield-to-owner* (the tenant has use, not flow).
+Variants: *yield-to-tenant* (the rent price prices in the expected yield) vs *yield-to-owner* (fees stay in the position for the owner to collect on reclaim).
 
 ### C) Held with active rights — actions persist post-return
 
-The tenant invokes rights that have permanent on-chain effects. The wrapper returns intact; what the tenant did with it remains done.
+The tenant invokes rights that have permanent on-chain effects. No wrapper needed — the issuing protocol already exposed the functions the tenant needs on its `key + store` object.
+
+```move
+// some_gov already issued VotingPower has key, store.
+// No wrapper needed.
+
+let (voting_power, asset_receipt) =
+    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+// ── runtime window ─────────────────────────────────────────────────────────
+    some_gov::cast_vote(&voting_power, proposal_id, /* support */ true, ctx);
+    some_gov::claim_distribution(&mut voting_power, ctx);
+// ── end of runtime ──────────────────────────────────────────────────────────
+usufruct::return_asset(&mut escrow, voting_power, asset_receipt);
+```
+
+The asset returns intact. The *effect* — the vote recorded in `some_gov`'s state — persists indefinitely regardless.
 
 - veToken / governance vote rental — votes cast during the tenure remain counted.
 - AccountCap / AdminCap — authority over a contract (treasurer, moderator, oracle-updater).
 - Multisig seat — temporary delegation of a signer's voting power.
-- Identity attestation NFT (non-soulbound) — KYC-checked identity used for a single operation.
+- Identity attestation object (non-soulbound) — KYC-checked identity used for a single operation.
 
 ### D) Single-shot consumption
 
-The wrapper is *spent* by use. The protocol verifies UID-identity at return; the wrapper internally expresses the state change (armed → consumed). The owner reclaims an empty wrapper, by design.
+The asset is spent by use. The issuing protocol defines the consumption logic; the tenant calls the redemption function; usufruct verifies only the UID on return, not the internal state.
+
+```move
+// some_mint already issued MintTicket has key, store.
+// MintTicket carries its own one-time-use logic internally. No wrapper needed.
+
+let (ticket, asset_receipt) =
+    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+// ── runtime window ─────────────────────────────────────────────────────────
+    let nft = some_mint::redeem(&mut ticket, ctx); // ticket is now spent
+// ── end of runtime ──────────────────────────────────────────────────────────
+usufruct::return_asset(&mut escrow, ticket, asset_receipt);
+// usufruct verifies only the UID on return — not the internal state.
+```
+
+The owner reclaims a spent ticket — that is the intended design. If the tenant returns without redeeming, the ticket comes back unused and the next tenant can try.
 
 - Allowlist / IDO slot — one mint per slot, slot is then dead.
 - Lottery ticket / mystery box — opened once.
 - Event ticket — admit once.
 - Voucher / discount code — one redemption.
 
-The four categories are not features of the *protocol*. They are properties of the *wrapper*. The protocol sees all four identically — a `key + store` object that enters escrow and returns intact (by UID, not by state).
+The four categories are not features of the *protocol*. They describe what the issuing protocol's interface allows the tenant to do. usufruct sees all four identically — a `key + store` object that enters escrow and returns with the same UID.
 
 ---
 
-## 5. The canonical pattern: two-layer hot-potato
+## 5. The direct case — when the asset IS the access
 
-For materials that do not themselves satisfy `key + store` — most prominently `Balance<C>`, but also raw amounts, ephemeral capabilities, and any non-object resource — the wrapper exposes its material through a hot-potato discipline that mirrors the protocol's own.
+When the underlying material already exists as a `key + store` object — a capability issued by another protocol to govern access in its own ecosystem — no wrapper is needed. The object is the interface; usufruct holds it; the tenant uses it.
+
+Many protocols on Sui mint `key + store` capability objects:
+
+- A **vote-escrow cap** (veToken-style) grants voting weight and gauge-boost in the issuing protocol.
+- A **market-maker cap** grants fee discounts or priority routing on a DEX.
+- A **subscription cap** grants access to gated functions, paid APIs, or premium tiers.
+- A **validator / operator cap** grants staking or operational privileges.
+- A **DAO membership cap** grants voting and claim rights in a governance system.
+- A **whitelist or KYC cap** grants verified-user access to constrained mints, sales, or operations.
+- An **oracle access cap** grants the right to read premium price feeds — pay per read, rate-limited inside the tenure window.
+- An **AI inference cap** grants the right to query a model object — pay per query, the model remains untouched.
+- A **priority route cap** grants preferential routing or fee discounts on a specific AMM pool during the tenure.
+
+Each is already `key + store`. The owner integrates it into an escrow as-is.
+
+### The flow
+
+```move
+let (cap, asset_receipt) =
+    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+// ── runtime window ─────────────────────────────────────────────────────────
+    issuer::cast_vote(&cap, proposal_id, /* support */ true);
+    issuer::claim_rewards(&mut cap, ctx);
+    issuer::priority_swap(&cap, &mut pool, amount_in, ctx);
+// ── end of runtime ──────────────────────────────────────────────────────────
+usufruct::return_asset(&mut escrow, cap, asset_receipt);
+```
+
+No `take` / `put`. No integrator module. No second hot-potato beyond usufruct's own `AssetReceipt`.
+
+### Why the wrapper collapses
+
+The wrapper collapses to identity because **the issuing protocol's own API already enforces every invariant that matters**. The cap's state either does not change with use, or whatever change matters lives in the issuer's storage, not in the cap object. The cap returns to escrow byte-identical to how it left.
+
+The structural consequence is that **every cap-issuing protocol on Sui is integrable with usufruct for free**, with no code on the integrator's side:
+
+1. Hold the cap.
+2. Call `usufruct::integrate(cap, ...)` with tenure price and policy.
+
+That is the entire integration. The cap-issuing protocol does not need to know that its caps are being rented. It does not need to ship special code. It does not have to opt in.
+
+### Where this fits in the taxonomy
+
+This is a degenerate case of **category C** (§4) — held with active rights. What's different is that the *integration cost is zero*.
+
+When the cap also accrues something passively while held (vote rewards, fee shares, time-weighted boosts), the pattern blends into **category B**. At that point, the integrator may want a wrapper to split the accrual between owner and tenant — which puts them back in the §6 wrapper pattern.
+
+### What this says about the protocol
+
+> usufruct turns any `key + store` capability into a rentable, time-bounded right of access — without requiring the cap-issuer's cooperation.
+
+This is usufruct's place in the ecosystem: a **meta-market over Sui's capability surface**, available to every protocol whether or not they participate.
+
+---
+
+## 6. Composition is monoidal — layers stack
+
+For integration layers to compose, each must express its own hot-potato discipline — a receipt struct with no abilities that the Move drop-checker forces to consume before the TX ends.
+
+Here is the canonical shape for a category A layer (a wrapper that extracts material and requires its return within the same TX):
 
 ```move
 module integrator::balance_vault;
@@ -184,75 +356,7 @@ Four properties of the receipt, each enforced by the Move VM:
 
 There is no runtime check. The entire discipline is enforced at bytecode-verifier time. **Zero runtime cost; total structural correctness.**
 
-This pattern works for any extract-return loop in category A. Substitute the field types and the conservation predicate; the *shape* is invariant.
-
----
-
-## 6. The direct case — when the asset IS the access
-
-The wrapper pattern of §5 covers any non-`key` resource (Balance, LP positions, raw amounts) that needs to be lifted into a `key + store` carrier. A second, simpler case requires no wrapper at all: the asset itself is a **capability object** that another protocol has issued to its users to grant access to its own ecosystem.
-
-Many protocols on Sui mint `key + store` capability objects:
-
-- A **vote-escrow cap** (veToken-style) grants voting weight and gauge-boost in the issuing protocol.
-- A **market-maker cap** grants fee discounts or priority routing on a DEX.
-- A **subscription cap** grants access to gated functions, paid APIs, or premium tiers.
-- A **validator / operator cap** grants staking or operational privileges.
-- A **DAO membership cap** grants voting and claim rights in a governance system.
-- A **whitelist or KYC cap** grants verified-user access to constrained mints, sales, or operations.
-
-Each of these is already `key + store`. They satisfy usufruct's generic bound directly. The owner integrates the cap into an escrow as-is.
-
-### The flow
-
-```move
-// Layer 0 — usufruct
-let (cap, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
-
-// The tenant now holds the cap. They call the issuing protocol directly,
-// passing the cap by reference. The issuer recognizes them as a legitimate holder.
-issuer::cast_vote(&cap, proposal_id, /* support */ true);
-issuer::claim_rewards(&mut cap, ctx);
-issuer::priority_swap(&cap, &mut pool, amount_in, ctx);
-// ... whatever the cap unlocks in the issuer's ecosystem ...
-
-// Layer 0 close — the cap returns intact.
-usufruct::return_asset(&mut escrow, cap, asset_receipt);
-```
-
-No `take` / `put`. No integrator module. No second hot-potato beyond usufruct's own `AssetReceipt`. The tenant rents the cap from usufruct and *de facto* rents the access the cap grants, exercises it, returns the cap.
-
-### Why the wrapper collapses
-
-The wrapper collapses to identity because **the issuing protocol's own API already enforces every invariant that matters**. The cap's state either does not change with use, or whatever change matters lives in the issuer's storage, not in the cap object. The cap returns to escrow byte-identical to how it left.
-
-The structural consequence is that **every cap-issuing protocol on Sui is integrable with usufruct for free**, with no code on the integrator's side. The integration is the cap holder's decision alone:
-
-1. Hold the cap.
-2. Call `usufruct::integrate(cap, ...)` with tenure price and policy.
-
-That is the entire integration. The cap-issuing protocol does not need to know that its caps are being rented. It does not need to ship special code. It does not have to opt in.
-
-### Where this fits in the taxonomy
-
-This is a degenerate case of **category C** (§4) — held with active rights. Actions taken with the cap have permanent effects in the issuer's ecosystem; the cap returns intact. What's different is that the *integration cost is zero*.
-
-When the cap also accrues something passively while held (vote rewards, fee shares, time-weighted boosts), the pattern blends into **category B**. At that point, the integrator may want a wrapper after all — to split passive accrual between owner and tenant — which puts them back in the §5 wrapper pattern.
-
-### What this says about the protocol
-
-> usufruct turns any `key + store` capability into a rentable, time-bounded right of access — without requiring the cap-issuer's cooperation.
-
-The issuer does not have to opt in. They do not have to be aware. Any `key + store` object whose value is "the right to call certain functions" becomes a tradeable, time-bounded right the moment its holder integrates it into an escrow.
-
-This is usufruct's place in the ecosystem: a **meta-market over Sui's capability surface**, available to every protocol whether or not they participate.
-
----
-
-## 7. Composition is monoidal — layers stack
-
-The protocol's own hot-potato (the receipt from `borrow_asset` consumed by `return_asset`) and an integration's hot-potato (e.g., `VaultBorrow`) compose without coordination. They simply nest.
+Once each layer has a receipt, the protocol's own `AssetReceipt` and the integration's `VaultBorrow` compose by nesting:
 
 ```
 usufruct::borrow_asset
@@ -297,14 +401,14 @@ Integrations may stack on the protocol or on each other. A `leveraged_balance_va
 
 ---
 
-## 8. Worked example — flash loans with horizon
+## 7. Worked example — flash loans with horizon
 
 The construction that justifies calling the protocol a *substrate* is also the simplest concrete instance of the composition principle. **Flash loans with horizon** — a primitive that did not exist anywhere before usufruct — emerge by composing a small integration module on top of the protocol, without modifying the protocol itself.
 
-### 8.1 The actors and their interfaces
+### 7.1 The actors and their interfaces
 
 - **Protocol team** ships `usufruct`. Untouched.
-- **Integrator** ships a `flash_loan` module — concretely, the `balance_vault` of §5 deployed to mainnet. Imports the `usufruct` package as a Move dependency.
+- **Integrator** ships a `flash_loan` module — concretely, the `balance_vault` of §6 deployed to mainnet. Imports the `usufruct` package as a Move dependency.
 - **Asset owner** wraps N units of USDC in a `Vault<USDC>` and integrates it into a usufruct `Escrow`, setting tenure price and lifecycle policy.
 - **Tenant** rents the vault from usufruct, paying the tenure fee. Now holds the *option* to flash-loan the vault for the next T seconds, across as many TXs as desired.
 
@@ -314,26 +418,19 @@ No actor needs to know any other's internals. The interfaces:
 - integrator ↔ tenant: the `take` / `put` API and the `VaultBorrow` receipt.
 - owner ↔ tenant: indirect, mediated by usufruct's lifecycle FSM.
 
-### 8.2 A single TX inside the tenure window
+### 7.2 A single TX inside the tenure window
 
 ```move
-// Layer 0 — open the protocol's borrow window
 let (vault, asset_receipt) =
     usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+// ── runtime window ─────────────────────────────────────────────────────────
+    let (coin, vault_borrow) = flash_loan::take(&mut vault, 1_000_000, ctx);
 
-// Layer 1 — open a flash loan against the vault
-let (coin, vault_borrow) =
-    flash_loan::take(&mut vault, 1_000_000, ctx);
+    let coin = deepbook::swap(coin, ...);   // USDC → SUI on pool A
+    let coin = cetus::swap(coin, ...);      // SUI → USDC on pool B
 
-// Layer N — arbitrary user PTB body
-let coin = deepbook::swap(coin, ...);   // USDC → SUI on pool A
-let coin = cetus::swap(coin, ...);      // SUI → USDC on pool B
-// `coin` now holds the swap's exit value
-
-// Layer 1 close — return funds to the vault
-flash_loan::put(&mut vault, coin, vault_borrow);
-
-// Layer 0 close — return wrapper to escrow
+    flash_loan::put(&mut vault, coin, vault_borrow);
+// ── end of runtime ──────────────────────────────────────────────────────────
 usufruct::return_asset(&mut escrow, vault, asset_receipt);
 ```
 
@@ -347,38 +444,30 @@ What the bytecode verifier checks at TX end, all at once:
 
 If any check fails, the entire TX reverts. The owner's vault is untouched; the tenant's tenure is preserved; no partial state is possible.
 
-### 8.3 The horizon
+### 7.3 The horizon
 
 In the next TX, the tenant repeats — new atomic stack, new opportunity, fresh PTB body. They may do this until the tenure expires. Each TX is independent and atomic; together, they constitute a **multi-TX flash-loan facility** over a window of time.
 
 The protocol enforces the *window*. The integrator's module enforces *conservation per TX*. The composition delivers the new primitive, with neither layer knowing the other exists.
 
-### 8.4 Nesting deeper — integrations on integrations
+### 7.4 Nesting deeper — integrations on integrations
 
 A second integrator may write a `leveraged_loan` module that uses `flash_loan::take` internally:
 
 ```move
-// Layer 0 — usufruct
 let (vault, asset_receipt) =
     usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+// ── runtime window ─────────────────────────────────────────────────────────
+    let (coin, vault_borrow) = flash_loan::take(&mut vault, 1_000_000, ctx);
 
-// Layer 1 — flash_loan against the vault
-let (coin, vault_borrow) = flash_loan::take(&mut vault, 1_000_000, ctx);
+    let (lev_coin, lev_receipt) =
+        leveraged_loan::take(&mut pool, coin, /* 5x */ 5, ctx);
 
-// Layer 2 — leveraged_loan wraps the flash-loan output
-let (lev_coin, lev_receipt) =
-    leveraged_loan::take(&mut pool, coin, /* 5x */ 5, ctx);
+    // ... arbitrage with `lev_coin` ...
 
-// Layer N — user PTB with leveraged_coin
-// ... arbitrage with `lev_coin` ...
-
-// Layer 2 close
-let coin = leveraged_loan::put(&mut pool, lev_coin, lev_receipt);
-
-// Layer 1 close
-flash_loan::put(&mut vault, coin, vault_borrow);
-
-// Layer 0 close
+    let coin = leveraged_loan::put(&mut pool, lev_coin, lev_receipt);
+    flash_loan::put(&mut vault, coin, vault_borrow);
+// ── end of runtime ──────────────────────────────────────────────────────────
 usufruct::return_asset(&mut escrow, vault, asset_receipt);
 ```
 
@@ -388,7 +477,7 @@ This is the **substrate property**: an open catalog of layers, each composable w
 
 ---
 
-## 9. usufruct is an FSM plus policies that orbit `borrow_asset` and `return_asset`
+## 8. usufruct is an FSM plus policies that orbit `borrow_asset` and `return_asset`
 
 Calling usufruct "a multi-TX option on atomic hot-potato stacks" undersells what the protocol provides. That framing captures only one *consequence* — that the runtime window of §2 reopens across many TXs. The *mechanism* is richer.
 
@@ -412,14 +501,14 @@ The protocol does not hardcode *when* a tenant may rent, *at what price*, *for h
 
 | Policy             | Conditions...                                                            |
 |--------------------|--------------------------------------------------------------------------|
-| `floor_price`      | minimum rent price; fixed or randomly drawn per cycle                    |
+| `floor_price`      | minimum rent price; fixed or randomly drawn per idle cycle                    |
 | `tenure_duration`  | how long the tenant's right persists after winning                       |
-| `tenure_extend`    | whether and how the tenant may extend; multi-cycle commitments           |
+| `tenure_extend`    | whether and how the tenant may extend; multi-tenures commitments           |
 | `handover`         | how the asset transfers from old tenant to new (instant, fixed, countdown) |
 | `auction_window`   | duration of the Dutch auction itself                                     |
-| `auction_shape`    | how the Dutch auction price descends across the window                   |
+| `auction_shape`    | how the price descends across the Dutch Auction window                    |
 | `credit_shape`     | how the tenant's stake is consumed into owner earnings over the tenure   |
-| `price_escalation` | how the ceiling escalates after handover                                 |
+| `price_escalation` | how the price escalates after handover                                 |
 
 Each policy is *external configuration* the owner chooses. The same FSM operates uniformly regardless of which variants are picked. The policies do not change what the protocol *does* — they change **the conditions under which each transition is permitted, and the terms it carries**.
 
@@ -469,49 +558,49 @@ Hot-potato discipline existed before usufruct. Tenure-bounded rights at owner-co
 
 ---
 
-## 10. Forward-looking catalog
+## 9. Forward-looking catalog
 
-The patterns below are not all implemented. They are the design space the abstraction opens. Each is one wrapper away from being a usable rental market.
+The patterns below are not all implemented. They are the design space the abstraction opens. Category A entries require a wrapper — the underlying material has no `key`. Categories B–D are typically direct protocol objects: no wrapper needed.
 
-| Category | Pattern                       | Wrapper exposes                              | Renter pays for                  |
-|----------|-------------------------------|----------------------------------------------|----------------------------------|
-| A        | `balance_vault<C>`            | flash-loanable balance                       | flash-loan window                |
-| A        | `oracle_access_cap`           | rate-limited reads of a premium feed         | premium access for T             |
-| A        | `inference_cap`               | rate-limited model queries                   | AI inference budget for T        |
-| A        | `priority_route_cap`          | priority routing on an AMM                   | priority access for T            |
-| B        | `lp_position_wrapper`         | LP token with optional fee retention split   | use rights + fees split          |
-| B        | `staking_position_wrapper`    | active stake (use without unstaking)         | staking yield during T           |
-| B        | `vesting_wrapper`             | unlock-tracking position                     | pre-unlock rights for T          |
-| B        | `rwa_yield_wrapper`           | yield-bearing RWA                            | use + yield arrangement for T    |
-| C        | `ve_token_rental`             | veToken with delegated voting                | vote rights for T                |
-| C        | `multisig_seat`               | delegated signer                             | signing authority for T          |
-| C        | `role_cap_rental`             | admin / treasurer / oracle role              | privileged actions for T         |
-| C        | `identity_attestation`        | KYC-passed identity (non-soulbound)          | one-off compliant operations     |
-| D        | `allowlist_slot`              | one-time mint right                          | the slot, atomically             |
-| D        | `event_ticket_wrapper`        | one-time admission                           | the entry, atomically            |
-| D        | `voucher_wrapper`             | redemption right                             | the redemption, atomically       |
-| meta     | `composite_portfolio`         | basket of N wrappers, rented as a unit       | the basket as a single asset     |
-| meta     | `leveraged_*`                 | meta-wrapper over another integration        | leverage on top of any pattern   |
+| Cat | Pattern                 | What the tenant gets during the window        | Tenant pays for              |
+|-----|-------------------------|-----------------------------------------------|------------------------------|
+| A   | `balance_vault<C>`      | flash-loanable coin reserve                   | flash-loan window            |
+| A   | `lending_backstop`      | flash reserve for liquidations                | liquidation window           |
+| A   | `paired_reserve<A,B>`   | two correlated balances for atomic arb        | cross-pool arb window        |
+| B   | `lp_position`           | LP fees stream while held                     | use rights + yield split     |
+| B   | `staking_position`      | staking rewards accrue while held             | staking yield during T       |
+| B   | `vesting_position`      | time accrues toward unlock                    | pre-unlock rights for T      |
+| B   | `rwa_bond`              | interest or coupon accrues                    | yield arrangement for T      |
+| C   | `ve_token`              | voting weight and gauge-boost                 | vote rights for T            |
+| C   | `multisig_seat`         | signing authority in a multisig               | signing authority for T      |
+| C   | `role_cap`              | admin / treasurer / oracle privileges         | privileged actions for T     |
+| C   | `oracle_access_cap`     | rate-limited reads of a premium price feed    | premium reads for T          |
+| C   | `inference_cap`         | rate-limited queries to a model object        | AI inference budget for T    |
+| C   | `priority_route_cap`    | priority routing or fee discount on an AMM    | priority access for T        |
+| D   | `allowlist_slot`        | one-time mint right                           | the slot, atomically         |
+| D   | `event_ticket`          | one-time admission                            | the entry, atomically        |
+| D   | `voucher`               | one-time redemption right                     | the redemption, atomically   |
+| meta| `composite_portfolio`   | basket of N objects, rented as a unit         | the basket as a single asset |
+| meta| `leveraged_*`           | meta-layer over another integration           | leverage on any pattern      |
 
-The last two rows demonstrate the DAG structure. `composite_portfolio` and `leveraged_*` are *meta-integrations* that wrap other integrations and are themselves rentable. The catalog composes onto itself.
+The last two rows demonstrate the DAG structure: `composite_portfolio` and `leveraged_*` are meta-integrations that stack on other integrations and are themselves rentable. The catalog composes onto itself.
 
 ---
 
-## 11. The integrator's mental model
+## 10. The integrator's mental model
 
 If you are building on usufruct, the question to ask is not "is my asset rentable?" but the following four:
 
-1. **What is my `key + store` wrapper?** What carries the underlying material as a Sui object that the protocol can hold.
-2. **What does "use" mean?** Which of the four categories (A/B/C/D) fits, and what API does the wrapper expose to make it usable.
-3. **What is the hot-potato discipline?** What receipt the wrapper issues (if any), what conservation it enforces, what fee it charges per use.
-4. **What does my wrapper compose with?** Whether it is a base layer, sits atop another integration, or is designed to be stacked under future ones.
+1. **What is the `key + store` object?** Either an existing object your protocol already issues, or a thin carrier you write to give non-`key` material an identity.
+2. **What does "use" mean?** Which of the four categories (A/B/C/D) fits. For most protocols the answer is already expressed by the functions they expose on the object — no extra code needed.
+3. **Is a hot-potato needed?** Only if the tenant extracts material from the object (category A). If the tenant calls existing protocol functions that return data or record effects (B/C/D), there is nothing to enforce beyond usufruct's own `AssetReceipt`.
+4. **What does this layer compose with?** Whether it stands alone, sits atop another integration, or is designed to be stacked under future ones.
 
 If those four questions have answers, you have an integration. The protocol takes care of the rest — lifecycle, time, fees, auctions, retirement — uniformly.
 
 ---
 
-## 12. References
+## 11. References
 
-- `balance_vault/` — reference implementation of pattern (A), with end-to-end tests demonstrating the multi-TX flash-loan loop. *(Pending in this repo.)*
 - The usufruct protocol — the substrate this catalog grows on. *(Separate repository.)*
 - usufruct's `ARCHITECTURE.md` — protocol internals. Read after this document, not before.

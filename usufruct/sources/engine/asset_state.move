@@ -14,6 +14,7 @@ use sui::{
 use usufruct::{
     asset_custody,
     asset_identity::{Self, AssetIdentity},
+    escrowed_asset_identity::{Self, EscrowedAssetIdentity},
     policy_ensemble::{Self, PolicyEnsemble},
     tenures::{Self, Tenures},
     curve_shape_policy,
@@ -68,7 +69,7 @@ const PROTOCOL_FEE_BPS: u64 = 1_000;
 // === Structs ===
 
 public struct AssetReceipt<Asset: key + store, phantom CoinType> {
-    identity: AssetIdentity,
+    identity: EscrowedAssetIdentity,
     renting:  RentingState<Asset, CoinType>,
 }
 
@@ -402,7 +403,7 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
                             WaitingState::AtDutch { asset, .. } |
                             WaitingState::Retired { asset })     => asset_custody::proj_locked_id(asset),
         AssetState::Renting(RentingState::Occupied { asset, .. } | RentingState::Demand { asset, .. }) =>
-            asset_custody::proj_asset_id(asset),
+            asset_identity::id(asset_custody::proj_asset_id(asset)),
     }
 }
 
@@ -944,7 +945,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             let asset_id    = asset_custody::proj_asset_id(&asset);
             let u           = asset_custody::take(&mut asset);
             let receipt     = AssetReceipt {
-                identity: asset_identity::new_identity(asset_id, core.escrow_identity),
+                identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Occupied { asset, terms, cycle },
             };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
@@ -958,7 +959,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
             let asset_id    = asset_custody::proj_asset_id(&asset);
             let u           = asset_custody::take(&mut asset);
             let receipt     = AssetReceipt {
-                identity: asset_identity::new_identity(asset_id, core.escrow_identity),
+                identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Demand { asset, terms, bid, cycle },
             };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
@@ -1142,12 +1143,12 @@ fun assert_borrow_authorized(
 }
 
 fun assert_return_valid<Asset: key + store>(
-    identity:  &AssetIdentity,
+    identity:  &EscrowedAssetIdentity,
     asset_in:  &Asset,
     escrow_id: EscrowIdentity,
 ) {
-    assert!(asset_identity::identity_escrow_identity(identity) == escrow_id,     EReceiptEscrowMismatch);
-    assert!(object::id(asset_in) == asset_identity::identity_asset_id(identity), EReturnedDifferentAsset);
+    assert!(escrowed_asset_identity::escrow_identity(identity) == escrow_id,                              EReceiptEscrowMismatch);
+    assert!(asset_identity::new(object::id(asset_in)) == escrowed_asset_identity::asset_id(identity),    EReturnedDifferentAsset);
 }
 
 fun split_fee(amount: Stake): FeeAllocation {

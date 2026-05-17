@@ -8,6 +8,7 @@ use std::unit_test::assert_eq;
 use sui::test_scenario;
 use usufruct::{
     asset_custody::{Self, AssetCustodyOpen},
+    asset_identity,
     escrow_identity,
 };
 
@@ -40,7 +41,7 @@ fun new_stamps_asset_id() {
         let u   = new_test_asset(sc.ctx());
         let uid = object::id(&u);
         let w   = asset_custody::new(u, fake_ei());
-        assert_eq!(asset_custody::proj_asset_id(&w), uid);
+        assert_eq!(asset_custody::proj_asset_id(&w), asset_identity::new(uid));
         assert!(asset_custody::proj_is_available(&w));
         dispose_wrapper(w);
     };

@@ -5,18 +5,13 @@ module usufruct::asset_identity;
 
 // === Imports ===
 
-use usufruct::escrow_identity::EscrowIdentity;
-
 // === Errors ===
 
 // === Constants ===
 
 // === Structs ===
 
-public struct AssetIdentity has copy, drop, store {
-    asset_id:        ID,
-    escrow_identity: EscrowIdentity,
-}
+public struct AssetIdentity has copy, drop, store { id: ID }
 
 // === Enums ===
 
@@ -28,16 +23,13 @@ public struct AssetIdentity has copy, drop, store {
 
 // === View Functions ===
 
-public(package) fun identity_asset_id(id: &AssetIdentity):        ID             { id.asset_id }
-public(package) fun identity_escrow_identity(id: &AssetIdentity): EscrowIdentity { id.escrow_identity }
+public(package) fun id(a: AssetIdentity): ID { a.id }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun new_identity(asset_id: ID, escrow_identity: EscrowIdentity): AssetIdentity {
-    AssetIdentity { asset_id, escrow_identity }
-}
+public(package) fun new(id: ID): AssetIdentity { AssetIdentity { id } }
 
 // === Private Functions ===
 

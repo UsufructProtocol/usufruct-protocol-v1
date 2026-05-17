@@ -7,6 +7,7 @@ module usufruct::asset_custody;
 
 use usufruct::{
     asset_identity::{Self, AssetIdentity},
+    escrowed_asset_identity::{Self, EscrowedAssetIdentity},
     escrow_identity::EscrowIdentity,
 };
 
@@ -17,7 +18,7 @@ use usufruct::{
 // === Structs ===
 
 public struct AssetCustodyOpen<U: key + store> has store {
-    identity:  AssetIdentity,
+    identity:  EscrowedAssetIdentity,
     available: Option<U>,
 }
 
@@ -36,7 +37,7 @@ public struct AssetCustodyLocked<U: key + store> has store {
 // === View Functions ===
 
 public(package) fun proj_locked_id<U: key + store>(self: &AssetCustodyLocked<U>): ID { object::id(&self.asset) }
-public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>):    ID { asset_identity::identity_asset_id(&self.identity) }
+public(package) fun proj_asset_id<U: key + store>(self: &AssetCustodyOpen<U>): AssetIdentity { escrowed_asset_identity::asset_id(&self.identity) }
 public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>): bool { self.available.is_some() }
 
 // === Admin Functions ===
@@ -44,7 +45,7 @@ public(package) fun proj_is_available<U: key + store>(self: &AssetCustodyOpen<U>
 // === Package Functions ===
 
 public(package) fun new<U: key + store>(u: U, escrow_identity: EscrowIdentity): AssetCustodyOpen<U> {
-    let identity = asset_identity::new_identity(object::id(&u), escrow_identity);
+    let identity = escrowed_asset_identity::new(asset_identity::new(object::id(&u)), escrow_identity);
     AssetCustodyOpen { identity, available: option::some(u) }
 }
 

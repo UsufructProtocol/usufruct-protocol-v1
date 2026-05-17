@@ -1,0 +1,176 @@
+// Copyright (c) 2026 Antonio Jiménez
+// SPDX-License-Identifier: Apache-2.0
+
+#[test_only]
+module usufruct::asset_state_credit_tests;
+
+use usufruct::{
+    asset_state,
+    policy_ensemble,
+    curve_shape_policy,
+    auction_window_policy,
+    handover_policy,
+    floor_price_policy,
+    tenure_extend_policy,
+    tenure_duration_policy,
+    monetary,
+    phases,
+    price_escalation_policy,
+};
+
+const MIN:    u64 = 10_000_000_000;
+const TENURE: u64 = 100_000;
+const STAKE:  u64 = 30_000_000_000;
+const T0:     u64 = 1_000_000;
+const EXPIRY: u64 = T0 + 25_000;
+
+fun base_ensemble(): policy_ensemble::PolicyEnsemble {
+    policy_ensemble::new_ensemble(
+        floor_price_policy::new_fixed(monetary::price(MIN)),
+        tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+        tenure_extend_policy::new_single(),
+        handover_policy::new_handover_instant(),
+        auction_window_policy::new_descent_skipped(),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        price_escalation_policy::new_fixed_delta(monetary::price(MIN)),
+    )
+}
+
+#[test]
+fun accruing_at_phase_start_returns_zero() {
+    let ensemble = base_ensemble();
+    assert!(monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), &ensemble, phases::duration(TENURE), phases::timestamp(T0)
+    )) == 0, 0);
+}
+
+#[test]
+fun accruing_at_tenure_ceiling_returns_full_stake() {
+    let ensemble = base_ensemble();
+    assert!(monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), &ensemble, phases::duration(TENURE), phases::timestamp(T0 + TENURE)
+    )) == STAKE, 0);
+}
+
+#[test]
+fun accruing_past_tenure_saturates_at_stake() {
+    let ensemble = base_ensemble();
+    assert!(monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), &ensemble, phases::duration(TENURE), phases::timestamp(T0 + TENURE * 3)
+    )) == STAKE, 0);
+}
+
+#[test]
+fun accruing_mid_tenure_is_between_zero_and_stake() {
+    let ensemble = base_ensemble();
+    let c   = monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), &ensemble, phases::duration(TENURE), phases::timestamp(T0 + TENURE / 2)
+    ));
+    assert!(c > 0,     0);
+    assert!(c < STAKE, 1);
+}
+
+#[test]
+fun accruing_is_monotone_non_decreasing() {
+    let ensemble     = base_ensemble();
+    let c_early = monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), &ensemble, phases::duration(TENURE), phases::timestamp(T0 + TENURE / 4)
+    ));
+    let c_late  = monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), &ensemble, phases::duration(TENURE), phases::timestamp(T0 + TENURE * 3 / 4)
+    ));
+    assert!(c_early <= c_late, 0);
+}
+
+#[test]
+fun accruing_various_curves_stay_in_bounds() {
+    let curves = vector[
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_smoothstep(),
+        curve_shape_policy::new_logistic(),
+        curve_shape_policy::new_power_law(1, 2),
+        curve_shape_policy::new_power_law(2, 1),
+        curve_shape_policy::new_exponential(2, true),
+        curve_shape_policy::new_exponential(2, false),
+    ];
+    let mid = T0 + TENURE / 2;
+    let mut i = 0;
+    while (i < curves.length()) {
+        let curve = *curves.borrow(i);
+        let ensemble = policy_ensemble::new_ensemble(
+            floor_price_policy::new_fixed(monetary::price(MIN)),
+            tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+            tenure_extend_policy::new_single(),
+            handover_policy::new_handover_instant(),
+            auction_window_policy::new_descent_skipped(),
+            curve,
+            curve_shape_policy::new_linear(),
+            price_escalation_policy::new_fixed_delta(monetary::price(MIN)),
+        );
+        let c = monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+            monetary::stake(STAKE), phases::timestamp(T0), &ensemble, phases::duration(TENURE), phases::timestamp(mid)
+        ));
+        assert!(c >= 0,     (i as u64));
+        assert!(c <= STAKE, (i as u64) + 100);
+        i = i + 1;
+    };
+}
+
+#[test]
+fun capped_at_phase_start_returns_zero() {
+    let ensemble = base_ensemble();
+    assert!(monetary::stake_mist(asset_state::capped_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY),
+        &ensemble, phases::duration(TENURE), phases::timestamp(T0)
+    )) == 0, 0);
+}
+
+#[test]
+fun capped_before_expiry_matches_accruing() {
+    let ensemble    = base_ensemble();
+    let before = phases::timestamp(EXPIRY - 1);
+    let accruing = monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), &ensemble, phases::duration(TENURE), before
+    ));
+    let capped = monetary::stake_mist(asset_state::capped_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY),
+        &ensemble, phases::duration(TENURE), before
+    ));
+    assert!(accruing == capped, 0);
+}
+
+#[test]
+fun capped_saturates_past_expiry() {
+    let ensemble    = base_ensemble();
+    let at_exp = monetary::stake_mist(asset_state::capped_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY),
+        &ensemble, phases::duration(TENURE), phases::timestamp(EXPIRY)
+    ));
+    let past   = monetary::stake_mist(asset_state::capped_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY),
+        &ensemble, phases::duration(TENURE), phases::timestamp(EXPIRY + 50_000)
+    ));
+    assert!(at_exp == past, 0);
+}
+
+#[test]
+fun capped_saturation_is_less_than_full_stake() {
+    let ensemble    = base_ensemble();
+    let at_exp = monetary::stake_mist(asset_state::capped_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(EXPIRY),
+        &ensemble, phases::duration(TENURE), phases::timestamp(EXPIRY)
+    ));
+    assert!(at_exp < STAKE, 0);
+    assert!(at_exp > 0,     1);
+}
+
+#[test]
+fun capped_at_tenure_boundary_returns_full_stake_when_expiry_past_ceiling() {
+    let late_expiry = T0 + TENURE + 10_000;
+    let ensemble         = base_ensemble();
+    assert!(monetary::stake_mist(asset_state::capped_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), phases::timestamp(late_expiry),
+        &ensemble, phases::duration(TENURE), phases::timestamp(T0 + TENURE)
+    )) == STAKE, 0);
+}

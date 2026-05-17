@@ -13,7 +13,7 @@ use sui::{
 };
 use usufruct::{
     asset_custody,
-    asset_identity::{Self, AssetIdentity},
+    asset_identity,
     escrowed_asset_identity::{Self, EscrowedAssetIdentity},
     policy_ensemble::{Self, PolicyEnsemble},
     tenures::{Self, Tenures},

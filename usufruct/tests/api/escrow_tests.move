@@ -37,7 +37,7 @@ use usufruct::{
     curve_shape_policy,
     tenures,
     auction_window_policy,
-    floor_price_policy,
+    rest_price_policy,
     handover_policy,
     monetary,
     price_escalation_policy,
@@ -6317,49 +6317,49 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
     sc.end();
 }
 
-// ─── §RandomInRange — FloorPricePolicy policy tests ─────────────────────────
+// ─── §RandomInRange — RestPricePolicy policy tests ─────────────────────────
 //
-// Tests for the RandomInRange variant of FloorPricePolicy.
+// Tests for the RandomInRange variant of RestPricePolicy.
 // Constructors validate invariants; resolution tests verify the drawn floor
 // always falls within [min, max]; bid tests verify the bidder strategy.
 
 // ── Constructor validation ────────────────────────────────────────────────────
 
-#[test, expected_failure(abort_code = floor_price_policy::EPriceZero, location = usufruct::floor_price_policy)]
+#[test, expected_failure(abort_code = rest_price_policy::EPriceZero, location = usufruct::rest_price_policy)]
 fun new_fixed_zero_price_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = floor_price_policy::new_fixed(usufruct::monetary::price(0));
+    let _p = rest_price_policy::new_fixed(usufruct::monetary::price(0));
     sc.end();
 }
 
-#[test, expected_failure(abort_code = floor_price_policy::EPriceZero, location = usufruct::floor_price_policy)]
+#[test, expected_failure(abort_code = rest_price_policy::EPriceZero, location = usufruct::rest_price_policy)]
 fun new_random_in_range_zero_min_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = floor_price_policy::new_random_in_range(
+    let _p = rest_price_policy::new_random_in_range(
         usufruct::monetary::price(0),
         usufruct::monetary::price(10_000_000_000),
     );
     sc.end();
 }
 
-#[test, expected_failure(abort_code = floor_price_policy::EMinNotLtMax, location = usufruct::floor_price_policy)]
+#[test, expected_failure(abort_code = rest_price_policy::EMinNotLtMax, location = usufruct::rest_price_policy)]
 fun new_random_in_range_min_equals_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = floor_price_policy::new_random_in_range(
+    let _p = rest_price_policy::new_random_in_range(
         usufruct::monetary::price(10_000_000_000),
         usufruct::monetary::price(10_000_000_000),
     );
     sc.end();
 }
 
-#[test, expected_failure(abort_code = floor_price_policy::EMinNotLtMax, location = usufruct::floor_price_policy)]
+#[test, expected_failure(abort_code = rest_price_policy::EMinNotLtMax, location = usufruct::rest_price_policy)]
 fun new_random_in_range_min_greater_than_max_aborts() {
     let mut sc = setup();
     sc.next_tx(OWNER);
-    let _p = floor_price_policy::new_random_in_range(
+    let _p = rest_price_policy::new_random_in_range(
         usufruct::monetary::price(15_000_000_000),
         usufruct::monetary::price(10_000_000_000),
     );
@@ -6810,7 +6810,7 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
 
 // ─── §TenureDurationPolicy — policy tests ──────────────────────────────────────
 //
-// Mirrors the FloorPricePolicy test suite for TenureDurationPolicy.
+// Mirrors the RestPricePolicy test suite for TenureDurationPolicy.
 // The observable of resolved_ceiling is tenure_expiry_ms():
 //   tenure_expiry_ms = phase_start + resolved_ceiling
 // At phase_start = 0, tenure_expiry_ms == resolved_ceiling_ms.
@@ -7128,7 +7128,7 @@ fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
     let tenure  = escrow_corpus::tenure_ceiling_const();
     let floor   = escrow_corpus::min_rent_price_const();
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(floor)),
+        rest_price_policy::new_fixed(monetary::price(floor)),
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
         handover_policy::new_handover_fixed_time(),
@@ -7279,7 +7279,7 @@ fun multi_cycle_cfg_countdown(): policy_ensemble::PolicyEnsemble {
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(floor)),
+        rest_price_policy::new_fixed(monetary::price(floor)),
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
         handover_policy::new_handover_countdown(phases::duration(countdown)),
@@ -8081,7 +8081,7 @@ fun multi_cycle_cfg_instant(): policy_ensemble::PolicyEnsemble {
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(floor)),
+        rest_price_policy::new_fixed(monetary::price(floor)),
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
         handover_policy::new_handover_instant(),

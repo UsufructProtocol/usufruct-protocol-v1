@@ -12,7 +12,7 @@ use usufruct::{
     auction_window_policy::{Self, AuctionWindowPolicy},
     handover_policy::{Self, HandoverPolicy},
     math,
-    floor_price_policy,
+    rest_price_policy,
     tenure_extend_policy::{Self, TenureExtendPolicy},
     tenure_duration_policy,
     monetary,
@@ -169,7 +169,7 @@ public(package) fun with_cycles_multi():        vector<CorpusEntry> { all_multi(
 /// Rebuild `ensemble` with a different `min_rent_price` (Fixed policy). All other fields unchanged.
 public(package) fun with_min_rent_price(ensemble: PolicyEnsemble, price_mist: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(price_mist)),
+        rest_price_policy::new_fixed(monetary::price(price_mist)),
         *policy_ensemble::proj_tenure_duration(&ensemble),
         *policy_ensemble::proj_tenure_extend(&ensemble),
         *policy_ensemble::proj_handover(&ensemble),
@@ -183,7 +183,7 @@ public(package) fun with_min_rent_price(ensemble: PolicyEnsemble, price_mist: u6
 /// Rebuild `ensemble` with a random-in-range `min_rent_price`. All other fields unchanged.
 public(package) fun with_random_min_rent_price(ensemble: PolicyEnsemble, min_mist: u64, max_mist: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
+        rest_price_policy::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
         *policy_ensemble::proj_tenure_duration(&ensemble),
         *policy_ensemble::proj_tenure_extend(&ensemble),
         *policy_ensemble::proj_handover(&ensemble),
@@ -197,7 +197,7 @@ public(package) fun with_random_min_rent_price(ensemble: PolicyEnsemble, min_mis
 /// Rebuild `ensemble` with a different `tenure_ceiling` (Fixed policy). All other fields unchanged.
 public(package) fun with_tenure_ceiling(ensemble: PolicyEnsemble, ceiling_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_floor_price(&ensemble),
+        *policy_ensemble::proj_rest_price(&ensemble),
         tenure_duration_policy::new_fixed(phases::duration(ceiling_ms)),
         *policy_ensemble::proj_tenure_extend(&ensemble),
         *policy_ensemble::proj_handover(&ensemble),
@@ -211,7 +211,7 @@ public(package) fun with_tenure_ceiling(ensemble: PolicyEnsemble, ceiling_ms: u6
 /// Rebuild `ensemble` with a random-in-range `tenure_ceiling`. All other fields unchanged.
 public(package) fun with_random_tenure_ceiling(ensemble: PolicyEnsemble, min_ms: u64, max_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_floor_price(&ensemble),
+        *policy_ensemble::proj_rest_price(&ensemble),
         tenure_duration_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
         *policy_ensemble::proj_tenure_extend(&ensemble),
         *policy_ensemble::proj_handover(&ensemble),
@@ -225,7 +225,7 @@ public(package) fun with_random_tenure_ceiling(ensemble: PolicyEnsemble, min_ms:
 /// Rebuild `ensemble` with a different `tenure_cycles` policy. All other fields unchanged.
 public(package) fun with_tenure_cycles(ensemble: PolicyEnsemble, policy: TenureExtendPolicy): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_floor_price(&ensemble),
+        *policy_ensemble::proj_rest_price(&ensemble),
         *policy_ensemble::proj_tenure_duration(&ensemble),
         policy,
         *policy_ensemble::proj_handover(&ensemble),
@@ -358,7 +358,7 @@ public(package) fun commitment_by_tag(tag: u64): CommitmentPolicy {
 fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8, m: u8): PolicyEnsemble {
     let curve = make_curve(e);
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(MIN_RENT_PRICE)),
+        rest_price_policy::new_fixed(monetary::price(MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(TENURE_CEILING)),
         make_tenure_cycles(m),
         make_handover(c),

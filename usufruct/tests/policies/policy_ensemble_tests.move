@@ -20,7 +20,7 @@ use usufruct::{
     escrow_identity,
     handover_policy::{Self, HandoverPolicy},
     math,
-    floor_price_policy,
+    rest_price_policy,
     tenure_extend_policy,
     tenure_duration_policy::{Self, TenureDurationPolicy},
     monetary,
@@ -41,7 +41,7 @@ fun v2_descent():  AuctionWindowPolicy  { auction_window_policy::new_descent_win
 
 fun v2_config(): PolicyEnsemble {
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
         tenure_extend_policy::new_single(),
         v2_handover(),
@@ -195,7 +195,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
 
     cases.do_ref!(|c| {
         let ensemble = policy_ensemble::new_ensemble(
-            floor_price_policy::new_fixed(monetary::price(c.min_rent_price)),
+            rest_price_policy::new_fixed(monetary::price(c.min_rent_price)),
             c.tenure_ceiling,
             tenure_extend_policy::new_single(),
             c.handover,
@@ -205,7 +205,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             c.price_escalation_policy,
         );
         // §7.3 P5 predicate: getter(new_config(..., f, ...)) == f for each field
-        assert_eq!(monetary::price_mist(floor_price_policy::compute_floor_price(policy_ensemble::proj_floor_price(&ensemble))),  c.min_rent_price);
+        assert_eq!(monetary::price_mist(rest_price_policy::compute_floor_price(policy_ensemble::proj_rest_price(&ensemble))),  c.min_rent_price);
         assert_eq!(*policy_ensemble::proj_tenure_duration(&ensemble),  c.tenure_ceiling);
         assert_eq!(*policy_ensemble::proj_handover(&ensemble),        c.handover);
         assert_eq!(*policy_ensemble::proj_auction_window(&ensemble),         c.descent);
@@ -222,18 +222,18 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
 #[test]
 fun getter_roundtrip_r1_min_rent_price_max() {
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(18_446_744_073_709_551_615)),
+        rest_price_policy::new_fixed(monetary::price(18_446_744_073_709_551_615)),
         tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(monetary::price_mist(floor_price_policy::compute_floor_price(policy_ensemble::proj_floor_price(&ensemble))), 18_446_744_073_709_551_615);
+    assert_eq!(monetary::price_mist(rest_price_policy::compute_floor_price(policy_ensemble::proj_rest_price(&ensemble))), 18_446_744_073_709_551_615);
 }
 
 #[test]
 fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(86_400_000)),
         tenure_extend_policy::new_single(),
         v2_handover(), v2_descent(),
@@ -248,7 +248,7 @@ fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
 fun getter_roundtrip_r3_handover_instant() {
     let h   = handover_policy::new_handover_instant();
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
         tenure_extend_policy::new_single(),
         h,
         v2_descent(),
@@ -263,7 +263,7 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
     // Companion to R3 covering the upper-saturation variant.
     let h   = handover_policy::new_handover_fixed_time();
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
         tenure_extend_policy::new_single(),
         h,
         v2_descent(),
@@ -277,7 +277,7 @@ fun getter_roundtrip_r3b_handover_fixed_time() {
 fun getter_roundtrip_r4_descent_window_one() {
     let d   = auction_window_policy::new_descent_window(phases::duration(1));
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
         d,
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
@@ -290,7 +290,7 @@ fun getter_roundtrip_r4b_descent_skipped() {
     // Companion to R4 covering the auction-skipped variant.
     let d   = auction_window_policy::new_descent_skipped();
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
         d,
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
@@ -304,7 +304,7 @@ fun getter_roundtrip_r5_credit_shape_power_law_gcd_normalized() {
     // Getter returns the reduced form — normalization is upstream in curve_shape_state.
     let raw = curve_shape_policy::new_power_law(2, 4);
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         raw,
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
@@ -316,7 +316,7 @@ fun getter_roundtrip_r5_credit_shape_power_law_gcd_normalized() {
 fun getter_roundtrip_r6_auction_shape_logistic() {
     let g = curve_shape_policy::new_logistic();
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(),
         g,
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
@@ -328,7 +328,7 @@ fun getter_roundtrip_r6_auction_shape_logistic() {
 fun getter_roundtrip_r7_price_function_state_compound_delta() {
     let pf = price_escalation_policy::new_compound_delta(math::bps(500), monetary::price(100));
     let ensemble = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         pf,
     );
@@ -337,11 +337,11 @@ fun getter_roundtrip_r7_price_function_state_compound_delta() {
 
 // ─── §7.2 — Invalid inputs (one function each) ────────────────────────────────
 
-#[test, expected_failure(abort_code = floor_price_policy::EPriceZero, location = usufruct::floor_price_policy)]
+#[test, expected_failure(abort_code = rest_price_policy::EPriceZero, location = usufruct::rest_price_policy)]
 fun new_config_rejects_min_rent_price_zero() {
-    // Validation moved to FloorPricePolicy constructor; new_fixed(0) aborts before new_config.
+    // Validation moved to RestPricePolicy constructor; new_fixed(0) aborts before new_config.
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(0)),
+        rest_price_policy::new_fixed(monetary::price(0)),
         tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
@@ -351,7 +351,7 @@ fun new_config_rejects_min_rent_price_zero() {
 #[test, expected_failure(abort_code = 0, location = usufruct::tenure_duration_policy)]
 fun new_config_rejects_tenure_ceiling_zero() {
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(0)),
         tenure_extend_policy::new_single(),
         v2_handover(), v2_descent(),
@@ -364,7 +364,7 @@ fun new_config_rejects_tenure_ceiling_zero() {
 fun new_config_rejects_countdown_floor_gt_tenure_ceiling() {
     // I3: Countdown(100) with tenure_ceiling=50
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(50)),
         tenure_extend_policy::new_single(),
         handover_policy::new_handover_countdown(phases::duration(100)),
@@ -378,7 +378,7 @@ fun new_config_rejects_countdown_floor_gt_tenure_ceiling() {
 fun new_config_rejects_countdown_floor_tenure_ceiling_plus_one() {
     // I4: smallest strictly-greater case — guards off-by-one on the < check
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(1_000)),
         tenure_extend_policy::new_single(),
         handover_policy::new_handover_countdown(phases::duration(1_001)),
@@ -392,7 +392,7 @@ fun new_config_rejects_countdown_floor_tenure_ceiling_plus_one() {
 fun new_config_rejects_countdown_floor_u64_max_tenure_ceiling_max_minus_one() {
     // I5: u64-saturated boundary; confirms plain unsigned compare (no arithmetic overflow)
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(18_446_744_073_709_551_614)), // u64::MAX - 1
         tenure_extend_policy::new_single(),
         handover_policy::new_handover_countdown(phases::duration(18_446_744_073_709_551_615)), // u64::MAX
@@ -408,7 +408,7 @@ fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
     // Constructor accepts Countdown(1_000) but new_config rejects when paired with
     // tenure_ceiling=1_000 — caller must use new_handover_fixed_time() instead.
     policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(1_000)),
         tenure_extend_policy::new_single(),
         handover_policy::new_handover_countdown(phases::duration(1_000)),
@@ -442,7 +442,7 @@ fun emit_registration_e1_full_snapshot() {
 fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
     // new_power_law(2,4) → stored PowerLaw{1,2}; getter returns the reduced form.
     let ensemble       = policy_ensemble::new_ensemble(
-        floor_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
+        rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_power_law(2, 4),
         curve_shape_policy::new_power_law(6, 3),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),

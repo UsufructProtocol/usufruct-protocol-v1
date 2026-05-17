@@ -19,7 +19,7 @@ use usufruct::{
     auction_window_policy,
     asset_state::{Self, EscrowCore, AssetState, AssetReceipt},
     handover_policy,
-    floor_price_policy,
+    rest_price_policy,
     math,
     tenure_duration_policy,
     monetary,
@@ -646,7 +646,7 @@ public fun bps_denominator():  u64 { asset_state::bps_denominator() }
 public fun min_rent_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    monetary::price_mist(floor_price_policy::compute_floor_price(policy_ensemble::proj_floor_price(read_ensemble(escrow))))
+    monetary::price_mist(rest_price_policy::compute_floor_price(policy_ensemble::proj_rest_price(read_ensemble(escrow))))
 }
 
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
@@ -706,23 +706,23 @@ public fun tenure_ceiling_range_max_ms<Asset: key + store, CoinType>(escrow: &Es
 }
 
 public fun min_rent_price_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    floor_price_policy::proj_is_fixed(policy_ensemble::proj_floor_price(read_ensemble(escrow)))
+    rest_price_policy::proj_is_fixed(policy_ensemble::proj_rest_price(read_ensemble(escrow)))
 }
 
 public fun min_rent_price_is_random_in_range<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    floor_price_policy::proj_is_random_in_range(policy_ensemble::proj_floor_price(read_ensemble(escrow)))
+    rest_price_policy::proj_is_random_in_range(policy_ensemble::proj_rest_price(read_ensemble(escrow)))
 }
 
 public fun min_rent_price_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    floor_price_policy::proj_fixed_price(policy_ensemble::proj_floor_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
+    rest_price_policy::proj_fixed_price(policy_ensemble::proj_rest_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun min_rent_price_range_min_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    floor_price_policy::proj_range_min(policy_ensemble::proj_floor_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
+    rest_price_policy::proj_range_min(policy_ensemble::proj_rest_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun min_rent_price_range_max_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    floor_price_policy::proj_range_max(policy_ensemble::proj_floor_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
+    rest_price_policy::proj_range_max(policy_ensemble::proj_rest_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun credit_shape_is_linear<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {

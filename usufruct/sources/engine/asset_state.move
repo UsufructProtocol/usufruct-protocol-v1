@@ -19,7 +19,7 @@ use usufruct::{
     tenures::{Self, Tenures},
     curve_shape_policy,
     auction_window_policy,
-    floor_price_policy,
+    rest_price_policy,
     price_escalation_policy,
     tenure_duration_policy,
     tenure_extend_policy,
@@ -759,7 +759,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let asset_id           = object::id(&asset);
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
     policy_ensemble::emit_registration(&ensemble, escrow_identity);
-    let floor    = floor_price_policy::compute_price(policy_ensemble::proj_floor_price(&ensemble), generator);
+    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble), generator);
     let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble), generator);
     let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble), ceiling, generator);
     let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble), generator);
@@ -901,7 +901,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
             let mut generator = sui::random::new_generator(random, ctx);
-            let floor    = floor_price_policy::compute_price(policy_ensemble::proj_floor_price(&core.ensemble.active), &mut generator);
+            let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&core.ensemble.active), &mut generator);
             let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&core.ensemble.active), &mut generator);
             let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&core.ensemble.active), ceiling, &mut generator);
             let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&core.ensemble.active), &mut generator);
@@ -1533,7 +1533,7 @@ fun do_auction_expiry<Asset: key + store>(
         event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_ensemble });
         ensemble.active = new_ensemble;
     };
-    let floor    = floor_price_policy::compute_price(policy_ensemble::proj_floor_price(&ensemble.active), generator);
+    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble.active), generator);
     let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble.active), generator);
     let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble.active), ceiling, generator);
     let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble.active), generator);

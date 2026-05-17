@@ -11,7 +11,7 @@ use usufruct::{
     auction_window_policy::AuctionWindowPolicy,
     escrow_identity::EscrowIdentity,
     handover_policy::{Self, HandoverPolicy},
-    floor_price_policy::FloorPricePolicy,
+    rest_price_policy::RestPricePolicy,
     tenure_duration_policy::{Self as tenure_duration_policy, TenureDurationPolicy},
     tenure_extend_policy::TenureExtendPolicy,
     price_escalation_policy::PriceEscalationPolicy,
@@ -26,7 +26,7 @@ const EHandoverFloorExceedsTenure: u64 = 2;
 // === Structs ===
 
 public struct PolicyEnsemble has copy, drop, store {
-    floor_price:      FloorPricePolicy,
+    rest_price: RestPricePolicy,
     tenure_duration:  TenureDurationPolicy,
     tenure_extend:    TenureExtendPolicy,
     handover:         HandoverPolicy,
@@ -48,7 +48,7 @@ public struct PolicyEnsembleRegistered has copy, drop {
 // === Public Functions ===
 
 public fun new_ensemble(
-    floor_price:      FloorPricePolicy,
+    rest_price: RestPricePolicy,
     tenure_duration:  TenureDurationPolicy,
     tenure_extend:    TenureExtendPolicy,
     handover:         HandoverPolicy,
@@ -62,7 +62,7 @@ public fun new_ensemble(
         EHandoverFloorExceedsTenure,
     );
     PolicyEnsemble {
-        floor_price,
+        rest_price,
         tenure_duration,
         tenure_extend,
         handover,
@@ -75,7 +75,7 @@ public fun new_ensemble(
 
 // === View Functions ===
 
-public(package) fun proj_floor_price(ensemble: &PolicyEnsemble):     &FloorPricePolicy      { &ensemble.floor_price }
+public(package) fun proj_rest_price(ensemble: &PolicyEnsemble):      &RestPricePolicy      { &ensemble.rest_price }
 public(package) fun proj_tenure_duration(ensemble: &PolicyEnsemble): &TenureDurationPolicy  { &ensemble.tenure_duration }
 public(package) fun proj_tenure_extend(ensemble: &PolicyEnsemble):   &TenureExtendPolicy    { &ensemble.tenure_extend }
 public(package) fun proj_handover(ensemble: &PolicyEnsemble):        &HandoverPolicy        { &ensemble.handover }

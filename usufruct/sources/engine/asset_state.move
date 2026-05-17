@@ -787,33 +787,34 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
 }
 
 public(package) fun execute_apply_pending_transition_states<Asset: key + store, CoinType>(
-    s:      AssetState<Asset, CoinType>,
-    core:   &mut EscrowCore<CoinType>,
-    random: &Random,
-    clock:  &Clock,
-    ctx:    &mut TxContext,
-): AssetState<Asset, CoinType> {
+    s:        AssetState<Asset, CoinType>,
+    mut core: EscrowCore<CoinType>,
+    random:   &Random,
+    clock:    &Clock,
+    ctx:      &mut TxContext,
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     let now = phases::now(clock);
-    let s = step_handover(s, core, now, ctx);
-    let s = step_tenure_expiry(s, core, now, ctx);
-    step_auction_expiry(s, core, random, now, ctx)
+    let s = step_handover(s, &mut core, now, ctx);
+    let s = step_tenure_expiry(s, &mut core, now, ctx);
+    let s = step_auction_expiry(s, &mut core, random, now, ctx);
+    (s, core)
 }
 
 public(package) fun execute_rent<Asset: key + store, CoinType>(
-    s:       AssetState<Asset, CoinType>,
-    core:    &mut EscrowCore<CoinType>,
-    payment: Coin<CoinType>,
-    tenures: Tenures,
-    random:  &Random,
-    clock:   &Clock,
-    ctx:     &mut TxContext,
-): (RentingState<Asset, CoinType>, TenantCap) {
-    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    s:        AssetState<Asset, CoinType>,
+    mut core: EscrowCore<CoinType>,
+    payment:  Coin<CoinType>,
+    tenures:  Tenures,
+    random:   &Random,
+    clock:    &Clock,
+    ctx:      &mut TxContext,
+): (RentingState<Asset, CoinType>, EscrowCore<CoinType>, TenantCap) {
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     tenure_extend_policy::validate(policy_ensemble::proj_tenure_extend(&core.ensemble.active), tenures);
     let now                = phases::now(clock);
     let escrow_identity    = core.escrow_identity;
     let fee_inbox_identity = core.fee_inbox_identity;
-    match (s) {
+    let (rs, cap) = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
         AssetState::Waiting(WaitingState::Idle { asset, cycle }) => {
             let floor = cycle.floor;
@@ -841,26 +842,27 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
                 &mut core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
             )
         },
-    }
+    };
+    (rs, core, cap)
 }
 
 public(package) fun execute_retire<Asset: key + store, CoinType>(
-    s:         AssetState<Asset, CoinType>,
-    core:      &mut EscrowCore<CoinType>,
+    s:        AssetState<Asset, CoinType>,
+    mut core: EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
     random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
-): AssetState<Asset, CoinType> {
-    assert_owner_cap_binds(owner_cap, core);
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
+    assert_owner_cap_binds(owner_cap, &core);
     let now = phases::now(clock);
-    assert_commitment_elapsed(core, now);
-    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    assert_commitment_elapsed(&core, now);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     core.ensemble.pending = option::none();
     let escrow_identity = core.escrow_identity;
     let raw_escrow_id   = escrow_identity::escrow_id(escrow_identity);
     let now_ms          = phases::timestamp_ms(now);
-    match (s) {
+    let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, .. }) =>
             AssetState::Waiting(do_retire_immediately(asset, escrow_identity, now, ctx)),
@@ -876,22 +878,23 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
             let OccupiedTerms { schedule, current, retire } = terms;
             AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, bid, cycle })
         },
-    }
+    };
+    (new_s, core)
 }
 
 public(package) fun execute_update_config<Asset: key + store, CoinType>(
-    s:         AssetState<Asset, CoinType>,
-    core:      &mut EscrowCore<CoinType>,
-    owner_cap: &OwnerCap,
-    new_ensemble:   PolicyEnsemble,
-    random:    &Random,
-    clock:     &Clock,
-    ctx:       &mut TxContext,
-): AssetState<Asset, CoinType> {
-    assert_owner_cap_binds(owner_cap, core);
-    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    s:            AssetState<Asset, CoinType>,
+    mut core:     EscrowCore<CoinType>,
+    owner_cap:    &OwnerCap,
+    new_ensemble: PolicyEnsemble,
+    random:       &Random,
+    clock:        &Clock,
+    ctx:          &mut TxContext,
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
+    assert_owner_cap_binds(owner_cap, &core);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
-    match (s) {
+    let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, cycle: _ }) => {
             event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_ensemble });
@@ -921,19 +924,20 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             core.ensemble.pending = option::some(new_ensemble);
             AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle })
         },
-    }
+    };
+    (new_s, core)
 }
 
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
-    core:       &mut EscrowCore<CoinType>,
+    mut core:   EscrowCore<CoinType>,
     tenant_cap: &TenantCap,
     random:     &Random,
     clock:      &Clock,
     ctx:        &mut TxContext,
-): (Asset, AssetReceipt<Asset, CoinType>) {
-    assert_tenant_cap_binds(tenant_cap, core);
-    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+): (Asset, AssetReceipt<Asset, CoinType>, EscrowCore<CoinType>) {
+    assert_tenant_cap_binds(tenant_cap, &core);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
@@ -949,7 +953,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 renting:  RentingState::Occupied { asset, terms, cycle },
             };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            (u, receipt)
+            (u, receipt, core)
         },
         AssetState::Renting(RentingState::Demand { mut asset, terms, bid, cycle }) => {
             assert_borrow_authorized(cap_identity,
@@ -963,7 +967,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 renting:  RentingState::Demand { asset, terms, bid, cycle },
             };
             event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
-            (u, receipt)
+            (u, receipt, core)
         },
         _s => abort EStaleTenantCap,
     }
@@ -1003,15 +1007,15 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
 }
 
 public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
-    s:      AssetState<Asset, CoinType>,
-    core:   &mut EscrowCore<CoinType>,
-    cap:    TenantCap,
-    random: &Random,
-    clock:  &Clock,
-    ctx:    &mut TxContext,
-): AssetState<Asset, CoinType> {
-    assert_tenant_cap_binds(&cap, core);
-    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    s:        AssetState<Asset, CoinType>,
+    mut core: EscrowCore<CoinType>,
+    cap:      TenantCap,
+    random:   &Random,
+    clock:    &Clock,
+    ctx:      &mut TxContext,
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
+    assert_tenant_cap_binds(&cap, &core);
+    let (s, core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let cap_identity = tenant_cap::identity(&cap);
     match (&s) {
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
@@ -1026,34 +1030,34 @@ public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
         _ => {},
     };
     tenant_cap::burn(cap, ctx);
-    s
+    (s, core)
 }
 
 public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
-    core:      &mut EscrowCore<CoinType>,
+    mut core:  EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
     random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
-): (AssetState<Asset, CoinType>, Coin<CoinType>) {
-    assert_owner_cap_binds(owner_cap, core);
-    let s = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>, Coin<CoinType>) {
+    assert_owner_cap_binds(owner_cap, &core);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
     let (coin, amount) = do_withdraw(&mut core.owner, owner_cap, ctx);
     event::emit(EarningsWithdrawn { escrow_id: escrow_identity::escrow_id(core.escrow_identity), owner_cap_id, owner: owner_addr, amount: monetary::stake_mist(amount), timestamp_ms });
-    (s, coin)
+    (s, core, coin)
 }
 
 public(package) fun execute_extend_commitment<CoinType>(
-    core:       &mut EscrowCore<CoinType>,
+    mut core:   EscrowCore<CoinType>,
     owner_cap:  &OwnerCap,
     new_policy: CommitmentPolicy,
     clock:      &Clock,
-) {
-    assert_owner_cap_binds(owner_cap, core);
+): EscrowCore<CoinType> {
+    assert_owner_cap_binds(owner_cap, &core);
     let now         = phases::now(clock);
     let old_expiry  = commitment_policy::unlock_at(
         commitment_policy::resolve(&core.commitment.policy),
@@ -1075,6 +1079,7 @@ public(package) fun execute_extend_commitment<CoinType>(
     });
     core.commitment.policy = new_policy;
     core.commitment.anchor = now;
+    core
 }
 
 public(package) fun execute_claim<Asset: key + store, CoinType>(
@@ -1086,7 +1091,7 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
-    let s = execute_apply_pending_transition_states(s, &mut core, random, clock, ctx);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
     match (s) {
         AssetState::Waiting(WaitingState::Retired { asset }) => {
             let EscrowCore { mut owner, escrow_identity, .. } = core;

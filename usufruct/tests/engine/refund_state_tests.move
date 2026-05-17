@@ -7,13 +7,11 @@ module usufruct::refund_state_tests;
 use sui::balance;
 use usufruct::{
     fee_message::{Self, FeeShare},
-    owner_seat,
     owner_earning::{Self, OwnerEarnings},
     escrow_identity,
     refund_state,
     tenant_seat::{Self, TenantSeat},
     tenant_identity,
-    tenant_stake,
     tenant_cap,
 };
 

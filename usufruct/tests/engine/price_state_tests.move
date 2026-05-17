@@ -13,11 +13,10 @@ use usufruct::{
     math,
     floor_price_policy,
     tenure_extend_policy,
-    tenure_duration_policy,
     monetary,
     phases,
     price_escalation_policy,
-    commitment_policy,
+    tenure_duration_policy,
 };
 
 const MIN:    u64 = 10_000_000_000;

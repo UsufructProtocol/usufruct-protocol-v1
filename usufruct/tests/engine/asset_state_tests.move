@@ -4,17 +4,15 @@
 #[test_only]
 module usufruct::asset_state_tests;
 
-use std::unit_test::assert_eq;
 use sui::{
     balance,
-    clock::{Self, Clock},
+    clock,
     coin,
     random::{Self, Random},
     sui::SUI,
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    asset_custody::{Self},
     asset_state::{Self},
     commitment_policy,
     tenures,
@@ -25,8 +23,6 @@ use usufruct::{
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
     tenant_seat::{Self, TenantSeat},
-    tenant_identity::{Self},
-    tenant_stake,
     tenant_cap::{Self, TenantCapIdentity},
 };
 

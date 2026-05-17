@@ -290,7 +290,7 @@ fun c1_consume_message_returns_balance_and_emits_collected_event() {
     {
         let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id   = object::id(&inbox);
-        let inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
+        let _inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
         let ticket       = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
         let msg          = fee_message::receive_message_for_testing(&mut inbox, ticket);
         let bal          = fee_message::consume_message_for_testing(msg, fee_inbox_id, ADMIN);
@@ -370,7 +370,7 @@ fun c3_consume_zero_balance_message() {
     {
         let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id   = object::id(&inbox);
-        let inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
+        let _inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
         let ticket       = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
         let msg          = fee_message::receive_message_for_testing(&mut inbox, ticket);
         let bal          = fee_message::consume_message_for_testing(msg, fee_inbox_id, ADMIN);
@@ -537,7 +537,7 @@ fun d6_distinct_escrow_ids_preserved_per_collected_event() {
     {
         let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id   = object::id(&inbox);
-        let inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
+        let _inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
         let tickets      = vector[
             test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id1),
             test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id2),
@@ -689,7 +689,7 @@ fun e4_collect_n_messages_emits_n_collected_events() {
     {
         let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id   = object::id(&inbox);
-        let inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
+        let _inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
         let tickets      = vector[
             test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id1),
             test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(id2),
@@ -756,7 +756,7 @@ fun e6_sent_collected_join_on_fee_message_id() {
     {
         let mut inbox    = scenario.take_from_sender<ProtocolFeeInbox>();
         let fee_inbox_id   = object::id(&inbox);
-        let inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
+        let _inbox_identity = protocol_fee_ref::fee_inbox_identity(fee_inbox_id);
         let ticket       = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
         let coin         = fee_message::collect_fee_messages<sui::sui::SUI>(
             &mut inbox, vector[ticket], scenario.ctx()

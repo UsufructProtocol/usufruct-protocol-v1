@@ -893,7 +893,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
-        AssetState::Waiting(WaitingState::Idle { asset, cycle }) => {
+        AssetState::Waiting(WaitingState::Idle { asset, cycle: _ }) => {
             event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_ensemble });
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
@@ -1908,7 +1908,7 @@ public(package) fun config_updated_new_config(e: &ConfigUpdated): PolicyEnsemble
 public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(
     r: AssetReceipt<Asset, CoinType>,
 ) {
-    sui::test_utils::destroy(r);
+    std::unit_test::destroy(r);
 }
 
 #[test_only]

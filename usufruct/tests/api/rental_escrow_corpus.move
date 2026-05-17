@@ -18,7 +18,6 @@ use usufruct::{
     monetary,
     phases,
     price_escalation_policy::{Self, PriceEscalationPolicy},
-    commitment_policy::{Self, CommitmentPolicy},
 };
 
 // === Errors ===
@@ -245,10 +244,6 @@ fun make_descent(h: u8): AuctionWindowPolicy {
     else        { auction_window_policy::new_descent_window(phases::duration(DESCENT_WINDOW_H1)) }
 }
 
-fun make_commitment(f: u8): CommitmentPolicy {
-    if (f == 0) { commitment_policy::new_immediate() }
-    else        { commitment_policy::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
-}
 
 // --- Filter helpers (called after axis validation in filter_*) ---
 

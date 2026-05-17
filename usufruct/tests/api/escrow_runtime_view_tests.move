@@ -9,13 +9,12 @@ use std::type_name;
 use sui::random::{Self, Random};
 use sui::{
     balance,
-    clock::{Self, Clock},
+    clock,
     coin::{Self, Coin},
     sui::SUI,
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    asset_state,
     commitment_policy,
     policy_ensemble::PolicyEnsemble,
     tenures,

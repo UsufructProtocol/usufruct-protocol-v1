@@ -15,7 +15,6 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    asset_custody,
     asset_state::{
         Self,
         RentStarted,
@@ -54,8 +53,6 @@ use usufruct::{
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
     tenant_seat::{Self, TenantSeat},
-    tenant_identity::{Self},
-    tenant_stake,
     tenant_cap,
 };
 
@@ -6331,7 +6328,7 @@ fun random_floor_resolves_in_range_at_integrate() {
     let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -6530,7 +6527,7 @@ fun random_floor_stable_within_idle_cycle() {
     let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(0), RANDOM_MIN, RANDOM_MAX,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
@@ -7190,7 +7187,7 @@ fun multi_cycle_insufficient_payment_aborts() {
 fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
     let tenure = escrow_corpus::tenure_ceiling_const();
@@ -7477,7 +7474,7 @@ fun multi_cycle_fixed_time_handover_tracks_new_ceiling() {
 
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
-    let delta  = escrow_corpus::fixed_delta_value_const();
+    let _delta = escrow_corpus::fixed_delta_value_const();
 
     // T1: 3 cycles, ceiling = tenure × 3.
     sc.next_tx(TENANT_ADDR_1);
@@ -7689,7 +7686,7 @@ fun degeneration_fixed_time_expiry_cycles_one() {
 
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
-    let delta  = escrow_corpus::fixed_delta_value_const();
+    let _delta = escrow_corpus::fixed_delta_value_const();
 
     // T1: 1 cycle.
     sc.next_tx(TENANT_ADDR_1);
@@ -7724,7 +7721,7 @@ fun degeneration_countdown_expiry_cycles_one() {
     let tenure    = escrow_corpus::tenure_ceiling_const();
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
-    let delta     = escrow_corpus::fixed_delta_value_const();
+    let _delta    = escrow_corpus::fixed_delta_value_const();
 
     // T1: 1 cycle, ceiling = tenure.
     sc.next_tx(TENANT_ADDR_1);
@@ -7762,10 +7759,10 @@ fun degeneration_countdown_expiry_cycles_one() {
 fun multi_cycle_handover_earnings_proportional_to_extended_ceiling() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
-    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let _tenure   = escrow_corpus::tenure_ceiling_const();
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
@@ -7919,7 +7916,7 @@ fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
     let tenure    = escrow_corpus::tenure_ceiling_const();
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
-    let delta     = escrow_corpus::fixed_delta_value_const();
+    let _delta    = escrow_corpus::fixed_delta_value_const();
 
     // T1: 3 cycles.
     sc.next_tx(TENANT_ADDR_1);
@@ -7977,7 +7974,7 @@ fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
 fun multi_cycle_handover_remain_credit_returned_to_tenant() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
-    let mut clk = clock::create_for_testing(sc.ctx());
+    let clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
     let floor     = escrow_corpus::min_rent_price_const();
@@ -8089,7 +8086,7 @@ fun handover_scaling_no_double_scaling_across_handover_chain() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
-    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let _tenure   = escrow_corpus::tenure_ceiling_const();
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
@@ -8289,7 +8286,7 @@ fun normalization_rescale_is_exact_across_handover_chain() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
 
-    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let _tenure   = escrow_corpus::tenure_ceiling_const();
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const(); // 25_000
 
@@ -8822,7 +8819,7 @@ fun commitment_extend_valid_increases_unlocks_at() {
 #[test, expected_failure(abort_code = E_COMMITMENT_NOT_EXTENDED, location = usufruct::asset_state)]
 fun commitment_extend_reduce_floor_aborts() {
     let mut sc  = setup();
-    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let _floor  = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,

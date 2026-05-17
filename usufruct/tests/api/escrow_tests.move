@@ -69,6 +69,21 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
     DemoAsset { id: object::new(ctx) }
 }
 
+/// Wrapper that lifts a `Balance<SUI>` into a `key + store` object so it
+/// can be integrated into usufruct. Demonstrates that the protocol accepts
+/// any `key + store` asset regardless of its internal structure.
+public struct BalanceVault has key, store {
+    id:      UID,
+    balance: balance::Balance<SUI>,
+}
+
+fun mk_balance_vault(amount: u64, ctx: &mut TxContext): BalanceVault {
+    BalanceVault {
+        id:      object::new(ctx),
+        balance: balance::create_for_testing<SUI>(amount),
+    }
+}
+
 /// Initialise the protocol-fee singletons and the shared Random object.
 /// Returns a scenario whose next-tx state has the `ProtocolFeeRef` frozen,
 /// the `ProtocolFeeInbox` owned by `OWNER`, and `Random` shared.
@@ -218,6 +233,41 @@ fun integrate_idle_across_handover_modes() {
         };
         m = m + 1;
     };
+    sc.end();
+}
+
+// ─── §2b. integrate — BalanceVault (asset abstraction) ───────────────────────
+
+/// §2b.1 — A `key + store` wrapper over `Balance<SUI>` is accepted by
+/// `integrate()` exactly like any other asset. The protocol is agnostic to
+/// the wrapper's internals; it only tracks the UID. This confirms that the
+/// `<Asset: key + store>` bound is a universal sigma — any Sui object
+/// qualifies, regardless of what it holds.
+#[test]
+fun integrate_accepts_balance_vault() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+
+    let ensemble = escrow_corpus::by_tag(0);
+    let fee_ref  = sc.take_immutable<ProtocolFeeRef>();
+    let clk      = clock::create_for_testing(sc.ctx());
+    let random   = sc.take_shared<Random>();
+
+    let vault = mk_balance_vault(1_000_000, sc.ctx());
+    let cap = escrow::integrate<BalanceVault, SUI>(
+        vault, ensemble, commitment_policy::new_immediate(), &fee_ref, &random, &clk, sc.ctx(),
+    );
+    test_scenario::return_shared(random);
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared_by_id<Escrow<BalanceVault, SUI>>(escrow_id);
+    assert_tag_idle(&escrow, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
     sc.end();
 }
 

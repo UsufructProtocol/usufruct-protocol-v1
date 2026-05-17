@@ -77,7 +77,7 @@ public(package) fun proj_range_max(policy: &FloorPricePolicy): Option<Price> {
 
 // === Package Functions ===
 
-public(package) fun floor_for_view(policy: &FloorPricePolicy): Price {
+public(package) fun floor_price(policy: &FloorPricePolicy): Price {
     match (policy) {
         FloorPricePolicy::Fixed { price }           => *price,
         FloorPricePolicy::RandomInRange { min, .. } => *min,

@@ -43,7 +43,7 @@ fun has_passed_table_and_monotone_in_now() {
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
             phases::timestamp(c.now),
-        ).is_crossed();
+        ).proj_is_crossed();
         assert_eq!(result, c.expected);
     });
 
@@ -58,7 +58,7 @@ fun has_passed_table_and_monotone_in_now() {
             phases::timestamp(100),
             phases::duration(50),
             phases::timestamp(n),
-        ).is_crossed();
+        ).proj_is_crossed();
         if (crossed) assert!(cur, 0);
         if (cur) crossed = true;
         n = n + 1;
@@ -225,7 +225,7 @@ fun has_passed_iff_now_ge_boundary_at() {
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
             phases::timestamp(c.now),
-        ).is_crossed();
+        ).proj_is_crossed();
         let u64_view  = c.now >= phases::timestamp_ms(phases::boundary_at(
             phases::timestamp(c.anchor),
             phases::duration(c.duration),

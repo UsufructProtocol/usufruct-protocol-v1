@@ -53,7 +53,7 @@ public(package) fun identity(cap: &TenantCap): TenantCapIdentity {
     TenantCapIdentity { id: object::id(cap) }
 }
 
-public(package) fun cap_id(t: TenantCapIdentity): ID { t.id }
+public(package) fun proj_id(t: TenantCapIdentity): ID { t.id }
 
 public(package) fun from_id(id: ID): TenantCapIdentity { TenantCapIdentity { id } }
 

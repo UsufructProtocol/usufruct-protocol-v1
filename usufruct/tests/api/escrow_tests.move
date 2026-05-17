@@ -6501,7 +6501,7 @@ fun min_rent_price_view_returns_policy_min_not_resolved_floor() {
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
-    // min_rent_price() always returns the policy min (floor_for_view)
+    // min_rent_price() always returns the policy min (floor_price)
     assert!(escrow::min_rent_price(&escrow) == RANDOM_MIN, 0);
 
     // compute_floor_price() returns the resolved floor ∈ [min, max]
@@ -6894,7 +6894,7 @@ fun tenure_ceiling_view_returns_policy_min_not_resolved() {
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
 
-    // tenure_ceiling_ms() returns the policy min (min_ceiling), not the resolved value
+    // tenure_ceiling_ms() returns the policy min (proj_min_ceiling), not the resolved value
     assert!(escrow::tenure_ceiling_ms(&escrow) == CEILING_RAND_MIN, 0);
 
     // After renting, tenure_expiry_ms() reflects the actual resolved ceiling

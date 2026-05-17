@@ -309,7 +309,7 @@ public(package) fun proj_config<CoinType>(
 
 public(package) fun proj_fee_inbox_id<CoinType>(
     core: &EscrowCore<CoinType>,
-): ID { protocol_fee_ref::inbox_id(core.fee_inbox_identity) }
+): ID { protocol_fee_ref::proj_id(core.fee_inbox_identity) }
 
 public(package) fun proj_integrated_at<CoinType>(
     core: &EscrowCore<CoinType>,
@@ -336,7 +336,7 @@ public(package) fun proj_owner_balance<CoinType>(
 public(package) fun proj_owner_cap_id<CoinType>(
     core: &EscrowCore<CoinType>,
 ): ID {
-    owner_cap::cap_id(owner_identity::proj_cap_identity(owner_seat::proj_identity(&core.owner)))
+    owner_cap::proj_id(owner_identity::proj_cap_identity(owner_seat::proj_identity(&core.owner)))
 }
 
 public(package) fun proj_is_active<Asset: key + store, CoinType>(
@@ -403,7 +403,7 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
                             WaitingState::AtDutch { asset, .. } |
                             WaitingState::Retired { asset })     => asset_custody::proj_locked_id(asset),
         AssetState::Renting(RentingState::Occupied { asset, .. } | RentingState::Demand { asset, .. }) =>
-            asset_identity::id(asset_custody::proj_asset_id(asset)),
+            asset_identity::proj_id(asset_custody::proj_asset_id(asset)),
     }
 }
 
@@ -422,7 +422,7 @@ public(package) fun proj_current_cap_id<Asset: key + store, CoinType>(
 ): Option<ID> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_cap::cap_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)))),
+            option::some(tenant_cap::proj_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)))),
         _ => option::none(),
     }
 }
@@ -442,7 +442,7 @@ public(package) fun proj_pending_cap_id<Asset: key + store, CoinType>(
 ): Option<ID> {
     match (s) {
         AssetState::Renting(RentingState::Demand { bid, .. }) =>
-            option::some(tenant_cap::cap_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending)))),
+            option::some(tenant_cap::proj_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending)))),
         _ => option::none(),
     }
 }
@@ -777,10 +777,10 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     });
     event::emit(AssetIntegrated<Asset, CoinType> {
         escrow_id:        raw_escrow_id,
-        owner_cap_id:     owner_cap::cap_id(owner_cap_identity),
+        owner_cap_id:     owner_cap::proj_id(owner_cap_identity),
         owner:            owner_addr,
         asset_id,
-        fee_inbox_id:     protocol_fee_ref::inbox_id(fee_inbox_identity),
+        fee_inbox_id:     protocol_fee_ref::proj_id(fee_inbox_identity),
         integrated_at_ms: phases::timestamp_ms(integrated_at),
     });
     (core, state, owner_cap)
@@ -952,7 +952,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Occupied { asset, terms, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant: tenant_addr });
             (u, receipt, core)
         },
         AssetState::Renting(RentingState::Demand { mut asset, terms, bid, cycle }) => {
@@ -966,7 +966,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Demand { asset, terms, bid, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant: tenant_addr });
             (u, receipt, core)
         },
         _s => abort EStaleTenantCap,
@@ -987,7 +987,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
-                tenant_cap_id: tenant_cap::cap_id(cap_id),
+                tenant_cap_id: tenant_cap::proj_id(cap_id),
                 tenant:        tenant_addr,
             });
             RentingState::Occupied { asset, terms, cycle }
@@ -998,7 +998,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
-                tenant_cap_id: tenant_cap::cap_id(cap_id),
+                tenant_cap_id: tenant_cap::proj_id(cap_id),
                 tenant:        tenant_addr,
             });
             RentingState::Demand { asset, terms, bid, cycle }
@@ -1132,7 +1132,7 @@ fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timest
             commitment_policy::resolve(&core.commitment.policy),
             core.commitment.anchor,
             now,
-        ).is_crossed(),
+        ).proj_is_crossed(),
         ECommitmentFloorNotElapsed,
     )
 }
@@ -1202,10 +1202,10 @@ fun do_handover<Asset: key + store, CoinType>(
 
     event::emit(HandoverCompleted {
         escrow_id: escrow_identity::escrow_id(escrow_identity),
-        displaced_tenant_cap_id:  tenant_cap::cap_id(displaced_cap_identity),
+        displaced_tenant_cap_id:  tenant_cap::proj_id(displaced_cap_identity),
         displaced_tenant:         displaced_addr,
         displaced_phase_start_ms: phases::timestamp_ms(schedule.phase_start),
-        new_tenant_cap_id:        tenant_cap::cap_id(new_cap_identity),
+        new_tenant_cap_id:        tenant_cap::proj_id(new_cap_identity),
         new_tenant_addr:          new_addr,
         new_tenant_stake:         monetary::stake_mist(new_stake),
         used_credit:              monetary::stake_mist(used_credit),
@@ -1256,7 +1256,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
 
     event::emit(TenureExpired {
         escrow_id:              escrow_identity::escrow_id(escrow_identity),
-        tenant_cap_id:          tenant_cap::cap_id(tenant_cap_identity),
+        tenant_cap_id:          tenant_cap::proj_id(tenant_cap_identity),
         tenant:                 tenant_addr,
         phase_start_ms:         phases::timestamp_ms(schedule.phase_start),
         owner_share:            monetary::stake_mist(alloc.owner_share),
@@ -1302,11 +1302,11 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let t = tenant_seat::new<CoinType>(cap_identity, pending_addr, coin::into_balance(payment));
     event::emit(BidPlaced {
         escrow_id: raw_escrow_id,
-        current_tenant_cap_id:     tenant_cap::cap_id(current_cap_identity),
+        current_tenant_cap_id:     tenant_cap::proj_id(current_cap_identity),
         current_tenant_addr:       current_addr,
         current_tenant_stake:      monetary::stake_mist(current_stake),
         current_phase_start_ms:    phases::timestamp_ms(terms.schedule.phase_start),
-        tenant_cap_id:             tenant_cap::cap_id(cap_identity),
+        tenant_cap_id:             tenant_cap::proj_id(cap_identity),
         pending_tenant:            pending_addr,
         bid_amount,
         floor_price:               monetary::price_mist(floor),
@@ -1362,12 +1362,12 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 
     event::emit(BidSuperseded {
         escrow_id: raw_escrow_id,
-        protected_tenant_cap_id:   tenant_cap::cap_id(protected_cap_identity),
+        protected_tenant_cap_id:   tenant_cap::proj_id(protected_cap_identity),
         protected_tenant_addr:     protected_addr,
         protected_tenant_stake:    monetary::stake_mist(protected_stake),
         protected_phase_start_ms:  phases::timestamp_ms(terms.schedule.phase_start),
-        displaced_tenant_cap_id:   tenant_cap::cap_id(displaced_cap_identity),
-        new_tenant_cap_id:         tenant_cap::cap_id(cap_identity),
+        displaced_tenant_cap_id:   tenant_cap::proj_id(displaced_cap_identity),
+        new_tenant_cap_id:         tenant_cap::proj_id(cap_identity),
         displaced_bidder:          displaced_addr,
         refunded_amount:           monetary::stake_mist(refunded_amount),
         new_bidder,
@@ -1391,15 +1391,15 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 }
 
 fun proj_demand_is_firable<CoinType>(bid: &DemandTerms<CoinType>, now: Timestamp): bool {
-    phases::check_boundary(bid.handover.expiry, phases::zero(), now).is_crossed()
+    phases::check_boundary(bid.handover.expiry, phases::zero(), now).proj_is_crossed()
 }
 
 fun proj_occupied_is_firable<CoinType>(terms: &OccupiedTerms<CoinType>, now: Timestamp): bool {
-    phases::check_boundary(terms.schedule.phase_start, terms.schedule.ceiling_total, now).is_crossed()
+    phases::check_boundary(terms.schedule.phase_start, terms.schedule.ceiling_total, now).proj_is_crossed()
 }
 
 fun proj_auction_is_firable(auction: &AuctionTerms, cycle: &CycleParams, now: Timestamp): bool {
-    auction_window_policy::has_expired(cycle.descent, auction.phase_start, now).is_crossed()
+    auction_window_policy::has_expired(cycle.descent, auction.phase_start, now).proj_is_crossed()
 }
 
 fun step_handover<Asset: key + store, CoinType>(
@@ -1506,7 +1506,7 @@ fun do_install<Asset: key + store, CoinType>(
         committed_tenures: tenures,
     };
     event::emit(RentStarted {
-        escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::cap_id(cap_identity), tenant: tenant_addr,
+        escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant: tenant_addr,
         phase_start_ms: now_ms, price_paid, floor_price: monetary::price_mist(floor),
     });
     (

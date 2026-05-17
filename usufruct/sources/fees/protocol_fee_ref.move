@@ -15,7 +15,7 @@ public struct FeeInboxIdentity has copy, drop, store { id: ID }
 
 public struct ProtocolFeeRef has key {
     id:       UID,
-    inbox_id: FeeInboxIdentity,
+    proj_id: FeeInboxIdentity,
 }
 
 // === Events ===
@@ -27,23 +27,23 @@ public struct ProtocolFeeRef has key {
 // === View Functions ===
 
 public fun proj_inbox_id(fee_ref: &ProtocolFeeRef): ID {
-    inbox_id(fee_ref.inbox_id)
+    proj_id(fee_ref.proj_id)
 }
 
 public(package) fun proj_inbox_identity(fee_ref: &ProtocolFeeRef): FeeInboxIdentity {
-    fee_ref.inbox_id
+    fee_ref.proj_id
 }
 
 public(package) fun fee_inbox_identity(id: ID): FeeInboxIdentity { FeeInboxIdentity { id } }
 
-public(package) fun inbox_id(i: FeeInboxIdentity): ID { i.id }
+public(package) fun proj_id(i: FeeInboxIdentity): ID { i.id }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun create_and_freeze(inbox_id: ID, ctx: &mut TxContext) {
-    transfer::freeze_object(ProtocolFeeRef { id: object::new(ctx), inbox_id: fee_inbox_identity(inbox_id) });
+public(package) fun create_and_freeze(proj_id: ID, ctx: &mut TxContext) {
+    transfer::freeze_object(ProtocolFeeRef { id: object::new(ctx), proj_id: fee_inbox_identity(proj_id) });
 }
 
 // === Private Functions ===
@@ -51,7 +51,7 @@ public(package) fun create_and_freeze(inbox_id: ID, ctx: &mut TxContext) {
 // === Test Functions ===
 
 #[test_only]
-public fun create_and_freeze_for_testing(inbox_id: ID, ctx: &mut TxContext) {
-    create_and_freeze(inbox_id, ctx)
+public fun create_and_freeze_for_testing(proj_id: ID, ctx: &mut TxContext) {
+    create_and_freeze(proj_id, ctx)
 }
 

@@ -50,7 +50,7 @@ fun has_expired_table() {
     cases.do_ref!(|c| {
         let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
         let resolved = auction_window_policy::resolve(&c.policy, &mut gen);
-        assert_eq!(auction_window_policy::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed(), c.expected);
+        assert_eq!(auction_window_policy::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).proj_is_crossed(), c.expected);
     });
 }
 
@@ -142,7 +142,7 @@ fun has_expired_iff_now_ge_expiry_at() {
     cases.do_ref!(|c| {
         let mut gen   = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
         let resolved  = auction_window_policy::resolve(&c.policy, &mut gen);
-        let bool_view = auction_window_policy::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).is_crossed();
+        let bool_view = auction_window_policy::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).proj_is_crossed();
         let u64_view  = c.now >= phases::timestamp_ms(auction_window_policy::expiry_at(resolved, phases::timestamp(c.phase_start)));
         assert_eq!(bool_view, u64_view);
     });

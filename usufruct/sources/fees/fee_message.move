@@ -92,7 +92,7 @@ public(package) fun post<C>(
 ) {
     let FeeShare { balance, escrow_identity } = share;
     let amount         = balance::value(&balance);
-    let fee_inbox_id   = protocol_fee_ref::inbox_id(fee_inbox_identity);
+    let fee_inbox_id   = protocol_fee_ref::proj_id(fee_inbox_identity);
     let escrow_id      = escrow_identity::escrow_id(escrow_identity);
     let msg = FeeMessage<C> {
         id: object::new(ctx),
@@ -121,7 +121,7 @@ fun consume_message<C>(
     let FeeMessage { id, escrow_identity, balance } = msg;
     let fee_message_id = object::uid_to_inner(&id);
     let amount         = balance::value(&balance);
-    let fee_inbox_id   = protocol_fee_ref::inbox_id(fee_inbox_identity);
+    let fee_inbox_id   = protocol_fee_ref::proj_id(fee_inbox_identity);
     let escrow_id      = escrow_identity::escrow_id(escrow_identity);
     id.delete();
     event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount, collector });

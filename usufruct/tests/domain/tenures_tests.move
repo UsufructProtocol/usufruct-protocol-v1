@@ -17,21 +17,21 @@ fun cycles_zero_aborts() {
     tenures::tenures(0);
 }
 
-// ─── is_single ────────────────────────────────────────────────────────────────
+// ─── proj_is_single ────────────────────────────────────────────────────────────────
 
 #[test]
 fun is_single_true_for_one() {
-    assert!(tenures::is_single(tenures::tenures(1)), 0);
+    assert!(tenures::proj_is_single(tenures::tenures(1)), 0);
 }
 
 #[test]
 fun is_single_false_for_two() {
-    assert!(!tenures::is_single(tenures::tenures(2)), 0);
+    assert!(!tenures::proj_is_single(tenures::tenures(2)), 0);
 }
 
 #[test]
 fun is_single_false_for_large() {
-    assert!(!tenures::is_single(tenures::tenures(100)), 0);
+    assert!(!tenures::proj_is_single(tenures::tenures(100)), 0);
 }
 
 // ─── total_price ──────────────────────────────────────────────────────────────

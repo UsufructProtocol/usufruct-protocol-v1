@@ -43,7 +43,7 @@ fun proj_inbox_identity_matches_inbox_id() {
     {
         let fee_ref = sc.take_immutable<ProtocolFeeRef>();
         let fi      = protocol_fee_ref::proj_inbox_identity(&fee_ref);
-        assert_eq!(protocol_fee_ref::inbox_id(fi), inbox_id);
+        assert_eq!(protocol_fee_ref::proj_id(fi), inbox_id);
         test_scenario::return_immutable(fee_ref);
     };
     sc.end();
@@ -55,7 +55,7 @@ fun proj_inbox_identity_matches_inbox_id() {
 fun fee_inbox_identity_round_trip() {
     let id = fake_inbox_id();
     let fi = protocol_fee_ref::fee_inbox_identity(id);
-    assert_eq!(protocol_fee_ref::inbox_id(fi), id);
+    assert_eq!(protocol_fee_ref::proj_id(fi), id);
 }
 
 #[test]
@@ -64,5 +64,5 @@ fun two_distinct_inbox_ids_produce_distinct_identities() {
     let id_b = object::id_from_address(@0xBB);
     let fi_a = protocol_fee_ref::fee_inbox_identity(id_a);
     let fi_b = protocol_fee_ref::fee_inbox_identity(id_b);
-    assert!(protocol_fee_ref::inbox_id(fi_a) != protocol_fee_ref::inbox_id(fi_b), 0);
+    assert!(protocol_fee_ref::proj_id(fi_a) != protocol_fee_ref::proj_id(fi_b), 0);
 }

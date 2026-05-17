@@ -51,7 +51,7 @@ public(package) fun timestamp_ms(t: Timestamp): u64 { t.ms }
 
 public(package) fun duration_ms(d: Duration): u64 { d.ms }
 
-public(package) fun is_crossed(b: &Boundary): bool {
+public(package) fun proj_is_crossed(b: &Boundary): bool {
     match (b) { Boundary::Crossed { .. } => true, _ => false }
 }
 

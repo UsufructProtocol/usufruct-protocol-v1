@@ -53,7 +53,7 @@ public(package) fun identity(cap: &OwnerCap): OwnerCapIdentity {
     OwnerCapIdentity { id: object::id(cap) }
 }
 
-public(package) fun cap_id(o: OwnerCapIdentity): ID { o.id }
+public(package) fun proj_id(o: OwnerCapIdentity): ID { o.id }
 
 public(package) fun proj_escrow_identity(cap: &OwnerCap): EscrowIdentity {
     cap.escrow_identity

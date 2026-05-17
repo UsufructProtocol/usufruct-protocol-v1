@@ -453,7 +453,7 @@ public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
 public fun tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    phases::duration_ms(tenure_duration_policy::min_ceiling(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))))
+    phases::duration_ms(tenure_duration_policy::proj_min_ceiling(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))))
 }
 
 public fun integrated_at_ms<Asset: key + store, CoinType>(
@@ -646,7 +646,7 @@ public fun bps_denominator():  u64 { asset_state::bps_denominator() }
 public fun min_rent_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    monetary::price_mist(floor_price_policy::floor_for_view(policy_ensemble::proj_floor_price(read_ensemble(escrow))))
+    monetary::price_mist(floor_price_policy::floor_price(policy_ensemble::proj_floor_price(read_ensemble(escrow))))
 }
 
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(

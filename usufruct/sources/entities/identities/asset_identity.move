@@ -11,7 +11,7 @@ module usufruct::asset_identity;
 
 // === Structs ===
 
-public struct AssetIdentity has copy, drop, store { id: ID }
+public struct AssetIdentity has copy, drop, store { proj_id: ID }
 
 // === Enums ===
 
@@ -23,13 +23,13 @@ public struct AssetIdentity has copy, drop, store { id: ID }
 
 // === View Functions ===
 
-public(package) fun id(a: AssetIdentity): ID { a.id }
+public(package) fun proj_id(a: AssetIdentity): ID { a.proj_id }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun new(id: ID): AssetIdentity { AssetIdentity { id } }
+public(package) fun new(proj_id: ID): AssetIdentity { AssetIdentity { proj_id } }
 
 // === Private Functions ===
 

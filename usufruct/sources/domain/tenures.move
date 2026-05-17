@@ -38,7 +38,7 @@ public fun tenures_count(c: Tenures): u64 { c.count }
 
 // === Package Functions ===
 
-public(package) fun is_single(c: Tenures): bool { c.count == 1 }
+public(package) fun proj_is_single(c: Tenures): bool { c.count == 1 }
 
 public(package) fun total_price(floor: Price, c: Tenures): Price {
     monetary::price(math::mul_div(monetary::price_mist(floor), c.count, 1))

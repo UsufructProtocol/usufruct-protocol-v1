@@ -164,7 +164,7 @@ fun has_expired_table() {
                 phases::timestamp(c.bid_time),
                 phases::timestamp(c.phase_start),
                 phases::timestamp(c.now),
-            ).is_crossed(),
+            ).proj_is_crossed(),
             c.expected,
         );
     });
@@ -254,7 +254,7 @@ fun has_expired_iff_now_ge_expiry_at() {
             phases::timestamp(c.bid_time),
             phases::timestamp(c.phase_start),
             phases::timestamp(c.now),
-        ).is_crossed();
+        ).proj_is_crossed();
         let u64_view = c.now >= phases::timestamp_ms(handover_policy::expiry_at(
             phases::duration(c.resolved_floor),
             phases::duration(c.resolved_ceiling),
@@ -284,7 +284,7 @@ fun has_expired_monotone_in_now() {
             phases::timestamp(bid_time),
             phases::timestamp(phase_start),
             phases::timestamp(n),
-        ).is_crossed();
+        ).proj_is_crossed();
         if (crossed) assert!(cur, 0);
         if (cur) crossed = true;
         n = n + 1;

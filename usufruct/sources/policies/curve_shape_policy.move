@@ -117,7 +117,7 @@ public(package) fun proj_exponential_alpha_neg(s: &CurveShapePolicy): Option<boo
 
 // === Package Functions ===
 
-public(package) fun height_value(h: CurveHeight): u64 { h.h }
+public(package) fun proj_value(h: CurveHeight): u64 { h.h }
 
 public(package) fun evaluate_curve(shape: &CurveShapePolicy, t: u64, t_max: u64): CurveHeight {
     let h = if (t == 0)     { 0 }

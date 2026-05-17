@@ -44,8 +44,8 @@ fun two_caps_produce_distinct_identities() {
         let id_a   = owner_identity::new(owner_cap::identity(&cap_a));
         let id_b   = owner_identity::new(owner_cap::identity(&cap_b));
         assert!(
-            owner_cap::cap_id(owner_identity::proj_cap_identity(&id_a)) !=
-            owner_cap::cap_id(owner_identity::proj_cap_identity(&id_b)),
+            owner_cap::proj_id(owner_identity::proj_cap_identity(&id_a)) !=
+            owner_cap::proj_id(owner_identity::proj_cap_identity(&id_b)),
             0,
         );
         owner_cap::burn(cap_a, OWNER);

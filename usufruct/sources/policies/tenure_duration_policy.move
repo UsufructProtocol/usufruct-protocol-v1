@@ -77,7 +77,7 @@ public(package) fun proj_range_max(policy: &TenureDurationPolicy): Option<Durati
 
 // === Package Functions ===
 
-public(package) fun min_ceiling(policy: &TenureDurationPolicy): Duration {
+public(package) fun proj_min_ceiling(policy: &TenureDurationPolicy): Duration {
     match (policy) {
         TenureDurationPolicy::Fixed { ceiling }           => *ceiling,
         TenureDurationPolicy::RandomInRange { min, .. }   => *min,

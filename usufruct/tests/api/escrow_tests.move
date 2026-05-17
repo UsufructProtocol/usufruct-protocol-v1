@@ -266,7 +266,7 @@ fun split_fee_partitions_into_owner_share_plus_protocol_fee() {
 
 #[test]
 fun split_fee_floors_to_zero_below_threshold() {
-    // Below 10 base units, mul_div(amount, 1000, 10000) = 0.
+    // Below 10 base units, compute_mul_div(amount, 1000, 10000) = 0.
     let (owner_amt, fee_amt) = escrow::split_fee_for_testing(9);
     assert_eq!(fee_amt,   0);
     assert_eq!(owner_amt, 9);
@@ -281,7 +281,7 @@ fun split_fee_zero_in_zero_out() {
 
 #[test]
 fun split_fee_exact_threshold_yields_one_fee() {
-    // mul_div(10, 1000, 10000) = 1.
+    // compute_mul_div(10, 1000, 10000) = 1.
     let (owner_amt, fee_amt) = escrow::split_fee_for_testing(10);
     assert_eq!(fee_amt,   1);
     assert_eq!(owner_amt, 9);
@@ -717,7 +717,7 @@ fun rent_from_at_dutch_installs_new_tenant() {
 
 /// Occupied → Demand via rent. BidPlaced carries
 /// the pre-computed handover_countdown_expiry. Sweeps the C axis
-/// (HandoverPolicy) since handover_policy::expiry_at depends on it.
+/// (HandoverPolicy) since handover_policy::compute_expiry_at depends on it.
 #[test]
 fun rent_from_handover_open_places_bid() {
     let mut sc = setup();
@@ -1287,9 +1287,9 @@ fun do_auction_expiry_returns_to_idle() {
     sc.end();
 }
 
-// ─── §14.5 next_pending — detection without firing ──────────────────────────
+// ─── §14.5 compute_next_pending — detection without firing ──────────────────────────
 
-/// next_pending returns None when nothing is due.
+/// compute_next_pending returns None when nothing is due.
 #[test]
 fun next_pending_returns_none_in_steady_state() {
     let mut sc = setup();
@@ -1308,9 +1308,9 @@ fun next_pending_returns_none_in_steady_state() {
     sc.end();
 }
 
-/// next_pending returns None when the escrow is at AtDutch but the descent
+/// compute_next_pending returns None when the escrow is at AtDutch but the descent
 /// window has not yet closed. Covers the AtDutch-not-firable branch of
-/// `next_pending` (B4 in bytecode).
+/// `compute_next_pending` (B4 in bytecode).
 #[test]
 fun next_pending_at_dutch_not_firable_returns_none() {
     let mut sc = setup();
@@ -1341,9 +1341,9 @@ fun next_pending_at_dutch_not_firable_returns_none() {
     sc.end();
 }
 
-/// next_pending returns Some(Demand) with the handover expiry as boundary
+/// compute_next_pending returns Some(Demand) with the handover expiry as boundary
 /// when the escrow is in Demand and the countdown has elapsed.
-/// Covers the Demand-firable branch of `next_pending` (B12 in bytecode).
+/// Covers the Demand-firable branch of `compute_next_pending` (B12 in bytecode).
 #[test]
 fun next_pending_demand_firable_returns_some() {
     let mut sc = setup();
@@ -1379,9 +1379,9 @@ fun next_pending_demand_firable_returns_some() {
     sc.end();
 }
 
-/// next_pending returns None when the escrow is in Demand but the handover
+/// compute_next_pending returns None when the escrow is in Demand but the handover
 /// countdown has not yet elapsed. Covers the Demand-not-firable branch of
-/// `next_pending` (B13 in bytecode).
+/// `compute_next_pending` (B13 in bytecode).
 #[test]
 fun next_pending_demand_not_firable_returns_none() {
     let mut sc = setup();
@@ -1410,7 +1410,7 @@ fun next_pending_demand_not_firable_returns_none() {
     sc.end();
 }
 
-/// next_pending returns Tenure with the boundary_ms when tenure has elapsed.
+/// compute_next_pending returns Tenure with the boundary_ms when tenure has elapsed.
 #[test]
 fun next_pending_detects_tenure_with_correct_boundary() {
     let mut sc = setup();
@@ -3576,7 +3576,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     // AtDutchAuction: T3's phase_start = t3_expiry=26_000 (handover boundary for Countdown).
-    // Actually: expiry_at(bid_time=2_000, phase_start=0, tenure_ceiling=100_000)
+    // Actually: compute_expiry_at(bid_time=2_000, phase_start=0, tenure_ceiling=100_000)
     //   = min(2_000+25_000, 0+100_000) = 27_000.
     let t3_phase_start = 27_000u64;
     let tenure_boundary = t3_phase_start + escrow_corpus::tenure_ceiling_const(); // 127_000
@@ -3931,7 +3931,7 @@ fun e2e_fin3_90_10_split_exact() {
 ///   DESC-1: compute_floor_price(tenure_boundary) == last_acq_price
 ///   DESC-2: compute_floor_price(descent_boundary) == min_rent_price
 ///
-/// Sweeps all 7 curve shapes (axis E) — evaluate_curve returns 0 at
+/// Sweeps all 7 curve shapes (axis E) — compute_curve_height returns 0 at
 /// elapsed=0 and SCALE at elapsed>=t_max by construction for every shape,
 /// so both endpoints must hold universally. Non-zero spread is created by
 /// T1 renting at 2×min_price (overpay, no handover needed) so last_acq_price
@@ -3964,7 +3964,7 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
             escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
             assert!(escrow::is_at_dutch_auction(&escrow), tag);
 
-            // DESC-1: elapsed_descent = 0 → evaluate_curve = 0 → no descent yet.
+            // DESC-1: elapsed_descent = 0 → compute_curve_height = 0 → no descent yet.
             // Clock is already at tenure_boundary (elapsed=0 from AtDutch phase_start).
             let floor_start = escrow::compute_floor_price(&escrow, &clk);
             assert_eq!(floor_start, stake);
@@ -3998,7 +3998,7 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
 ///
 /// Symmetric counterpart to DESC-1/2: same endpoint logic, credit domain
 /// instead of price domain. Sweeps all 7 curve shapes (axis E) to confirm
-/// the saturation behavior is universal — evaluate_curve short-circuits at
+/// the saturation behavior is universal — compute_curve_height short-circuits at
 /// both extremes regardless of shape.
 #[test]
 fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
@@ -4025,8 +4025,8 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
             assert_eq!(uc_start, 0);
 
             // DESC-4: at exact tenure_ceiling (elapsed >= t_max), full stake is earned.
-            // evaluate_curve short-circuits to SCALE for elapsed >= t_max regardless
-            // of curve shape: used_credit = mul_div(stake, SCALE, SCALE) = stake.
+            // compute_curve_height short-circuits to SCALE for elapsed >= t_max regardless
+            // of curve shape: used_credit = compute_mul_div(stake, SCALE, SCALE) = stake.
             clock::set_for_testing(&mut clk, ceiling);
             let uc_end = escrow::compute_used_credit(&escrow, &clk);
             assert_eq!(uc_end, min_price);
@@ -4796,7 +4796,7 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
 
 /// With HandoverPolicy::FixedTime, the handover countdown expiry is always
 /// phase_start + tenure_ceiling — the handover fires exactly at the tenure
-/// boundary. At that moment elapsed == tenure_ceiling, so evaluate_curve
+/// boundary. At that moment elapsed == tenure_ceiling, so compute_curve_height
 /// short-circuits to SCALE for every curve shape. This means:
 ///
 ///   used_credit == stake  (full credit consumed)
@@ -4804,7 +4804,7 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
 ///   owner_share + protocol_fee == stake  (all of T1's stake distributed)
 ///
 /// Sweeps all 7 curve shapes (axis E) — the result must hold for every shape
-/// because it depends on the evaluate_curve saturation invariant (DESC-4),
+/// because it depends on the compute_curve_height saturation invariant (DESC-4),
 /// not on the specific curve formula.
 #[test]
 fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
@@ -6207,7 +6207,7 @@ fun e2e_ev3_borrow_return_cap_id_consistency() {
 // ── EV-4: BidPlaced.handover_countdown_expiry accuracy per policy ─────────────
 
 /// The handover_countdown_expiry stamped in BidPlaced must match the value
-/// computed by handover_policy::expiry_at for each HandoverPolicy variant.
+/// computed by handover_policy::compute_expiry_at for each HandoverPolicy variant.
 ///
 /// With phase_start=0, tenure_ceiling=100_000, bid at t=1_000:
 ///   c=0 Instant:  expiry = bid_time                              = 1_000
@@ -7198,7 +7198,7 @@ fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
     let p1  = mk_payment(floor, sc.ctx());
     let cap1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &random, &clk, sc.ctx());
 
-    // T2 bids with cycles(3): pays total_price(floor_price_at, 3)
+    // T2 bids with cycles(3): pays compute_total_price(compute_floor_price_at, 3)
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor  = escrow::compute_floor_price(&escrow, &clk);
     let p2         = mk_payment(bid_floor * 3, sc.ctx());
@@ -8276,7 +8276,7 @@ fun handover_scaling_rate_symmetry_per_committed_cycle() {
 
 // ─── §Normalization invariants ────────────────────────────────────────────────
 
-/// Truncation invariant: rescale_duration is exact across a handover chain.
+/// Truncation invariant: compute_rescaled_duration is exact across a handover chain.
 /// T1(3) → T2(2) → T3(1): each rescaling divides exactly — no accumulated error.
 /// Final handover value must equal the base countdown, not countdown ± drift.
 #[test]
@@ -8478,7 +8478,7 @@ fun normalization_at_dutch_ceiling_after_handover_then_expiry() {
 }
 
 /// Fixed-point: T1(n) → T2(n). Same cycle count → rescale is identity.
-/// rescale_duration(extended, cycles(n), cycles(n)) = extended exactly.
+/// compute_rescaled_duration(extended, cycles(n), cycles(n)) = extended exactly.
 /// Neither ceiling nor handover should change across a same-cycles handover.
 #[test]
 fun normalization_same_cycle_count_is_identity() {
@@ -8661,7 +8661,7 @@ const E_COMMITMENT_NOT_EXTENDED:      u64 = 17;  // asset_state::ECommitmentNotE
 
 
 /// I-1 + I-2: commitment_anchor is set to integrated_at at integrate time.
-/// With Immediate (floor=0), unlock_at = anchor + 0 = anchor = integrated_at.
+/// With Immediate (floor=0), compute_unlock_at = anchor + 0 = anchor = integrated_at.
 #[test]
 fun commitment_init_anchor_equals_integrated_at() {
     let mut sc  = setup();

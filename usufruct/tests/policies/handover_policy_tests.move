@@ -35,7 +35,7 @@ fun new_handover_random_in_range_rejects_min_gt_max() {
 #[test]
 fun resolve_instant_returns_zero() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-    let result = handover_policy::resolve(
+    let result = handover_policy::compute_duration(
         &handover_policy::new_handover_instant(),
         phases::duration(100),
         &mut gen,
@@ -47,7 +47,7 @@ fun resolve_instant_returns_zero() {
 fun resolve_fixed_time_returns_ceiling() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
     let ceiling = phases::duration(200);
-    let result = handover_policy::resolve(
+    let result = handover_policy::compute_duration(
         &handover_policy::new_handover_fixed_time(),
         ceiling,
         &mut gen,
@@ -58,7 +58,7 @@ fun resolve_fixed_time_returns_ceiling() {
 #[test]
 fun resolve_countdown_returns_floor() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-    let result = handover_policy::resolve(
+    let result = handover_policy::compute_duration(
         &handover_policy::new_handover_countdown(phases::duration(42)),
         phases::duration(100),
         &mut gen,
@@ -80,14 +80,14 @@ fun resolve_random_in_range_draws_in_bounds() {
     let mut i = 0;
     while (i < seeds.length()) {
         let mut gen = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
-        let result = handover_policy::resolve(&policy, phases::duration(200), &mut gen);
+        let result = handover_policy::compute_duration(&policy, phases::duration(200), &mut gen);
         let ms = phases::duration_ms(result);
         assert!(ms >= min && ms <= max, 0);
         i = i + 1;
     };
 }
 
-// ─── countdown_floor_lt ───────────────────────────────────────────────────────
+// ─── compute_countdown_floor_lt ───────────────────────────────────────────────────────
 
 #[test_only]
 public struct CountdownFloorLtCase has drop {
@@ -113,11 +113,11 @@ fun countdown_floor_lt_table() {
         CountdownFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100)), ceiling: 100, expected: false },
     ];
     cases.do_ref!(|c| {
-        assert_eq!(handover_policy::countdown_floor_lt(&c.policy, phases::duration(c.ceiling)), c.expected);
+        assert_eq!(handover_policy::compute_countdown_floor_lt(&c.policy, phases::duration(c.ceiling)), c.expected);
     });
 }
 
-// ─── has_expired — takes resolved_floor: Duration ────────────────────────────
+// ─── compute_expiry_boundary — takes resolved_floor: Duration ────────────────────────────
 
 #[test_only]
 public struct HasExpiredCase has drop {
@@ -158,7 +158,7 @@ fun has_expired_table() {
     ];
     cases.do_ref!(|c| {
         assert_eq!(
-            handover_policy::has_expired(
+            handover_policy::compute_expiry_boundary(
                 phases::duration(c.resolved_floor),
                 phases::duration(c.resolved_ceiling),
                 phases::timestamp(c.bid_time),
@@ -170,7 +170,7 @@ fun has_expired_table() {
     });
 }
 
-// ─── expiry_at ────────────────────────────────────────────────────────────────
+// ─── compute_expiry_at ────────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct ExpiryAtCase has drop {
@@ -202,7 +202,7 @@ fun expiry_at_table() {
     ];
     cases.do_ref!(|c| {
         assert_eq!(
-            phases::timestamp_ms(handover_policy::expiry_at(
+            phases::timestamp_ms(handover_policy::compute_expiry_at(
                 phases::duration(c.resolved_floor),
                 phases::duration(c.resolved_ceiling),
                 phases::timestamp(c.bid_time),
@@ -213,7 +213,7 @@ fun expiry_at_table() {
     });
 }
 
-// ─── sister identity: has_expired ⇔ now >= expiry_at ─────────────────────────
+// ─── sister identity: compute_expiry_boundary ⇔ now >= compute_expiry_at ─────────────────────────
 
 #[test_only]
 public struct HoSisterCase has drop {
@@ -248,14 +248,14 @@ fun has_expired_iff_now_ge_expiry_at() {
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, now: 150 },
     ];
     cases.do_ref!(|c| {
-        let bool_view = handover_policy::has_expired(
+        let bool_view = handover_policy::compute_expiry_boundary(
             phases::duration(c.resolved_floor),
             phases::duration(c.resolved_ceiling),
             phases::timestamp(c.bid_time),
             phases::timestamp(c.phase_start),
             phases::timestamp(c.now),
         ).proj_is_crossed();
-        let u64_view = c.now >= phases::timestamp_ms(handover_policy::expiry_at(
+        let u64_view = c.now >= phases::timestamp_ms(handover_policy::compute_expiry_at(
             phases::duration(c.resolved_floor),
             phases::duration(c.resolved_ceiling),
             phases::timestamp(c.bid_time),
@@ -278,7 +278,7 @@ fun has_expired_monotone_in_now() {
     let mut n: u64 = 0;
     let mut crossed = false;
     while (n <= 200) {
-        let cur = handover_policy::has_expired(
+        let cur = handover_policy::compute_expiry_boundary(
             phases::duration(resolved_floor),
             phases::duration(resolved_ceiling),
             phases::timestamp(bid_time),

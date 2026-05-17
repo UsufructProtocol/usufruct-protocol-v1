@@ -77,14 +77,14 @@ public(package) fun proj_range_max(policy: &FloorPricePolicy): Option<Price> {
 
 // === Package Functions ===
 
-public(package) fun floor_price(policy: &FloorPricePolicy): Price {
+public(package) fun compute_floor_price(policy: &FloorPricePolicy): Price {
     match (policy) {
         FloorPricePolicy::Fixed { price }           => *price,
         FloorPricePolicy::RandomInRange { min, .. } => *min,
     }
 }
 
-public(package) fun resolve(policy: &FloorPricePolicy, generator: &mut RandomGenerator): Price {
+public(package) fun compute_price(policy: &FloorPricePolicy, generator: &mut RandomGenerator): Price {
     match (policy) {
         FloorPricePolicy::Fixed { price } => *price,
         FloorPricePolicy::RandomInRange { min, max } => {

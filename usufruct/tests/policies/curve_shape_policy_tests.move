@@ -93,7 +93,7 @@ fun new_exponential_alpha_abs_above_8_aborts() {
     let _ = curve_shape_policy::new_exponential(9, true);
 }
 
-// ─── evaluate_curve dispatcher ─────────────────────────────────────────────
+// ─── compute_curve_height dispatcher ─────────────────────────────────────────────
 //
 // §11.1 edge rows × variant seeds, plus the P-D1 dispatch-equivalence
 // property. The edge rows fire BEFORE any eval_* call (short-circuits on
@@ -130,7 +130,7 @@ fun evaluate_curve_edge_cases_apply_to_every_variant() {
         let shape = &seeds[s];
         cases.do_ref!(|case| {
             assert_eq!(
-                curve_shape_policy::proj_value(curve_shape_policy::evaluate_curve(shape, case.t, case.t_max)),
+                curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(shape, case.t, case.t_max)),
                 case.expected,
             );
         });
@@ -139,7 +139,7 @@ fun evaluate_curve_edge_cases_apply_to_every_variant() {
 }
 
 // P-D1 dispatch equivalence: for every variant seed and every interior
-// (t, t_max), evaluate_curve must route to the matching eval_* function and
+// (t, t_max), compute_curve_height must route to the matching eval_* function and
 // forward fields verbatim. Catches dispatcher drift (wrong arm, swapped
 // fields) that no single-variant test row would surface.
 
@@ -165,7 +165,7 @@ fun evaluate_curve_dispatch_equivalence_linear() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::evaluate_curve(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
             curve_shape_policy::eval_linear_for_testing(p.t, p.t_max),
         );
     });
@@ -177,7 +177,7 @@ fun evaluate_curve_dispatch_equivalence_smoothstep() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::evaluate_curve(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
             curve_shape_policy::eval_smoothstep_for_testing(p.t, p.t_max),
         );
     });
@@ -189,7 +189,7 @@ fun evaluate_curve_dispatch_equivalence_logistic() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::evaluate_curve(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
             curve_shape_policy::eval_logistic_for_testing(p.t, p.t_max),
         );
     });
@@ -201,7 +201,7 @@ fun evaluate_curve_dispatch_equivalence_power_law() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::evaluate_curve(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
             curve_shape_policy::eval_power_law_for_testing(p.t, p.t_max, 2, 1),
         );
     });
@@ -213,7 +213,7 @@ fun evaluate_curve_dispatch_equivalence_exponential() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::evaluate_curve(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
             curve_shape_policy::eval_exponential_for_testing(p.t, p.t_max, 2, false),
         );
     });
@@ -507,7 +507,7 @@ fun eval_power_law_above_linear_when_concave() {
 //   5. Restore `assert_eq!`. Suite turns green.
 //
 // Four of the five inputs land on perfect d-th powers (1/4, 1/8, 1/16) so
-// `nth_root_u128` returns an exact integer; the (3, 4, 1, 2) row exercises
+// `compute_nth_root_u128` returns an exact integer; the (3, 4, 1, 2) row exercises
 // floor rounding on the irrational √0.75.
 #[test]
 fun eval_power_law_root_golden_vectors() {

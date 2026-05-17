@@ -18,7 +18,7 @@ fun new_deferred_rejects_zero() {
     commitment_policy::new_deferred(phases::duration(0));
 }
 
-// ─── is_unlocked ──────────────────────────────────────────────────────────────
+// ─── compute_unlock_boundary ──────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct IsUnlockedCase has drop {
@@ -54,8 +54,8 @@ fun is_unlocked_table() {
         IsUnlockedCase { policy: commitment_policy::new_deferred(phases::duration(7_200_000)), integrated_at: 1_000_000, now: 8_200_000, expected: true  },
     ];
     cases.do_ref!(|c| {
-        let resolved = commitment_policy::resolve(&c.policy);
-        assert_eq!(commitment_policy::is_unlocked(resolved, phases::timestamp(c.integrated_at), phases::timestamp(c.now)).proj_is_crossed(), c.expected);
+        let resolved = commitment_policy::compute_duration(&c.policy);
+        assert_eq!(commitment_policy::compute_unlock_boundary(resolved, phases::timestamp(c.integrated_at), phases::timestamp(c.now)).proj_is_crossed(), c.expected);
     });
 }
 
@@ -73,8 +73,8 @@ fun is_unlocked_monotone_in_now_under_deferred() {
     let mut n: u64 = 0;
     let mut crossed = false;
     while (n <= 200) {
-        let resolved = commitment_policy::resolve(&p);
-        let cur = commitment_policy::is_unlocked(resolved, phases::timestamp(integrated_at), phases::timestamp(n)).proj_is_crossed();
+        let resolved = commitment_policy::compute_duration(&p);
+        let cur = commitment_policy::compute_unlock_boundary(resolved, phases::timestamp(integrated_at), phases::timestamp(n)).proj_is_crossed();
         if (crossed) assert!(cur, 0);
         if (cur) crossed = true;
         n = n + 1;

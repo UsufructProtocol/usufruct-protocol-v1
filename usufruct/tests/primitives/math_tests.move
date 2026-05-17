@@ -9,7 +9,7 @@ use std::u128;
 use std::unit_test::assert_eq;
 use usufruct::math;
 
-// ─── mul_div ───────────────────────────────────────────────────────────────
+// ─── compute_mul_div ───────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct MulDivCase has drop {
@@ -40,7 +40,7 @@ fun mul_div_table() {
         MulDivCase { a: 9223372036854775808, b: 2, c: 2, expected: 9223372036854775808 },
     ];
     cases.do_ref!(|case| {
-        let result = math::mul_div(case.a, case.b, case.c);
+        let result = math::compute_mul_div(case.a, case.b, case.c);
         assert_eq!(result, case.expected);
         // Invariant: result*c ≤ a*b < (result+1)*c
         // For u64 inputs, (result+1)*c ≤ 2^64 * (2^64-1) < u128::MAX — no overflow.
@@ -54,31 +54,31 @@ fun mul_div_table() {
 
 #[test, expected_failure(arithmetic_error, location = usufruct::math)]
 fun mul_div_c_zero_aborts() {
-    math::mul_div(1, 1, 0);
+    math::compute_mul_div(1, 1, 0);
 }
 
 #[test, expected_failure(arithmetic_error, location = usufruct::math)]
 fun mul_div_all_zero_aborts() {
-    math::mul_div(0, 0, 0);
+    math::compute_mul_div(0, 0, 0);
 }
 
 #[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun mul_div_overflow_max_times_2() {
-    math::mul_div(u64::max_value!(), 2, 1);
+    math::compute_mul_div(u64::max_value!(), 2, 1);
 }
 
 #[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun mul_div_overflow_exact_u64_boundary() {
     // 2^32 * 2^32 = 2^64 = u64::MAX + 1
-    math::mul_div(4294967296, 4294967296, 1);
+    math::compute_mul_div(4294967296, 4294967296, 1);
 }
 
 #[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun mul_div_overflow_max_times_max() {
-    math::mul_div(u64::max_value!(), u64::max_value!(), 1);
+    math::compute_mul_div(u64::max_value!(), u64::max_value!(), 1);
 }
 
-// ─── nth_root_u128 ─────────────────────────────────────────────────────────
+// ─── compute_nth_root_u128 ─────────────────────────────────────────────────────────
 
 #[test_only]
 public struct NthRootCase has drop {
@@ -124,7 +124,7 @@ fun nth_root_u128_table() {
         NthRootCase { n: 79228162514264337593543950335,           d: 4, expected: 16777215    }, // 2^96-1
     ];
     cases.do_ref!(|case| {
-        let result = math::nth_root_u128(case.n, case.d);
+        let result = math::compute_nth_root_u128(case.n, case.d);
         assert_eq!(result, case.expected);
         // Invariant: result^d ≤ n < (result+1)^d
         assert!(pow_u128(result, case.d) <= case.n, 0);
@@ -134,12 +134,12 @@ fun nth_root_u128_table() {
 
 #[test, expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
 fun nth_root_u128_rejects_degree_above_4() {
-    math::nth_root_u128(100, 5);
+    math::compute_nth_root_u128(100, 5);
 }
 
 #[test, expected_failure(abort_code = math::ENthRootBadDegree, location = usufruct::math)]
 fun nth_root_u128_rejects_degree_below_2() {
-    math::nth_root_u128(100, 1);
+    math::compute_nth_root_u128(100, 1);
 }
 
 #[test]
@@ -153,21 +153,21 @@ fun nth_root_u128_largest_perfect_powers() {
     // (k+1)^2 mathematically exceeds u128, so floor remains k for k_sq + 1.
     let k: u128 = u64::max_value!() as u128;
     let k_sq = k * k;
-    assert_eq!(math::nth_root_u128(k_sq, 2), k);
-    assert_eq!(math::nth_root_u128(k_sq - 1, 2), k - 1);
-    assert_eq!(math::nth_root_u128(k_sq + 1, 2), k);
+    assert_eq!(math::compute_nth_root_u128(k_sq, 2), k);
+    assert_eq!(math::compute_nth_root_u128(k_sq - 1, 2), k - 1);
+    assert_eq!(math::compute_nth_root_u128(k_sq + 1, 2), k);
 
     // d = 3: (2^42)^3 = 2^126.
     let cube_base: u128 = 1u128 << 42;
     let cube_n = pow_u128(cube_base, 3);
-    assert_eq!(math::nth_root_u128(cube_n, 3), cube_base);
-    assert_eq!(math::nth_root_u128(cube_n - 1, 3), cube_base - 1);
+    assert_eq!(math::compute_nth_root_u128(cube_n, 3), cube_base);
+    assert_eq!(math::compute_nth_root_u128(cube_n - 1, 3), cube_base - 1);
 
     // d = 4: (2^31)^4 = 2^124.
     let q_base: u128 = 1u128 << 31;
     let q_n = pow_u128(q_base, 4);
-    assert_eq!(math::nth_root_u128(q_n, 4), q_base);
-    assert_eq!(math::nth_root_u128(q_n - 1, 4), q_base - 1);
+    assert_eq!(math::compute_nth_root_u128(q_n, 4), q_base);
+    assert_eq!(math::compute_nth_root_u128(q_n - 1, 4), q_base - 1);
 }
 
 #[test]
@@ -185,8 +185,8 @@ fun nth_root_u128_non_power_of_2_roundtrip() {
         while (di < dlen) {
             let d = ds[di];
             let kd = pow_u128(k, d);
-            assert_eq!(math::nth_root_u128(kd, d), k);
-            assert_eq!(math::nth_root_u128(kd - 1, d), k - 1);
+            assert_eq!(math::compute_nth_root_u128(kd, d), k);
+            assert_eq!(math::compute_nth_root_u128(kd - 1, d), k - 1);
             di = di + 1;
         };
         bi = bi + 1;
@@ -223,7 +223,7 @@ fun nth_root_u128_scaled_irrationals() {
         NthRootCase { n: 10 * s4, d: 4, expected: 1778279410 },
     ];
     cases.do_ref!(|case| {
-        let result = math::nth_root_u128(case.n, case.d);
+        let result = math::compute_nth_root_u128(case.n, case.d);
         assert_eq!(result, case.expected);
         assert!(pow_u128(result, case.d) <= case.n, 0);
         assert!(upper_bound_holds(case.n, result, case.d), 1);
@@ -251,7 +251,7 @@ fun nth_root_u128_convergence_stress() {
         NthRootCase { n:  1_329_228_000_736_676_036_962_857_191_812_890_625,   d: 4, expected: 1_073_741_825 },             // (2^30+1)^4
     ];
     cases.do_ref!(|case| {
-        let result = math::nth_root_u128(case.n, case.d);
+        let result = math::compute_nth_root_u128(case.n, case.d);
         assert_eq!(result, case.expected);
         assert!(pow_u128(result, case.d) <= case.n, 0);
         assert!(upper_bound_holds(case.n, result, case.d), 1);

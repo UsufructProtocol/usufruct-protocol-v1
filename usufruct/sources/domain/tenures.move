@@ -40,20 +40,20 @@ public fun tenures_count(c: Tenures): u64 { c.count }
 
 public(package) fun proj_is_single(c: Tenures): bool { c.count == 1 }
 
-public(package) fun total_price(floor: Price, c: Tenures): Price {
-    monetary::price(math::mul_div(monetary::price_mist(floor), c.count, 1))
+public(package) fun compute_total_price(floor: Price, c: Tenures): Price {
+    monetary::price(math::compute_mul_div(monetary::price_mist(floor), c.count, 1))
 }
 
-public(package) fun per_tenure_stake(stake: Stake, c: Tenures): Stake {
-    monetary::stake(math::mul_div(monetary::stake_mist(stake), 1, c.count))
+public(package) fun compute_per_tenure_stake(stake: Stake, c: Tenures): Stake {
+    monetary::stake(math::compute_mul_div(monetary::stake_mist(stake), 1, c.count))
 }
 
-public(package) fun total_duration(d: Duration, c: Tenures): Duration {
-    phases::duration(math::mul_div(phases::duration_ms(d), c.count, 1))
+public(package) fun compute_total_duration(d: Duration, c: Tenures): Duration {
+    phases::duration(math::compute_mul_div(phases::duration_ms(d), c.count, 1))
 }
 
-public(package) fun rescale_duration(d: Duration, from: Tenures, to: Tenures): Duration {
-    phases::duration(math::mul_div(phases::duration_ms(d), to.count, from.count))
+public(package) fun compute_rescaled_duration(d: Duration, from: Tenures, to: Tenures): Duration {
+    phases::duration(math::compute_mul_div(phases::duration_ms(d), to.count, from.count))
 }
 
 // === Private Functions ===

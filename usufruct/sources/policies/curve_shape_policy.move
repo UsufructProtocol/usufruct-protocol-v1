@@ -119,7 +119,7 @@ public(package) fun proj_exponential_alpha_neg(s: &CurveShapePolicy): Option<boo
 
 public(package) fun proj_value(h: CurveHeight): u64 { h.h }
 
-public(package) fun evaluate_curve(shape: &CurveShapePolicy, t: u64, t_max: u64): CurveHeight {
+public(package) fun compute_curve_height(shape: &CurveShapePolicy, t: u64, t_max: u64): CurveHeight {
     let h = if (t == 0)     { 0 }
             else if (t >= t_max) { SCALE }
             else match (shape) {
@@ -132,27 +132,27 @@ public(package) fun evaluate_curve(shape: &CurveShapePolicy, t: u64, t_max: u64)
     CurveHeight { h }
 }
 
-public(package) fun apply(amount: u64, height: CurveHeight): u64 {
-    math::mul_div(amount, height.h, SCALE)
+public(package) fun compute_scaled_value(amount: u64, height: CurveHeight): u64 {
+    math::compute_mul_div(amount, height.h, SCALE)
 }
 
 // === Private Functions ===
 
 fun eval_linear(t: u64, t_max: u64): u64 {
-    math::mul_div(t, SCALE, t_max)
+    math::compute_mul_div(t, SCALE, t_max)
 }
 
 fun eval_smoothstep(t: u64, t_max: u64): u64 {
-    let x: u64     = math::mul_div(t, SCALE, t_max);
+    let x: u64     = math::compute_mul_div(t, SCALE, t_max);
     let x128: u128 = x as u128;
     let num: u128  = x128 * x128 * (3 * SCALE_U128 - 2 * x128);
     (num / SCALE_SQ) as u64
 }
 
 fun eval_power_law(t: u64, t_max: u64, alpha_num: u8, alpha_den: u8): u64 {
-    let x_scaled: u64 = math::mul_div(t, SCALE, t_max);
+    let x_scaled: u64 = math::compute_mul_div(t, SCALE, t_max);
     let mut acc:  u64 = x_scaled;
-    (alpha_num - 1).do!(|_| acc = math::mul_div(acc, x_scaled, SCALE));
+    (alpha_num - 1).do!(|_| acc = math::compute_mul_div(acc, x_scaled, SCALE));
     if (alpha_den == 1) {
         return acc
     };
@@ -162,7 +162,7 @@ fun eval_power_law(t: u64, t_max: u64, alpha_num: u8, alpha_den: u8): u64 {
         _ => SCALE_CB,
     };
     let target: u128 = (acc as u128) * scale_pow;
-    math::nth_root_u128(target, alpha_den as u32) as u64
+    math::compute_nth_root_u128(target, alpha_den as u32) as u64
 }
 
 fun eval_exponential(t: u64, t_max: u64, alpha_abs: u8, alpha_neg: bool): u64 {

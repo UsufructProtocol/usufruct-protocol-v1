@@ -55,7 +55,7 @@ public(package) fun proj_is_crossed(b: &Boundary): bool {
     match (b) { Boundary::Crossed { .. } => true, _ => false }
 }
 
-public(package) fun check_boundary(anchor: Timestamp, d: Duration, now: Timestamp): Boundary {
+public(package) fun compute_boundary(anchor: Timestamp, d: Duration, now: Timestamp): Boundary {
     let boundary_ms = anchor.ms + d.ms;
     if (now.ms >= boundary_ms) {
         Boundary::Crossed { overdue: Duration { ms: now.ms - boundary_ms } }
@@ -64,15 +64,15 @@ public(package) fun check_boundary(anchor: Timestamp, d: Duration, now: Timestam
     }
 }
 
-public(package) fun elapsed_since(start: Timestamp, now: Timestamp): Duration {
+public(package) fun compute_elapsed(start: Timestamp, now: Timestamp): Duration {
     if (now.ms >= start.ms) Duration { ms: now.ms - start.ms } else Duration { ms: 0 }
 }
 
-public(package) fun boundary_at(anchor: Timestamp, d: Duration): Timestamp {
+public(package) fun compute_boundary_at(anchor: Timestamp, d: Duration): Timestamp {
     Timestamp { ms: anchor.ms + d.ms }
 }
 
-public(package) fun earliest(a: Timestamp, b: Timestamp): Timestamp {
+public(package) fun compute_earliest(a: Timestamp, b: Timestamp): Timestamp {
     Timestamp { ms: u64::min(a.ms, b.ms) }
 }
 

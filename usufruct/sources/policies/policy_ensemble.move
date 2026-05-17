@@ -58,7 +58,7 @@ public fun new_ensemble(
     price_escalation: PriceEscalationPolicy,
 ): PolicyEnsemble {
     assert!(
-        handover_policy::countdown_floor_lt(&handover, tenure_duration_policy::proj_min_ceiling(&tenure_duration)),
+        handover_policy::compute_countdown_floor_lt(&handover, tenure_duration_policy::proj_min_ceiling(&tenure_duration)),
         EHandoverFloorExceedsTenure,
     );
     PolicyEnsemble {

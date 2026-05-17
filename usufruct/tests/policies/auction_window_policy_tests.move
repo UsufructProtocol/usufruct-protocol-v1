@@ -16,7 +16,7 @@ fun new_descent_window_rejects_zero() {
     auction_window_policy::new_descent_window(phases::duration(0));
 }
 
-// ─── has_expired ──────────────────────────────────────────────────────────────
+// ─── compute_expiry_boundary ──────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct HasExpiredCase has drop {
@@ -49,12 +49,12 @@ fun has_expired_table() {
     ];
     cases.do_ref!(|c| {
         let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-        let resolved = auction_window_policy::resolve(&c.policy, &mut gen);
-        assert_eq!(auction_window_policy::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).proj_is_crossed(), c.expected);
+        let resolved = auction_window_policy::compute_duration(&c.policy, &mut gen);
+        assert_eq!(auction_window_policy::compute_expiry_boundary(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).proj_is_crossed(), c.expected);
     });
 }
 
-// ─── expiry_at ────────────────────────────────────────────────────────────────
+// ─── compute_expiry_at ────────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct ExpiryAtCase has drop {
@@ -77,8 +77,8 @@ fun expiry_at_table() {
     ];
     cases.do_ref!(|c| {
         let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-        let resolved = auction_window_policy::resolve(&c.policy, &mut gen);
-        assert_eq!(phases::timestamp_ms(auction_window_policy::expiry_at(resolved, phases::timestamp(c.phase_start))), c.expected);
+        let resolved = auction_window_policy::compute_duration(&c.policy, &mut gen);
+        assert_eq!(phases::timestamp_ms(auction_window_policy::compute_expiry_at(resolved, phases::timestamp(c.phase_start))), c.expected);
     });
 }
 
@@ -108,7 +108,7 @@ fun window_ceiling_aborts_on_skipped() {
     auction_window_policy::window_ceiling(&p);
 }
 
-// ─── sister identity: has_expired ⇔ now >= expiry_at ──────────────────────────
+// ─── sister identity: compute_expiry_boundary ⇔ now >= compute_expiry_at ──────────────────────────
 
 #[test_only]
 public struct DeSisterCase has drop {
@@ -117,7 +117,7 @@ public struct DeSisterCase has drop {
     now:         u64,
 }
 
-// Architectural invariant: bool view (has_expired) and u64 view (expiry_at)
+// Architectural invariant: bool view (compute_expiry_boundary) and u64 view (compute_expiry_at)
 // agree on every (variant, input) combination. After the vacuous-variant
 // refactor (Skipped now gates via phases::has_passed), the identity holds
 // unconditionally — no clock-monotone precondition needed.
@@ -141,9 +141,9 @@ fun has_expired_iff_now_ge_expiry_at() {
     ];
     cases.do_ref!(|c| {
         let mut gen   = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-        let resolved  = auction_window_policy::resolve(&c.policy, &mut gen);
-        let bool_view = auction_window_policy::has_expired(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).proj_is_crossed();
-        let u64_view  = c.now >= phases::timestamp_ms(auction_window_policy::expiry_at(resolved, phases::timestamp(c.phase_start)));
+        let resolved  = auction_window_policy::compute_duration(&c.policy, &mut gen);
+        let bool_view = auction_window_policy::compute_expiry_boundary(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).proj_is_crossed();
+        let u64_view  = c.now >= phases::timestamp_ms(auction_window_policy::compute_expiry_at(resolved, phases::timestamp(c.phase_start)));
         assert_eq!(bool_view, u64_view);
     });
 }
@@ -179,14 +179,14 @@ fun resolve_random_in_range_draws_in_bounds() {
     let mut i = 0;
     while (i < seeds.length()) {
         let mut gen = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
-        let result  = auction_window_policy::resolve(&policy, &mut gen);
+        let result  = auction_window_policy::compute_duration(&policy, &mut gen);
         let ms      = phases::duration_ms(result);
         assert!(ms >= min && ms <= max, 0);
         i = i + 1;
     };
 }
 
-// ─── RandomInRange — expiry_at is in [phase+min, phase+max] ──────────────────
+// ─── RandomInRange — compute_expiry_at is in [phase+min, phase+max] ──────────────────
 
 #[test]
 fun random_in_range_expiry_at_within_bounds() {
@@ -201,8 +201,8 @@ fun random_in_range_expiry_at_within_bounds() {
     let mut i = 0;
     while (i < seeds.length()) {
         let mut gen  = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
-        let resolved = auction_window_policy::resolve(&policy, &mut gen);
-        let expiry   = phases::timestamp_ms(auction_window_policy::expiry_at(resolved, phases::timestamp(phase_start)));
+        let resolved = auction_window_policy::compute_duration(&policy, &mut gen);
+        let expiry   = phases::timestamp_ms(auction_window_policy::compute_expiry_at(resolved, phases::timestamp(phase_start)));
         assert!(expiry >= phase_start + min, 0);
         assert!(expiry <= phase_start + max, 1);
         i = i + 1;

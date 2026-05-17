@@ -44,19 +44,19 @@ fun as_reference_price_zero() {
     assert_eq!(monetary::price_mist(p), 0);
 }
 
-// ─── §3. price_add ────────────────────────────────────────────────────────────
+// ─── §3. compute_price_add ────────────────────────────────────────────────────────────
 
 #[test]
 fun price_add_sums_correctly() {
     let a = monetary::price(100);
     let b = monetary::price(250);
-    assert_eq!(monetary::price_mist(monetary::price_add(a, b)), 350);
+    assert_eq!(monetary::price_mist(monetary::compute_price_add(a, b)), 350);
 }
 
 #[test]
 fun price_add_zero_identity() {
     let a = monetary::price(777);
-    assert_eq!(monetary::price_mist(monetary::price_add(a, monetary::price(0))), 777);
+    assert_eq!(monetary::price_mist(monetary::compute_price_add(a, monetary::price(0))), 777);
 }
 
 #[test]
@@ -64,42 +64,42 @@ fun price_add_at_u64_max_succeeds() {
     let max = 18_446_744_073_709_551_615u64;
     let a   = monetary::price(max / 2);
     let b   = monetary::price(max / 2);
-    let sum = monetary::price_mist(monetary::price_add(a, b));
+    let sum = monetary::price_mist(monetary::compute_price_add(a, b));
     assert!(sum <= max, 0);
 }
 
 #[test, expected_failure(abort_code = 0, location = usufruct::monetary)]
 fun price_add_overflow_aborts() {
     let max = 18_446_744_073_709_551_615u64;
-    monetary::price_add(monetary::price(max), monetary::price(1));
+    monetary::compute_price_add(monetary::price(max), monetary::price(1));
 }
 
-// ─── §4. price_sub ────────────────────────────────────────────────────────────
+// ─── §4. compute_price_sub ────────────────────────────────────────────────────────────
 
 #[test]
 fun price_sub_correct() {
     let a = monetary::price(1_000);
     let b = monetary::price(300);
-    assert_eq!(monetary::price_mist(monetary::price_sub(a, b)), 700);
+    assert_eq!(monetary::price_mist(monetary::compute_price_sub(a, b)), 700);
 }
 
 #[test]
 fun price_sub_to_zero() {
     let v = monetary::price(50);
-    assert_eq!(monetary::price_mist(monetary::price_sub(v, v)), 0);
+    assert_eq!(monetary::price_mist(monetary::compute_price_sub(v, v)), 0);
 }
 
-// ─── §5. stake_sub ────────────────────────────────────────────────────────────
+// ─── §5. compute_stake_sub ────────────────────────────────────────────────────────────
 
 #[test]
 fun stake_sub_correct() {
     let a = monetary::stake(2_000);
     let b = monetary::stake(500);
-    assert_eq!(monetary::stake_mist(monetary::stake_sub(a, b)), 1_500);
+    assert_eq!(monetary::stake_mist(monetary::compute_stake_sub(a, b)), 1_500);
 }
 
 #[test]
 fun stake_sub_to_zero() {
     let v = monetary::stake(100);
-    assert_eq!(monetary::stake_mist(monetary::stake_sub(v, v)), 0);
+    assert_eq!(monetary::stake_mist(monetary::compute_stake_sub(v, v)), 0);
 }

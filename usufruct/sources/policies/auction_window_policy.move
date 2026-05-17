@@ -80,7 +80,7 @@ public(package) fun proj_range_max(policy: &AuctionWindowPolicy): Option<Duratio
 
 // === Package Functions ===
 
-public(package) fun resolve(policy: &AuctionWindowPolicy, generator: &mut RandomGenerator): Duration {
+public(package) fun compute_duration(policy: &AuctionWindowPolicy, generator: &mut RandomGenerator): Duration {
     match (policy) {
         AuctionWindowPolicy::Skipped                    => phases::zero(),
         AuctionWindowPolicy::Window { ceiling }         => *ceiling,
@@ -90,19 +90,19 @@ public(package) fun resolve(policy: &AuctionWindowPolicy, generator: &mut Random
     }
 }
 
-public(package) fun has_expired(
+public(package) fun compute_expiry_boundary(
     resolved:    Duration,
     phase_start: Timestamp,
     now:         Timestamp,
 ): Boundary {
-    phases::check_boundary(phase_start, resolved, now)
+    phases::compute_boundary(phase_start, resolved, now)
 }
 
-public(package) fun expiry_at(
+public(package) fun compute_expiry_at(
     resolved:    Duration,
     phase_start: Timestamp,
 ): Timestamp {
-    phases::boundary_at(phase_start, resolved)
+    phases::compute_boundary_at(phase_start, resolved)
 }
 
 

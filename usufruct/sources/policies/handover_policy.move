@@ -84,7 +84,7 @@ public(package) fun proj_range_max(policy: &HandoverPolicy): Option<Duration> {
 
 // === Package Functions ===
 
-public(package) fun countdown_floor_lt(policy: &HandoverPolicy, ceiling: Duration): bool {
+public(package) fun compute_countdown_floor_lt(policy: &HandoverPolicy, ceiling: Duration): bool {
     match (policy) {
         HandoverPolicy::Countdown { floor }       => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
         HandoverPolicy::RandomInRange { max, .. } => phases::duration_ms(*max)   < phases::duration_ms(ceiling),
@@ -92,7 +92,7 @@ public(package) fun countdown_floor_lt(policy: &HandoverPolicy, ceiling: Duratio
     }
 }
 
-public(package) fun resolve(
+public(package) fun compute_duration(
     policy:    &HandoverPolicy,
     ceiling:   Duration,
     generator: &mut RandomGenerator,
@@ -110,32 +110,32 @@ public(package) fun resolve(
     }
 }
 
-public(package) fun has_expired(
+public(package) fun compute_expiry_boundary(
     resolved_floor:   Duration,
     resolved_ceiling: Duration,
     bid_time:         Timestamp,
     phase_start:      Timestamp,
     now:              Timestamp,
 ): Boundary {
-    phases::check_boundary(
-        phases::earliest(
-            phases::boundary_at(bid_time,    resolved_floor),
-            phases::boundary_at(phase_start, resolved_ceiling),
+    phases::compute_boundary(
+        phases::compute_earliest(
+            phases::compute_boundary_at(bid_time,    resolved_floor),
+            phases::compute_boundary_at(phase_start, resolved_ceiling),
         ),
         phases::zero(),
         now,
     )
 }
 
-public(package) fun expiry_at(
+public(package) fun compute_expiry_at(
     resolved_floor:   Duration,
     resolved_ceiling: Duration,
     bid_time:         Timestamp,
     phase_start:      Timestamp,
 ): Timestamp {
-    phases::earliest(
-        phases::boundary_at(bid_time,    resolved_floor),
-        phases::boundary_at(phase_start, resolved_ceiling),
+    phases::compute_earliest(
+        phases::compute_boundary_at(bid_time,    resolved_floor),
+        phases::compute_boundary_at(phase_start, resolved_ceiling),
     )
 }
 

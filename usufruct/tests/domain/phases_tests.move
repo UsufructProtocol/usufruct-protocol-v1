@@ -39,7 +39,7 @@ fun has_passed_table_and_monotone_in_now() {
         HasPassedCase { anchor: max - 1, duration: 1, now: max,     expected: true  },
     ];
     cases.do_ref!(|c| {
-        let result = phases::check_boundary(
+        let result = phases::compute_boundary(
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
             phases::timestamp(c.now),
@@ -54,7 +54,7 @@ fun has_passed_table_and_monotone_in_now() {
     let mut n: u64 = 100;
     let mut crossed = false;
     while (n <= 200) {
-        let cur = phases::check_boundary(
+        let cur = phases::compute_boundary(
             phases::timestamp(100),
             phases::duration(50),
             phases::timestamp(n),
@@ -68,14 +68,14 @@ fun has_passed_table_and_monotone_in_now() {
 #[test, expected_failure(arithmetic_error, location = usufruct::phases)]
 fun has_passed_overflow_in_anchor_plus_duration_aborts() {
     // anchor + duration overflows u64 → Move aborts arithmetic.
-    phases::check_boundary(
+    phases::compute_boundary(
         phases::timestamp(u64::max_value!()),
         phases::duration(1),
         phases::timestamp(u64::max_value!()),
     );
 }
 
-// ─── elapsed_since ────────────────────────────────────────────────────────────
+// ─── compute_elapsed ────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct ElapsedSinceCase has drop {
@@ -104,19 +104,19 @@ fun elapsed_since_table_and_reciprocal_when_after_start() {
         ElapsedSinceCase { start: max, now: 0,   expected: 0   },
     ];
     cases.do_ref!(|c| {
-        let r = phases::duration_ms(phases::elapsed_since(
+        let r = phases::duration_ms(phases::compute_elapsed(
             phases::timestamp(c.start),
             phases::timestamp(c.now),
         ));
         assert_eq!(r, c.expected);
         // Reciprocal invariant: when no saturation occurs (now >= start),
-        // r + start == now — elapsed_since is information-preserving in
+        // r + start == now — compute_elapsed is information-preserving in
         // the non-saturated regime. Catches off-by-one in the subtraction.
         if (c.now >= c.start) assert_eq!(r + c.start, c.now);
     });
 }
 
-// ─── boundary_at ──────────────────────────────────────────────────────────────
+// ─── compute_boundary_at ──────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct BoundaryAtCase has drop {
@@ -140,7 +140,7 @@ fun boundary_at_table() {
         BoundaryAtCase { anchor: 1,       duration: max - 1, expected: max },
     ];
     cases.do_ref!(|c| {
-        let result = phases::timestamp_ms(phases::boundary_at(
+        let result = phases::timestamp_ms(phases::compute_boundary_at(
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
         ));
@@ -151,11 +151,11 @@ fun boundary_at_table() {
 #[test, expected_failure(arithmetic_error, location = usufruct::phases)]
 fun boundary_at_overflow_aborts() {
     // u64::MAX + 1 overflows. Pinned: Move's `+` aborts on overflow rather
-    // than wrapping; this is the contract `boundary_at` inherits.
-    phases::boundary_at(phases::timestamp(u64::max_value!()), phases::duration(1));
+    // than wrapping; this is the contract `compute_boundary_at` inherits.
+    phases::compute_boundary_at(phases::timestamp(u64::max_value!()), phases::duration(1));
 }
 
-// ─── earliest ─────────────────────────────────────────────────────────────────
+// ─── compute_earliest ─────────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct EarliestCase has drop {
@@ -178,16 +178,16 @@ fun earliest_table_and_commutative() {
         EarliestCase { a: max, b: max, expected: max },
     ];
     cases.do_ref!(|c| {
-        let result   = phases::timestamp_ms(phases::earliest(phases::timestamp(c.a), phases::timestamp(c.b)));
-        let result_r = phases::timestamp_ms(phases::earliest(phases::timestamp(c.b), phases::timestamp(c.a)));
+        let result   = phases::timestamp_ms(phases::compute_earliest(phases::timestamp(c.a), phases::timestamp(c.b)));
+        let result_r = phases::timestamp_ms(phases::compute_earliest(phases::timestamp(c.b), phases::timestamp(c.a)));
         assert_eq!(result, c.expected);
-        // Commutativity invariant: earliest is symmetric in its arguments.
+        // Commutativity invariant: compute_earliest is symmetric in its arguments.
         // Catches accidentally swapping `min` for a non-symmetric op.
         assert_eq!(result_r, c.expected);
     });
 }
 
-// ─── sister identity: has_passed ⇔ now >= boundary_at ─────────────────────────
+// ─── sister identity: has_passed ⇔ now >= compute_boundary_at ─────────────────────────
 
 #[test_only]
 public struct SisterIdentityCase has drop {
@@ -197,7 +197,7 @@ public struct SisterIdentityCase has drop {
 }
 
 // Architectural invariant: the bool view (has_passed) and the u64 view
-// (boundary_at) must agree on every input. If anyone changes one without
+// (compute_boundary_at) must agree on every input. If anyone changes one without
 // updating the other — or introduces a comparator drift — this test
 // catches it. This is the time-layer analogue of curve_shape_state_tests'
 // "P-D1 dispatch equivalence" (lines 178-256): the layer promises
@@ -221,12 +221,12 @@ fun has_passed_iff_now_ge_boundary_at() {
         SisterIdentityCase { anchor: 0,   duration: 50, now: 50  },
     ];
     cases.do_ref!(|c| {
-        let bool_view = phases::check_boundary(
+        let bool_view = phases::compute_boundary(
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
             phases::timestamp(c.now),
         ).proj_is_crossed();
-        let u64_view  = c.now >= phases::timestamp_ms(phases::boundary_at(
+        let u64_view  = c.now >= phases::timestamp_ms(phases::compute_boundary_at(
             phases::timestamp(c.anchor),
             phases::duration(c.duration),
         ));

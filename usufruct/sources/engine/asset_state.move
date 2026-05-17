@@ -618,7 +618,7 @@ public(package) fun proj_credit_expiry<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun floor_price_at<Asset: key + store, CoinType>(
+public(package) fun compute_floor_price_at<Asset: key + store, CoinType>(
     s:    &AssetState<Asset, CoinType>,
     core: &EscrowCore<CoinType>,
     now:  Timestamp,
@@ -630,15 +630,15 @@ public(package) fun floor_price_at<Asset: key + store, CoinType>(
         },
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            ascending_floor_price(tenures::per_tenure_stake(tenant_seat::proj_stake_value(&terms.current), terms.schedule.committed_tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::compute_per_tenure_stake(tenant_seat::proj_stake_value(&terms.current), terms.schedule.committed_tenures), &core.ensemble.active)
         },
         AssetState::Renting(RentingState::Demand { bid, .. }) => {
-            ascending_floor_price(tenures::per_tenure_stake(tenant_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::compute_per_tenure_stake(tenant_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
         },
     }
 }
 
-public(package) fun used_credit_at<Asset: key + store, CoinType>(
+public(package) fun compute_used_credit_at<Asset: key + store, CoinType>(
     s:    &AssetState<Asset, CoinType>,
     core: &EscrowCore<CoinType>,
     now:  Timestamp,
@@ -660,7 +660,7 @@ public(package) fun proj_handover_settlement<Asset: key + store, CoinType>(
     now:  Timestamp,
 ): (Stake, Stake, Stake) {
     let stake = proj_current_stake_value(s);
-    let used  = used_credit_at(s, core, now);
+    let used  = compute_used_credit_at(s, core, now);
     let alloc = split_fee(used);
     (
         monetary::stake(monetary::stake_mist(stake) - monetary::stake_mist(used)),
@@ -706,7 +706,7 @@ public(package) fun cap_is_stale<Asset: key + store, CoinType>(
     !cap_is_current(s, cap) && !cap_is_pending(s, cap)
 }
 
-public(package) fun next_pending<Asset: key + store, CoinType>(
+public(package) fun compute_next_pending<Asset: key + store, CoinType>(
     s:     &AssetState<Asset, CoinType>,
     clock: &Clock,
 ): Option<Timestamp> {
@@ -715,12 +715,12 @@ public(package) fun next_pending<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Idle { .. } | WaitingState::Retired { .. }) => option::none(),
         AssetState::Waiting(WaitingState::AtDutch { auction, cycle, .. }) => {
             if (proj_auction_is_firable(auction, cycle, now)) {
-                option::some(auction_window_policy::expiry_at(cycle.descent, auction.phase_start))
+                option::some(auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start))
             } else { option::none() }
         },
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
             if (proj_occupied_is_firable(terms, now)) {
-                option::some(phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total))
+                option::some(phases::compute_boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total))
             } else { option::none() }
         },
         AssetState::Renting(RentingState::Demand { bid, .. }) => {
@@ -759,10 +759,10 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let asset_id           = object::id(&asset);
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
     policy_ensemble::emit_registration(&ensemble, escrow_identity);
-    let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&ensemble), generator);
-    let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&ensemble), generator);
-    let handover = handover_policy::resolve(policy_ensemble::proj_handover(&ensemble), ceiling, generator);
-    let descent  = auction_window_policy::resolve(policy_ensemble::proj_auction_window(&ensemble), generator);
+    let floor    = floor_price_policy::compute_price(policy_ensemble::proj_floor_price(&ensemble), generator);
+    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble), generator);
+    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble), ceiling, generator);
+    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble), generator);
     let core = EscrowCore {
         owner:              owner_seat::new<CoinType>(owner_cap_identity),
         ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
@@ -818,25 +818,25 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
         AssetState::Waiting(WaitingState::Idle { asset, cycle }) => {
             let floor = cycle.floor;
-            assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
+            assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
             let floor = descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.ensemble.active, now);
-            assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
+            assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = tenant_seat::proj_stake_value(&terms.current);
-            let floor = ascending_floor_price(tenures::per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
-            assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
+            let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
+            assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             let stake = tenant_seat::proj_stake_value(&bid.pending);
-            let floor = ascending_floor_price(tenures::per_tenure_stake(stake, bid.handover.tenures), &core.ensemble.active);
-            assert!(coin::value(&payment) >= monetary::price_mist(tenures::total_price(floor, tenures)), EInsufficientPayment);
+            let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, bid.handover.tenures), &core.ensemble.active);
+            assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_supersede_bid(
                 asset, terms, bid, cycle, tenures,
                 &mut core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
@@ -901,10 +901,10 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
             let mut generator = sui::random::new_generator(random, ctx);
-            let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&core.ensemble.active), &mut generator);
-            let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&core.ensemble.active), &mut generator);
-            let handover = handover_policy::resolve(policy_ensemble::proj_handover(&core.ensemble.active), ceiling, &mut generator);
-            let descent  = auction_window_policy::resolve(policy_ensemble::proj_auction_window(&core.ensemble.active), &mut generator);
+            let floor    = floor_price_policy::compute_price(policy_ensemble::proj_floor_price(&core.ensemble.active), &mut generator);
+            let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&core.ensemble.active), &mut generator);
+            let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&core.ensemble.active), ceiling, &mut generator);
+            let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&core.ensemble.active), &mut generator);
             AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
         },
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
@@ -1059,12 +1059,12 @@ public(package) fun execute_extend_commitment<CoinType>(
 ): EscrowCore<CoinType> {
     assert_owner_cap_binds(owner_cap, &core);
     let now         = phases::now(clock);
-    let old_expiry  = commitment_policy::unlock_at(
-        commitment_policy::resolve(&core.commitment.policy),
+    let old_expiry  = commitment_policy::compute_unlock_at(
+        commitment_policy::compute_duration(&core.commitment.policy),
         core.commitment.anchor,
     );
-    let new_expiry  = commitment_policy::unlock_at(
-        commitment_policy::resolve(&new_policy),
+    let new_expiry  = commitment_policy::compute_unlock_at(
+        commitment_policy::compute_duration(&new_policy),
         now,
     );
     assert!(
@@ -1128,8 +1128,8 @@ fun tenant_addr<C>(seat: &TenantSeat<C>): address {
 
 fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {
     assert!(
-        commitment_policy::is_unlocked(
-            commitment_policy::resolve(&core.commitment.policy),
+        commitment_policy::compute_unlock_boundary(
+            commitment_policy::compute_duration(&core.commitment.policy),
             core.commitment.anchor,
             now,
         ).proj_is_crossed(),
@@ -1158,7 +1158,7 @@ fun assert_return_valid<Asset: key + store>(
 
 fun split_fee(amount: Stake): FeeAllocation {
     let mist         = monetary::stake_mist(amount);
-    let protocol_fee = math::apply_bps(mist, math::bps(PROTOCOL_FEE_BPS));
+    let protocol_fee = math::compute_apply_bps(mist, math::bps(PROTOCOL_FEE_BPS));
     FeeAllocation {
         owner_share:  monetary::stake(mist - protocol_fee),
         protocol_fee: monetary::stake(protocol_fee),
@@ -1183,7 +1183,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let principal   = tenant_seat::proj_stake_value(&current);
     let used_credit = capped_used_credit(principal, schedule.phase_start, boundary, config, schedule.ceiling_total, boundary);
     let alloc         = split_fee(used_credit);
-    let remain_credit = monetary::stake_sub(principal, used_credit);
+    let remain_credit = monetary::compute_stake_sub(principal, used_credit);
 
     let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&current));
     let displaced_addr   = tenant_addr(&current);
@@ -1218,8 +1218,8 @@ fun do_handover<Asset: key + store, CoinType>(
 
     let new_schedule = TenancySchedule {
         phase_start:      boundary,
-        ceiling_total:    tenures::rescale_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures),
-        handover_total:   tenures::rescale_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures),
+        ceiling_total:    tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures),
+        handover_total:   tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures),
         committed_tenures: incoming_tenures,
     };
     RentingState::Occupied {
@@ -1293,7 +1293,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let current_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
     let current_addr   = tenant_addr(&terms.current);
     let current_stake  = tenant_seat::proj_stake_value(&terms.current);
-    let expiry         = handover_policy::expiry_at(terms.schedule.handover_total, terms.schedule.ceiling_total, now, terms.schedule.phase_start);
+    let expiry         = handover_policy::compute_expiry_at(terms.schedule.handover_total, terms.schedule.ceiling_total, now, terms.schedule.phase_start);
     let pending_addr   = ctx.sender();
     let bid_amount     = coin::value(&payment);
     let raw_escrow_id  = escrow_identity::escrow_id(escrow_identity);
@@ -1391,15 +1391,15 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 }
 
 fun proj_demand_is_firable<CoinType>(bid: &DemandTerms<CoinType>, now: Timestamp): bool {
-    phases::check_boundary(bid.handover.expiry, phases::zero(), now).proj_is_crossed()
+    phases::compute_boundary(bid.handover.expiry, phases::zero(), now).proj_is_crossed()
 }
 
 fun proj_occupied_is_firable<CoinType>(terms: &OccupiedTerms<CoinType>, now: Timestamp): bool {
-    phases::check_boundary(terms.schedule.phase_start, terms.schedule.ceiling_total, now).proj_is_crossed()
+    phases::compute_boundary(terms.schedule.phase_start, terms.schedule.ceiling_total, now).proj_is_crossed()
 }
 
 fun proj_auction_is_firable(auction: &AuctionTerms, cycle: &CycleParams, now: Timestamp): bool {
-    auction_window_policy::has_expired(cycle.descent, auction.phase_start, now).proj_is_crossed()
+    auction_window_policy::compute_expiry_boundary(cycle.descent, auction.phase_start, now).proj_is_crossed()
 }
 
 fun step_handover<Asset: key + store, CoinType>(
@@ -1435,7 +1435,7 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (proj_occupied_is_firable(&terms, now)) {
-                let boundary = phases::boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total);
+                let boundary = phases::compute_boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total);
                 AssetState::Waiting(do_tenure_expiry(
                     asset, terms, cycle,
                     &mut core.owner, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
@@ -1459,7 +1459,7 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
             if (proj_auction_is_firable(&auction, &cycle, now)) {
-                let boundary = auction_window_policy::expiry_at(cycle.descent, auction.phase_start);
+                let boundary = auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start);
                 let mut generator = sui::random::new_generator(random, ctx);
                 AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary, &mut generator))
             } else {
@@ -1501,8 +1501,8 @@ fun do_install<Asset: key + store, CoinType>(
     let wrapped = asset_custody::open_tenancy(locked, escrow_identity);
     let schedule = TenancySchedule {
         phase_start:      now,
-        ceiling_total:    tenures::total_duration(cycle.ceiling, tenures),
-        handover_total:   tenures::total_duration(cycle.handover, tenures),
+        ceiling_total:    tenures::compute_total_duration(cycle.ceiling, tenures),
+        handover_total:   tenures::compute_total_duration(cycle.handover, tenures),
         committed_tenures: tenures,
     };
     event::emit(RentStarted {
@@ -1533,10 +1533,10 @@ fun do_auction_expiry<Asset: key + store>(
         event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_ensemble });
         ensemble.active = new_ensemble;
     };
-    let floor    = floor_price_policy::resolve(policy_ensemble::proj_floor_price(&ensemble.active), generator);
-    let ceiling  = tenure_duration_policy::resolve(policy_ensemble::proj_tenure_duration(&ensemble.active), generator);
-    let handover = handover_policy::resolve(policy_ensemble::proj_handover(&ensemble.active), ceiling, generator);
-    let descent  = auction_window_policy::resolve(policy_ensemble::proj_auction_window(&ensemble.active), generator);
+    let floor    = floor_price_policy::compute_price(policy_ensemble::proj_floor_price(&ensemble.active), generator);
+    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble.active), generator);
+    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble.active), ceiling, generator);
+    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble.active), generator);
     WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
 }
 
@@ -1573,13 +1573,13 @@ fun accruing_used_credit(
     resolved_ceiling: Duration,
     now:              Timestamp,
 ): Stake {
-    let elapsed = phases::elapsed_since(phase_start, now);
-    let g = curve_shape_policy::evaluate_curve(
+    let elapsed = phases::compute_elapsed(phase_start, now);
+    let g = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_credit_shape(ensemble),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_ceiling),
     );
-    monetary::stake(curve_shape_policy::apply(monetary::stake_mist(stake), g))
+    monetary::stake(curve_shape_policy::compute_scaled_value(monetary::stake_mist(stake), g))
 }
 
 fun capped_used_credit(
@@ -1590,18 +1590,18 @@ fun capped_used_credit(
     resolved_ceiling: Duration,
     now:              Timestamp,
 ): Stake {
-    let effective = phases::earliest(now, expiry);
-    let elapsed   = phases::elapsed_since(phase_start, effective);
-    let g = curve_shape_policy::evaluate_curve(
+    let effective = phases::compute_earliest(now, expiry);
+    let elapsed   = phases::compute_elapsed(phase_start, effective);
+    let g = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_credit_shape(ensemble),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_ceiling),
     );
-    monetary::stake(curve_shape_policy::apply(monetary::stake_mist(stake), g))
+    monetary::stake(curve_shape_policy::compute_scaled_value(monetary::stake_mist(stake), g))
 }
 
 fun ascending_floor_price(stake: Stake, ensemble: &PolicyEnsemble): Price {
-    price_escalation_policy::evaluate_price_fn(
+    price_escalation_policy::compute_next_price(
         policy_ensemble::proj_price_escalation(ensemble),
         monetary::as_reference_price(stake),
     )
@@ -1615,15 +1615,15 @@ fun descending_floor_price(
     ensemble:              &PolicyEnsemble,
     now:              Timestamp,
 ): Price {
-    let elapsed  = phases::elapsed_since(phase_start, now);
-    let h        = curve_shape_policy::evaluate_curve(
+    let elapsed  = phases::compute_elapsed(phase_start, now);
+    let h        = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_auction_shape(ensemble),
         phases::duration_ms(elapsed),
         phases::duration_ms(resolved_descent),
     );
-    let spread   = monetary::price_mist(monetary::price_sub(last_acq_price, resolved_floor));
-    let consumed = curve_shape_policy::apply(spread, h);
-    monetary::price_sub(last_acq_price, monetary::price(consumed))
+    let spread   = monetary::price_mist(monetary::compute_price_sub(last_acq_price, resolved_floor));
+    let consumed = curve_shape_policy::compute_scaled_value(spread, h);
+    monetary::compute_price_sub(last_acq_price, monetary::price(consumed))
 }
 
 // === Test Functions ===

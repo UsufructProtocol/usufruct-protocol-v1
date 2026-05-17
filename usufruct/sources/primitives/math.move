@@ -38,18 +38,18 @@ public(package) fun bps_value(rate: BasisPoints): u64 { rate.bps }
 
 public(package) fun bps_denominator(): u64 { BPS_DENOMINATOR }
 
-public(package) fun apply_bps(amount: u64, rate: BasisPoints): u64 {
-    mul_div(amount, rate.bps, BPS_DENOMINATOR)
+public(package) fun compute_apply_bps(amount: u64, rate: BasisPoints): u64 {
+    compute_mul_div(amount, rate.bps, BPS_DENOMINATOR)
 }
 
-public(package) fun mul_div(a: u64, b: u64, c: u64): u64 {
+public(package) fun compute_mul_div(a: u64, b: u64, c: u64): u64 {
     let num: u128 = (a as u128) * (b as u128);
     let res: u128 = num / (c as u128);
     assert!(res <= (u64::max_value!() as u128), EMulDivOverflow);
     res as u64
 }
 
-public(package) fun nth_root_u128(n: u128, d: u32): u128 {
+public(package) fun compute_nth_root_u128(n: u128, d: u32): u128 {
     assert!(d >= 2 && d <= 4, ENthRootBadDegree);
     if (n == 0) return 0;
     if (n == 1) return 1;

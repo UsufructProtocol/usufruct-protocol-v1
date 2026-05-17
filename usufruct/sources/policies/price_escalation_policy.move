@@ -75,7 +75,7 @@ public(package) fun proj_compound_delta_delta(p: &PriceEscalationPolicy): Option
 
 // === Package Functions ===
 
-public(package) fun evaluate_price_fn(
+public(package) fun compute_next_price(
     price_fn: &PriceEscalationPolicy,
     price:    Price,
 ): Price {
@@ -90,12 +90,12 @@ public(package) fun evaluate_price_fn(
 fun bps_upper(): u64 { u64::max_value!() - math::bps_denominator() }
 
 fun eval_fixed_delta(price: Price, delta: Price): Price {
-    monetary::price_add(price, delta)
+    monetary::compute_price_add(price, delta)
 }
 
 fun eval_compound_delta(price: Price, bps: BasisPoints, delta: Price): Price {
     let denom = math::bps_denominator();
-    let scaled = math::mul_div(monetary::price_mist(price), denom + math::bps_value(bps), denom);
+    let scaled = math::compute_mul_div(monetary::price_mist(price), denom + math::bps_value(bps), denom);
     monetary::price(scaled + monetary::price_mist(delta))
 }
 

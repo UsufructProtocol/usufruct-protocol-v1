@@ -133,7 +133,7 @@ fun eval_compound_delta_golden_vectors() {
         CompoundDeltaCase { price: 200,            bps: 50,     delta: 1,             result: 202            }, // at threshold: pct +1, +delta
         CompoundDeltaCase { price: 199,            bps: 50,     delta: 1,             result: 200            }, // below threshold: pct floors to 0
         CompoundDeltaCase { price: 1_000_000_000,  bps: 10_000, delta: 1,             result: 2_000_000_001  }, // 100% + delta
-        CompoundDeltaCase { price: 0,              bps: 500,    delta: 1,             result: 1              }, // zero price: mul_div(0,…)=0, only delta
+        CompoundDeltaCase { price: 0,              bps: 500,    delta: 1,             result: 1              }, // zero price: compute_mul_div(0,…)=0, only delta
         CompoundDeltaCase { price: 9_999,          bps: 1,      delta: 1,             result: 10_000         }, // just below bps=1 threshold
         CompoundDeltaCase { price: 10_000,         bps: 1,      delta: 1,             result: 10_002         }, // at bps=1 threshold: pct +1, +delta
         CompoundDeltaCase { price: 20_000,         bps: 1,      delta: 1,             result: 20_003         }, // above threshold: pct +2, +delta
@@ -149,13 +149,13 @@ fun eval_compound_delta_golden_vectors() {
 
 #[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun eval_compound_delta_overflow_mul_div_max_aborts() {
-    // mul_div(u64::MAX, 10_001, 10_000) > u64::MAX — math layer aborts
+    // compute_mul_div(u64::MAX, 10_001, 10_000) > u64::MAX — math layer aborts
     price_escalation_policy::eval_compound_delta_for_testing(18_446_744_073_709_551_615, 1, 1);
 }
 
 #[test, expected_failure(abort_code = math::EMulDivOverflow, location = usufruct::math)]
 fun eval_compound_delta_overflow_mul_div_double_aborts() {
-    // mul_div(u64::MAX-1, 20_000, 10_000) = 2*(u64::MAX-1) — overflows u64
+    // compute_mul_div(u64::MAX-1, 20_000, 10_000) = 2*(u64::MAX-1) — overflows u64
     price_escalation_policy::eval_compound_delta_for_testing(18_446_744_073_709_551_614, 10_000, 1);
 }
 
@@ -218,20 +218,20 @@ fun eval_compound_delta_strict_increase_seed_set_c_prime() {
     });
 }
 
-// ─── §5.3 evaluate_price_fn ────────────────────────────────────────────────
+// ─── §5.3 compute_next_price ────────────────────────────────────────────────
 
 #[test]
 fun evaluate_price_fn_golden_vectors() {
     assert_eq!(
-        monetary::price_mist(price_escalation_policy::evaluate_price_fn(&price_escalation_policy::new_fixed_delta(monetary::price(50)), monetary::price(100))),
+        monetary::price_mist(price_escalation_policy::compute_next_price(&price_escalation_policy::new_fixed_delta(monetary::price(50)), monetary::price(100))),
         150,
     );
     assert_eq!(
-        monetary::price_mist(price_escalation_policy::evaluate_price_fn(&price_escalation_policy::new_compound_delta(math::bps(500), monetary::price(1)), monetary::price(10_000))),
+        monetary::price_mist(price_escalation_policy::compute_next_price(&price_escalation_policy::new_compound_delta(math::bps(500), monetary::price(1)), monetary::price(10_000))),
         10_501,
     );
     assert_eq!(
-        monetary::price_mist(price_escalation_policy::evaluate_price_fn(&price_escalation_policy::new_compound_delta(math::bps(50), monetary::price(1)), monetary::price(200))),
+        monetary::price_mist(price_escalation_policy::compute_next_price(&price_escalation_policy::new_compound_delta(math::bps(50), monetary::price(1)), monetary::price(200))),
         202,
     );
 }
@@ -249,7 +249,7 @@ fun evaluate_price_fn_dispatch_equivalence_fixed_delta() {
         let pf  = price_escalation_policy::new_fixed_delta(monetary::price(deltas[i]));
         let price = prices[i];
         assert_eq!(
-            monetary::price_mist(price_escalation_policy::evaluate_price_fn(&pf, monetary::price(price))),
+            monetary::price_mist(price_escalation_policy::compute_next_price(&pf, monetary::price(price))),
             price_escalation_policy::eval_fixed_delta_for_testing(price, deltas[i]),
         );
         i = i + 1;
@@ -267,7 +267,7 @@ fun evaluate_price_fn_dispatch_equivalence_compound_delta() {
         let pf  = price_escalation_policy::new_compound_delta(math::bps(bpss[i]), monetary::price(deltas[i]));
         let price = prices[i];
         assert_eq!(
-            monetary::price_mist(price_escalation_policy::evaluate_price_fn(&pf, monetary::price(price))),
+            monetary::price_mist(price_escalation_policy::compute_next_price(&pf, monetary::price(price))),
             price_escalation_policy::eval_compound_delta_for_testing(price, bpss[i], deltas[i]),
         );
         i = i + 1;
@@ -277,7 +277,7 @@ fun evaluate_price_fn_dispatch_equivalence_compound_delta() {
 // ─── Composition golden vectors ────────────────────────────────────────────
 //
 // Apply the price function n times sequentially and pin the exact integer
-// result at each step. Verifies mul_div precision across accumulated rounding.
+// result at each step. Verifies compute_mul_div precision across accumulated rounding.
 //
 // Bootstrap procedure (run once; this test guards the values from then on):
 //   1. Replace assert_eq!(x, expected[i]) with std::debug::print(&x).

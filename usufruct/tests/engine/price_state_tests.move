@@ -49,7 +49,7 @@ fun ascending_is_time_independent() {
 #[test]
 fun ascending_agrees_with_price_function_state() {
     let ensemble      = base_ensemble(false);
-    let expected = monetary::price_mist(price_escalation_policy::evaluate_price_fn(policy_ensemble::proj_price_escalation(&ensemble), monetary::price(STAKE)));
+    let expected = monetary::price_mist(price_escalation_policy::compute_next_price(policy_ensemble::proj_price_escalation(&ensemble), monetary::price(STAKE)));
     assert!(monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &ensemble)) == expected, 0);
 }
 

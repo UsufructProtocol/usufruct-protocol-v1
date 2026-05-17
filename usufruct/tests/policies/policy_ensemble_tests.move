@@ -205,7 +205,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             c.price_escalation_policy,
         );
         // §7.3 P5 predicate: getter(new_config(..., f, ...)) == f for each field
-        assert_eq!(monetary::price_mist(floor_price_policy::floor_price(policy_ensemble::proj_floor_price(&ensemble))),  c.min_rent_price);
+        assert_eq!(monetary::price_mist(floor_price_policy::compute_floor_price(policy_ensemble::proj_floor_price(&ensemble))),  c.min_rent_price);
         assert_eq!(*policy_ensemble::proj_tenure_duration(&ensemble),  c.tenure_ceiling);
         assert_eq!(*policy_ensemble::proj_handover(&ensemble),        c.handover);
         assert_eq!(*policy_ensemble::proj_auction_window(&ensemble),         c.descent);
@@ -227,7 +227,7 @@ fun getter_roundtrip_r1_min_rent_price_max() {
         curve_shape_policy::new_linear(), curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(1)),
     );
-    assert_eq!(monetary::price_mist(floor_price_policy::floor_price(policy_ensemble::proj_floor_price(&ensemble))), 18_446_744_073_709_551_615);
+    assert_eq!(monetary::price_mist(floor_price_policy::compute_floor_price(policy_ensemble::proj_floor_price(&ensemble))), 18_446_744_073_709_551_615);
 }
 
 #[test]

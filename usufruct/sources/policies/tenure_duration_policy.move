@@ -84,7 +84,7 @@ public(package) fun proj_min_ceiling(policy: &TenureDurationPolicy): Duration {
     }
 }
 
-public(package) fun resolve(policy: &TenureDurationPolicy, generator: &mut RandomGenerator): Duration {
+public(package) fun compute_duration(policy: &TenureDurationPolicy, generator: &mut RandomGenerator): Duration {
     match (policy) {
         TenureDurationPolicy::Fixed { ceiling } => *ceiling,
         TenureDurationPolicy::RandomInRange { min, max } => {

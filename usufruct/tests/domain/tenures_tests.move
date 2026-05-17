@@ -34,7 +34,7 @@ fun is_single_false_for_large() {
     assert!(!tenures::proj_is_single(tenures::tenures(100)), 0);
 }
 
-// ─── total_price ──────────────────────────────────────────────────────────────
+// ─── compute_total_price ──────────────────────────────────────────────────────────────
 
 #[test_only]
 public struct TotalPriceCase has drop {
@@ -56,7 +56,7 @@ fun total_price_table() {
         TotalPriceCase { floor_mist: 1, n: 7, expected: 7 },
     ];
     cases.do_ref!(|c| {
-        let result = monetary::price_mist(tenures::total_price(monetary::price(c.floor_mist), tenures::tenures(c.n)));
+        let result = monetary::price_mist(tenures::compute_total_price(monetary::price(c.floor_mist), tenures::tenures(c.n)));
         assert_eq!(result, c.expected);
     });
 }

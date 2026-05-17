@@ -52,19 +52,19 @@ public(package) fun proj_floor_ms(policy: &CommitmentPolicy): Option<Duration> {
 
 // === Package Functions ===
 
-public(package) fun resolve(policy: &CommitmentPolicy): Duration {
+public(package) fun compute_duration(policy: &CommitmentPolicy): Duration {
     match (policy) {
         CommitmentPolicy::Immediate          => phases::zero(),
         CommitmentPolicy::Deferred { floor } => *floor,
     }
 }
 
-public(package) fun unlock_at(resolved: Duration, at: Timestamp): Timestamp {
-    phases::boundary_at(at, resolved)
+public(package) fun compute_unlock_at(resolved: Duration, at: Timestamp): Timestamp {
+    phases::compute_boundary_at(at, resolved)
 }
 
-public(package) fun is_unlocked(resolved: Duration, at: Timestamp, now: Timestamp): Boundary {
-    phases::check_boundary(at, resolved, now)
+public(package) fun compute_unlock_boundary(resolved: Duration, at: Timestamp, now: Timestamp): Boundary {
+    phases::compute_boundary(at, resolved, now)
 }
 
 // === Private Functions ===

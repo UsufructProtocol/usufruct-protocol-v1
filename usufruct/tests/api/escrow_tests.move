@@ -1285,6 +1285,29 @@ fun retire_with_wrong_cap_aborts() {
     sc.end();
 }
 
+/// A genuine OwnerCap from a different real escrow is rejected.
+/// Demonstrates that any cap bound to escrow A cannot retire escrow B,
+/// even though both caps were legitimately issued by the protocol.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+fun retire_with_real_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    escrow::retire(&mut escrow_b, &cap_a, &random, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    owner_cap::burn(cap_a, OWNER);
+    owner_cap::burn(cap_b, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 #[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
 fun retire_before_floor_aborts_under_deferred_policy() {
     let mut sc = setup();
@@ -2016,6 +2039,28 @@ fun withdraw_earnings_with_wrong_cap_aborts() {
     sc.end();
 }
 
+/// A genuine OwnerCap from a different real escrow is rejected on withdraw_earnings.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+fun withdraw_earnings_with_real_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    let coin = escrow::withdraw_earnings(&mut escrow_b, &cap_a, &random, &clk, sc.ctx());
+
+    coin::burn_for_testing(coin);
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    owner_cap::burn(cap_a, OWNER);
+    owner_cap::burn(cap_b, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §17. claim_asset ────────────────────────────────────────────────────────
 
 /// Happy path: drive escrow to Retired, then claim. Returns
@@ -2123,6 +2168,33 @@ fun claim_asset_with_wrong_cap_aborts() {
     coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
     owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// A genuine OwnerCap from a different real escrow is rejected on claim_asset.
+/// escrow_b is driven to Retired so the state check does not fire first.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+fun claim_asset_with_real_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    escrow::drive_to_retired_for_testing(&mut escrow_b);
+    let escrow_b_id = object::id(&escrow_b);
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    sc.next_tx(OWNER);
+    let escrow_b = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_b_id);
+
+    let (asset, earnings) = escrow::claim_asset(escrow_b, cap_a, &random, &clk, sc.ctx());
+    coin::destroy_zero(earnings);
+    transfer::public_transfer(asset, OWNER);
+    owner_cap::burn(cap_b, OWNER);
     test_scenario::return_shared(random);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -9956,6 +10028,27 @@ fun update_config_with_wrong_cap_aborts() {
     sc.end();
 }
 
+/// A genuine OwnerCap from a different real escrow is rejected on update_config.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+fun update_config_with_real_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    escrow::update_config(&mut escrow_b, &cap_a, ensemble, &random, &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    owner_cap::burn(cap_a, OWNER);
+    owner_cap::burn(cap_b, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ── execute_extend_commitment: wrong cap + non-monotonic policy ───────────────
 
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
@@ -9972,6 +10065,25 @@ fun extend_commitment_with_wrong_cap_aborts() {
     test_scenario::return_shared(escrow);
     owner_cap::burn(foreign_cap, OWNER);
     owner_cap::burn(_owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// A genuine OwnerCap from a different real escrow is rejected on extend_commitment.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+fun extend_commitment_with_real_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::extend_commitment(&mut escrow_b, &cap_a, commitment_policy::new_immediate(), &clk);
+
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    owner_cap::burn(cap_a, OWNER);
+    owner_cap::burn(cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }

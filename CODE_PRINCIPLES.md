@@ -163,6 +163,27 @@ The abort was not removed by adding a test. It was removed by making its branch 
 
 ---
 
+### 1.5 Option as mutual exclusion — simultaneous access is a type error
+
+When an object can be in one of two mutually exclusive states, encoding the active state as `Option` makes simultaneous access structurally impossible. The `None` is not a sentinel value — it is the type-level proof that the state has been extracted and is live elsewhere.
+
+```move
+// escrow.move
+public struct Escrow<Asset: key + store, phantom CoinType> has key {
+    id:    UID,
+    core:  Option<EscrowCore<CoinType>>,
+    state: Option<AssetState<Asset, CoinType>>,
+}
+```
+
+During `borrow_asset`, `state` is extracted into the `AssetReceipt` hot-potato and the field becomes `None`. Any operation that calls `escrow.state.extract()` or reads from `state` while the receipt is live aborts with `EAssetBorrowed`. There is no way to hold both `AssetState` and a valid `AssetReceipt` at the same time — the type system prevents it by construction. The escrow is effectively frozen at the type level for the duration of the borrow.
+
+This is distinct from `Option` used as a nullable field for convenience. Here the `None` state has a precise domain meaning: the asset is currently in the tenant's possession. The `Some`/`None` transition mirrors the `borrow`/`return` lifecycle exactly.
+
+**Test:** every read of `escrow.state` inside the package goes through `take_state` or `read_state`, both of which abort on `None` with `EAssetBorrowed` — the invariant is centralized, never scattered across call sites.
+
+---
+
 ## 2. Make illegal programs unrepresentable
 
 **Level: function signatures and module architecture**
@@ -364,6 +385,33 @@ A `_ =>` wildcard in a match on a protocol enum is the smell. It means a new var
 
 ---
 
+### 2.6 Typed identity wrappers — address routing is reified as a type
+
+Raw `address` and `ID` fields invite silent routing errors: the same primitive type can represent a fee inbox, a refund destination, a cap identity, or an escrow anchor. Wrapping each in a named domain type makes the compiler reject routing to the wrong consumer.
+
+```move
+// refund_address.move
+public struct RefundAddress    has copy, drop, store { addr: address }
+
+// escrow_identity.move
+public struct EscrowIdentity   has copy, drop, store { id: ID }
+
+// owner_cap.move / tenant_cap.move
+public struct OwnerCapIdentity has copy, drop, store { id: ID }
+public struct TenantCapIdentity has copy, drop, store { id: ID }
+
+// protocol_fee_ref.move
+public struct FeeInboxIdentity has copy, drop, store { id: ID }
+```
+
+Each type seals its value against accidental use in the wrong context. A `RefundAddress` can only reach `tenant_stake::liquidate`; a `FeeInboxIdentity` can only reach `fee_message::post`. The compiler rejects any attempt to pass one where the other is expected — even though both wrap the same `address` primitive.
+
+The extraction to raw `address` or `ID` is deliberate and visible (`refund_address::addr(r)`, `escrow_identity::escrow_id(e)`), consistent with §2.4. The typed wrapper is the domain type; the extractor is the explicit crossing.
+
+**Test:** `grep -r ": address\b" sources/` in internal function signatures returns zero results outside constructors and event fields.
+
+---
+
 ## Applied checklist
 
 When writing or reviewing code in this codebase:
@@ -372,6 +420,7 @@ When writing or reviewing code in this codebase:
 - [ ] Does any state machine use a `bool` field for a one-way transition? If so, it is a missing enum variant.
 - [ ] Does any borrow/return pair have a `_ => abort` on the return side? If so, a cross-object invariant is missing a type.
 - [ ] Does any entity carry both identity and balance fields directly, without the Identity + Material split?
+- [ ] Is any mutually exclusive state encoded as a nullable field for convenience rather than as a structural `Option` with a precise domain meaning?
 
 **From Principle 2:**
 - [ ] Do any internal function signatures contain raw `u64`, `bool`, or anonymous tuples where a domain type exists?
@@ -380,3 +429,4 @@ When writing or reviewing code in this codebase:
 - [ ] Does any function return or accept a raw `Balance<C>` outside its defining module?
 - [ ] Is any domain crossing implicit — a `u64` value used directly in arithmetic without a named extractor call?
 - [ ] Does any match expression use `_ =>` on a protocol enum variant?
+- [ ] Does any internal function signature accept a raw `address` or `ID` where a typed identity wrapper exists?

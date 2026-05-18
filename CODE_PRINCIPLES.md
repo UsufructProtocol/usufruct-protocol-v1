@@ -294,7 +294,19 @@ let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::
 let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
 ```
 
-The downstream consumers have incompatible types. Routing is not a convention the programmer must remember — it is a constraint the compiler checks at every call site.
+The downstream consumers have incompatible types. Routing is not a convention the programmer must remember — it is a constraint the compiler checks at every call site:
+
+```move
+// owner_seat.move
+public(package) fun deposit<C>(self: &mut OwnerSeat<C>, incoming: OwnerEarnings<C>) { ... }
+
+// fee_message.move
+public(package) fun post<C>(share: FeeShare<C>, fee_inbox_identity: FeeInboxIdentity, ctx: &mut TxContext) { ... }
+
+// With the typed shares in hand, the swap is a compile error:
+owner_seat::deposit(owner, fee_share);      // ERROR — expected OwnerEarnings<C>, got FeeShare<C>
+fee_message::post(owner_earnings, ...);     // ERROR — expected FeeShare<C>, got OwnerEarnings<C>
+```
 
 The strongest expression of this principle is `RefundState<CoinType>` — a hot-potato enum with no abilities that carries all three typed shares simultaneously and forces their complete distribution before the transaction ends:
 

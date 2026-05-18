@@ -1,3 +1,7 @@
+> **Archive.** This is the original design document that preceded the implementation. The protocol was originally called **Liquid Renting** — hence the filename. The name was later changed to **usufruct**, reflecting the precise legal concept the protocol implements: the right to use and enjoy an asset without owning it. The document reflects the thinking at the start of the project — the founding question, the economic model, and the early mechanics. The codebase evolved beyond it and led the design from that point forward. The ultimate source of truth is the source code in [`usufruct/sources/`](../usufruct/sources/); [`specs/`](../specs/) and [`ARCHITECTURE.md`](../ARCHITECTURE.md) document what the code does. Terminology and mechanics here may differ from the current protocol.
+
+---
+
 # Liquid Renting Protocol — Technical Specification
 
 **Version:** 1.0.0-draft

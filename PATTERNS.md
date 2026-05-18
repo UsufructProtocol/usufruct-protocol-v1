@@ -598,6 +598,30 @@ What was framed earlier as the *temporal axis* — multi-TX option on atomic sta
 
 Hot-potato discipline existed before usufruct. Tenure-bounded rights at owner-configured terms did not.
 
+#### Configuration archetypes
+
+The same FSM produces radically different financial instruments depending on how the `PolicyEnsemble` is configured. Three canonical archetypes emerge. This is a direct consequence of the engine's polymorphic property: the state machine is fully decoupled from the ensemble. The engine does not branch on policy variants — it calls a uniform interface and receives resolved values (price, duration, shape). The ensemble is external configuration; the engine is invariant. The same transitions, the same credit logic, the same settlement arithmetic execute regardless of which variant is active.
+
+**Machine-oriented — pay-per-API.** Tenure ceiling in milliseconds to seconds, `handover = Instant`, `auction_window = Skipped`. No queuing, no handover protection. A new bidder displaces the current tenant immediately; price resets to floor on each idle cycle. Designed for machine clients accessing a rate-limited resource at high frequency — the "tenant" is a bot, not a person.
+
+**User-oriented — protected renting.** Tenure ceiling in minutes to days, `handover = Countdown`, meaningful `auction_window`. A bidder must wait out the handover countdown before displacing the current tenant. The tenant has a guaranteed window to use the rental before being displaced. Designed for human users renting time-bounded access to something they interact with over a session.
+
+**Fixed-time reservation.** `handover = FixedTime`, which ties the handover expiry to the tenure ceiling, making displacement impossible before the tenure ends. The tenant's occupancy is fully guaranteed for its stated duration. Designed for time-slot reservations — conference rooms, event slots, scheduled access windows — where partial occupancy has no value.
+
+Same protocol code. Entirely different economic products.
+
+#### No external coordinators — lazy evaluation
+
+State transitions — tenure expiry, handover countdown firing, auction window closing — are not executed by an external keeper. They are evaluated lazily: the FSM checks whether any pending transition is fireable at the start of every operation and fires it before proceeding. The next transaction to touch the escrow performs any overdue transitions as a side effect.
+
+The consequence for integrators: no off-chain bot to run, no keeper to fund, no cron job to maintain. A transition that becomes fireable at time T will execute the next time anyone interacts with the escrow, whether that is T+1ms or T+1 hour. The escrow is always correct relative to the clock at the time of the transaction, and its economic guarantees are not dependent on the liveness of any external party.
+
+#### The incumbent advantage
+
+The current tenant holds a structural advantage at renewal time. A new challenger entering from outside must pay the full escalated floor price for a fresh tenure. The current tenant bidding to extend from `Occupied` pays the same escalated floor — but their already-consumed credit is sunk into the owner's balance. The challenger's cost is the full floor; the incumbent's effective cost is the floor minus what they have already paid for. The further into a tenure the current tenant is, the greater this asymmetry.
+
+The result is a natural continuity incentive built into the economics: the protocol structurally favors the existing occupant at renewal time without any explicit loyalty mechanism. Integrators targeting stable long-term tenants over churn can amplify this effect through a front-loaded `credit_shape`, which consumes most of the stake early and leaves the incumbent with maximum sunk credit relative to a new entrant.
+
 ---
 
 ### 9. Forward-looking catalog
@@ -626,6 +650,12 @@ The patterns below are not all implemented. They are the design space the abstra
 | meta| `leveraged_*`           | meta-layer over another integration           | leverage on any pattern      |
 
 The last two rows demonstrate the DAG structure: `composite_portfolio` and `leveraged_*` are meta-integrations that stack on other integrations and are themselves rentable. The catalog composes onto itself.
+
+#### The native token demand circuit
+
+When the owner denominates rental prices in an integrator-issued token (`CoinType = MyToken`), the rental market becomes an organic demand driver for that token. Every tenant must acquire `MyToken` to pay rent. Competitive pressure for a desirable asset drives up the price paid per tenure, which increases operational demand for `MyToken` in circulation.
+
+This feedback loop is grounded in utility: demand is functional, not speculative — tenants need the token to access the asset. The stronger the underlying asset's utility, the stronger and more stable the demand signal. For integrators with an existing token economy, choosing their own token as `CoinType` converts the rental market into a demand mechanism that requires no separate incentive design — it is a direct consequence of the asset being worth competing for.
 
 ---
 
@@ -694,7 +724,19 @@ With `TenantCap`, only the borrow right transfers — financial exposure to disp
 
 ---
 
-## 12. The integrator's mental model
+### 12. The OwnerCap as a rentable asset — level-2 rental
+
+`OwnerCap` has `key + store`, which means it can itself be integrated into a usufruct escrow. The result is a two-level rental market: the level-1 escrow holds the underlying asset; a level-2 escrow holds the `OwnerCap` of the level-1 escrow. Whoever rents the `OwnerCap` from the level-2 escrow temporarily holds full owner authority over the level-1 escrow.
+
+During their level-2 tenure, the meta-tenant can call any owner-gated operation on level-1: `update_config` to change rental policy, `retire` to initiate asset reclaim, `withdraw_earnings` to extract accumulated owner balance, or `extend_commitment`. The level-1 escrow is governed by whoever holds the `OwnerCap` at the time, not by the original integrator.
+
+This creates **market-mediated transfer of escrow control** without explicit sale semantics. Set a level-2 tenure long enough to cover a full level-1 retirement cycle, and the highest bidder at level-2 wins temporary ownership of the underlying asset's lifecycle — including the right to reclaim it. The asset goes to whoever holds the `OwnerCap` when `claim_asset` is called, which may be different from whoever called `retire`, depending on when each level-2 tenure ends.
+
+At the extreme, a level-2 escrow with `FixedTime` handover and a tenure sized to match a level-1 retirement horizon becomes an ownership auction: one bidder wins per cycle, exercises full owner rights, and the level-1 asset exits to them.
+
+---
+
+## 13. The integrator's mental model
 
 If you are building on usufruct, the question to ask is not "is my asset rentable?" but the following four:
 
@@ -707,7 +749,7 @@ If those four questions have answers, you have an integration. The protocol take
 
 ---
 
-## 13. References
+## 14. References
 
 - The usufruct protocol — the substrate this catalog grows on. *(Separate repository.)*
 - usufruct's `ARCHITECTURE.md` — protocol internals. Read after this document, not before.

@@ -8,6 +8,8 @@ The FSM is structured as a two-level enum hierarchy. The outer level distinguish
 
 `EscrowCore` is the financial and configuration context that travels alongside every state. It holds the owner's seat, the active policy ensemble (and optionally a staged pending update), the fee inbox identity, the commitment schedule, the integration timestamp, and the escrow identity. Together, `AssetState` and `EscrowCore` form the complete runtime representation of an escrow.
 
+`execute_borrow` and `execute_return` are the only two functions that dissolve and reconstitute the `AssetState`. `execute_borrow` extracts the `RentingState` from the escrow and wraps it in an `AssetReceipt` hot potato, leaving the escrow with no state. `execute_return` consumes the receipt and re-inserts the state. Because `AssetReceipt` has no `drop` or `store`, both calls are forced into the same Programmable Transaction Block — the asset and the receipt must be returned before the transaction ends. The window between the two calls is the tenant's execution space: arbitrary Move logic can run against the live asset, composed freely with other protocols, while the escrow is structurally frozen. No state machine advance, no rental operation, and no owner operation is possible during this window because there is no `AssetState` to operate on. The hot potato is the enforcement mechanism — it is not a runtime check but a type-system guarantee. Because the entire borrow–use–return sequence executes atomically within a single transaction, no external observer ever sees the escrow in a partially-borrowed state: the `None` window is invisible to the outside world.
+
 ## § TYPES
 
 **State hierarchy**

@@ -73,10 +73,6 @@ public struct AssetReceipt<Asset: key + store, phantom CoinType> {
     renting:  RentingState<Asset, CoinType>,
 }
 
-public struct FeeAllocation has drop {
-    owner_share:  Stake,
-    protocol_fee: Stake,
-}
 
 public struct CycleParams has copy, drop, store {
     floor:    Price,
@@ -661,11 +657,11 @@ public(package) fun proj_handover_settlement<Asset: key + store, CoinType>(
 ): (Stake, Stake, Stake) {
     let stake = proj_current_stake_value(s);
     let used  = compute_used_credit_at(s, core, now);
-    let alloc = split_fee(used);
+    let (owner_share, protocol_fee) = split_fee_amounts(used);
     (
         monetary::stake(monetary::stake_mist(stake) - monetary::stake_mist(used)),
-        alloc.owner_share,
-        alloc.protocol_fee,
+        owner_share,
+        protocol_fee,
     )
 }
 
@@ -673,8 +669,7 @@ public(package) fun proj_tenure_settlement<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): (Stake, Stake) {
     assert!(proj_is_rented(s), ENotRented);
-    let alloc = split_fee(proj_current_stake_value(s));
-    (alloc.owner_share, alloc.protocol_fee)
+    split_fee_amounts(proj_current_stake_value(s))
 }
 
 public(package) fun cap_is_current<Asset: key + store, CoinType>(
@@ -1156,13 +1151,10 @@ fun assert_return_valid<Asset: key + store>(
     assert!(asset_identity::new(object::id(asset_in)) == escrowed_asset_identity::asset_id(identity),    EReturnedDifferentAsset);
 }
 
-fun split_fee(amount: Stake): FeeAllocation {
-    let mist         = monetary::stake_mist(amount);
-    let protocol_fee = math::compute_apply_bps(mist, math::bps(PROTOCOL_FEE_BPS));
-    FeeAllocation {
-        owner_share:  monetary::stake(mist - protocol_fee),
-        protocol_fee: monetary::stake(protocol_fee),
-    }
+fun split_fee_amounts(amount: Stake): (Stake, Stake) {
+    let mist     = monetary::stake_mist(amount);
+    let fee_mist = math::compute_apply_bps(mist, math::bps(PROTOCOL_FEE_BPS));
+    (monetary::stake(mist - fee_mist), monetary::stake(fee_mist))
 }
 
 fun do_handover<Asset: key + store, CoinType>(
@@ -1182,15 +1174,16 @@ fun do_handover<Asset: key + store, CoinType>(
 
     let principal   = tenant_seat::proj_stake_value(&current);
     let used_credit = capped_used_credit(principal, schedule.phase_start, boundary, config, schedule.ceiling_total, boundary);
-    let alloc         = split_fee(used_credit);
+    let used_mist     = monetary::stake_mist(used_credit);
+    let fee_mist      = math::compute_apply_bps(used_mist, math::bps(PROTOCOL_FEE_BPS));
     let remain_credit = monetary::compute_stake_sub(principal, used_credit);
 
     let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&current));
     let displaced_addr   = tenant_addr(&current);
 
     let mut departing  = current;
-    let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, alloc.owner_share);
-    let fee_share      = tenant_seat::take_fee_share(&mut departing, alloc.protocol_fee, escrow_identity);
+    let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
+    let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
     let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
@@ -1208,9 +1201,9 @@ fun do_handover<Asset: key + store, CoinType>(
         new_tenant_cap_id:        tenant_cap::proj_id(new_cap_identity),
         new_tenant_addr:          new_addr,
         new_tenant_stake:         monetary::stake_mist(new_stake),
-        used_credit:              monetary::stake_mist(used_credit),
-        owner_share:              monetary::stake_mist(alloc.owner_share),
-        protocol_fee:             monetary::stake_mist(alloc.protocol_fee),
+        used_credit:              used_mist,
+        owner_share:              used_mist - fee_mist,
+        protocol_fee:             fee_mist,
         remain_credit:            monetary::stake_mist(remain_credit),
         new_rent_price,
         timestamp_ms:             boundary_ms,
@@ -1245,11 +1238,12 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let principal            = tenant_seat::proj_stake_value(&tenant);
     let tenant_cap_identity  = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&tenant));
     let tenant_addr          = tenant_addr(&tenant);
-    let alloc = split_fee(principal);
+    let principal_mist = monetary::stake_mist(principal);
+    let fee_mist       = math::compute_apply_bps(principal_mist, math::bps(PROTOCOL_FEE_BPS));
 
     let mut departing  = tenant;
-    let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, alloc.owner_share);
-    let fee_share      = tenant_seat::take_fee_share(&mut departing, alloc.protocol_fee, escrow_identity);
+    let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::stake(principal_mist - fee_mist));
+    let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
     let (_, stake)     = tenant_seat::unbundle(departing);
     tenant_stake::destroy_zero(stake);
     refund_state::distribute(refund_state::nothing(fee_share, owner_earnings), owner, fee_inbox_identity, ctx);
@@ -1259,9 +1253,9 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         tenant_cap_id:          tenant_cap::proj_id(tenant_cap_identity),
         tenant:                 tenant_addr,
         phase_start_ms:         phases::timestamp_ms(schedule.phase_start),
-        owner_share:            monetary::stake_mist(alloc.owner_share),
-        protocol_fee:           monetary::stake_mist(alloc.protocol_fee),
-        last_acquisition_price: monetary::stake_mist(principal),
+        owner_share:            principal_mist - fee_mist,
+        protocol_fee:           fee_mist,
+        last_acquisition_price: principal_mist,
         timestamp_ms:           phases::timestamp_ms(boundary),
     });
 
@@ -1630,8 +1624,8 @@ fun descending_floor_price(
 
 #[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
-    let alloc = split_fee(monetary::stake(amount));
-    (monetary::stake_mist(alloc.owner_share), monetary::stake_mist(alloc.protocol_fee))
+    let (owner, fee) = split_fee_amounts(monetary::stake(amount));
+    (monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
 #[test_only]

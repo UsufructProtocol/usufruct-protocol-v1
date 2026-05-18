@@ -1,213 +1,273 @@
 # Architecture
 
-This document describes the internal architecture of the `usufruct` Move package for contributors. It covers module layers, the lifecycle state model, design patterns, and the SDK projection system.
+Internal architecture of the `usufruct` Move package for contributors. Covers module layers, the two shared objects, the lifecycle state model, the FSM engine, and the policy and entity systems.
 
 ---
 
 ## What the protocol does
 
-Liquid Renting is an on-chain rental protocol for Sui objects. An asset owner integrates their object into an `Escrow`, which manages the full rental lifecycle: listing, bidding, handover, Dutch auction, and retirement. Tenants pay stake to rent; stake is distributed to the owner and protocol as rent is consumed.
+**usufruct** is an on-chain rental protocol for any Sui object with `key + store` abilities. An owner integrates their object into an `Escrow`, which manages the full rental lifecycle: listing at rest price, Dutch auction descent, tenant acquisition, handover under demand, and retirement. Tenants pay stake; stake is distributed to the owner and protocol as credit is consumed.
+
+The protocol is generic over both the asset type and the payment coin: `Escrow<Asset: key + store, CoinType: phantom>`. It enforces custody and economics. What the tenant does with the asset between `borrow_asset` and `return_asset` is outside the protocol's concern.
 
 ---
 
 ## Module layers
 
-Dependencies flow strictly downward. A module may only call modules in layers below it.
+Dependencies flow strictly downward. A module may only import modules in layers below it. The diagram is derived from actual import declarations.
 
 ```
-╔══════════════════════════════════════════════════════════╗
-║                   PTB / SDK BOUNDARY                     ║
-║                                                          ║
-║   escrow.move (key, shared)    runtime_projection.move   ║
-║   ── mutations / actions ──    ── reads / projections ── ║
-╚═══════════════════════╤══════════════════════════════════╝
-                        │  owns + orchestrates
-╔═══════════════════════▼══════════════════════════════════╗
-║                   ORCHESTRATION                          ║
-║              asset_context_state.move                    ║
-║                                                          ║
-║   AssetContext { AssetState, Owner, IntegrationConfig }  ║
-║   lifecycle transitions · pricing · cap auth · events   ║
-╚══════╤══════════════╤══════════════╤════════════════╤════╝
-       │              │              │                │
-╔══════▼═════╗  ╔═════▼═════╗  ╔════▼════╗  ╔════════▼═══╗
-║  ENTITY    ║  ║  POLICY   ║  ║ COMPUTE ║  ║  CAP/AUTH  ║
-║            ║  ║           ║  ║         ║  ║            ║
-║ tenant     ║  ║ config    ║  ║ price_  ║  ║ tenant_cap ║
-║ owner      ║  ║  ↳curve   ║  ║  state  ║  ║ owner_cap  ║
-║ asset      ║  ║  ↳descent ║  ║ credit_ ║  ║ cap_auth_  ║
-║            ║  ║  ↳handov  ║  ║  ctx    ║  ║  state     ║
-║            ║  ║  ↳retire  ║  ║ refund_ ║  ║            ║
-║            ║  ║  ↳price_fn║  ║  state  ║  ║            ║
-╚════════════╝  ╚═══════════╝  ╚═════════╝  ╚════════════╝
-╔══════════════════════════════════════════════════════════╗
-║  PRIMITIVES              math.move    phases.move        ║
-╚══════════════════════════════════════════════════════════╝
+┌────────────────────────────────────────────────────────┐
+│                   LAYER 5 — PUBLIC API                 │
+│                     api/escrow.move                    │
+│          Escrow<Asset, CoinType>  (key, shared)        │
+│   mutations · views · cap operations · integrations    │
+└───────────────────────────┬────────────────────────────┘
+                            │
+┌───────────────────────────▼────────────────────────────┐
+│                   LAYER 4 — FSM ENGINE                 │
+│                 engine/asset_state.move                │
+│   AssetState · EscrowCore · all transitions · events   │
+└──────┬──────────────────┬─────────────────┬────────────┘
+       │                  │                 │
+┌──────▼──────┐  ┌────────▼───────┐  ┌─────▼──────────────┐
+│  LAYER 3    │  │   LAYER 3      │  │    LAYER 3          │
+│  engine/    │  │   fees/        │  │    policies/        │
+│  refund_    │  │   fee_message  │  │    policy_ensemble  │
+│  state.move │  │   protocol_    │  │    commitment_      │
+│  asset_     │  │   fee_*.move   │  │    policy.move      │
+│  custody    │  └────────────────┘  └─────────────────────┘
+└─────────────┘
+       │
+┌──────▼──────────────────────────────────────────────────┐
+│                   LAYER 2 — ENTITIES                    │
+│  entities/cap/     owner_cap.move  tenant_cap.move      │
+│  entities/seat/    owner_seat.move tenant_seat.move     │
+│  entities/balances/ owner_earning  tenant_stake         │
+│  entities/identities/ (5 modules)                      │
+│  entities/address/  refund_address.move                 │
+│  policies/ (8 individual policy modules)               │
+│  fees/protocol_fee_ref.move  fees/protocol_fee_inbox   │
+└──────┬──────────────────────────────────────────────────┘
+       │
+┌──────▼──────────────────────────────────────────────────┐
+│                   LAYER 1 — DOMAIN                      │
+│  domain/monetary.move   Price, Stake                    │
+│  domain/phases.move     Timestamp, Duration, Boundary   │
+│  domain/tenures.move    Tenures                         │
+│  primitives/math.move   BasisPoints, CurveHeight        │
+└──────┬──────────────────────────────────────────────────┘
+       │
+┌──────▼──────────────────────────────────────────────────┐
+│               LAYER 0 — FRAMEWORK + OTW                 │
+│  sui::*  ·  std::*  ·  package/usufruct.move            │
+└─────────────────────────────────────────────────────────┘
 ```
 
-**PTB boundary** — `escrow.move` is the only `key` object and the sole entry point for mutations. `runtime_projection.move` is the sole entry point for reads from external packages. Both are `public`; everything else is `public(package)`.
+**Layer 5 (api/)** — `escrow.move` is the sole public entry point. It owns the `Escrow` shared object and exposes every PTB-reachable function. No state machine logic lives here — it delegates entirely to `asset_state.move`.
 
-**Orchestration** — `asset_context_state.move` owns the lifecycle state machine. It composes all entity, policy, and compute types into a single `AssetContext` and implements every transition.
+**Layer 4 (engine/)** — `asset_state.move` is the FSM engine. Every state transition, all credit and pricing arithmetic, and all event emissions originate here. `EscrowCore` and `AssetState` are defined here and never appear in layer 5 except as `Option` fields.
 
-**Entity** — `tenant`, `owner`, `asset` are value types (`store` only) that carry identity and material (balance or custody). Each follows the `Entity { Identity, Material }` shape.
+**Layer 3** — Three sub-systems that compose entities and policies into protocol-level constructs: the refund routing engine (`refund_state`), the asset custody model (`asset_custody`), the fee routing system (`fee_message`, `protocol_fee_*`), and the policy bundle (`policy_ensemble`, `commitment_policy`).
 
-**Policy** — `config` bundles the six policy enums that parameterize the escrow at integration time. Policy types are `copy + drop + store` — they live inside `IntegrationConfig` and never change after creation.
+**Layer 2 (entities/, policies/)** — Protocol entities (caps, seats, balances, identities) and individual policy types. Each policy module owns a single policy enum and its `compute_*` resolution function.
 
-**Compute** — derived types that are calculated on demand and never stored. `PriceState`, `CreditContext`, `RefundState`, `PendingTransitionState` are all `drop`-only (or no abilities). They express a computation result, not persistent state.
+**Layer 1 (domain/, primitives/)** — Domain primitives that wrap raw `u64` or `address` into typed values. No module except the owner operates on the naked primitive.
 
-**Cap/Auth** — capability objects (`key + store`) that authorize tenant and owner actions. `CapAuthorizationState` is a derived enum that classifies a cap as current, pending, or stale.
+**Layer 0** — Sui framework and the package OTW (`usufruct.move`), which mints the `Publisher` at deploy time.
 
-**Primitives** — `math` provides `mul_div` and `nth_root_u128`; `phases` owns all timestamp arithmetic. No other module performs raw `+` on timestamps.
+---
+
+## The two objects
+
+`Escrow<Asset, CoinType>` is the only shared object. `OwnerCap` and `TenantCap` are owned objects that authorize operations on the shared escrow.
+
+### Escrow structure
+
+```move
+// api/escrow.move
+public struct Escrow<Asset: key + store, phantom CoinType> has key {
+    id:    UID,
+    core:  Option<EscrowCore<CoinType>>,
+    state: Option<AssetState<Asset, CoinType>>,
+}
+```
+
+Both fields are `Option`. `state` is `None` while the asset is borrowed by a tenant — the `AssetState` is extracted into the `AssetReceipt` hot potato and re-inserted on return. `core` is extracted via `take` for any mutation and re-inserted via `put` after. This is the Option-as-mutual-exclusion pattern: the `None` encodes domain meaning (state is live elsewhere), not nullable convenience.
+
+### EscrowCore structure
+
+```move
+// engine/asset_state.move
+EscrowCore<CoinType> {
+    owner:              OwnerSeat<CoinType>,
+    ensemble:           EnsembleSlot,
+    fee_inbox_identity: FeeInboxIdentity,
+    integrated_at:      Timestamp,
+    commitment:         CommitmentSlot,
+    escrow_identity:    EscrowIdentity,
+}
+```
+
+`EscrowCore` carries the financial and configuration context that persists across the full escrow lifetime. `EnsembleSlot` holds the active `PolicyEnsemble` and an optional staged pending update. `CommitmentSlot` holds the owner's commitment policy and its anchor timestamp.
 
 ---
 
 ## Lifecycle state model
 
-The full state is stored inside `AssetContext`, which uses the Context-State pattern at three nested levels.
+`AssetState` is a two-level enum hierarchy. The outer split separates financial from non-financial state at the type level: `CoinType` is only present in `RentingState`.
 
 ```
-AssetContext
-├── asset_state: AssetState
-│     ├── Waiting
-│     │     └── WaitingContext
-│     │           ├── asset: AssetCustodyLocked<U>   (asset held, no borrow)
-│     │           └── state: WaitingState
-│     │                 ├── Idle
-│     │                 ├── AtDutch { last_acq_price, phase_start_ms }
-│     │                 └── Retired
-│     └── Renting
-│           └── TenancyContext
-│                 ├── asset: AssetCustodyOpen<U>      (asset borrowable)
-│                 ├── phase_start_ms
-│                 ├── retiring: bool
-│                 └── state: TenancyState
-│                       ├── Occupied { tenant: Tenant<C> }
-│                       └── Demand   { current, pending, handover_expiry }
-├── owner: Owner<C>
-│     └── OwnerIdentity { cap_id }  +  OwnerEarnings { balance }
-└── config: IntegrationConfig
-      ├── HandoverPolicyState  (Instant | Countdown | FixedTime)
-      ├── DescentPolicyState   (Skipped | Window)
-      ├── RetirePolicyState    (Immediate | Deferred)
-      ├── CurveShapeState      (credit curve)
-      ├── CurveShapeState      (descent curve)
-      └── PriceFunctionState   (FixedDelta | CompoundDelta)
+AssetState<Asset, CoinType>
+├── Waiting(WaitingState<Asset>)                    // no CoinType
+│     ├── Idle    { asset: AssetCustodyLocked, cycle: CycleParams }
+│     ├── AtDutch { asset: AssetCustodyLocked, auction: AuctionTerms, cycle: CycleParams }
+│     └── Retired { asset: AssetCustodyLocked }
+└── Renting(RentingState<Asset, CoinType>)          // carries CoinType
+      ├── Occupied { asset: AssetCustodyOpen, terms: OccupiedTerms<C>, cycle: CycleParams }
+      └── Demand   { asset: AssetCustodyOpen, terms: OccupiedTerms<C>, bid: DemandTerms<C>, cycle: CycleParams }
 ```
 
-### Five logical states — preserved through abstraction
+**WaitingState** — no tenant, no financial state. Asset is held in `AssetCustodyLocked`, which does not expose a borrow interface.
 
-The protocol has exactly five states as its conceptual backbone:
+**RentingState** — active tenancy. Asset is held in `AssetCustodyOpen`, which exposes `take`/`put` and the `AssetReceipt` borrow protocol. `CoinType` is present because the tenant's stake and the owner's earnings live here.
 
-| Logical state | Implementation |
-|---|---|
-| `Idle` | `Waiting(WaitingState::Idle)` |
-| `AtDutch` | `Waiting(WaitingState::AtDutch { .. })` |
-| `Retired` | `Waiting(WaitingState::Retired)` |
-| `HandoverOpen` | `Renting(TenancyState::Demand { .. })` |
-| `HandoverConfirmed` | `Renting(TenancyState::Occupied { .. })` |
+**CycleParams** — resolved policy parameters for the current rental cycle: `floor: Price`, `ceiling: Duration`, `handover: Duration`, `descent: Duration`. Sampled once at cycle entry from the `PolicyEnsemble`. The engine never reads policy variants after this point.
 
-The nested tree (`Waiting × WaitingState`, `Renting × TenancyContext × TenancyState`) is the implementation of that abstraction, not an expansion of it. The cardinality is 5 before and after — the tree was shaped by successive abstraction passes that extracted shared fields into context structs, but never introduced a new reachable state.
+**OccupiedTerms** — current tenant's full context: `TenancySchedule` (phase start, total ceiling, total handover, committed tenures), `TenantSeat<C>` (identity + stake), and `RetireCondition` (flag set by owner to retire after this tenure).
 
-Preserving cardinality was deliberate. Each split in the tree corresponds to a real difference in what the asset holds: `Waiting` carries `AssetCustodyLocked` (no borrow protocol), `Renting` carries `AssetCustodyOpen` (take/put/receipt). A flat enum with five variants would allow illegal combinations — `Idle` with a borrowable asset, `HandoverConfirmed` with no tenant — that the nested structure makes unrepresentable by construction.
+**DemandTerms** — pending tenant's bid: `TenantSeat<C>` + `HandoverTerms` (expiry timestamp, committed tenures).
 
-**Context-State pattern**: shared fields live in the context struct; variant-specific fields live in the state enum. This avoids repeating fields across variants. Example: `phase_start_ms` is shared across `Occupied` and `Demand`, so it lives in `TenancyContext`, not in each `TenancyState` variant.
+### State transitions
 
-**Binary split at the top**: `AssetState` is binary — `Renting` (active tenancy) or `Waiting` (no tenant). This split removes the compiler bug triggered by deeply nested generic type params in enum fringe positions (`TypeInner::Param` vs `TypeInner::Apply` in `hlir/match_compilation.rs`). See `BUG_REPORT.md`.
+```
+             rent (do_install)          rent (do_install)
+   Idle ─────────────────────► Occupied ◄──────────────── AtDutch
+    ▲                              │  │
+    │ step_auction_expiry          │  │ rent (do_place_bid)
+    │ (do_auction_expiry)          │  ▼
+    └──────────────────────── AtDutch   Demand ──────────────────► Occupied
+                                    ▲   │  ▲                    (do_handover)
+                                    │   │  └── rent (do_supersede_bid, self-loop)
+                              tenure│   │
+                              expiry│   │ tenure expiry [retire flag]
+                                    │   ▼
+                                 AtDutch  Retired
 
-**Asset custody**: `AssetCustodyLocked` holds the asset when no tenancy is active (no borrow protocol needed). `AssetCustodyOpen` holds it during tenancy and exposes `take`/`put`/`AssetReceipt` — a hot-potato borrow protocol that prevents asset swaps and cross-escrow attacks.
+   Idle, AtDutch ──► Retired     execute_retire (immediate)
+   Occupied, Demand ──► Retired  tenure expiry with RetireCondition::Retiring
+
+   Retired ──► (consumed)        execute_claim
+```
+
+Transitions are **lazy**: `execute_apply_pending_transition_states` evaluates all fireable transitions in fixed order (`step_handover` → `step_tenure_expiry` → `step_auction_expiry`) and is called at the start of every mutating operation. No external keeper is required.
 
 ---
 
-## Ephemeral types (never stored)
+## The FSM engine — `asset_state.move`
 
-These types cross module boundaries within a PTB but are never written to the object store.
+`asset_state.move` is the largest module and the protocol's core. It owns:
 
-```
-   borrow_asset()
-        │
-   AssetReceipt ── hot potato (no abilities) ──► return_asset()
-   Proves the borrowed U came from this escrow; three-assertion put()
-   guards cross-escrow, receipt-swap, and asset-swap attacks.
+- The `AssetState`, `WaitingState`, `RentingState` enum hierarchy
+- `EscrowCore` and all its sub-types (`EnsembleSlot`, `CommitmentSlot`, `CycleParams`, `OccupiedTerms`, `DemandTerms`, `AuctionTerms`, `TenancySchedule`, `HandoverTerms`)
+- `AssetReceipt` — the hot-potato receipt that carries `RentingState` during borrow
+- `RetireCondition` — one-way transition flag as an enum variant, not a boolean
+- All `execute_*` transition functions
+- All `proj_*` view functions
+- All event type definitions and `event::emit` calls
 
-   lifecycle boundary
-        │
-   RefundState ── hot potato ──┬──► owner::deposit()    (owner share)
-   (Nothing|Parcial|Total)     ├──► fee_message::post() (fee share)
-                                └──► tenant::liquidate() (tenant refund)
-   Encodes the legal distribution shape; cannot be dropped, so the
-   compiler enforces that every exit route is handled.
-
-        FeeShare ──► FeeMessage (key) ──► ProtocolFeeInbox
-        (store only)  minted by post()    collected by protocol
-
-   asset_context_state::next_pending()
-        │
-   PendingTransitionState ── drop only ──► fire() ──► state transition
-   Lazy APT loop: detect then fire. Never stored.
-
-   credit_context_state::build()
-        │
-   CreditContext ── drop only ──► used_credit() ──► u64
-   Snapshot of credit state at a point in time. Computed on demand.
-```
+Every other module in the protocol is a building block that `asset_state` composes. The engine contains no `match` expressions over policy variants — it receives resolved `CycleParams` primitives and operates uniformly regardless of which policy combination produced them.
 
 ---
 
-## Design patterns
+## Policy layer
 
-### Entity = Identity + Material
-
-Every protocol entity follows the same shape:
+Eight policies parameterize the escrow at integration time. Seven are bundled in `PolicyEnsemble`; one (`CommitmentPolicy`) is stored separately in `EscrowCore` because it governs the owner, not the rental market.
 
 ```
-struct Entity {
-    identity: EntityIdentity,   // who + authority (IDs, addresses)
-    material: EntityMaterial,   // what they hold (balance, custody)
+PolicyEnsemble {
+    rest_price:         RestPricePolicy         // floor price per idle cycle
+    tenure_duration:    TenureDurationPolicy    // max tenure length
+    tenure_extend:      TenureExtendPolicy      // Single | Multi tenure commitment
+    handover:           HandoverPolicy          // handover countdown variant
+    auction_window:     AuctionWindowPolicy     // Dutch auction duration variant
+    credit_shape:       CurveShapePolicy        // credit consumption curve
+    auction_shape:      CurveShapePolicy        // price descent curve
+    price_escalation:   PriceEscalationPolicy   // price escalation under demand
 }
+
+CommitmentPolicy    // Immediate | Deferred — owner's exit lock
 ```
 
-`Tenant { TenantIdentity { cap_id, address }, TenantStake { balance } }`  
-`Owner  { OwnerIdentity  { cap_id },          OwnerEarnings { balance } }`
+Each policy module owns a single enum and a `compute_*` function that resolves the policy to a domain primitive (`Price`, `Duration`). After resolution, the engine sees only domain primitives. Policy variants are an extension point; the engine is invariant over them.
 
-Identity never carries balance; material never carries authority. The split makes routing unambiguous and prevents confused deputy mistakes.
-
-### Hot potato as contract enforcement
-
-`RefundState` has no abilities. The compiler guarantees that every lifecycle exit path distributes all funds — you cannot drop a `RefundState` without destructuring it, so you cannot forget the owner share, the fee, or the tenant refund. The enum shape encodes which distribution applies; the type system enforces that it is consumed.
-
-### Lazy evaluation (APT loop)
-
-State transitions are not triggered immediately by clock. `next_pending()` detects the single due transition given the current time. `apply_pending_transition_states()` loops until none remain. This decouples detection from firing and makes each boundary handler independently testable.
-
-### `proj_*` convention and SDK projection
-
-All `public(package)` view functions carry a `proj_` prefix. `runtime_projection.move` wraps every `proj_*` function as `public`, making it the single read-access point for external packages.
-
-The design follows two rules:
-
-1. **Eager**: every piece of runtime state gets a `proj_*` function regardless of whether its type is directly observable by the SDK. Curation is handled by the type system — if a type has no `key` ability, no external package can construct a value to pass to the wrapper, making it unreachable by construction.
-
-2. **One direction**: `proj_*` calls flow strictly downward in the dependency graph. `asset_context_state` reads `tenant`, `owner`, `asset`, `config`. Nothing reads upward. This makes the impact of any field change traceable to a single layer.
+`EnsembleSlot` holds the active ensemble and an optional pending update. Pending updates are staged when the escrow is occupied and applied only at the `AtDutch → Idle` transition — never mid-tenure.
 
 ---
 
-## The SDK boundary in detail
+## Entity layer
 
-`Escrow<Asset, CoinType>` is the only `key` object. External packages interact exclusively through it.
+Every protocol entity follows the **Identity + Material** split:
 
 ```
-External package
-      │
-      ├── mutations  ──►  escrow.move  (public fns)
-      │                       │
-      │                       └── asset_context_state (public(package))
-      │                               └── tenant / owner / asset / ...
-      │
-      └── reads  ──►  runtime_projection.move  (public fns)
-                          │
-                          └── module::proj_*  (public(package))
+Cap (key + store)          — owned object; authorizes escrow operations
+  OwnerCap  { id, escrow_identity }
+  TenantCap { id, escrow_identity, refund_address, cap_identity }
+
+Identity (copy + drop + store)  — who the entity is
+  OwnerIdentity   { cap_identity: OwnerCapIdentity }
+  TenantIdentity  { cap_identity: TenantCapIdentity, refund_address: RefundAddress }
+
+Seat (store, CoinType)     — entity in flight: identity + material together
+  OwnerSeat<C>   { identity: OwnerIdentity,  earnings: OwnerEarnings<C> }
+  TenantSeat<C>  { identity: TenantIdentity, stake:    TenantStake<C>   }
+
+Balance (store, CoinType)  — typed wrapper over sui::Balance
+  OwnerEarnings<C>  { balance: Balance<C> }    → owner_seat::deposit
+  TenantStake<C>    { balance: Balance<C> }    → refund or split
+  FeeShare<C>       { balance, escrow_identity } → fee_message::post
 ```
 
-`escrow.move` is a thin wrapper: it extracts `AssetContext` from the `Option`, delegates to `asset_context_state`, and refills the slot. It has no state of its own. This concentrates the public API in a single module while keeping the state machine in `asset_context_state`, where it belongs.
+`OwnerCap` and `TenantCap` are `key + store` — they are transferable owned objects. Whoever holds the cap holds the rights it represents. The protocol validates only `cap.escrow_identity == escrow.escrow_identity`; it does not validate the holder's address.
 
-`runtime_projection.move` is a pure read layer: one `public` wrapper per `proj_*` function, no logic. Any external package that needs to inspect protocol state imports this module.
+---
+
+## Fee layer
+
+The fee system uses a three-part design to handle the fact that `ProtocolFeeInbox` is an owned object — it cannot be passed by reference in a transaction that also touches the shared `Escrow`.
+
+```
+ProtocolFeeRef  (frozen)      — immutable pointer to the inbox; passed at integrate time
+FeeInboxIdentity (copy+drop)  — the inbox's ID, carried inside EscrowCore
+FeeShare<C>      (store)      — typed balance destined for the inbox
+FeeMessage<C>    (key+store)  — FeeShare wrapped as a Sui object; transferred to the inbox
+ProtocolFeeInbox (key+store)  — owned object; collects FeeMessages via Receiving<T>
+```
+
+At settlement, `fee_message::post` wraps `FeeShare<C>` into a `FeeMessage<C>` object and transfers it to the inbox address. The protocol owner later calls `protocol_fee_inbox::collect` to drain accumulated messages. No direct balance transfer between shared and owned objects occurs.
+
+---
+
+## Ephemeral types
+
+Types that cross module boundaries within a PTB but are never written to the object store.
+
+```
+AssetReceipt<Asset, CoinType>   — no abilities (hot potato)
+  Carries RentingState while asset is borrowed.
+  Forces borrow and return into the same PTB.
+  escrow.state = None while active.
+
+RefundState<CoinType>           — no abilities (hot potato)
+  Nothing  { fee_share, owner_earnings }
+  Parcial  { seat, fee_share, owner_earnings }
+  Total    { seat }
+  Encodes the settlement shape for each transition context.
+  Must be consumed by distribute() in the same transaction.
+  Partial settlement is structurally impossible.
+
+FeeShare<CoinType>              — store only
+  Intermediate typed balance between split and post.
+  Cannot persist beyond its producing transaction without
+  being wrapped into a FeeMessage.
+```

@@ -622,6 +622,20 @@ The current tenant holds a structural advantage at renewal time. A new challenge
 
 The result is a natural continuity incentive built into the economics: the protocol structurally favors the existing occupant at renewal time without any explicit loyalty mechanism. Integrators targeting stable long-term tenants over churn can amplify this effect through a front-loaded `credit_shape`, which consumes most of the stake early and leaves the incumbent with maximum sunk credit relative to a new entrant.
 
+#### Self-renewal as an emergent property of identity-agnosticism
+
+The protocol evaluates bids against a price, never against an address. `do_place_bid` does not check whether the bidder is the current tenant — it processes the payment and installs the bidder as the pending tenant in `Demand` state. This means the current tenant can call `rent()` on their own escrow while still occupying it.
+
+If no one outbids them before the handover countdown fires, the handover executes normally: the current tenant is "displaced", receives their own `remain_credit`, and the pending tenant — also themselves — becomes the new current occupant with a fresh tenure. Their net cost is `escalated_floor − remain_credit` — always strictly less than what any external competitor must pay for the same position.
+
+Three market properties emerge from this single design choice, without the protocol encoding any of them:
+
+- **Self-renewal.** The current tenant can extend their position by bidding against themselves.
+- **Right of first refusal.** If a challenger bids, the current tenant can supersede them before the handover fires, reclaiming the pending slot at the same or higher price.
+- **Structural cost advantage.** The incumbent's renewal cost is always lower than a new entrant's entry cost, by exactly the amount of credit already sunk.
+
+These are not features. They are consequences of the FSM being identity-agnostic — a protocol that sees prices, not participants.
+
 ---
 
 ### 9. Forward-looking catalog

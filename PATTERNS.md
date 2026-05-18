@@ -382,6 +382,42 @@ usufruct::borrow_asset
 - **Atomic rollback.** If any `assert!` at any level fails, the entire TX reverts — including all side effects on other protocols (DEXes, lending markets, perps) called inside the stack.
 - **Isolation.** Each receipt is private to its emitting module. Outer layers cannot inspect inner state; inner layers cannot escape upward. Move's linear typing keeps every layer's invariants local.
 
+### Every hot potato is a runtime router
+
+`VaultBorrow` is a canonical instance of a more general pattern. A hot potato — any struct with no abilities — is structurally a **router**: the Move drop-checker forces execution to reach the function that consumes it before the TX ends. The space between the emitting call and the consuming call is a runtime window, indistinguishable in kind from the outer window that `borrow_asset` / `return_asset` creates.
+
+`vault::take` opens a window. `vault::put` closes it. Between them, arbitrary code runs. This is precisely the structure of the protocol's outer pair — only at a different level.
+
+This is not a property usufruct designs into the integration. It is a property of the **asset's own API**: any function on the asset that emits a hot potato creates a nested runtime window within the outer borrow / return bracket. The protocol provides the outer container; the asset determines how many sub-windows are available inside it.
+
+The practical consequence: `borrow_asset` does not give the tenant a single runtime slot. It gives them access to a **FIFO of runtimes** — as many sequential windows as the asset's API can generate. Each `take` / `put` cycle is one entry in that FIFO: independent, atomic, and fully closed before the next opens. The length of the queue is bounded only by PTB gas limits.
+
+```
+borrow_asset()
+  │
+  ├─ take() ──────────────────┐
+  │                            │  VaultBorrow  (hot potato → router → put())
+  │   [ runtime window #1 ]   │
+  │   arbitrary PTB code      │
+  ├─ put()  ◄──────────────────┘
+  │
+  ├─ take() ──────────────────┐
+  │                            │  VaultBorrow  (hot potato → router → put())
+  │   [ runtime window #2 ]   │
+  │   arbitrary PTB code      │
+  ├─ put()  ◄──────────────────┘
+  │
+  ├─ take() ──────────────────┐
+  │                            │  VaultBorrow  (hot potato → router → put())
+  │   [ runtime window #n ]   │
+  │   arbitrary PTB code      │
+  ├─ put()  ◄──────────────────┘
+  │
+return_asset()
+```
+
+`Vault` is the canonical instance. The pattern is not. Any asset whose API emits a hot potato participates in this structure — the depth of its FIFO is determined entirely by how many such emissions its API allows within a single borrow window.
+
 ### Why composition is economically natural
 
 Each layer charges its own fee, independently:

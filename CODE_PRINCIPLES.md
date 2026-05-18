@@ -250,6 +250,10 @@ public(package) fun compute_price(policy: &RestPricePolicy, generator: &mut Rand
 
 After `compute_price` returns, the engine sees `Price`. Whether the policy was `Fixed` or `RandomInRange` is invisible by design.
 
+**This principle is what makes the FSM engine polymorphic over configuration.** `asset_state.move` contains no match expression over any policy variant. The engine receives `CycleParams` — a record of already-resolved primitives (`floor: Price`, `ceiling: Duration`, `handover: Duration`, `descent: Duration`) — computed once at cycle entry. From that point forward, the engine does not know and does not care which policy variant produced each value. The same transition logic, the same credit arithmetic, the same settlement code executes for every one of the 672 policy combinations in the test corpus.
+
+If the engine had to branch on policy variants, every new variant added to the ensemble would require touching the engine. The `resolve()` boundary cuts that coupling: the ensemble can grow without the engine changing. Policy variants are an extension point; the engine is invariant.
+
 **Diagnostic:** an `abort 0` (or any abort) in a match arm annotated "unreachable after resolve()" is the smell. It means a policy type crossed the resolution boundary into a computation function.
 
 **Test:** no computation function (`has_expired`, `compute_floor_price`, `compute_used_credit`) accepts a `&*Policy` parameter.

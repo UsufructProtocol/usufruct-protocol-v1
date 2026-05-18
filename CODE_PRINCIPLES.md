@@ -284,6 +284,18 @@ tenant_stake::liquidate          → transfer to refund address
 
 No function signature outside its defining module accepts or returns `Balance<C>`.
 
+**The compiler enforces what naming convention alone cannot.** Before this principle was applied fully, the fee split was computed into `FeeAllocation { owner_share: Stake, protocol_fee: Stake }` — both fields the same type. The field names communicated intent, but a developer could write `let FeeAllocation { owner_share: fee, protocol_fee: owner } = alloc` and the compiler would not protest: same type, valid destructure, silent swap. The fix was to eliminate `FeeAllocation` entirely and produce `OwnerEarnings<C>` and `FeeShare<C>` directly at the split site:
+
+```move
+// do_handover / do_tenure_expiry — owner_earnings and fee_share cannot be swapped.
+// owner_seat::deposit accepts OwnerEarnings<C>; fee_message::post accepts FeeShare<C>.
+// Passing one where the other is expected is a compile error.
+let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
+let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
+```
+
+The downstream consumers have incompatible types. Routing is not a convention the programmer must remember — it is a constraint the compiler checks at every call site.
+
 The strongest expression of this principle is `RefundState<CoinType>` — a hot-potato enum with no abilities that carries all three typed shares simultaneously and forces their complete distribution before the transaction ends:
 
 ```move
@@ -304,13 +316,10 @@ Each variant encodes exactly which consumers receive funds for a given settlemen
 When a typed value must cross into a math or framework operation, the extraction is made visible by calling a named extractor. This makes "I am leaving the typed domain here" a statement in the code, not a hidden operation.
 
 ```move
-fun split_fee(amount: Stake): FeeAllocation {
-    let mist         = monetary::stake_mist(amount);          // deliberate crossing
-    let protocol_fee = math::compute_apply_bps(mist, math::bps(PROTOCOL_FEE_BPS));
-    FeeAllocation {
-        owner_share:  monetary::stake(mist - protocol_fee),
-        protocol_fee: monetary::stake(protocol_fee),
-    }
+fun split_fee_amounts(amount: Stake): (Stake, Stake) {
+    let mist     = monetary::stake_mist(amount);          // deliberate crossing
+    let fee_mist = math::compute_apply_bps(mist, math::bps(PROTOCOL_FEE_BPS));
+    (monetary::stake(mist - fee_mist), monetary::stake(fee_mist))
 }
 ```
 

@@ -2941,6 +2941,55 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
     sc.end();
 }
 
+// ─── §B3b. Superseded bid cap cannot borrow ──────────────────────────────────
+
+/// After T2's bid is superseded by T3, T2's cap is stale.
+/// borrow_asset() with T2's stale cap aborts EStaleTenantCap.
+///
+/// Config: c=1 (Countdown) so the handover countdown does not fire
+/// before T2 attempts borrow — escrow stays in Demand.
+#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
+fun e2e_b3b_superseded_tenant_cap_borrow_aborts() {
+    let mut sc  = setup();
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let ensemble     = escrow_corpus::by_tag(tag);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random  = sc.take_shared<Random>();
+
+    // T1 rents: Idle → Occupied.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()),
+        tenures::tenures(1), &random, &clk, sc.ctx());
+
+    // T2 bids: Occupied → Demand (countdown starts at now_t2=1_000).
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor_t2 = escrow::compute_floor_price(&escrow, &clk);
+    let cap_t2   = escrow::rent(
+        &mut escrow, mk_payment(floor_t2, sc.ctx()),
+        tenures::tenures(1), &random, &clk, sc.ctx());
+
+    // T3 supersedes T2 before countdown expires → T2's cap is now stale.
+    clock::set_for_testing(&mut clk, 2_000);
+    let floor_t3 = escrow::compute_floor_price(&escrow, &clk);
+    let cap_t3   = escrow::rent(
+        &mut escrow, mk_payment(floor_t3, sc.ctx()),
+        tenures::tenures(1), &random, &clk, sc.ctx());
+
+    // Escrow is still Demand; countdown has not elapsed — APT does not fire.
+    // T2's cap is stale: borrow must abort.
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t2, &random, &clk, sc.ctx());
+    escrow::return_asset(&mut escrow, asset, receipt);
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §B4. Auction entry — rent from AtDutch then borrow in same PTB ──────────
 
 /// T1 rents, tenure expires → AtDutchAuction. T2 rents at the auction

@@ -94,6 +94,57 @@ Asymmetries between entities are preserved, not normalized. `OwnerIdentity` auth
 
 ---
 
+### 1.4 Unreachable aborts are type holes — coverage is the oracle
+
+*Don't lie with abort.*
+
+A `_ => abort` or `abort 0` in a match on a protocol enum is a lie: the programmer knows the branch is unreachable, but the type still allows it to be constructed. The abort is not a legitimate runtime error — it is a confession that the type is not yet tight enough.
+
+The proof that this codebase has no such holes is observable: every match arm across the FSM is reachable by a valid input, and the test suite achieves 100% coverage with no `#[allow(dead_code)]` suppressions and no test that exists only to force an abort arm. If a coverage gap appeared, the correct response would not be to write a test that forces the branch — it would be to eliminate the branch by strengthening the type.
+
+**Coverage is the oracle.** A gap signals that the type can still represent a state the protocol prohibits. The action is always the same: encode the invariant into the type until the branch disappears.
+
+The canonical example in this codebase is `execute_return`. Before `RentingState` was introduced as a receipt-carried type, the function matched over the full `AssetState` — which includes waiting variants that are structurally impossible at return time. The compiler could not know this, so an abort was needed:
+
+```move
+// Before — AssetReceipt carries only identity; execute_return matches AssetState.
+// The waiting variants are impossible at this point, but the type cannot say so.
+public struct AssetReceipt { identity: EscrowedAssetIdentity }
+
+fun execute_return(s: &mut AssetState<A, C>, receipt: AssetReceipt, asset: A) {
+    match (s) {
+        AssetState::Renting(RentingState::Occupied { .. }) => { /* re-insert */ },
+        AssetState::Renting(RentingState::Demand   { .. }) => { /* re-insert */ },
+        _ => abort EReceiptStateMismatch,   // unreachable in production — type hole
+    }
+}
+```
+
+Pursuing 100% coverage exposed this arm as untestable: no valid sequence of protocol operations can produce a `Waiting` state at return time. The fix was to carry `RentingState` inside `AssetReceipt`. The arm disappeared because the type now makes the impossible state unrepresentable:
+
+```move
+// After — AssetReceipt carries RentingState; execute_return is exhaustive with no abort.
+public struct AssetReceipt<Asset: key + store, phantom CoinType> {
+    identity: EscrowedAssetIdentity,
+    renting:  RentingState<Asset, CoinType>,   // only Occupied | Demand exist
+}
+
+fun execute_return(receipt: AssetReceipt<A, C>, asset: A, ...) {
+    let AssetReceipt { identity, renting } = receipt;
+    match (renting) {
+        RentingState::Occupied { .. } => { /* reconstruct AssetState::Waiting or Renting */ },
+        RentingState::Demand   { .. } => { /* reconstruct */ },
+        // No _ arm — RentingState has exactly these two variants; compiler verifies exhaustion
+    }
+}
+```
+
+The abort was not removed by adding a test. It was removed by making its branch unrepresentable. The coverage gap closed as a consequence.
+
+**Test:** `grep -r "abort 0\|abort EUnreachable\|// unreachable" sources/` returns zero results.
+
+---
+
 ## 2. Make illegal programs unrepresentable
 
 **Level: function signatures and module architecture**

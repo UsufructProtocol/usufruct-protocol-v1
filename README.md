@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="media/usufruct-banner.png" alt="usufruct" width="100%" />
+</p>
+
 # usufruct
 
 *A rental protocol for Sui objects — a new market layer for the right of use.*
@@ -27,6 +31,8 @@ An owner integrates any Sui object with `key + store` abilities into an `Escrow<
 **Self-correcting.** Competition drives price up. Absence of demand drives it down through the Dutch auction. Both are governed by configurable curves.
 
 **Tenant economics preserved.** A displaced tenant recovers the unused portion of their stake — the part not yet consumed by the credit curve. They paid for time; they recover what they didn't use.
+
+**Price is discovered by competition.** Tenants bid against each other for the right of use. The current tenant's position is always contestable — anyone willing to pay more can challenge it. The owner earns the market rate, not a fixed floor.
 
 **No keeper required.** State transitions execute lazily on the next transaction that touches the escrow. No off-chain coordinator, no cron job, no external dependency on liveness.
 
@@ -85,6 +91,16 @@ Eight policies configure the market at integration time. They determine the term
 | `price_escalation` | Escalation function under demand |
 
 The same asset under different configurations produces different markets. A machine-oriented configuration (millisecond tenures, instant handover) produces a pay-per-call access market. A user-oriented configuration (day-long tenures, countdown handover) produces a protected rental. A fixed-time configuration produces a reservation system. Same protocol code; different economic products.
+
+**1 FSM engine. 672 verified configurations. Unbounded parameter space.**
+
+usufruct is rental market as a primitive — integrate your asset once and get the full market mechanics: price discovery, Dutch auctions, handovers, credit curves, and retirement. No custom auction logic to write, no handover code to maintain, no credit model to design. The market is infrastructure; your asset is the product.
+
+---
+
+## Simulator
+
+Before reading specs or code, build intuition interactively. The [usufruct simulator](https://github.com/0xkurious/usufruct-simulator) is a playground that lets you configure policies, run rental scenarios, and observe how price, credit, and handover mechanics interact — without deploying anything.
 
 ---
 

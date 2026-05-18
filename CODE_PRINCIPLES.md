@@ -51,6 +51,20 @@ public enum RetireCondition has store, drop {
 
 `RetireCondition` lives inside `OccupiedTerms` — it only exists while renting. The combination "retiring while waiting" has no type representation.
 
+The one-way nature of the transition is enforced by the function that sets it. There is no way to call `retire_condition_set` twice — the second call aborts. With a `bool` this would require an external guard; here the type itself is the guard:
+
+```move
+// asset_state.move
+fun retire_condition_set(r: RetireCondition): RetireCondition {
+    match (r) {
+        RetireCondition::NotRetiring => RetireCondition::Retiring,
+        RetireCondition::Retiring    => abort EAlreadyRetiring,
+    }
+}
+```
+
+The match is exhaustive over two variants. If a third variant were ever added, the compiler would require its handling here before the code could compile.
+
 **Test:** `grep -r "retiring: bool\|is_retiring" sources/` returns zero results.
 
 ---

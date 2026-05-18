@@ -4,6 +4,25 @@ Design principles applied consistently across this codebase. The document is str
 
 ---
 
+## Context — functional programming applied to Move
+
+The two principles in this document are not invented for this codebase. They are the core insight of functional programming applied to a domain where correctness matters: rather than mutating shared state and trusting the programmer not to forget anything, make invalid states and invalid programs structurally impossible so the compiler does the checking.
+
+Functional languages handle state by making it explicit in types. A function takes a state value and produces a new state value. Illegal intermediate states have no type representation. The compiler tracks what was consumed and what was produced.
+
+**Sui Move 2024 opened the door to express this style in Move.** The 2024 edition introduced enums with exhaustive match — algebraic data types, the foundation of every ML-family type system (Haskell, OCaml, Rust). With enums, Move can represent sum types: `AssetState = Waiting | Renting`. With exhaustive match, the compiler rejects any function that does not handle every case. Before Move 2024, this style was not expressible.
+
+The codebase applies four functional concepts concretely:
+
+- **Sum types (enums)** for state — `WaitingState | RentingState` instead of boolean flags and nullable fields. Invalid combinations have no representation.
+- **Linear types (hot-potato)** for resource discipline — a value that must be consumed exactly once. The compiler rejects any transaction that does not satisfy the constraint. This is the same guarantee Rust achieves with ownership and Haskell with linear types.
+- **Value transformations** for state transitions — `execute_rent(AssetState, ...) → (RentingState, TenantCap)`. The old state is consumed; the new one is produced. There is no partial update, no field left in an inconsistent intermediate state.
+- **Resolved configuration as pure values** — `CycleParams` carries resolved policy outputs as domain primitives passed to the engine. The engine is a pure function over its inputs; it never reads configuration directly.
+
+The practical consequence is not academic elegance — it is an auditable security property. Imperative smart contracts depend on the programmer updating all related state consistently and remembering every invariant. Functional-style contracts depend on the compiler: the output type of a transition function cannot be satisfied without consuming the right inputs in the right order. The compiler is the auditor.
+
+---
+
 ## 1. Make illegal states unrepresentable
 
 **Level: data types**

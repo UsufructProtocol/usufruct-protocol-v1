@@ -203,6 +203,14 @@ public struct Stake has copy, drop, store { mist: u64 }
 public struct Timestamp has copy, drop, store { ms: u64 }
 public struct Duration  has copy, drop, store { ms: u64 }
 
+// tenures.move — owns the tenure-count domain; enforces count > 0 at construction
+public struct Tenures has copy, drop, store { count: u64 }
+
+public fun tenures(n: u64): Tenures {
+    assert!(n > 0, ETenuresZero);
+    Tenures { count: n }
+}
+
 // math.move — owns the math primitives
 public struct BasisPoints has copy, drop, store { bps: u64 }
 public struct CurveHeight has copy, drop  { h:   u64 }
@@ -212,6 +220,7 @@ public struct CurveHeight has copy, drop  { h:   u64 }
 |--------|-------|-------|
 | Money  | `monetary.move` | `Price`, `Stake` |
 | Time   | `phases.move`   | `Timestamp`, `Duration`, `Boundary` |
+| Count  | `tenures.move`  | `Tenures` |
 | Math   | `math.move`     | `BasisPoints`, `CurveHeight` |
 
 **Test:** `grep -r ": u64" sources/` in internal functions (excluding events, errors, `math.move`) returns zero results.

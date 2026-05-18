@@ -68,6 +68,34 @@ A normalised height value scaled by `SCALE = 1_000_000_000`. Ranges from 0 to SC
 - `PowerLaw` parameters are reduced to lowest terms at construction; `(2,4)` and `(1,2)` are the same curve.
 - Exponential evaluation uses a pre-computed Taylor series with fixed-point normalisation constants; precision is bounded by the series truncation.
 
+## § NUMERIC CONSTANTS
+
+The `Exponential` and `Logistic` evaluators rely on algorithm-derived constants that are pre-computed and pinned to avoid runtime `exp` calls in fixed-point arithmetic. Two families exist:
+
+**Logistic normalisation** (`LOGISTIC_DENOM`, `LOGISTIC_SIGMA_FLOOR`)  
+`eval_logistic` maps `t ∈ [0, t_max]` to a sigmoid argument `y ∈ [−K/2, +K/2]` (with `K = LOGISTIC_K = 12`, the range is `[−6, 6]`). The constants capture the sigmoid's value at the two boundaries so the output can be re-normalised to `[0, SCALE]`:
+
+```
+ey        = exp_scaled_pos(LOGISTIC_K, 2)          // e^(K/2) · TAYLOR_SCALE
+sigma_max = ey · SCALE / (ey + TAYLOR_SCALE)       // σ(+K/2) · SCALE
+sigma_min = SCALE − sigma_max                      // σ(−K/2) · SCALE  (by symmetry)
+
+LOGISTIC_DENOM       = sigma_max − sigma_min       // range of σ over the window
+LOGISTIC_SIGMA_FLOOR = sigma_min                   // = (SCALE − LOGISTIC_DENOM) / 2
+```
+
+Pinned via the `bootstrap_constants_match_pinned` regression test in `curve_shape_policy_tests`. Re-derive whenever the Taylor series parameters (truncation depth K, rounding mode) change.
+
+**Exponential normalisation** (`EXP_A_NORM_{1..8}_{POS,NEG}`)  
+Sixteen pre-computed normalisation denominators — one per `(alpha_abs, alpha_neg)` pair in `[1,8] × {false,true}`. Derivation:
+- `EXP_A_NORM_{a}_POS = exp_scaled(a, 1, false) − TAYLOR_SCALE`
+- `EXP_A_NORM_{a}_NEG = TAYLOR_SCALE − exp_scaled(a, 1, true)`
+
+Pinned via the same bootstrap as the logistic constants. Re-derive whenever the Taylor series parameters change; the regression test guards against silent drift.
+
+**Taylor series** (`exp_scaled_pos`)  
+Computes `e^(y_num/y_den) · TAYLOR_SCALE` via a 32-term Taylor expansion in fixed-point arithmetic. Truncation at K = 32 is sufficient for all `alpha_abs ∈ [1,8]` and all `t ∈ [0, t_max]` inputs the protocol generates. `y_den > 0` is a caller pre-condition; the function does not validate it.
+
 ## § EVENTS
 
 None.

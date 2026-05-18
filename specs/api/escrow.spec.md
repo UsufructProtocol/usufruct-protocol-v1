@@ -54,7 +54,7 @@ Shared object. One per integrated asset. `state` is `None` while the asset is bo
 **View — identity**
 - `asset_id(): ID`, `asset_type_name(): TypeName`, `coin_type_name(): TypeName`
 - `owner_cap_id(): ID`, `fee_inbox_id(): ID`
-- `integration_config(): PolicyEnsemble`, `has_pending_config_update(): bool`
+- `policy_ensemble(): PolicyEnsemble`, `has_pending_config_update(): bool`
 
 **View — tenant**
 - `current_tenant_addr(): Option<address>`, `current_tenant_cap_id(): Option<ID>`, `current_stake(): Option<u64>`

@@ -5241,7 +5241,7 @@ fun update_config_idle_applies_immediately() {
     escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &random, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 0);
-    assert!(escrow::integration_config(&escrow) == new_ensemble, 1);
+    assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 1);
     assert!(!escrow::has_pending_config_update(&escrow), 2);
 
     let resets = event::events_by_type<ConfigUpdated>();
@@ -5285,7 +5285,7 @@ fun update_config_at_dutch_schedules_without_cancelling() {
 
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) != new_ensemble, 2);
+    assert!(escrow::policy_ensemble(&escrow) != new_ensemble, 2);
 
     let scheduled = event::events_by_type<ConfigUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);
@@ -5319,7 +5319,7 @@ fun update_config_renting_schedules_without_interrupting() {
 
     assert!(escrow::is_rented(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) == original_cfg, 2);
+    assert!(escrow::policy_ensemble(&escrow) == original_cfg, 2);
 
     let scheduled = event::events_by_type<ConfigUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);
@@ -5358,7 +5358,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
     );
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) == ensemble, 2);
+    assert!(escrow::policy_ensemble(&escrow) == ensemble, 2);
 
     let resets_mid = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets_mid.length(), 0);
@@ -5369,7 +5369,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
 
     assert!(escrow::is_idle(&escrow), 3);
     assert!(!escrow::has_pending_config_update(&escrow), 4);
-    assert!(escrow::integration_config(&escrow) == new_ensemble, 5);
+    assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 5);
 
     let resets = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets.length(), 1);
@@ -5420,7 +5420,7 @@ fun update_config_handover_preserves_pending_does_not_apply() {
 
     assert!(escrow::is_rented(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) == original_cfg, 2);
+    assert!(escrow::policy_ensemble(&escrow) == original_cfg, 2);
 
     let resets = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets.length(), 0);
@@ -5475,7 +5475,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
     clock::set_for_testing(&mut clk, 2 * escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 2);
-    assert!(escrow::integration_config(&escrow) == new_ensemble, 3);
+    assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 3);
 
     let resets = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets.length(), 1);
@@ -5525,7 +5525,7 @@ fun update_config_override_last_write_wins() {
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 2);
-    assert!(escrow::integration_config(&escrow) == cfg_b, 3);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_b, 3);
 
     let resets = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets.length(), 1);
@@ -5576,8 +5576,8 @@ fun update_config_retire_wins_discards_pending_silently() {
     );
 
     assert!(escrow::is_retired(&escrow), 2);
-    assert!(escrow::integration_config(&escrow) != new_ensemble, 3);
-    assert!(escrow::integration_config(&escrow) == original_cfg, 4);
+    assert!(escrow::policy_ensemble(&escrow) != new_ensemble, 3);
+    assert!(escrow::policy_ensemble(&escrow) == original_cfg, 4);
 
     let resets = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets.length(), 0);
@@ -5675,7 +5675,7 @@ fun update_config_at_dutch_natural_expiry_applies_pending() {
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) == new_ensemble, 2);
+    assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 2);
     assert!(!escrow::has_pending_config_update(&escrow), 3);
 
     let resets = event::events_by_type<ConfigUpdated>();
@@ -5722,7 +5722,7 @@ fun update_config_pending_survives_multiple_handovers() {
 
     assert!(escrow::is_rented(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
-    assert!(escrow::integration_config(&escrow) == original_cfg, 2);
+    assert!(escrow::policy_ensemble(&escrow) == original_cfg, 2);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
 
     // Second handover: T2 → T1.
@@ -5731,7 +5731,7 @@ fun update_config_pending_survives_multiple_handovers() {
 
     assert!(escrow::is_rented(&escrow), 3);
     assert!(escrow::has_pending_config_update(&escrow), 4);
-    assert!(escrow::integration_config(&escrow) == original_cfg, 5);
+    assert!(escrow::policy_ensemble(&escrow) == original_cfg, 5);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
     assert_eq!(event::events_by_type<ConfigUpdateScheduled>().length(), 1);
 
@@ -5762,7 +5762,7 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     );
 
     // Old config is active; no pending.
-    assert!(escrow::integration_config(&escrow) == original_cfg, 0);
+    assert!(escrow::policy_ensemble(&escrow) == original_cfg, 0);
     assert!(!escrow::has_pending_config_update(&escrow), 1);
 
     let new_ensemble = escrow_corpus::by_tag(1);
@@ -5771,7 +5771,7 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     // Still at AtDutch; old config still active.
     assert!(escrow::is_at_dutch_auction(&escrow), 2);
     assert!(escrow::has_pending_config_update(&escrow), 3);
-    assert!(escrow::integration_config(&escrow) == original_cfg, 4);
+    assert!(escrow::policy_ensemble(&escrow) == original_cfg, 4);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
 
     // Auction expiry → new config applied.
@@ -5779,7 +5779,7 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 5);
-    assert!(escrow::integration_config(&escrow) == new_ensemble, 6);
+    assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 6);
     assert!(!escrow::has_pending_config_update(&escrow), 7);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 1);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
@@ -5826,7 +5826,7 @@ fun update_config_at_dutch_overrides_renting_pending() {
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 3);
-    assert!(escrow::integration_config(&escrow) == cfg_b, 4);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_b, 4);
     assert!(!escrow::has_pending_config_update(&escrow), 5);
 
     let resets = event::events_by_type<ConfigUpdated>();
@@ -5865,7 +5865,7 @@ fun update_config_state_clean_after_application() {
 
     // State after first cycle.
     assert!(escrow::is_idle(&escrow), 0);
-    assert!(escrow::integration_config(&escrow) == cfg_cycle1, 1);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_cycle1, 1);
     assert!(!escrow::has_pending_config_update(&escrow), 2);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 1);
 
@@ -5873,7 +5873,7 @@ fun update_config_state_clean_after_application() {
     escrow::update_config(&mut escrow, &owner_cap, cfg_cycle2, &random, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 3);
-    assert!(escrow::integration_config(&escrow) == cfg_cycle2, 4);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_cycle2, 4);
     assert!(!escrow::has_pending_config_update(&escrow), 5);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 2);
     assert_eq!(event::events_by_type<ConfigUpdateScheduled>().length(), 1);
@@ -5908,7 +5908,7 @@ fun update_config_behavior_min_rent_price_floor_changes() {
 
     // After reset: floor = 20 SUI
     assert!(escrow::compute_floor_price(&escrow, &clk) == 20_000_000_000, 1);
-    assert!(escrow::integration_config(&escrow) == cfg_high, 2);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_high, 2);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -6020,7 +6020,7 @@ fun update_config_behavior_auction_window_policy_atdutch_presence() {
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 0);
-    assert!(escrow::integration_config(&escrow) == cfg_window, 1);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_window, 1);
 
     // T2 rents under cfg_window (Window descent). phase_start = tenure_ceiling.
     let cap_t2 = escrow::rent(
@@ -9406,7 +9406,7 @@ fun resolve_invariant_update_config_in_idle_redraws_descent() {
 
     // Still Idle; config applied directly (no schedule).
     assert!(escrow::is_idle(&escrow), 0);
-    assert!(escrow::integration_config(&escrow) == cfg_h2, 1);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_h2, 1);
     assert!(!escrow::has_pending_config_update(&escrow), 2);
 
     let descent_h2 = *option::borrow(&escrow::auction_descent_duration_ms(&escrow));
@@ -9482,7 +9482,7 @@ fun resolve_invariant_pending_config_applies_at_auction_expiry_then_redraws() {
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
-    assert!(escrow::integration_config(&escrow) == cfg_h1, 1);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_h1, 1);
     assert!(escrow::has_pending_config_update(&escrow), 2);
     let descent_atdutch = *option::borrow(&escrow::auction_descent_duration_ms(&escrow));
     assert_eq!(descent_atdutch, descent_h1);
@@ -9492,7 +9492,7 @@ fun resolve_invariant_pending_config_applies_at_auction_expiry_then_redraws() {
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + descent_h1 + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 3);
-    assert!(escrow::integration_config(&escrow) == cfg_h2, 4);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_h2, 4);
     assert!(!escrow::has_pending_config_update(&escrow), 5);
 
     let descent_idle_new = *option::borrow(&escrow::auction_descent_duration_ms(&escrow));
@@ -9629,7 +9629,7 @@ fun resolve_invariant_no_redraw_outside_three_authorized_sites() {
     clock::set_for_testing(&mut clk, phase_start + escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), 5);
-    assert!(escrow::integration_config(&escrow) == cfg_h2, 6);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_h2, 6);
     assert!(escrow::has_pending_config_update(&escrow), 7);
     assert_eq!(escrow::resolved_floor_for_testing(&escrow),    floor_cycle);
     assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  ceiling_cycle);
@@ -9644,7 +9644,7 @@ fun resolve_invariant_no_redraw_outside_three_authorized_sites() {
     clock::set_for_testing(&mut clk, atdutch_phase_start + descent_cycle + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 8);
-    assert!(escrow::integration_config(&escrow) == cfg_h1, 9);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_h1, 9);
     assert!(!escrow::has_pending_config_update(&escrow), 10);
     let descent_new_cycle = escrow::resolved_descent_for_testing(&escrow);
     assert_eq!(descent_new_cycle, escrow_corpus::descent_window_h1_const());
@@ -9700,7 +9700,7 @@ fun resolve_invariant_no_pending_redraws_from_current_config() {
     );
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 5);
-    assert!(escrow::integration_config(&escrow) == ensemble, 6);
+    assert!(escrow::policy_ensemble(&escrow) == ensemble, 6);
     assert!(!escrow::has_pending_config_update(&escrow), 7);
 
     // Floor and ceiling are fixed policies: re-draw returns exact constants.
@@ -9780,7 +9780,7 @@ fun resolve_invariant_double_update_config_is_idempotent() {
     assert!(escrow::is_idle(&escrow), 3);
 
     // Config and all four resolved_* are identical to the original state.
-    assert!(escrow::integration_config(&escrow) == cfg_a, 4);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_a, 4);
     assert!(!escrow::has_pending_config_update(&escrow), 5);
     assert_eq!(escrow::resolved_floor_for_testing(&escrow),    escrow_corpus::min_rent_price_const());
     assert_eq!(escrow::resolved_ceiling_for_testing(&escrow),  escrow_corpus::tenure_ceiling_const());
@@ -9825,7 +9825,7 @@ fun update_config_demand_schedules_pending() {
     // State remains Demand; pending config is now set.
     assert!(escrow::is_demand(&escrow), 1);
     assert!(escrow::has_pending_config_update(&escrow), 2);
-    assert!(escrow::integration_config(&escrow) == ensemble, 3);
+    assert!(escrow::policy_ensemble(&escrow) == ensemble, 3);
 
     let scheduled = event::events_by_type<ConfigUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);

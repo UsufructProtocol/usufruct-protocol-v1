@@ -622,7 +622,7 @@ public fun owner_balance<Asset: key + store, CoinType>(
     monetary::stake_mist(asset_state::proj_owner_balance(read_core(escrow)))
 }
 
-public fun integration_config<Asset: key + store, CoinType>(
+public fun policy_ensemble<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): PolicyEnsemble {
     *read_ensemble(escrow)

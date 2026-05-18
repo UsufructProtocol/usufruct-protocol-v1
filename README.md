@@ -89,12 +89,54 @@ Eight policies configure the market at integration time. They determine the term
 | `auction_shape` | Price descent curve |
 | `credit_shape` | Credit consumption rate |
 | `price_escalation` | Escalation function under demand |
+| `commitment` | Owner exit lock — immediate or deferred with a minimum duration |
 
-The same asset under different configurations produces different markets. A machine-oriented configuration (millisecond tenures, instant handover) produces a pay-per-call access market. A user-oriented configuration (day-long tenures, countdown handover) produces a protected rental. A fixed-time configuration produces a reservation system. Same protocol code; different economic products.
+### Archetypes
 
-**1 FSM engine. 672 verified configurations. Unbounded parameter space.**
+The same asset under different configurations produces different markets:
 
-usufruct is rental market as a primitive — integrate your asset once and get the full market mechanics: price discovery, Dutch auctions, handovers, credit curves, and retirement. No custom auction logic to write, no handover code to maintain, no credit model to design. The market is infrastructure; your asset is the product.
+- **Pay-per-call access** — millisecond tenures, instant handover. No queuing, no protection. Price resets to floor each cycle. Designed for AI agents and rate-limited APIs.
+- **Protected rental** — day-long tenures, countdown handover. The current tenant has a guaranteed window before displacement. Designed for human users who need continuity.
+- **Reservation system** — fixed-time handover tied to the tenure ceiling. Displacement is impossible before the tenure ends. Designed for time-slot bookings where partial occupancy has no value.
+- **Yield position** — multi-tenure commitment, back-loaded credit shape, high price escalation. The tenant commits to multiple tenures upfront at a lower per-tenure rate. Displacement is cheap early in the tenure and expensive late — the incumbent's sunk credit grows over time, rewarding those who hold through volatility. Designed for LP positions, staking seats, or any asset where long-term commitment has compounding value.
+
+### One engine, many markets
+
+The state machine is invariant. The eight policies are external configuration that the engine resolves at runtime — it never branches on policy variants, only on resolved values. The same transition logic, the same credit arithmetic, the same settlement code runs regardless of which policy combination is active.
+
+Each policy axis adds a dimension to the space of expressible markets: a different `credit_shape` changes the cost of displacement at any point in the tenure; a different `handover` changes the competitive dynamics; a different `auction_shape` changes how price descends when demand stalls; a different `price_escalation` changes the incumbent's cost of renewal relative to an external challenger.
+
+**672 discrete policy combinations are verified by the test corpus. The continuous parameter space — price floors, duration ranges, curve parameters — is unbounded.**
+
+usufruct is rental market as a primitive — integrate your asset once and get price discovery, Dutch auctions, handovers, credit curves, and retirement. No custom auction logic to write, no handover code to maintain, no credit model to design. The market is infrastructure; your asset is the product.
+
+---
+
+## Economics
+
+**How the owner earns.** When a tenant enters, they lock a stake. As time passes, that stake is consumed by the credit curve — value flows from the tenant's locked position to the owner's accumulated balance. At settlement (displacement, tenure expiry, or handover), the consumed portion is distributed and the unconsumed portion is returned to the tenant. The owner withdraws accumulated earnings at any time via the `OwnerCap` with no action required from anyone else.
+
+**The split.** Of the consumed credit, **90% goes to the owner** and **10% is the protocol fee**. The fee is never charged on locked stake or gross payment — only on value that has already been earned.
+
+**Aligned incentives.** The more tenants compete for the asset, the higher the price, the more credit accrues, and the more both owner and protocol earn. Neither benefits from low activity. The payment coin is chosen by the owner at integration time — it is the coin tenants pay with, the coin the owner earns, and the coin the protocol collects its fee in. There is no protocol token, no wrapping, no conversion.
+
+> **Note for protocols with native tokens.** If you denominate rentals in your own coin, every tenant competing for the asset must acquire it first. Demand for the right of use converts directly into demand for your token — not through speculation, but through participation. The rental market becomes an organic demand circuit for your coin, grounded in the utility of the asset itself.
+
+---
+
+## Retiring the asset
+
+The owner reclaims the asset in two steps: `retire()` then `claim_asset()`.
+
+**`retire()`** signals the owner's intent to exit. Its effect depends on the current state:
+- From `Idle` or `AtDutch` — the asset transitions to `Retired` immediately.
+- From `Occupied` or `Demand` — a retire flag is set. The current tenant completes their tenure normally; the asset moves to `Retired` when it ends.
+
+In both cases, the current tenant's economics are preserved — there is no forced eviction.
+
+**`claim_asset()`** is called once the escrow is in `Retired` state. It consumes the escrow, returns the asset and all accumulated earnings, and burns the `OwnerCap`. The escrow object is deleted permanently.
+
+**The commitment policy** governs when `retire()` becomes callable. Set to `Immediate`, the owner can retire at any time. Set to `Deferred`, retirement is locked until the commitment window has elapsed — an on-chain credibility signal to tenants that the market will remain open for a minimum duration.
 
 ---
 

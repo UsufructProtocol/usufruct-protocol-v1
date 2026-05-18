@@ -182,7 +182,39 @@ The abort was not removed by adding a test. It was removed by making its branch 
 
 ---
 
-### 1.5 Option as mutual exclusion — simultaneous access is a type error
+### 1.5 Transition return types encode reachability — the signature is the invariant
+
+The two-level state split (`WaitingState` / `RentingState`) propagates from the enum hierarchy into the return types of every transition function. The return type of a `do_*` function is not documentation — it is a compile-time proof of which states that transition can reach.
+
+```move
+// Transitions that always produce renting state — CoinType is present, a tenant exists
+fun do_install<Asset, C>(...):        (RentingState<Asset, C>, TenantCap)
+fun do_place_bid<Asset, C>(...):      (RentingState<Asset, C>, TenantCap)
+fun do_supersede_bid<Asset, C>(...):  (RentingState<Asset, C>, TenantCap)
+fun do_handover<Asset, C>(...):        RentingState<Asset, C>
+
+// Transitions that always produce waiting state — no CoinType, no tenant
+fun do_tenure_expiry<Asset, C>(...):   WaitingState<Asset>
+fun do_auction_expiry<Asset>(...):     WaitingState<Asset>
+fun do_retire_immediately<Asset>(...): WaitingState<Asset>
+```
+
+`do_tenure_expiry` returning `WaitingState<Asset>` makes it a compile error for that function to produce a `RentingState`. The code cannot construct the wrong type — the body must assemble a `WaitingState` variant or it does not compile. A change that accidentally tried to leave a tenant in place after tenure expiry would be rejected before it could run.
+
+`step_*` functions sit one level above. They check whether a transition is fireable and delegate to `do_*` if so. Because a step may or may not fire, both outcomes are possible — the return type is `AssetState`:
+
+```move
+// Conditional steps — return AssetState because the transition may not fire
+fun step_handover<Asset, C>(...):       AssetState<Asset, C>
+fun step_tenure_expiry<Asset, C>(...):  AssetState<Asset, C>
+fun step_auction_expiry<Asset, C>(...): AssetState<Asset, C>
+```
+
+The two-tier split is a direct consequence of P1 applied to functions: `do_*` expresses what a transition produces and the compiler enforces it; `step_*` expresses whether it fires and the logic enforces it. Illegal outcomes are unrepresentable at the type level, not just undocumented.
+
+---
+
+### 1.6 Option as mutual exclusion — simultaneous access is a type error
 
 When an object can be in one of two mutually exclusive states, encoding the active state as `Option` makes simultaneous access structurally impossible. The `None` is not a sentinel value — it is the type-level proof that the state has been extracted and is live elsewhere.
 

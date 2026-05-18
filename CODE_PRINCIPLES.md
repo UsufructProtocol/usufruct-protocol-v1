@@ -102,7 +102,11 @@ A `_ => abort` or `abort 0` in a match on a protocol enum is a lie: the programm
 
 The proof that this codebase has no such holes is observable: every match arm across the FSM is reachable by a valid input, and the test suite achieves 100% coverage with no `#[allow(dead_code)]` suppressions and no test that exists only to force an abort arm. If a coverage gap appeared, the correct response would not be to write a test that forces the branch — it would be to eliminate the branch by strengthening the type.
 
-**Coverage is the oracle.** A gap signals that the type can still represent a state the protocol prohibits. The action is always the same: encode the invariant into the type until the branch disappears.
+**Coverage is the oracle.** In most codebases a coverage gap has two interpretations: a missing test, or dead code. In a codebase that applies this principle consistently there is a third interpretation — and it is the most valuable one: the type can still represent a state the protocol prohibits. That third interpretation points to a structurally different action. Not a test. Not a deletion. A new type.
+
+This inverts the usual framing. Coverage normally measures whether the tests are exhaustive over the program. Here it measures whether the types are exhaustive over the domain. The program is already complete; the question is whether the type system has closed every hole the semantics require.
+
+The compiler and the test runner are working together as design tools, not only as verification tools. The compiler signals when a type cannot guarantee something — an exhaustive match that needs a `_ =>` arm is the compiler saying "I can't prove this case is impossible." The test runner signals when something is unreachable — a branch with no covering test is the test runner saying "no valid input reaches here." The intersection of those two signals is where missing types live: the compiler can't prove it impossible, and no valid input can reach it. That combination means the type is too wide. Narrow it.
 
 The canonical example in this codebase is `execute_return`. Before `RentingState` was introduced as a receipt-carried type, the function matched over the full `AssetState` — which includes waiting variants that are structurally impossible at return time. The compiler could not know this, so an abort was needed:
 

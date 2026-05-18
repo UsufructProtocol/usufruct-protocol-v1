@@ -284,6 +284,19 @@ tenant_stake::liquidate          → transfer to refund address
 
 No function signature outside its defining module accepts or returns `Balance<C>`.
 
+The strongest expression of this principle is `RefundState<CoinType>` — a hot-potato enum with no abilities that carries all three typed shares simultaneously and forces their complete distribution before the transaction ends:
+
+```move
+// refund_state.move
+public enum RefundState<phantom CoinType> {            // no abilities — hot potato
+    Nothing { fee_share: FeeShare<C>, owner_earnings: OwnerEarnings<C> },
+    Parcial { seat: TenantSeat<C>, fee_share: FeeShare<C>, owner_earnings: OwnerEarnings<C> },
+    Total   { seat: TenantSeat<C> },
+}
+```
+
+Each variant encodes exactly which consumers receive funds for a given settlement context — tenure expiry, handover, or superseded bid. The hot-potato constraint means `distribute` must be called in the same transaction that creates the `RefundState`. Partial settlement — routing fee and owner earnings but forgetting the tenant refund — is structurally impossible: the compiler rejects any transaction that does not consume every field. Raw `Balance` never appears; every balance travels wrapped in a typed share destined for exactly one consumer.
+
 ---
 
 ### 2.4 Extraction is a deliberate domain crossing

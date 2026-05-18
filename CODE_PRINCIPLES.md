@@ -1,0 +1,266 @@
+# Code Principles
+
+Design principles applied consistently across this codebase. The document is structured around two core principles from which everything else derives. Each derived consequence includes a real example from the source and a grep-based test for violations.
+
+---
+
+## 1. Make illegal states unrepresentable
+
+**Level: data types**
+
+A type that can represent an invalid state will eventually hold one. Encode validity into the type itself so the invalid state has no representation.
+
+The clearest instance in this codebase is the `AssetState` hierarchy. Financial state (`CoinType`) only exists when the asset is rented — it is structurally absent from all waiting states. It is not possible to construct a `WaitingState` that holds tenant stake or a rent price, because the type does not have the field.
+
+```move
+// WaitingState: no CoinType — financial state structurally absent
+public enum WaitingState<Asset: key + store> has store {
+    Idle    { asset: AssetCustodyLocked<Asset>, cycle: CycleParams },
+    AtDutch { asset: AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams },
+    Retired { asset: AssetCustodyLocked<Asset> },
+}
+
+// RentingState: carries CoinType — financial state structurally present
+public enum RentingState<Asset: key + store, phantom CoinType> has store {
+    Occupied { asset: AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, cycle: CycleParams },
+    Demand   { asset: AssetCustodyOpen<Asset>, terms: OccupiedTerms<CoinType>, bid: DemandTerms<CoinType>, cycle: CycleParams },
+}
+
+public enum AssetState<Asset: key + store, phantom CoinType> has store {
+    Waiting(WaitingState<Asset>),
+    Renting(RentingState<Asset, CoinType>),
+}
+```
+
+The split is not organizational — it is a type-system guarantee. Functions operating only on waiting state carry no `CoinType` in their signature. Functions operating only on renting state carry it. The compiler enforces this at every call site.
+
+---
+
+### 1.1 One-way transitions are enum variants, not booleans
+
+A bool field that is only ever set to `true` is a missing enum variant. One-way transitions encode as state machine states, not mutable flags.
+
+```move
+// A bool `is_retiring: bool` would allow the invalid combination
+// "retiring=true while Waiting". The enum makes it structurally impossible.
+public enum RetireCondition has store, drop {
+    NotRetiring,
+    Retiring,
+}
+```
+
+`RetireCondition` lives inside `OccupiedTerms` — it only exists while renting. The combination "retiring while waiting" has no type representation.
+
+**Test:** `grep -r "retiring: bool\|is_retiring" sources/` returns zero results.
+
+---
+
+### 1.2 Cross-object invariants belong in the receipt type
+
+When a protocol spans two object accesses (borrow and return), the compiler cannot verify cross-object invariants by observing a different object. The fix: carry the relevant state inside the hot-potato receipt. The return function then matches over a type that has only the valid variants — exhaustive by construction.
+
+```move
+// AssetReceipt carries the full RentingState extracted from the escrow.
+// execute_return matches only over Occupied | Demand — no wildcard needed.
+public struct AssetReceipt<Asset: key + store, phantom CoinType> {
+    identity: EscrowedAssetIdentity,
+    renting:  RentingState<Asset, CoinType>,
+}
+```
+
+The side effect of carrying state in the receipt is that `escrow.state = None` while the asset is borrowed. No external transaction observes this intermediate state — Sui PTBs commit atomically. Any attempt to read or mutate the escrow state between borrow and return aborts with `EAssetBorrowed`.
+
+**Diagnostic:** a `_ => abort` in the match on the *return* side of a borrow/return pair is the smell. It means a cross-object invariant has not been given a type yet.
+
+---
+
+### 1.3 Entity shape: Identity + Material
+
+Every protocol entity that carries both an identity and a balance follows the same structural split. The two halves travel separately at settlement boundaries: identity routes the destination; material carries the funds.
+
+```move
+public struct TenantSeat<phantom CoinType> has store {
+    identity: TenantIdentity,
+    stake:    TenantStake<CoinType>,
+}
+
+public struct OwnerSeat<phantom CoinType> has store {
+    identity: OwnerIdentity,
+    earnings: OwnerEarnings<CoinType>,
+}
+```
+
+Asymmetries between entities are preserved, not normalized. `OwnerIdentity` authorizes by cap_id only; `TenantIdentity` authorizes by cap_id and carries a `RefundAddress`. The difference is domain information, not an inconsistency.
+
+---
+
+## 2. Make illegal programs unrepresentable
+
+**Level: function signatures and module architecture**
+
+A primitive in a function signature lies about its meaning. `u64` says "I am a number" — it does not say "I am a price" or "I am a timestamp in milliseconds." Two arguments of the same raw type can be silently swapped; the compiler has no basis to reject the mistake.
+
+Replace primitives with domain types at every internal function boundary. The compiler then rejects incorrect argument order, incorrect unit, and incorrect domain — all at compile time.
+
+```move
+// Before — can pass duration where price is expected; compiler cannot help
+fun ascending_floor_price(stake: u64, ...): u64
+
+// After — wrong domain is a compile error
+fun ascending_floor_price(stake: Stake, ensemble: &PolicyEnsemble): Price {
+    price_escalation_policy::compute_next_price(
+        policy_ensemble::proj_price_escalation(ensemble),
+        monetary::as_reference_price(stake),
+    )
+}
+```
+
+**Rule:** outside `math.move`, no internal function signature contains a raw `u64` where a domain type exists. The extraction to `u64` happens exactly once, at the event emission or SDK boundary.
+
+**Test:** `grep -r "fun.*: u64" sources/` excluding `math.move`, `events`, and error constants returns zero results.
+
+---
+
+### 2.1 Layer ownership — a domain owns its primitive
+
+Each domain layer owns exactly one module that wraps its primitive. No module except the owner operates on the naked value.
+
+```move
+// monetary.move — owns the money domain
+public struct Price has copy, drop, store { mist: u64 }
+public struct Stake has copy, drop, store { mist: u64 }
+
+// phases.move — owns the time domain
+public struct Timestamp has copy, drop, store { ms: u64 }
+public struct Duration  has copy, drop, store { ms: u64 }
+
+// math.move — owns the math primitives
+public struct BasisPoints has copy, drop, store { bps: u64 }
+public struct CurveHeight has copy, drop  { h:   u64 }
+```
+
+| Domain | Owner | Types |
+|--------|-------|-------|
+| Money  | `monetary.move` | `Price`, `Stake` |
+| Time   | `phases.move`   | `Timestamp`, `Duration`, `Boundary` |
+| Math   | `math.move`     | `BasisPoints`, `CurveHeight` |
+
+**Test:** `grep -r ": u64" sources/` in internal functions (excluding events, errors, `math.move`) returns zero results.
+
+---
+
+### 2.2 Policy resolves to domain primitive — computation never sees the policy
+
+A policy type encodes a *choice* about how to derive a value. A computation function uses the *derived value*. These are different things and must not share a type.
+
+Policy variants resolve to domain primitives at the cycle-entry boundary. Everything downstream receives only the resolved primitive.
+
+```move
+// rest_price_policy.move — resolves at the boundary, returns Price
+public(package) fun compute_price(policy: &RestPricePolicy, generator: &mut RandomGenerator): Price {
+    match (policy) {
+        RestPricePolicy::Fixed { price }            => *price,
+        RestPricePolicy::RandomInRange { min, max } => {
+            monetary::price(generator.generate_u64_in_range(
+                monetary::price_mist(*min),
+                monetary::price_mist(*max),
+            ))
+        },
+    }
+}
+```
+
+After `compute_price` returns, the engine sees `Price`. Whether the policy was `Fixed` or `RandomInRange` is invisible by design.
+
+**Diagnostic:** an `abort 0` (or any abort) in a match arm annotated "unreachable after resolve()" is the smell. It means a policy type crossed the resolution boundary into a computation function.
+
+**Test:** no computation function (`has_expired`, `compute_floor_price`, `compute_used_credit`) accepts a `&*Policy` parameter.
+
+---
+
+### 2.3 Raw Balance never crosses module borders
+
+Every `Balance<C>` produced inside the package wraps immediately into a typed share destined for a single consumer. The naked `Balance` is internal plumbing only.
+
+```move
+public struct TenantStake<phantom CoinType> has store {
+    balance: Balance<CoinType>,          // internal — never returned directly
+}
+
+public struct FeeShare<phantom CoinType> has store {
+    balance:         Balance<CoinType>,  // internal — posted as FeeMessage
+    escrow_identity: EscrowIdentity,
+}
+```
+
+The routing chain is:
+```
+tenant_seat::take_fee_share      → FeeShare<C>       → fee_message::post → fee inbox
+tenant_seat::take_owner_earnings → OwnerEarnings<C>  → owner_seat::deposit → owner balance
+tenant_stake::liquidate          → transfer to refund address
+```
+
+No function signature outside its defining module accepts or returns `Balance<C>`.
+
+---
+
+### 2.4 Extraction is a deliberate domain crossing
+
+When a typed value must cross into a math or framework operation, the extraction is made visible by calling a named extractor. This makes "I am leaving the typed domain here" a statement in the code, not a hidden operation.
+
+```move
+fun split_fee(amount: Stake): FeeAllocation {
+    let mist         = monetary::stake_mist(amount);          // deliberate crossing
+    let protocol_fee = math::compute_apply_bps(mist, math::bps(PROTOCOL_FEE_BPS));
+    FeeAllocation {
+        owner_share:  monetary::stake(mist - protocol_fee),
+        protocol_fee: monetary::stake(protocol_fee),
+    }
+}
+```
+
+Event fields are the terminal extraction point — `u64` in event structs is correct and intentional. Events are serialized for off-chain consumers; domain types stop at the event boundary.
+
+---
+
+### 2.5 Exhaustive match over boolean guards
+
+When a function branches on state, use a match expression over boolean guards. Exhaustive match forces the compiler to require coverage of every variant. Adding a new variant to an enum becomes a compile error at every match site.
+
+```move
+// proj_asset_id matches all variants of AssetState explicitly — no wildcard
+public(package) fun proj_asset_id<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): ID {
+    match (s) {
+        AssetState::Waiting(WaitingState::Idle    { asset, .. } |
+                            WaitingState::AtDutch { asset, .. } |
+                            WaitingState::Retired { asset })     =>
+            asset_custody::proj_locked_id(asset),
+        AssetState::Renting(RentingState::Occupied { asset, .. } |
+                            RentingState::Demand   { asset, .. }) =>
+            asset_identity::proj_id(asset_custody::proj_asset_id(asset)),
+    }
+}
+```
+
+A `_ =>` wildcard in a match on a protocol enum is the smell. It means a new variant can be added without the compiler requiring its handling.
+
+---
+
+## Applied checklist
+
+When writing or reviewing code in this codebase:
+
+**From Principle 1:**
+- [ ] Does any state machine use a `bool` field for a one-way transition? If so, it is a missing enum variant.
+- [ ] Does any borrow/return pair have a `_ => abort` on the return side? If so, a cross-object invariant is missing a type.
+- [ ] Does any entity carry both identity and balance fields directly, without the Identity + Material split?
+
+**From Principle 2:**
+- [ ] Do any internal function signatures contain raw `u64`, `bool`, or anonymous tuples where a domain type exists?
+- [ ] Does any module operate on a naked `u64` primitive that belongs to another domain's owner module?
+- [ ] Does any computation function accept a `&*Policy` parameter? If so, `resolve()` is missing.
+- [ ] Does any function return or accept a raw `Balance<C>` outside its defining module?
+- [ ] Is any domain crossing implicit — a `u64` value used directly in arithmetic without a named extractor call?
+- [ ] Does any match expression use `_ =>` on a protocol enum variant?

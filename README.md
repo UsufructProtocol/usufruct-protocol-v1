@@ -146,6 +146,14 @@ Before reading specs or code, build intuition interactively. The [usufruct simul
 
 ---
 
+## Built with functional style on Sui Move 2024
+
+The codebase applies functional programming consistently throughout: sum types for state, linear types for resource discipline, value transformations for transitions, resolved configuration as pure values. Sui Move 2024's enums with exhaustive match made this style expressible in Move for the first time.
+
+The result is a state machine where illegal states have no type representation and illegal programs cannot be constructed. For a deeper look at the principles behind these decisions, see [`CODE_PRINCIPLES.md`](./CODE_PRINCIPLES.md).
+
+---
+
 ## Zero external dependencies
 
 The package imports only the Sui standard library. No oracle, no AMM, no third-party protocol. Any Sui object integrates without taking a dependency on an external ecosystem, and the protocol itself carries no upgrade or governance risk from outside parties.

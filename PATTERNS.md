@@ -670,7 +670,31 @@ What market structures emerge from this — sublease agreements, secondary cap a
 
 ---
 
-## 11. The integrator's mental model
+## The OwnerCap
+
+`OwnerCap` also has `key + store` abilities. Whoever holds it holds **full authority** over the escrow: retire, withdraw earnings, claim the asset, update the policy configuration, and extend the commitment. The protocol validates only that the cap matches the escrow's registered `owner_cap_id` — not the holder's address. Transfer of the `OwnerCap` is transfer of ownership, with no caveats.
+
+---
+
+### 11. Protocol-owned escrows and governance
+
+Because `OwnerCap` is an ordinary owned Sui object, it can be held by any address — including a smart contract module, a DAO treasury, or a multisig. This makes the escrow's lifecycle fully programmable without any modification to the protocol.
+
+**DAO-governed escrow.** Integrate an asset, then transfer the `OwnerCap` to a DAO governance object or shared treasury. From that point, owner operations (retire, update config, withdraw earnings) are gated by the DAO's own proposal and voting mechanism. The protocol does not know or care — it validates the cap, not the caller.
+
+**Protocol-owned escrow.** A smart contract module can hold the `OwnerCap` and govern the escrow programmatically: auto-retire after a fixed number of tenures, route withdrawn earnings to a yield-sharing pool, update policy configuration in response to on-chain signals. The escrow becomes a component in a larger protocol rather than an independently owned object.
+
+**Multisig ownership.** Transfer the `OwnerCap` to a multisig cap from another protocol. Owner operations then require the configured threshold of signers. Useful for shared assets or treasury-managed integrations where no single address should have unilateral control.
+
+**Delegated management.** Transfer the `OwnerCap` temporarily to a manager address — a keeper bot, an operations wallet, or a third-party service — while retaining the intent to reclaim it later. Since `OwnerCap` is transferable, this is a first-class pattern with no protocol friction.
+
+#### The difference from TenantCap
+
+With `TenantCap`, only the borrow right transfers — financial exposure to displacement (the `RefundAddress`) stays anchored to the original payer. With `OwnerCap`, there is no such split: economic rights and operational authority are unified. Whoever holds the cap can withdraw accumulated earnings, claim the underlying asset, and modify the escrow's terms. Transfer of `OwnerCap` is full transfer of ownership with no residual exposure retained by the prior holder.
+
+---
+
+## 12. The integrator's mental model
 
 If you are building on usufruct, the question to ask is not "is my asset rentable?" but the following four:
 
@@ -683,7 +707,7 @@ If those four questions have answers, you have an integration. The protocol take
 
 ---
 
-## 12. References
+## 13. References
 
 - The usufruct protocol — the substrate this catalog grows on. *(Separate repository.)*
 - usufruct's `ARCHITECTURE.md` — protocol internals. Read after this document, not before.

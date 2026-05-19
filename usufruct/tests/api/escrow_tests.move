@@ -894,6 +894,54 @@ fun rent_from_handover_confirmed_supersedes_bid() {
     sc.end();
 }
 
+/// Invariant: instant handover (c=0) makes `RefundState::Total` unreachable.
+/// `from_superseded` is only reachable through `do_supersede_bid`, which
+/// executes only when `execute_rent` matches on `RentingState::Demand`.
+/// With instant handover the expiry equals `now` at bid time, so
+/// `step_handover` resolves the Demand state before `execute_rent` can
+/// branch on it. T3's bid fires the handover (Occupied → T2) and then
+/// places a fresh bid — `do_supersede_bid` is never reached.
+/// Observable proxy: zero `BidSuperseded` events regardless of how many
+/// successive challengers bid.
+#[test]
+fun instant_handover_never_supersedes_pending_bid() {
+    let mut sc = setup();
+    // c=0 (Instant) — handover_expiry := now at every bid
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // T1 rents: Idle → Occupied
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &random, &clk, sc.ctx());
+
+    // T2 bids: Occupied → Demand (handover_expiry = 0 = now)
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2 = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 1);
+
+    // T3 bids: step_handover fires (expiry=0 ≤ now=0) → HandoverCompleted
+    // → Occupied(T2) → do_place_bid(T3) → Demand again. Never supersedes.
+    let floor3 = escrow::compute_floor_price(&escrow, &clk);
+    let p3 = mk_payment(floor3, sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 2);
+
+    // Structural invariant: BidSuperseded never fires ⟺ RefundState::Total unreachable.
+    assert_eq!(event::events_by_type<BidSuperseded>().length(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §10. rent — abort paths ─────────────────────────────────────────────────
 
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]

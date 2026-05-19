@@ -33,10 +33,10 @@ fun has_expired_table() {
         // The auction never has a real window: the boundary collapses to
         // phase_start itself, so Demand → Idle in one APT step
         // (spec M6b / Q11).
-        HasExpiredCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, now: 99,  expected: false }, // before phase
-        HasExpiredCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, now: 100, expected: true  }, // exact phase
-        HasExpiredCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, now: 101, expected: true  }, // after phase
-        HasExpiredCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 0,   now: 0,   expected: true  }, // zero anchor
+        HasExpiredCase { policy: auction_window_policy::new_descent_off(), phase_start: 100, now: 99,  expected: false }, // before phase
+        HasExpiredCase { policy: auction_window_policy::new_descent_off(), phase_start: 100, now: 100, expected: true  }, // exact phase
+        HasExpiredCase { policy: auction_window_policy::new_descent_off(), phase_start: 100, now: 101, expected: true  }, // after phase
+        HasExpiredCase { policy: auction_window_policy::new_descent_off(), phase_start: 0,   now: 0,   expected: true  }, // zero anchor
 
         // Fixed — boundary triple at phase_start + ceiling = 150
         HasExpiredCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 100, now: 149, expected: false }, // one before
@@ -67,8 +67,8 @@ public struct ExpiryAtCase has drop {
 fun expiry_at_table() {
     let cases = vector[
         // Skipped — returns phase_start itself (boundary collapses)
-        ExpiryAtCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 0,   expected: 0   },
-        ExpiryAtCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, expected: 100 },
+        ExpiryAtCase { policy: auction_window_policy::new_descent_off(), phase_start: 0,   expected: 0   },
+        ExpiryAtCase { policy: auction_window_policy::new_descent_off(), phase_start: 100, expected: 100 },
 
         // Fixed — returns phase_start + ceiling
         ExpiryAtCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)),    phase_start: 100, expected: 150 },
@@ -98,13 +98,13 @@ fun fixed_ceiling_returns_ceiling_for_window() {
     };
 }
 
-#[test, expected_failure(abort_code = auction_window_policy::EDescentSkippedNoFixed, location = usufruct::auction_window_policy)]
+#[test, expected_failure(abort_code = auction_window_policy::EDescentOffNoFixed, location = usufruct::auction_window_policy)]
 fun fixed_ceiling_aborts_on_skipped() {
     // fixed_ceiling on Skipped is unreachable in production
     // (compute_price_descent only fires from AtDutchAuction, structurally
     // unobservable under Skipped). This pins the abort code as the
     // contract — anyone calling it directly gets a deterministic failure.
-    let p = auction_window_policy::new_descent_skipped();
+    let p = auction_window_policy::new_descent_off();
     auction_window_policy::fixed_ceiling(&p);
 }
 
@@ -125,10 +125,10 @@ public struct DeSisterCase has drop {
 fun has_expired_iff_now_ge_expiry_at() {
     let cases = vector[
         // Skipped — boundary triple at phase_start
-        DeSisterCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, now: 99  },
-        DeSisterCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, now: 100 },
-        DeSisterCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, now: 101 },
-        DeSisterCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 0,   now: 0   },
+        DeSisterCase { policy: auction_window_policy::new_descent_off(), phase_start: 100, now: 99  },
+        DeSisterCase { policy: auction_window_policy::new_descent_off(), phase_start: 100, now: 100 },
+        DeSisterCase { policy: auction_window_policy::new_descent_off(), phase_start: 100, now: 101 },
+        DeSisterCase { policy: auction_window_policy::new_descent_off(), phase_start: 0,   now: 0   },
 
         // Fixed — boundary triple at phase_start + ceiling = 150
         DeSisterCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 100, now: 149 },
@@ -213,8 +213,8 @@ fun random_in_range_expiry_at_within_bounds() {
 
 #[test]
 fun projectors_skipped_variant() {
-    let p = auction_window_policy::new_descent_skipped();
-    assert!(p.proj_is_skipped());
+    let p = auction_window_policy::new_descent_off();
+    assert!(p.proj_is_off());
     assert!(!p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
     assert!(p.proj_fixed_ceiling().is_none());
@@ -225,7 +225,7 @@ fun projectors_skipped_variant() {
 #[test]
 fun projectors_window_variant() {
     let p = auction_window_policy::new_descent_fixed(phases::duration(75));
-    assert!(!p.proj_is_skipped());
+    assert!(!p.proj_is_off());
     assert!(p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
     assert_eq!(phases::duration_ms(p.proj_fixed_ceiling().destroy_some()), 75);
@@ -236,7 +236,7 @@ fun projectors_window_variant() {
 #[test]
 fun projectors_random_in_range_variant() {
     let p = auction_window_policy::new_descent_random_in_range(phases::duration(20), phases::duration(80));
-    assert!(!p.proj_is_skipped());
+    assert!(!p.proj_is_off());
     assert!(!p.proj_is_fixed());
     assert!(p.proj_is_random_in_range());
     assert!(p.proj_fixed_ceiling().is_none());

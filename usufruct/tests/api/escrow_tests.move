@@ -4264,7 +4264,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 
 // ─── §Skipped descent — price resets to min_rent_price at tenure boundary ────
 
-/// With AuctionWindowPolicy::Skipped (h=0), tenure expiry triggers the M6b cascade:
+/// With AuctionWindowPolicy::Off (h=0), tenure expiry triggers the M6b cascade:
 /// Occupied → AtDutchAuction → Idle fires in a single APT step because
 /// the descent window is zero. The entry price resets to min_rent_price at
 /// the exact tenure boundary, regardless of what the departing tenant paid.
@@ -7301,7 +7301,7 @@ fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
         handover_policy::new_handover_full_tenure(),
-        auction_window_policy::new_descent_skipped(),
+        auction_window_policy::new_descent_off(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(floor)),
@@ -7452,7 +7452,7 @@ fun multi_cycle_cfg_countdown(): policy_ensemble::PolicyEnsemble {
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
         handover_policy::new_handover_fixed(phases::duration(countdown)),
-        auction_window_policy::new_descent_skipped(),
+        auction_window_policy::new_descent_off(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(floor)),
@@ -8253,8 +8253,8 @@ fun multi_cycle_cfg_instant(): policy_ensemble::PolicyEnsemble {
         rest_price_policy::new_fixed(monetary::price(floor)),
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
-        handover_policy::new_handover_instant(),
-        auction_window_policy::new_descent_skipped(),
+        handover_policy::new_handover_off(),
+        auction_window_policy::new_descent_off(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(floor)),

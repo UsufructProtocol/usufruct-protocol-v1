@@ -40,10 +40,10 @@ CorpusEntry   has copy, drop, store {
 | Axis | Policy                | Range | Variants |
 |------|-----------------------|-------|----------|
 | `m`  | TenureExtendPolicy    | 0..1  | 0 = Single, 1 = Multi |
-| `c`  | HandoverPolicy        | 0..3  | 0 = Instant, 1 = Fixed (25 000 ms), 2 = FullTenure, 3 = RandomInRange (10 000..75 000 ms) |
+| `c`  | HandoverPolicy        | 0..3  | 0 = Off, 1 = Fixed (25 000 ms), 2 = FullTenure, 3 = RandomInRange (10 000..75 000 ms) |
 | `d`  | PriceEscalationPolicy | 0..1  | 0 = FixedDelta (10 000 000 000), 1 = CompoundDelta (1 000 bps + 1) |
 | `e`  | CurveShapePolicy pair | 0..6  | 0 = Linear, 1 = Smoothstep, 2 = Logistic, 3 = PowerLaw(1,2), 4 = PowerLaw(2,1), 5 = Exponential(2,true), 6 = Exponential(2,false) |
-| `h`  | AuctionWindowPolicy   | 0..2  | 0 = Skipped, 1 = Fixed (100 000 ms), 2 = RandomInRange (10 000..90 000 ms) |
+| `h`  | AuctionWindowPolicy   | 0..2  | 0 = Off, 1 = Fixed (100 000 ms), 2 = RandomInRange (10 000..90 000 ms) |
 | `f`  | CommitmentPolicy      | 0..1  | 0 = Immediate, 1 = Deferred (10 000 000 ms) |
 
 `credit_shape` and `auction_shape` in every entry are always the same `CurveShapePolicy` (both derived from axis `e`). The corpus deliberately does not cross-product them independently.

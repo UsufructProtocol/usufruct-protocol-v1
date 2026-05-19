@@ -21,7 +21,7 @@ const EMinNotLtMax:       u64 = 1;
 // === Enums ===
 
 public enum HandoverPolicy has copy, drop, store {
-    Instant,
+    Off,
     FullTenure,
     Fixed          { floor: Duration },
     RandomInRange  { min: Duration, max: Duration },
@@ -33,7 +33,7 @@ public enum HandoverPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_handover_instant():    HandoverPolicy { HandoverPolicy::Instant }
+public fun new_handover_off():    HandoverPolicy { HandoverPolicy::Off }
 public fun new_handover_full_tenure(): HandoverPolicy { HandoverPolicy::FullTenure }
 
 public fun new_handover_fixed(floor: Duration): HandoverPolicy {
@@ -49,8 +49,8 @@ public fun new_handover_random_in_range(min: Duration, max: Duration): HandoverP
 
 // === View Functions ===
 
-public(package) fun proj_is_instant(policy: &HandoverPolicy): bool {
-    match (policy) { HandoverPolicy::Instant => true, _ => false }
+public(package) fun proj_is_off(policy: &HandoverPolicy): bool {
+    match (policy) { HandoverPolicy::Off => true, _ => false }
 }
 public(package) fun proj_is_full_tenure(policy: &HandoverPolicy): bool {
     match (policy) { HandoverPolicy::FullTenure => true, _ => false }
@@ -88,7 +88,7 @@ public(package) fun compute_countdown_floor_lt(policy: &HandoverPolicy, ceiling:
     match (policy) {
         HandoverPolicy::Fixed { floor }       => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
         HandoverPolicy::RandomInRange { max, .. } => phases::duration_ms(*max)   < phases::duration_ms(ceiling),
-        HandoverPolicy::Instant | HandoverPolicy::FullTenure => true,
+        HandoverPolicy::Off | HandoverPolicy::FullTenure => true,
     }
 }
 
@@ -98,7 +98,7 @@ public(package) fun compute_duration(
     generator: &mut RandomGenerator,
 ): Duration {
     match (policy) {
-        HandoverPolicy::Instant                    => phases::zero(),
+        HandoverPolicy::Off                    => phases::zero(),
         HandoverPolicy::FullTenure                  => ceiling,
         HandoverPolicy::Fixed { floor }        => *floor,
         HandoverPolicy::RandomInRange { min, max } => phases::duration(

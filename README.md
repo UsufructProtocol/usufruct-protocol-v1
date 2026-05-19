@@ -84,7 +84,7 @@ Eight policies configure the market at integration time. They determine the term
 | `rest_price` | Floor price per idle cycle — fixed or random in range |
 | `tenure_duration` | Maximum tenure length — fixed or random in range |
 | `tenure_extend` | Single or multi-tenure commitment |
-| `handover` | Handover variant — instant, full-tenure, countdown, or random in range |
+| `handover` | Handover variant — off, full-tenure, countdown, or random in range |
 | `auction_window` | Dutch auction duration — fixed window, skipped, or random in range |
 | `auction_shape` | Price descent curve |
 | `credit_shape` | Credit consumption rate |

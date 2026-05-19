@@ -36,7 +36,7 @@ fun new_handover_random_in_range_rejects_min_gt_max() {
 fun resolve_instant_returns_zero() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
     let result = handover_policy::compute_duration(
-        &handover_policy::new_handover_instant(),
+        &handover_policy::new_handover_off(),
         phases::duration(100),
         &mut gen,
     );
@@ -99,8 +99,8 @@ public struct FixedFloorLtCase has drop {
 #[test]
 fun countdown_floor_lt_table() {
     let cases = vector[
-        FixedFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 100, expected: true  },
-        FixedFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 0,   expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_off(),     ceiling: 100, expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_off(),     ceiling: 0,   expected: true  },
         FixedFloorLtCase { policy: handover_policy::new_handover_full_tenure(),  ceiling: 100, expected: true  },
         FixedFloorLtCase { policy: handover_policy::new_handover_full_tenure(),  ceiling: 0,   expected: true  },
         FixedFloorLtCase { policy: handover_policy::new_handover_fixed(phases::duration(50)),  ceiling: 100, expected: true  },
@@ -295,8 +295,8 @@ fun has_expired_monotone_in_now() {
 
 #[test]
 fun projectors_instant_variant() {
-    let p = handover_policy::new_handover_instant();
-    assert!(p.proj_is_instant());
+    let p = handover_policy::new_handover_off();
+    assert!(p.proj_is_off());
     assert!(!p.proj_is_full_tenure());
     assert!(!p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
@@ -308,7 +308,7 @@ fun projectors_instant_variant() {
 #[test]
 fun projectors_full_tenure_variant() {
     let p = handover_policy::new_handover_full_tenure();
-    assert!(!p.proj_is_instant());
+    assert!(!p.proj_is_off());
     assert!(p.proj_is_full_tenure());
     assert!(!p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
@@ -320,7 +320,7 @@ fun projectors_full_tenure_variant() {
 #[test]
 fun projectors_countdown_variant() {
     let p = handover_policy::new_handover_fixed(phases::duration(42));
-    assert!(!p.proj_is_instant());
+    assert!(!p.proj_is_off());
     assert!(!p.proj_is_full_tenure());
     assert!(p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
@@ -332,7 +332,7 @@ fun projectors_countdown_variant() {
 #[test]
 fun projectors_random_in_range_variant() {
     let p = handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100));
-    assert!(!p.proj_is_instant());
+    assert!(!p.proj_is_off());
     assert!(!p.proj_is_full_tenure());
     assert!(!p.proj_is_fixed());
     assert!(p.proj_is_random_in_range());

@@ -29,9 +29,9 @@ fun base_ensemble(descent: bool): policy_ensemble::PolicyEnsemble {
     policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
         tenure_extend_policy::new_single(),
-        handover_policy::new_handover_instant(),
+        handover_policy::new_handover_off(),
         if (descent) { auction_window_policy::new_descent_fixed(phases::duration(TENURE)) }
-        else         { auction_window_policy::new_descent_skipped()       },
+        else         { auction_window_policy::new_descent_off()       },
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(MIN)),
@@ -59,8 +59,8 @@ fun ascending_fixed_delta_adds_delta() {
     let ensemble   = policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
         tenure_extend_policy::new_single(),
-        handover_policy::new_handover_instant(),
-        auction_window_policy::new_descent_skipped(),
+        handover_policy::new_handover_off(),
+        auction_window_policy::new_descent_off(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(delta)),
@@ -75,8 +75,8 @@ fun ascending_compound_delta_raises_price() {
     let ensemble = policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
         tenure_extend_policy::new_single(),
-        handover_policy::new_handover_instant(),
-        auction_window_policy::new_descent_skipped(),
+        handover_policy::new_handover_off(),
+        auction_window_policy::new_descent_off(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_compound_delta(math::bps(1_000), monetary::price(1)),
@@ -165,7 +165,7 @@ fun descending_various_curves_respect_bounds() {
         let ensemble = policy_ensemble::new_ensemble(
             rest_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
             tenure_extend_policy::new_single(),
-            handover_policy::new_handover_instant(),
+            handover_policy::new_handover_off(),
             auction_window_policy::new_descent_fixed(phases::duration(TENURE)),
             curve_shape_policy::new_linear(),
             curve,

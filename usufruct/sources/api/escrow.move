@@ -269,7 +269,7 @@ public fun is_rented<Asset: key + store, CoinType>(
 public fun is_descent_skipped<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    auction_window_policy::proj_is_skipped(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
+    auction_window_policy::proj_is_off(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
 public fun is_descent_window<Asset: key + store, CoinType>(
@@ -290,10 +290,10 @@ public fun is_commitment_deferred<Asset: key + store, CoinType>(
     commitment_policy::proj_is_deferred(&asset_state::proj_commitment_policy(read_core(escrow)))
 }
 
-public fun is_handover_instant<Asset: key + store, CoinType>(
+public fun is_handover_off<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy::proj_is_instant(policy_ensemble::proj_handover(read_ensemble(escrow)))
+    handover_policy::proj_is_off(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
 public fun is_handover_full_tenure<Asset: key + store, CoinType>(

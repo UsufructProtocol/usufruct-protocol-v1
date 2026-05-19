@@ -144,7 +144,7 @@ fun handover_views_match_variants() {
         let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(c, 0, 0, 0, 0));
         let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
-        assert_eq!(escrow::is_handover_instant(&escrow),     c == 0);
+        assert_eq!(escrow::is_handover_off(&escrow),     c == 0);
         assert_eq!(escrow::is_handover_fixed(&escrow),   c == 1);
         assert_eq!(escrow::is_handover_full_tenure(&escrow),  c == 2);
 

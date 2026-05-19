@@ -219,7 +219,7 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64 {
 }
 
 fun make_handover(c: u8): HandoverPolicy {
-    if (c == 0)      { handover_policy::new_handover_instant() }
+    if (c == 0)      { handover_policy::new_handover_off() }
     else if (c == 1) { handover_policy::new_handover_fixed(phases::duration(HANDOVER_COUNTDOWN_C1)) }
     else             { handover_policy::new_handover_full_tenure() }
 }
@@ -240,7 +240,7 @@ fun make_curve(e: u8): CurveShapePolicy {
 }
 
 fun make_descent(h: u8): AuctionWindowPolicy {
-    if (h == 0) { auction_window_policy::new_descent_skipped() }
+    if (h == 0) { auction_window_policy::new_descent_off() }
     else        { auction_window_policy::new_descent_fixed(phases::duration(DESCENT_WINDOW_H1)) }
 }
 

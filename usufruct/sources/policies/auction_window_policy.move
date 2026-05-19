@@ -13,7 +13,7 @@ use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 const EDescentCeilingZero:     u64 = 0;
 const EMinNotLtMax:            u64 = 2;
-#[test_only] const EDescentSkippedNoFixed: u64 = 1;
+#[test_only] const EDescentOffNoFixed: u64 = 1;
 
 // === Constants ===
 
@@ -22,7 +22,7 @@ const EMinNotLtMax:            u64 = 2;
 // === Enums ===
 
 public enum AuctionWindowPolicy has copy, drop, store {
-    Skipped,
+    Off,
     Fixed         { ceiling: Duration },
     RandomInRange { min: Duration, max: Duration },
 }
@@ -33,7 +33,7 @@ public enum AuctionWindowPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_descent_skipped(): AuctionWindowPolicy { AuctionWindowPolicy::Skipped }
+public fun new_descent_off(): AuctionWindowPolicy { AuctionWindowPolicy::Off }
 
 public fun new_descent_fixed(ceiling: Duration): AuctionWindowPolicy {
     assert!(phases::duration_ms(ceiling) > 0, EDescentCeilingZero);
@@ -48,8 +48,8 @@ public fun new_descent_random_in_range(min: Duration, max: Duration): AuctionWin
 
 // === View Functions ===
 
-public(package) fun proj_is_skipped(policy: &AuctionWindowPolicy): bool {
-    match (policy) { AuctionWindowPolicy::Skipped => true, _ => false }
+public(package) fun proj_is_off(policy: &AuctionWindowPolicy): bool {
+    match (policy) { AuctionWindowPolicy::Off => true, _ => false }
 }
 public(package) fun proj_is_fixed(policy: &AuctionWindowPolicy): bool {
     match (policy) { AuctionWindowPolicy::Fixed { .. } => true, _ => false }
@@ -82,7 +82,7 @@ public(package) fun proj_range_max(policy: &AuctionWindowPolicy): Option<Duratio
 
 public(package) fun compute_duration(policy: &AuctionWindowPolicy, generator: &mut RandomGenerator): Duration {
     match (policy) {
-        AuctionWindowPolicy::Skipped                    => phases::zero(),
+        AuctionWindowPolicy::Off                    => phases::zero(),
         AuctionWindowPolicy::Fixed { ceiling }         => *ceiling,
         AuctionWindowPolicy::RandomInRange { min, max } => phases::duration(
             generator.generate_u64_in_range(phases::duration_ms(*min), phases::duration_ms(*max))
@@ -119,8 +119,8 @@ public fun e_min_not_lt_max(): u64 { EMinNotLtMax }
 public fun fixed_ceiling(policy: &AuctionWindowPolicy): Duration {
     match (policy) {
         AuctionWindowPolicy::Fixed { ceiling }        => *ceiling,
-        AuctionWindowPolicy::Skipped
-        | AuctionWindowPolicy::RandomInRange { .. }    => abort EDescentSkippedNoFixed,
+        AuctionWindowPolicy::Off
+        | AuctionWindowPolicy::RandomInRange { .. }    => abort EDescentOffNoFixed,
     }
 }
 

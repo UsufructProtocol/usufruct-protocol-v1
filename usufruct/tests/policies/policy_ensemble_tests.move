@@ -71,11 +71,11 @@ public struct Case has drop {
 #[test]
 fun new_config_valid_inputs_and_getter_roundtrip() {
     let cases = vector[
-        // V1 — minimal valid; HandoverPolicy::Instant
+        // V1 — minimal valid; HandoverPolicy::Off
         Case {
             min_rent_price: 1,
             tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1)),
-            handover:       handover_policy::new_handover_instant(),
+            handover:       handover_policy::new_handover_off(),
             descent:        auction_window_policy::new_descent_fixed(phases::duration(1)),
             credit_shape:   curve_shape_policy::new_linear(),
             auction_shape:  curve_shape_policy::new_linear(),
@@ -105,7 +105,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 50,
             tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(100_000)),
-            handover:       handover_policy::new_handover_instant(),
+            handover:       handover_policy::new_handover_off(),
             descent:        auction_window_policy::new_descent_fixed(phases::duration(50_000)),
             credit_shape:   curve_shape_policy::new_power_law(1, 2),
             auction_shape:  curve_shape_policy::new_linear(),
@@ -165,7 +165,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
         Case {
             min_rent_price: 1,
             tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),
-            handover:       handover_policy::new_handover_instant(),
+            handover:       handover_policy::new_handover_off(),
             descent:        auction_window_policy::new_descent_fixed(phases::duration(1)),
             credit_shape:   curve_shape_policy::new_power_law(2, 4),
             auction_shape:  curve_shape_policy::new_power_law(6, 3),
@@ -181,12 +181,12 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             auction_shape:  curve_shape_policy::new_exponential(8, true),
             price_escalation_policy: price_escalation_policy::new_compound_delta(math::bps(1), monetary::price(1)),
         },
-        // V12 — AuctionWindowPolicy::Skipped ("AtDutchAuction unobservable" mode, M6b)
+        // V12 — AuctionWindowPolicy::Off ("AtDutchAuction unobservable" mode, M6b)
         Case {
             min_rent_price: 1,
             tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),
-            handover:       handover_policy::new_handover_instant(),
-            descent:        auction_window_policy::new_descent_skipped(),
+            handover:       handover_policy::new_handover_off(),
+            descent:        auction_window_policy::new_descent_off(),
             credit_shape:   curve_shape_policy::new_linear(),
             auction_shape:  curve_shape_policy::new_linear(),
             price_escalation_policy: price_escalation_policy::new_fixed_delta(monetary::price(1)),
@@ -246,7 +246,7 @@ fun getter_roundtrip_r2_tenure_ceiling_typical_ms() {
 
 #[test]
 fun getter_roundtrip_r3_handover_instant() {
-    let h   = handover_policy::new_handover_instant();
+    let h   = handover_policy::new_handover_off();
     let ensemble = policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
         tenure_extend_policy::new_single(),
@@ -288,7 +288,7 @@ fun getter_roundtrip_r4_descent_window_one() {
 #[test]
 fun getter_roundtrip_r4b_descent_skipped() {
     // Companion to R4 covering the auction-skipped variant.
-    let d   = auction_window_policy::new_descent_skipped();
+    let d   = auction_window_policy::new_descent_off();
     let ensemble = policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(),
         d,

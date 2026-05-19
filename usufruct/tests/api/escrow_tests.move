@@ -186,7 +186,7 @@ fun integrate_creates_idle_escrow_smoke() {
 // ─── §2. integrate — corpus projection ───────────────────────────────────────
 
 /// §10.1 — integrate is universally applicable. Sweeps the C axis
-/// (HandoverPolicy ∈ {Instant, Countdown, FixedTime}) — three
+/// (HandoverPolicy ∈ {Instant, Countdown, FullTenure}) — three
 /// behaviorally distinct handover modes — at fixed (d=0, e=0, h=0, f=0).
 /// Verifies the post-condition `state_tag == Idle` for each.
 ///
@@ -800,7 +800,7 @@ fun rent_from_handover_open_places_bid() {
             assert_eq!(asset_state::bid_placed_tenant_cap_id(&placed[0]), object::id(&cap_t2));
             // The expiry was stamped — its specific value depends on c
             // (Instant: now+0 = now2; Countdown: min(now2+25_000, phase_start+ceiling);
-            // FixedTime: phase_start+ceiling). Property: expiry > 0.
+            // FullTenure: phase_start+ceiling). Property: expiry > 0.
             assert!(asset_state::bid_placed_handover_countdown_expiry(&placed[0]) > 0, tag_cfg);
 
             transfer::public_transfer(cap_t1, OWNER);
@@ -2249,14 +2249,14 @@ fun claim_asset_with_real_foreign_escrow_cap_aborts() {
 }
 
 /// APT cascade: Demand → Occupied → AtDutch → Idle in
-/// one pass under (c=2 FixedTime, h=0 Skipped). M6c spec scenario.
-/// FixedTime saturates handover_countdown_expiry to the tenure
+/// one pass under (c=2 FullTenure, h=0 Skipped). M6c spec scenario.
+/// FullTenure saturates handover_countdown_expiry to the tenure
 /// boundary; Skipped collapses descent — three transitions fire in
 /// sequence within a single APT call.
 #[test]
 fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FixedTime, h=0 Skipped
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FullTenure, h=0 Skipped
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -2273,7 +2273,7 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
 
     // Jump clock past the second tenure boundary so all three
     // transitions are due in one APT call:
-    //   handover at tenure_ceiling (FixedTime expiry); after it,
+    //   handover at tenure_ceiling (FullTenure expiry); after it,
     //   the new phase_start is tenure_ceiling, so tenure expiry is
     //   due at 2 × tenure_ceiling; auction fires immediately under
     //   h=0 Skipped.
@@ -3465,18 +3465,18 @@ fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
     sc.end();
 }
 
-// ─── §F2. FixedTime — T3 supersedes T2, T3 wins handover at tenure boundary ──
+// ─── §F2. FullTenure — T3 supersedes T2, T3 wins handover at tenure boundary ──
 
-/// With c=2 (FixedTime), handover_countdown_expiry saturates to
+/// With c=2 (FullTenure), handover_countdown_expiry saturates to
 /// phase_start + tenure_ceiling. T2 bids, T3 supersedes T2; at the
 /// tenure boundary APT fires the handover to T3 (not T2). T2's cap is stale.
 ///
 /// Config: c=2, d=0, e=0, h=1 (Window — tenure and handover don't co-fire
 /// into Idle so we can observe T3's Occupied), f=0.
 #[test]
-fun e2e_f2_fixed_time_T3_supersedes_T2_wins_at_tenure_boundary() {
+fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(2, 0, 0, 1, 0); // c=2 FixedTime, h=1
+    let tag     = escrow_corpus::tag(2, 0, 0, 1, 0); // c=2 FullTenure, h=1
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -3499,7 +3499,7 @@ fun e2e_f2_fixed_time_T3_supersedes_T2_wins_at_tenure_boundary() {
     let cap_t3    = escrow::rent(&mut escrow, mk_payment(floor_f2b, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
     assert_eq!(event::events_by_type<BidSuperseded>().length(), 1);
 
-    // APT at tenure_ceiling (= FixedTime handover expiry = phase_start + tenure_ceiling = 100_000).
+    // APT at tenure_ceiling (= FullTenure handover expiry = phase_start + tenure_ceiling = 100_000).
     // Handover fires → T3 wins → Occupied (T3 current, new phase_start=100_000).
     // T3's tenure ceiling = 100_000 + 100_000 = 200_000 > 100_000 → no tenure expiry yet.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
@@ -3906,7 +3906,7 @@ fun e2e_hc_floor_uses_pending_stake_not_current_stake() {
 /// t_hv < 125_000 ensures no cascade; t_te > 200_000 ensures tenure fires.
 ///
 /// The test is split by (c, m) — 84 entries each — to fit the VM time limit:
-///   e2e_fin_conservation_{instant|countdown|fixed_time|random}_{single|multi}
+///   e2e_fin_conservation_{instant|countdown|full_tenure|random}_{single|multi}
 /// Together they cover all 672 corpus entries.
 fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenario) {
     let ceiling  = escrow_corpus::tenure_ceiling_const(); // 100_000
@@ -3954,7 +3954,7 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
                 uc,
             );
             assert!(uc > 0, tag);
-            // FixedTime: handover fires at t_max → full credit earned, nothing returned.
+            // FullTenure: handover fires at t_max → full credit earned, nothing returned.
             // All other policies: handover fires before t_max → partial credit, refund > 0.
             if (entry.c() == 2) assert_eq!(rc, 0)
             else                assert!(rc > 0, tag);
@@ -3990,11 +3990,11 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
 // 8 slices × 84 entries = 672 total (full coverage of all()). Requires --gas-limit 500_000_000.
 #[test] fun e2e_fin_conservation_instant_single()    { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 0), setup()); }
 #[test] fun e2e_fin_conservation_countdown_single()  { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 1), setup()); }
-#[test] fun e2e_fin_conservation_fixed_time_single() { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 2), setup()); }
+#[test] fun e2e_fin_conservation_full_tenure_single() { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 2), setup()); }
 #[test] fun e2e_fin_conservation_random_single()     { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_single(), 3), setup()); }
 #[test] fun e2e_fin_conservation_instant_multi()     { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   0), setup()); }
 #[test] fun e2e_fin_conservation_countdown_multi()   { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   1), setup()); }
-#[test] fun e2e_fin_conservation_fixed_time_multi()  { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   2), setup()); }
+#[test] fun e2e_fin_conservation_full_tenure_multi()  { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   2), setup()); }
 #[test] fun e2e_fin_conservation_random_multi()      { fin_conservation_loop(escrow_corpus::filter_c(escrow_corpus::all_multi(),   3), setup()); }
 
 // ─── §FIN-2-sentinel (kept for readability) ──────────────────────────────────
@@ -5011,9 +5011,9 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
 
 // ─── §CORPUS-GAPS. Coverage for under-tested axis values ─────────────────────
 
-// ── Gap 1: c=2 (FixedTime) — handover fires at tenure boundary, full credit ──
+// ── Gap 1: c=2 (FullTenure) — handover fires at tenure boundary, full credit ──
 
-/// With HandoverPolicy::FixedTime, the handover countdown expiry is always
+/// With HandoverPolicy::FullTenure, the handover countdown expiry is always
 /// phase_start + tenure_ceiling — the handover fires exactly at the tenure
 /// boundary. At that moment elapsed == tenure_ceiling, so compute_curve_height
 /// short-circuits to SCALE for every curve shape. This means:
@@ -5026,15 +5026,15 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
 /// because it depends on the compute_curve_height saturation invariant (DESC-4),
 /// not on the specific curve formula.
 #[test]
-fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
+fun e2e_corpus_gap_full_tenure_handover_full_credit_across_curves() {
     let mut sc    = setup();
     let stake     = escrow_corpus::min_rent_price_const();
-    let boundary  = escrow_corpus::tenure_ceiling_const(); // FixedTime expiry = 0 + 100_000
+    let boundary  = escrow_corpus::tenure_ceiling_const(); // FullTenure expiry = 0 + 100_000
     let mut m = 0u8;
     while (m <= 1) {
         let mut e: u8 = 0;
         while (e <= 6) {
-            let tag = escrow_corpus::tag_with_cycles(2, 0, e, 0, 0, m); // c=2 FixedTime, vary e
+            let tag = escrow_corpus::tag_with_cycles(2, 0, e, 0, 0, m); // c=2 FullTenure, vary e
             let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
             let random = sc.take_shared<Random>();
@@ -5047,7 +5047,7 @@ fun e2e_corpus_gap_fixed_time_handover_full_credit_across_curves() {
             let cap_t2   = escrow::rent(
                 &mut escrow, mk_payment(floor_t2, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
-            // APT at tenure boundary: FixedTime expiry fires → handover.
+            // APT at tenure boundary: FullTenure expiry fires → handover.
             clock::set_for_testing(&mut clk, boundary);
             escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
             assert!(escrow::is_occupied(&escrow), tag);
@@ -6270,14 +6270,14 @@ fun update_config_behavior_handover_instant_borrow_succeeds() {
     sc.end();
 }
 
-// Test BD-7b: FixedTime handover blocks T4 borrow until handover fires ─────────
-/// After reset from Instant to FixedTime, the pending bidder (T4) cannot
+// Test BD-7b: FullTenure handover blocks T4 borrow until handover fires ─────────
+/// After reset from Instant to FullTenure, the pending bidder (T4) cannot
 /// borrow until the handover boundary has passed.
 #[test, expected_failure(abort_code = asset_state::EPendingTenantCap, location = usufruct::asset_state)]
 fun update_config_behavior_handover_fixed_borrow_blocked() {
     let mut sc = setup();
     let cfg_instant = escrow_corpus::by_tag(0);                               // c=0 Instant
-    let cfg_fixed   = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FixedTime
+    let cfg_fixed   = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FullTenure
     let (mut escrow, owner_cap) = integrate_and_take(cfg_instant, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -6287,7 +6287,7 @@ fun update_config_behavior_handover_fixed_borrow_blocked() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx(),
     );
 
-    // Schedule cfg_fixed (FixedTime); applied when T1's tenure expires.
+    // Schedule cfg_fixed (FullTenure); applied when T1's tenure expires.
     escrow::update_config(&mut escrow, &owner_cap, cfg_fixed, &random, &clk, sc.ctx());
 
     // T1's tenure expires → Idle with cfg_fixed.
@@ -6295,12 +6295,12 @@ fun update_config_behavior_handover_fixed_borrow_blocked() {
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 0);
 
-    // T3 rents under cfg_fixed (FixedTime). phase_start = tenure_ceiling = 100_000.
+    // T3 rents under cfg_fixed (FullTenure). phase_start = tenure_ceiling = 100_000.
     let cap_t3 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx(),
     );
 
-    // T4 bids; FixedTime handover_expiry = 100_000 + 100_000 = 200_000.
+    // T4 bids; FullTenure handover_expiry = 100_000 + 100_000 = 200_000.
     // Clock is still at 100_000 — far below expiry.
     let floor_t4 = escrow::compute_floor_price(&escrow, &clk);
     let cap_t4 = escrow::rent(
@@ -6431,7 +6431,7 @@ fun e2e_ev3_borrow_return_cap_id_consistency() {
 /// With phase_start=0, tenure_ceiling=100_000, bid at t=1_000:
 ///   c=0 Instant:  expiry = bid_time                              = 1_000
 ///   c=1 Countdown: expiry = min(bid_time + 25_000, 100_000)     = 26_000
-///   c=2 FixedTime: expiry = phase_start + tenure_ceiling         = 100_000
+///   c=2 FullTenure: expiry = phase_start + tenure_ceiling         = 100_000
 ///
 /// All three are derived from corpus constants — no hardcoded expectations.
 #[test]
@@ -6469,7 +6469,7 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
             } else if (c == 1) {
                 bid_time + countdown                               // Countdown: bid + 25_000 = 26_000
             } else {
-                tenure_ceiling                                     // FixedTime: phase_start(0) + ceiling
+                tenure_ceiling                                     // FullTenure: phase_start(0) + ceiling
             };
             assert_eq!(stamped_expiry, expected_expiry);
 
@@ -7300,7 +7300,7 @@ fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
         rest_price_policy::new_fixed(monetary::price(floor)),
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
-        handover_policy::new_handover_fixed_time(),
+        handover_policy::new_handover_full_tenure(),
         auction_window_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
@@ -7423,7 +7423,7 @@ fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
     let p2         = mk_payment(bid_floor * 3, sc.ctx());
     let cap2       = escrow::rent(&mut escrow, p2, tenures::tenures(3), &random, &clk, sc.ctx());
 
-    // Fire handover at phase_start + tenure (FixedTime boundary).
+    // Fire handover at phase_start + tenure (FullTenure boundary).
     let boundary = tenure;
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
 
@@ -7548,12 +7548,12 @@ fun multi_cycle_countdown_displaces_via_rate() {
     sc.end();
 }
 
-/// T3 — HandoverFixedTime: multi-cycle tenant consumes all paid cycles.
+/// T3 — HandoverFullTenure: multi-cycle tenant consumes all paid cycles.
 /// T1 pays 3 cycles (ceiling = tenure × 3). T2 bids at t=tenure/2 but
 /// handover expiry = phase_start + ceiling = tenure × 3. T1 is only
 /// displaced at t = tenure × 3 — the full tenure is respected.
 #[test]
-fun multi_cycle_fixed_time_tenant_consumes_full_ceiling() {
+fun multi_cycle_full_tenure_tenant_consumes_full_ceiling() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -7567,7 +7567,7 @@ fun multi_cycle_fixed_time_tenant_consumes_full_ceiling() {
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &random, &clk, sc.ctx());
 
-    // T2 bids early at t=tenure/2. FixedTime: expiry = phase_start + ceiling = tenure × 3.
+    // T2 bids early at t=tenure/2. FullTenure: expiry = phase_start + ceiling = tenure × 3.
     let bid_time = tenure / 2;
     clock::set_for_testing(&mut clk, bid_time);
     sc.next_tx(TENANT_ADDR_2);
@@ -7680,12 +7680,12 @@ fun multi_cycle_supersede_floor_based_on_pending_rate() {
     sc.end();
 }
 
-/// FixedTime handover-after-handover invariant.
+/// FullTenure handover-after-handover invariant.
 /// T1 (3 cycles) → T2 (2 cycles) wins handover.
-/// T2.ceiling = base × 2. T2.resolved_handover = base × 2 (FixedTime tracks new ceiling).
+/// T2.ceiling = base × 2. T2.resolved_handover = base × 2 (FullTenure tracks new ceiling).
 /// T3 bids → handover expiry = T2.phase_start + base × 2.
 #[test]
-fun multi_cycle_fixed_time_handover_tracks_new_ceiling() {
+fun multi_cycle_full_tenure_handover_tracks_new_ceiling() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -7699,7 +7699,7 @@ fun multi_cycle_fixed_time_handover_tracks_new_ceiling() {
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &random, &clk, sc.ctx());
 
-    // T2: 2 cycles. FixedTime: handover expiry = phase_start(0) + ceiling(tenure×3).
+    // T2: 2 cycles. FullTenure: handover expiry = phase_start(0) + ceiling(tenure×3).
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor_t2 = escrow::compute_floor_price(&escrow, &clk);
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), tenures::tenures(2), &random, &clk, sc.ctx());
@@ -7719,7 +7719,7 @@ fun multi_cycle_fixed_time_handover_tracks_new_ceiling() {
     let bid_floor_t3 = escrow::compute_floor_price(&escrow, &clk);
     let cap3 = escrow::rent(&mut escrow, mk_payment(bid_floor_t3, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
-    // FixedTime: T3's handover expiry = T2.phase_start + T2.ceiling = tenure×3 + tenure×2.
+    // FullTenure: T3's handover expiry = T2.phase_start + T2.ceiling = tenure×3 + tenure×2.
     let handover_expiry_t3 = escrow::handover_countdown_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry_t3), boundary_t2 + tenure * 2);
 
@@ -7894,10 +7894,10 @@ fun degeneration_supersede_floor_chain_cycles_one() {
     sc.end();
 }
 
-/// FixedTime degeneration: cycles(1) → handover expiry = phase_start + tenure.
-/// The FixedTime boundary must not be extended when cycles=1.
+/// FullTenure degeneration: cycles(1) → handover expiry = phase_start + tenure.
+/// The FullTenure boundary must not be extended when cycles=1.
 #[test]
-fun degeneration_fixed_time_expiry_cycles_one() {
+fun degeneration_full_tenure_expiry_cycles_one() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
@@ -7911,7 +7911,7 @@ fun degeneration_fixed_time_expiry_cycles_one() {
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
-    // T2 bids: FixedTime expiry = phase_start(0) + ceiling(tenure × 1) = tenure.
+    // T2 bids: FullTenure expiry = phase_start(0) + ceiling(tenure × 1) = tenure.
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor = escrow::compute_floor_price(&escrow, &clk);
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
@@ -8393,11 +8393,11 @@ fun handover_scaling_instant_stays_zero_for_any_cycles() {
     sc.end();
 }
 
-/// FixedTime: handover expiry always equals tenure expiry regardless of bid time.
+/// FullTenure: handover expiry always equals tenure expiry regardless of bid time.
 /// extended_handover = extended_ceiling → expiry = phase_start + extended_ceiling.
 /// Bid at t=0 or t=mid-tenure: same expiry.
 #[test]
-fun handover_scaling_fixed_time_expiry_equals_tenure_expiry() {
+fun handover_scaling_full_tenure_expiry_equals_tenure_expiry() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -8411,7 +8411,7 @@ fun handover_scaling_fixed_time_expiry_equals_tenure_expiry() {
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &random, &clk, sc.ctx());
     let tenure_expiry = *option::borrow(&escrow::tenure_expiry_ms(&escrow)); // tenure×3
 
-    // T2 bids at t=0: FixedTime expiry = phase_start + extended_ceiling = tenure×3.
+    // T2 bids at t=0: FullTenure expiry = phase_start + extended_ceiling = tenure×3.
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor = escrow::compute_floor_price(&escrow, &clk);
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
@@ -8428,7 +8428,7 @@ fun handover_scaling_fixed_time_expiry_equals_tenure_expiry() {
     let cap3 = escrow::rent(&mut escrow, mk_payment(bid_floor_t3, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
     let expiry_at_mid = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow));
 
-    // Both bids see handover expiry == tenure expiry — bid time is irrelevant for FixedTime.
+    // Both bids see handover expiry == tenure expiry — bid time is irrelevant for FullTenure.
     assert_eq!(expiry_at_zero, tenure_expiry);
     assert_eq!(expiry_at_mid, tenure_expiry_t2);
 

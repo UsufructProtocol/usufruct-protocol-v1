@@ -606,7 +606,7 @@ The same FSM produces radically different financial instruments depending on how
 
 **User-oriented — protected renting.** Tenure ceiling in minutes to days, `handover = Countdown`, meaningful `auction_window`. A bidder must wait out the handover countdown before displacing the current tenant. The tenant has a guaranteed window to use the rental before being displaced. Designed for human users renting time-bounded access to something they interact with over a session.
 
-**Fixed-time reservation.** `handover = FixedTime`, which ties the handover expiry to the tenure ceiling, making displacement impossible before the tenure ends. The tenant's occupancy is fully guaranteed for its stated duration. Designed for time-slot reservations — conference rooms, event slots, scheduled access windows — where partial occupancy has no value.
+**Full-tenure reservation.** `handover = FullTenure`, which ties the handover expiry to the tenure ceiling, making displacement impossible before the tenure ends. The tenant's occupancy is fully guaranteed for its stated duration. Designed for time-slot reservations — conference rooms, event slots, scheduled access windows — where partial occupancy has no value.
 
 Same protocol code. Entirely different economic products.
 
@@ -746,7 +746,7 @@ During their level-2 tenure, the meta-tenant can call any owner-gated operation 
 
 This creates **market-mediated transfer of escrow control** without explicit sale semantics. Set a level-2 tenure long enough to cover a full level-1 retirement cycle, and the highest bidder at level-2 wins temporary ownership of the underlying asset's lifecycle — including the right to reclaim it. The asset goes to whoever holds the `OwnerCap` when `claim_asset` is called, which may be different from whoever called `retire`, depending on when each level-2 tenure ends.
 
-At the extreme, a level-2 escrow with `FixedTime` handover and a tenure sized to match a level-1 retirement horizon becomes an ownership auction: one bidder wins per cycle, exercises full owner rights, and the level-1 asset exits to them.
+At the extreme, a level-2 escrow with `FullTenure` handover and a tenure sized to match a level-1 retirement horizon becomes an ownership auction: one bidder wins per cycle, exercises full owner rights, and the level-1 asset exits to them.
 
 ---
 

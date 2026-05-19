@@ -44,11 +44,11 @@ fun resolve_instant_returns_zero() {
 }
 
 #[test]
-fun resolve_fixed_time_returns_ceiling() {
+fun resolve_full_tenure_returns_ceiling() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
     let ceiling = phases::duration(200);
     let result = handover_policy::compute_duration(
-        &handover_policy::new_handover_fixed_time(),
+        &handover_policy::new_handover_full_tenure(),
         ceiling,
         &mut gen,
     );
@@ -101,8 +101,8 @@ fun countdown_floor_lt_table() {
     let cases = vector[
         CountdownFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 100, expected: true  },
         CountdownFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 0,   expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_fixed_time(),  ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_fixed_time(),  ceiling: 0,   expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_full_tenure(),  ceiling: 100, expected: true  },
+        CountdownFloorLtCase { policy: handover_policy::new_handover_full_tenure(),  ceiling: 0,   expected: true  },
         CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(50)),  ceiling: 100, expected: true  },
         CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(99)),  ceiling: 100, expected: true  },
         CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(100)), ceiling: 100, expected: false },
@@ -138,7 +138,7 @@ fun has_expired_table() {
         HasExpiredCase { resolved_floor: 0, resolved_ceiling: 500, bid_time: 100, phase_start: 0,   now: 100, expected: true  },
         HasExpiredCase { resolved_floor: 0, resolved_ceiling: 500, bid_time: 100, phase_start: 0,   now: 999, expected: true  },
 
-        // FixedTime (floor=ceiling=50): expiry = min(bid+50, phase+50). With bid>phase, bid+50>phase+50, so expiry=phase+50=150
+        // FullTenure (floor=ceiling=50): expiry = min(bid+50, phase+50). With bid>phase, bid+50>phase+50, so expiry=phase+50=150
         HasExpiredCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 149, expected: false },
         HasExpiredCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 150, expected: true  },
         HasExpiredCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 140, phase_start: 100, now: 150, expected: true  }, // different bid, same boundary
@@ -189,7 +189,7 @@ fun expiry_at_table() {
         ExpiryAtCase { resolved_floor: 0, resolved_ceiling: 500, bid_time: 100, phase_start: 0,   expected: 100 },
         ExpiryAtCase { resolved_floor: 0, resolved_ceiling: 500, bid_time: 200, phase_start: 100, expected: 200 },
 
-        // FixedTime (floor=ceiling=50): expiry = min(bid+50, phase+50). With bid>phase → expiry=phase+50=150
+        // FullTenure (floor=ceiling=50): expiry = min(bid+50, phase+50). With bid>phase → expiry=phase+50=150
         ExpiryAtCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110,   phase_start: 100, expected: 150 },
         ExpiryAtCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 140,   phase_start: 100, expected: 150 },
 
@@ -231,7 +231,7 @@ fun has_expired_iff_now_ge_expiry_at() {
         HoSisterCase { resolved_floor: 0, resolved_ceiling: 500, bid_time: 0,   phase_start: 0,   now: 0    },
         HoSisterCase { resolved_floor: 0, resolved_ceiling: 500, bid_time: 100, phase_start: 0,   now: 99   },
         HoSisterCase { resolved_floor: 0, resolved_ceiling: 500, bid_time: 100, phase_start: 0,   now: 100  },
-        // FixedTime (bid > phase so expiry=phase+ceil=150)
+        // FullTenure (bid > phase so expiry=phase+ceil=150)
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 149 },
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 150 },
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 151 },
@@ -297,7 +297,7 @@ fun has_expired_monotone_in_now() {
 fun projectors_instant_variant() {
     let p = handover_policy::new_handover_instant();
     assert!(p.proj_is_instant());
-    assert!(!p.proj_is_fixed_time());
+    assert!(!p.proj_is_full_tenure());
     assert!(!p.proj_is_countdown());
     assert!(!p.proj_is_random_in_range());
     assert!(p.proj_countdown_floor_ms().is_none());
@@ -306,10 +306,10 @@ fun projectors_instant_variant() {
 }
 
 #[test]
-fun projectors_fixed_time_variant() {
-    let p = handover_policy::new_handover_fixed_time();
+fun projectors_full_tenure_variant() {
+    let p = handover_policy::new_handover_full_tenure();
     assert!(!p.proj_is_instant());
-    assert!(p.proj_is_fixed_time());
+    assert!(p.proj_is_full_tenure());
     assert!(!p.proj_is_countdown());
     assert!(!p.proj_is_random_in_range());
     assert!(p.proj_countdown_floor_ms().is_none());
@@ -321,7 +321,7 @@ fun projectors_fixed_time_variant() {
 fun projectors_countdown_variant() {
     let p = handover_policy::new_handover_countdown(phases::duration(42));
     assert!(!p.proj_is_instant());
-    assert!(!p.proj_is_fixed_time());
+    assert!(!p.proj_is_full_tenure());
     assert!(p.proj_is_countdown());
     assert!(!p.proj_is_random_in_range());
     assert_eq!(phases::duration_ms(p.proj_countdown_floor_ms().destroy_some()), 42);
@@ -333,7 +333,7 @@ fun projectors_countdown_variant() {
 fun projectors_random_in_range_variant() {
     let p = handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100));
     assert!(!p.proj_is_instant());
-    assert!(!p.proj_is_fixed_time());
+    assert!(!p.proj_is_full_tenure());
     assert!(!p.proj_is_countdown());
     assert!(p.proj_is_random_in_range());
     assert!(p.proj_countdown_floor_ms().is_none());

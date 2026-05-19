@@ -73,7 +73,7 @@ public use fun entry_m   as CorpusEntry.m;
 
 /// Full deterministic corpus — 672 entries, one per (m,c,d,e,h,f) tuple.
 ///   m: 0..1  TenureExtendPolicy (Single, Multi)
-///   c: 0..3  HandoverPolicy     (Instant, Countdown, FixedTime, RandomInRange)
+///   c: 0..3  HandoverPolicy     (Instant, Countdown, FullTenure, RandomInRange)
 ///   d: 0..1  PriceEscalationPolicy      (FixedDelta, CompoundDelta)
 ///   e: 0..6  CurveShapePolicy pair    (Linear..Exponential)
 ///   h: 0..2  AuctionWindowPolicy      (Skipped, Window, RandomInRange)
@@ -154,7 +154,7 @@ public(package) fun filter_m(es: vector<CorpusEntry>, m: u8): vector<CorpusEntry
 
 public(package) fun with_handover_instant():    vector<CorpusEntry> { filter_c(all(), 0) }
 public(package) fun with_handover_countdown():  vector<CorpusEntry> { filter_c(all(), 1) }
-public(package) fun with_handover_fixed_time(): vector<CorpusEntry> { filter_c(all(), 2) }
+public(package) fun with_handover_full_tenure(): vector<CorpusEntry> { filter_c(all(), 2) }
 public(package) fun with_handover_random():     vector<CorpusEntry> { all_random_handover() }
 public(package) fun with_descent_skipped():     vector<CorpusEntry> { filter_h(all(), 0) }
 public(package) fun with_descent_window():      vector<CorpusEntry> { filter_h(all(), 1) }
@@ -381,7 +381,7 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): u64 {
 fun make_handover(c: u8): HandoverPolicy {
     if (c == 0)      { handover_policy::new_handover_instant() }
     else if (c == 1) { handover_policy::new_handover_countdown(phases::duration(HANDOVER_COUNTDOWN_C1)) }
-    else if (c == 2) { handover_policy::new_handover_fixed_time() }
+    else if (c == 2) { handover_policy::new_handover_full_tenure() }
     else             { handover_policy::new_handover_random_in_range(phases::duration(HANDOVER_RANDOM_MIN_C3), phases::duration(HANDOVER_RANDOM_MAX_C3)) }
 }
 

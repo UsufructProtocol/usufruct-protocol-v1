@@ -141,21 +141,21 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             auction_shape:  curve_shape_policy::new_linear(),
             price_escalation_policy: price_escalation_policy::new_compound_delta(math::bps(500), monetary::price(100)),
         },
-        // V8 — HandoverPolicy::FixedTime
+        // V8 — HandoverPolicy::FullTenure
         Case {
             min_rent_price: 1,
             tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),
-            handover:       handover_policy::new_handover_fixed_time(),
+            handover:       handover_policy::new_handover_full_tenure(),
             descent:        auction_window_policy::new_descent_window(phases::duration(1)),
             credit_shape:   curve_shape_policy::new_linear(),
             auction_shape:  curve_shape_policy::new_linear(),
             price_escalation_policy: price_escalation_policy::new_fixed_delta(monetary::price(1)),
         },
-        // V9 — FixedTime at u64-extreme tenure_ceiling (independent of magnitude)
+        // V9 — FullTenure at u64-extreme tenure_ceiling (independent of magnitude)
         Case {
             min_rent_price: 1,
             tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(18_446_744_073_709_551_615)),
-            handover:       handover_policy::new_handover_fixed_time(),
+            handover:       handover_policy::new_handover_full_tenure(),
             descent:        auction_window_policy::new_descent_window(phases::duration(1)),
             credit_shape:   curve_shape_policy::new_linear(),
             auction_shape:  curve_shape_policy::new_linear(),
@@ -259,9 +259,9 @@ fun getter_roundtrip_r3_handover_instant() {
 }
 
 #[test]
-fun getter_roundtrip_r3b_handover_fixed_time() {
+fun getter_roundtrip_r3b_handover_full_tenure() {
     // Companion to R3 covering the upper-saturation variant.
-    let h   = handover_policy::new_handover_fixed_time();
+    let h   = handover_policy::new_handover_full_tenure();
     let ensemble = policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)),
         tenure_extend_policy::new_single(),
@@ -404,9 +404,9 @@ fun new_config_rejects_countdown_floor_u64_max_tenure_ceiling_max_minus_one() {
 
 #[test, expected_failure(abort_code = policy_ensemble::EHandoverFloorExceedsTenure, location = usufruct::policy_ensemble)]
 fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
-    // I6: equality with tenure_ceiling is FixedTime, not the upper edge of Countdown.
+    // I6: equality with tenure_ceiling is FullTenure, not the upper edge of Countdown.
     // Constructor accepts Countdown(1_000) but new_config rejects when paired with
-    // tenure_ceiling=1_000 — caller must use new_handover_fixed_time() instead.
+    // tenure_ceiling=1_000 — caller must use new_handover_full_tenure() instead.
     policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
         tenure_duration_policy::new_fixed(phases::duration(1_000)),

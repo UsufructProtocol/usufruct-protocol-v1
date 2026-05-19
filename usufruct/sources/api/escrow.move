@@ -296,10 +296,10 @@ public fun is_handover_instant<Asset: key + store, CoinType>(
     handover_policy::proj_is_instant(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
-public fun is_handover_fixed_time<Asset: key + store, CoinType>(
+public fun is_handover_full_tenure<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy::proj_is_fixed_time(policy_ensemble::proj_handover(read_ensemble(escrow)))
+    handover_policy::proj_is_full_tenure(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
 public fun is_handover_countdown<Asset: key + store, CoinType>(

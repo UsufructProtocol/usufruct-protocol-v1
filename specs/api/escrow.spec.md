@@ -49,7 +49,7 @@ Shared object. One per integrated asset. `state` is `None` while the asset is bo
 **View — policy shape**
 - `is_descent_skipped`, `is_descent_window`
 - `is_commitment_immediate`, `is_commitment_deferred`
-- `is_handover_instant`, `is_handover_fixed_time`, `is_handover_countdown`
+- `is_handover_instant`, `is_handover_full_tenure`, `is_handover_countdown`
 
 **View — identity**
 - `asset_id(): ID`, `asset_type_name(): TypeName`, `coin_type_name(): TypeName`

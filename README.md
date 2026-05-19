@@ -84,7 +84,7 @@ Eight policies configure the market at integration time. They determine the term
 | `rest_price` | Floor price per idle cycle — fixed or random in range |
 | `tenure_duration` | Maximum tenure length — fixed or random in range |
 | `tenure_extend` | Single or multi-tenure commitment |
-| `handover` | Handover variant — instant, fixed time, countdown, or random in range |
+| `handover` | Handover variant — instant, full-tenure, countdown, or random in range |
 | `auction_window` | Dutch auction duration — fixed window, skipped, or random in range |
 | `auction_shape` | Price descent curve |
 | `credit_shape` | Credit consumption rate |
@@ -97,7 +97,7 @@ The same asset under different configurations produces different markets:
 
 - **Pay-per-call access** — millisecond tenures, instant handover. No queuing, no protection. Price resets to floor each cycle. Designed for AI agents and rate-limited APIs.
 - **Protected rental** — day-long tenures, countdown handover. The current tenant has a guaranteed window before displacement. Designed for human users who need continuity.
-- **Reservation system** — fixed-time handover tied to the tenure ceiling. Displacement is impossible before the tenure ends. Designed for time-slot bookings where partial occupancy has no value.
+- **Reservation system** — full-tenure handover tied to the tenure ceiling. Displacement is impossible before the tenure ends. Designed for time-slot bookings where partial occupancy has no value.
 - **Yield position** — multi-tenure commitment, back-loaded credit shape, high price escalation. The tenant commits to multiple tenures upfront at a lower per-tenure rate. Displacement is cheap early in the tenure and expensive late — the incumbent's sunk credit grows over time, rewarding those who hold through volatility. Designed for LP positions, staking seats, or any asset where long-term commitment has compounding value.
 
 ### One engine, many markets

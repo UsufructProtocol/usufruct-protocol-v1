@@ -146,7 +146,7 @@ fun handover_views_match_variants() {
 
         assert_eq!(escrow::is_handover_instant(&escrow),     c == 0);
         assert_eq!(escrow::is_handover_countdown(&escrow),   c == 1);
-        assert_eq!(escrow::is_handover_fixed_time(&escrow),  c == 2);
+        assert_eq!(escrow::is_handover_full_tenure(&escrow),  c == 2);
 
         // Countdown floor: only present on c=1
         if (c == 1) {

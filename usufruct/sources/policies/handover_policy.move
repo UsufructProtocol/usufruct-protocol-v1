@@ -22,7 +22,7 @@ const EMinNotLtMax:       u64 = 1;
 
 public enum HandoverPolicy has copy, drop, store {
     Instant,
-    FixedTime,
+    FullTenure,
     Countdown      { floor: Duration },
     RandomInRange  { min: Duration, max: Duration },
 }
@@ -34,7 +34,7 @@ public enum HandoverPolicy has copy, drop, store {
 // === Public Functions ===
 
 public fun new_handover_instant():    HandoverPolicy { HandoverPolicy::Instant }
-public fun new_handover_fixed_time(): HandoverPolicy { HandoverPolicy::FixedTime }
+public fun new_handover_full_tenure(): HandoverPolicy { HandoverPolicy::FullTenure }
 
 public fun new_handover_countdown(floor: Duration): HandoverPolicy {
     assert!(phases::duration_ms(floor) > 0, EHandoverFloorZero);
@@ -52,8 +52,8 @@ public fun new_handover_random_in_range(min: Duration, max: Duration): HandoverP
 public(package) fun proj_is_instant(policy: &HandoverPolicy): bool {
     match (policy) { HandoverPolicy::Instant => true, _ => false }
 }
-public(package) fun proj_is_fixed_time(policy: &HandoverPolicy): bool {
-    match (policy) { HandoverPolicy::FixedTime => true, _ => false }
+public(package) fun proj_is_full_tenure(policy: &HandoverPolicy): bool {
+    match (policy) { HandoverPolicy::FullTenure => true, _ => false }
 }
 public(package) fun proj_is_countdown(policy: &HandoverPolicy): bool {
     match (policy) { HandoverPolicy::Countdown { .. } => true, _ => false }
@@ -88,7 +88,7 @@ public(package) fun compute_countdown_floor_lt(policy: &HandoverPolicy, ceiling:
     match (policy) {
         HandoverPolicy::Countdown { floor }       => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
         HandoverPolicy::RandomInRange { max, .. } => phases::duration_ms(*max)   < phases::duration_ms(ceiling),
-        HandoverPolicy::Instant | HandoverPolicy::FixedTime => true,
+        HandoverPolicy::Instant | HandoverPolicy::FullTenure => true,
     }
 }
 
@@ -99,7 +99,7 @@ public(package) fun compute_duration(
 ): Duration {
     match (policy) {
         HandoverPolicy::Instant                    => phases::zero(),
-        HandoverPolicy::FixedTime                  => ceiling,
+        HandoverPolicy::FullTenure                  => ceiling,
         HandoverPolicy::Countdown { floor }        => *floor,
         HandoverPolicy::RandomInRange { min, max } => phases::duration(
             generator.generate_u64_in_range(

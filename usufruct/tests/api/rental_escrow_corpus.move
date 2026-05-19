@@ -139,7 +139,7 @@ public(package) fun filter_f(es: vector<CorpusEntry>, f: u8): vector<CorpusEntry
 
 public(package) fun with_handover_instant():    vector<CorpusEntry> { filter_c(all(), 0) }
 public(package) fun with_handover_countdown():  vector<CorpusEntry> { filter_c(all(), 1) }
-public(package) fun with_handover_fixed_time(): vector<CorpusEntry> { filter_c(all(), 2) }
+public(package) fun with_handover_full_tenure(): vector<CorpusEntry> { filter_c(all(), 2) }
 public(package) fun with_descent_skipped():     vector<CorpusEntry> { filter_h(all(), 0) }
 public(package) fun with_descent_window():      vector<CorpusEntry> { filter_h(all(), 1) }
 public(package) fun with_retire_immediate():    vector<CorpusEntry> { filter_f(all(), 0) }
@@ -221,7 +221,7 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64 {
 fun make_handover(c: u8): HandoverPolicy {
     if (c == 0)      { handover_policy::new_handover_instant() }
     else if (c == 1) { handover_policy::new_handover_countdown(phases::duration(HANDOVER_COUNTDOWN_C1)) }
-    else             { handover_policy::new_handover_fixed_time() }
+    else             { handover_policy::new_handover_full_tenure() }
 }
 
 fun make_price_function_state(d: u8): PriceEscalationPolicy {

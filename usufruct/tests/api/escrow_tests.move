@@ -1292,7 +1292,7 @@ fun retire_with_wrong_cap_aborts() {
 fun retire_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -2044,7 +2044,7 @@ fun withdraw_earnings_with_wrong_cap_aborts() {
 fun withdraw_earnings_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -2179,7 +2179,7 @@ fun claim_asset_with_wrong_cap_aborts() {
 fun claim_asset_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -10033,7 +10033,7 @@ fun update_config_with_wrong_cap_aborts() {
 fun update_config_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -10074,7 +10074,7 @@ fun extend_commitment_with_wrong_cap_aborts() {
 fun extend_commitment_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 

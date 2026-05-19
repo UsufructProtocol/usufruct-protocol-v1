@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="media/usufruct-banner.png" alt="usufruct" width="100%" />
+  <img src="media/github/usufruct-banner.png" alt="usufruct" width="100%" />
 </p>
 
 # usufruct

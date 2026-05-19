@@ -186,7 +186,7 @@ fun integrate_creates_idle_escrow_smoke() {
 // ─── §2. integrate — corpus projection ───────────────────────────────────────
 
 /// §10.1 — integrate is universally applicable. Sweeps the C axis
-/// (HandoverPolicy ∈ {Instant, Countdown, FullTenure}) — three
+/// (HandoverPolicy ∈ {Instant, Fixed, FullTenure}) — three
 /// behaviorally distinct handover modes — at fixed (d=0, e=0, h=0, f=0).
 /// Verifies the post-condition `state_tag == Idle` for each.
 ///
@@ -432,7 +432,7 @@ fun floor_price_handover_confirmed_escalates_pending_stake() {
 
 /// AtDutch at t=phase_start (elapsed=0) returns `last_acquisition_price`
 /// (curve evaluated at 0 → 0 consumed). Sweeps E (curve dimension) at
-/// fixed h=1 (descent=Window). The boundary `g(0)=0` is universal
+/// fixed h=1 (descent=Fixed). The boundary `g(0)=0` is universal
 /// across all 7 curves.
 #[test]
 fun floor_price_at_dutch_at_t0_equals_last_acq_price() {
@@ -605,13 +605,13 @@ fun used_credit_at_tenure_ceiling_equals_principal_for_all_curves() {
 }
 
 /// Demand clamps the effective time at
-/// `handover_countdown_expiry`. With c=1 (Countdown(25_000)), a
+/// `handover_countdown_expiry`. With c=1 (Fixed(25_000)), a
 /// callback at far-future timestamp yields the same used_credit as
 /// one at exactly the expiry — the clamp is the load-bearing property.
 #[test]
 fun used_credit_handover_confirmed_clamps_at_expiry() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)); // c=1 Countdown
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)); // c=1 Fixed
     let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
 
     let phase_start = 1_000_000;
@@ -799,7 +799,7 @@ fun rent_from_handover_open_places_bid() {
             assert!(placed.length() == 1, tag_cfg);
             assert_eq!(asset_state::bid_placed_tenant_cap_id(&placed[0]), object::id(&cap_t2));
             // The expiry was stamped — its specific value depends on c
-            // (Instant: now+0 = now2; Countdown: min(now2+25_000, phase_start+ceiling);
+            // (Instant: now+0 = now2; Fixed: min(now2+25_000, phase_start+ceiling);
             // FullTenure: phase_start+ceiling). Property: expiry > 0.
             assert!(asset_state::bid_placed_handover_countdown_expiry(&placed[0]) > 0, tag_cfg);
 
@@ -854,7 +854,7 @@ fun rent_from_handover_open_aborts_when_retiring_flag_set() {
 #[test]
 fun rent_from_handover_confirmed_supersedes_bid() {
     let mut sc = setup();
-    // c=1 (Countdown) — non-zero handover-countdown so APT does NOT
+    // c=1 (Fixed) — non-zero handover-countdown so APT does NOT
     // fire handover at the third rent before supersede can run.
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -989,7 +989,7 @@ fun rent_from_retired_aborts() {
 /// Verifies: state transition, owner balance increases by owner_share,
 /// HandoverCompleted carries used_credit = owner_share + protocol_fee
 /// and remain_credit = principal − used_credit.
-/// Uses c=1 (Countdown) + e=0 (Linear) so used_credit fires
+/// Uses c=1 (Fixed) + e=0 (Linear) so used_credit fires
 /// mid-tenure (Parcial branch — remainder > 0).
 #[test]
 fun do_handover_routes_funds_and_emits_event_parcial() {
@@ -1435,7 +1435,7 @@ fun next_pending_returns_none_in_steady_state() {
 #[test]
 fun next_pending_at_dutch_not_firable_returns_none() {
     let mut sc = setup();
-    // h=1 Window descent — non-zero descent duration ensures the auction is
+    // h=1 Fixed descent — non-zero descent duration ensures the auction is
     // not immediately firable at clock=0.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -1445,7 +1445,7 @@ fun next_pending_at_dutch_not_firable_returns_none() {
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &random, &clk, sc.ctx());
 
-    // Expire the tenure to enter AtDutch (h=1 → Window → stays in AtDutch).
+    // Expire the tenure to enter AtDutch (h=1 → Fixed → stays in AtDutch).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_at_dutch_auction(&escrow), 0);
@@ -1468,7 +1468,7 @@ fun next_pending_at_dutch_not_firable_returns_none() {
 #[test]
 fun next_pending_demand_firable_returns_some() {
     let mut sc = setup();
-    // c=1 Countdown — non-zero handover countdown so we can control timing.
+    // c=1 Fixed — non-zero handover countdown so we can control timing.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -1580,7 +1580,7 @@ fun apt_noop_when_nothing_due() {
 }
 
 /// APT fires handover when the handover-countdown expires.
-/// c=1 (Countdown); after rent → place_bid, jump clock past expiry,
+/// c=1 (Fixed); after rent → place_bid, jump clock past expiry,
 /// call APT. State becomes Occupied (handover fired).
 #[test]
 fun apt_fires_handover_when_countdown_expires() {
@@ -1766,7 +1766,7 @@ fun borrow_asset_from_idle_aborts() {
 #[test, expected_failure(abort_code = asset_state::EPendingTenantCap, location = usufruct::asset_state)]
 fun borrow_asset_with_pending_cap_aborts() {
     let mut sc = setup();
-    // c=1 Countdown so place_bid stamps a future expiry (no APT
+    // c=1 Fixed so place_bid stamps a future expiry (no APT
     // handover before borrow).
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -2661,7 +2661,7 @@ fun e2e_two_tenant_successions_price_escalates() {
 /// so the descent has a genuine spread to exercise.
 ///
 /// Config: c=0 (Instant — handover fires at bid_time, no clock advance),
-///         d=0 (FixedDelta), e=0 (linear), h=1 (Window), f=0.
+///         d=0 (FixedDelta), e=0 (linear), h=1 (Fixed), f=0.
 #[test]
 fun e2e_auction_winner_rents_at_mid_descent() {
     let mut sc  = setup();
@@ -2780,12 +2780,12 @@ fun e2e_deferred_retire_succeeds_after_floor() {
 /// Verifies: BidSuperseded event fires for T2's displacement, APT
 /// HandoverCompleted fires to T3, T2's cap is burnable.
 ///
-/// Config: c=1 (Countdown 25_000 ms — Instant would fire handover
+/// Config: c=1 (Fixed 25_000 ms — Instant would fire handover
 /// before T3 can supersede), d=0, e=0, h=0, f=0.
 #[test]
 fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -3066,12 +3066,12 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
 /// After T2's bid is superseded by T3, T2's cap is stale.
 /// borrow_asset() with T2's stale cap aborts EStaleTenantCap.
 ///
-/// Config: c=1 (Countdown) so the handover countdown does not fire
+/// Config: c=1 (Fixed) so the handover countdown does not fire
 /// before T2 attempts borrow — escrow stays in Demand.
 #[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
 fun e2e_b3b_superseded_tenant_cap_borrow_aborts() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -3350,12 +3350,12 @@ fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
 /// Occupied with the retiring flag inherited. T2's tenure then collapses
 /// to Retired (not AtDutch) because the flag is active.
 ///
-/// Config: c=1 (Countdown — time is needed to verify flag persists through APT),
+/// Config: c=1 (Fixed — time is needed to verify flag persists through APT),
 ///         h=0 (Skipped — tenure → Retired in one APT when retiring=true), f=0.
 #[test]
 fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -3471,7 +3471,7 @@ fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
 /// phase_start + tenure_ceiling. T2 bids, T3 supersedes T2; at the
 /// tenure boundary APT fires the handover to T3 (not T2). T2's cap is stale.
 ///
-/// Config: c=2, d=0, e=0, h=1 (Window — tenure and handover don't co-fire
+/// Config: c=2, d=0, e=0, h=1 (Fixed — tenure and handover don't co-fire
 /// into Idle so we can observe T3's Occupied), f=0.
 #[test]
 fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
@@ -3519,9 +3519,9 @@ fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
     sc.end();
 }
 
-// ─── §B1-inv. Countdown requires clock advance before borrow ─────────────────
+// ─── §B1-inv. Fixed requires clock advance before borrow ─────────────────
 
-/// Temporal invariant: with c=1 (Countdown, handover_floor=25_000 ms),
+/// Temporal invariant: with c=1 (Fixed, handover_floor=25_000 ms),
 /// a pending tenant cannot borrow until the countdown elapses and APT
 /// promotes them to current. Documents the protocol guarantee that
 /// Demand is a locked state — TenantCap alone is insufficient.
@@ -3539,7 +3539,7 @@ fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
 #[test]
 fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
 
@@ -3566,7 +3566,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     let cap_t2  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), tag);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
-    // Countdown has not elapsed — T2 is still pending, state unchanged.
+    // Fixed has not elapsed — T2 is still pending, state unchanged.
     assert!(escrow::is_demand(&escrow), tag);
     test_scenario::return_shared(random);
     clock::destroy_for_testing(clk);
@@ -3607,12 +3607,12 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
 #[test]
 fun e2e_same_tenant_successive_bids_identity_agnostic() {
     let mut sc  = setup();
-    // c=1 (Countdown, floor=25_000) required: rent() calls APT internally.
+    // c=1 (Fixed, floor=25_000) required: rent() calls APT internally.
     // With c=0 (Instant) the countdown expires at bid_time, so APT within
     // the supersede rent() would fire the handover before do_supersede_bid.
     // With c=1 the countdown hasn't elapsed at t=2_000, so the supersede path
     // is reachable.
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -3680,7 +3680,7 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
 #[test]
 fun e2e_current_tenant_defends_against_challenger() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -3747,11 +3747,11 @@ fun e2e_current_tenant_defends_against_challenger() {
 #[test]
 fun e2e_overpay_accepted_elevates_next_floor() {
     let mut sc    = setup();
-    // c=1 (Countdown) required for the Demand supersede step:
+    // c=1 (Fixed) required for the Demand supersede step:
     // rent() calls APT internally; with c=0 the countdown expires at bid_time,
     // so APT fires the handover before reaching do_supersede_bid in HC state.
-    // h=1 (Window) makes AtDutchAuction observable.
-    let tag       = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Countdown, h=1 Window
+    // h=1 (Fixed) makes AtDutchAuction observable.
+    let tag       = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Fixed, h=1 Fixed
     let ensemble       = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk   = clock::create_for_testing(sc.ctx());
@@ -3794,7 +3794,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     clock::set_for_testing(&mut clk, t3_expiry);
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
 
-    // AtDutchAuction: T3's phase_start = t3_expiry=26_000 (handover boundary for Countdown).
+    // AtDutchAuction: T3's phase_start = t3_expiry=26_000 (handover boundary for Fixed).
     // Actually: compute_expiry_at(bid_time=2_000, phase_start=0, tenure_ceiling=100_000)
     //   = min(2_000+25_000, 0+100_000) = 27_000.
     let t3_phase_start = 27_000u64;
@@ -3847,7 +3847,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
 #[test]
 fun e2e_hc_floor_uses_pending_stake_not_current_stake() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
@@ -4006,7 +4006,7 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
 /// The exhaustive coverage is in the e2e_fin_conservation_* family above;
 /// this test exists as a named, self-contained explanation of the invariant.
 ///
-/// Config: c=0 (Instant), h=1 (Window — AtDutch observable after expiry).
+/// Config: c=0 (Instant), h=1 (Fixed — AtDutch observable after expiry).
 #[test]
 fun e2e_fin2_tenure_expiry_financial_conservation() {
     let mut sc  = setup();
@@ -4156,7 +4156,7 @@ fun e2e_fin3_90_10_split_exact() {
 /// T1 renting at 2×min_price (overpay, no handover needed) so last_acq_price
 /// = 2×min_price > min_price and the two endpoints are distinct values.
 ///
-/// Config: c=0, h=1 (Window — AtDutch observable), d=0, f=0; vary e=0..6.
+/// Config: c=0, h=1 (Fixed — AtDutch observable), d=0, f=0; vary e=0..6.
 #[test]
 fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
     let mut sc    = setup();
@@ -4168,7 +4168,7 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
     while (m <= 1) {
         let mut e: u8 = 0;
         while (e <= 6) {
-            let tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m); // h=1 Window, vary e
+            let tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m); // h=1 Fixed, vary e
             let ensemble = escrow_corpus::by_tag(tag);
             let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
@@ -4332,12 +4332,12 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
 ///   Boundary 2 — Tenure   (HO → AtDutch): T2.phase_start + tenure_ceiling = 126_000
 ///   Boundary 3 — Auction  (AtDutch → Idle): 126_000 + descent_window = 226_000
 ///
-/// Config: c=1 (Countdown — observable HC boundary), h=1 (Window — AtDutch
+/// Config: c=1 (Fixed — observable HC boundary), h=1 (Fixed — AtDutch
 /// observable), d=0, e=0, f=0.
 #[test]
 fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Countdown, h=1 Window
+    let tag     = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Fixed, h=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -4595,7 +4595,7 @@ fun e2e_retire1_from_idle() {
 #[test]
 fun e2e_retire2_from_at_dutch() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Window → AtDutch observable
+    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Fixed → AtDutch observable
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -4661,7 +4661,7 @@ fun e2e_retire3_from_handover_open() {
 #[test]
 fun e2e_retire4_from_handover_confirmed() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -4744,7 +4744,7 @@ fun e2e_retire5_from_handover_open_while_borrowed() {
 #[test]
 fun e2e_retire6_from_handover_confirmed_while_borrowed() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -4832,7 +4832,7 @@ fun e2e_retire7_already_retired_aborts() {
 ///   expiry=26_000, tenure_ceiling=100_000 → uc = stake × 26/100 = 2_600_000_000
 ///   remain_credit=7_400_000_000, owner_share=2_340_000_000, fee=260_000_000
 ///
-/// Config: c=1 Countdown (expiry=26_000), vary e=0..6, h=0, d=0, f=0.
+/// Config: c=1 Fixed (expiry=26_000), vary e=0..6, h=0, d=0, f=0.
 #[test]
 fun e2e_cred1_used_credit_clamped_at_handover_confirmed_expiry_across_curves() {
     let mut sc    = setup();
@@ -5137,17 +5137,17 @@ fun e2e_corpus_gap_deferred_retire_from_handover_open_after_floor() {
     sc.end();
 }
 
-// ── Gap 4: h=1 (Window) + retiring flag — bypasses AtDutch descent ───────────
+// ── Gap 4: h=1 (Fixed) + retiring flag — bypasses AtDutch descent ───────────
 
 /// §RETIRE tests (RETIRE-3/4/5/6) all use h=0 (Skipped). This verifies
 /// that the retiring flag correctly bypasses AtDutchAuction even when
 /// AuctionWindowPolicy is Window (h=1): tenure expiry → Retired directly,
-/// NOT AtDutch. The Window policy only affects the descent duration when
+/// NOT AtDutch. The Fixed policy only affects the descent duration when
 /// there is NO retiring flag; the flag unconditionally collapses to Retired.
 #[test]
 fun e2e_corpus_gap_retiring_flag_bypasses_at_dutch_with_window_policy() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Window
+    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -5194,13 +5194,13 @@ fun e2e_corpus_gap_retiring_flag_bypasses_at_dutch_with_window_policy() {
 /// If the expiry had reset to 2_000 + 25_000 = 27_000, the second APT at 26_000
 /// would be a no-op — the test would catch the bug.
 ///
-/// Config: c=1 Countdown (25_000 ms), d=0, e=0, h=0, f=0.
+/// Config: c=1 Fixed (25_000 ms), d=0, e=0, h=0, f=0.
 ///   T2 bids  at t=1_000  →  original_expiry = 26_000
 ///   T3 supersedes at t=2_000  →  reset_expiry (bug) would be 27_000
 #[test]
 fun e2e_sup1_supersede_preserves_countdown_expiry() {
     let mut sc    = setup();
-    let tag       = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Countdown
+    let tag       = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk   = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
@@ -5310,7 +5310,7 @@ fun update_config_idle_applies_immediately() {
 #[test]
 fun update_config_at_dutch_schedules_without_cancelling() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -5488,7 +5488,7 @@ fun update_config_handover_preserves_pending_does_not_apply() {
 #[test]
 fun update_config_chain_handover_then_auction_expiry_applies() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -5545,7 +5545,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
 #[test]
 fun update_config_override_last_write_wins() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -5693,7 +5693,7 @@ fun update_config_on_retiring_aborts() {
 #[test]
 fun update_config_at_dutch_natural_expiry_applies_pending() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -5751,7 +5751,7 @@ fun update_config_at_dutch_natural_expiry_applies_pending() {
 #[test]
 fun update_config_pending_survives_multiple_handovers() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
@@ -5797,7 +5797,7 @@ fun update_config_pending_survives_multiple_handovers() {
 #[test]
 fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -5846,7 +5846,7 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
 #[test]
 fun update_config_at_dutch_overrides_renting_pending() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -5895,7 +5895,7 @@ fun update_config_at_dutch_overrides_renting_pending() {
 #[test]
 fun update_config_state_clean_after_application() {
     let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Window
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -6042,15 +6042,15 @@ fun update_config_behavior_tenure_ceiling_apt_detection() {
 }
 
 // Test BD-3: descent policy determines AtDutch vs Idle for the next cycle ──────
-/// After update_config from Skip→Window, the NEXT tenure expiry (T2) routes
+/// After update_config from Skip→Fixed, the NEXT tenure expiry (T2) routes
 /// through AtDutch. Under the old Skip policy it would have been Idle.
 #[test]
 fun update_config_behavior_auction_window_policy_atdutch_presence() {
     let mut sc = setup();
     // cfg_skip: h=0 Skip — tenure expiry → Idle
     let cfg_skip   = escrow_corpus::by_tag(0);
-    // cfg_window: h=1 Window — tenure expiry → AtDutch
-    let cfg_window = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    // cfg_fixed: h=1 Fixed — tenure expiry → AtDutch
+    let cfg_fixed = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(cfg_skip, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random = sc.take_shared<Random>();
@@ -6060,22 +6060,22 @@ fun update_config_behavior_auction_window_policy_atdutch_presence() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx(),
     );
 
-    // Schedule cfg_window; will be applied at T1's tenure expiry.
-    escrow::update_config(&mut escrow, &owner_cap, cfg_window, &random, &clk, sc.ctx());
+    // Schedule cfg_fixed; will be applied at T1's tenure expiry.
+    escrow::update_config(&mut escrow, &owner_cap, cfg_fixed, &random, &clk, sc.ctx());
 
-    // T1's tenure expires → Idle with cfg_window (pending_config skips AtDutch
+    // T1's tenure expires → Idle with cfg_fixed (pending_config skips AtDutch
     // during fire(), so T1's own expiry still goes to Idle directly).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow), 0);
-    assert!(escrow::policy_ensemble(&escrow) == cfg_window, 1);
+    assert!(escrow::policy_ensemble(&escrow) == cfg_fixed, 1);
 
-    // T2 rents under cfg_window (Window descent). phase_start = tenure_ceiling.
+    // T2 rents under cfg_fixed (Fixed descent). phase_start = tenure_ceiling.
     let cap_t2 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx(),
     );
 
-    // T2's tenure expires at 2 × tenure_ceiling. With Window descent and no
+    // T2's tenure expires at 2 × tenure_ceiling. With Fixed descent and no
     // pending_config, fire() goes to AtDutch instead of Idle.
     clock::set_for_testing(&mut clk, 2 * escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
@@ -6430,7 +6430,7 @@ fun e2e_ev3_borrow_return_cap_id_consistency() {
 ///
 /// With phase_start=0, tenure_ceiling=100_000, bid at t=1_000:
 ///   c=0 Instant:  expiry = bid_time                              = 1_000
-///   c=1 Countdown: expiry = min(bid_time + 25_000, 100_000)     = 26_000
+///   c=1 Fixed: expiry = min(bid_time + 25_000, 100_000)     = 26_000
 ///   c=2 FullTenure: expiry = phase_start + tenure_ceiling         = 100_000
 ///
 /// All three are derived from corpus constants — no hardcoded expectations.
@@ -6467,7 +6467,7 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
             let expected_expiry = if (c == 0) {
                 bid_time                                           // Instant: expiry = bid_time
             } else if (c == 1) {
-                bid_time + countdown                               // Countdown: bid + 25_000 = 26_000
+                bid_time + countdown                               // Fixed: bid + 25_000 = 26_000
             } else {
                 tenure_ceiling                                     // FullTenure: phase_start(0) + ceiling
             };
@@ -6568,7 +6568,7 @@ fun random_floor_resolves_in_range_at_integrate() {
 #[test]
 fun random_floor_resolves_in_range_after_auction_expiry() {
     let mut sc = setup();
-    // h=1 Window so AtDutch occurs after tenure expiry
+    // h=1 Fixed so AtDutch occurs after tenure expiry
     let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         RANDOM_MIN, RANDOM_MAX,
@@ -6772,7 +6772,7 @@ fun random_floor_stable_within_idle_cycle() {
 #[test]
 fun e2e_random_two_cycles_atdutch_collapses_at_own_resolved_floor() {
     let mut sc = setup();
-    // h=1 Window so AtDutch has a measurable descent
+    // h=1 Fixed so AtDutch has a measurable descent
     let ensemble = escrow_corpus::with_random_min_rent_price(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         RANDOM_MIN, RANDOM_MAX,
@@ -6941,7 +6941,7 @@ fun e2e_random_update_config_changes_range_for_next_cycle() {
 #[test]
 fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     let mut sc = setup();
-    // h=1 Window, all other axes at default — fixed min_rent_price (corpus default)
+    // h=1 Fixed, all other axes at default — fixed min_rent_price (corpus default)
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let fixed_price = escrow_corpus::min_rent_price_const();
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -7060,7 +7060,7 @@ fun random_ceiling_resolves_in_range_after_integrate() {
 #[test]
 fun random_ceiling_resolves_in_range_after_auction_expiry() {
     let mut sc = setup();
-    // h=1 Window to produce AtDutch → Idle cycle
+    // h=1 Fixed to produce AtDutch → Idle cycle
     let ensemble = escrow_corpus::with_random_tenure_ceiling(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         CEILING_RAND_MIN, CEILING_RAND_MAX,
@@ -7250,7 +7250,7 @@ fun random_ceiling_update_config_changes_range() {
 #[test]
 fun random_ceiling_different_per_cycle() {
     let mut sc = setup();
-    // h=1 Window so AtDutch occurs between cycles
+    // h=1 Fixed so AtDutch occurs between cycles
     let ensemble = escrow_corpus::with_random_tenure_ceiling(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)),
         CEILING_RAND_MIN, CEILING_RAND_MAX,
@@ -7442,7 +7442,7 @@ fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
     sc.end();
 }
 
-// Helper: Multi + HandoverCountdown.
+// Helper: Multi + HandoverFixed.
 fun multi_cycle_cfg_countdown(): policy_ensemble::PolicyEnsemble {
     let tenure    = escrow_corpus::tenure_ceiling_const();
     let floor     = escrow_corpus::min_rent_price_const();
@@ -7451,7 +7451,7 @@ fun multi_cycle_cfg_countdown(): policy_ensemble::PolicyEnsemble {
         rest_price_policy::new_fixed(monetary::price(floor)),
         tenure_duration_policy::new_fixed(phases::duration(tenure)),
         tenure_extend_policy::new_multi(),
-        handover_policy::new_handover_countdown(phases::duration(countdown)),
+        handover_policy::new_handover_fixed(phases::duration(countdown)),
         auction_window_policy::new_descent_skipped(),
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
@@ -7495,7 +7495,7 @@ fun multi_cycle_floor_price_is_per_cycle_rate() {
     sc.end();
 }
 
-/// T2 — HandoverCountdown: competitor displaces multi-cycle tenant by rate.
+/// T2 — HandoverFixed: competitor displaces multi-cycle tenant by rate.
 /// T1 pays 3 cycles (ceiling = tenure × 3). T2 bids at t=tenure/2 with 1
 /// cycle, paying only the per-cycle floor. Handover fires at
 /// t + countdown — well before T1's 300k ceiling. T1 is displaced early.
@@ -7575,7 +7575,7 @@ fun multi_cycle_full_tenure_tenant_consumes_full_ceiling() {
     assert!(bid_floor == floor + delta, 0);
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
 
-    // Countdown expiry must equal the full 3-cycle ceiling.
+    // Fixed expiry must equal the full 3-cycle ceiling.
     let handover_expiry = escrow::handover_countdown_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry), tenure * 3);
 
@@ -7733,7 +7733,7 @@ fun multi_cycle_full_tenure_handover_tracks_new_ceiling() {
     sc.end();
 }
 
-/// Countdown floor scales with committed_tenures.
+/// Fixed floor scales with committed_tenures.
 /// T1 (3 cycles): extended_handover = countdown × 3 = 75k.
 /// T2 (2 cycles) wins at 75k: T2.handover = countdown × 2 = 50k, T2.ceiling = 200k.
 /// T3 bids at t=175k → expiry = min(175k+50k, 75k+200k) = min(225k, 275k) = 225k.
@@ -7928,7 +7928,7 @@ fun degeneration_full_tenure_expiry_cycles_one() {
     sc.end();
 }
 
-/// Countdown degeneration: cycles(1) → expiry = min(bid+countdown, phase_start+tenure).
+/// Fixed degeneration: cycles(1) → expiry = min(bid+countdown, phase_start+tenure).
 /// The countdown formula must be identical to the pre-cycles baseline.
 #[test]
 fun degeneration_countdown_expiry_cycles_one() {
@@ -8261,7 +8261,7 @@ fun multi_cycle_cfg_instant(): policy_ensemble::PolicyEnsemble {
     )
 }
 
-/// Countdown scaling: bid at t=0 against n-cycle tenant → expiry = countdown × n exactly.
+/// Fixed scaling: bid at t=0 against n-cycle tenant → expiry = countdown × n exactly.
 /// Verifies the numeric value, not just that it is larger than the base countdown.
 /// A truncation error in the scaling multiplication would show here.
 #[test]
@@ -9372,7 +9372,7 @@ fun commitment_chain_same_floor_from_later_time_passes() {
 // flow through every variant of the cycle without re-draw. The tests
 // below pin down each part of that invariant. They focus on
 // `resolved_descent` — the field that newly joined the invariant — and
-// rely on h=1 (Window: deterministic descent = ceiling const) and h=2
+// rely on h=1 (Fixed: deterministic descent = ceiling const) and h=2
 // (RandomInRange: descent ∈ [10_000, 90_000]) to make the values
 // observable without random-seed control.
 
@@ -9849,7 +9849,7 @@ fun resolve_invariant_double_update_config_is_idempotent() {
 #[test]
 fun update_config_demand_schedules_pending() {
     let mut sc = setup();
-    // c=1 Countdown — prevents APT from immediately firing the handover
+    // c=1 Fixed — prevents APT from immediately firing the handover
     // inside update_config, keeping the escrow in Demand after the call.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -9971,7 +9971,7 @@ fun burn_stale_cap_in_idle_succeeds() {
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
 fun rent_with_insufficient_payment_in_at_dutch_aborts() {
     let mut sc = setup();
-    // h=1 Window: tenure expires → AtDutch (stays there, no immediate collapse).
+    // h=1 Fixed: tenure expires → AtDutch (stays there, no immediate collapse).
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -10025,7 +10025,7 @@ fun rent_with_insufficient_payment_in_occupied_aborts() {
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
 fun rent_with_insufficient_payment_in_demand_aborts() {
     let mut sc = setup();
-    // c=1 Countdown: prevents handover from firing immediately on second rent.
+    // c=1 Fixed: prevents handover from firing immediately on second rent.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
@@ -10160,7 +10160,7 @@ fun extend_commitment_non_monotonic_aborts() {
 //
 // The existing claim_asset_aborts_in_at_dutch_state test uses h=0 (Skipped),
 // so APT collapses AtDutch→Idle before execute_claim sees it.
-// Using h=1 (Window) keeps the escrow in AtDutch through the claim call.
+// Using h=1 (Fixed) keeps the escrow in AtDutch through the claim call.
 
 #[test, expected_failure(abort_code = asset_state::ENotRetired, location = usufruct::asset_state)]
 fun claim_asset_aborts_in_at_dutch_with_window_descent() {
@@ -10217,7 +10217,7 @@ fun compute_handover_settlement_aborts_on_idle() {
 
 // ── Remaining variant gaps ─────────────────────────────────────────────────────
 
-/// execute_borrow in AtDutch: use h=1 (Window) so APT does not collapse
+/// execute_borrow in AtDutch: use h=1 (Fixed) so APT does not collapse
 /// AtDutch→Idle before execute_borrow runs. The _s => abort arm fires on AtDutch.
 #[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
 fun borrow_asset_aborts_in_at_dutch_with_window_descent() {

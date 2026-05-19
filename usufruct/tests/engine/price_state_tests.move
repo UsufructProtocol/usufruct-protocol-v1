@@ -30,7 +30,7 @@ fun base_ensemble(descent: bool): policy_ensemble::PolicyEnsemble {
         rest_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
         tenure_extend_policy::new_single(),
         handover_policy::new_handover_instant(),
-        if (descent) { auction_window_policy::new_descent_window(phases::duration(TENURE)) }
+        if (descent) { auction_window_policy::new_descent_fixed(phases::duration(TENURE)) }
         else         { auction_window_policy::new_descent_skipped()       },
         curve_shape_policy::new_linear(),
         curve_shape_policy::new_linear(),
@@ -166,7 +166,7 @@ fun descending_various_curves_respect_bounds() {
             rest_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
             tenure_extend_policy::new_single(),
             handover_policy::new_handover_instant(),
-            auction_window_policy::new_descent_window(phases::duration(TENURE)),
+            auction_window_policy::new_descent_fixed(phases::duration(TENURE)),
             curve_shape_policy::new_linear(),
             curve,
             price_escalation_policy::new_fixed_delta(monetary::price(MIN)),

@@ -275,7 +275,7 @@ public fun is_descent_skipped<Asset: key + store, CoinType>(
 public fun is_descent_window<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    auction_window_policy::proj_is_window(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
+    auction_window_policy::proj_is_fixed(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
 public fun is_commitment_immediate<Asset: key + store, CoinType>(
@@ -302,10 +302,10 @@ public fun is_handover_full_tenure<Asset: key + store, CoinType>(
     handover_policy::proj_is_full_tenure(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
-public fun is_handover_countdown<Asset: key + store, CoinType>(
+public fun is_handover_fixed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    handover_policy::proj_is_countdown(policy_ensemble::proj_handover(read_ensemble(escrow)))
+    handover_policy::proj_is_fixed(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
 public fun is_retiring<Asset: key + store, CoinType>(
@@ -652,13 +652,13 @@ public fun min_rent_price<Asset: key + store, CoinType>(
 public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    auction_window_policy::proj_window_ceiling(policy_ensemble::proj_auction_window(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
+    auction_window_policy::proj_fixed_ceiling(policy_ensemble::proj_auction_window(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    handover_policy::proj_countdown_floor_ms(policy_ensemble::proj_handover(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
+    handover_policy::proj_fixed_floor_ms(policy_ensemble::proj_handover(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun commitment_floor_ms<Asset: key + store, CoinType>(

@@ -325,7 +325,7 @@ fun settlement_views_in_rented_state() {
 #[test]
 fun settlement_views_in_demand_state() {
     let mut sc  = setup();
-    // c=1 Countdown — prevents APT from immediately resolving the handover
+    // c=1 Fixed — prevents APT from immediately resolving the handover
     // inside the second rent call, keeping the escrow in Demand.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
@@ -369,7 +369,7 @@ fun settlement_views_in_demand_state() {
 #[test]
 fun at_dutch_views_after_tenure_expiry() {
     let mut sc  = setup();
-    // h=1 → Descent::Window; ensures the escrow enters AtDutch on tenure expiry
+    // h=1 → Descent::Fixed; ensures the escrow enters AtDutch on tenure expiry
     // instead of collapsing back to Idle (which Descent::Skipped would do).
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
@@ -393,7 +393,7 @@ fun at_dutch_views_after_tenure_expiry() {
     assert!(escrow::is_occupied(&escrow));
     assert_eq!(escrow::next_transition_ms(&escrow, &clk).destroy_some(), expiry);
 
-    // Fire the transition → state advances to AtDutch (descent=Window).
+    // Fire the transition → state advances to AtDutch (descent=Fixed).
     escrow::apply_pending_transition_states(&mut escrow, &random, &clk, sc.ctx());
     test_scenario::return_shared(random);
 
@@ -462,7 +462,7 @@ fun retired_views_after_retire_from_idle() {
 #[test]
 fun demand_views_after_handover_bid() {
     let mut sc  = setup();
-    // c=1 → handover=Countdown; second rent enters Demand (not Instant fire-through).
+    // c=1 → handover=Fixed; second rent enters Demand (not Instant fire-through).
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
@@ -524,7 +524,7 @@ fun demand_views_after_handover_bid() {
 #[test]
 fun retiring_flag_views_after_retire_during_renting() {
     let mut sc  = setup();
-    // c=1 → Countdown handover; rules out Instant fire-through on retire.
+    // c=1 → Fixed handover; rules out Instant fire-through on retire.
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
@@ -569,7 +569,7 @@ fun cartesian_state_projector_matrix() {
     let mut sc = setup();
     let ensemble           = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let cfg_countdown = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let cfg_window    = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let cfg_fixed    = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
 
     // — Idle —
     let (escrow, cap) = build_escrow(ensemble, &mut sc);
@@ -600,7 +600,7 @@ fun cartesian_state_projector_matrix() {
     clock::destroy_for_testing(clk);
     dispose_escrow(escrow, cap);
 
-    // — Demand (Countdown handover → second rent places a bid) —
+    // — Demand (Fixed handover → second rent places a bid) —
     let (mut escrow, cap) = build_escrow(cfg_countdown, &mut sc);
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -620,8 +620,8 @@ fun cartesian_state_projector_matrix() {
     clock::destroy_for_testing(clk);
     dispose_escrow(escrow, cap);
 
-    // — AtDutch (Window descent → tenure expiry advances to AtDutch) —
-    let (mut escrow, cap) = build_escrow(cfg_window, &mut sc);
+    // — AtDutch (Fixed descent → tenure expiry advances to AtDutch) —
+    let (mut escrow, cap) = build_escrow(cfg_fixed, &mut sc);
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
     let random  = sc.take_shared<Random>();
@@ -648,7 +648,7 @@ fun cartesian_state_projector_matrix() {
 #[test]
 fun tenant_cap_views_in_at_dutch_state() {
     let mut sc  = setup();
-    // h=1 Window: tenure expires → AtDutch (does not immediately collapse).
+    // h=1 Fixed: tenure expires → AtDutch (does not immediately collapse).
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
@@ -791,7 +791,7 @@ fun views_flip_across_tenure_expiry_to_idle() {
 
 #[test]
 fun views_flip_across_tenure_expiry_to_at_dutch() {
-    // Occupied → AtDutch: tenure expires with descent=Window.
+    // Occupied → AtDutch: tenure expires with descent=Fixed.
     let mut sc  = setup();
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
@@ -898,7 +898,7 @@ fun views_flip_across_auction_expiry_to_idle() {
 #[test]
 fun views_flip_across_handover_countdown_expiry() {
     // Demand → Occupied: handover countdown expires, pending tenant becomes current.
-    // Uses c=1 (Countdown handover) so a second rent enters Demand state.
+    // Uses c=1 (Fixed handover) so a second rent enters Demand state.
     let mut sc  = setup();
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);

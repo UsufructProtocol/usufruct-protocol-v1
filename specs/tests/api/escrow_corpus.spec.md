@@ -16,7 +16,7 @@ The corpus serves three roles:
 
 **Targeted single-config lookup** — `by_tag(tag)` retrieves one specific combination by its τ2 tag. Scenario tests use this to pin a readable, stable config while still expressing which policy variant is under test.
 
-**Filtered subsets** — `filter_*` primitives and named projections (`with_handover_countdown()`, `with_descent_skipped()`, etc.) allow tests to narrow to a single axis without rebuilding entries manually.
+**Filtered subsets** — `filter_*` primitives and named projections (`with_handover_fixed()`, `with_descent_skipped()`, etc.) allow tests to narrow to a single axis without rebuilding entries manually.
 
 One structural asymmetry: the `f` axis (CommitmentPolicy) is tracked in `CorpusEntry` and encoded in the tag, but is **not embedded in the `PolicyEnsemble`** — the commitment policy is a separate concern passed at integration time. Callers retrieve it via `commitment_by_tag(tag)` alongside `by_tag(tag)`.
 
@@ -40,10 +40,10 @@ CorpusEntry   has copy, drop, store {
 | Axis | Policy                | Range | Variants |
 |------|-----------------------|-------|----------|
 | `m`  | TenureExtendPolicy    | 0..1  | 0 = Single, 1 = Multi |
-| `c`  | HandoverPolicy        | 0..3  | 0 = Instant, 1 = Countdown (25 000 ms), 2 = FullTenure, 3 = RandomInRange (10 000..75 000 ms) |
+| `c`  | HandoverPolicy        | 0..3  | 0 = Instant, 1 = Fixed (25 000 ms), 2 = FullTenure, 3 = RandomInRange (10 000..75 000 ms) |
 | `d`  | PriceEscalationPolicy | 0..1  | 0 = FixedDelta (10 000 000 000), 1 = CompoundDelta (1 000 bps + 1) |
 | `e`  | CurveShapePolicy pair | 0..6  | 0 = Linear, 1 = Smoothstep, 2 = Logistic, 3 = PowerLaw(1,2), 4 = PowerLaw(2,1), 5 = Exponential(2,true), 6 = Exponential(2,false) |
-| `h`  | AuctionWindowPolicy   | 0..2  | 0 = Skipped, 1 = Window (100 000 ms), 2 = RandomInRange (10 000..90 000 ms) |
+| `h`  | AuctionWindowPolicy   | 0..2  | 0 = Skipped, 1 = Fixed (100 000 ms), 2 = RandomInRange (10 000..90 000 ms) |
 | `f`  | CommitmentPolicy      | 0..1  | 0 = Immediate, 1 = Deferred (10 000 000 ms) |
 
 `credit_shape` and `auction_shape` in every entry are always the same `CurveShapePolicy` (both derived from axis `e`). The corpus deliberately does not cross-product them independently.
@@ -67,7 +67,7 @@ c = (tag / 10_000)  % 10
 m = tag / 100_000
 ```
 
-Example: `tag(1, 0, 0, 0, 0)` → `10_000` — Countdown handover, all other axes at default (Single, FixedDelta, Linear, Skipped, Immediate).
+Example: `tag(1, 0, 0, 0, 0)` → `10_000` — Fixed handover, all other axes at default (Single, FixedDelta, Linear, Skipped, Immediate).
 
 ## § API
 
@@ -92,7 +92,7 @@ Example: `tag(1, 0, 0, 0, 0)` → `10_000` — Countdown handover, all other axe
 - `escrow_corpus::filter_c`, `filter_d`, `filter_e`, `filter_h`, `filter_f`, `filter_m` — each takes a `vector<CorpusEntry>` and an axis value; returns the matching subset. Validates the axis bound before filtering.
 
 **Named projections** (convenience wrappers over filter primitives; all derive from `all()`)
-- `with_handover_instant()`, `with_handover_countdown()`, `with_handover_full_tenure()`, `with_handover_random()`
+- `with_handover_instant()`, `with_handover_fixed()`, `with_handover_full_tenure()`, `with_handover_random()`
 - `with_descent_skipped()`, `with_descent_window()`, `with_descent_random()`
 - `with_retire_immediate()`, `with_retire_deferred()`
 - `with_fixed_pricing()`, `with_compound_pricing()`

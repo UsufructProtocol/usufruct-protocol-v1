@@ -11,8 +11,8 @@ use usufruct::phases;
 // ─── constructors — abort guards ──────────────────────────────────────────────
 
 #[test, expected_failure(abort_code = handover_policy::EHandoverFloorZero, location = usufruct::handover_policy)]
-fun new_handover_countdown_rejects_zero() {
-    handover_policy::new_handover_countdown(phases::duration(0));
+fun new_handover_fixed_rejects_zero() {
+    handover_policy::new_handover_fixed(phases::duration(0));
 }
 
 #[test, expected_failure(abort_code = handover_policy::EHandoverFloorZero, location = usufruct::handover_policy)]
@@ -59,7 +59,7 @@ fun resolve_full_tenure_returns_ceiling() {
 fun resolve_countdown_returns_floor() {
     let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
     let result = handover_policy::compute_duration(
-        &handover_policy::new_handover_countdown(phases::duration(42)),
+        &handover_policy::new_handover_fixed(phases::duration(42)),
         phases::duration(100),
         &mut gen,
     );
@@ -90,7 +90,7 @@ fun resolve_random_in_range_draws_in_bounds() {
 // ─── compute_countdown_floor_lt ───────────────────────────────────────────────────────
 
 #[test_only]
-public struct CountdownFloorLtCase has drop {
+public struct FixedFloorLtCase has drop {
     policy:   HandoverPolicy,
     ceiling:  u64,
     expected: bool,
@@ -99,18 +99,18 @@ public struct CountdownFloorLtCase has drop {
 #[test]
 fun countdown_floor_lt_table() {
     let cases = vector[
-        CountdownFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 0,   expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_full_tenure(),  ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_full_tenure(),  ceiling: 0,   expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(50)),  ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(99)),  ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(100)), ceiling: 100, expected: false },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_countdown(phases::duration(101)), ceiling: 100, expected: false },
+        FixedFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 100, expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_instant(),     ceiling: 0,   expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_full_tenure(),  ceiling: 100, expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_full_tenure(),  ceiling: 0,   expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_fixed(phases::duration(50)),  ceiling: 100, expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_fixed(phases::duration(99)),  ceiling: 100, expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_fixed(phases::duration(100)), ceiling: 100, expected: false },
+        FixedFloorLtCase { policy: handover_policy::new_handover_fixed(phases::duration(101)), ceiling: 100, expected: false },
         // RandomInRange — uses max for conservative validation
-        CountdownFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(50)), ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(99)), ceiling: 100, expected: true  },
-        CountdownFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100)), ceiling: 100, expected: false },
+        FixedFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(50)), ceiling: 100, expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(99)), ceiling: 100, expected: true  },
+        FixedFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100)), ceiling: 100, expected: false },
     ];
     cases.do_ref!(|c| {
         assert_eq!(handover_policy::compute_countdown_floor_lt(&c.policy, phases::duration(c.ceiling)), c.expected);
@@ -143,12 +143,12 @@ fun has_expired_table() {
         HasExpiredCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 150, expected: true  },
         HasExpiredCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 140, phase_start: 100, now: 150, expected: true  }, // different bid, same boundary
 
-        // Countdown (resolved_floor=20) — countdown wins: min(bid+20, phase+50) = min(30, 150) = 30
+        // Fixed (resolved_floor=20) — countdown wins: min(bid+20, phase+50) = min(30, 150) = 30
         HasExpiredCase { resolved_floor: 20, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 29,  expected: false },
         HasExpiredCase { resolved_floor: 20, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 30,  expected: true  },
         HasExpiredCase { resolved_floor: 20, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 31,  expected: true  },
 
-        // Countdown (resolved_floor=200) — tenure wins: min(bid+200=210, phase+50=150) = 150
+        // Fixed (resolved_floor=200) — tenure wins: min(bid+200=210, phase+50=150) = 150
         HasExpiredCase { resolved_floor: 200, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 149, expected: false },
         HasExpiredCase { resolved_floor: 200, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 150, expected: true  },
 
@@ -193,11 +193,11 @@ fun expiry_at_table() {
         ExpiryAtCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110,   phase_start: 100, expected: 150 },
         ExpiryAtCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 140,   phase_start: 100, expected: 150 },
 
-        // Countdown floor wins: min(bid+20=30, phase+50=150) = 30
+        // Fixed floor wins: min(bid+20=30, phase+50=150) = 30
         ExpiryAtCase { resolved_floor: 20, resolved_ceiling: 50, bid_time: 10, phase_start: 100, expected: 30  },
-        // Countdown tenure wins: min(bid+200=210, phase+50=150) = 150
+        // Fixed tenure wins: min(bid+200=210, phase+50=150) = 150
         ExpiryAtCase { resolved_floor: 200, resolved_ceiling: 50, bid_time: 10, phase_start: 100, expected: 150 },
-        // Countdown equality: min(150, 150) = 150
+        // Fixed equality: min(150, 150) = 150
         ExpiryAtCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, expected: 150 },
     ];
     cases.do_ref!(|c| {
@@ -235,15 +235,15 @@ fun has_expired_iff_now_ge_expiry_at() {
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 149 },
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 150 },
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 110, phase_start: 100, now: 151 },
-        // Countdown countdown-wins
+        // Fixed countdown-wins
         HoSisterCase { resolved_floor: 20, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 29 },
         HoSisterCase { resolved_floor: 20, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 30 },
         HoSisterCase { resolved_floor: 20, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 31 },
-        // Countdown tenure-wins
+        // Fixed tenure-wins
         HoSisterCase { resolved_floor: 200, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 149 },
         HoSisterCase { resolved_floor: 200, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 150 },
         HoSisterCase { resolved_floor: 200, resolved_ceiling: 50, bid_time: 10, phase_start: 100, now: 151 },
-        // Countdown equality
+        // Fixed equality
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, now: 149 },
         HoSisterCase { resolved_floor: 50, resolved_ceiling: 50, bid_time: 100, phase_start: 100, now: 150 },
     ];
@@ -298,9 +298,9 @@ fun projectors_instant_variant() {
     let p = handover_policy::new_handover_instant();
     assert!(p.proj_is_instant());
     assert!(!p.proj_is_full_tenure());
-    assert!(!p.proj_is_countdown());
+    assert!(!p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
-    assert!(p.proj_countdown_floor_ms().is_none());
+    assert!(p.proj_fixed_floor_ms().is_none());
     assert!(p.proj_range_min().is_none());
     assert!(p.proj_range_max().is_none());
 }
@@ -310,21 +310,21 @@ fun projectors_full_tenure_variant() {
     let p = handover_policy::new_handover_full_tenure();
     assert!(!p.proj_is_instant());
     assert!(p.proj_is_full_tenure());
-    assert!(!p.proj_is_countdown());
+    assert!(!p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
-    assert!(p.proj_countdown_floor_ms().is_none());
+    assert!(p.proj_fixed_floor_ms().is_none());
     assert!(p.proj_range_min().is_none());
     assert!(p.proj_range_max().is_none());
 }
 
 #[test]
 fun projectors_countdown_variant() {
-    let p = handover_policy::new_handover_countdown(phases::duration(42));
+    let p = handover_policy::new_handover_fixed(phases::duration(42));
     assert!(!p.proj_is_instant());
     assert!(!p.proj_is_full_tenure());
-    assert!(p.proj_is_countdown());
+    assert!(p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
-    assert_eq!(phases::duration_ms(p.proj_countdown_floor_ms().destroy_some()), 42);
+    assert_eq!(phases::duration_ms(p.proj_fixed_floor_ms().destroy_some()), 42);
     assert!(p.proj_range_min().is_none());
     assert!(p.proj_range_max().is_none());
 }
@@ -334,9 +334,9 @@ fun projectors_random_in_range_variant() {
     let p = handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100));
     assert!(!p.proj_is_instant());
     assert!(!p.proj_is_full_tenure());
-    assert!(!p.proj_is_countdown());
+    assert!(!p.proj_is_fixed());
     assert!(p.proj_is_random_in_range());
-    assert!(p.proj_countdown_floor_ms().is_none());
+    assert!(p.proj_fixed_floor_ms().is_none());
     assert_eq!(phases::duration_ms(p.proj_range_min().destroy_some()), 10);
     assert_eq!(phases::duration_ms(p.proj_range_max().destroy_some()), 100);
 }

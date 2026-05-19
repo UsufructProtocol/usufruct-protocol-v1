@@ -145,10 +145,10 @@ fun handover_views_match_variants() {
         let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
         assert_eq!(escrow::is_handover_instant(&escrow),     c == 0);
-        assert_eq!(escrow::is_handover_countdown(&escrow),   c == 1);
+        assert_eq!(escrow::is_handover_fixed(&escrow),   c == 1);
         assert_eq!(escrow::is_handover_full_tenure(&escrow),  c == 2);
 
-        // Countdown floor: only present on c=1
+        // Fixed floor: only present on c=1
         if (c == 1) {
             assert_eq!(escrow::handover_countdown_floor_ms(&escrow).destroy_some(), escrow_corpus::handover_countdown_c1_const());
         } else {
@@ -174,7 +174,7 @@ fun descent_views_match_variants() {
         assert_eq!(escrow::is_descent_skipped(&escrow), h == 0);
         assert_eq!(escrow::is_descent_window(&escrow),  h == 1);
 
-        // dutch_auction_ceiling_ms wraps proj_window_ceiling — Some only on Window
+        // dutch_auction_ceiling_ms wraps proj_fixed_ceiling — Some only on Window
         if (h == 1) {
             assert_eq!(escrow::dutch_auction_ceiling_ms(&escrow).destroy_some(), escrow_corpus::descent_window_h1_const());
         } else {

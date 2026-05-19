@@ -9,24 +9,24 @@ Defines the time window within which `auction_shape` expresses the price descent
 ```
 AuctionWindowPolicy   has copy, drop, store
   Skipped
-  Window        { ceiling: Duration }
+  Fixed         { ceiling: Duration }
   RandomInRange { min: Duration, max: Duration }
 ```
 
 - `Skipped` — no descent phase; on tenure expiry the escrow transitions directly to `Idle` at the floor price.
-- `Window` — a fixed-length descent phase; price falls linearly (or along the configured `auction_shape` curve) from last acquisition price to floor over `ceiling` milliseconds.
+- `Fixed` — a fixed-length descent phase; price falls linearly (or along the configured `auction_shape` curve) from last acquisition price to floor over `ceiling` milliseconds.
 - `RandomInRange` — descent duration is sampled uniformly from `[min, max)` at transition time; the resolved duration is not revealed in advance.
 
 ## § API
 
 **Constructors** (public)
 - `auction_window_policy::new_descent_skipped(): AuctionWindowPolicy`
-- `auction_window_policy::new_descent_window(ceiling: Duration): AuctionWindowPolicy` — asserts `ceiling > 0`.
+- `auction_window_policy::new_descent_fixed(ceiling: Duration): AuctionWindowPolicy` — asserts `ceiling > 0`.
 - `auction_window_policy::new_descent_random_in_range(min: Duration, max: Duration): AuctionWindowPolicy` — asserts `min > 0` and `min < max`.
 
 **Projections** (package)
-- `auction_window_policy::proj_is_skipped`, `proj_is_window`, `proj_is_random_in_range`
-- `auction_window_policy::proj_window_ceiling`, `proj_range_min`, `proj_range_max` — each returns `Option<Duration>`.
+- `auction_window_policy::proj_is_skipped`, `proj_is_fixed`, `proj_is_random_in_range`
+- `auction_window_policy::proj_fixed_ceiling`, `proj_range_min`, `proj_range_max` — each returns `Option<Duration>`.
 
 **Computations** (package)
 - `auction_window_policy::compute_duration(&AuctionWindowPolicy, rng: &mut RandomGenerator): Duration` — resolves the descent duration; samples from range if `RandomInRange`.

@@ -8,12 +8,12 @@ use std::unit_test::assert_eq;
 use usufruct::auction_window_policy::{Self, AuctionWindowPolicy};
 use usufruct::phases;
 
-// ─── new_descent_window — abort ───────────────────────────────────────────────
+// ─── new_descent_fixed — abort ───────────────────────────────────────────────
 
 #[test, expected_failure(abort_code = auction_window_policy::EDescentCeilingZero, location = usufruct::auction_window_policy)]
-fun new_descent_window_rejects_zero() {
+fun new_descent_fixed_rejects_zero() {
     // Window(0) is not allowed; the zero-ceiling mode is Skipped.
-    auction_window_policy::new_descent_window(phases::duration(0));
+    auction_window_policy::new_descent_fixed(phases::duration(0));
 }
 
 // ─── compute_expiry_boundary ──────────────────────────────────────────────────────────────
@@ -38,14 +38,14 @@ fun has_expired_table() {
         HasExpiredCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, now: 101, expected: true  }, // after phase
         HasExpiredCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 0,   now: 0,   expected: true  }, // zero anchor
 
-        // Window — boundary triple at phase_start + ceiling = 150
-        HasExpiredCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 100, now: 149, expected: false }, // one before
-        HasExpiredCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 100, now: 150, expected: true  }, // exact
-        HasExpiredCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 100, now: 151, expected: true  }, // one after
+        // Fixed — boundary triple at phase_start + ceiling = 150
+        HasExpiredCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 100, now: 149, expected: false }, // one before
+        HasExpiredCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 100, now: 150, expected: true  }, // exact
+        HasExpiredCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 100, now: 151, expected: true  }, // one after
 
         // Window with phase_start=0 (boundary == ceiling)
-        HasExpiredCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 0, now: 49, expected: false },
-        HasExpiredCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 0, now: 50, expected: true  },
+        HasExpiredCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 0, now: 49, expected: false },
+        HasExpiredCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 0, now: 50, expected: true  },
     ];
     cases.do_ref!(|c| {
         let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
@@ -70,10 +70,10 @@ fun expiry_at_table() {
         ExpiryAtCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 0,   expected: 0   },
         ExpiryAtCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, expected: 100 },
 
-        // Window — returns phase_start + ceiling
-        ExpiryAtCase { policy: auction_window_policy::new_descent_window(phases::duration(50)),    phase_start: 100, expected: 150 },
-        ExpiryAtCase { policy: auction_window_policy::new_descent_window(phases::duration(1)),     phase_start: 0,   expected: 1   },
-        ExpiryAtCase { policy: auction_window_policy::new_descent_window(phases::duration(9_999)), phase_start: 1,   expected: 10_000 },
+        // Fixed — returns phase_start + ceiling
+        ExpiryAtCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)),    phase_start: 100, expected: 150 },
+        ExpiryAtCase { policy: auction_window_policy::new_descent_fixed(phases::duration(1)),     phase_start: 0,   expected: 1   },
+        ExpiryAtCase { policy: auction_window_policy::new_descent_fixed(phases::duration(9_999)), phase_start: 1,   expected: 10_000 },
     ];
     cases.do_ref!(|c| {
         let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
@@ -82,30 +82,30 @@ fun expiry_at_table() {
     });
 }
 
-// ─── window_ceiling ───────────────────────────────────────────────────────────
+// ─── fixed_ceiling ───────────────────────────────────────────────────────────
 
 #[test]
-fun window_ceiling_returns_ceiling_for_window() {
+fun fixed_ceiling_returns_ceiling_for_window() {
     // Identity property: ceiling out == ceiling in.
     let ceilings: vector<u64> = vector[1, 50, 9_999, 1_000_000_000];
     let mut i = 0;
     let len = ceilings.length();
     while (i < len) {
         let c = ceilings[i];
-        let p = auction_window_policy::new_descent_window(phases::duration(c));
-        assert_eq!(phases::duration_ms(auction_window_policy::window_ceiling(&p)), c);
+        let p = auction_window_policy::new_descent_fixed(phases::duration(c));
+        assert_eq!(phases::duration_ms(auction_window_policy::fixed_ceiling(&p)), c);
         i = i + 1;
     };
 }
 
-#[test, expected_failure(abort_code = auction_window_policy::EDescentSkippedNoWindow, location = usufruct::auction_window_policy)]
-fun window_ceiling_aborts_on_skipped() {
-    // window_ceiling on Skipped is unreachable in production
+#[test, expected_failure(abort_code = auction_window_policy::EDescentSkippedNoFixed, location = usufruct::auction_window_policy)]
+fun fixed_ceiling_aborts_on_skipped() {
+    // fixed_ceiling on Skipped is unreachable in production
     // (compute_price_descent only fires from AtDutchAuction, structurally
     // unobservable under Skipped). This pins the abort code as the
     // contract — anyone calling it directly gets a deterministic failure.
     let p = auction_window_policy::new_descent_skipped();
-    auction_window_policy::window_ceiling(&p);
+    auction_window_policy::fixed_ceiling(&p);
 }
 
 // ─── sister identity: compute_expiry_boundary ⇔ now >= compute_expiry_at ──────────────────────────
@@ -130,14 +130,14 @@ fun has_expired_iff_now_ge_expiry_at() {
         DeSisterCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 100, now: 101 },
         DeSisterCase { policy: auction_window_policy::new_descent_skipped(), phase_start: 0,   now: 0   },
 
-        // Window — boundary triple at phase_start + ceiling = 150
-        DeSisterCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 100, now: 149 },
-        DeSisterCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 100, now: 150 },
-        DeSisterCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 100, now: 151 },
+        // Fixed — boundary triple at phase_start + ceiling = 150
+        DeSisterCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 100, now: 149 },
+        DeSisterCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 100, now: 150 },
+        DeSisterCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 100, now: 151 },
 
         // Window at zero anchor
-        DeSisterCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 0, now: 49 },
-        DeSisterCase { policy: auction_window_policy::new_descent_window(phases::duration(50)), phase_start: 0, now: 50 },
+        DeSisterCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 0, now: 49 },
+        DeSisterCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 0, now: 50 },
     ];
     cases.do_ref!(|c| {
         let mut gen   = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
@@ -215,20 +215,20 @@ fun random_in_range_expiry_at_within_bounds() {
 fun projectors_skipped_variant() {
     let p = auction_window_policy::new_descent_skipped();
     assert!(p.proj_is_skipped());
-    assert!(!p.proj_is_window());
+    assert!(!p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
-    assert!(p.proj_window_ceiling().is_none());
+    assert!(p.proj_fixed_ceiling().is_none());
     assert!(p.proj_range_min().is_none());
     assert!(p.proj_range_max().is_none());
 }
 
 #[test]
 fun projectors_window_variant() {
-    let p = auction_window_policy::new_descent_window(phases::duration(75));
+    let p = auction_window_policy::new_descent_fixed(phases::duration(75));
     assert!(!p.proj_is_skipped());
-    assert!(p.proj_is_window());
+    assert!(p.proj_is_fixed());
     assert!(!p.proj_is_random_in_range());
-    assert_eq!(phases::duration_ms(p.proj_window_ceiling().destroy_some()), 75);
+    assert_eq!(phases::duration_ms(p.proj_fixed_ceiling().destroy_some()), 75);
     assert!(p.proj_range_min().is_none());
     assert!(p.proj_range_max().is_none());
 }
@@ -237,9 +237,9 @@ fun projectors_window_variant() {
 fun projectors_random_in_range_variant() {
     let p = auction_window_policy::new_descent_random_in_range(phases::duration(20), phases::duration(80));
     assert!(!p.proj_is_skipped());
-    assert!(!p.proj_is_window());
+    assert!(!p.proj_is_fixed());
     assert!(p.proj_is_random_in_range());
-    assert!(p.proj_window_ceiling().is_none());
+    assert!(p.proj_fixed_ceiling().is_none());
     assert_eq!(phases::duration_ms(p.proj_range_min().destroy_some()), 20);
     assert_eq!(phases::duration_ms(p.proj_range_max().destroy_some()), 80);
 }

@@ -23,7 +23,7 @@ const EMinNotLtMax:       u64 = 1;
 public enum HandoverPolicy has copy, drop, store {
     Instant,
     FullTenure,
-    Countdown      { floor: Duration },
+    Fixed          { floor: Duration },
     RandomInRange  { min: Duration, max: Duration },
 }
 
@@ -36,9 +36,9 @@ public enum HandoverPolicy has copy, drop, store {
 public fun new_handover_instant():    HandoverPolicy { HandoverPolicy::Instant }
 public fun new_handover_full_tenure(): HandoverPolicy { HandoverPolicy::FullTenure }
 
-public fun new_handover_countdown(floor: Duration): HandoverPolicy {
+public fun new_handover_fixed(floor: Duration): HandoverPolicy {
     assert!(phases::duration_ms(floor) > 0, EHandoverFloorZero);
-    HandoverPolicy::Countdown { floor }
+    HandoverPolicy::Fixed { floor }
 }
 
 public fun new_handover_random_in_range(min: Duration, max: Duration): HandoverPolicy {
@@ -55,15 +55,15 @@ public(package) fun proj_is_instant(policy: &HandoverPolicy): bool {
 public(package) fun proj_is_full_tenure(policy: &HandoverPolicy): bool {
     match (policy) { HandoverPolicy::FullTenure => true, _ => false }
 }
-public(package) fun proj_is_countdown(policy: &HandoverPolicy): bool {
-    match (policy) { HandoverPolicy::Countdown { .. } => true, _ => false }
+public(package) fun proj_is_fixed(policy: &HandoverPolicy): bool {
+    match (policy) { HandoverPolicy::Fixed { .. } => true, _ => false }
 }
 public(package) fun proj_is_random_in_range(policy: &HandoverPolicy): bool {
     match (policy) { HandoverPolicy::RandomInRange { .. } => true, _ => false }
 }
-public(package) fun proj_countdown_floor_ms(policy: &HandoverPolicy): Option<Duration> {
+public(package) fun proj_fixed_floor_ms(policy: &HandoverPolicy): Option<Duration> {
     match (policy) {
-        HandoverPolicy::Countdown { floor } => option::some(*floor),
+        HandoverPolicy::Fixed { floor } => option::some(*floor),
         _ => option::none(),
     }
 }
@@ -86,7 +86,7 @@ public(package) fun proj_range_max(policy: &HandoverPolicy): Option<Duration> {
 
 public(package) fun compute_countdown_floor_lt(policy: &HandoverPolicy, ceiling: Duration): bool {
     match (policy) {
-        HandoverPolicy::Countdown { floor }       => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
+        HandoverPolicy::Fixed { floor }       => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
         HandoverPolicy::RandomInRange { max, .. } => phases::duration_ms(*max)   < phases::duration_ms(ceiling),
         HandoverPolicy::Instant | HandoverPolicy::FullTenure => true,
     }
@@ -100,7 +100,7 @@ public(package) fun compute_duration(
     match (policy) {
         HandoverPolicy::Instant                    => phases::zero(),
         HandoverPolicy::FullTenure                  => ceiling,
-        HandoverPolicy::Countdown { floor }        => *floor,
+        HandoverPolicy::Fixed { floor }        => *floor,
         HandoverPolicy::RandomInRange { min, max } => phases::duration(
             generator.generate_u64_in_range(
                 phases::duration_ms(*min),

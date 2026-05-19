@@ -8442,6 +8442,65 @@ fun handover_scaling_full_tenure_expiry_equals_tenure_expiry() {
     sc.end();
 }
 
+/// RandomInRange scales: expiry = R × N where R ∈ [min, max] is fixed for
+/// the whole idle→occupied cycle (resolved once at integration, resampled
+/// on each return to idle). At bid_time=0 no ceiling clamp applies since
+/// R < tenure_ceiling always (corpus constants: max=75k < ceiling=100k).
+/// Two escrows — same config, different resolved R — each asserts the
+/// per-tenure value stays in [min, max] and the total scales exactly × N.
+#[test]
+fun handover_scaling_random_in_range_scales_with_committed_tenures() {
+    let mut sc = setup();
+    let floor   = escrow_corpus::min_rent_price_const();
+    let min_ms  = escrow_corpus::handover_random_min_c3_const(); // 10_000
+    let max_ms  = escrow_corpus::handover_random_max_c3_const(); // 75_000
+
+    // c=3 (RandomInRange [10k,75k]), h=0 (Off descent), m=1 (multi tenure).
+    let cfg = escrow_corpus::by_tag(escrow_corpus::tag_with_cycles(3, 0, 0, 0, 0, 1));
+    let (mut escrow_a, owner_cap_a) = integrate_and_take(cfg, &mut sc);
+    let (mut escrow_b, owner_cap_b) = integrate_and_take(cfg, &mut sc);
+    let clk    = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // Escrow A — T1 rents N=1: handover_total = R_a × 1.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap_a1 = escrow::rent(&mut escrow_a, mk_payment(floor, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
+    sc.next_tx(TENANT_ADDR_2);
+    let floor_a2 = escrow::compute_floor_price(&escrow_a, &clk);
+    let cap_a2 = escrow::rent(&mut escrow_a, mk_payment(floor_a2, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
+    let expiry_1 = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow_a));
+
+    // Escrow B — T1 rents N=3: handover_total = R_b × 3.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap_b1 = escrow::rent(&mut escrow_b, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &random, &clk, sc.ctx());
+    sc.next_tx(TENANT_ADDR_2);
+    let floor_b2 = escrow::compute_floor_price(&escrow_b, &clk);
+    let cap_b2 = escrow::rent(&mut escrow_b, mk_payment(floor_b2, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
+    let expiry_3 = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow_b));
+
+    // N=1: per-tenure R_a ∈ [min, max].
+    assert!(expiry_1 >= min_ms,     0);
+    assert!(expiry_1 <= max_ms,     1);
+    // N=3: bounds scale × 3; per-tenure R_b ∈ [min, max]; exact multiple (R_b is integer ms).
+    assert!(expiry_3 >= min_ms * 3, 2);
+    assert!(expiry_3 <= max_ms * 3, 3);
+    assert_eq!(expiry_3 / 3 * 3, expiry_3); // R_b × 3 — no fractional ms
+    assert!(expiry_3 / 3 >= min_ms, 5);
+    assert!(expiry_3 / 3 <= max_ms, 6);
+
+    transfer::public_transfer(cap_a1, TENANT_ADDR_1);
+    transfer::public_transfer(cap_a2, TENANT_ADDR_2);
+    transfer::public_transfer(cap_b1, TENANT_ADDR_1);
+    transfer::public_transfer(cap_b2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    owner_cap::burn(owner_cap_a, OWNER);
+    owner_cap::burn(owner_cap_b, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 /// Rate symmetry: handover window per committed cycle is constant.
 /// T1a (1 cycle, f) → bid expiry = f.
 /// T1b (3 cycles, f×3) → bid expiry = f×3.

@@ -35,11 +35,7 @@ const EAxisMOutOfRange: u64 = 5;
 const TENURE_CEILING:         u64 = 100_000;
 const MIN_RENT_PRICE:         u64 = 10_000_000_000;
 const HANDOVER_COUNTDOWN_C1:  u64 = 25_000;
-const HANDOVER_RANDOM_MIN_C3: u64 = 10_000;
-const HANDOVER_RANDOM_MAX_C3: u64 = 75_000;
 const DESCENT_WINDOW_H1:      u64 = 100_000;
-const DESCENT_RANDOM_MIN_H2:  u64 = 10_000;
-const DESCENT_RANDOM_MAX_H2:  u64 = 90_000;
 const RETIRE_DEFERRED_F1:     u64 = 10_000_000;
 const FIXED_DELTA_VALUE:      u64 = 10_000_000_000;
 const COMPOUND_DELTA_BPS:     u64 = 1_000;
@@ -49,10 +45,10 @@ const COMPOUND_DELTA_VALUE:   u64 = 1;
 
 public struct CorpusEntry has copy, drop, store {
     ensemble: PolicyEnsemble,
-    c:   u8,   // 0..3  HandoverPolicy
+    c:   u8,   // 0..2  HandoverPolicy
     d:   u8,   // 0..1  PriceEscalationPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
-    h:   u8,   // 0..2  AuctionWindowPolicy
+    h:   u8,   // 0..1  AuctionWindowPolicy
     f:   u8,   // 0..1  CommitmentPolicy
     m:   u8,   // 0..1  TenureExtendPolicy
     tag: u64,  // m·100_000 + c·10_000 + d·1_000 + e·100 + h·10 + f
@@ -71,12 +67,12 @@ public use fun entry_m   as CorpusEntry.m;
 
 // === Package Functions ===
 
-/// Full deterministic corpus — 672 entries, one per (m,c,d,e,h,f) tuple.
+/// Full deterministic corpus — 336 entries, one per (m,c,d,e,h,f) tuple.
 ///   m: 0..1  TenureExtendPolicy (Single, Multi)
-///   c: 0..3  HandoverPolicy     (Instant, Fixed, FullTenure, RandomInRange)
+///   c: 0..2  HandoverPolicy     (Off, Fixed, FullTenure)
 ///   d: 0..1  PriceEscalationPolicy      (FixedDelta, CompoundDelta)
 ///   e: 0..6  CurveShapePolicy pair    (Linear..Exponential)
-///   h: 0..2  AuctionWindowPolicy      (Skipped, Window, RandomInRange)
+///   h: 0..1  AuctionWindowPolicy      (Skipped, Window)
 ///   f: 0..1  CommitmentPolicy       (Immediate, Deferred)
 ///
 /// Requires --gas-limit ≥ 100_000_000.
@@ -87,17 +83,11 @@ public(package) fun all(): vector<CorpusEntry> {
     entries
 }
 
-/// 336 entries: Single cycle (m=0), full axis cross-product.
+/// 168 entries: Single cycle (m=0), full axis cross-product.
 public(package) fun all_single(): vector<CorpusEntry> { make_full_slice(0) }
 
-/// 336 entries: Multi cycle (m=1), full axis cross-product.
+/// 168 entries: Multi cycle (m=1), full axis cross-product.
 public(package) fun all_multi(): vector<CorpusEntry> { make_full_slice(1) }
-
-/// Filtered views — derive from all() for full coverage.
-public(package) fun all_random_handover():       vector<CorpusEntry> { filter_c(all_single(), 3) }
-public(package) fun all_random_handover_multi(): vector<CorpusEntry> { filter_c(all_multi(),  3) }
-public(package) fun all_random_descent():        vector<CorpusEntry> { filter_h(all_single(), 2) }
-public(package) fun all_random_descent_multi():  vector<CorpusEntry> { filter_h(all_multi(),  2) }
 
 /// Single-config lookup by τ2 tag. Validates each decoded axis and returns
 /// PolicyEnsemble directly — the wrapper carries no new info when the
@@ -110,10 +100,10 @@ public(package) fun by_tag(tag: u64): PolicyEnsemble {
     let c = ((tag / 10_000) % 10) as u8;
     let m = (tag / 100_000) as u8;
     assert!(m <= 1, EAxisMOutOfRange);
-    assert!(c <= 3, EAxisCOutOfRange);
+    assert!(c <= 2, EAxisCOutOfRange);
     assert!(d <= 1, EAxisDOutOfRange);
     assert!(e <= 6, EAxisEOutOfRange);
-    assert!(h <= 2, EAxisHOutOfRange);
+    assert!(h <= 1, EAxisHOutOfRange);
     assert!(f <= 1, EAxisFOutOfRange);
     build_config(c, d, e, h, f, m)
 }
@@ -121,7 +111,7 @@ public(package) fun by_tag(tag: u64): PolicyEnsemble {
 // --- Filter primitives ---
 
 public(package) fun filter_c(es: vector<CorpusEntry>, c: u8): vector<CorpusEntry> {
-    assert!(c <= 3, EAxisCOutOfRange);
+    assert!(c <= 2, EAxisCOutOfRange);
     collect_matching_c(es, c)
 }
 
@@ -136,7 +126,7 @@ public(package) fun filter_e(es: vector<CorpusEntry>, e: u8): vector<CorpusEntry
 }
 
 public(package) fun filter_h(es: vector<CorpusEntry>, h: u8): vector<CorpusEntry> {
-    assert!(h <= 2, EAxisHOutOfRange);
+    assert!(h <= 1, EAxisHOutOfRange);
     collect_matching_h(es, h)
 }
 
@@ -155,10 +145,8 @@ public(package) fun filter_m(es: vector<CorpusEntry>, m: u8): vector<CorpusEntry
 public(package) fun with_handover_instant():    vector<CorpusEntry> { filter_c(all(), 0) }
 public(package) fun with_handover_fixed():  vector<CorpusEntry> { filter_c(all(), 1) }
 public(package) fun with_handover_full_tenure(): vector<CorpusEntry> { filter_c(all(), 2) }
-public(package) fun with_handover_random():     vector<CorpusEntry> { all_random_handover() }
 public(package) fun with_descent_skipped():     vector<CorpusEntry> { filter_h(all(), 0) }
 public(package) fun with_descent_window():      vector<CorpusEntry> { filter_h(all(), 1) }
-public(package) fun with_descent_random():      vector<CorpusEntry> { all_random_descent() }
 public(package) fun with_retire_immediate():    vector<CorpusEntry> { filter_f(all(), 0) }
 public(package) fun with_retire_deferred():     vector<CorpusEntry> { filter_f(all(), 1) }
 public(package) fun with_fixed_pricing():       vector<CorpusEntry> { filter_d(all(), 0) }
@@ -180,39 +168,11 @@ public(package) fun with_min_rent_price(ensemble: PolicyEnsemble, price_mist: u6
     )
 }
 
-/// Rebuild `ensemble` with a random-in-range `min_rent_price`. All other fields unchanged.
-public(package) fun with_random_min_rent_price(ensemble: PolicyEnsemble, min_mist: u64, max_mist: u64): PolicyEnsemble {
-    policy_ensemble::new_ensemble(
-        rest_price_policy::new_random_in_range(monetary::price(min_mist), monetary::price(max_mist)),
-        *policy_ensemble::proj_tenure_duration(&ensemble),
-        *policy_ensemble::proj_tenure_extend(&ensemble),
-        *policy_ensemble::proj_handover(&ensemble),
-        *policy_ensemble::proj_auction_window(&ensemble),
-        *policy_ensemble::proj_credit_shape(&ensemble),
-        *policy_ensemble::proj_auction_shape(&ensemble),
-        *policy_ensemble::proj_price_escalation(&ensemble),
-    )
-}
-
 /// Rebuild `ensemble` with a different `tenure_ceiling` (Fixed policy). All other fields unchanged.
 public(package) fun with_tenure_ceiling(ensemble: PolicyEnsemble, ceiling_ms: u64): PolicyEnsemble {
     policy_ensemble::new_ensemble(
         *policy_ensemble::proj_rest_price(&ensemble),
         tenure_duration_policy::new_fixed(phases::duration(ceiling_ms)),
-        *policy_ensemble::proj_tenure_extend(&ensemble),
-        *policy_ensemble::proj_handover(&ensemble),
-        *policy_ensemble::proj_auction_window(&ensemble),
-        *policy_ensemble::proj_credit_shape(&ensemble),
-        *policy_ensemble::proj_auction_shape(&ensemble),
-        *policy_ensemble::proj_price_escalation(&ensemble),
-    )
-}
-
-/// Rebuild `ensemble` with a random-in-range `tenure_ceiling`. All other fields unchanged.
-public(package) fun with_random_tenure_ceiling(ensemble: PolicyEnsemble, min_ms: u64, max_ms: u64): PolicyEnsemble {
-    policy_ensemble::new_ensemble(
-        *policy_ensemble::proj_rest_price(&ensemble),
-        tenure_duration_policy::new_random_in_range(phases::duration(min_ms), phases::duration(max_ms)),
         *policy_ensemble::proj_tenure_extend(&ensemble),
         *policy_ensemble::proj_handover(&ensemble),
         *policy_ensemble::proj_auction_window(&ensemble),
@@ -240,10 +200,10 @@ public(package) fun with_tenure_cycles(ensemble: PolicyEnsemble, policy: TenureE
 
 /// Validated τ2 tag — m=0 (Single cycles). Backward compatible with all existing callers.
 public(package) fun tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64 {
-    assert!(c <= 3, EAxisCOutOfRange);
+    assert!(c <= 2, EAxisCOutOfRange);
     assert!(d <= 1, EAxisDOutOfRange);
     assert!(e <= 6, EAxisEOutOfRange);
-    assert!(h <= 2, EAxisHOutOfRange);
+    assert!(h <= 1, EAxisHOutOfRange);
     assert!(f <= 1, EAxisFOutOfRange);
     build_tag(c, d, e, h, f, 0)
 }
@@ -251,10 +211,10 @@ public(package) fun tag(c: u8, d: u8, e: u8, h: u8, f: u8): u64 {
 /// Validated τ2 tag with explicit tenure-cycles axis.
 public(package) fun tag_with_cycles(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): u64 {
     assert!(m <= 1, EAxisMOutOfRange);
-    assert!(c <= 3, EAxisCOutOfRange);
+    assert!(c <= 2, EAxisCOutOfRange);
     assert!(d <= 1, EAxisDOutOfRange);
     assert!(e <= 6, EAxisEOutOfRange);
-    assert!(h <= 2, EAxisHOutOfRange);
+    assert!(h <= 1, EAxisHOutOfRange);
     assert!(f <= 1, EAxisFOutOfRange);
     build_tag(c, d, e, h, f, m)
 }
@@ -264,11 +224,7 @@ public(package) fun tag_with_cycles(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): u
 public(package) fun tenure_ceiling_const():           u64 { TENURE_CEILING }
 public(package) fun min_rent_price_const():           u64 { MIN_RENT_PRICE }
 public(package) fun handover_countdown_c1_const():    u64 { HANDOVER_COUNTDOWN_C1 }
-public(package) fun handover_random_min_c3_const():   u64 { HANDOVER_RANDOM_MIN_C3 }
-public(package) fun handover_random_max_c3_const():   u64 { HANDOVER_RANDOM_MAX_C3 }
 public(package) fun descent_window_h1_const():        u64 { DESCENT_WINDOW_H1 }
-public(package) fun descent_random_min_h2_const():    u64 { DESCENT_RANDOM_MIN_H2 }
-public(package) fun descent_random_max_h2_const():    u64 { DESCENT_RANDOM_MAX_H2 }
 public(package) fun retire_deferred_f1_const():       u64 { RETIRE_DEFERRED_F1 }
 public(package) fun fixed_delta_value_const():        u64 { FIXED_DELTA_VALUE }
 public(package) fun compound_delta_bps_const():       u64 { COMPOUND_DELTA_BPS }
@@ -310,17 +266,17 @@ fun assert_by_tag_roundtrips(entries: vector<CorpusEntry>) {
     };
 }
 
-// Full cross-product: c=0..3, d=0..1, e=0..6, h=0..2, f=0..1 → 4×2×7×3×2 = 336 entries.
+// Full cross-product: c=0..2, d=0..1, e=0..6, h=0..1, f=0..1 → 3×2×7×2×2 = 168 entries.
 fun make_full_slice(m: u8): vector<CorpusEntry> {
     let mut entries = vector[];
     let mut c = 0u8;
-    while (c <= 3) {
+    while (c <= 2) {
         let mut d = 0u8;
         while (d <= 1) {
             let mut e = 0u8;
             while (e <= 6) {
                 let mut h = 0u8;
-                while (h <= 2) {
+                while (h <= 1) {
                     let mut f = 0u8;
                     while (f <= 1) {
                         entries.push_back(make_entry(c, d, e, h, f, m));
@@ -381,8 +337,7 @@ fun build_tag(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): u64 {
 fun make_handover(c: u8): HandoverPolicy {
     if (c == 0)      { handover_policy::new_handover_off() }
     else if (c == 1) { handover_policy::new_handover_fixed(phases::duration(HANDOVER_COUNTDOWN_C1)) }
-    else if (c == 2) { handover_policy::new_handover_full_tenure() }
-    else             { handover_policy::new_handover_random_in_range(phases::duration(HANDOVER_RANDOM_MIN_C3), phases::duration(HANDOVER_RANDOM_MAX_C3)) }
+    else             { handover_policy::new_handover_full_tenure() }
 }
 
 fun make_price_function_state(d: u8): PriceEscalationPolicy {
@@ -401,9 +356,8 @@ fun make_curve(e: u8): CurveShapePolicy {
 }
 
 fun make_descent(h: u8): AuctionWindowPolicy {
-    if (h == 0)      { auction_window_policy::new_descent_off() }
-    else if (h == 1) { auction_window_policy::new_descent_fixed(phases::duration(DESCENT_WINDOW_H1)) }
-    else             { auction_window_policy::new_descent_random_in_range(phases::duration(DESCENT_RANDOM_MIN_H2), phases::duration(DESCENT_RANDOM_MAX_H2)) }
+    if (h == 0) { auction_window_policy::new_descent_off() }
+    else        { auction_window_policy::new_descent_fixed(phases::duration(DESCENT_WINDOW_H1)) }
 }
 
 fun make_tenure_cycles(m: u8): TenureExtendPolicy {
@@ -495,19 +449,13 @@ fun collect_matching_m(es: vector<CorpusEntry>, m: u8): vector<CorpusEntry> {
 // Self-tests — require --gas-limit ≥ 100_000_000 for the full-corpus tests.
 
 #[test]
-fun all_has_672_entries() { assert!(all().length() == 672, 0); }
+fun all_has_336_entries() { assert!(all().length() == 336, 0); }
 
 #[test]
-fun all_single_has_336_entries() { assert!(all_single().length() == 336, 0); }
+fun all_single_has_168_entries() { assert!(all_single().length() == 168, 0); }
 
 #[test]
-fun all_multi_has_336_entries() { assert!(all_multi().length() == 336, 0); }
-
-#[test]
-fun all_random_handover_has_84_entries() { assert!(all_random_handover().length() == 84, 0); }
-
-#[test]
-fun all_random_descent_has_112_entries() { assert!(all_random_descent().length() == 112, 0); }
+fun all_multi_has_168_entries() { assert!(all_multi().length() == 168, 0); }
 
 #[test]
 fun all_tags_consistent_single() { assert_tags_consistent(all_single()); }
@@ -516,19 +464,7 @@ fun all_tags_consistent_single() { assert_tags_consistent(all_single()); }
 fun all_tags_consistent_multi() { assert_tags_consistent(all_multi()); }
 
 #[test]
-fun all_tags_consistent_random_handover() { assert_tags_consistent(all_random_handover()); }
-
-#[test]
-fun all_tags_consistent_random_descent() { assert_tags_consistent(all_random_descent()); }
-
-#[test]
 fun by_tag_roundtrips_single() { assert_by_tag_roundtrips(all_single()); }
 
 #[test]
 fun by_tag_roundtrips_multi() { assert_by_tag_roundtrips(all_multi()); }
-
-#[test]
-fun by_tag_roundtrips_random_handover() { assert_by_tag_roundtrips(all_random_handover()); }
-
-#[test]
-fun by_tag_roundtrips_random_descent() { assert_by_tag_roundtrips(all_random_descent()); }

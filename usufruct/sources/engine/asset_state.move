@@ -9,7 +9,6 @@ use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
     event,
-    random::{Random, RandomGenerator},
 };
 use usufruct::{
     asset_custody,
@@ -745,7 +744,6 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     fee_inbox_identity: FeeInboxIdentity,
     escrow_identity:    EscrowIdentity,
     integrated_at:      Timestamp,
-    generator:          &mut RandomGenerator,
     ctx:                &mut TxContext,
 ): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, OwnerCap) {
     let owner_addr         = ctx.sender();
@@ -754,10 +752,10 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let asset_id           = object::id(&asset);
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
     policy_ensemble::emit_registration(&ensemble, escrow_identity);
-    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble), generator);
-    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble), generator);
-    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble), ceiling, generator);
-    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble), generator);
+    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble));
+    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble));
+    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble), ceiling);
+    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble));
     let core = EscrowCore {
         owner:              owner_seat::new<CoinType>(owner_cap_identity),
         ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
@@ -784,14 +782,13 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
 public(package) fun execute_apply_pending_transition_states<Asset: key + store, CoinType>(
     s:        AssetState<Asset, CoinType>,
     mut core: EscrowCore<CoinType>,
-    random:   &Random,
     clock:    &Clock,
     ctx:      &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     let now = phases::now(clock);
     let s = step_handover(s, &mut core, now, ctx);
     let s = step_tenure_expiry(s, &mut core, now, ctx);
-    let s = step_auction_expiry(s, &mut core, random, now, ctx);
+    let s = step_auction_expiry(s, &mut core, now);
     (s, core)
 }
 
@@ -800,11 +797,10 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     core:    EscrowCore<CoinType>,
     payment: Coin<CoinType>,
     tenures:  Tenures,
-    random:   &Random,
     clock:    &Clock,
     ctx:      &mut TxContext,
 ): (RentingState<Asset, CoinType>, EscrowCore<CoinType>, TenantCap) {
-    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     tenure_extend_policy::validate(policy_ensemble::proj_tenure_extend(&core.ensemble.active), tenures);
     let now                = phases::now(clock);
     let escrow_identity    = core.escrow_identity;
@@ -845,14 +841,13 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
-    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
     let now = phases::now(clock);
     assert_commitment_elapsed(&core, now);
-    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     core.ensemble.pending = option::none();
     let escrow_identity = core.escrow_identity;
     let raw_escrow_id   = escrow_identity::escrow_id(escrow_identity);
@@ -882,12 +877,11 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     core:         EscrowCore<CoinType>,
     owner_cap:    &OwnerCap,
     new_ensemble: PolicyEnsemble,
-    random:       &Random,
     clock:        &Clock,
     ctx:          &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
-    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
@@ -895,11 +889,10 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_ensemble });
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
-            let mut generator = sui::random::new_generator(random, ctx);
-            let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&core.ensemble.active), &mut generator);
-            let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&core.ensemble.active), &mut generator);
-            let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&core.ensemble.active), ceiling, &mut generator);
-            let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&core.ensemble.active), &mut generator);
+            let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&core.ensemble.active));
+            let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&core.ensemble.active));
+            let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&core.ensemble.active), ceiling);
+            let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&core.ensemble.active));
             AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
         },
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
@@ -927,12 +920,11 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       EscrowCore<CoinType>,
     tenant_cap: &TenantCap,
-    random:     &Random,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt<Asset, CoinType>, EscrowCore<CoinType>) {
     assert_tenant_cap_binds(tenant_cap, &core);
-    let (s, core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     match (s) {
@@ -1005,12 +997,11 @@ public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
     s:    AssetState<Asset, CoinType>,
     core: EscrowCore<CoinType>,
     cap:  TenantCap,
-    random:   &Random,
     clock:    &Clock,
     ctx:      &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     assert_tenant_cap_binds(&cap, &core);
-    let (s, core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     let cap_identity = tenant_cap::identity(&cap);
     match (&s) {
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
@@ -1032,12 +1023,11 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
-    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>, Coin<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
-    let (s, mut core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     let timestamp_ms = clock::timestamp_ms(clock);
     let owner_cap_id = object::id(owner_cap);
     let owner_addr   = ctx.sender();
@@ -1081,12 +1071,11 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
-    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
-    let (s, core) = execute_apply_pending_transition_states(s, core, random, clock, ctx);
+    let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     match (s) {
         AssetState::Waiting(WaitingState::Retired { asset }) => {
             let EscrowCore { mut owner, escrow_identity, .. } = core;
@@ -1444,18 +1433,15 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
 }
 
 fun step_auction_expiry<Asset: key + store, CoinType>(
-    s:      AssetState<Asset, CoinType>,
-    core:   &mut EscrowCore<CoinType>,
-    random: &Random,
-    now:    Timestamp,
-    ctx:    &mut TxContext,
+    s:    AssetState<Asset, CoinType>,
+    core: &mut EscrowCore<CoinType>,
+    now:  Timestamp,
 ): AssetState<Asset, CoinType> {
     match (s) {
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
             if (proj_auction_is_firable(&auction, &cycle, now)) {
                 let boundary = auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start);
-                let mut generator = sui::random::new_generator(random, ctx);
-                AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary, &mut generator))
+                AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary))
             } else {
                 AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle })
             }
@@ -1519,7 +1505,6 @@ fun do_auction_expiry<Asset: key + store>(
     ensemble:        &mut EnsembleSlot,
     escrow_identity: EscrowIdentity,
     boundary:        Timestamp,
-    generator:       &mut RandomGenerator,
 ): WaitingState<Asset> {
     event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
     if (ensemble.pending.is_some()) {
@@ -1527,10 +1512,10 @@ fun do_auction_expiry<Asset: key + store>(
         event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_ensemble });
         ensemble.active = new_ensemble;
     };
-    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble.active), generator);
-    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble.active), generator);
-    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble.active), ceiling, generator);
-    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble.active), generator);
+    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble.active));
+    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble.active));
+    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble.active), ceiling);
+    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble.active));
     WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
 }
 
@@ -1725,14 +1710,13 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
 
 #[test_only]
 public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinType>(
-    state:     AssetState<Asset, CoinType>,
-    core:      &mut EscrowCore<CoinType>,
-    boundary:  Timestamp,
-    generator: &mut RandomGenerator,
+    state:    AssetState<Asset, CoinType>,
+    core:     &mut EscrowCore<CoinType>,
+    boundary: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
         AssetState::Waiting(WaitingState::AtDutch { asset, auction, .. }) =>
-            AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary, generator)),
+            AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary)),
         AssetState::Waiting(_ws) => abort ENotRented,
         AssetState::Renting(_rs) => abort ENotRented,
     }

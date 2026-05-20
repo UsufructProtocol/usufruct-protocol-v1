@@ -15,76 +15,34 @@ fun new_handover_fixed_rejects_zero() {
     handover_policy::new_handover_fixed(phases::duration(0));
 }
 
-#[test, expected_failure(abort_code = handover_policy::EHandoverFloorZero, location = usufruct::handover_policy)]
-fun new_handover_random_in_range_rejects_zero_min() {
-    handover_policy::new_handover_random_in_range(phases::duration(0), phases::duration(100));
-}
-
-#[test, expected_failure(abort_code = handover_policy::EMinNotLtMax, location = usufruct::handover_policy)]
-fun new_handover_random_in_range_rejects_min_eq_max() {
-    handover_policy::new_handover_random_in_range(phases::duration(50), phases::duration(50));
-}
-
-#[test, expected_failure(abort_code = handover_policy::EMinNotLtMax, location = usufruct::handover_policy)]
-fun new_handover_random_in_range_rejects_min_gt_max() {
-    handover_policy::new_handover_random_in_range(phases::duration(100), phases::duration(50));
-}
-
 // ─── resolve — deterministic variants ────────────────────────────────────────
 
 #[test]
 fun resolve_off_returns_zero() {
-    let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
     let result = handover_policy::compute_duration(
         &handover_policy::new_handover_off(),
         phases::duration(100),
-        &mut gen,
     );
     assert_eq!(phases::duration_ms(result), 0);
 }
 
 #[test]
 fun resolve_full_tenure_returns_ceiling() {
-    let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
     let ceiling = phases::duration(200);
     let result = handover_policy::compute_duration(
         &handover_policy::new_handover_full_tenure(),
         ceiling,
-        &mut gen,
     );
     assert_eq!(phases::duration_ms(result), 200);
 }
 
 #[test]
 fun resolve_fixed_returns_floor() {
-    let mut gen = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
     let result = handover_policy::compute_duration(
         &handover_policy::new_handover_fixed(phases::duration(42)),
         phases::duration(100),
-        &mut gen,
     );
     assert_eq!(phases::duration_ms(result), 42);
-}
-
-#[test]
-fun resolve_random_in_range_draws_in_bounds() {
-    let min: u64 = 10;
-    let max: u64 = 50;
-    let policy = handover_policy::new_handover_random_in_range(
-        phases::duration(min),
-        phases::duration(max),
-    );
-    let seeds = vector[
-        vector[0u8], vector[1u8], vector[2u8], vector[3u8], vector[7u8],
-    ];
-    let mut i = 0;
-    while (i < seeds.length()) {
-        let mut gen = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
-        let result = handover_policy::compute_duration(&policy, phases::duration(200), &mut gen);
-        let ms = phases::duration_ms(result);
-        assert!(ms >= min && ms <= max, 0);
-        i = i + 1;
-    };
 }
 
 // ─── compute_countdown_floor_lt ───────────────────────────────────────────────────────
@@ -107,10 +65,6 @@ fun fixed_floor_lt_table() {
         FixedFloorLtCase { policy: handover_policy::new_handover_fixed(phases::duration(99)),  ceiling: 100, expected: true  },
         FixedFloorLtCase { policy: handover_policy::new_handover_fixed(phases::duration(100)), ceiling: 100, expected: false },
         FixedFloorLtCase { policy: handover_policy::new_handover_fixed(phases::duration(101)), ceiling: 100, expected: false },
-        // RandomInRange — uses max for conservative validation
-        FixedFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(50)), ceiling: 100, expected: true  },
-        FixedFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(99)), ceiling: 100, expected: true  },
-        FixedFloorLtCase { policy: handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100)), ceiling: 100, expected: false },
     ];
     cases.do_ref!(|c| {
         assert_eq!(handover_policy::compute_countdown_floor_lt(&c.policy, phases::duration(c.ceiling)), c.expected);
@@ -299,10 +253,7 @@ fun projectors_off_variant() {
     assert!(p.proj_is_off());
     assert!(!p.proj_is_full_tenure());
     assert!(!p.proj_is_fixed());
-    assert!(!p.proj_is_random_in_range());
     assert!(p.proj_fixed_floor_ms().is_none());
-    assert!(p.proj_range_min().is_none());
-    assert!(p.proj_range_max().is_none());
 }
 
 #[test]
@@ -311,10 +262,7 @@ fun projectors_full_tenure_variant() {
     assert!(!p.proj_is_off());
     assert!(p.proj_is_full_tenure());
     assert!(!p.proj_is_fixed());
-    assert!(!p.proj_is_random_in_range());
     assert!(p.proj_fixed_floor_ms().is_none());
-    assert!(p.proj_range_min().is_none());
-    assert!(p.proj_range_max().is_none());
 }
 
 #[test]
@@ -323,20 +271,5 @@ fun projectors_fixed_variant() {
     assert!(!p.proj_is_off());
     assert!(!p.proj_is_full_tenure());
     assert!(p.proj_is_fixed());
-    assert!(!p.proj_is_random_in_range());
     assert_eq!(phases::duration_ms(p.proj_fixed_floor_ms().destroy_some()), 42);
-    assert!(p.proj_range_min().is_none());
-    assert!(p.proj_range_max().is_none());
-}
-
-#[test]
-fun projectors_random_in_range_variant() {
-    let p = handover_policy::new_handover_random_in_range(phases::duration(10), phases::duration(100));
-    assert!(!p.proj_is_off());
-    assert!(!p.proj_is_full_tenure());
-    assert!(!p.proj_is_fixed());
-    assert!(p.proj_is_random_in_range());
-    assert!(p.proj_fixed_floor_ms().is_none());
-    assert_eq!(phases::duration_ms(p.proj_range_min().destroy_some()), 10);
-    assert_eq!(phases::duration_ms(p.proj_range_max().destroy_some()), 100);
 }

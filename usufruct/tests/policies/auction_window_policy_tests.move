@@ -48,8 +48,7 @@ fun has_expired_table() {
         HasExpiredCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 0, now: 50, expected: true  },
     ];
     cases.do_ref!(|c| {
-        let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-        let resolved = auction_window_policy::compute_duration(&c.policy, &mut gen);
+        let resolved = auction_window_policy::compute_duration(&c.policy);
         assert_eq!(auction_window_policy::compute_expiry_boundary(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).proj_is_crossed(), c.expected);
     });
 }
@@ -76,8 +75,7 @@ fun expiry_at_table() {
         ExpiryAtCase { policy: auction_window_policy::new_descent_fixed(phases::duration(9_999)), phase_start: 1,   expected: 10_000 },
     ];
     cases.do_ref!(|c| {
-        let mut gen  = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-        let resolved = auction_window_policy::compute_duration(&c.policy, &mut gen);
+        let resolved = auction_window_policy::compute_duration(&c.policy);
         assert_eq!(phases::timestamp_ms(auction_window_policy::compute_expiry_at(resolved, phases::timestamp(c.phase_start))), c.expected);
     });
 }
@@ -140,106 +138,10 @@ fun has_expired_iff_now_ge_expiry_at() {
         DeSisterCase { policy: auction_window_policy::new_descent_fixed(phases::duration(50)), phase_start: 0, now: 50 },
     ];
     cases.do_ref!(|c| {
-        let mut gen   = sui::random::new_generator_from_seed_for_testing(vector[0u8]);
-        let resolved  = auction_window_policy::compute_duration(&c.policy, &mut gen);
+        let resolved  = auction_window_policy::compute_duration(&c.policy);
         let bool_view = auction_window_policy::compute_expiry_boundary(resolved, phases::timestamp(c.phase_start), phases::timestamp(c.now)).proj_is_crossed();
         let u64_view  = c.now >= phases::timestamp_ms(auction_window_policy::compute_expiry_at(resolved, phases::timestamp(c.phase_start)));
         assert_eq!(bool_view, u64_view);
     });
 }
 
-// ─── RandomInRange — constructors ─────────────────────────────────────────────
-
-#[test, expected_failure(abort_code = auction_window_policy::EDescentCeilingZero, location = usufruct::auction_window_policy)]
-fun new_descent_random_in_range_rejects_zero_min() {
-    auction_window_policy::new_descent_random_in_range(phases::duration(0), phases::duration(100));
-}
-
-#[test, expected_failure(abort_code = auction_window_policy::EMinNotLtMax, location = usufruct::auction_window_policy)]
-fun new_descent_random_in_range_rejects_min_eq_max() {
-    auction_window_policy::new_descent_random_in_range(phases::duration(50), phases::duration(50));
-}
-
-#[test, expected_failure(abort_code = auction_window_policy::EMinNotLtMax, location = usufruct::auction_window_policy)]
-fun new_descent_random_in_range_rejects_min_gt_max() {
-    auction_window_policy::new_descent_random_in_range(phases::duration(100), phases::duration(50));
-}
-
-// ─── RandomInRange — resolve draws in bounds ──────────────────────────────────
-
-#[test]
-fun resolve_random_in_range_draws_in_bounds() {
-    let min: u64 = 10;
-    let max: u64 = 50;
-    let policy = auction_window_policy::new_descent_random_in_range(
-        phases::duration(min),
-        phases::duration(max),
-    );
-    let seeds = vector[vector[0u8], vector[1u8], vector[2u8], vector[3u8], vector[7u8]];
-    let mut i = 0;
-    while (i < seeds.length()) {
-        let mut gen = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
-        let result  = auction_window_policy::compute_duration(&policy, &mut gen);
-        let ms      = phases::duration_ms(result);
-        assert!(ms >= min && ms <= max, 0);
-        i = i + 1;
-    };
-}
-
-// ─── RandomInRange — compute_expiry_at is in [phase+min, phase+max] ──────────────────
-
-#[test]
-fun random_in_range_expiry_at_within_bounds() {
-    let min: u64 = 10;
-    let max: u64 = 100;
-    let phase_start: u64 = 500;
-    let policy = auction_window_policy::new_descent_random_in_range(
-        phases::duration(min),
-        phases::duration(max),
-    );
-    let seeds = vector[vector[0u8], vector[1u8], vector[4u8], vector[9u8]];
-    let mut i = 0;
-    while (i < seeds.length()) {
-        let mut gen  = sui::random::new_generator_from_seed_for_testing(*seeds.borrow(i));
-        let resolved = auction_window_policy::compute_duration(&policy, &mut gen);
-        let expiry   = phases::timestamp_ms(auction_window_policy::compute_expiry_at(resolved, phases::timestamp(phase_start)));
-        assert!(expiry >= phase_start + min, 0);
-        assert!(expiry <= phase_start + max, 1);
-        i = i + 1;
-    };
-}
-
-// ─── projectors ──────────────────────────────────────────────────────────────
-
-#[test]
-fun projectors_off_variant() {
-    let p = auction_window_policy::new_descent_off();
-    assert!(p.proj_is_off());
-    assert!(!p.proj_is_fixed());
-    assert!(!p.proj_is_random_in_range());
-    assert!(p.proj_fixed_ceiling().is_none());
-    assert!(p.proj_range_min().is_none());
-    assert!(p.proj_range_max().is_none());
-}
-
-#[test]
-fun projectors_window_variant() {
-    let p = auction_window_policy::new_descent_fixed(phases::duration(75));
-    assert!(!p.proj_is_off());
-    assert!(p.proj_is_fixed());
-    assert!(!p.proj_is_random_in_range());
-    assert_eq!(phases::duration_ms(p.proj_fixed_ceiling().destroy_some()), 75);
-    assert!(p.proj_range_min().is_none());
-    assert!(p.proj_range_max().is_none());
-}
-
-#[test]
-fun projectors_random_in_range_variant() {
-    let p = auction_window_policy::new_descent_random_in_range(phases::duration(20), phases::duration(80));
-    assert!(!p.proj_is_off());
-    assert!(!p.proj_is_fixed());
-    assert!(p.proj_is_random_in_range());
-    assert!(p.proj_fixed_ceiling().is_none());
-    assert_eq!(phases::duration_ms(p.proj_range_min().destroy_some()), 20);
-    assert_eq!(phases::duration_ms(p.proj_range_max().destroy_some()), 80);
-}

@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-#[allow(lint(public_random))]
 module usufruct::escrow;
 
 // === Imports ===
@@ -10,7 +9,6 @@ use std::type_name::{Self, TypeName};
 use sui::{
     clock::Clock,
     coin::Coin,
-    random::Random,
 };
 use usufruct::{
     policy_ensemble::{Self, PolicyEnsemble},
@@ -56,21 +54,18 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 
 public fun integrate<Asset: key + store, CoinType>(
     asset:      Asset,
-    ensemble:        PolicyEnsemble,
+    ensemble:   PolicyEnsemble,
     commitment: CommitmentPolicy,
     fee_ref:    &ProtocolFeeRef,
-    random:     &Random,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): OwnerCap {
-    let uid           = object::new(ctx);
-    let mut generator = sui::random::new_generator(random, ctx);
+    let uid             = object::new(ctx);
     let (core, state, owner_cap) = asset_state::execute_integrate<Asset, CoinType>(
         asset, ensemble, commitment,
         protocol_fee_ref::proj_inbox_identity(fee_ref),
         escrow_identity::new(object::uid_to_inner(&uid)),
         phases::now(clock),
-        &mut generator,
         ctx,
     );
     transfer::share_object(Escrow<Asset, CoinType> {
@@ -84,13 +79,12 @@ public fun integrate<Asset: key + store, CoinType>(
 public fun withdraw_earnings<Asset: key + store, CoinType>(
     escrow:    &mut Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
-    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Coin<CoinType> {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core, coin) = asset_state::execute_withdraw_earnings(state, core, owner_cap, random, clock, ctx);
+    let (new_state, new_core, coin) = asset_state::execute_withdraw_earnings(state, core, owner_cap, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
     coin
@@ -99,13 +93,12 @@ public fun withdraw_earnings<Asset: key + store, CoinType>(
 public fun claim_asset<Asset: key + store, CoinType>(
     escrow:    Escrow<Asset, CoinType>,
     owner_cap: OwnerCap,
-    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (Asset, Coin<CoinType>) {
     let Escrow { id, core, state } = escrow;
     let core_val          = core.destroy_some();
-    let (asset, earnings) = asset_state::execute_claim(state.destroy_some(), core_val, &owner_cap, random, clock, ctx);
+    let (asset, earnings) = asset_state::execute_claim(state.destroy_some(), core_val, &owner_cap, clock, ctx);
     owner_cap::burn(owner_cap, ctx.sender());
     id.delete();
     (asset, earnings)
@@ -114,13 +107,12 @@ public fun claim_asset<Asset: key + store, CoinType>(
 public fun retire<Asset: key + store, CoinType>(
     escrow:    &mut Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
-    random:    &Random,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_retire(state, core, owner_cap, random, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_retire(state, core, owner_cap, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
@@ -137,16 +129,15 @@ public fun extend_commitment<Asset: key + store, CoinType>(
 }
 
 public fun update_config<Asset: key + store, CoinType>(
-    escrow:    &mut Escrow<Asset, CoinType>,
-    owner_cap: &OwnerCap,
-    new_ensemble:   PolicyEnsemble,
-    random:    &Random,
-    clock:     &Clock,
-    ctx:       &mut TxContext,
+    escrow:       &mut Escrow<Asset, CoinType>,
+    owner_cap:    &OwnerCap,
+    new_ensemble: PolicyEnsemble,
+    clock:        &Clock,
+    ctx:          &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_update_config(state, core, owner_cap, new_ensemble, random, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_update_config(state, core, owner_cap, new_ensemble, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
@@ -155,13 +146,12 @@ public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut Escrow<Asset, CoinType>,
     payment: Coin<CoinType>,
     cycles:  Tenures,
-    random:  &Random,
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): TenantCap {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (rs, new_core, cap) = asset_state::execute_rent(state, core, payment, cycles, random, clock, ctx);
+    let (rs, new_core, cap) = asset_state::execute_rent(state, core, payment, cycles, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, asset_state::renting_into_state(rs));
     cap
@@ -170,13 +160,12 @@ public fun rent<Asset: key + store, CoinType>(
 public fun borrow_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     tenant_cap: &TenantCap,
-    random:     &Random,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt<Asset, CoinType>) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (asset, receipt, new_core) = asset_state::execute_borrow(state, core, tenant_cap, random, clock, ctx);
+    let (asset, receipt, new_core) = asset_state::execute_borrow(state, core, tenant_cap, clock, ctx);
     put_core(escrow, new_core);
     (asset, receipt)
 }
@@ -194,13 +183,12 @@ public fun return_asset<Asset: key + store, CoinType>(
 public fun soft_burn_tenant_cap<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
     cap:    TenantCap,
-    random: &Random,
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_soft_burn_tenant_cap(state, core, cap, random, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_soft_burn_tenant_cap(state, core, cap, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
@@ -211,13 +199,12 @@ public fun hard_burn_tenant_cap(cap: TenantCap, ctx: &mut TxContext) {
 
 public fun apply_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
-    random: &Random,
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_apply_pending_transition_states(state, core, random, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_apply_pending_transition_states(state, core, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
@@ -689,40 +676,12 @@ public fun tenure_ceiling_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow
     tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
 }
 
-public fun tenure_ceiling_is_random_in_range<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    tenure_duration_policy::proj_is_random_in_range(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
-}
-
 public fun tenure_ceiling_fixed_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
     tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
-public fun tenure_ceiling_range_min_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    tenure_duration_policy::proj_range_min(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
-}
-
-public fun tenure_ceiling_range_max_ms<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    tenure_duration_policy::proj_range_max(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
-}
-
-public fun min_rent_price_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    rest_price_policy::proj_is_fixed(policy_ensemble::proj_rest_price(read_ensemble(escrow)))
-}
-
-public fun min_rent_price_is_random_in_range<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
-    rest_price_policy::proj_is_random_in_range(policy_ensemble::proj_rest_price(read_ensemble(escrow)))
-}
-
 public fun min_rent_price_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
     rest_price_policy::proj_fixed_price(policy_ensemble::proj_rest_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
-}
-
-public fun min_rent_price_range_min_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    rest_price_policy::proj_range_min(policy_ensemble::proj_rest_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
-}
-
-public fun min_rent_price_range_max_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
-    rest_price_policy::proj_range_max(policy_ensemble::proj_rest_price(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
 public fun credit_shape_is_linear<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
@@ -997,9 +956,8 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     escrow:   &mut Escrow<Asset, CoinType>,
     boundary: phases::Timestamp,
 ) {
-    let mut generator = sui::random::new_generator_from_seed_for_testing(vector[0u8, 1u8]);
     let state = take_state(escrow);
-    let new_state = asset_state::fire_do_auction_expiry_for_testing(state, escrow.core.borrow_mut(), boundary, &mut generator);
+    let new_state = asset_state::fire_do_auction_expiry_for_testing(state, escrow.core.borrow_mut(), boundary);
     put_state(escrow, new_state);
 }
 

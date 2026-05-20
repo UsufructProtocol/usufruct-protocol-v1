@@ -1,18 +1,15 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-#[allow(lint(public_random))]
 module usufruct::handover_policy;
 
 // === Imports ===
 
-use sui::random::RandomGenerator;
 use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 // === Errors ===
 
 const EHandoverFloorZero: u64 = 0;
-const EMinNotLtMax:       u64 = 1;
 
 // === Constants ===
 
@@ -23,8 +20,7 @@ const EMinNotLtMax:       u64 = 1;
 public enum HandoverPolicy has copy, drop, store {
     Off,
     FullTenure,
-    Fixed          { floor: Duration },
-    RandomInRange  { min: Duration, max: Duration },
+    Fixed { floor: Duration },
 }
 
 // === Events ===
@@ -41,12 +37,6 @@ public fun new_handover_fixed(floor: Duration): HandoverPolicy {
     HandoverPolicy::Fixed { floor }
 }
 
-public fun new_handover_random_in_range(min: Duration, max: Duration): HandoverPolicy {
-    assert!(phases::duration_ms(min) > 0, EHandoverFloorZero);
-    assert!(phases::duration_ms(min) < phases::duration_ms(max), EMinNotLtMax);
-    HandoverPolicy::RandomInRange { min, max }
-}
-
 // === View Functions ===
 
 public(package) fun proj_is_off(policy: &HandoverPolicy): bool {
@@ -58,24 +48,9 @@ public(package) fun proj_is_full_tenure(policy: &HandoverPolicy): bool {
 public(package) fun proj_is_fixed(policy: &HandoverPolicy): bool {
     match (policy) { HandoverPolicy::Fixed { .. } => true, _ => false }
 }
-public(package) fun proj_is_random_in_range(policy: &HandoverPolicy): bool {
-    match (policy) { HandoverPolicy::RandomInRange { .. } => true, _ => false }
-}
 public(package) fun proj_fixed_floor_ms(policy: &HandoverPolicy): Option<Duration> {
     match (policy) {
         HandoverPolicy::Fixed { floor } => option::some(*floor),
-        _ => option::none(),
-    }
-}
-public(package) fun proj_range_min(policy: &HandoverPolicy): Option<Duration> {
-    match (policy) {
-        HandoverPolicy::RandomInRange { min, .. } => option::some(*min),
-        _ => option::none(),
-    }
-}
-public(package) fun proj_range_max(policy: &HandoverPolicy): Option<Duration> {
-    match (policy) {
-        HandoverPolicy::RandomInRange { max, .. } => option::some(*max),
         _ => option::none(),
     }
 }
@@ -86,27 +61,16 @@ public(package) fun proj_range_max(policy: &HandoverPolicy): Option<Duration> {
 
 public(package) fun compute_countdown_floor_lt(policy: &HandoverPolicy, ceiling: Duration): bool {
     match (policy) {
-        HandoverPolicy::Fixed { floor }       => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
-        HandoverPolicy::RandomInRange { max, .. } => phases::duration_ms(*max)   < phases::duration_ms(ceiling),
+        HandoverPolicy::Fixed { floor }          => phases::duration_ms(*floor) < phases::duration_ms(ceiling),
         HandoverPolicy::Off | HandoverPolicy::FullTenure => true,
     }
 }
 
-public(package) fun compute_duration(
-    policy:    &HandoverPolicy,
-    ceiling:   Duration,
-    generator: &mut RandomGenerator,
-): Duration {
+public(package) fun compute_duration(policy: &HandoverPolicy, ceiling: Duration): Duration {
     match (policy) {
-        HandoverPolicy::Off                    => phases::zero(),
-        HandoverPolicy::FullTenure                  => ceiling,
-        HandoverPolicy::Fixed { floor }        => *floor,
-        HandoverPolicy::RandomInRange { min, max } => phases::duration(
-            generator.generate_u64_in_range(
-                phases::duration_ms(*min),
-                phases::duration_ms(*max),
-            )
-        ),
+        HandoverPolicy::Off            => phases::zero(),
+        HandoverPolicy::FullTenure     => ceiling,
+        HandoverPolicy::Fixed { floor } => *floor,
     }
 }
 
@@ -145,6 +109,4 @@ public(package) fun compute_expiry_at(
 
 #[test_only]
 public fun e_handover_floor_zero(): u64 { EHandoverFloorZero }
-#[test_only]
-public fun e_min_not_lt_max(): u64 { EMinNotLtMax }
 

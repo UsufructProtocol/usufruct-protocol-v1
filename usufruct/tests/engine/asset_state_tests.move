@@ -8,7 +8,6 @@ use sui::{
     balance,
     clock,
     coin,
-    random::{Self, Random},
     sui::SUI,
     test_scenario::{Self, Scenario},
 };
@@ -38,7 +37,6 @@ public struct DemoAsset has key, store { id: UID }
 
 fun setup(): Scenario {
     let mut sc = test_scenario::begin(@0x0);
-    { random::create_for_testing(sc.ctx()); };
     sc.next_tx(OWNER);
     { protocol_fee_inbox::init_for_testing(sc.ctx()); };
     sc
@@ -65,14 +63,12 @@ fun integrate_and_take_with_cfg(
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
-    let rnd     = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset,
         ensemble,
         commitment_policy::new_immediate(),
-        &fee_ref, &rnd, &clk, sc.ctx(),
+        &fee_ref, &clk, sc.ctx(),
     );
-    test_scenario::return_shared(rnd);
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
@@ -127,14 +123,12 @@ fun claim_asset_aborts_in_at_dutch_state() {
 
     let escrow = retake_escrow_by_value(escrow, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
-    let (asset, earnings) = escrow::claim_asset(escrow, cap, &rnd, &clk, sc.ctx());
+    let (asset, earnings) = escrow::claim_asset(escrow, cap, &clk, sc.ctx());
 
     // Unreachable — claim_asset aborts above. Bindings only satisfy the
     // type checker; expected_failure makes the abort the success path.
     coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -152,12 +146,10 @@ fun claim_asset_aborts_in_occupied_state() {
 
     let escrow = retake_escrow_by_value(escrow, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
-    let (asset, earnings) = escrow::claim_asset(escrow, cap, &rnd, &clk, sc.ctx());
+    let (asset, earnings) = escrow::claim_asset(escrow, cap, &clk, sc.ctx());
 
     coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -180,12 +172,10 @@ fun claim_asset_aborts_in_demand_state() {
 
     let escrow = retake_escrow_by_value(escrow, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
-    let (asset, earnings) = escrow::claim_asset(escrow, cap, &rnd, &clk, sc.ctx());
+    let (asset, earnings) = escrow::claim_asset(escrow, cap, &clk, sc.ctx());
 
     coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -217,21 +207,19 @@ fun borrow_asset_aborts_in_at_dutch_state() {
     escrow::drive_to_at_dutch_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
 
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
     let foreign_cap = tenant_cap::new(
         escrow_identity::new(object::id(&escrow)),
         TENANT_ADDR_1,
         sc.ctx(),
     );
 
-    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &rnd, &clk, sc.ctx());
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
 
     transfer::public_transfer(asset, OWNER);
     asset_state::destroy_receipt_for_testing(receipt);
     transfer::public_transfer(foreign_cap, OWNER);
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -244,21 +232,19 @@ fun borrow_asset_aborts_in_retired_state() {
     escrow::drive_to_retired_for_testing(&mut escrow);
 
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
     let foreign_cap = tenant_cap::new(
         escrow_identity::new(object::id(&escrow)),
         TENANT_ADDR_1,
         sc.ctx(),
     );
 
-    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &rnd, &clk, sc.ctx());
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
 
     transfer::public_transfer(asset, OWNER);
     asset_state::destroy_receipt_for_testing(receipt);
     transfer::public_transfer(foreign_cap, OWNER);
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -294,7 +280,6 @@ fun burn_foreign_cap_in_retired_aborts() {
     escrow::drive_to_retired_for_testing(&mut escrow);
 
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
 
     // Cap issued by some other escrow (here a synthetic identity); the
     // Retired state of `escrow` must not be a backdoor for burning it.
@@ -304,11 +289,10 @@ fun burn_foreign_cap_in_retired_aborts() {
         sc.ctx(),
     );
 
-    escrow::soft_burn_tenant_cap(&mut escrow, foreign, &rnd, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, foreign, &clk, sc.ctx());
 
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -325,23 +309,21 @@ fun burn_live_current_cap_in_demand_aborts() {
         &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
 
     // Rent #1: Idle → Occupied. cap_t1 becomes current.
     let p1     = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     // Rent #2: Occupied → Demand (place_bid). cap_t2 becomes pending,
     // cap_t1 stays current.
     let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::compute_floor_price(&escrow, &clk)), sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
 
     // Burn the live current cap — must abort.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &rnd, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -354,24 +336,22 @@ fun burn_live_pending_cap_in_demand_aborts() {
         &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
 
     let p1     = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::compute_floor_price(&escrow, &clk)), sc.ctx());
-    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
 
     // Burn the live pending cap — must abort. This case is distinct
     // from current: pending lives only in Demand. In the legacy form
     // both checks lived in the `cap_auth_for_tenancy` match; in the
     // typed-states form `pending` is a direct field of the Demand
     // storage variant, so the assert is per-arm and per-field.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &rnd, &clk, sc.ctx());
+    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -387,16 +367,15 @@ fun double_borrow_aborts() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(&mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
 
     let p = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap = escrow::rent(&mut escrow, p, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, p, tenures::tenures(1), &clk, sc.ctx());
 
     // First borrow — succeeds, slot is now empty.
-    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &clk, sc.ctx());
 
     // Second borrow — must abort EAssetBorrowed.
-    let (asset2, receipt2) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
+    let (asset2, receipt2) = escrow::borrow_asset(&mut escrow, &t_cap, &clk, sc.ctx());
 
     // Unreachable — consumed only to satisfy the type checker.
     escrow::return_asset(&mut escrow, asset, receipt);
@@ -404,7 +383,6 @@ fun double_borrow_aborts() {
     transfer::public_transfer(t_cap, OWNER);
     test_scenario::return_shared(escrow);
     transfer::public_transfer(cap, OWNER);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -426,16 +404,15 @@ fun cross_escrow_return_with_authentic_receipt_aborts() {
     let (mut escrow_a, cap_a) = integrate_and_take(&mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take_with_cfg(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
 
     // Rent on both escrows so they are in Occupied state.
     let p_a = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap_a = escrow::rent(&mut escrow_a, p_a, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let t_cap_a = escrow::rent(&mut escrow_a, p_a, tenures::tenures(1), &clk, sc.ctx());
     let p_b = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap_b = escrow::rent(&mut escrow_b, p_b, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let t_cap_b = escrow::rent(&mut escrow_b, p_b, tenures::tenures(1), &clk, sc.ctx());
 
     // Borrow from A — receipt_a carries escrow_a's identity.
-    let (asset_a, receipt_a) = escrow::borrow_asset(&mut escrow_a, &t_cap_a, &rnd, &clk, sc.ctx());
+    let (asset_a, receipt_a) = escrow::borrow_asset(&mut escrow_a, &t_cap_a, &clk, sc.ctx());
 
     // Attempt to return asset_a to escrow_b using receipt_a — must abort.
     escrow::return_asset(&mut escrow_b, asset_a, receipt_a);
@@ -446,7 +423,6 @@ fun cross_escrow_return_with_authentic_receipt_aborts() {
     test_scenario::return_shared(escrow_b);
     transfer::public_transfer(cap_a, OWNER);
     transfer::public_transfer(cap_b, OWNER);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -463,15 +439,14 @@ fun cross_borrow_asset_swap_aborts() {
     let (mut escrow_a, cap_a) = integrate_and_take(&mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take_with_cfg(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
 
     let p_a = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap_a = escrow::rent(&mut escrow_a, p_a, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let t_cap_a = escrow::rent(&mut escrow_a, p_a, tenures::tenures(1), &clk, sc.ctx());
     let p_b = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap_b = escrow::rent(&mut escrow_b, p_b, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let t_cap_b = escrow::rent(&mut escrow_b, p_b, tenures::tenures(1), &clk, sc.ctx());
 
-    let (asset_a, receipt_a) = escrow::borrow_asset(&mut escrow_a, &t_cap_a, &rnd, &clk, sc.ctx());
-    let (asset_b, receipt_b) = escrow::borrow_asset(&mut escrow_b, &t_cap_b, &rnd, &clk, sc.ctx());
+    let (asset_a, receipt_a) = escrow::borrow_asset(&mut escrow_a, &t_cap_a, &clk, sc.ctx());
+    let (asset_b, receipt_b) = escrow::borrow_asset(&mut escrow_b, &t_cap_b, &clk, sc.ctx());
 
     // Return asset_b to escrow_a with receipt_a:
     //   receipt_a.escrow_id = A  == A          ← passes check 1
@@ -486,7 +461,6 @@ fun cross_borrow_asset_swap_aborts() {
     test_scenario::return_shared(escrow_b);
     transfer::public_transfer(cap_a, OWNER);
     transfer::public_transfer(cap_b, OWNER);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -498,12 +472,11 @@ fun return_with_swapped_asset_aborts() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(&mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let rnd = sc.take_shared<Random>();
 
     let p = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
-    let t_cap = escrow::rent(&mut escrow, p, tenures::tenures(1), &rnd, &clk, sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, p, tenures::tenures(1), &clk, sc.ctx());
 
-    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &rnd, &clk, sc.ctx());
+    let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &clk, sc.ctx());
     // Sink the borrowed asset; present a fresh object with the authentic receipt.
     transfer::public_transfer(asset, OWNER);
     let swapped = mk_demo_asset(sc.ctx());
@@ -512,7 +485,6 @@ fun return_with_swapped_asset_aborts() {
     transfer::public_transfer(t_cap, OWNER);
     test_scenario::return_shared(escrow);
     transfer::public_transfer(cap, OWNER);
-    test_scenario::return_shared(rnd);
     clock::destroy_for_testing(clk);
     sc.end();
 }

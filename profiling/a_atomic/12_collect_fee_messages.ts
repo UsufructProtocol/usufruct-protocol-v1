@@ -44,7 +44,7 @@ import { clock } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
-const N_MAX    = parseInt(process.argv[2] ?? '500', 10);
+const N_MAX    = parseInt(process.argv[2] ?? '50', 10);
 const N_VALUES = [1, 10, 50, 100, 500, 1000, 5000, 10000].filter(n => n <= N_MAX);
 const MAX_BATCH = 500; // max tickets per collect_fee_messages PTB
 

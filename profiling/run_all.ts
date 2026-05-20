@@ -17,6 +17,9 @@ const phase = process.argv.find(a => a.startsWith('--phase='))?.split('=')[1];
 const A_SCRIPTS = [
   'a_atomic/01_integrate.ts',
   'a_atomic/02_rent.ts',
+  'a_atomic/02b_rent_multi_tenure.ts 1',
+  'a_atomic/02b_rent_multi_tenure.ts 10',
+  'a_atomic/02b_rent_multi_tenure.ts 100',
   'a_atomic/03_borrow_return.ts',
   'a_atomic/04_soft_burn.ts',
   'a_atomic/05_hard_burn.ts',
@@ -33,9 +36,9 @@ const B_SCRIPTS = [
   'b_flows/01_minimal.ts',
   'b_flows/02_asset_lifecycle.ts',
   'b_flows/03_handover.ts',
-  'b_flows/04_multi_tenure.ts 3',
-  'b_flows/04_multi_tenure.ts 5',
-  'b_flows/04_multi_tenure.ts 10',
+  'b_flows/04_sequential_rents.ts 3',
+  'b_flows/04_sequential_rents.ts 5',
+  'b_flows/04_sequential_rents.ts 10',
   'b_flows/05_earnings.ts',
 ];
 

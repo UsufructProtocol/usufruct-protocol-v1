@@ -5,6 +5,6 @@ license = "Apache-2.0"
 authors = ["Antonio Jiménez <build@0xkurious.xyz>"]
 
 [environments]
-localnet = "9e592f3d"
+localnet = "e62bf6b6"
 
 [dependencies]

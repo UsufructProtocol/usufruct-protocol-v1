@@ -66,13 +66,15 @@ function withPatchedToml<T>(
     );
   }
 
-  // Add [environments] section if not present for this alias
+  // Add or replace [environments] entry for this alias
   const envEntry = `${alias} = "${chainId}"`;
-  if (!patched.includes(envEntry)) {
-    const hasSection = patched.includes('[environments]');
-    patched = hasSection
-      ? patched.replace('[environments]', `[environments]\n${envEntry}`)
-      : patched + `\n[environments]\n${envEntry}\n`;
+  const aliasPattern = new RegExp(`${alias}\\s*=\\s*"[^"]*"`);
+  if (aliasPattern.test(patched)) {
+    patched = patched.replace(aliasPattern, envEntry);
+  } else if (patched.includes('[environments]')) {
+    patched = patched.replace('[environments]', `[environments]\n${envEntry}`);
+  } else {
+    patched = patched + `\n[environments]\n${envEntry}\n`;
   }
 
   writeFileSync(moveTomlPath, patched);

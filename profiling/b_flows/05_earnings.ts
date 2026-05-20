@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 /**
  * Phase B / 05 — Earnings withdrawal per tenure
- * Flow: integrate → N × (rent → withdraw_earnings → soft_burn) → retire → claim
- * Shows the overhead of owner collecting earnings after every tenure.
+ * Flow: integrate → N × (rent → wait → apply → withdraw) → retire → apply → claim
+ * Shows overhead of collecting earnings after each tenure.
  */
 
 import { resolve, dirname } from 'path';
@@ -10,10 +10,10 @@ import { fileURLToPath }  from 'url';
 import { Transaction }    from '@mysten/sui/transactions';
 import { writeFileSync }  from 'fs';
 import {
-  loadDeployment, loadKeypairs, makeClient,
+  loadDeployment, loadKeypairs, makeClient, FLOOR_PRICE_MIST,
 } from '../env.ts';
 import { measure } from '../measure.ts';
-import { buildIntegrate, buildRent, buildHandoverEnsemble, clock, random } from '../builders.ts';
+import { buildIntegrate, buildFlowEnsemble, clock, random } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const N   = 3;
@@ -33,10 +33,7 @@ async function main() {
   // integrate
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const ownerCap = buildIntegrate(
-    tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId,
-    buildHandoverEnsemble,
-  );
+  const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
   tx1.transferObjects([ownerCap], d.owner.address);
   const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
   steps.push(r1);
@@ -49,17 +46,35 @@ async function main() {
   for (let i = 0; i < N; i++) {
     const kpT  = i % 2 === 0 ? kp.tenant1 : kp.tenant2;
     const addr = i % 2 === 0 ? d.tenant1.address : d.tenant2.address;
+    const payAmt = FLOOR_PRICE_MIST + BigInt(i);
 
     // rent
     const txRent = new Transaction();
     txRent.setSender(addr);
-    const cap = buildRent(txRent, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
+    const [pay] = txRent.splitCoins(txRent.gas, [txRent.pure.u64(payAmt)]);
+    const cyc  = txRent.moveCall({ target: `${d.usufructPackageId}::tenures::tenures`, arguments: [txRent.pure.u64(1n)] });
+    const cap  = txRent.moveCall({
+      target: `${d.usufructPackageId}::escrow::rent`,
+      typeArguments: typeArgs,
+      arguments: [txRent.object(escrowId), pay, cyc, random(txRent), clock(txRent)],
+    });
     txRent.transferObjects([cap], addr);
     const rRent = await measure(client, kpT, `rent_${i}`, 0, txRent);
     steps.push(rRent);
 
-    const cRent = (await client.getTransactionBlock({ digest: rRent.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
-    const capId = (cRent.find(c => c.type === 'created' && (c as any).objectType?.includes('TenantCap')) as any).objectId;
+    // wait for tenure to expire
+    await new Promise(r => setTimeout(r, 12000));
+
+    // apply (settles tenure, releases earnings)
+    const txApp = new Transaction();
+    txApp.setSender(d.owner.address);
+    txApp.moveCall({
+      target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
+      typeArguments: typeArgs,
+      arguments: [txApp.object(escrowId), random(txApp), clock(txApp)],
+    });
+    const rApp = await measure(client, kp.owner, `apply_${i}`, 0, txApp);
+    steps.push(rApp);
 
     // withdraw earnings
     const txW = new Transaction();
@@ -72,21 +87,7 @@ async function main() {
     txW.transferObjects([earnings], d.owner.address);
     const rW = await measure(client, kp.owner, `withdraw_${i}`, 0, txW);
     steps.push(rW);
-
-    console.log(`  tenure ${i + 1}: rent=${rRent.net}  withdraw=${rW.net}`);
-
-    if (i < N - 1) {
-      const txB = new Transaction();
-      txB.setSender(addr);
-      txB.moveCall({
-        target: `${d.usufructPackageId}::escrow::soft_burn_tenant_cap`,
-        typeArguments: typeArgs,
-        arguments: [txB.object(escrowId), txB.object(capId), random(txB), clock(txB)],
-      });
-      const rB = await measure(client, kpT, `soft_burn_${i}`, 0, txB);
-      steps.push(rB);
-      console.log(`           soft_burn=${rB.net}`);
-    }
+    console.log(`  tenure ${i + 1}: rent=${rRent.net}  apply=${rApp.net}  withdraw=${rW.net}`);
   }
 
   // retire + apply + claim
@@ -106,7 +107,7 @@ async function main() {
     typeArguments: typeArgs,
     arguments: [txApp.object(escrowId), random(txApp), clock(txApp)],
   });
-  steps.push(await measure(client, kp.owner, 'apply_transitions', 0, txApp));
+  steps.push(await measure(client, kp.owner, 'apply_final', 0, txApp));
 
   const txC = new Transaction();
   txC.setSender(d.owner.address);

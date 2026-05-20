@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 /**
  * Phase B / 03 — Tenant rotation via handover
- * Flow: integrate → rent(t1) → soft_burn(t1) → rent(t2) → retire → claim
- * Shows the cost of a full tenant rotation through the demand/handover protocol.
+ * Flow: integrate → rent(t1) → [wait tenure] → rent(t2) → retire → apply → claim
+ * HandoverPolicy::FullTenure allows t2 to bid at any point during t1's tenure.
  */
 
 import { resolve, dirname } from 'path';
@@ -11,9 +11,10 @@ import { Transaction }    from '@mysten/sui/transactions';
 import { writeFileSync }  from 'fs';
 import {
   loadDeployment, loadKeypairs, makeClient,
+  FLOOR_PRICE_MIST,
 } from '../env.ts';
 import { measure } from '../measure.ts';
-import { buildIntegrate, buildRent, buildHandoverEnsemble, clock, random } from '../builders.ts';
+import { buildIntegrate, buildFlowHandoverEnsemble, clock, random } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -29,14 +30,11 @@ async function main() {
 
   const steps: any[] = [];
 
-  // 1. integrate (with handover ensemble)
+  // 1. integrate (2s tenure, FullTenure handover)
   process.stdout.write('Step 1 integrate...');
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const ownerCap = buildIntegrate(
-    tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId,
-    buildHandoverEnsemble,
-  );
+  const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowHandoverEnsemble);
   tx1.transferObjects([ownerCap], d.owner.address);
   const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
   steps.push(r1);
@@ -50,42 +48,65 @@ async function main() {
   process.stdout.write('Step 2 rent(t1)...');
   const tx2 = new Transaction();
   tx2.setSender(d.tenant1.address);
-  const cap1 = buildRent(tx2, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
+  const [pay1] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(FLOOR_PRICE_MIST)]);
+  const cyc1  = tx2.moveCall({ target: `${d.usufructPackageId}::tenures::tenures`, arguments: [tx2.pure.u64(1n)] });
+  const cap1  = tx2.moveCall({
+    target: `${d.usufructPackageId}::escrow::rent`,
+    typeArguments: typeArgs,
+    arguments: [tx2.object(escrowId), pay1, cyc1, random(tx2), clock(tx2)],
+  });
   tx2.transferObjects([cap1], d.tenant1.address);
   const r2 = await measure(client, kp.tenant1, 'rent_t1', 0, tx2);
   steps.push(r2);
   console.log(` net=${r2.net}`);
 
   const c2 = (await client.getTransactionBlock({ digest: r2.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
-  const tenantCap1Id = (c2.find(c => c.type === 'created' && (c as any).objectType?.includes('TenantCap')) as any).objectId;
+  const cap1Id = (c2.find(c => c.type === 'created' && (c as any).objectType?.includes('TenantCap')) as any).objectId;
 
-  // 3. tenant1 soft_burns (→ demand)
-  process.stdout.write('Step 3 soft_burn(t1)...');
+  // 3. tenant2 bids (→ Demand, cap1 becomes stale)
+  process.stdout.write('Step 3 rent(t2)...');
   const tx3 = new Transaction();
-  tx3.setSender(d.tenant1.address);
-  tx3.moveCall({
-    target: `${d.usufructPackageId}::escrow::soft_burn_tenant_cap`,
+  tx3.setSender(d.tenant2.address);
+  const [pay2] = tx3.splitCoins(tx3.gas, [tx3.pure.u64(FLOOR_PRICE_MIST * 2n)]); // 2x for escalation
+  const cyc2  = tx3.moveCall({ target: `${d.usufructPackageId}::tenures::tenures`, arguments: [tx3.pure.u64(1n)] });
+  const cap2  = tx3.moveCall({
+    target: `${d.usufructPackageId}::escrow::rent`,
     typeArguments: typeArgs,
-    arguments: [tx3.object(escrowId), tx3.object(tenantCap1Id), random(tx3), clock(tx3)],
+    arguments: [tx3.object(escrowId), pay2, cyc2, random(tx3), clock(tx3)],
   });
-  const r3 = await measure(client, kp.tenant1, 'soft_burn', 0, tx3);
+  tx3.transferObjects([cap2], d.tenant2.address);
+  const r3 = await measure(client, kp.tenant2, 'rent_t2', 0, tx3);
   steps.push(r3);
   console.log(` net=${r3.net}`);
 
-  // 4. tenant2 rents (filling the demand slot)
-  process.stdout.write('Step 4 rent(t2)...');
+  // 4. soft_burn stale cap1
+  process.stdout.write('  waiting for tenure expiry + apply...');
+  await new Promise(r => setTimeout(r, 12000));
+  const txApp = new Transaction();
+  txApp.setSender(d.owner.address);
+  txApp.moveCall({
+    target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
+    typeArguments: typeArgs,
+    arguments: [txApp.object(escrowId), random(txApp), clock(txApp)],
+  });
+  const rApp = await measure(client, kp.owner, 'apply_handover', 0, txApp);
+  steps.push(rApp);
+  console.log(` net=${rApp.net}`);
+
+  // Burn stale cap1
+  process.stdout.write('Step 4 soft_burn(stale t1)...');
   const tx4 = new Transaction();
-  tx4.setSender(d.tenant2.address);
-  const cap2 = buildRent(tx4, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
-  tx4.transferObjects([cap2], d.tenant2.address);
-  const r4 = await measure(client, kp.tenant2, 'rent_t2', 0, tx4);
+  tx4.setSender(d.tenant1.address);
+  tx4.moveCall({
+    target: `${d.usufructPackageId}::escrow::soft_burn_tenant_cap`,
+    typeArguments: typeArgs,
+    arguments: [tx4.object(escrowId), tx4.object(cap1Id), random(tx4), clock(tx4)],
+  });
+  const r4 = await measure(client, kp.tenant1, 'soft_burn', 0, tx4);
   steps.push(r4);
   console.log(` net=${r4.net}`);
 
-  const c4 = (await client.getTransactionBlock({ digest: r4.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
-  const tenantCap2Id = (c4.find(c => c.type === 'created' && (c as any).objectType?.includes('TenantCap')) as any).objectId;
-
-  // 5. owner retires
+  // 5. retire
   process.stdout.write('Step 5 retire...');
   const tx5 = new Transaction();
   tx5.setSender(d.owner.address);
@@ -98,16 +119,20 @@ async function main() {
   steps.push(r5);
   console.log(` net=${r5.net}`);
 
-  // 5b. apply
-  const tx5b = new Transaction();
-  tx5b.setSender(d.owner.address);
-  tx5b.moveCall({
+  // Wait for t2's tenure to expire, then apply+claim
+  process.stdout.write('  waiting for t2 tenure expiry...');
+  await new Promise(r => setTimeout(r, 12000));
+  console.log(' done');
+
+  const txApp2 = new Transaction();
+  txApp2.setSender(d.owner.address);
+  txApp2.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
-    arguments: [tx5b.object(escrowId), random(tx5b), clock(tx5b)],
+    arguments: [txApp2.object(escrowId), random(txApp2), clock(txApp2)],
   });
-  const r5b = await measure(client, kp.owner, 'apply_transitions', 0, tx5b);
-  steps.push(r5b);
+  const rApp2 = await measure(client, kp.owner, 'apply_transitions', 0, txApp2);
+  steps.push(rApp2);
 
   // 6. claim
   process.stdout.write('Step 6 claim...');

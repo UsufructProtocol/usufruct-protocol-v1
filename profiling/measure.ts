@@ -3,6 +3,21 @@ import { SuiClient }      from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction }    from '@mysten/sui/transactions';
 
+// Setup helper: sign + execute + explicit waitForTransaction.
+export async function execSetup(
+  client: SuiClient,
+  signer: Ed25519Keypair,
+  tx:     Transaction,
+): Promise<{ objectChanges: any[] }> {
+  const result = await client.signAndExecuteTransaction({
+    transaction: tx,
+    signer,
+    options: { showObjectChanges: true },
+  });
+  await client.waitForTransaction({ digest: result.digest });
+  return { objectChanges: result.objectChanges ?? [] };
+}
+
 export interface GasRecord {
   op:             string;
   run:            number;
@@ -28,6 +43,8 @@ export async function measure(
     signer,
     options: { showEffects: true, showObjectChanges: true },
   });
+
+  await client.waitForTransaction({ digest: result.digest });
 
   if (result.effects?.status.status !== 'success') {
     throw new Error(`[${op} run ${run}] tx failed: ${result.effects?.status.error}`);

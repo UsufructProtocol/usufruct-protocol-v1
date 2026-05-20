@@ -1,8 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Phase B / 02 — Asset lifecycle (with borrow/return)
- * Flow: integrate → rent → borrow → return → retire → claim
- * Adds borrow+return round trip to the minimal flow.
+ * Flow: integrate → rent → borrow+return → [wait tenure] → retire → apply → claim
  */
 
 import { resolve, dirname } from 'path';
@@ -13,7 +12,7 @@ import {
   loadDeployment, loadKeypairs, makeClient,
 } from '../env.ts';
 import { measure } from '../measure.ts';
-import { buildIntegrate, buildRent, clock, random } from '../builders.ts';
+import { buildIntegrate, buildRent, buildFlowEnsemble, clock, random } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -33,9 +32,8 @@ async function main() {
   process.stdout.write('Step 1 integrate...');
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
   tx1.transferObjects([ownerCap], d.owner.address);
-
   const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
   steps.push(r1);
   console.log(` net=${r1.net}`);
@@ -50,7 +48,6 @@ async function main() {
   tx2.setSender(d.tenant1.address);
   const cap = buildRent(tx2, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
   tx2.transferObjects([cap], d.tenant1.address);
-
   const r2 = await measure(client, kp.tenant1, 'rent', 0, tx2);
   steps.push(r2);
   console.log(` net=${r2.net}`);
@@ -58,21 +55,15 @@ async function main() {
   const c2 = (await client.getTransactionBlock({ digest: r2.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
   const tenantCapId = (c2.find(c => c.type === 'created' && (c as any).objectType?.includes('TenantCap')) as any).objectId;
 
-  // 3. borrow + return (same PTB — hot potato)
+  // 3. borrow + return (single PTB via profiling_helpers)
   process.stdout.write('Step 3 borrow+return...');
   const tx3 = new Transaction();
   tx3.setSender(d.tenant1.address);
-  const [asset, receipt] = tx3.moveCall({
-    target: `${d.usufructPackageId}::escrow::borrow_asset`,
+  tx3.moveCall({
+    target: `${d.usufructPackageId}::profiling_helpers::borrow_and_return`,
     typeArguments: typeArgs,
     arguments: [tx3.object(escrowId), tx3.object(tenantCapId), random(tx3), clock(tx3)],
-  }) as any[];
-  tx3.moveCall({
-    target: `${d.usufructPackageId}::escrow::return_asset`,
-    typeArguments: typeArgs,
-    arguments: [tx3.object(escrowId), asset, receipt],
   });
-
   const r3 = await measure(client, kp.tenant1, 'borrow_return', 0, tx3);
   steps.push(r3);
   console.log(` net=${r3.net}`);
@@ -89,6 +80,11 @@ async function main() {
   const r4 = await measure(client, kp.owner, 'retire', 0, tx4);
   steps.push(r4);
   console.log(` net=${r4.net}`);
+
+  // Wait for tenure expiry
+  process.stdout.write('  waiting for tenure expiry...');
+  await new Promise(r => setTimeout(r, 12000));
+  console.log(' done');
 
   // 4b. apply
   const tx4b = new Transaction();
@@ -111,7 +107,6 @@ async function main() {
     arguments: [tx5.object(escrowId), tx5.object(ownerCapId), random(tx5), clock(tx5)],
   }) as any[];
   tx5.transferObjects([claimedAsset, earnings], d.owner.address);
-
   const r5 = await measure(client, kp.owner, 'claim_asset', 0, tx5);
   steps.push(r5);
   console.log(` net=${r5.net}`);

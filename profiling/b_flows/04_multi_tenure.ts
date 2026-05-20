@@ -1,8 +1,9 @@
 #!/usr/bin/env tsx
 /**
  * Phase B / 04 — Multi-tenure scaling
- * Flow: integrate → N × (rent → soft_burn) → retire → claim
+ * Flow: integrate → N × (rent → wait → apply) → retire → apply → claim
  * Run with N=3, N=5, N=10 to verify linear vs super-linear gas scaling.
+ * Uses 2s tenure so N cycles complete in N*3 seconds.
  *
  * Usage: tsx b_flows/04_multi_tenure.ts [N]   (default N=3)
  */
@@ -12,10 +13,10 @@ import { fileURLToPath }  from 'url';
 import { Transaction }    from '@mysten/sui/transactions';
 import { writeFileSync }  from 'fs';
 import {
-  loadDeployment, loadKeypairs, makeClient,
+  loadDeployment, loadKeypairs, makeClient, FLOOR_PRICE_MIST,
 } from '../env.ts';
 import { measure } from '../measure.ts';
-import { buildIntegrate, buildRent, buildHandoverEnsemble, clock, random } from '../builders.ts';
+import { buildIntegrate, buildFlowEnsemble, clock, random } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const N   = parseInt(process.argv[2] ?? '3', 10);
@@ -24,11 +25,8 @@ async function main() {
   const d      = loadDeployment();
   const client = makeClient();
   const kp     = loadKeypairs(d);
-  const tenants = [kp.tenant1, kp.tenant2, kp.tenant1, kp.tenant2, kp.tenant1,
-                   kp.tenant2, kp.tenant1, kp.tenant2, kp.tenant1, kp.tenant2];
-  const tenantAddrs = [d.tenant1.address, d.tenant2.address, d.tenant1.address, d.tenant2.address,
-                       d.tenant1.address, d.tenant2.address, d.tenant1.address, d.tenant2.address,
-                       d.tenant1.address, d.tenant2.address];
+  const tenants    = [kp.tenant1, kp.tenant2];
+  const tenantAddrs = [d.tenant1.address, d.tenant2.address];
 
   const typeArgs = [
     `${d.dummyAssetPackageId}::dummy_asset::DummyAsset`,
@@ -41,10 +39,7 @@ async function main() {
   // integrate
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const ownerCap = buildIntegrate(
-    tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId,
-    buildHandoverEnsemble,
-  );
+  const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
   tx1.transferObjects([ownerCap], d.owner.address);
   const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
   steps.push(r1);
@@ -54,48 +49,52 @@ async function main() {
   const escrowId   = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('Escrow')) as any).objectId;
   const ownerCapId = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('OwnerCap')) as any).objectId;
 
-  // N tenure cycles: rent → soft_burn
+  let paymentMultiplier = 1n; // escalation: each tenure costs 1 MIST more
+
   for (let i = 0; i < N; i++) {
-    const kpTenant = tenants[i % 2];
-    const addrTenant = tenantAddrs[i % 2];
+    const kpT = tenants[i % 2];
+    const addrT = tenantAddrs[i % 2];
+    const payAmt = FLOOR_PRICE_MIST + BigInt(i); // floor + delta*i
 
     const txRent = new Transaction();
-    txRent.setSender(addrTenant);
-    const cap = buildRent(txRent, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
-    txRent.transferObjects([cap], addrTenant);
-    const rRent = await measure(client, kpTenant, `rent_${i}`, 0, txRent);
+    txRent.setSender(addrT);
+    const [pay] = txRent.splitCoins(txRent.gas, [txRent.pure.u64(payAmt)]);
+    const cyc  = txRent.moveCall({ target: `${d.usufructPackageId}::tenures::tenures`, arguments: [txRent.pure.u64(1n)] });
+    const cap  = txRent.moveCall({
+      target: `${d.usufructPackageId}::escrow::rent`,
+      typeArguments: typeArgs,
+      arguments: [txRent.object(escrowId), pay, cyc, random(txRent), clock(txRent)],
+    });
+    txRent.transferObjects([cap], addrT);
+    const rRent = await measure(client, kpT, `rent_${i}`, 0, txRent);
     steps.push(rRent);
+    console.log(`  tenure ${i + 1}: rent net=${rRent.net}`);
 
-    const cRent = (await client.getTransactionBlock({ digest: rRent.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
-    const capId = (cRent.find(c => c.type === 'created' && (c as any).objectType?.includes('TenantCap')) as any).objectId;
+    // Wait for tenure to expire, then apply transitions (settles to Idle for next rent)
+    await new Promise(r => setTimeout(r, 12000));
 
-    // Don't soft_burn on last tenure — owner retires instead
-    if (i < N - 1) {
-      const txBurn = new Transaction();
-      txBurn.setSender(addrTenant);
-      txBurn.moveCall({
-        target: `${d.usufructPackageId}::escrow::soft_burn_tenant_cap`,
-        typeArguments: typeArgs,
-        arguments: [txBurn.object(escrowId), txBurn.object(capId), random(txBurn), clock(txBurn)],
-      });
-      const rBurn = await measure(client, kpTenant, `soft_burn_${i}`, 0, txBurn);
-      steps.push(rBurn);
-      console.log(`  tenure ${i + 1}: rent=${rRent.net} + soft_burn=${rBurn.net}`);
-    } else {
-      console.log(`  tenure ${i + 1} (last): rent=${rRent.net}`);
-    }
+    const txApp = new Transaction();
+    txApp.setSender(d.owner.address);
+    txApp.moveCall({
+      target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
+      typeArguments: typeArgs,
+      arguments: [txApp.object(escrowId), random(txApp), clock(txApp)],
+    });
+    const rApp = await measure(client, kp.owner, `apply_${i}`, 0, txApp);
+    steps.push(rApp);
+    console.log(`           apply  net=${rApp.net}`);
   }
 
-  // retire
-  const txR = new Transaction();
-  txR.setSender(d.owner.address);
-  txR.moveCall({
+  // retire + apply + claim
+  const txRet = new Transaction();
+  txRet.setSender(d.owner.address);
+  txRet.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [txR.object(escrowId), txR.object(ownerCapId), random(txR), clock(txR)],
+    arguments: [txRet.object(escrowId), txRet.object(ownerCapId), random(txRet), clock(txRet)],
   });
-  const rR = await measure(client, kp.owner, 'retire', 0, txR);
-  steps.push(rR);
+  const rRet = await measure(client, kp.owner, 'retire', 0, txRet);
+  steps.push(rRet);
 
   const txA = new Transaction();
   txA.setSender(d.owner.address);
@@ -104,10 +103,9 @@ async function main() {
     typeArguments: typeArgs,
     arguments: [txA.object(escrowId), random(txA), clock(txA)],
   });
-  const rA = await measure(client, kp.owner, 'apply_transitions', 0, txA);
+  const rA = await measure(client, kp.owner, 'apply_final', 0, txA);
   steps.push(rA);
 
-  // claim
   const txC = new Transaction();
   txC.setSender(d.owner.address);
   const [asset, earnings] = txC.moveCall({

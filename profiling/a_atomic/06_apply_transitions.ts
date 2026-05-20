@@ -13,7 +13,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
-import { measure, saveRecords, median } from '../measure.ts';
+import { measure, saveRecords, median, execSetup } from '../measure.ts';
 import { buildIntegrate, buildRent, clock, random } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -29,9 +29,7 @@ async function setupOccupied(
   const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
   tx1.transferObjects([ownerCap], d.owner.address);
 
-  const r1 = await client.signAndExecuteTransaction({
-    transaction: tx1, signer: owner, options: { showObjectChanges: true },
-  });
+  const r1 = await execSetup(client, owner, tx1);
   const escrowObj = (r1.objectChanges ?? []).find(
     c => c.type === 'created' && (c as any).objectType?.includes('Escrow'),
   ) as any;
@@ -41,7 +39,7 @@ async function setupOccupied(
   const tenantCap = buildRent(tx2, d.usufructPackageId, d.dummyAssetPackageId, escrowObj.objectId);
   tx2.transferObjects([tenantCap], d.tenant1.address);
 
-  await client.signAndExecuteTransaction({ transaction: tx2, signer: tenant1 });
+  await execSetup(client, tenant1, tx2);
   return { escrowId: escrowObj.objectId };
 }
 
@@ -57,6 +55,7 @@ async function main() {
 
   const records = [];
   for (let run = 0; run < RUNS; run++) {
+    if (run > 0) await new Promise(r => setTimeout(r, 1000)); // let fullnode stabilize
     process.stdout.write(`  run ${run + 1}/${RUNS} setup...`);
     const { escrowId } = await setupOccupied(client, kp.owner, kp.tenant1, d);
 

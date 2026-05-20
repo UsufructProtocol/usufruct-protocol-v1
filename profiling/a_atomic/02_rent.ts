@@ -13,7 +13,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
-import { measure, saveRecords, median } from '../measure.ts';
+import { measure, saveRecords, median, execSetup } from '../measure.ts';
 import { buildIntegrate, buildRent } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -29,10 +29,7 @@ async function setupIdleEscrow(
   const ownerCap = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
   tx.transferObjects([ownerCap], d.owner.address);
 
-  const result = await client.signAndExecuteTransaction({
-    transaction: tx, signer: owner,
-    options: { showObjectChanges: true },
-  });
+  const result = await execSetup(client, owner, tx);
 
   const changes = result.objectChanges ?? [];
   const escrow  = changes.find(c => c.type === 'created' && (c as any).objectType?.includes('Escrow'));
@@ -49,6 +46,7 @@ async function main() {
 
   const records = [];
   for (let run = 0; run < RUNS; run++) {
+    if (run > 0) await new Promise(r => setTimeout(r, 1000));
     process.stdout.write(`  run ${run + 1}/${RUNS} setup...`);
     const { escrowId } = await setupIdleEscrow(client, kp.owner, d);
 

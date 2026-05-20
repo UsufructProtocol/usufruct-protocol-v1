@@ -4,3 +4,5 @@ results/*.json
 results/*.csv
 deployment.json
 asset/build/
+Pub.localnet.toml
+package-lock.json

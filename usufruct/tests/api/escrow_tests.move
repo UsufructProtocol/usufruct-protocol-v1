@@ -1408,6 +1408,57 @@ fun do_auction_expiry_returns_to_idle() {
     sc.end();
 }
 
+/// Retire flag set from Demand state does NOT block supersede bids.
+/// Bidders are still competing for the last tenure before retirement.
+/// The retire flag closes the market at the cycle level (no new tenants
+/// after the current one), but the pending slot is still open: anyone
+/// willing to pay more can displace the pending challenger and claim
+/// that final tenure. Only an Occupied+retiring escrow rejects new bids.
+#[test]
+fun retire_from_demand_allows_supersede_for_last_tenure() {
+    let mut sc = setup();
+    // c=1 (Fixed) — non-zero handover window keeps Demand alive across calls.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let random = sc.take_shared<Random>();
+
+    // T1 rents: Idle → Occupied.
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &random, &clk, sc.ctx());
+
+    // T2 bids: Occupied → Demand.
+    let p2_amt = escrow_corpus::min_rent_price_const() * 2;
+    let p2 = mk_payment(p2_amt, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+
+    // Owner retires from Demand: sets retire flag, state stays Demand.
+    escrow::retire(&mut escrow, &owner_cap, &random, &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 1);
+    assert_eq!(event::events_by_type<RetireFlagSet>().length(), 1);
+
+    // T3 supersedes T2: retire flag does NOT block supersede.
+    // Bidders are competing for the last tenure before the asset retires.
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor3 = escrow::compute_floor_price(&escrow, &clk);
+    let cap_t3 = escrow::rent(&mut escrow, mk_payment(floor3, sc.ctx()), tenures::tenures(1), &random, &clk, sc.ctx());
+
+    assert!(escrow::is_demand(&escrow), 2);
+    assert_eq!(event::events_by_type<BidSuperseded>().length(), 1);
+    assert_eq!(asset_state::bid_superseded_displaced_cap_id(&event::events_by_type<BidSuperseded>()[0]), object::id(&cap_t2));
+    assert_eq!(asset_state::bid_superseded_new_cap_id     (&event::events_by_type<BidSuperseded>()[0]), object::id(&cap_t3));
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    test_scenario::return_shared(random);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §14.5 compute_next_pending — detection without firing ──────────────────────────
 
 /// compute_next_pending returns None when nothing is due.

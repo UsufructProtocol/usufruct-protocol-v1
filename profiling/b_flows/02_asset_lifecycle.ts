@@ -1,7 +1,19 @@
 #!/usr/bin/env tsx
 /**
- * Phase B / 02 — Asset lifecycle (with borrow/return)
- * Flow: integrate → rent → borrow+return → [wait tenure] → retire → apply → claim
+ * Phase B / 02 — Asset lifecycle (rent + retire + claim)
+ * Flow: integrate → rent → retire → [wait tenure] → apply → claim
+ *
+ * Note on borrow+return:
+ *   This flow intentionally omits the borrow+return step. Two Sui constraints
+ *   make it impossible to measure borrow+return in any single PTB:
+ *     1. Sui forbids MoveCall commands after any command that uses the Random
+ *        shared object (borrow_asset takes &Random).
+ *     2. AssetReceipt is a hot potato — it must be consumed by return_asset
+ *        in the same transaction, which is a MoveCall.
+ *   The borrow+return round-trip cost must be measured via a dedicated
+ *   protocol-level helper (not added here to keep source clean).
+ *   For the gas cost of borrow_asset + return_asset individually, use
+ *   `sui move test -s` against the relevant unit tests.
  */
 
 import { resolve, dirname } from 'path';
@@ -52,50 +64,34 @@ async function main() {
   steps.push(r2);
   console.log(` net=${r2.net}`);
 
-  const c2 = (await client.getTransactionBlock({ digest: r2.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
-  const tenantCapId = (c2.find(c => c.type === 'created' && (c as any).objectType?.includes('TenantCap')) as any).objectId;
-
-  // 3. borrow + return (single PTB via profiling_helpers)
-  process.stdout.write('Step 3 borrow+return...');
+  // 3. retire
+  process.stdout.write('Step 3 retire...');
   const tx3 = new Transaction();
-  tx3.setSender(d.tenant1.address);
+  tx3.setSender(d.owner.address);
   tx3.moveCall({
-    target: `${d.usufructPackageId}::profiling_helpers::borrow_and_return`,
-    typeArguments: typeArgs,
-    arguments: [tx3.object(escrowId), tx3.object(tenantCapId), random(tx3), clock(tx3)],
-  });
-  const r3 = await measure(client, kp.tenant1, 'borrow_return', 0, tx3);
-  steps.push(r3);
-  console.log(` net=${r3.net}`);
-
-  // 4. retire
-  process.stdout.write('Step 4 retire...');
-  const tx4 = new Transaction();
-  tx4.setSender(d.owner.address);
-  tx4.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [tx4.object(escrowId), tx4.object(ownerCapId), random(tx4), clock(tx4)],
+    arguments: [tx3.object(escrowId), tx3.object(ownerCapId), random(tx3), clock(tx3)],
   });
-  const r4 = await measure(client, kp.owner, 'retire', 0, tx4);
-  steps.push(r4);
-  console.log(` net=${r4.net}`);
+  const r3 = await measure(client, kp.owner, 'retire', 0, tx3);
+  steps.push(r3);
+  console.log(` net=${r3.net}`);
 
   // Wait for tenure expiry
   process.stdout.write('  waiting for tenure expiry...');
   await new Promise(r => setTimeout(r, 12000));
   console.log(' done');
 
-  // 4b. apply
-  const tx4b = new Transaction();
-  tx4b.setSender(d.owner.address);
-  tx4b.moveCall({
+  // 4. apply
+  const tx4 = new Transaction();
+  tx4.setSender(d.owner.address);
+  tx4.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
-    arguments: [tx4b.object(escrowId), random(tx4b), clock(tx4b)],
+    arguments: [tx4.object(escrowId), random(tx4), clock(tx4)],
   });
-  const r4b = await measure(client, kp.owner, 'apply_transitions', 0, tx4b);
-  steps.push(r4b);
+  const r4 = await measure(client, kp.owner, 'apply_transitions', 0, tx4);
+  steps.push(r4);
 
   // 5. claim
   process.stdout.write('Step 5 claim...');

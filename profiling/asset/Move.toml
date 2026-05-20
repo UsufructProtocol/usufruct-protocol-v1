@@ -1,0 +1,8 @@
+[package]
+name = "dummy_asset"
+edition = "2024"
+
+[dependencies]
+
+[addresses]
+dummy_asset = "0x0"

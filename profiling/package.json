@@ -1,0 +1,20 @@
+{
+  "name": "usufruct-profiling",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "setup:deploy": "tsx setup/deploy.ts",
+    "setup:fund":   "tsx setup/fund.ts",
+    "a":            "tsx run_all.ts --phase=a",
+    "b":            "tsx run_all.ts --phase=b",
+    "run":          "tsx run_all.ts",
+    "report":       "tsx report.ts"
+  },
+  "dependencies": {
+    "@mysten/sui": "^1.0.0"
+  },
+  "devDependencies": {
+    "tsx":        "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

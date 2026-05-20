@@ -904,7 +904,7 @@ fun rent_from_demand_supersedes_bid() {
 /// Observable proxy: zero `BidSuperseded` events regardless of how many
 /// successive challengers bid.
 #[test]
-fun instant_handover_never_supersedes_pending_bid() {
+fun off_handover_never_supersedes_pending_bid() {
     let mut sc = setup();
     // c=0 (Instant) — handover_expiry := now at every bid
     let ensemble = escrow_corpus::by_tag(0);

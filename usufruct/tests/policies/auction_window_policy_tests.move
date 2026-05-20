@@ -99,7 +99,7 @@ fun fixed_ceiling_returns_ceiling_for_window() {
 }
 
 #[test, expected_failure(abort_code = auction_window_policy::EDescentOffNoFixed, location = usufruct::auction_window_policy)]
-fun fixed_ceiling_aborts_on_skipped() {
+fun fixed_ceiling_aborts_on_off() {
     // fixed_ceiling on Skipped is unreachable in production
     // (compute_price_descent only fires from AtDutchAuction, structurally
     // unobservable under Skipped). This pins the abort code as the
@@ -212,7 +212,7 @@ fun random_in_range_expiry_at_within_bounds() {
 // ─── projectors ──────────────────────────────────────────────────────────────
 
 #[test]
-fun projectors_skipped_variant() {
+fun projectors_off_variant() {
     let p = auction_window_policy::new_descent_off();
     assert!(p.proj_is_off());
     assert!(!p.proj_is_fixed());

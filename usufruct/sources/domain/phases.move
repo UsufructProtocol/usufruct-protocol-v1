@@ -35,6 +35,8 @@ public fun now(clock: &Clock): Timestamp {
     Timestamp { ms: clock::timestamp_ms(clock) }
 }
 
+public fun duration(ms: u64): Duration { Duration { ms } }
+
 // === View Functions ===
 
 // === Admin Functions ===
@@ -42,8 +44,6 @@ public fun now(clock: &Clock): Timestamp {
 // === Package Functions ===
 
 public(package) fun timestamp(ms: u64): Timestamp { Timestamp { ms } }
-
-public(package) fun duration(ms: u64): Duration { Duration { ms } }
 
 public(package) fun zero(): Duration { Duration { ms: 0 } }
 

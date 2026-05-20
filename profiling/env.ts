@@ -16,8 +16,11 @@ export interface Deployment {
   tenant2: { address: string; secretKey: string };
 }
 
-export const LOCALNET_RPC = 'http://127.0.0.1:9000';
-export const FAUCET_URL   = 'http://127.0.0.1:9123/gas';
+// Network config — override via environment variables:
+//   SUI_RPC=https://fullnode.testnet.sui.io:443
+//   SUI_FAUCET=https://faucet.testnet.sui.io/gas   (omit on mainnet)
+export const RPC_URL    = process.env.SUI_RPC    ?? 'http://127.0.0.1:9000';
+export const FAUCET_URL = process.env.SUI_FAUCET ?? 'http://127.0.0.1:9123/gas';
 
 // Sui system objects
 export const CLOCK_ID  = '0x0000000000000000000000000000000000000000000000000000000000000006';
@@ -43,7 +46,7 @@ export function loadDeployment(): Deployment {
 }
 
 export function makeClient(): SuiClient {
-  return new SuiClient({ url: LOCALNET_RPC });
+  return new SuiClient({ url: RPC_URL });
 }
 
 export function makeKeypair(secretKey: string): Ed25519Keypair {

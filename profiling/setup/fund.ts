@@ -3,7 +3,10 @@
  * Requests faucet SUI for all three wallets.
  * Run whenever a wallet runs low on gas.
  *
+ * Not available on Mainnet — fund wallets manually there.
+ *
  * Usage: npm run setup:fund
+ *   SUI_FAUCET=https://faucet.testnet.sui.io/gas npm run setup:fund
  */
 
 import { FAUCET_URL, loadDeployment } from '../env.ts';
@@ -21,9 +24,14 @@ async function requestFaucet(address: string): Promise<void> {
 }
 
 async function main() {
+  if (!process.env.SUI_FAUCET && process.env.SUI_RPC?.includes('mainnet')) {
+    console.error('Mainnet detected — no faucet available. Fund wallets manually.');
+    process.exit(1);
+  }
+
   const d = loadDeployment();
 
-  console.log('Requesting faucet for all wallets...');
+  console.log(`Requesting faucet (${FAUCET_URL}) for all wallets...`);
   for (const wallet of [d.owner, d.tenant1, d.tenant2]) {
     await requestFaucet(wallet.address);
     await new Promise(r => setTimeout(r, 1500));

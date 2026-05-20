@@ -20,7 +20,7 @@ import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
-import { buildIntegrate, clock, random } from '../builders.ts';
+import { buildIntegrate, clock } from '../builders.ts';
 import type { TransactionArgument } from '@mysten/sui/transactions';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -80,7 +80,7 @@ async function setupWithEarnings(
   const tenantCap = tx2.moveCall({
     target: `${d.usufructPackageId}::escrow::rent`,
     typeArguments: typeArgs,
-    arguments: [tx2.object(escrowObj.objectId), payment, cycles, random(tx2), clock(tx2)],
+    arguments: [tx2.object(escrowObj.objectId), payment, cycles, clock(tx2)],
   });
   tx2.transferObjects([tenantCap], d.tenant1.address);
   await execSetup(client, tenant1, tx2);
@@ -94,7 +94,7 @@ async function setupWithEarnings(
   tx3.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
-    arguments: [tx3.object(escrowObj.objectId), random(tx3), clock(tx3)],
+    arguments: [tx3.object(escrowObj.objectId), clock(tx3)],
   });
   await execSetup(client, owner, tx3);
 
@@ -124,7 +124,7 @@ async function main() {
     const earnings = tx.moveCall({
       target: `${d.usufructPackageId}::escrow::withdraw_earnings`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), tx.object(ownerCapId), random(tx), clock(tx)],
+      arguments: [tx.object(escrowId), tx.object(ownerCapId), clock(tx)],
     });
     tx.transferObjects([earnings], d.owner.address);
 

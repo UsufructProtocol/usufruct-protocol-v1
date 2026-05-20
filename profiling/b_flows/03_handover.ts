@@ -14,7 +14,7 @@ import {
   FLOOR_PRICE_MIST,
 } from '../env.ts';
 import { measure } from '../measure.ts';
-import { buildIntegrate, buildFlowHandoverEnsemble, clock, random } from '../builders.ts';
+import { buildIntegrate, buildFlowHandoverEnsemble, clock } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -53,7 +53,7 @@ async function main() {
   const cap1  = tx2.moveCall({
     target: `${d.usufructPackageId}::escrow::rent`,
     typeArguments: typeArgs,
-    arguments: [tx2.object(escrowId), pay1, cyc1, random(tx2), clock(tx2)],
+    arguments: [tx2.object(escrowId), pay1, cyc1, clock(tx2)],
   });
   tx2.transferObjects([cap1], d.tenant1.address);
   const r2 = await measure(client, kp.tenant1, 'rent_t1', 0, tx2);
@@ -72,7 +72,7 @@ async function main() {
   const cap2  = tx3.moveCall({
     target: `${d.usufructPackageId}::escrow::rent`,
     typeArguments: typeArgs,
-    arguments: [tx3.object(escrowId), pay2, cyc2, random(tx3), clock(tx3)],
+    arguments: [tx3.object(escrowId), pay2, cyc2, clock(tx3)],
   });
   tx3.transferObjects([cap2], d.tenant2.address);
   const r3 = await measure(client, kp.tenant2, 'rent_t2', 0, tx3);
@@ -87,7 +87,7 @@ async function main() {
   txApp.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
-    arguments: [txApp.object(escrowId), random(txApp), clock(txApp)],
+    arguments: [txApp.object(escrowId), clock(txApp)],
   });
   const rApp = await measure(client, kp.owner, 'apply_handover', 0, txApp);
   steps.push(rApp);
@@ -100,7 +100,7 @@ async function main() {
   tx4.moveCall({
     target: `${d.usufructPackageId}::escrow::soft_burn_tenant_cap`,
     typeArguments: typeArgs,
-    arguments: [tx4.object(escrowId), tx4.object(cap1Id), random(tx4), clock(tx4)],
+    arguments: [tx4.object(escrowId), tx4.object(cap1Id), clock(tx4)],
   });
   const r4 = await measure(client, kp.tenant1, 'soft_burn', 0, tx4);
   steps.push(r4);
@@ -113,7 +113,7 @@ async function main() {
   tx5.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [tx5.object(escrowId), tx5.object(ownerCapId), random(tx5), clock(tx5)],
+    arguments: [tx5.object(escrowId), tx5.object(ownerCapId), clock(tx5)],
   });
   const r5 = await measure(client, kp.owner, 'retire', 0, tx5);
   steps.push(r5);
@@ -129,7 +129,7 @@ async function main() {
   txApp2.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
-    arguments: [txApp2.object(escrowId), random(txApp2), clock(txApp2)],
+    arguments: [txApp2.object(escrowId), clock(txApp2)],
   });
   const rApp2 = await measure(client, kp.owner, 'apply_transitions', 0, txApp2);
   steps.push(rApp2);
@@ -141,7 +141,7 @@ async function main() {
   const [asset, earnings] = tx6.moveCall({
     target: `${d.usufructPackageId}::escrow::claim_asset`,
     typeArguments: typeArgs,
-    arguments: [tx6.object(escrowId), tx6.object(ownerCapId), random(tx6), clock(tx6)],
+    arguments: [tx6.object(escrowId), tx6.object(ownerCapId), clock(tx6)],
   }) as any[];
   tx6.transferObjects([asset, earnings], d.owner.address);
   const r6 = await measure(client, kp.owner, 'claim_asset', 0, tx6);

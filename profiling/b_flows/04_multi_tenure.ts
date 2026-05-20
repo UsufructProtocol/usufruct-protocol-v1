@@ -16,7 +16,7 @@ import {
   loadDeployment, loadKeypairs, makeClient, FLOOR_PRICE_MIST,
 } from '../env.ts';
 import { measure } from '../measure.ts';
-import { buildIntegrate, buildFlowEnsemble, clock, random } from '../builders.ts';
+import { buildIntegrate, buildFlowEnsemble, clock } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const N   = parseInt(process.argv[2] ?? '3', 10);
@@ -63,7 +63,7 @@ async function main() {
     const cap  = txRent.moveCall({
       target: `${d.usufructPackageId}::escrow::rent`,
       typeArguments: typeArgs,
-      arguments: [txRent.object(escrowId), pay, cyc, random(txRent), clock(txRent)],
+      arguments: [txRent.object(escrowId), pay, cyc, clock(txRent)],
     });
     txRent.transferObjects([cap], addrT);
     const rRent = await measure(client, kpT, `rent_${i}`, 0, txRent);
@@ -78,7 +78,7 @@ async function main() {
     txApp.moveCall({
       target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
       typeArguments: typeArgs,
-      arguments: [txApp.object(escrowId), random(txApp), clock(txApp)],
+      arguments: [txApp.object(escrowId), clock(txApp)],
     });
     const rApp = await measure(client, kp.owner, `apply_${i}`, 0, txApp);
     steps.push(rApp);
@@ -91,7 +91,7 @@ async function main() {
   txRet.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [txRet.object(escrowId), txRet.object(ownerCapId), random(txRet), clock(txRet)],
+    arguments: [txRet.object(escrowId), txRet.object(ownerCapId), clock(txRet)],
   });
   const rRet = await measure(client, kp.owner, 'retire', 0, txRet);
   steps.push(rRet);
@@ -101,7 +101,7 @@ async function main() {
   txA.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
-    arguments: [txA.object(escrowId), random(txA), clock(txA)],
+    arguments: [txA.object(escrowId), clock(txA)],
   });
   const rA = await measure(client, kp.owner, 'apply_final', 0, txA);
   steps.push(rA);
@@ -111,7 +111,7 @@ async function main() {
   const [asset, earnings] = txC.moveCall({
     target: `${d.usufructPackageId}::escrow::claim_asset`,
     typeArguments: typeArgs,
-    arguments: [txC.object(escrowId), txC.object(ownerCapId), random(txC), clock(txC)],
+    arguments: [txC.object(escrowId), txC.object(ownerCapId), clock(txC)],
   }) as any[];
   txC.transferObjects([asset, earnings], d.owner.address);
   const rC = await measure(client, kp.owner, 'claim_asset', 0, txC);

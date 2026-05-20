@@ -18,7 +18,7 @@ import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
-import { buildIntegrate, clock, random } from '../builders.ts';
+import { buildIntegrate, clock } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -52,7 +52,7 @@ async function setupRetiredEscrow(
   tx2.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [tx2.object(escrowObj.objectId), tx2.object(capObj.objectId), random(tx2), clock(tx2)],
+    arguments: [tx2.object(escrowObj.objectId), tx2.object(capObj.objectId), clock(tx2)],
   });
   await execSetup(client, owner, tx2);
 
@@ -62,7 +62,7 @@ async function setupRetiredEscrow(
   tx3.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
-    arguments: [tx3.object(escrowObj.objectId), random(tx3), clock(tx3)],
+    arguments: [tx3.object(escrowObj.objectId), clock(tx3)],
   });
   await execSetup(client, owner, tx3);
 
@@ -92,7 +92,7 @@ async function main() {
     const [asset, earnings] = tx.moveCall({
       target: `${d.usufructPackageId}::escrow::claim_asset`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), tx.object(ownerCapId), random(tx), clock(tx)],
+      arguments: [tx.object(escrowId), tx.object(ownerCapId), clock(tx)],
     }) as any[];
 
     tx.transferObjects([asset, earnings], d.owner.address);

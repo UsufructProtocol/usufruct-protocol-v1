@@ -19,7 +19,7 @@ import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
-import { buildIntegrate, buildRent, clock, random } from '../builders.ts';
+import { buildIntegrate, buildRent, clock } from '../builders.ts';
 import type { TransactionArgument } from '@mysten/sui/transactions';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -92,7 +92,7 @@ async function setupDemandState(
   const cap2 = tx3.moveCall({
     target: `${d.usufructPackageId}::escrow::rent`,
     typeArguments: [`${d.dummyAssetPackageId}::dummy_asset::DummyAsset`, '0x2::sui::SUI'],
-    arguments: [tx3.object(escrowObj.objectId), payment2, cycles2, random(tx3), clock(tx3)],
+    arguments: [tx3.object(escrowObj.objectId), payment2, cycles2, clock(tx3)],
   });
   tx3.transferObjects([cap2], d.tenant2.address);
 
@@ -111,7 +111,7 @@ async function setupDemandState(
   txApply.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
-    arguments: [txApply.object(escrowObj.objectId), random(txApply), clock(txApply)],
+    arguments: [txApply.object(escrowObj.objectId), clock(txApply)],
   });
   await execSetup(client, owner, txApply);
 
@@ -144,7 +144,7 @@ async function main() {
     tx.moveCall({
       target: `${d.usufructPackageId}::escrow::soft_burn_tenant_cap`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), tx.object(staleCapId), random(tx), clock(tx)],
+      arguments: [tx.object(escrowId), tx.object(staleCapId), clock(tx)],
     });
 
     const rec = await measure(client, kp.tenant1, 'soft_burn', run, tx);

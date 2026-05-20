@@ -13,7 +13,7 @@ import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
-import { buildIntegrate, buildMinimalEnsemble, clock, random } from '../builders.ts';
+import { buildIntegrate, buildMinimalEnsemble, clock } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -61,7 +61,7 @@ async function main() {
     tx.moveCall({
       target: `${d.usufructPackageId}::escrow::update_config`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), tx.object(ownerCapId), newEnsemble, random(tx), clock(tx)],
+      arguments: [tx.object(escrowId), tx.object(ownerCapId), newEnsemble, clock(tx)],
     });
 
     const rec = await measure(client, kp.owner, 'update_config', run, tx);

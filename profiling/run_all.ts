@@ -17,9 +17,7 @@ const phase = process.argv.find(a => a.startsWith('--phase='))?.split('=')[1];
 const A_SCRIPTS = [
   'a_atomic/01_integrate.ts',
   'a_atomic/02_rent.ts',
-  // 03_borrow_return: not measurable in isolation — Sui forbids MoveCall commands
-  // after any command that uses the Random shared object, and AssetReceipt is a
-  // hot potato that must be consumed in the same PTB. Cost captured in b_flows/02.
+  'a_atomic/03_borrow_return.ts',
   'a_atomic/04_soft_burn.ts',
   'a_atomic/05_hard_burn.ts',
   'a_atomic/06_apply_transitions.ts',
@@ -28,6 +26,7 @@ const A_SCRIPTS = [
   'a_atomic/09_withdraw_earnings.ts',
   'a_atomic/10_extend_commitment.ts',
   'a_atomic/11_update_config.ts',
+  'a_atomic/12_collect_fee_messages.ts',
 ];
 
 const B_SCRIPTS = [

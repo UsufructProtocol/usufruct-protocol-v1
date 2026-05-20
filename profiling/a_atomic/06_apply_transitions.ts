@@ -14,7 +14,7 @@ import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
-import { buildIntegrate, buildRent, clock, random } from '../builders.ts';
+import { buildIntegrate, buildRent, clock } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -66,7 +66,7 @@ async function main() {
     tx.moveCall({
       target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), random(tx), clock(tx)],
+      arguments: [tx.object(escrowId), clock(tx)],
     });
 
     const rec = await measure(client, kp.owner, 'apply_transitions_noop', run, tx);

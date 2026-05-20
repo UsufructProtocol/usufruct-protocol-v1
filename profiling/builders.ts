@@ -1,7 +1,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import type { TransactionArgument } from '@mysten/sui/transactions';
 import {
-  CLOCK_ID, RANDOM_ID,
+  CLOCK_ID,
   FLOOR_PRICE_MIST, TENURE_DURATION_MS, HANDOVER_FLOOR_MS, DELTA_PRICE_MIST,
 } from './env.ts';
 
@@ -20,7 +20,6 @@ function durationArg(tx: Transaction, pkg: string, ms: bigint): TransactionArgum
 }
 
 export function clock(tx: Transaction)  { return tx.object(CLOCK_ID);  }
-export function random(tx: Transaction) { return tx.object(RANDOM_ID); }
 
 // Builds the minimal PolicyEnsemble for profiling (HandoverPolicy::Off).
 export function buildMinimalEnsemble(tx: Transaction, pkg: string): TransactionArgument {
@@ -142,7 +141,7 @@ export function buildIntegrate(
       `${dummyAssetPkg}::dummy_asset::DummyAsset`,
       '0x2::sui::SUI',
     ],
-    arguments: [asset, ensemble, commitment, feeRef, random(tx), clock(tx)],
+    arguments: [asset, ensemble, commitment, feeRef, clock(tx)],
   });
 }
 
@@ -161,6 +160,6 @@ export function buildRent(
   return tx.moveCall({
     target: `${usufructPkg}::escrow::rent`,
     typeArguments: [`${dummyPkg}::dummy_asset::DummyAsset`, '0x2::sui::SUI'],
-    arguments: [tx.object(escrowId), payment, cycles, random(tx), clock(tx)],
+    arguments: [tx.object(escrowId), payment, cycles, clock(tx)],
   });
 }

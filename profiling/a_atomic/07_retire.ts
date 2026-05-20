@@ -14,7 +14,7 @@ import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
-import { buildIntegrate, clock, random } from '../builders.ts';
+import { buildIntegrate, clock } from '../builders.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -61,7 +61,7 @@ async function main() {
     tx.moveCall({
       target: `${d.usufructPackageId}::escrow::retire`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), tx.object(ownerCapId), random(tx), clock(tx)],
+      arguments: [tx.object(escrowId), tx.object(ownerCapId), clock(tx)],
     });
 
     const rec = await measure(client, kp.owner, 'retire', run, tx);

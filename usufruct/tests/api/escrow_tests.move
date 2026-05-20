@@ -359,7 +359,7 @@ fun floor_price_idle_returns_min_rent_price() {
 /// the D axis (PriceEscalationPolicy): d=0 (FixedDelta) and d=1 (CompoundDelta)
 /// — the only axis compute_next_rent_price actually consumes.
 #[test]
-fun floor_price_handover_open_escalates_current_stake() {
+fun floor_price_occupied_escalates_current_stake() {
     let mut sc = setup();
     let mut m = 0u8;
     while (m <= 1) {
@@ -395,7 +395,7 @@ fun floor_price_handover_open_escalates_current_stake() {
 /// Demand returns `f_next_rent_price(pending_stake)`.
 /// Sweeps D as above, but the input stake is t2's (the bidder's).
 #[test]
-fun floor_price_handover_confirmed_escalates_pending_stake() {
+fun floor_price_demand_escalates_pending_stake() {
     let mut sc = setup();
     let mut m = 0u8;
     while (m <= 1) {
@@ -609,7 +609,7 @@ fun used_credit_at_tenure_ceiling_equals_principal_for_all_curves() {
 /// callback at far-future timestamp yields the same used_credit as
 /// one at exactly the expiry — the clamp is the load-bearing property.
 #[test]
-fun used_credit_handover_confirmed_clamps_at_expiry() {
+fun used_credit_demand_clamps_at_expiry() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)); // c=1 Fixed
     let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
@@ -769,7 +769,7 @@ fun rent_from_at_dutch_installs_new_tenant() {
 /// the pre-computed handover_countdown_expiry. Sweeps the C axis
 /// (HandoverPolicy) since handover_policy::compute_expiry_at depends on it.
 #[test]
-fun rent_from_handover_open_places_bid() {
+fun rent_from_occupied_places_bid() {
     let mut sc = setup();
     let mut m = 0u8;
     while (m <= 1) {
@@ -817,7 +817,7 @@ fun rent_from_handover_open_places_bid() {
 }
 
 #[test, expected_failure(abort_code = asset_state::ERetireFlagBlocksBid, location = usufruct::asset_state)]
-fun rent_from_handover_open_aborts_when_retiring_flag_set() {
+fun rent_from_occupied_aborts_when_retiring_flag_set() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -852,7 +852,7 @@ fun rent_from_handover_open_aborts_when_retiring_flag_set() {
 /// bidder's full stake is refunded (RefundState::Total → liquidate).
 /// State tag is unchanged; pending cap_id is replaced.
 #[test]
-fun rent_from_handover_confirmed_supersedes_bid() {
+fun rent_from_demand_supersedes_bid() {
     let mut sc = setup();
     // c=1 (Fixed) — non-zero handover-countdown so APT does NOT
     // fire handover at the third rent before supersede can run.
@@ -1248,7 +1248,7 @@ fun retire_from_at_dutch_collapses_to_retired() {
 /// RetireFlagSet emitted with state_at_set=Occupied; no AssetRetired
 /// (the asset stays with the tenant until tenure expiry).
 #[test]
-fun retire_from_handover_open_only_lifts_flag() {
+fun retire_from_occupied_only_lifts_flag() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -4676,7 +4676,7 @@ fun e2e_retire2_from_at_dutch() {
 
 // RETIRE-3: Occupied ─────────────────────────────────────────────────────
 #[test]
-fun e2e_retire3_from_handover_open() {
+fun e2e_retire3_from_occupied() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // h=0 Skipped — irrelevant with flag
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
@@ -4710,7 +4710,7 @@ fun e2e_retire3_from_handover_open() {
 
 // RETIRE-4: Demand ────────────────────────────────────────────────
 #[test]
-fun e2e_retire4_from_handover_confirmed() {
+fun e2e_retire4_from_demand() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
@@ -4755,7 +4755,7 @@ fun e2e_retire4_from_handover_confirmed() {
 
 // RETIRE-5: Occupied + asset borrowed ────────────────────────────────────
 #[test]
-fun e2e_retire5_from_handover_open_while_borrowed() {
+fun e2e_retire5_from_occupied_while_borrowed() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
@@ -4793,7 +4793,7 @@ fun e2e_retire5_from_handover_open_while_borrowed() {
 
 // RETIRE-6: Demand + asset borrowed ───────────────────────────────
 #[test]
-fun e2e_retire6_from_handover_confirmed_while_borrowed() {
+fun e2e_retire6_from_demand_while_borrowed() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
@@ -4885,7 +4885,7 @@ fun e2e_retire7_already_retired_aborts() {
 ///
 /// Config: c=1 Fixed (expiry=26_000), vary e=0..6, h=0, d=0, f=0.
 #[test]
-fun e2e_cred1_used_credit_clamped_at_handover_confirmed_expiry_across_curves() {
+fun e2e_cred1_used_credit_clamped_at_demand_expiry_across_curves() {
     let mut sc    = setup();
     let stake     = escrow_corpus::min_rent_price_const();
     let expiry    = 1_000 + escrow_corpus::handover_countdown_c1_const(); // 26_000
@@ -5148,7 +5148,7 @@ fun e2e_corpus_gap_full_tenure_handover_full_credit_across_curves() {
 ///   retire_at       = retire_floor + 1          = 10_000_001
 ///   tenure_boundary = t_rent + ceiling          = 10_050_000
 #[test]
-fun e2e_corpus_gap_deferred_retire_from_handover_open_after_floor() {
+fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     let mut sc    = setup();
     let tag       = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc);

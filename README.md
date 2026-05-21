@@ -157,4 +157,5 @@ The result is a state machine where illegal states have no type representation a
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — module layers, state hierarchy, FSM engine
 - [`PATTERNS.md`](./PATTERNS.md) — integration patterns and the design space they open
 - [`CODE_PRINCIPLES.md`](./CODE_PRINCIPLES.md) — design principles applied across the codebase
+- [`UPGRADE_STRATEGY.md`](./UPGRADE_STRATEGY.md) — why usufruct versions instead of upgrading, and what that means for integrators
 - [`specs/`](./specs/) — full technical specification per module

@@ -57,7 +57,6 @@ const EReceiptEscrowMismatch:  u64 = 10;
 const ENotRetired:               u64 = 12;
 const ENoEarnings:              u64 = 13;
 const ERetireAlreadyScheduled:  u64 = 16;
-const ECommitmentNotExtended:     u64 = 17;
 const EReturnedDifferentAsset: u64 = 19;
 const EAlreadyRetiring:        u64 = 20;
 
@@ -1043,18 +1042,14 @@ public(package) fun execute_extend_commitment<CoinType>(
     clock:      &Clock,
 ): EscrowCore<CoinType> {
     assert_owner_cap_binds(owner_cap, &core);
-    let now         = phases::now(clock);
-    let old_expiry  = commitment_policy::compute_unlock_at(
+    let now        = phases::now(clock);
+    let old_expiry = commitment_policy::compute_unlock_at(
         commitment_policy::compute_duration(&core.commitment.policy),
         core.commitment.anchor,
     );
-    let new_expiry  = commitment_policy::compute_unlock_at(
+    let new_expiry = commitment_policy::compute_unlock_at(
         commitment_policy::compute_duration(&new_policy),
-        now,
-    );
-    assert!(
-        phases::timestamp_ms(new_expiry) >= phases::timestamp_ms(old_expiry),
-        ECommitmentNotExtended,
+        old_expiry,
     );
     event::emit(CommitmentExtended {
         escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
@@ -1063,7 +1058,7 @@ public(package) fun execute_extend_commitment<CoinType>(
         timestamp_ms:  phases::timestamp_ms(now),
     });
     core.commitment.policy = new_policy;
-    core.commitment.anchor = now;
+    core.commitment.anchor = old_expiry;
     core
 }
 

@@ -8,11 +8,9 @@ use std::unit_test::assert_eq;
 use usufruct::commitment_policy::{Self, CommitmentPolicy};
 use usufruct::phases;
 
-const E_COMMITMENT_FLOOR_ZERO: u64 = 0; // mirrors commitment_policy::ECommitmentFloorZero
-
 // ─── new_deferred — abort ──────────────────────────────────────────────
 
-#[test, expected_failure(abort_code = E_COMMITMENT_FLOOR_ZERO, location = usufruct::commitment_policy)]
+#[test, expected_failure(abort_code = commitment_policy::ECommitmentFloorZero, location = usufruct::commitment_policy)]
 fun new_deferred_rejects_zero() {
     // Deferred(0) is not allowed; the zero-floor mode is Immediate.
     commitment_policy::new_deferred(phases::duration(0));

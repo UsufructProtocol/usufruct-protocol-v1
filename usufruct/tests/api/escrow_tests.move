@@ -57,7 +57,6 @@ use usufruct::{
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
-const E_ALREADY_RETIRING: u64 = 20; // mirrors asset_state::EAlreadyRetiring
 const OWNER: address = @0x07;
 
 /// Test asset — minimal key+store object that satisfies the
@@ -1247,7 +1246,7 @@ fun retire_when_already_retired_aborts() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = E_ALREADY_RETIRING, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EAlreadyRetiring, location = usufruct::asset_state)]
 fun retire_when_already_retiring_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);

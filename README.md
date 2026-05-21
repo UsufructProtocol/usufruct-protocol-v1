@@ -20,9 +20,15 @@ The asset never leaves the market. There is always a price at which the usus is 
 
 ---
 
-## How it works
+## Usufruct Playground: Learn How the Protocol Works by Playing
 
-An owner integrates any Sui object with `key + store` abilities into an `Escrow<Asset, CoinType>`. The protocol governs the full lifecycle from there.
+Before reading specs or code, build intuition interactively. The [usufruct playground](https://github.com/0xkurious/usufruct-protocol-playground) lets you configure policies, run rental scenarios, and observe how price, credit, and handover mechanics interact — without deploying anything.
+
+---
+
+## Why usufruct is different
+
+Most rental markets close when someone checks in. usufruct doesn't.
 
 **Always a price.** In every state there is a price at which the right of use can be acquired: the rest price at idle, a descending price during the Dutch auction, an escalated price while occupied.
 
@@ -36,23 +42,21 @@ An owner integrates any Sui object with `key + store` abilities into an `Escrow<
 
 **No keeper required.** State transitions execute lazily on the next transaction that touches the escrow. No off-chain coordinator, no cron job, no external dependency on liveness.
 
+**Zero external dependencies.** The package imports only the Sui standard library. No oracle, no AMM, no third-party protocol. Any Sui object integrates without taking a dependency on an external ecosystem, and the protocol itself carries no upgrade or governance risk from outside parties.
+
+**The asset is the interface.** Any object your protocol already issues integrates directly — no adapter code, no permission required, no contract rewrite. If your object has `key + store`, your protocol is already compatible with usufruct.
+
 ---
 
-## What you integrate
+## How it works
 
-The protocol is generic over asset and payment coin:
+An owner wraps any Sui object into an escrow and configures the market — price floor, tenure length, handover rules, auction behavior. From that point, the protocol governs the full lifecycle autonomously.
 
-```move
-Escrow<Asset: key + store, CoinType>
-```
+A tenant pays to acquire the right of use. They receive a `TenantCap` — a capability that proves their current right. With it, they can borrow the asset into any Programmable Transaction Block, use it however the asset's own interface allows, and return it before the transaction closes. The protocol does not inspect what happens in between.
 
-Any object your protocol already issues — a governance cap, an LP position, an access credential, a yield-bearing position — integrates directly. If it has `key + store`, it is compatible. No adapter code. No permission from the issuing protocol. The object is the interface; usufruct holds it; the market does the rest.
+If a challenger bids while the asset is occupied, the current tenant keeps their right for the handover window before displacement executes. When no one wants the asset, the price descends through a Dutch auction until someone does. When the owner is ready to exit, they retire the escrow and claim the asset back along with accumulated earnings.
 
-```move
-let owner_cap = usufruct::integrate<MyAsset, SUI>(
-    asset, ensemble, commitment, &fee_ref, &random, &clock, ctx
-);
-```
+Every transition executes lazily on the next transaction that touches the escrow.
 
 ---
 
@@ -62,7 +66,7 @@ The right of use is exercised through one pair of functions:
 
 ```move
 let (asset, receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &tenant_cap, &clock, ctx);
 // ── the tenant's execution space ─────────────────────────────────────────────
 //   call any function on `asset`
 //   compose with other protocols in the same PTB
@@ -81,11 +85,11 @@ Eight policies configure the market at integration time. They determine the term
 
 | Policy | Controls |
 |--------|---------|
-| `rest_price` | Floor price per idle cycle — fixed or random in range |
-| `tenure_duration` | Maximum tenure length — fixed or random in range |
+| `rest_price` | Floor price per idle cycle |
+| `tenure_duration` | Maximum tenure length |
 | `tenure_extend` | Single or multi-tenure commitment |
-| `handover` | Handover variant — off, full-tenure, countdown, or random in range |
-| `auction_window` | Dutch auction duration — fixed window, skipped, or random in range |
+| `handover` | Handover variant — off, full-tenure, or countdown |
+| `auction_window` | Dutch auction duration — fixed window or skipped |
 | `auction_shape` | Price descent curve |
 | `credit_shape` | Credit consumption rate |
 | `price_escalation` | Escalation function under demand |
@@ -106,7 +110,7 @@ The state machine is invariant. The eight policies are external configuration th
 
 Each policy axis adds a dimension to the space of expressible markets: a different `credit_shape` changes the cost of displacement at any point in the tenure; a different `handover` changes the competitive dynamics; a different `auction_shape` changes how price descends when demand stalls; a different `price_escalation` changes the incumbent's cost of renewal relative to an external challenger.
 
-**672 discrete policy combinations are verified by the test corpus. The continuous parameter space — price floors, duration ranges, curve parameters — is unbounded.**
+**336 discrete policy combinations are verified by the test corpus. The continuous parameter space — price floors, duration ceilings, curve parameters — is unbounded.**
 
 usufruct is rental market as a primitive — integrate your asset once and get price discovery, Dutch auctions, handovers, credit curves, and retirement. No custom auction logic to write, no handover code to maintain, no credit model to design. The market is infrastructure; your asset is the product.
 
@@ -140,25 +144,11 @@ In both cases, the current tenant's economics are preserved — there is no forc
 
 ---
 
-## Simulator
-
-Before reading specs or code, build intuition interactively. The [usufruct simulator](https://github.com/0xkurious/usufruct-simulator) is a playground that lets you configure policies, run rental scenarios, and observe how price, credit, and handover mechanics interact — without deploying anything.
-
----
-
 ## Built with functional style on Sui Move 2024
 
 The codebase applies functional programming consistently throughout: sum types for state, linear types for resource discipline, value transformations for transitions, resolved configuration as pure values. Sui Move 2024's enums with exhaustive match made this style expressible in Move for the first time.
 
 The result is a state machine where illegal states have no type representation and illegal programs cannot be constructed. For a deeper look at the principles behind these decisions, see [`CODE_PRINCIPLES.md`](./CODE_PRINCIPLES.md).
-
----
-
-## Zero external dependencies
-
-The package imports only the Sui standard library. No oracle, no AMM, no third-party protocol. Any Sui object integrates without taking a dependency on an external ecosystem, and the protocol itself carries no upgrade or governance risk from outside parties.
-
-usufruct is a primitive — composable with anything, dependent on nothing.
 
 ---
 

@@ -7,7 +7,6 @@ module usufruct::refund_state;
 
 use usufruct::{
     fee_message::{Self, FeeShare},
-    monetary,
     owner_seat::{Self, OwnerSeat},
     owner_earning::{Self, OwnerEarnings},
     protocol_fee_ref::FeeInboxIdentity,
@@ -79,24 +78,6 @@ public(package) fun parcial<C>(
 
 public(package) fun total<C>(seat: TenantSeat<C>): RefundState<C> {
     RefundState::Total { seat }
-}
-
-public(package) fun from_superseded<C>(pending: TenantSeat<C>): RefundState<C> {
-    total(pending)
-}
-
-public(package) fun from_departing<C>(
-    departing:      TenantSeat<C>,
-    fee_share:      FeeShare<C>,
-    owner_earnings: OwnerEarnings<C>,
-): RefundState<C> {
-    if (monetary::stake_mist(tenant_seat::proj_stake_value(&departing)) > 0) {
-        parcial(departing, fee_share, owner_earnings)
-    } else {
-        let (_, stake) = tenant_seat::unbundle(departing);
-        tenant_stake::destroy_zero(stake);
-        nothing(fee_share, owner_earnings)
-    }
 }
 
 public(package) fun distribute<C>(

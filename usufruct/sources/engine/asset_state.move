@@ -1173,7 +1173,13 @@ fun do_handover<Asset: key + store, CoinType>(
     let mut departing  = current;
     let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
     let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
-    let refund         = refund_state::from_departing(departing, fee_share, owner_earnings);
+    let refund = if (monetary::stake_mist(tenant_seat::proj_stake_value(&departing)) > 0) {
+        refund_state::parcial(departing, fee_share, owner_earnings)
+    } else {
+        let (_, stake) = tenant_seat::unbundle(departing);
+        tenant_stake::destroy_zero(stake);
+        refund_state::nothing(fee_share, owner_earnings)
+    };
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
     let new_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&pending));
@@ -1340,7 +1346,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let cap_identity = tenant_cap::identity(&cap);
     let t = tenant_seat::new<CoinType>(cap_identity, new_bidder, coin::into_balance(payment));
 
-    let refund = refund_state::from_superseded(pending);
+    let refund = refund_state::total(pending);
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
     event::emit(BidSuperseded {
@@ -1784,7 +1790,13 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
             let OccupiedTerms { schedule: _, current: mut tenant, retire: _ } = terms;
             let owner_earnings = tenant_seat::take_owner_earnings(&mut tenant, monetary::stake(owner_amount));
             let fee_share      = tenant_seat::take_fee_share(&mut tenant, monetary::stake(fee_amount), core.escrow_identity);
-            let refund = refund_state::from_departing(tenant, fee_share, owner_earnings);
+            let refund = if (monetary::stake_mist(tenant_seat::proj_stake_value(&tenant)) > 0) {
+                refund_state::parcial(tenant, fee_share, owner_earnings)
+            } else {
+                let (_, stake) = tenant_seat::unbundle(tenant);
+                tenant_stake::destroy_zero(stake);
+                refund_state::nothing(fee_share, owner_earnings)
+            };
             refund_state::destroy_for_testing(refund);
             AssetState::Waiting(WaitingState::AtDutch {
                 asset:   asset_custody::close_tenancy(asset),

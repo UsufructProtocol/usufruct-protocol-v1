@@ -25,16 +25,17 @@ public struct Stake has copy, drop, store { mist: u64 }
 
 // === Public Functions ===
 
+public fun price(mist: u64): Price { Price { mist } }
+public fun price_mist(p: Price): u64 { p.mist }
+
 // === View Functions ===
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun price(mist: u64): Price { Price { mist } }
 public(package) fun stake(mist: u64): Stake { Stake { mist } }
 
-public(package) fun price_mist(p: Price): u64 { p.mist }
 public(package) fun stake_mist(s: Stake): u64 { s.mist }
 
 public(package) fun as_reference_price(s: Stake): Price { Price { mist: s.mist } }

@@ -4,4 +4,7 @@ edition = "2024"
 license = "Apache-2.0"
 authors = ["Antonio Jiménez <build@0xkurious.xyz>"]
 
+[environments]
+localnet = "e62bf6b6"
+
 [dependencies]

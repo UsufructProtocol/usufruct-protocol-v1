@@ -5,7 +5,6 @@
 module usufruct::escrow_view_tests;
 
 use std::unit_test::assert_eq;
-use sui::random::{Self, Random};
 use sui::{
     clock,
     test_scenario::{Self, Scenario},
@@ -33,7 +32,6 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
 
 fun setup(): Scenario {
     let mut sc = test_scenario::begin(@0x0);
-    { random::create_for_testing(sc.ctx()); };
     sc.next_tx(OWNER);
     { protocol_fee_inbox::init_for_testing(sc.ctx()); };
     sc
@@ -52,11 +50,9 @@ fun build_escrow_with_commitment(
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
-    let random  = sc.take_shared<Random>();
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment, &fee_ref, &random, &clk, sc.ctx(),
+        asset, ensemble, commitment, &fee_ref, &clk, sc.ctx(),
     );
-    test_scenario::return_shared(random);
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
@@ -80,24 +76,7 @@ fun tenure_ceiling_views_match_variants() {
     let cfg_fixed = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (escrow, cap) = build_escrow(cfg_fixed, &mut sc);
     assert!(escrow::tenure_ceiling_is_fixed(&escrow));
-    assert!(!escrow::tenure_ceiling_is_random_in_range(&escrow));
     assert_eq!(escrow::tenure_ceiling_fixed_ms(&escrow).destroy_some(), escrow_corpus::tenure_ceiling_const());
-    assert!(escrow::tenure_ceiling_range_min_ms(&escrow).is_none());
-    assert!(escrow::tenure_ceiling_range_max_ms(&escrow).is_none());
-    dispose(escrow, cap);
-
-    // RandomInRange (custom override)
-    let cfg_random = escrow_corpus::with_random_tenure_ceiling(
-        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)),
-        50_000,
-        150_000,
-    );
-    let (escrow, cap) = build_escrow(cfg_random, &mut sc);
-    assert!(!escrow::tenure_ceiling_is_fixed(&escrow));
-    assert!(escrow::tenure_ceiling_is_random_in_range(&escrow));
-    assert!(escrow::tenure_ceiling_fixed_ms(&escrow).is_none());
-    assert_eq!(escrow::tenure_ceiling_range_min_ms(&escrow).destroy_some(), 50_000);
-    assert_eq!(escrow::tenure_ceiling_range_max_ms(&escrow).destroy_some(), 150_000);
     dispose(escrow, cap);
 
     sc.end();
@@ -111,24 +90,7 @@ fun min_rent_price_views_match_variants() {
 
     let cfg_fixed = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (escrow, cap) = build_escrow(cfg_fixed, &mut sc);
-    assert!(escrow::min_rent_price_is_fixed(&escrow));
-    assert!(!escrow::min_rent_price_is_random_in_range(&escrow));
     assert_eq!(escrow::min_rent_price_fixed_mist(&escrow).destroy_some(), escrow_corpus::min_rent_price_const());
-    assert!(escrow::min_rent_price_range_min_mist(&escrow).is_none());
-    assert!(escrow::min_rent_price_range_max_mist(&escrow).is_none());
-    dispose(escrow, cap);
-
-    let cfg_random = escrow_corpus::with_random_min_rent_price(
-        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)),
-        5_000_000_000,
-        20_000_000_000,
-    );
-    let (escrow, cap) = build_escrow(cfg_random, &mut sc);
-    assert!(!escrow::min_rent_price_is_fixed(&escrow));
-    assert!(escrow::min_rent_price_is_random_in_range(&escrow));
-    assert!(escrow::min_rent_price_fixed_mist(&escrow).is_none());
-    assert_eq!(escrow::min_rent_price_range_min_mist(&escrow).destroy_some(), 5_000_000_000);
-    assert_eq!(escrow::min_rent_price_range_max_mist(&escrow).destroy_some(), 20_000_000_000);
     dispose(escrow, cap);
 
     sc.end();
@@ -140,7 +102,7 @@ fun min_rent_price_views_match_variants() {
 fun handover_views_match_variants() {
     let mut sc = setup();
     let mut c: u8 = 0;
-    while (c <= 3) {
+    while (c <= 2) {
         let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(c, 0, 0, 0, 0));
         let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
@@ -167,7 +129,7 @@ fun handover_views_match_variants() {
 fun descent_views_match_variants() {
     let mut sc = setup();
     let mut h: u8 = 0;
-    while (h <= 2) {
+    while (h <= 1) {
         let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, h, 0));
         let (escrow, cap) = build_escrow(ensemble, &mut sc);
 

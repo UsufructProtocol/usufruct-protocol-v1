@@ -109,17 +109,17 @@ fun retake_escrow_by_value(escrow: Escrow<DemoAsset, SUI>, sc: &mut Scenario): E
 // other leaves get their dedicated tests here.
 
 #[test, expected_failure(abort_code = asset_state::ENotRetired, location = usufruct::asset_state)]
-fun claim_asset_aborts_in_at_dutch_state() {
+fun claim_asset_aborts_in_descent_state() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(&mut sc);
 
-    // Idle → Occupied → AtDutch.
+    // Idle → Occupied → Descent.
     escrow::drive_to_rented_for_testing(
         &mut escrow,
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
         0,
     );
-    escrow::drive_to_at_dutch_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
+    escrow::drive_to_descent_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
 
     let escrow = retake_escrow_by_value(escrow, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
@@ -183,7 +183,7 @@ fun claim_asset_aborts_in_demand_state() {
 // ─── execute_borrow wrong-state aborts (C3) ──────────────────────────────────
 //
 // `execute_borrow` does the happy path on Occupied / Demand match arms.
-// The three Waiting variants (Idle, AtDutch, Retired) abort
+// The three Waiting variants (Idle, Descent, Retired) abort
 // `EStaleTenantCap` — reachable from the public API and individually
 // tested here.
 //
@@ -192,10 +192,10 @@ fun claim_asset_aborts_in_demand_state() {
 //
 // The Idle case for borrow is already covered by
 // `escrow_tests::borrow_asset_from_idle_aborts`; the two missing
-// Waiting variants (AtDutch, Retired) get their tests here.
+// Waiting variants (Descent, Retired) get their tests here.
 
 #[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
-fun borrow_asset_aborts_in_at_dutch_state() {
+fun borrow_asset_aborts_in_descent_state() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
 
@@ -204,7 +204,7 @@ fun borrow_asset_aborts_in_at_dutch_state() {
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
         0,
     );
-    escrow::drive_to_at_dutch_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
+    escrow::drive_to_descent_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
 
     let clk = clock::create_for_testing(sc.ctx());
     let foreign_cap = tenant_cap::new(
@@ -262,7 +262,7 @@ fun borrow_asset_aborts_in_retired_state() {
 //   2. Only stale caps can be burned (ETenantCapNotStale).
 //      current/pending caps are still in active use.
 //
-// In Idle/AtDutch/Retired the second invariant is satisfied
+// In Idle/Descent/Retired the second invariant is satisfied
 // structurally (no current/pending exists in those contexts). The
 // legacy form skipped the escrow-identity check in Retired, opening
 // the bypass for invariant 1. This test fixes the latent bug.

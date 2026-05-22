@@ -217,10 +217,10 @@ public fun is_idle<Asset: key + store, CoinType>(
     asset_state::proj_is_idle(read_state(escrow))
 }
 
-public fun is_at_dutch_auction<Asset: key + store, CoinType>(
+public fun is_in_descent<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_state::proj_is_at_dutch(read_state(escrow))
+    asset_state::proj_is_descent(read_state(escrow))
 }
 
 public fun is_occupied<Asset: key + store, CoinType>(
@@ -636,7 +636,7 @@ public fun min_rent_price<Asset: key + store, CoinType>(
     monetary::price_mist(rest_price_policy::compute_floor_price(policy_ensemble::proj_rest_price(read_ensemble(escrow))))
 }
 
-public fun dutch_auction_ceiling_ms<Asset: key + store, CoinType>(
+public fun descent_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     auction_window_policy::proj_fixed_ceiling(policy_ensemble::proj_auction_window(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
@@ -897,7 +897,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
 }
 
 #[test_only]
-public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
+public(package) fun drive_to_descent_for_testing<Asset: key + store, CoinType>(
     escrow:             &mut Escrow<Asset, CoinType>,
     owner_amount:       u64,
     fee_amount:         u64,
@@ -905,7 +905,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
     new_phase_start_ms: u64,
 ) {
     let state = take_state(escrow);
-    let new_state = asset_state::drive_to_at_dutch_for_testing(
+    let new_state = asset_state::drive_to_descent_for_testing(
         state, escrow.core.borrow(), owner_amount, fee_amount, last_acq_price, phases::timestamp(new_phase_start_ms),
     );
     put_state(escrow, new_state);

@@ -181,7 +181,7 @@ fun new_config_valid_inputs_and_getter_roundtrip() {
             auction_shape:  curve_shape_policy::new_exponential(8, true),
             price_escalation_policy: price_escalation_policy::new_compound_delta(math::bps(1), monetary::price(1)),
         },
-        // V12 — AuctionWindowPolicy::Off ("AtDutchAuction unobservable" mode, M6b)
+        // V12 — AuctionWindowPolicy::Off ("DescentAuction unobservable" mode, M6b)
         Case {
             min_rent_price: 1,
             tenure_ceiling: tenure_duration_policy::new_fixed(phases::duration(1_000)),

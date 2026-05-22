@@ -136,11 +136,11 @@ fun descent_views_match_variants() {
         assert_eq!(escrow::is_descent_skipped(&escrow), h == 0);
         assert_eq!(escrow::is_descent_window(&escrow),  h == 1);
 
-        // dutch_auction_ceiling_ms wraps proj_fixed_ceiling — Some only on Window
+        // descent_ceiling_ms wraps proj_fixed_ceiling — Some only on Window
         if (h == 1) {
-            assert_eq!(escrow::dutch_auction_ceiling_ms(&escrow).destroy_some(), escrow_corpus::descent_window_h1_const());
+            assert_eq!(escrow::descent_ceiling_ms(&escrow).destroy_some(), escrow_corpus::descent_window_h1_const());
         } else {
-            assert!(escrow::dutch_auction_ceiling_ms(&escrow).is_none());
+            assert!(escrow::descent_ceiling_ms(&escrow).is_none());
         };
 
         dispose(escrow, cap);

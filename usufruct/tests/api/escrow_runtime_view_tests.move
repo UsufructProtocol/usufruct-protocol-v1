@@ -76,7 +76,7 @@ fun dispose_escrow(escrow: Escrow<DemoAsset, SUI>, cap: OwnerCap) {
 // Instant handover), state_id encodes the expected state-machine leaf:
 //
 //   0 → Waiting::Idle
-//   1 → Waiting::AtDutch
+//   1 → Waiting::Descent
 //   2 → Waiting::Retired
 //   3 → Renting::Occupied
 //   4 → Renting::Demand
@@ -95,7 +95,7 @@ const STATE_DEMAND:   u8 = 4;
 fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     let in_renting = state_id == STATE_OCCUPIED || state_id == STATE_DEMAND;
     let in_demand  = state_id == STATE_DEMAND;
-    let in_at_dutch = state_id == STATE_AT_DUTCH;
+    let in_descent = state_id == STATE_AT_DUTCH;
     let in_waiting_with_resolved = state_id == STATE_IDLE || state_id == STATE_AT_DUTCH;
 
     // — Static identity — asset_id traverses both Waiting and Renting branches
@@ -104,7 +104,7 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
 
     // — Discriminators —
     assert_eq!(escrow::is_idle(escrow),             state_id == STATE_IDLE);
-    assert_eq!(escrow::is_at_dutch_auction(escrow), state_id == STATE_AT_DUTCH);
+    assert_eq!(escrow::is_in_descent(escrow), state_id == STATE_AT_DUTCH);
     assert_eq!(escrow::is_retired(escrow),          state_id == STATE_RETIRED);
     assert_eq!(escrow::is_occupied(escrow),         state_id == STATE_OCCUPIED);
     assert_eq!(escrow::is_demand(escrow),           state_id == STATE_DEMAND);
@@ -121,8 +121,8 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::pending_tenant_cap_id(escrow).is_some(), in_demand);
     assert_eq!(escrow::pending_stake(escrow).is_some(),         in_demand);
 
-    // — phase_start: tenancy envelope (Renting) or state (AtDutch) —
-    assert_eq!(escrow::phase_start_ms(escrow).is_some(), in_renting || in_at_dutch);
+    // — phase_start: tenancy envelope (Renting) or state (Descent) —
+    assert_eq!(escrow::phase_start_ms(escrow).is_some(), in_renting || in_descent);
     // tenure_expiry computed only under Renting (early-returns otherwise)
     assert_eq!(escrow::tenure_expiry_ms(escrow).is_some(), in_renting);
 
@@ -131,16 +131,16 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::active_handover_duration_ms(escrow).is_some(), in_renting);
     assert_eq!(escrow::active_floor_price_mist(escrow).is_some(),     in_renting);
 
-    // — next_* (waiting-resolved): live in WaitingState::Idle and AtDutch —
+    // — next_* (waiting-resolved): live in WaitingState::Idle and Descent —
     assert_eq!(escrow::next_floor_price_mist(escrow).is_some(),     in_waiting_with_resolved);
     assert_eq!(escrow::next_tenure_ceiling_ms(escrow).is_some(),    in_waiting_with_resolved);
     assert_eq!(escrow::next_handover_duration_ms(escrow).is_some(), in_waiting_with_resolved);
 
     // — Waiting-side descent: present in Idle (locked-in for next cycle)
-    //   and in AtDutch (descent in progress). Absent in Renting/Retired.
+    //   and in Descent (descent in progress). Absent in Renting/Retired.
     assert_eq!(escrow::auction_descent_duration_ms(escrow).is_some(), in_waiting_with_resolved);
-    // — AtDutch-only field —
-    assert_eq!(escrow::last_acq_price(escrow).is_some(),              in_at_dutch);
+    // — Descent-only field —
+    assert_eq!(escrow::last_acq_price(escrow).is_some(),              in_descent);
 
     // — Demand-only fields (handover countdown active) —
     assert_eq!(escrow::handover_countdown_expiry_ms(escrow).is_some(), in_demand);
@@ -259,7 +259,7 @@ fun rented_views_post_rent() {
     assert_eq!(escrow::active_tenure_ceiling_ms(&escrow).destroy_some(), escrow_corpus::tenure_ceiling_const());
     let _ahd = escrow::active_handover_duration_ms(&escrow); // Some (resolved at rent time)
     let _afp = escrow::active_floor_price_mist(&escrow);     // Some
-    // last_acq_price is recorded only on AtDutch transitions, not on rent from Idle.
+    // last_acq_price is recorded only on Descent transitions, not on rent from Idle.
     assert!(escrow::last_acq_price(&escrow).is_none());
 
     // — Credit context — accruing in Occupied-like Renting state —
@@ -354,12 +354,12 @@ fun settlement_views_in_demand_state() {
     sc.end();
 }
 
-// ─── pending transitions and AtDutch entry ───────────────────────────────────
+// ─── pending transitions and Descent entry ───────────────────────────────────
 
 #[test]
-fun at_dutch_views_after_tenure_expiry() {
+fun descent_views_after_tenure_expiry() {
     let mut sc  = setup();
-    // h=1 → Descent::Fixed; ensures the escrow enters AtDutch on tenure expiry
+    // h=1 → Descent::Fixed; ensures the escrow enters Descent on tenure expiry
     // instead of collapsing back to Idle (which Descent::Skipped would do).
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
@@ -382,14 +382,14 @@ fun at_dutch_views_after_tenure_expiry() {
     assert!(escrow::is_occupied(&escrow));
     assert_eq!(escrow::next_transition_ms(&escrow, &clk).destroy_some(), expiry);
 
-    // Fire the transition → state advances to AtDutch (descent=Fixed).
+    // Fire the transition → state advances to Descent (descent=Fixed).
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
-    assert!(escrow::is_at_dutch_auction(&escrow));
+    assert!(escrow::is_in_descent(&escrow));
     assert!(!escrow::is_idle(&escrow));
     assert!(!escrow::is_rented(&escrow));
 
-    // AtDutch records the last acquisition price and stores the resolved
+    // Descent records the last acquisition price and stores the resolved
     // descent window, plus the resolved values for the next bid.
     assert!(escrow::last_acq_price(&escrow).is_some());
     assert!(escrow::auction_descent_duration_ms(&escrow).is_some());
@@ -399,7 +399,7 @@ fun at_dutch_views_after_tenure_expiry() {
 
     // Advance clock past the descent window: an Auction transition becomes pending.
     clock::set_for_testing(&mut clk, expiry + escrow_corpus::descent_window_h1_const() + 1);
-    assert!(escrow::is_at_dutch_auction(&escrow));
+    assert!(escrow::is_in_descent(&escrow));
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
     clock::destroy_for_testing(clk);
@@ -422,7 +422,7 @@ fun retired_views_after_retire_from_idle() {
     // — State predicates —
     assert!(escrow::is_retired(&escrow));
     assert!(!escrow::is_idle(&escrow));
-    assert!(!escrow::is_at_dutch_auction(&escrow));
+    assert!(!escrow::is_in_descent(&escrow));
     assert!(!escrow::is_rented(&escrow));
     assert!(!escrow::is_active(&escrow));            // Retired is the only inactive state
     assert!(!escrow::is_occupied(&escrow));
@@ -596,7 +596,7 @@ fun cartesian_state_projector_matrix() {
     clock::destroy_for_testing(clk);
     dispose_escrow(escrow, cap);
 
-    // — AtDutch (Fixed descent → tenure expiry advances to AtDutch) —
+    // — Descent (Fixed descent → tenure expiry advances to Descent) —
     let (mut escrow, cap) = build_escrow(cfg_fixed, &mut sc);
     sc.next_tx(TENANT_ADDR);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -616,13 +616,13 @@ fun cartesian_state_projector_matrix() {
 // ─── cap_is_* false-arm coverage ─────────────────────────────────────────────
 //
 // tenant_cap_is_current/pending/stale call the internal cap_is_* predicates.
-// The `_ => false` arms for AtDutch and Retired were uncovered because existing
+// The `_ => false` arms for Descent and Retired were uncovered because existing
 // tests only used Idle or Renting states.
 
 #[test]
-fun tenant_cap_views_in_at_dutch_state() {
+fun tenant_cap_views_in_descent_state() {
     let mut sc  = setup();
-    // h=1 Fixed: tenure expires → AtDutch (does not immediately collapse).
+    // h=1 Fixed: tenure expires → Descent (does not immediately collapse).
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
 
@@ -633,9 +633,9 @@ fun tenant_cap_views_in_at_dutch_state() {
 
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
-    // In AtDutch: no active tenancy — any cap is stale.
+    // In Descent: no active tenancy — any cap is stale.
     let cap_id = object::id(&t_cap);
     assert!(!escrow::tenant_cap_is_current(&escrow, cap_id), 1);
     assert!(!escrow::tenant_cap_is_pending(&escrow, cap_id), 2);
@@ -758,8 +758,8 @@ fun views_flip_across_tenure_expiry_to_idle() {
 }
 
 #[test]
-fun views_flip_across_tenure_expiry_to_at_dutch() {
-    // Occupied → AtDutch: tenure expires with descent=Fixed.
+fun views_flip_across_tenure_expiry_to_descent() {
+    // Occupied → Descent: tenure expires with descent=Fixed.
     let mut sc  = setup();
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
@@ -773,7 +773,7 @@ fun views_flip_across_tenure_expiry_to_at_dutch() {
 
     // ── Before APT ────────────────────────────────────────────────────────────
     assert!( escrow::is_occupied(&escrow));
-    assert!(!escrow::is_at_dutch_auction(&escrow));
+    assert!(!escrow::is_in_descent(&escrow));
     assert!( escrow::is_rented(&escrow));
     assert!( escrow::current_tenant_addr(&escrow).is_some());
     assert!( escrow::current_stake(&escrow).is_some());
@@ -793,7 +793,7 @@ fun views_flip_across_tenure_expiry_to_at_dutch() {
     // ── After APT ─────────────────────────────────────────────────────────────
     // Descent window starts now: no new pending transition until window expires.
     assert!(!escrow::is_occupied(&escrow));
-    assert!( escrow::is_at_dutch_auction(&escrow));
+    assert!( escrow::is_in_descent(&escrow));
     assert!(!escrow::is_rented(&escrow));
     assert!( escrow::current_tenant_addr(&escrow).is_none());
     assert!( escrow::current_stake(&escrow).is_none());
@@ -815,7 +815,7 @@ fun views_flip_across_tenure_expiry_to_at_dutch() {
 
 #[test]
 fun views_flip_across_auction_expiry_to_idle() {
-    // AtDutch → Idle: descent window expires.
+    // Descent → Idle: descent window expires.
     let mut sc  = setup();
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
@@ -824,18 +824,18 @@ fun views_flip_across_auction_expiry_to_idle() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let t_cap   = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    // Drive Occupied → AtDutch first.
+    // Drive Occupied → Descent first.
     let tenure_expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, tenure_expiry);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow));
+    assert!(escrow::is_in_descent(&escrow));
 
     // Advance clock past the descent window.
     let descent = escrow::auction_descent_duration_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, tenure_expiry + descent + 1);
 
     // ── Before APT ────────────────────────────────────────────────────────────
-    assert!( escrow::is_at_dutch_auction(&escrow));
+    assert!( escrow::is_in_descent(&escrow));
     assert!(!escrow::is_idle(&escrow));
     assert!( escrow::last_acq_price(&escrow).is_some());
     assert!( escrow::phase_start_ms(&escrow).is_some());
@@ -846,7 +846,7 @@ fun views_flip_across_auction_expiry_to_idle() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     // ── After APT ─────────────────────────────────────────────────────────────
-    assert!(!escrow::is_at_dutch_auction(&escrow));
+    assert!(!escrow::is_in_descent(&escrow));
     assert!( escrow::is_idle(&escrow));
     assert!( escrow::last_acq_price(&escrow).is_none());
     assert!( escrow::phase_start_ms(&escrow).is_none());

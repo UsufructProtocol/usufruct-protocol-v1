@@ -99,7 +99,7 @@ fun fixed_ceiling_returns_ceiling_for_window() {
 #[test, expected_failure(abort_code = auction_window_policy::EDescentOffNoFixed, location = usufruct::auction_window_policy)]
 fun fixed_ceiling_aborts_on_off() {
     // fixed_ceiling on Skipped is unreachable in production
-    // (compute_price_descent only fires from AtDutchAuction, structurally
+    // (compute_price_descent only fires from DescentAuction, structurally
     // unobservable under Skipped). This pins the abort code as the
     // contract — anyone calling it directly gets a deterministic failure.
     let p = auction_window_policy::new_descent_off();

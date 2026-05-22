@@ -136,7 +136,7 @@ public enum RetireCondition has store, drop {
 
 public enum WaitingState<Asset: key + store> has store {
     Idle    { asset: asset_custody::AssetCustodyLocked<Asset>, cycle: CycleParams },
-    AtDutch { asset: asset_custody::AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams },
+    Descent { asset: asset_custody::AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams },
     Retired { asset: asset_custody::AssetCustodyLocked<Asset> },
 }
 
@@ -350,10 +350,10 @@ public(package) fun proj_is_idle<Asset: key + store, CoinType>(
     match (s) { AssetState::Waiting(WaitingState::Idle { .. }) => true, _ => false }
 }
 
-public(package) fun proj_is_at_dutch<Asset: key + store, CoinType>(
+public(package) fun proj_is_descent<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
-    match (s) { AssetState::Waiting(WaitingState::AtDutch { .. }) => true, _ => false }
+    match (s) { AssetState::Waiting(WaitingState::Descent { .. }) => true, _ => false }
 }
 
 public(package) fun proj_is_retired<Asset: key + store, CoinType>(
@@ -395,7 +395,7 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
 ): ID {
     match (s) {
         AssetState::Waiting(WaitingState::Idle    { asset, .. } |
-                            WaitingState::AtDutch { asset, .. } |
+                            WaitingState::Descent { asset, .. } |
                             WaitingState::Retired { asset })     => asset_custody::proj_locked_id(asset),
         AssetState::Renting(RentingState::Occupied { asset, .. } | RentingState::Demand { asset, .. }) =>
             asset_identity::proj_id(asset_custody::proj_asset_id(asset)),
@@ -478,7 +478,7 @@ public(package) fun proj_phase_start<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
             option::some(terms.schedule.phase_start),
-        AssetState::Waiting(WaitingState::AtDutch { auction, .. }) =>
+        AssetState::Waiting(WaitingState::Descent { auction, .. }) =>
             option::some(auction.phase_start),
         _ => option::none(),
     }
@@ -527,7 +527,7 @@ public(package) fun proj_waiting_resolved_floor<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Price> {
     match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::AtDutch { cycle, .. }) =>
+        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) =>
             option::some(cycle.floor),
         _ => option::none(),
     }
@@ -537,7 +537,7 @@ public(package) fun proj_waiting_resolved_ceiling<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {
     match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::AtDutch { cycle, .. }) =>
+        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) =>
             option::some(cycle.ceiling),
         _ => option::none(),
     }
@@ -547,7 +547,7 @@ public(package) fun proj_waiting_resolved_handover<Asset: key + store, CoinType>
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {
     match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::AtDutch { cycle, .. }) =>
+        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) =>
             option::some(cycle.handover),
         _ => option::none(),
     }
@@ -557,7 +557,7 @@ public(package) fun proj_waiting_resolved_descent<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {
     match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::AtDutch { cycle, .. }) =>
+        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) =>
             option::some(cycle.descent),
         _ => option::none(),
     }
@@ -567,7 +567,7 @@ public(package) fun proj_last_acq_price<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Price> {
     match (s) {
-        AssetState::Waiting(WaitingState::AtDutch { auction, .. }) => option::some(auction.last_acq_price),
+        AssetState::Waiting(WaitingState::Descent { auction, .. }) => option::some(auction.last_acq_price),
         _ => option::none(),
     }
 }
@@ -620,7 +620,7 @@ public(package) fun compute_floor_price_at<Asset: key + store, CoinType>(
 ): Price {
     match (s) {
         AssetState::Waiting(WaitingState::Idle { cycle, .. }) => cycle.floor,
-        AssetState::Waiting(WaitingState::AtDutch { auction, cycle, .. }) => {
+        AssetState::Waiting(WaitingState::Descent { auction, cycle, .. }) => {
             descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.ensemble.active, now)
         },
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
@@ -707,7 +707,7 @@ public(package) fun compute_next_pending<Asset: key + store, CoinType>(
     let now = phases::now(clock);
     match (s) {
         AssetState::Waiting(WaitingState::Idle { .. } | WaitingState::Retired { .. }) => option::none(),
-        AssetState::Waiting(WaitingState::AtDutch { auction, cycle, .. }) => {
+        AssetState::Waiting(WaitingState::Descent { auction, cycle, .. }) => {
             if (proj_auction_is_firable(auction, cycle, now)) {
                 option::some(auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start))
             } else { option::none() }
@@ -812,7 +812,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
-        AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
+        AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             let floor = descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.ensemble.active, now);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
@@ -856,7 +856,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, .. }) =>
             AssetState::Waiting(do_retire_immediately(asset, escrow_identity, now, ctx)),
-        AssetState::Waiting(WaitingState::AtDutch { asset, .. }) =>
+        AssetState::Waiting(WaitingState::Descent { asset, .. }) =>
             AssetState::Waiting(do_retire_immediately(asset, escrow_identity, now, ctx)),
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner: ctx.sender(), timestamp_ms: now_ms });
@@ -895,10 +895,10 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&core.ensemble.active));
             AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
         },
-        AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
+        AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_ensemble });
             core.ensemble.pending = option::some(new_ensemble);
-            AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle })
+            AssetState::Waiting(WaitingState::Descent { asset, auction, cycle })
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
@@ -1258,7 +1258,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         config.pending = option::none();
         WaitingState::Retired { asset: locked }
     } else {
-        WaitingState::AtDutch {
+        WaitingState::Descent {
             asset:   locked,
             auction: AuctionTerms { last_acq_price: monetary::as_reference_price(principal), phase_start: boundary },
             cycle,
@@ -1442,12 +1442,12 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
     now:  Timestamp,
 ): AssetState<Asset, CoinType> {
     match (s) {
-        AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle }) => {
+        AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             if (proj_auction_is_firable(&auction, &cycle, now)) {
                 let boundary = auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start);
                 AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary))
             } else {
-                AssetState::Waiting(WaitingState::AtDutch { asset, auction, cycle })
+                AssetState::Waiting(WaitingState::Descent { asset, auction, cycle })
             }
         },
         s => s,
@@ -1719,7 +1719,7 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     boundary: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Waiting(WaitingState::AtDutch { asset, auction, .. }) =>
+        AssetState::Waiting(WaitingState::Descent { asset, auction, .. }) =>
             AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary)),
         AssetState::Waiting(_ws) => abort ENotRented,
         AssetState::Renting(_rs) => abort ENotRented,
@@ -1775,7 +1775,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
 }
 
 #[test_only]
-public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
+public(package) fun drive_to_descent_for_testing<Asset: key + store, CoinType>(
     state:           AssetState<Asset, CoinType>,
     core:            &EscrowCore<CoinType>,
     owner_amount:    u64,
@@ -1796,7 +1796,7 @@ public(package) fun drive_to_at_dutch_for_testing<Asset: key + store, CoinType>(
                 refund_state::nothing(fee_share, owner_earnings)
             };
             refund_state::destroy_for_testing(refund);
-            AssetState::Waiting(WaitingState::AtDutch {
+            AssetState::Waiting(WaitingState::Descent {
                 asset:   asset_custody::close_tenancy(asset),
                 auction: AuctionTerms { last_acq_price: monetary::price(last_acq_price), phase_start: new_phase_start },
                 cycle,
@@ -1841,7 +1841,7 @@ public(package) fun proj_resolved_descent_for_testing<Asset: key + store, CoinTy
     s: &AssetState<Asset, CoinType>,
 ): Duration {
     match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::AtDutch { cycle, .. }) => cycle.descent,
+        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.descent,
         AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) => cycle.descent,
         AssetState::Waiting(WaitingState::Retired { .. }) => abort 0,
     }
@@ -1852,7 +1852,7 @@ public(package) fun proj_resolved_floor_for_testing<Asset: key + store, CoinType
     s: &AssetState<Asset, CoinType>,
 ): Price {
     match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::AtDutch { cycle, .. }) => cycle.floor,
+        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.floor,
         AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) => cycle.floor,
         AssetState::Waiting(WaitingState::Retired { .. }) => abort 0,
     }
@@ -1863,7 +1863,7 @@ public(package) fun proj_resolved_ceiling_for_testing<Asset: key + store, CoinTy
     s: &AssetState<Asset, CoinType>,
 ): Duration {
     match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::AtDutch { cycle, .. }) => cycle.ceiling,
+        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.ceiling,
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) => terms.schedule.ceiling_total,
         AssetState::Waiting(WaitingState::Retired { .. }) => abort 0,
     }
@@ -1874,7 +1874,7 @@ public(package) fun proj_resolved_handover_for_testing<Asset: key + store, CoinT
     s: &AssetState<Asset, CoinType>,
 ): Duration {
     match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::AtDutch { cycle, .. }) => cycle.handover,
+        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.handover,
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) => terms.schedule.handover_total,
         AssetState::Waiting(WaitingState::Retired { .. }) => abort 0,
     }

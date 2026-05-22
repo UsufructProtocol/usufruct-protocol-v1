@@ -133,7 +133,7 @@ usufruct is rental market as a primitive — integrate your asset once and get p
 The owner reclaims the asset in two steps: `retire()` then `claim_asset()`.
 
 **`retire()`** signals the owner's intent to exit. Its effect depends on the current state:
-- From `Idle` or `AtDutch` — the asset transitions to `Retired` immediately.
+- From `Idle` or `Descent` — the asset transitions to `Retired` immediately.
 - From `Occupied` or `Demand` — a retire flag is set. The current tenant completes their tenure normally; the asset moves to `Retired` when it ends.
 
 In both cases, the current tenant's economics are preserved — there is no forced eviction.

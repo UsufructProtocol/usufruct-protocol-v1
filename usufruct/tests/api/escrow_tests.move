@@ -417,12 +417,12 @@ fun floor_price_demand_escalates_pending_stake() {
     sc.end();
 }
 
-/// AtDutch at t=phase_start (elapsed=0) returns `last_acquisition_price`
+/// Descent at t=phase_start (elapsed=0) returns `last_acquisition_price`
 /// (curve evaluated at 0 → 0 consumed). Sweeps E (curve dimension) at
 /// fixed h=1 (descent=Fixed). The boundary `g(0)=0` is universal
 /// across all 7 curves.
 #[test]
-fun floor_price_at_dutch_at_t0_equals_last_acq_price() {
+fun floor_price_descent_at_t0_equals_last_acq_price() {
     let mut sc = setup();
     let mut m = 0u8;
     while (m <= 1) {
@@ -437,12 +437,12 @@ fun floor_price_at_dutch_at_t0_equals_last_acq_price() {
                 mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
                 0,
             );
-            // Drive Occupied → AtDutch with last_acq_price > min_rent_price
+            // Drive Occupied → Descent with last_acq_price > min_rent_price
             // so the spread is positive (otherwise the assertion would be
             // trivial: last_acq_price - 0 = last_acq_price for any curve).
             let last_acq = escrow_corpus::min_rent_price_const() * 2;
             let boundary_ms = 100_000;
-            escrow::drive_to_at_dutch_for_testing(
+            escrow::drive_to_descent_for_testing(
                 &mut escrow, STAKE_T1, 0, last_acq, boundary_ms,
             );
 
@@ -462,10 +462,10 @@ fun floor_price_at_dutch_at_t0_equals_last_acq_price() {
     sc.end();
 }
 
-/// AtDutch at t=phase_start+ceiling (full descent) collapses to
+/// Descent at t=phase_start+ceiling (full descent) collapses to
 /// `min_rent_price` for every curve (g(t_max)=SCALE → consumed=spread).
 #[test]
-fun floor_price_at_dutch_at_full_descent_equals_min_rent_price() {
+fun floor_price_descent_at_full_descent_equals_min_rent_price() {
     let mut sc = setup();
     let mut m = 0u8;
     while (m <= 1) {
@@ -482,7 +482,7 @@ fun floor_price_at_dutch_at_full_descent_equals_min_rent_price() {
             );
             let last_acq    = escrow_corpus::min_rent_price_const() * 2;
             let phase_start = 100_000;
-            escrow::drive_to_at_dutch_for_testing(
+            escrow::drive_to_descent_for_testing(
                 &mut escrow, STAKE_T1, 0, last_acq, phase_start,
             );
 
@@ -641,7 +641,7 @@ fun used_credit_aborts_on_idle() {
 }
 
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
-fun used_credit_aborts_on_at_dutch() {
+fun used_credit_aborts_on_descent() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(0);
     let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
@@ -650,7 +650,7 @@ fun used_credit_aborts_on_at_dutch() {
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
         0,
     );
-    escrow::drive_to_at_dutch_for_testing(
+    escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1, 0, escrow_corpus::min_rent_price_const(), 100_000,
     );
     let clock = clock::create_for_testing(sc.ctx());
@@ -706,22 +706,22 @@ fun rent_from_idle_installs_new_tenant() {
     sc.end();
 }
 
-/// AtDutch → Occupied via rent. RentStarted.from_state = AtDutchAuction.
+/// Descent → Occupied via rent. RentStarted.from_state = DescentAuction.
 #[test]
-fun rent_from_at_dutch_installs_new_tenant() {
+fun rent_from_descent_installs_new_tenant() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));  // h=1 for non-zero descent window
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    // Drive to AtDutch via test-only helpers.
+    // Drive to Descent via test-only helpers.
     escrow::drive_to_rented_for_testing(
         &mut escrow,
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
         0,
     );
     let last_acq = escrow_corpus::min_rent_price_const() * 2;
-    escrow::drive_to_at_dutch_for_testing(
+    escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1, 0, last_acq, escrow_corpus::tenure_ceiling_const(),
     );
 
@@ -1061,11 +1061,11 @@ fun do_tenure_expiry_tenant_receives_no_refund() {
     sc.end();
 }
 
-/// Occupied → AtDutch via tenure boundary. Refund is always
+/// Occupied → Descent via tenure boundary. Refund is always
 /// Nothing (full stake consumed: owner+fee). last_acquisition_price
 /// equals the principal at boundary.
 #[test]
-fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
+fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -1079,8 +1079,8 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
-    // Post-condition: NotRented + AtDutch.
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    // Post-condition: NotRented + Descent.
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     // Owner balance += owner_share (90% of full principal).
     let owner_share_expected = principal - principal / 10;
@@ -1110,7 +1110,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_at_dutch() {
 }
 
 /// Occupied + retiring=true → tenure expiry transitions directly
-/// to Retired (skipping AtDutch). AssetRetired co-emits with
+/// to Retired (skipping Descent). AssetRetired co-emits with
 /// TenureExpired.
 #[test]
 fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
@@ -1128,7 +1128,7 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
-    // Post-condition: NotRented + Retired (not AtDutch).
+    // Post-condition: NotRented + Retired (not Descent).
     assert!(escrow::is_retired(&escrow), 0);
 
     // Both events emitted: TenureExpired + AssetRetired.
@@ -1173,10 +1173,10 @@ fun retire_from_idle_collapses_to_retired() {
     sc.end();
 }
 
-/// retire from AtDutch → Retired (same flow as Idle, different
-/// from_state). Drives via the test-only AtDutch helper.
+/// retire from Descent → Retired (same flow as Idle, different
+/// from_state). Drives via the test-only Descent helper.
 #[test]
-fun retire_from_at_dutch_collapses_to_retired() {
+fun retire_from_descent_collapses_to_retired() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 window
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -1187,7 +1187,7 @@ fun retire_from_at_dutch_collapses_to_retired() {
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
         0,
     );
-    escrow::drive_to_at_dutch_for_testing(
+    escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1, 0, escrow_corpus::min_rent_price_const() * 2, 100_000,
     );
 
@@ -1323,7 +1323,7 @@ fun retire_before_floor_aborts_under_deferred_policy() {
 
 // ─── §13. do_auction_expiry ──────────────────────────────────────────────────
 
-/// AtDutch → Idle via auction boundary. No tenant funds; only emits
+/// Descent → Idle via auction boundary. No tenant funds; only emits
 /// AuctionExpired.
 #[test]
 fun do_auction_expiry_returns_to_idle() {
@@ -1331,13 +1331,13 @@ fun do_auction_expiry_returns_to_idle() {
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
 
-    // Drive Idle → Occupied → AtDutch via test helpers.
+    // Drive Idle → Occupied → Descent via test helpers.
     escrow::drive_to_rented_for_testing(
         &mut escrow,
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
         0,
     );
-    escrow::drive_to_at_dutch_for_testing(
+    escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1, 0, escrow_corpus::min_rent_price_const() * 2, 100_000,
     );
 
@@ -1423,11 +1423,11 @@ fun next_pending_returns_none_in_steady_state() {
     sc.end();
 }
 
-/// compute_next_pending returns None when the escrow is at AtDutch but the descent
-/// window has not yet closed. Covers the AtDutch-not-firable branch of
+/// compute_next_pending returns None when the escrow is at Descent but the descent
+/// window has not yet closed. Covers the Descent-not-firable branch of
 /// `compute_next_pending` (B4 in bytecode).
 #[test]
-fun next_pending_at_dutch_not_firable_returns_none() {
+fun next_pending_descent_not_firable_returns_none() {
     let mut sc = setup();
     // h=1 Fixed descent — non-zero descent duration ensures the auction is
     // not immediately firable at clock=0.
@@ -1438,10 +1438,10 @@ fun next_pending_at_dutch_not_firable_returns_none() {
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
 
-    // Expire the tenure to enter AtDutch (h=1 → Fixed → stays in AtDutch).
+    // Expire the tenure to enter Descent (h=1 → Fixed → stays in Descent).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     // Probe at clock just after tenure expiry — the descent window is not yet
     // closed, so no pending transition.
@@ -1616,8 +1616,8 @@ fun apt_fires_tenure_expiry_when_elapsed() {
     // Jump clock past the tenure boundary.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    // Tenure expired: Occupied → AtDutch (h=1 window).
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    // Tenure expired: Occupied → Descent (h=1 window).
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     let expired = event::events_by_type<TenureExpired>();
     assert_eq!(expired.length(), 1);
@@ -1631,7 +1631,7 @@ fun apt_fires_tenure_expiry_when_elapsed() {
 
 /// APT cascade: rent → tenure expires → auction also expires under
 /// h=0 (Skipped descent) → state collapses to Idle in one APT call.
-/// Spec scenario M6b (Occupied → AtDutchAuction → Idle in one
+/// Spec scenario M6b (Occupied → DescentAuction → Idle in one
 /// pass). Verifies the cascade order and that MAX_APT_ITERATIONS
 /// holds (3 iterations needed: tenure, auction; the no-op final
 /// iteration to confirm steady state).
@@ -1647,7 +1647,7 @@ fun apt_cascade_tenure_then_auction_skipped() {
 
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    // Cascade: Occupied → AtDutch (tenure_expiry) → Idle (auction_expiry under h=0 collapses to phase_start, immediately expired).
+    // Cascade: Occupied → Descent (tenure_expiry) → Idle (auction_expiry under h=0 collapses to phase_start, immediately expired).
     assert!(escrow::is_idle(&escrow), 0);
 
     let tenure_e = event::events_by_type<TenureExpired>();
@@ -2184,7 +2184,7 @@ fun claim_asset_with_real_foreign_escrow_cap_aborts() {
     sc.end();
 }
 
-/// APT cascade: Demand → Occupied → AtDutch → Idle in
+/// APT cascade: Demand → Occupied → Descent → Idle in
 /// one pass under (c=2 FullTenure, h=0 Skipped). M6c spec scenario.
 /// FullTenure saturates handover_countdown_expiry to the tenure
 /// boundary; Skipped collapses descent — three transitions fire in
@@ -2214,7 +2214,7 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     //   h=0 Skipped.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() * 3);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    // Cascade: Demand → Occupied → AtDutch → Idle.
+    // Cascade: Demand → Occupied → Descent → Idle.
     assert!(escrow::is_idle(&escrow), 1);
 
     // All three boundary events fired.
@@ -2232,7 +2232,7 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
 
 // ─── §18. End-to-end scenarios ───────────────────────────────────────────────
 
-/// Exhaustive full-cycle helper: Idle → HO → HC → HO → {Idle|AtDutch} → Idle
+/// Exhaustive full-cycle helper: Idle → HO → HC → HO → {Idle|Descent} → Idle
 /// → Retired → claimed, over all combinations of c, h, m (d=0, e=0, f=0).
 ///
 /// Timing is derived from the BidPlaced event (same strategy as APT idempotency)
@@ -2286,7 +2286,7 @@ fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenari
 
         // B3: Auction expiry (h ≠ 0 only — h=0 exits directly to Idle).
         if (entry.h() != 0) {
-            assert!(escrow::is_at_dutch_auction(&escrow), tag);
+            assert!(escrow::is_in_descent(&escrow), tag);
             let max_descent = escrow_corpus::descent_window_h1_const();
             clock::set_for_testing(&mut clk, tenure_boundary + max_descent);
             escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
@@ -2330,8 +2330,8 @@ fun e2e_full_cycle_all_ch_m() {
 }
 
 /// Full rental cycle with bid: integrate → rent (Idle→HO) → place bid
-/// (HO→HC) → APT handover (HC→HO) → APT tenure (HO→AtDutch) → APT
-/// auction (AtDutch→Idle) → retire → claim. Verifies the assembly
+/// (HO→HC) → APT handover (HC→HO) → APT tenure (HO→Descent) → APT
+/// auction (Descent→Idle) → retire → claim. Verifies the assembly
 /// holds across all transitions and the events fire in order.
 #[test]
 fun e2e_full_rental_cycle_with_bid_and_handover() {
@@ -2357,13 +2357,13 @@ fun e2e_full_rental_cycle_with_bid_and_handover() {
     escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow_handle), 0);
 
-    // APT past tenure: tenure expiry fires (HO → AtDutch).
+    // APT past tenure: tenure expiry fires (HO → Descent).
     let tenure_boundary = countdown_expiry + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary);
     escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow_handle), 1);
+    assert!(escrow::is_in_descent(&escrow_handle), 1);
 
-    // APT past auction: auction expiry fires (AtDutch → Idle).
+    // APT past auction: auction expiry fires (Descent → Idle).
     let auction_boundary = tenure_boundary + escrow_corpus::descent_window_h1_const();
     clock::set_for_testing(&mut clk, auction_boundary);
     escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
@@ -2397,7 +2397,7 @@ fun e2e_full_rental_cycle_with_bid_and_handover() {
 }
 
 /// Tenure expiry without a competing bid: rent → tenure expires →
-/// AtDutch → no_winner → Idle. Owner accumulates the full stake's
+/// Descent → no_winner → Idle. Owner accumulates the full stake's
 /// 90% via tenure expiry. Sweeps E (curve dimension) at fixed
 /// (c=0, d=0, h=1, f=0) — the universal boundary properties
 /// (g(t_max)=SCALE, full descent collapses to min_rent_price)
@@ -2418,10 +2418,10 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
             let p1 = mk_payment(principal, sc.ctx());
             let cap_t1 = escrow::rent(&mut escrow_handle, p1, tenures::tenures(1), &clk, sc.ctx());
 
-            // APT past tenure → AtDutch.
+            // APT past tenure → Descent.
             clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
             escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
-            assert!(escrow::is_at_dutch_auction(&escrow_handle), cfg_tag);
+            assert!(escrow::is_in_descent(&escrow_handle), cfg_tag);
 
             // APT past descent → Idle.
             clock::set_for_testing(
@@ -2448,7 +2448,7 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
 }
 
 /// Retire-during-rental: rent → retire (flag set, state stays HO) →
-/// APT past tenure → state collapses to Retired (not AtDutch). Owner
+/// APT past tenure → state collapses to Retired (not Descent). Owner
 /// claims the asset; AssetRetired emitted.
 #[test]
 fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
@@ -2464,7 +2464,7 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
     escrow::retire(&mut escrow_handle, &owner_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow_handle), 0);
 
-    // APT past tenure: state collapses to Retired (skipping AtDutch).
+    // APT past tenure: state collapses to Retired (skipping Descent).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow_handle), 1);
@@ -2494,7 +2494,7 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
 ///
 /// Config: c=0 (Instant — handover fires at bid_time, no clock advance),
 ///         d=0 (FixedDelta — price escalates additively),
-///         h=0 (Skipped — AtDutchAuction is unobservable),
+///         h=0 (Skipped — DescentAuction is unobservable),
 ///         e=0, f=0.
 ///
 /// Verifies: floor_price increases at each succession, two HandoverCompleted
@@ -2571,9 +2571,9 @@ fun e2e_two_tenant_successions_price_escalates() {
 // ─── §2. Auction winner rents at descending price ─────────────────────────────
 
 /// T1 rents, T2 displaces T1 via handover (so T2's price > T1's), T2's
-/// tenure expires → AtDutchAuction with non-zero spread. T3 rents at
+/// tenure expires → DescentAuction with non-zero spread. T3 rents at
 /// mid-descent price, which is strictly below T2's price (the last
-/// acquisition price entering AtDutch) but ≥ min_rent_price.
+/// acquisition price entering Descent) but ≥ min_rent_price.
 ///
 /// Zero-spread is impossible here: T2's price = T1 + FixedDelta > min_rent_price,
 /// so the descent has a genuine spread to exercise.
@@ -2603,12 +2603,12 @@ fun e2e_auction_winner_rents_at_mid_descent() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
-    // APT past T2's tenure ceiling → AtDutchAuction.
+    // APT past T2's tenure ceiling → DescentAuction.
     // last_acquisition_price = price_t2 > min_rent_price → non-zero spread.
     let tenure_boundary = now_t2 + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), tag);
+    assert!(escrow::is_in_descent(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
 
     // T3 at mid-descent: price is between price_t2 and min_rent_price.
@@ -2754,7 +2754,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
 // ─── §5. Zero-spread descent — floor stays at min_rent_price ─────────────────
 
 /// T1 rents at min_rent_price and holds until tenure expires without a
-/// successor. AtDutchAuction starts with last_acquisition_price =
+/// successor. DescentAuction starts with last_acquisition_price =
 /// min_rent_price — the spread [min_rent_price, min_rent_price] is zero.
 /// compute_floor_price must return min_rent_price at every point in the
 /// descent window regardless of curve shape.
@@ -2784,12 +2784,12 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
                 sc.ctx(),
             );
 
-            // APT past tenure ceiling → AtDutchAuction.
+            // APT past tenure ceiling → DescentAuction.
             // last_acquisition_price = min_rent_price → zero spread.
             let tenure_boundary = escrow_corpus::tenure_ceiling_const();
             clock::set_for_testing(&mut clk, tenure_boundary + 1);
             escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-            assert!(escrow::is_at_dutch_auction(&escrow), tag);
+            assert!(escrow::is_in_descent(&escrow), tag);
 
             // floor at t=0 of descent window: must equal min_rent_price.
             // (Zero spread means price == min_price at every point; any clock value works.)
@@ -3003,13 +3003,13 @@ fun e2e_b3b_superseded_tenant_cap_borrow_aborts() {
     sc.end();
 }
 
-// ─── §B4. Auction entry — rent from AtDutch then borrow in same PTB ──────────
+// ─── §B4. Auction entry — rent from Descent then borrow in same PTB ──────────
 
-/// T1 rents, tenure expires → AtDutchAuction. T2 rents at the auction
-/// price — rent() from AtDutch calls do_install_new_tenant (T2 is
+/// T1 rents, tenure expires → DescentAuction. T2 rents at the auction
+/// price — rent() from Descent calls do_install_new_tenant (T2 is
 /// immediately current, no APT needed). T2 borrows in the same PTB.
 ///
-/// Config: c=0, d=0, h=1 (observable AtDutch), f=0.
+/// Config: c=0, d=0, h=1 (observable Descent), f=0.
 #[test]
 fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     let mut sc  = setup();
@@ -3018,7 +3018,7 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    // T1 rents, tenure expires → AtDutchAuction.
+    // T1 rents, tenure expires → DescentAuction.
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     // T2 places a bid and APT fires handover so last_acq_price > min to get a spread.
@@ -3030,9 +3030,9 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     let tenure_boundary = 1_000 + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), tag);
+    assert!(escrow::is_in_descent(&escrow), tag);
 
-    // T3 rents from AtDutchAuction at mid-descent price — immediately current.
+    // T3 rents from DescentAuction at mid-descent price — immediately current.
     let now_mid  = tenure_boundary + escrow_corpus::descent_window_h1_const() / 2;
     clock::set_for_testing(&mut clk, now_mid);
     let price_t3 = escrow::compute_floor_price(&escrow, &clk);
@@ -3231,7 +3231,7 @@ fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
 /// Owner sets the retiring flag while in Demand (T2 has a pending
 /// bid). APT still honors the bid and fires the handover — T2 receives
 /// Occupied with the retiring flag inherited. T2's tenure then collapses
-/// to Retired (not AtDutch) because the flag is active.
+/// to Retired (not Descent) because the flag is active.
 ///
 /// Config: c=1 (Fixed — time is needed to verify flag persists through APT),
 ///         h=0 (Skipped — tenure → Retired in one APT when retiring=true), f=0.
@@ -3265,7 +3265,7 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
     assert!(escrow::is_occupied(&escrow), tag);
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
-    // APT past T2's tenure ceiling → collapses to Retired (not AtDutch).
+    // APT past T2's tenure ceiling → collapses to Retired (not Descent).
     let tenure_boundary = countdown_expiry + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
@@ -3305,7 +3305,7 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
     let boundary = escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, boundary);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    // h=0 Skipped: tenure → AtDutch → Idle in one APT step.
+    // h=0 Skipped: tenure → Descent → Idle in one APT step.
     assert!(escrow::is_idle(&escrow), tag);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -3606,7 +3606,7 @@ fun e2e_current_tenant_defends_against_challenger() {
 /// raising the floor for the next bidder more than a minimal bid would.
 ///
 /// Drives sequentially through: Idle → Occupied → Demand →
-/// AtDutchAuction, paying 2× the floor_price at each step. After each rent,
+/// DescentAuction, paying 2× the floor_price at each step. After each rent,
 /// the new floor_price == price_paid + FIXED_DELTA (not floor_price + delta),
 /// confirming the full overpay is stored as stake.
 #[test]
@@ -3615,7 +3615,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     // c=1 (Fixed) required for the Demand supersede step:
     // rent() calls APT internally; with c=0 the countdown expires at bid_time,
     // so APT fires the handover before reaching do_supersede_bid in HC state.
-    // h=1 (Fixed) makes AtDutchAuction observable.
+    // h=1 (Fixed) makes DescentAuction observable.
     let tag       = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Fixed, h=1 Fixed
     let ensemble       = escrow_corpus::by_tag(tag);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -3658,23 +3658,23 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     clock::set_for_testing(&mut clk, t3_expiry);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
-    // AtDutchAuction: T3's phase_start = t3_expiry=26_000 (handover boundary for Fixed).
+    // DescentAuction: T3's phase_start = t3_expiry=26_000 (handover boundary for Fixed).
     // Actually: compute_expiry_at(bid_time=2_000, phase_start=0, tenure_ceiling=100_000)
     //   = min(2_000+25_000, 0+100_000) = 27_000.
     let t3_phase_start = 27_000u64;
     let tenure_boundary = t3_phase_start + escrow_corpus::tenure_ceiling_const(); // 127_000
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), tag);
+    assert!(escrow::is_in_descent(&escrow), tag);
 
-    // Pay 2× mid-descent price. RentStarted events: [Idle, AtDutch].
+    // Pay 2× mid-descent price. RentStarted events: [Idle, Descent].
     let now_mid       = tenure_boundary + escrow_corpus::descent_window_h1_const() / 2;
     clock::set_for_testing(&mut clk, now_mid);
     let descent_price = escrow::compute_floor_price(&escrow, &clk);
     let price_t4      = 2 * descent_price;
     let cap_t4        = escrow::rent(&mut escrow, mk_payment(price_t4, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let rs_all        = event::events_by_type<RentStarted>();
-    assert_eq!(rs_all.length(), 2); // Idle + AtDutch
+    assert_eq!(rs_all.length(), 2); // Idle + Descent
     assert_eq!(asset_state::rent_started_price_paid(rs_all.borrow(1)), price_t4);
     assert!(price_t4 >= asset_state::rent_started_floor_price(rs_all.borrow(1)), tag);
     assert!(escrow::is_occupied(&escrow), tag);
@@ -3863,7 +3863,7 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
 /// The exhaustive coverage is in the e2e_fin_conservation_* family above;
 /// this test exists as a named, self-contained explanation of the invariant.
 ///
-/// Config: c=0 (Instant), h=1 (Fixed — AtDutch observable after expiry).
+/// Config: c=0 (Instant), h=1 (Fixed — Descent observable after expiry).
 #[test]
 fun e2e_fin2_tenure_expiry_financial_conservation() {
     let mut sc  = setup();
@@ -3887,7 +3887,7 @@ fun e2e_fin2_tenure_expiry_financial_conservation() {
     let t2_tenure_boundary = now_t2 + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, t2_tenure_boundary);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), tag);
+    assert!(escrow::is_in_descent(&escrow), tag);
 
     let te_events = event::events_by_type<TenureExpired>();
     assert_eq!(te_events.length(), 1);
@@ -3949,7 +3949,7 @@ fun e2e_fin3_90_10_split_exact() {
         assert_eq!(te_fee,   min_price / 10);
         assert_eq!(te_owner, min_price - min_price / 10);
         // last_acquisition_price == T1's stake here (no handover → founding ==
-        // departing tenant), and marks the AtDutch descent starting point.
+        // departing tenant), and marks the Descent descent starting point.
         assert_eq!(te_lap, min_price);
     };
     transfer::public_transfer(cap_a1, OWNER);
@@ -3993,7 +3993,7 @@ fun e2e_fin3_90_10_split_exact() {
 
 // ─── §DESC-1/2. Price descent — exact endpoint invariants ────────────────────
 
-/// At the exact start of AtDutchAuction (t = tenure_boundary, elapsed_descent
+/// At the exact start of DescentAuction (t = tenure_boundary, elapsed_descent
 /// = 0), compute_floor_price == last_acquisition_price — no discount yet.
 /// At the exact end of the descent window (t = descent_boundary,
 /// elapsed_descent = descent_window), compute_floor_price == min_rent_price.
@@ -4007,7 +4007,7 @@ fun e2e_fin3_90_10_split_exact() {
 /// T1 renting at 2×min_price (overpay, no handover needed) so last_acq_price
 /// = 2×min_price > min_price and the two endpoints are distinct values.
 ///
-/// Config: c=0, h=1 (Fixed — AtDutch observable), d=0, f=0; vary e=0..6.
+/// Config: c=0, h=1 (Fixed — Descent observable), d=0, f=0; vary e=0..6.
 #[test]
 fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
     let mut sc    = setup();
@@ -4028,13 +4028,13 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
             let cap_t1 = escrow::rent(
                 &mut escrow, mk_payment(stake, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-            // APT at exact tenure boundary → AtDutchAuction (last_acq_price = stake).
+            // APT at exact tenure boundary → DescentAuction (last_acq_price = stake).
             clock::set_for_testing(&mut clk, tenure_boundary);
             escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-            assert!(escrow::is_at_dutch_auction(&escrow), tag);
+            assert!(escrow::is_in_descent(&escrow), tag);
 
             // DESC-1: elapsed_descent = 0 → compute_curve_height = 0 → no descent yet.
-            // Clock is already at tenure_boundary (elapsed=0 from AtDutch phase_start).
+            // Clock is already at tenure_boundary (elapsed=0 from Descent phase_start).
             let floor_start = escrow::compute_floor_price(&escrow, &clk);
             assert_eq!(floor_start, stake);
 
@@ -4112,7 +4112,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 // ─── §Skipped descent — price resets to min_rent_price at tenure boundary ────
 
 /// With AuctionWindowPolicy::Off (h=0), tenure expiry triggers the M6b cascade:
-/// Occupied → AtDutchAuction → Idle fires in a single APT step because
+/// Occupied → DescentAuction → Idle fires in a single APT step because
 /// the descent window is zero. The entry price resets to min_rent_price at
 /// the exact tenure boundary, regardless of what the departing tenant paid.
 ///
@@ -4137,7 +4137,7 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
     assert!(escrow::compute_floor_price(&escrow, &clk) > min_price, tag);
 
     // APT at the exact tenure boundary (phase_start=0, tenure_ceiling=100_000).
-    // M6b: Occupied → AtDutchAuction → Idle in one step (Skipped descent).
+    // M6b: Occupied → DescentAuction → Idle in one step (Skipped descent).
     let tenure_boundary = escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
@@ -4174,10 +4174,10 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
 ///
 /// Transitions exercised:
 ///   Boundary 1 — Handover (HC → HO): countdown_expiry = 1_000 + 25_000 = 26_000
-///   Boundary 2 — Tenure   (HO → AtDutch): T2.phase_start + tenure_ceiling = 126_000
-///   Boundary 3 — Auction  (AtDutch → Idle): 126_000 + descent_window = 226_000
+///   Boundary 2 — Tenure   (HO → Descent): T2.phase_start + tenure_ceiling = 126_000
+///   Boundary 3 — Auction  (Descent → Idle): 126_000 + descent_window = 226_000
 ///
-/// Config: c=1 (Fixed — observable HC boundary), h=1 (Fixed — AtDutch
+/// Config: c=1 (Fixed — observable HC boundary), h=1 (Fixed — Descent
 /// observable), d=0, e=0, f=0.
 #[test]
 fun e2e_apt1_idempotent_double_call_at_every_boundary() {
@@ -4217,18 +4217,18 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     let tenure_boundary = countdown_expiry + escrow_corpus::tenure_ceiling_const(); // 126_000
     clock::set_for_testing(&mut clk, tenure_boundary);
 
-    // First APT: tenure fires → AtDutchAuction, 1 TenureExpired event.
+    // First APT: tenure fires → DescentAuction, 1 TenureExpired event.
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), tag);
+    assert!(escrow::is_in_descent(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
 
     // Second APT at same clock: no-op.
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), tag);
+    assert!(escrow::is_in_descent(&escrow), tag);
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
 
     // ── Boundary 3: Auction expiry ──────────────────────────────────────────
-    // AtDutch.phase_start = tenure_boundary = 126_000; descent_boundary = 226_000.
+    // Descent.phase_start = tenure_boundary = 126_000; descent_boundary = 226_000.
     let descent_boundary = tenure_boundary + escrow_corpus::descent_window_h1_const(); // 226_000
     clock::set_for_testing(&mut clk, descent_boundary);
 
@@ -4266,7 +4266,7 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
 /// Three boundaries are tested (or two for h=0):
 ///   B1 — handover fires at hv_expiry
 ///   B2 — T2's tenure fires at hv_expiry + CEILING
-///   B3 — AtDutch fires at B2 + max_descent  (h=1: DESCENT_WINDOW_H1)
+///   B3 — Descent fires at B2 + max_descent  (h=1: DESCENT_WINDOW_H1)
 ///
 /// At each boundary: first APT fires the transition; second APT is a no-op —
 /// state and event count must be identical after both calls.
@@ -4320,7 +4320,7 @@ fun apt_idempotency_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Sc
 
         // ── B3: Auction expiry (h ≠ 0 only) ──────────────────────────────────
         if (entry.h() != 0) {
-            assert!(escrow::is_at_dutch_auction(&escrow), tag);
+            assert!(escrow::is_in_descent(&escrow), tag);
             let max_descent = escrow_corpus::descent_window_h1_const();
             clock::set_for_testing(&mut clk, tenure_boundary + max_descent);
             escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
@@ -4367,7 +4367,7 @@ fun e2e_apt_idempotency_all_ch_m() {
 // protocol cascade to Retired, and verifies claim_asset returns the asset.
 //
 //   RETIRE-1  Idle                  → retire() immediate        → Retired
-//   RETIRE-2  AtDutchAuction        → retire() immediate        → Retired
+//   RETIRE-2  DescentAuction        → retire() immediate        → Retired
 //   RETIRE-3  Occupied          → retire() flag → tenure    → Retired
 //   RETIRE-4  Demand     → retire() flag → handover
 //                                              → tenure         → Retired
@@ -4423,22 +4423,22 @@ fun e2e_retire1_from_idle() {
     sc.end();
 }
 
-// RETIRE-2: AtDutchAuction ───────────────────────────────────────────────────
+// RETIRE-2: DescentAuction ───────────────────────────────────────────────────
 #[test]
-fun e2e_retire2_from_at_dutch() {
+fun e2e_retire2_from_descent() {
     let mut sc  = setup();
-    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Fixed → AtDutch observable
+    let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Fixed → Descent observable
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    // T1 rents; tenure expires → AtDutchAuction.
+    // T1 rents; tenure expires → DescentAuction.
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), tag);
+    assert!(escrow::is_in_descent(&escrow), tag);
 
-    // do_retire_immediately from AtDutch → Retired.
+    // do_retire_immediately from Descent → Retired.
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
@@ -4469,7 +4469,7 @@ fun e2e_retire3_from_occupied() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
-    // APT at tenure boundary: tenure fires; flag → Retired (not AtDutch).
+    // APT at tenure boundary: tenure fires; flag → Retired (not Descent).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
@@ -4933,7 +4933,7 @@ fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag); // flag set, still HO
 
-    // APT at tenure boundary → retiring flag → Retired (not AtDutch).
+    // APT at tenure boundary → retiring flag → Retired (not Descent).
     clock::set_for_testing(&mut clk, tenure_boundary);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
@@ -4949,15 +4949,15 @@ fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     sc.end();
 }
 
-// ── Gap 4: h=1 (Fixed) + retiring flag — bypasses AtDutch descent ───────────
+// ── Gap 4: h=1 (Fixed) + retiring flag — bypasses Descent descent ───────────
 
 /// §RETIRE tests (RETIRE-3/4/5/6) all use h=0 (Skipped). This verifies
-/// that the retiring flag correctly bypasses AtDutchAuction even when
+/// that the retiring flag correctly bypasses DescentAuction even when
 /// AuctionWindowPolicy is Window (h=1): tenure expiry → Retired directly,
-/// NOT AtDutch. The Fixed policy only affects the descent duration when
+/// NOT Descent. The Fixed policy only affects the descent duration when
 /// there is NO retiring flag; the flag unconditionally collapses to Retired.
 #[test]
-fun e2e_corpus_gap_retiring_flag_bypasses_at_dutch_with_window_policy() {
+fun e2e_corpus_gap_retiring_flag_bypasses_descent_with_window_policy() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
@@ -4971,11 +4971,11 @@ fun e2e_corpus_gap_retiring_flag_bypasses_at_dutch_with_window_policy() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
-    // APT at tenure boundary: retiring flag → Retired (NOT AtDutch despite h=1).
+    // APT at tenure boundary: retiring flag → Retired (NOT Descent despite h=1).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_retired(&escrow), tag);     // flag bypassed AtDutch
-    assert!(!escrow::is_at_dutch_auction(&escrow), tag);
+    assert!(escrow::is_retired(&escrow), tag);     // flag bypassed Descent
+    assert!(!escrow::is_in_descent(&escrow), tag);
 
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
@@ -5077,7 +5077,7 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 //
 // update_config allows the owner to swap the PolicyEnsemble of an escrow at
 // runtime. When the escrow is Idle the change takes effect immediately. When
-// the escrow is occupied (Renting or AtDutchAuction) the new config is
+// the escrow is occupied (Renting or DescentAuction) the new config is
 // buffered as a pending reset and applied at the next natural boundary
 // (tenure expiry or auction expiry). retire() discards any pending reset
 // without applying it.
@@ -5110,11 +5110,11 @@ fun update_config_idle_applies_immediately() {
     sc.end();
 }
 
-// Test 2: AtDutch → schedule without cancelling ───────────────────────────────
-/// update_config from AtDutchAuction: new config is buffered, state stays
-/// AtDutch, ConfigUpdateScheduled emitted, ConfigUpdated NOT emitted.
+// Test 2: Descent → schedule without cancelling ───────────────────────────────
+/// update_config from DescentAuction: new config is buffered, state stays
+/// Descent, ConfigUpdateScheduled emitted, ConfigUpdated NOT emitted.
 #[test]
-fun update_config_at_dutch_schedules_without_cancelling() {
+fun update_config_descent_schedules_without_cancelling() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -5125,7 +5125,7 @@ fun update_config_at_dutch_schedules_without_cancelling() {
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
         0,
     );
-    escrow::drive_to_at_dutch_for_testing(
+    escrow::drive_to_descent_for_testing(
         &mut escrow,
         STAKE_T1 - STAKE_T1 / 10,
         STAKE_T1 / 10,
@@ -5136,7 +5136,7 @@ fun update_config_at_dutch_schedules_without_cancelling() {
     let new_ensemble = escrow_corpus::by_tag(1);
     escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
     assert!(escrow::policy_ensemble(&escrow) != new_ensemble, 2);
 
@@ -5184,10 +5184,10 @@ fun update_config_renting_schedules_without_interrupting() {
     sc.end();
 }
 
-// Test 4: tenure expiry with pending reset → AtDutch runs, config applies at auction expiry ──
+// Test 4: tenure expiry with pending reset → Descent runs, config applies at auction expiry ──
 /// When a pending config reset is buffered and tenure expires, the escrow enters
-/// AtDutch normally — the reset is NOT applied at tenure expiry. The config
-/// is applied only when AtDutch expires → Idle. AuctionExpired IS emitted.
+/// Descent normally — the reset is NOT applied at tenure expiry. The config
+/// is applied only when Descent expires → Idle. AuctionExpired IS emitted.
 #[test]
 fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
     let mut sc = setup();
@@ -5201,18 +5201,18 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
     let new_ensemble = escrow_corpus::by_tag(1);
     escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
-    // Tenure expiry → AtDutch. pending_config survives; old config still active.
+    // Tenure expiry → Descent. pending_config survives; old config still active.
     escrow::fire_do_tenure_expiry_for_testing(
         &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
     );
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
     assert!(escrow::policy_ensemble(&escrow) == ensemble, 2);
 
     let resets_mid = event::events_by_type<ConfigUpdated>();
     assert_eq!(resets_mid.length(), 0);
 
-    // Auction expiry via production APT → fire's AtDutch arm applies pending_config → Idle.
+    // Auction expiry via production APT → fire's Descent arm applies pending_config → Idle.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
@@ -5281,7 +5281,7 @@ fun update_config_handover_preserves_pending_does_not_apply() {
 
 // Test 6: handover then tenure expiry then auction expiry applies pending reset ─
 /// Chain: rent T1 → update_config(new_ensemble) → drive to Demand → handover →
-/// T2 tenure expiry → AtDutch → auction expiry → Idle with new config.
+/// T2 tenure expiry → Descent → auction expiry → Idle with new config.
 /// The reset is applied only at auction expiry, not at tenure expiry.
 #[test]
 fun update_config_chain_handover_then_auction_expiry_applies() {
@@ -5307,10 +5307,10 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_rented(&escrow), 10);
 
-    // T2's tenure expires at 2 × tenure_ceiling_const() → AtDutch (not Idle).
+    // T2's tenure expires at 2 × tenure_ceiling_const() → Descent (not Idle).
     clock::set_for_testing(&mut clk, 2 * escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
 
     let resets_mid = event::events_by_type<ConfigUpdated>();
@@ -5359,10 +5359,10 @@ fun update_config_override_last_write_wins() {
 
     assert!(escrow::has_pending_config_update(&escrow), 0);
 
-    // Tenure expiry → AtDutch. pending_config (cfg_b) survives.
+    // Tenure expiry → Descent. pending_config (cfg_b) survives.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 1);
+    assert!(escrow::is_in_descent(&escrow), 1);
 
     // Auction expiry via production APT → Idle with cfg_b applied.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1);
@@ -5474,12 +5474,12 @@ fun update_config_on_retiring_aborts() {
     sc.end();
 }
 
-// Test 11: AtDutch natural expiry applies pending reset ───────────────────────
-/// update_config scheduled while AtDutch; auction expires naturally via the
+// Test 11: Descent natural expiry applies pending reset ───────────────────────
+/// update_config scheduled while Descent; auction expires naturally via the
 /// production APT path. On natural expiry the pending reset is applied,
 /// ConfigUpdated emitted, AND AuctionExpired also emitted.
 #[test]
-fun update_config_at_dutch_natural_expiry_applies_pending() {
+fun update_config_descent_natural_expiry_applies_pending() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -5490,7 +5490,7 @@ fun update_config_at_dutch_natural_expiry_applies_pending() {
         mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
         0,
     );
-    escrow::drive_to_at_dutch_for_testing(
+    escrow::drive_to_descent_for_testing(
         &mut escrow,
         STAKE_T1 - STAKE_T1 / 10,
         STAKE_T1 / 10,
@@ -5574,12 +5574,12 @@ fun update_config_pending_survives_multiple_handovers() {
     sc.end();
 }
 
-// Invariant 2: during AtDutch with pending, old config remains active ──────────
-/// update_config called while at AtDutch: the escrow stays at AtDutch, the old
+// Invariant 2: during Descent with pending, old config remains active ──────────
+/// update_config called while at Descent: the escrow stays at Descent, the old
 /// config remains active (not the new one), and only at auction expiry does the
 /// new config take effect.
 #[test]
-fun update_config_at_dutch_old_config_active_until_auction_expiry() {
+fun update_config_descent_old_config_active_until_auction_expiry() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
@@ -5587,7 +5587,7 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     let mut clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
-    escrow::drive_to_at_dutch_for_testing(
+    escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
         escrow_corpus::min_rent_price_const() * 2, 0,
     );
@@ -5599,8 +5599,8 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     let new_ensemble = escrow_corpus::by_tag(1);
     escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
-    // Still at AtDutch; old config still active.
-    assert!(escrow::is_at_dutch_auction(&escrow), 2);
+    // Still at Descent; old config still active.
+    assert!(escrow::is_in_descent(&escrow), 2);
     assert!(escrow::has_pending_config_update(&escrow), 3);
     assert!(escrow::policy_ensemble(&escrow) == original_cfg, 4);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
@@ -5621,12 +5621,12 @@ fun update_config_at_dutch_old_config_active_until_auction_expiry() {
     sc.end();
 }
 
-// Invariant 3: cross-phase last write wins (Renting → AtDutch) ───────────────
-/// update_config in Renting sets cfg_a; tenure expires → AtDutch (cfg_a still
-/// pending); update_config in AtDutch overrides to cfg_b. At auction expiry only
+// Invariant 3: cross-phase last write wins (Renting → Descent) ───────────────
+/// update_config in Renting sets cfg_a; tenure expires → Descent (cfg_a still
+/// pending); update_config in Descent overrides to cfg_b. At auction expiry only
 /// cfg_b is applied. Exactly 1 ConfigUpdated (cfg_b), 2 ConfigUpdateScheduled.
 #[test]
-fun update_config_at_dutch_overrides_renting_pending() {
+fun update_config_descent_overrides_renting_pending() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -5639,12 +5639,12 @@ fun update_config_at_dutch_overrides_renting_pending() {
     escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
     escrow::update_config(&mut escrow, &owner_cap, cfg_a, &clk, sc.ctx());
 
-    // Tenure expiry → AtDutch with cfg_a pending.
+    // Tenure expiry → Descent with cfg_a pending.
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure), sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
 
-    // Override pending from AtDutch: cfg_b wins.
+    // Override pending from Descent: cfg_b wins.
     escrow::update_config(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
     assert!(escrow::has_pending_config_update(&escrow), 2);
     assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
@@ -5683,7 +5683,7 @@ fun update_config_state_clean_after_application() {
     let cfg_cycle2 = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
     let tenure     = escrow_corpus::tenure_ceiling_const();
 
-    // Full cycle: Renting → reset → AtDutch → auction expiry → Idle with cfg_cycle1.
+    // Full cycle: Renting → reset → Descent → auction expiry → Idle with cfg_cycle1.
     escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
     escrow::update_config(&mut escrow, &owner_cap, cfg_cycle1, &clk, sc.ctx());
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure), sc.ctx());
@@ -5813,15 +5813,15 @@ fun update_config_behavior_tenure_ceiling_apt_detection() {
     sc.end();
 }
 
-// Test BD-3: descent policy determines AtDutch vs Idle for the next cycle ──────
+// Test BD-3: descent policy determines Descent vs Idle for the next cycle ──────
 /// After update_config from Skip→Fixed, the NEXT tenure expiry (T2) routes
-/// through AtDutch. Under the old Skip policy it would have been Idle.
+/// through Descent. Under the old Skip policy it would have been Idle.
 #[test]
 fun update_config_behavior_auction_window_policy_atdutch_presence() {
     let mut sc = setup();
     // cfg_skip: h=0 Skip — tenure expiry → Idle
     let cfg_skip   = escrow_corpus::by_tag(0);
-    // cfg_fixed: h=1 Fixed — tenure expiry → AtDutch
+    // cfg_fixed: h=1 Fixed — tenure expiry → Descent
     let cfg_fixed = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(cfg_skip, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -5834,7 +5834,7 @@ fun update_config_behavior_auction_window_policy_atdutch_presence() {
     // Schedule cfg_fixed; will be applied at T1's tenure expiry.
     escrow::update_config(&mut escrow, &owner_cap, cfg_fixed, &clk, sc.ctx());
 
-    // T1's tenure expires → Idle with cfg_fixed (pending_config skips AtDutch
+    // T1's tenure expires → Idle with cfg_fixed (pending_config skips Descent
     // during fire(), so T1's own expiry still goes to Idle directly).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
@@ -5847,10 +5847,10 @@ fun update_config_behavior_auction_window_policy_atdutch_presence() {
     );
 
     // T2's tenure expires at 2 × tenure_ceiling. With Fixed descent and no
-    // pending_config, fire() goes to AtDutch instead of Idle.
+    // pending_config, fire() goes to Descent instead of Idle.
     clock::set_for_testing(&mut clk, 2 * escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 2);
+    assert!(escrow::is_in_descent(&escrow), 2);
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -6256,9 +6256,9 @@ fun new_fixed_zero_price_aborts() {
     sc.end();
 }
 
-// ─── §Fixed — AtDutch descent collapse symmetry ───────────────────────────────
+// ─── §Fixed — Descent descent collapse symmetry ───────────────────────────────
 
-// Symmetric to E2E-2 for RandomInRange: with Fixed policy, the AtDutch descent
+// Symmetric to E2E-2 for RandomInRange: with Fixed policy, the Descent descent
 // collapses exactly to the fixed price at full descent (elapsed == window).
 // This pins the invariant for both policy variants: descent bottom == resolved_floor,
 // which for Fixed is always the configured price.
@@ -6279,11 +6279,11 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(bid, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    // Tenure expires → AtDutch (resolved_floor = fixed_price carried into descent)
+    // Tenure expires → Descent (resolved_floor = fixed_price carried into descent)
     let t_atdutch = escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, t_atdutch);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 1);
+    assert!(escrow::is_in_descent(&escrow), 1);
 
     // Start of descent: price == last_acq_price (= bid = 2× fixed_price)
     assert!(escrow::compute_floor_price_at_ms(&escrow, t_atdutch) == bid, 2);
@@ -7042,8 +7042,8 @@ fun multi_cycle_tenure_expiry_fires_at_extended_ceiling() {
     let boundary = tenure * 3;
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
 
-    // Post-condition: AtDutch with last_acq_price = principal.
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    // Post-condition: Descent with last_acq_price = principal.
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     let expired = event::events_by_type<TenureExpired>();
     assert_eq!(expired.length(), 1);
@@ -7062,11 +7062,11 @@ fun multi_cycle_tenure_expiry_fires_at_extended_ceiling() {
     sc.end();
 }
 
-/// AtDutch → multi-cycle rent: ceiling extends correctly from the Dutch state.
+/// Descent → multi-cycle rent: ceiling extends correctly from the Dutch state.
 /// After a prior tenure expires (last_acq = 20 SUI), a renter enters with
 /// cycles(3) — ceiling = base_tenure × 3 from the new phase_start.
 #[test]
-fun multi_cycle_rent_from_at_dutch_extends_ceiling() {
+fun multi_cycle_rent_from_descent_extends_ceiling() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent
     // Override tenure_cycles to Multi so we can rent with cycles(3).
@@ -7078,11 +7078,11 @@ fun multi_cycle_rent_from_at_dutch_extends_ceiling() {
     let last_acq = escrow_corpus::min_rent_price_const() * 2;
     let phase_start_ms = tenure;
 
-    // Drive to AtDutch via test helpers.
+    // Drive to Descent via test helpers.
     escrow::drive_to_rented_for_testing(
         &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
     );
-    escrow::drive_to_at_dutch_for_testing(
+    escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1, 0, last_acq, phase_start_ms,
     );
 
@@ -7520,11 +7520,11 @@ fun normalization_rescale_is_exact_across_handover_chain() {
     sc.end();
 }
 
-/// AtDutch ceiling compounding bug: T1(n) expires → AtDutch carries extended
-/// ceiling (base×n). New tenant from AtDutch with cycles(m) should get
+/// Descent ceiling compounding bug: T1(n) expires → Descent carries extended
+/// ceiling (base×n). New tenant from Descent with cycles(m) should get
 /// ceiling = base×m, NOT base×n×m.
 #[test]
-fun normalization_at_dutch_ceiling_not_compounded_after_multi_cycle_expiry() {
+fun normalization_descent_ceiling_not_compounded_after_multi_cycle_expiry() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -7536,16 +7536,16 @@ fun normalization_at_dutch_ceiling_not_compounded_after_multi_cycle_expiry() {
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
-    // T1 tenure expires at 300k → AtDutch. AtDutch must carry base ceiling=100k.
+    // T1 tenure expires at 300k → Descent. Descent must carry base ceiling=100k.
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure * 3), sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     // Advance clock to expiry boundary so phase_start is deterministic.
     let entry_time = tenure * 3;
     clock::set_for_testing(&mut clk, entry_time);
 
-    // New tenant from AtDutch with cycles(2): ceiling must be base×2 = 200k.
-    // Buggy: AtDutch carries resolved_ceiling=300k → do_install produces 300k×2=600k.
+    // New tenant from Descent with cycles(2): ceiling must be base×2 = 200k.
+    // Buggy: Descent carries resolved_ceiling=300k → do_install produces 300k×2=600k.
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor = escrow::compute_floor_price(&escrow, &clk);
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
@@ -7564,12 +7564,12 @@ fun normalization_at_dutch_ceiling_not_compounded_after_multi_cycle_expiry() {
     sc.end();
 }
 
-/// AtDutch carries normalized handover, not extended.
-/// T1(3 cycles) expires → AtDutch. New tenant with cycles(2) must see:
+/// Descent carries normalized handover, not extended.
+/// T1(3 cycles) expires → Descent. New tenant with cycles(2) must see:
 ///   ceiling  = base × 2 (not base × 3 × 2)
 ///   handover = countdown × 2 (not countdown × 3 × 2)
 #[test]
-fun normalization_at_dutch_handover_also_normalized_after_multi_cycle_expiry() {
+fun normalization_descent_handover_also_normalized_after_multi_cycle_expiry() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -7583,12 +7583,12 @@ fun normalization_at_dutch_handover_also_normalized_after_multi_cycle_expiry() {
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure * 3), sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     let entry_time = tenure * 3;
     clock::set_for_testing(&mut clk, entry_time);
 
-    // T2 from AtDutch with cycles(2).
+    // T2 from Descent with cycles(2).
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor = escrow::compute_floor_price(&escrow, &clk);
     let cap2_a = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
@@ -7613,10 +7613,10 @@ fun normalization_at_dutch_handover_also_normalized_after_multi_cycle_expiry() {
     sc.end();
 }
 
-/// Demand path: T1(3) → T2 wins handover → T2's tenure expires → AtDutch.
-/// AtDutch must carry T2's normalized base values, not T2's extended ones.
+/// Demand path: T1(3) → T2 wins handover → T2's tenure expires → Descent.
+/// Descent must carry T2's normalized base values, not T2's extended ones.
 #[test]
-fun normalization_at_dutch_ceiling_after_handover_then_expiry() {
+fun normalization_descent_ceiling_after_handover_then_expiry() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -7638,12 +7638,12 @@ fun normalization_at_dutch_ceiling_after_handover_then_expiry() {
     let boundary_t2 = countdown * 3;
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_t2), sc.ctx());
 
-    // T2 tenure expires at boundary_t2 + tenure×2 = 275k → AtDutch.
+    // T2 tenure expires at boundary_t2 + tenure×2 = 275k → Descent.
     let expiry_t2 = boundary_t2 + tenure * 2;
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(expiry_t2), sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
-    // T3 from AtDutch with cycles(1): ceiling = base×1 = tenure. (Not tenure×2×1.)
+    // T3 from Descent with cycles(1): ceiling = base×1 = tenure. (Not tenure×2×1.)
     clock::set_for_testing(&mut clk, expiry_t2);
     sc.next_tx(@0xC1);
     let floor_t3 = escrow::compute_floor_price(&escrow, &clk);
@@ -7760,10 +7760,10 @@ fun do_handover_winner_receives_base_times_bidding_cycles_no_compound() {
     sc.end();
 }
 
-/// AtDutch descent is driven by resolved_descent and phase_start only.
+/// Descent descent is driven by resolved_descent and phase_start only.
 /// resolved_ceiling (extended for multi-cycle) plays no role in auction timing.
 ///
-/// T1 (3 cycles, base_tenure=100k) expires at t=300k → AtDutch.
+/// T1 (3 cycles, base_tenure=100k) expires at t=300k → Descent.
 /// Descent window = descent_window_h1 = 100k.
 ///
 /// Verified:
@@ -7774,7 +7774,7 @@ fun do_handover_winner_receives_base_times_bidding_cycles_no_compound() {
 /// If resolved_ceiling (300k) affected the descent window, the price at t=400k
 /// would NOT reach min_rent_price yet — only at t=300k+300k=600k would it.
 #[test]
-fun at_dutch_descent_driven_by_resolved_descent_not_resolved_ceiling() {
+fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     let mut sc = setup();
 
     // Config with Multi tenure_cycles and a descent window.
@@ -7793,11 +7793,11 @@ fun at_dutch_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     let principal = floor * 3;
     let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
-    // T1 tenure expires at t = tenure×3 = 300k → AtDutch.
-    // AtDutch.phase_start = 300k. resolved_ceiling is normalized to base = 100k.
+    // T1 tenure expires at t = tenure×3 = 300k → Descent.
+    // Descent.phase_start = 300k. resolved_ceiling is normalized to base = 100k.
     let t_expiry = tenure * 3;
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(t_expiry), sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     // At t_expiry (elapsed=0): price = last_acq_price = T1's stake = floor×3.
     let price_at_start = escrow::compute_floor_price_at_ms(&escrow, t_expiry);
@@ -8352,7 +8352,7 @@ fun commitment_chain_same_floor_from_later_time_passes() {
 // The lifecycle FSM draws policy values at exactly three sites, all of
 // them at the moment a state becomes `Idle`:
 //   1. `execute_integrate`                — Bootstrap → Idle.
-//   2. `do_auction_expiry`                — AtDutch  → Idle (after
+//   2. `do_auction_expiry`                — Descent  → Idle (after
 //      applying any `pending_config`).
 //   3. `execute_update_config` arm Idle   — owner reset → Idle (after
 //      applying the new config directly).
@@ -8450,7 +8450,7 @@ fun update_config_demand_retiring_aborts() {
 
 // ── execute_soft_burn_tenant_cap: non-renting happy path ───────────────────────────
 //
-// In Idle/AtDutch/Retired, any cap belonging to this escrow is stale by
+// In Idle/Descent/Retired, any cap belonging to this escrow is stale by
 // construction (no active tenancy). The match `_ => {}` passes through and
 // the cap is burned unconditionally.
 
@@ -8459,7 +8459,7 @@ fun update_config_demand_retiring_aborts() {
 #[test]
 fun burn_stale_cap_in_idle_succeeds() {
     let mut sc = setup();
-    // h=0 Skipped descent: tenure expires → AtDutch → immediately Idle via APT.
+    // h=0 Skipped descent: tenure expires → Descent → immediately Idle via APT.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -8481,12 +8481,12 @@ fun burn_stale_cap_in_idle_succeeds() {
     sc.end();
 }
 
-// ── execute_rent: insufficient payment in AtDutch / Occupied / Demand ─────────
+// ── execute_rent: insufficient payment in Descent / Occupied / Demand ─────────
 
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
-fun rent_with_insufficient_payment_in_at_dutch_aborts() {
+fun rent_with_insufficient_payment_in_descent_aborts() {
     let mut sc = setup();
-    // h=1 Fixed: tenure expires → AtDutch (stays there, no immediate collapse).
+    // h=1 Fixed: tenure expires → Descent (stays there, no immediate collapse).
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -8496,7 +8496,7 @@ fun rent_with_insufficient_payment_in_at_dutch_aborts() {
 
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     // Pay 0 — below any possible Dutch floor.
     let zero = mk_payment(0, sc.ctx());
@@ -8641,14 +8641,14 @@ fun extend_commitment_with_real_foreign_escrow_cap_aborts() {
     sc.end();
 }
 
-// ── execute_claim: AtDutch arm ────────────────────────────────────────────────
+// ── execute_claim: Descent arm ────────────────────────────────────────────────
 //
-// The existing claim_asset_aborts_in_at_dutch_state test uses h=0 (Skipped),
-// so APT collapses AtDutch→Idle before execute_claim sees it.
-// Using h=1 (Fixed) keeps the escrow in AtDutch through the claim call.
+// The existing claim_asset_aborts_in_descent_state test uses h=0 (Skipped),
+// so APT collapses Descent→Idle before execute_claim sees it.
+// Using h=1 (Fixed) keeps the escrow in Descent through the claim call.
 
 #[test, expected_failure(abort_code = asset_state::ENotRetired, location = usufruct::asset_state)]
-fun claim_asset_aborts_in_at_dutch_with_window_descent() {
+fun claim_asset_aborts_in_descent_with_window_descent() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
@@ -8659,7 +8659,7 @@ fun claim_asset_aborts_in_at_dutch_with_window_descent() {
 
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     // Return the &mut escrow, then take it by value for claim_asset.
     test_scenario::return_shared(escrow);
@@ -8700,10 +8700,10 @@ fun compute_handover_settlement_aborts_on_idle() {
 
 // ── Remaining variant gaps ─────────────────────────────────────────────────────
 
-/// execute_borrow in AtDutch: use h=1 (Fixed) so APT does not collapse
-/// AtDutch→Idle before execute_borrow runs. The _s => abort arm fires on AtDutch.
+/// execute_borrow in Descent: use h=1 (Fixed) so APT does not collapse
+/// Descent→Idle before execute_borrow runs. The _s => abort arm fires on Descent.
 #[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
-fun borrow_asset_aborts_in_at_dutch_with_window_descent() {
+fun borrow_asset_aborts_in_descent_with_window_descent() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -8713,7 +8713,7 @@ fun borrow_asset_aborts_in_at_dutch_with_window_descent() {
     let cap_t1 = escrow::rent(&mut escrow, p, tenures::tenures(1), &clk, sc.ctx());
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     // Borrow with a cap that has the correct escrow identity — APT will not
     // fire because the descent window is not yet closed.
@@ -8732,9 +8732,9 @@ fun borrow_asset_aborts_in_at_dutch_with_window_descent() {
     sc.end();
 }
 
-/// execute_soft_burn_tenant_cap in AtDutch: _ => {} passthrough (any cap is stale).
+/// execute_soft_burn_tenant_cap in Descent: _ => {} passthrough (any cap is stale).
 #[test]
-fun burn_stale_cap_in_at_dutch_succeeds() {
+fun burn_stale_cap_in_descent_succeeds() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -8744,7 +8744,7 @@ fun burn_stale_cap_in_at_dutch_succeeds() {
     let cap_t1 = escrow::rent(&mut escrow, p, tenures::tenures(1), &clk, sc.ctx());
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
 
     escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
@@ -8788,9 +8788,9 @@ fun compute_handover_settlement_aborts_on_retired() {
     sc.end();
 }
 
-/// proj_current_stake_value: AtDutch abort via compute_handover_settlement.
+/// proj_current_stake_value: Descent abort via compute_handover_settlement.
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
-fun compute_handover_settlement_aborts_on_at_dutch() {
+fun compute_handover_settlement_aborts_on_descent() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
@@ -8799,7 +8799,7 @@ fun compute_handover_settlement_aborts_on_at_dutch() {
     let cap_t1 = escrow::rent(&mut escrow, p, tenures::tenures(1), &clk, sc.ctx());
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
-    assert!(escrow::is_at_dutch_auction(&escrow), 0);
+    assert!(escrow::is_in_descent(&escrow), 0);
     let (_, _, _) = escrow::compute_handover_settlement(&escrow, 0);
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);

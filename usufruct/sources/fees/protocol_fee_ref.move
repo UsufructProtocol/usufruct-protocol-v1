@@ -26,7 +26,7 @@ public struct ProtocolFeeRef has key {
 
 // === View Functions ===
 
-public fun proj_inbox_id(fee_ref: &ProtocolFeeRef): ID {
+public(package) fun proj_inbox_id(fee_ref: &ProtocolFeeRef): ID {
     proj_id(fee_ref.proj_id)
 }
 

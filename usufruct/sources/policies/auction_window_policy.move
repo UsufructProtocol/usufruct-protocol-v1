@@ -29,9 +29,9 @@ public enum AuctionWindowPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_descent_off(): AuctionWindowPolicy { AuctionWindowPolicy::Off }
+public(package) fun new_descent_off(): AuctionWindowPolicy { AuctionWindowPolicy::Off }
 
-public fun new_descent_fixed(ceiling: Duration): AuctionWindowPolicy {
+public(package) fun new_descent_fixed(ceiling: Duration): AuctionWindowPolicy {
     assert!(phases::duration_ms(ceiling) > 0, EDescentCeilingZero);
     AuctionWindowPolicy::Fixed { ceiling }
 }

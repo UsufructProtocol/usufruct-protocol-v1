@@ -70,13 +70,13 @@ public enum CurveShapePolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_linear(): CurveShapePolicy { CurveShapePolicy::Linear }
+public(package) fun new_linear(): CurveShapePolicy { CurveShapePolicy::Linear }
 
-public fun new_smoothstep(): CurveShapePolicy { CurveShapePolicy::Smoothstep }
+public(package) fun new_smoothstep(): CurveShapePolicy { CurveShapePolicy::Smoothstep }
 
-public fun new_logistic(): CurveShapePolicy { CurveShapePolicy::Logistic }
+public(package) fun new_logistic(): CurveShapePolicy { CurveShapePolicy::Logistic }
 
-public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShapePolicy {
+public(package) fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShapePolicy {
     assert!(alpha_num >= 1 && alpha_num <= 8, EAlphaNumRange);
     assert!(alpha_den >= 1 && alpha_den <= 4, EAlphaDenRange);
     assert!(alpha_num != alpha_den,           EDegenerateLinear);
@@ -87,7 +87,7 @@ public fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShapePolicy {
     }
 }
 
-public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapePolicy {
+public(package) fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapePolicy {
     assert!(alpha_abs >= 1 && alpha_abs <= 8, EAlphaAbsRange);
     CurveShapePolicy::Exponential { alpha_abs, alpha_neg }
 }

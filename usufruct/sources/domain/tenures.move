@@ -25,12 +25,12 @@ public struct Tenures has copy, drop, store { count: u64 }
 
 // === Public Functions ===
 
-public fun tenures(n: u64): Tenures {
+public(package) fun tenures(n: u64): Tenures {
     assert!(n > 0, ETenuresZero);
     Tenures { count: n }
 }
 
-public fun tenures_count(c: Tenures): u64 { c.count }
+public(package) fun tenures_count(c: Tenures): u64 { c.count }
 
 // === View Functions ===
 

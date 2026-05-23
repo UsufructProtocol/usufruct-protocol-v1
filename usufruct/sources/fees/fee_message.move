@@ -56,7 +56,7 @@ public struct FeeMessageCollected<phantom CoinType> has copy, drop {
 
 // === Public Functions ===
 
-public fun collect_fee_messages<C>(
+public(package) fun collect_fee_messages<C>(
     inbox:   &mut ProtocolFeeInbox,
     tickets: vector<Receiving<FeeMessage<C>>>,
     ctx:     &mut TxContext,

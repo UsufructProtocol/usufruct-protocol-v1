@@ -47,7 +47,7 @@ public struct PolicyEnsembleRegistered has copy, drop {
 
 // === Public Functions ===
 
-public fun new_ensemble(
+public(package) fun new_ensemble(
     rest_price: RestPricePolicy,
     tenure_duration:  TenureDurationPolicy,
     tenure_extend:    TenureExtendPolicy,

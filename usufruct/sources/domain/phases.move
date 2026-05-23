@@ -31,11 +31,11 @@ public enum Boundary has copy, drop {
 
 // === Public Functions ===
 
-public fun now(clock: &Clock): Timestamp {
+public(package) fun now(clock: &Clock): Timestamp {
     Timestamp { ms: clock::timestamp_ms(clock) }
 }
 
-public fun duration(ms: u64): Duration { Duration { ms } }
+public(package) fun duration(ms: u64): Duration { Duration { ms } }
 
 // === View Functions ===
 

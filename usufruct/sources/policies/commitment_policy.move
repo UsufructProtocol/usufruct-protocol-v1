@@ -26,9 +26,9 @@ public enum CommitmentPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_immediate(): CommitmentPolicy { CommitmentPolicy::Immediate }
+public(package) fun new_immediate(): CommitmentPolicy { CommitmentPolicy::Immediate }
 
-public fun new_deferred(floor: Duration): CommitmentPolicy {
+public(package) fun new_deferred(floor: Duration): CommitmentPolicy {
     assert!(phases::duration_ms(floor) > 0, ECommitmentFloorZero);
     CommitmentPolicy::Deferred { floor }
 }

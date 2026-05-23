@@ -29,10 +29,10 @@ public enum HandoverPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_handover_off():    HandoverPolicy { HandoverPolicy::Off }
-public fun new_handover_full_tenure(): HandoverPolicy { HandoverPolicy::FullTenure }
+public(package) fun new_handover_off():    HandoverPolicy { HandoverPolicy::Off }
+public(package) fun new_handover_full_tenure(): HandoverPolicy { HandoverPolicy::FullTenure }
 
-public fun new_handover_fixed(floor: Duration): HandoverPolicy {
+public(package) fun new_handover_fixed(floor: Duration): HandoverPolicy {
     assert!(phases::duration_ms(floor) > 0, EHandoverFloorZero);
     HandoverPolicy::Fixed { floor }
 }

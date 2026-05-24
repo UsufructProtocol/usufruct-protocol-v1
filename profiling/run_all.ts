@@ -30,6 +30,7 @@ const A_SCRIPTS = [
   'a_atomic/10_extend_commitment.ts',
   'a_atomic/11_update_config.ts',
   'a_atomic/12_collect_fee_messages.ts',
+  'a_atomic/13_curve_shapes.ts',
 ];
 
 const B_SCRIPTS = [

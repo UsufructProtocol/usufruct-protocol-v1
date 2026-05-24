@@ -33,6 +33,28 @@ Results in SUI (1 SUI = 10⁹ MIST).
 | `hard_burn_tenant_cap` | −0.000555 | −1 object |
 | `claim_asset` | −0.001625 | −2 objects (Escrow + OwnerCap) |
 
+### borrow_return — curve shape variants
+
+Measured at t ≈ t_max/2 (3 s into a 6 s tenure) so `compute_curve_height` runs
+the full branch for each variant. Linear, Smoothstep, and Logistic are unit enum
+variants; PowerLaw and Exponential carry fields (`alpha_num`/`alpha_den`,
+`alpha_abs`/`alpha_neg`).
+
+| Variant | Net MIST | Δ vs linear |
+|---|---|---|
+| `linear` | 1,095,848 | — |
+| `smoothstep` | 1,095,848 | +0 |
+| `power_law(2/1)` | 1,096,000 | +152 |
+| `power_law(8/1)` | 1,096,000 | +152 |
+| `power_law(3/2)` | 1,096,000 | +152 |
+| `power_law(8/3)` | 1,096,000 | +152 |
+| `exp(1, pos)` | 1,096,000 | +152 |
+| `exp(8, pos)` | 1,096,000 | +152 |
+| `exp(8, neg)` | 1,096,000 | +152 |
+| `logistic` | 1,095,848 | +0 |
+
+See finding #7.
+
 ### collect_fee_messages — scalability
 
 | N messages | Net SUI total | Net SUI per message |
@@ -114,6 +136,29 @@ The full minimal flow (integrate → rent → retire → apply → claim) costs
 **−0.006335 SUI** net. The storage rebates from destroying Escrow and OwnerCap
 on `claim_asset` exceed the total storage accumulated by the lifecycle.
 The protocol does not permanently inflate chain state.
+
+### #7 — Curve shape computation is gas-neutral
+
+All 10 `CurveShapePolicy` variants cost the same gas within a 152 MIST margin
+(0.000000152 SUI). `exp(8, pos)` — a Taylor series with ~28 iterations — costs
+identically to `linear` (one `mul_div`). `power_law(8/3)` — 7 multiplications
+plus Newton's-method cube root — costs identically to `smoothstep`.
+
+The +152 MIST observed on `PowerLaw` and `Exponential` variants traces to enum
+field destructuring in the `match` arm (`*alpha_num`, `*alpha_den`), not to the
+arithmetic itself. `Linear`, `Smoothstep`, and `Logistic` are unit variants with
+no fields to read; their match arm is one instruction cheaper.
+
+**Why:** Sui's gas model prices bytecode instructions, but arithmetic operations
+(`Mul`, `Div`, loop iterations) cost fractions of a MIST. The dominant charges in
+any PTB are transaction overhead and object access. A Taylor series with 30
+iterations adds ~150 arithmetic instructions — negligible against a transaction
+floor of ~1,000,000 MIST. This is a deliberate design choice: Sui makes on-chain
+math economically viable for complex DeFi protocols.
+
+**Implication:** integrators choose `CurveShapePolicy` based on the economic or
+UX shape they want — concave growth, S-curve, logistic dampening — with zero gas
+cost consequence for the tenant.
 
 ---
 

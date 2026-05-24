@@ -8,6 +8,7 @@
     "a":            "tsx run_all.ts --phase=a",
     "b":            "tsx run_all.ts --phase=b",
     "run":          "tsx run_all.ts",
+    "curves":       "tsx a_atomic/13_curve_shapes.ts",
     "report":       "tsx report.ts"
   },
   "dependencies": {

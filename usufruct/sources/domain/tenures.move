@@ -25,18 +25,18 @@ public struct Tenures has copy, drop, store { count: u64 }
 
 // === Public Functions ===
 
-public fun tenures(n: u64): Tenures {
-    assert!(n > 0, ETenuresZero);
-    Tenures { count: n }
-}
-
-public fun tenures_count(c: Tenures): u64 { c.count }
-
 // === View Functions ===
 
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun tenures(n: u64): Tenures {
+    assert!(n > 0, ETenuresZero);
+    Tenures { count: n }
+}
+
+public(package) fun tenures_count(c: Tenures): u64 { c.count }
 
 public(package) fun proj_is_single(c: Tenures): bool { c.count == 1 }
 
@@ -60,6 +60,4 @@ public(package) fun compute_rescaled_duration(d: Duration, from: Tenures, to: Te
 
 // === Test Functions ===
 
-#[test_only]
-public fun e_tenures_zero(): u64 { ETenuresZero }
 

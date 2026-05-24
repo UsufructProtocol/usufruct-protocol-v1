@@ -27,11 +27,6 @@ public enum RestPricePolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_fixed(price: Price): RestPricePolicy {
-    assert!(monetary::price_mist(price) > 0, EPriceZero);
-    RestPricePolicy::Fixed { price }
-}
-
 // === View Functions ===
 
 public(package) fun proj_is_fixed(_policy: &RestPricePolicy): bool { true }
@@ -43,6 +38,11 @@ public(package) fun proj_fixed_price(policy: &RestPricePolicy): Option<Price> {
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun new_fixed(price: Price): RestPricePolicy {
+    assert!(monetary::price_mist(price) > 0, EPriceZero);
+    RestPricePolicy::Fixed { price }
+}
 
 public(package) fun compute_floor_price(policy: &RestPricePolicy): Price {
     match (policy) { RestPricePolicy::Fixed { price } => *price }

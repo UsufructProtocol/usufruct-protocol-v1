@@ -26,13 +26,6 @@ public enum CommitmentPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_immediate(): CommitmentPolicy { CommitmentPolicy::Immediate }
-
-public fun new_deferred(floor: Duration): CommitmentPolicy {
-    assert!(phases::duration_ms(floor) > 0, ECommitmentFloorZero);
-    CommitmentPolicy::Deferred { floor }
-}
-
 // === View Functions ===
 
 public(package) fun proj_is_immediate(policy: &CommitmentPolicy): bool {
@@ -51,6 +44,13 @@ public(package) fun proj_floor_ms(policy: &CommitmentPolicy): Option<Duration> {
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun new_immediate(): CommitmentPolicy { CommitmentPolicy::Immediate }
+
+public(package) fun new_deferred(floor: Duration): CommitmentPolicy {
+    assert!(phases::duration_ms(floor) > 0, ECommitmentFloorZero);
+    CommitmentPolicy::Deferred { floor }
+}
 
 public(package) fun compute_duration(policy: &CommitmentPolicy): Duration {
     match (policy) {

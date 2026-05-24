@@ -83,7 +83,7 @@ public(package) fun take_owner_earnings<C>(
 // === Test Functions ===
 
 #[test_only]
-public fun proj_stake<C>(t: &TenantSeat<C>): &TenantStake<C> { &t.stake }
+public(package) fun proj_stake<C>(t: &TenantSeat<C>): &TenantStake<C> { &t.stake }
 
 #[test_only]
 public fun destroy_for_testing<C>(t: TenantSeat<C>) {

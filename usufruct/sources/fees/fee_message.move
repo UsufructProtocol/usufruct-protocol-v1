@@ -56,7 +56,17 @@ public struct FeeMessageCollected<phantom CoinType> has copy, drop {
 
 // === Public Functions ===
 
-public fun collect_fee_messages<C>(
+// === View Functions ===
+
+public(package) fun proj_share_value<C>(s: &FeeShare<C>): Stake { monetary::stake(balance::value(&s.balance)) }
+
+public(package) fun proj_escrow_id<C>(msg: &FeeMessage<C>): ID    { escrow_identity::escrow_id(msg.escrow_identity) }
+
+// === Admin Functions ===
+
+// === Package Functions ===
+
+public(package) fun collect_fee_messages<C>(
     inbox:   &mut ProtocolFeeInbox,
     tickets: vector<Receiving<FeeMessage<C>>>,
     ctx:     &mut TxContext,
@@ -70,16 +80,6 @@ public fun collect_fee_messages<C>(
     });
     total.into_coin(ctx)
 }
-
-// === View Functions ===
-
-public(package) fun proj_share_value<C>(s: &FeeShare<C>): Stake { monetary::stake(balance::value(&s.balance)) }
-
-public(package) fun proj_escrow_id<C>(msg: &FeeMessage<C>): ID    { escrow_identity::escrow_id(msg.escrow_identity) }
-
-// === Admin Functions ===
-
-// === Package Functions ===
 
 public(package) fun new_share<C>(balance: Balance<C>, escrow_identity: EscrowIdentity): FeeShare<C> {
     FeeShare { balance, escrow_identity }

@@ -28,9 +28,6 @@ public enum TenureExtendPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public fun new_single(): TenureExtendPolicy { TenureExtendPolicy::Single }
-public fun new_multi():  TenureExtendPolicy { TenureExtendPolicy::Multi  }
-
 // === View Functions ===
 
 public(package) fun proj_is_single(policy: &TenureExtendPolicy): bool {
@@ -45,6 +42,9 @@ public(package) fun proj_is_multi(policy: &TenureExtendPolicy): bool {
 
 // === Package Functions ===
 
+public(package) fun new_single(): TenureExtendPolicy { TenureExtendPolicy::Single }
+public(package) fun new_multi():  TenureExtendPolicy { TenureExtendPolicy::Multi  }
+
 public(package) fun validate(policy: &TenureExtendPolicy, cycles: Tenures) {
     match (policy) {
         TenureExtendPolicy::Single => assert!(tenures::proj_is_single(cycles), EMultiCycleNotAllowed),
@@ -56,6 +56,5 @@ public(package) fun validate(policy: &TenureExtendPolicy, cycles: Tenures) {
 
 // === Test Functions ===
 
-#[test_only]
-public fun e_multi_cycle_not_allowed(): u64 { EMultiCycleNotAllowed }
+
 

@@ -47,7 +47,22 @@ public struct PolicyEnsembleRegistered has copy, drop {
 
 // === Public Functions ===
 
-public fun new_ensemble(
+// === View Functions ===
+
+public(package) fun proj_rest_price(ensemble: &PolicyEnsemble):      &RestPricePolicy      { &ensemble.rest_price }
+public(package) fun proj_tenure_duration(ensemble: &PolicyEnsemble): &TenureDurationPolicy  { &ensemble.tenure_duration }
+public(package) fun proj_tenure_extend(ensemble: &PolicyEnsemble):   &TenureExtendPolicy    { &ensemble.tenure_extend }
+public(package) fun proj_handover(ensemble: &PolicyEnsemble):        &HandoverPolicy        { &ensemble.handover }
+public(package) fun proj_auction_window(ensemble: &PolicyEnsemble):   &AuctionWindowPolicy   { &ensemble.auction_window }
+public(package) fun proj_credit_shape(ensemble: &PolicyEnsemble):    &CurveShapePolicy      { &ensemble.credit_shape }
+public(package) fun proj_auction_shape(ensemble: &PolicyEnsemble):   &CurveShapePolicy      { &ensemble.auction_shape }
+public(package) fun proj_price_escalation(ensemble: &PolicyEnsemble): &PriceEscalationPolicy { &ensemble.price_escalation }
+
+// === Admin Functions ===
+
+// === Package Functions ===
+
+public(package) fun new_ensemble(
     rest_price: RestPricePolicy,
     tenure_duration:  TenureDurationPolicy,
     tenure_extend:    TenureExtendPolicy,
@@ -72,21 +87,6 @@ public fun new_ensemble(
         price_escalation,
     }
 }
-
-// === View Functions ===
-
-public(package) fun proj_rest_price(ensemble: &PolicyEnsemble):      &RestPricePolicy      { &ensemble.rest_price }
-public(package) fun proj_tenure_duration(ensemble: &PolicyEnsemble): &TenureDurationPolicy  { &ensemble.tenure_duration }
-public(package) fun proj_tenure_extend(ensemble: &PolicyEnsemble):   &TenureExtendPolicy    { &ensemble.tenure_extend }
-public(package) fun proj_handover(ensemble: &PolicyEnsemble):        &HandoverPolicy        { &ensemble.handover }
-public(package) fun proj_auction_window(ensemble: &PolicyEnsemble):   &AuctionWindowPolicy   { &ensemble.auction_window }
-public(package) fun proj_credit_shape(ensemble: &PolicyEnsemble):    &CurveShapePolicy      { &ensemble.credit_shape }
-public(package) fun proj_auction_shape(ensemble: &PolicyEnsemble):   &CurveShapePolicy      { &ensemble.auction_shape }
-public(package) fun proj_price_escalation(ensemble: &PolicyEnsemble): &PriceEscalationPolicy { &ensemble.price_escalation }
-
-// === Admin Functions ===
-
-// === Package Functions ===
 
 public(package) fun emit_registration(ensemble: &PolicyEnsemble, escrow_identity: EscrowIdentity) {
     event::emit(PolicyEnsembleRegistered { escrow_identity, ensemble: *ensemble });

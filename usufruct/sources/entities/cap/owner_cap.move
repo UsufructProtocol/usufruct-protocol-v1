@@ -41,7 +41,7 @@ public struct OwnerCapBurned has copy, drop {
 
 // === View Functions ===
 
-public fun proj_escrow_id(cap: &OwnerCap): ID {
+public(package) fun proj_escrow_id(cap: &OwnerCap): ID {
     escrow_identity::escrow_id(cap.escrow_identity)
 }
 

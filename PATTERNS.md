@@ -714,13 +714,67 @@ What market structures emerge from this — sublease agreements, secondary cap a
 
 ---
 
+### 11. The TenantCap as a rentable asset — subleasing via escrow
+
+> **Note.** This is an emergent property, not a designed protocol feature. It falls out of `TenantCap` satisfying `key + store` — the same bound that makes any object integrable. The protocol did not anticipate or optimize for this; it is documented here because it is real and has economic consequences.
+
+Transferring a `TenantCap` (§10) delegates the borrow right with no protocol involvement. A structurally richer alternative follows from the same `key + store` bound: the tenant can *integrate* their cap into a second escrow and auction the borrow right on the open market. The cap becomes the asset in the new escrow; the sub-lease terms are an independent `PolicyEnsemble`.
+
+**Two-escrow structure**
+
+| Layer | Escrow holds     | Owner           | Tenant          |
+|-------|------------------|-----------------|-----------------|
+| L1    | underlying asset | original owner  | original tenant |
+| L2    | `TenantCap` L1   | original tenant | sub-tenant      |
+
+The sub-tenant rents from L2. Their borrow window yields `TenantCap L1` as the extracted asset. Inside that L2 window they open a nested borrow on L1 and receive the underlying asset. Two `AssetReceipt`s are live simultaneously; the drop-checker enforces LIFO closure.
+
+```move
+// escrow_l1: holds the underlying asset; original owner integrated it.
+// escrow_l2: holds TenantCap_l1 as its asset; original tenant integrated it.
+// Sub-tenant holds TenantCap_l2.
+
+let (tenant_cap_l1, receipt_l2) =
+    usufruct::borrow_asset(&mut escrow_l2, &tenant_cap_l2, &random, &clock, ctx);
+// ── runtime window L2 ──────────────────────────────────────────────────────
+//   tenant_cap_l1 is a Move value in the PTB body.
+
+    let (asset, receipt_l1) =
+        usufruct::borrow_asset(&mut escrow_l1, &tenant_cap_l1, &random, &clock, ctx);
+    // ── runtime window L1 ────────────────────────────────────────────────
+    //   asset is a Move value; arbitrary PTB code runs here.
+    // ── end of runtime L1 ────────────────────────────────────────────────
+    usufruct::return_asset(&mut escrow_l1, asset, receipt_l1);
+
+// ── end of runtime L2 ──────────────────────────────────────────────────────
+usufruct::return_asset(&mut escrow_l2, tenant_cap_l1, receipt_l2);
+```
+
+`receipt_l1` must be settled before `tenant_cap_l1` is consumed by `return_asset` for L2. The Move type system enforces this structurally: the inner borrow must close before the outer one can. The L1 escrow sees only a valid cap; it has no visibility into L2.
+
+#### What the original tenant controls at L2
+
+Integrating `TenantCap L1` into escrow_l2 makes the original tenant the L2 owner. They configure the L2 `PolicyEnsemble` independently — sub-lease price floor, tenure duration, auction shape, handover policy. One constraint the protocol does not enforce: L2 tenures should not outlast the remaining L1 tenure, or the sub-tenant receives a cap they cannot exercise. Enforcing this is outside the protocol's scope.
+
+#### The RefundAddress asymmetry compounds
+
+At L1, the `refund_address` in `TenantCap L1` is fixed to the original tenant's address at `rent()` time and never changes. If a challenger displaces the original tenant at L1 while `TenantCap L1` sits inside escrow_l2, the L1 stake refund flows to the original tenant — not to escrow_l2, not to the sub-tenant. The L2 pricing must account for this exposure.
+
+#### When this market has value
+
+The L2 escrow is worth bidding on only while `TenantCap L1` is still the *current* cap at escrow_l1 — verified on-chain via `escrow::current_tenant_cap_id()` — and the remaining `tenure_duration` is long enough to justify the sub-lease terms the L2 owner has set. A long, uncontested tenure at L1 creates a liquid sub-lease market; a tenure that is nearly expired or already under `Demand` pressure at L1 makes the L2 asset illiquid or worthless.
+
+> **Note — TenantCaps are ephemeral assets.** A `TenantCap` is displaced the moment a handover fires at its escrow. If `TenantCap L1` is displaced while sitting inside escrow_l2, it becomes stale: borrow_asset on escrow_l1 will abort for any holder, and the L2 asset has no residual value. Any participant evaluating a bid on escrow_l2 must read `escrow_l1::current_tenant_cap_id()` and `escrow_l1::tenure_expiry_ms()` before paying. The protocol surfaces this information; pricing the staleness risk is the market's job.
+
+---
+
 ## The OwnerCap
 
 `OwnerCap` also has `key + store` abilities. Whoever holds it holds **full authority** over the escrow: retire, withdraw earnings, claim the asset, update the policy configuration, and extend the commitment. The protocol validates only that the cap matches the escrow's registered `owner_cap_id` — not the holder's address. Transfer of the `OwnerCap` is transfer of ownership, with no caveats.
 
 ---
 
-### 11. Protocol-owned escrows and governance
+### 12. Protocol-owned escrows and governance
 
 Because `OwnerCap` is an ordinary owned Sui object, it can be held by any address — including a smart contract module, a DAO treasury, or a multisig. This makes the escrow's lifecycle fully programmable without any modification to the protocol.
 
@@ -738,7 +792,7 @@ With `TenantCap`, only the borrow right transfers — financial exposure to disp
 
 ---
 
-### 12. The OwnerCap as a rentable asset — level-2 rental
+### 13. The OwnerCap as a rentable asset — level-2 rental
 
 `OwnerCap` has `key + store`, which means it can itself be integrated into a usufruct escrow. The result is a two-level rental market: the level-1 escrow holds the underlying asset; a level-2 escrow holds the `OwnerCap` of the level-1 escrow. Whoever rents the `OwnerCap` from the level-2 escrow temporarily holds full owner authority over the level-1 escrow.
 
@@ -750,7 +804,7 @@ At the extreme, a level-2 escrow with `FullTenure` handover and a tenure sized t
 
 ---
 
-### 13. The ProtocolFeeInbox as a rentable fee stream
+### 14. The ProtocolFeeInbox as a rentable fee stream
 
 `ProtocolFeeInbox` has `key + store`:
 
@@ -827,7 +881,7 @@ The protocol applies its own rental mechanism to its own revenue infrastructure.
 
 ---
 
-## 14. The integrator's mental model
+## 15. The integrator's mental model
 
 If you are building on usufruct, the question to ask is not "is my asset rentable?" but the following four:
 
@@ -840,7 +894,7 @@ If those four questions have answers, you have an integration. The protocol take
 
 ---
 
-## 15. References
+## 16. References
 
 - The usufruct protocol — the substrate this catalog grows on. *(Separate repository.)*
 - usufruct's `ARCHITECTURE.md` — protocol internals. Read after this document, not before.

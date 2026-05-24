@@ -21,19 +21,29 @@ use usufruct::{
     tenure_extend_policy::{Self, TenureExtendPolicy},
 };
 
-// === Value Type Constructors ===
+// === Errors ===
+
+// === Constants ===
+
+// === Structs ===
+
+// === Enums ===
+
+// === Events ===
+
+// === Method Aliases ===
+
+// === Public Functions ===
+
+// --- Value types ---
 
 public fun price(mist: u64): Price { monetary::price(mist) }
-
-public fun price_mist(p: Price): u64 { monetary::price_mist(p) }
 
 public fun duration_ms(ms: u64): Duration { phases::duration(ms) }
 
 public fun tenures(n: u64): Tenures { tenures::tenures(n) }
 
-public fun tenures_count(c: Tenures): u64 { tenures::tenures_count(c) }
-
-// === AuctionWindowPolicy Constructors ===
+// --- AuctionWindowPolicy ---
 
 public fun new_descent_off(): AuctionWindowPolicy { auction_window_policy::new_descent_off() }
 
@@ -41,7 +51,7 @@ public fun new_descent_fixed(ceiling: Duration): AuctionWindowPolicy {
     auction_window_policy::new_descent_fixed(ceiling)
 }
 
-// === CommitmentPolicy Constructors ===
+// --- CommitmentPolicy ---
 
 public fun new_commitment_immediate(): CommitmentPolicy { commitment_policy::new_immediate() }
 
@@ -49,7 +59,7 @@ public fun new_commitment_deferred(floor: Duration): CommitmentPolicy {
     commitment_policy::new_deferred(floor)
 }
 
-// === CurveShapePolicy Constructors ===
+// --- CurveShapePolicy ---
 
 public fun new_linear(): CurveShapePolicy { curve_shape_policy::new_linear() }
 
@@ -65,7 +75,7 @@ public fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapePolicy {
     curve_shape_policy::new_exponential(alpha_abs, alpha_neg)
 }
 
-// === HandoverPolicy Constructors ===
+// --- HandoverPolicy ---
 
 public fun new_handover_off(): HandoverPolicy { handover_policy::new_handover_off() }
 
@@ -75,7 +85,7 @@ public fun new_handover_fixed(floor: Duration): HandoverPolicy {
     handover_policy::new_handover_fixed(floor)
 }
 
-// === PriceEscalationPolicy Constructors ===
+// --- PriceEscalationPolicy ---
 
 public fun new_price_fixed_delta(delta: Price): PriceEscalationPolicy {
     price_escalation_policy::new_fixed_delta(delta)
@@ -85,25 +95,25 @@ public fun new_price_compound_delta(bps: BasisPoints, delta: Price): PriceEscala
     price_escalation_policy::new_compound_delta(bps, delta)
 }
 
-// === RestPricePolicy Constructors ===
+// --- RestPricePolicy ---
 
 public fun new_rest_price_fixed(price: Price): RestPricePolicy {
     rest_price_policy::new_fixed(price)
 }
 
-// === TenureDurationPolicy Constructors ===
+// --- TenureDurationPolicy ---
 
 public fun new_tenure_duration_fixed(ceiling: Duration): TenureDurationPolicy {
     tenure_duration_policy::new_fixed(ceiling)
 }
 
-// === TenureExtendPolicy Constructors ===
+// --- TenureExtendPolicy ---
 
 public fun new_tenure_single(): TenureExtendPolicy { tenure_extend_policy::new_single() }
 
 public fun new_tenure_multi(): TenureExtendPolicy { tenure_extend_policy::new_multi() }
 
-// === PolicyEnsemble Constructor ===
+// --- PolicyEnsemble ---
 
 public fun new_ensemble(
     rest_price:       RestPricePolicy,
@@ -126,3 +136,13 @@ public fun new_ensemble(
         price_escalation,
     )
 }
+
+// === View Functions ===
+
+// === Admin Functions ===
+
+// === Package Functions ===
+
+// === Private Functions ===
+
+// === Test Functions ===

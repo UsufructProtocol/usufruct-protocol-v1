@@ -7987,7 +7987,6 @@ fun commitment_extend_valid_increases_unlocks_at() {
 #[test, expected_failure(abort_code = asset_state::ECommitmentNotExtended, location = usufruct::asset_state)]
 fun commitment_extend_with_immediate_when_locked_aborts() {
     let mut sc  = setup();
-    let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
     let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,

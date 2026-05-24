@@ -59,11 +59,11 @@ fun setup(): Scenario {
     sc
 }
 
-// ─── FP — fee_inbox::proj_inbox_id ─────────────────────────────────────────────
+// ─── FI — fee_inbox::inbox_id ──────────────────────────────────────────────────
 
-// FP1: proj_inbox_id extracts the fee inbox ID from a ProtocolFeeRef.
+// FI1: inbox_id extracts the fee inbox ID from a ProtocolFeeRef.
 #[test]
-fun fp1_proj_inbox_id_returns_inbox_id() {
+fun fi1_inbox_id_returns_inbox_id() {
     let mut sc = setup();
     sc.next_tx(OWNER);
     {
@@ -71,7 +71,7 @@ fun fp1_proj_inbox_id_returns_inbox_id() {
         let inbox     = sc.take_from_sender<ProtocolFeeInbox>();
         let inbox_id  = object::id(&inbox);
 
-        assert_eq!(fee_inbox::proj_inbox_id(&fee_ref), inbox_id);
+        assert_eq!(fee_inbox::inbox_id(&fee_ref), inbox_id);
 
         sc.return_to_sender(inbox);
         test_scenario::return_immutable(fee_ref);

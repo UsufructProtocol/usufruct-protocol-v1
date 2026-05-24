@@ -15,6 +15,18 @@ use usufruct::{
     protocol_fee_ref::{Self, ProtocolFeeRef},
 };
 
+// === Errors ===
+
+// === Constants ===
+
+// === Structs ===
+
+// === Enums ===
+
+// === Events ===
+
+// === Method Aliases ===
+
 // === Public Functions ===
 
 public fun collect_fee_messages<C>(
@@ -25,6 +37,16 @@ public fun collect_fee_messages<C>(
     fee_message::collect_fee_messages(inbox, tickets, ctx)
 }
 
-public fun proj_inbox_id(fee_ref: &ProtocolFeeRef): ID {
+// === View Functions ===
+
+public fun inbox_id(fee_ref: &ProtocolFeeRef): ID {
     protocol_fee_ref::proj_inbox_id(fee_ref)
 }
+
+// === Admin Functions ===
+
+// === Package Functions ===
+
+// === Private Functions ===
+
+// === Test Functions ===

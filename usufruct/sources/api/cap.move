@@ -10,6 +10,18 @@ use usufruct::{
     tenant_cap::{Self, TenantCap},
 };
 
+// === Errors ===
+
+// === Constants ===
+
+// === Structs ===
+
+// === Enums ===
+
+// === Events ===
+
+// === Method Aliases ===
+
 // === Public Functions ===
 
 public fun owner_cap_escrow_id(cap: &OwnerCap): ID {
@@ -19,3 +31,13 @@ public fun owner_cap_escrow_id(cap: &OwnerCap): ID {
 public fun tenant_cap_escrow_id(cap: &TenantCap): ID {
     tenant_cap::proj_escrow_id(cap)
 }
+
+// === View Functions ===
+
+// === Admin Functions ===
+
+// === Package Functions ===
+
+// === Private Functions ===
+
+// === Test Functions ===

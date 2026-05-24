@@ -4,7 +4,6 @@
 #[test_only]
 module usufruct::ensemble_tests;
 
-use std::unit_test::assert_eq;
 use sui::{
     clock,
     sui::SUI,
@@ -39,29 +38,13 @@ fun setup(): Scenario {
 
 // ─── V — Value type constructors ───────────────────────────────────────────────
 
-// V1: price/price_mist are inverses.
+// V1: duration_ms is accepted by policy constructors that take Duration.
 #[test]
-fun v1_price_price_mist_roundtrip() {
-    assert_eq!(ensemble::price_mist(ensemble::price(0)),                         0);
-    assert_eq!(ensemble::price_mist(ensemble::price(12_345)),                    12_345);
-    assert_eq!(ensemble::price_mist(ensemble::price(18_446_744_073_709_551_615)), 18_446_744_073_709_551_615);
-}
-
-// V2: duration_ms is accepted by policy constructors that take Duration.
-#[test]
-fun v2_duration_ms_feeds_policy_constructors() {
+fun v1_duration_ms_feeds_policy_constructors() {
     let _ = ensemble::new_descent_fixed(ensemble::duration_ms(60_000));
     let _ = ensemble::new_handover_fixed(ensemble::duration_ms(30_000));
     let _ = ensemble::new_tenure_duration_fixed(ensemble::duration_ms(100_000));
     let _ = ensemble::new_commitment_deferred(ensemble::duration_ms(10_000_000));
-}
-
-// V3: tenures/tenures_count are inverses.
-#[test]
-fun v3_tenures_count_roundtrip() {
-    assert_eq!(ensemble::tenures_count(ensemble::tenures(1)),   1);
-    assert_eq!(ensemble::tenures_count(ensemble::tenures(7)),   7);
-    assert_eq!(ensemble::tenures_count(ensemble::tenures(100)), 100);
 }
 
 // ─── E — PTB chain integration ─────────────────────────────────────────────────

@@ -750,7 +750,84 @@ At the extreme, a level-2 escrow with `FullTenure` handover and a tenure sized t
 
 ---
 
-## 13. The integrator's mental model
+### 13. The ProtocolFeeInbox as a rentable fee stream
+
+`ProtocolFeeInbox` has `key + store`:
+
+```move
+public struct ProtocolFeeInbox has key, store { id: UID }
+```
+
+That bound is the only requirement for `integrate()`. The protocol can integrate its own fee inbox into a usufruct escrow and auction the right to collect its accumulated earnings to the open market.
+
+#### The economic structure
+
+Every `apply_transitions` that settles a fee creates a `FeeMessage<C>` object and transfers it to the inbox's address. These accumulate passively — the inbox does nothing; fee messages arrive at it from any number of concurrent escrows. Collecting them (via `transfer::receive`) returns more in storage rebate than it costs in computation: break-even is N = 2 messages; at N = 50 the net gain converges to ~−0.001911 SUI per message (see FINDINGS.md §4).
+
+A tenant who rents the inbox during a window of sufficient protocol activity pays `rent ≤ expected_fee_stream_value` and collects the surplus as arbitrage. The competitive market for collection rights prices the fee stream automatically — the highest-value bidder in each tenure cycle wins, and their bid reflects the fee volume they expect to harvest.
+
+#### The borrow window
+
+```move
+let (inbox, asset_receipt) =
+    usufruct::borrow_asset(&mut inbox_escrow, &tenant_cap, &clock, ctx);
+// ── runtime window ───────────────────────────────────────────────────
+    // tickets: vector<Receiving<FeeMessage<SUI>>> assembled by the PTB builder
+    // from the FeeMessage objects that live at the inbox's address.
+    let coin = fee_inbox::collect_fee_messages<SUI>(
+        &mut inbox,
+        tickets,
+        ctx,
+    );
+    transfer::public_transfer(coin, ctx.sender());
+// ── end of runtime ──────────────────────────────────────────────────
+usufruct::return_asset(&mut inbox_escrow, inbox, asset_receipt);
+```
+
+The inbox returns to escrow intact. Its UID never changes. New `FeeMessage` objects continue arriving at its address while it sits in escrow between borrow windows. The next tenant inherits a fresh batch.
+
+#### What this pattern produces
+
+**Incentivized collection without a keeper.** The protocol owner does not need to run a bot or manually call `collect`. Market participants compete to do it, because collection is profitable at scale. The economic incentive the protocol designed into its fee structure (self-funding collection) is the same force that drives tenants to bid for collection rights.
+
+**Revenue capitalization.** The expected future fee stream is capitalized into periodic rent. The protocol owner receives a predictable rent income instead of variable, manually-triggered collection proceeds. The tenant bears fee-volume risk in exchange for the upside when volume exceeds expectations.
+
+**Market-set collection frequency.** When fee volume is high, the inbox attracts competitive bids and collection rights are exercised frequently. When volume is low, bids fall or the escrow sits idle. The collection cadence is regulated by the same market that generates the fees — without any governance parameter to tune.
+
+#### Where this fits in the taxonomy
+
+This is **category B** (§4) — held with passive accrual. The inbox accrues `FeeMessage` objects on its own while in escrow; the tenant decides when and how many to collect per borrow window. No wrapper is needed: the inbox is already `key + store`, and `fee_message::collect` is the accrual-harvesting function.
+
+#### Homogeneous protocol revenue via CoinType selection
+
+`FeeMessage<C>` carries the `CoinType` of the escrow that produced it. A protocol
+hosting escrows in multiple coin types accumulates a heterogeneous inbox:
+`FeeMessage<SUI>`, `FeeMessage<USDC>`, `FeeMessage<BUCK>`. The tenant who rents the
+inbox collects all of them — receiving a basket of heterogeneous coins as their
+collection reward.
+
+The protocol's revenue, however, is the *rent* paid for the inbox escrow — and the
+`CoinType` of that escrow is the protocol owner's choice. Integrating
+`ProtocolFeeInbox` into `Escrow<ProtocolFeeInbox, USDsui>` means every tenant bids
+and pays in `USDsui`, regardless of which coins are accumulated inside. The protocol
+receives a single, homogeneous revenue stream in the coin it chose; the tenant
+receives the heterogeneous fee messages and prices their bid to reflect the expected
+value of that basket.
+
+The complexity of valuing a multi-coin fee stream is absorbed by the market. No
+on-chain conversion, no oracle dependency, no governance parameter. The `CoinType`
+selection at `integrate()` time is the only decision.
+
+> **Note.** This is an emergent pattern — a consequence of `ProtocolFeeInbox` satisfying
+> `key + store`, not a design decision or stated strategy of the protocol.
+
+#### The recursive property
+
+The protocol applies its own rental mechanism to its own revenue infrastructure. The fee stream generated by renting assets through usufruct is itself rented through usufruct. There is no separate governance layer, no special-cased collection logic, and no modification to the protocol — it falls out of `key + store` being a universal bound.
+
+---
+
+## 14. The integrator's mental model
 
 If you are building on usufruct, the question to ask is not "is my asset rentable?" but the following four:
 
@@ -763,7 +840,7 @@ If those four questions have answers, you have an integration. The protocol take
 
 ---
 
-## 14. References
+## 15. References
 
 - The usufruct protocol — the substrate this catalog grows on. *(Separate repository.)*
 - usufruct's `ARCHITECTURE.md` — protocol internals. Read after this document, not before.

@@ -423,25 +423,34 @@ fun new_config_rejects_countdown_floor_eq_tenure_ceiling() {
 // E1: full config snapshot is captured in the event; escrow_id matches.
 #[test]
 fun emit_registration_e1_full_snapshot() {
-    let ensemble        = v2_config();
-    let ei = escrow_identity::new(object::id_from_address(@0xE5C1));
+    let ensemble = v2_config();
+    let ei       = escrow_identity::new(object::id_from_address(@0xE5C1));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
         policy_ensemble::emit_registration(&ensemble, ei);
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 1);
-        assert_eq!(policy_ensemble::registered_escrow_identity(&events[0]), ei);
-        assert_eq!(policy_ensemble::registered_ensemble(&events[0]),    ensemble);
+        let e = &events[0];
+        assert_eq!(policy_ensemble::registered_escrow_identity(e), escrow_identity::escrow_id(ei));
+        assert_eq!(policy_ensemble::registered_rest_price_mist(e),          V2_MIN_RENT_PRICE);
+        assert_eq!(policy_ensemble::registered_tenure_duration_ms(e),       V2_TENURE_CEILING);
+        assert_eq!(policy_ensemble::registered_handover_policy(e),          b"Fixed".to_string());
+        assert_eq!(policy_ensemble::registered_handover_floor_ms(e),        option::some(V2_HANDOVER_FLOOR));
+        assert_eq!(policy_ensemble::registered_auction_window_policy(e),    b"Fixed".to_string());
+        assert_eq!(policy_ensemble::registered_auction_window_ceiling_ms(e),option::some(V2_DESCENT_CEILING));
+        assert_eq!(policy_ensemble::registered_credit_shape_policy(e),      b"Linear".to_string());
+        assert_eq!(policy_ensemble::registered_credit_alpha_num(e),         option::none());
     };
     scenario.end();
 }
 
 // E2: PowerLaw gcd-normalized curves are stored in reduced form inside the event.
+//     new_power_law(2,4) → GCD=2 → alpha_num=1, alpha_den=2.
+//     new_power_law(6,3) → GCD=3 → alpha_num=2, alpha_den=1.
 #[test]
 fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
-    // new_power_law(2,4) → stored PowerLaw{1,2}; getter returns the reduced form.
-    let ensemble       = policy_ensemble::new_ensemble(
+    let ensemble = policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)), tenure_duration_policy::new_fixed(phases::duration(V2_TENURE_CEILING)), tenure_extend_policy::new_single(), v2_handover(), v2_descent(),
         curve_shape_policy::new_power_law(2, 4),
         curve_shape_policy::new_power_law(6, 3),
@@ -452,11 +461,12 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
     scenario.next_tx(@0xA);
     {
         policy_ensemble::emit_registration(&ensemble, ei);
-        let events  = event::events_by_type<PolicyEnsembleRegistered>();
-        let payload = policy_ensemble::registered_ensemble(&events[0]);
-        // stored values are the reduced (gcd-normalized) forms
-        assert_eq!(*policy_ensemble::proj_credit_shape(&payload),  curve_shape_policy::new_power_law(2, 4));
-        assert_eq!(*policy_ensemble::proj_auction_shape(&payload), curve_shape_policy::new_power_law(6, 3));
+        let events = event::events_by_type<PolicyEnsembleRegistered>();
+        let e = &events[0];
+        assert_eq!(policy_ensemble::registered_credit_alpha_num(e), option::some(1u8));
+        assert_eq!(policy_ensemble::registered_credit_alpha_den(e), option::some(2u8));
+        assert_eq!(policy_ensemble::registered_auction_alpha_num(e), option::some(2u8));
+        assert_eq!(policy_ensemble::registered_auction_alpha_den(e), option::some(1u8));
     };
     scenario.end();
 }
@@ -467,8 +477,8 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
 //     not a module-side guard.
 #[test]
 fun emit_registration_e3_not_idempotent_caller_contract() {
-    let ensemble        = v2_config();
-    let ei = escrow_identity::new(object::id_from_address(@0xE5C1));
+    let ensemble = v2_config();
+    let ei       = escrow_identity::new(object::id_from_address(@0xE5C1));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
@@ -476,8 +486,9 @@ fun emit_registration_e3_not_idempotent_caller_contract() {
         policy_ensemble::emit_registration(&ensemble, ei);
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 2);
-        assert_eq!(policy_ensemble::registered_ensemble(&events[0]), policy_ensemble::registered_ensemble(&events[1]));
-        assert_eq!(policy_ensemble::registered_escrow_identity(&events[0]), policy_ensemble::registered_escrow_identity(&events[1]));
+        assert_eq!(policy_ensemble::registered_rest_price_mist(&events[0]),    policy_ensemble::registered_rest_price_mist(&events[1]));
+        assert_eq!(policy_ensemble::registered_escrow_identity(&events[0]),    policy_ensemble::registered_escrow_identity(&events[1]));
+        assert_eq!(policy_ensemble::registered_auction_window_policy(&events[0]), policy_ensemble::registered_auction_window_policy(&events[1]));
     };
     scenario.end();
 }

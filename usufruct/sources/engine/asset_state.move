@@ -5,6 +5,7 @@ module usufruct::asset_state;
 
 // === Imports ===
 
+use std::string::String;
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
@@ -181,21 +182,12 @@ public struct EarningsWithdrawn has copy, drop {
     timestamp_ms: u64,
 }
 
-public struct ConfigUpdateScheduled has copy, drop {
-    escrow_id:  ID,
-    new_config: PolicyEnsemble,
-}
-
-public struct ConfigUpdated has copy, drop {
-    escrow_id:  ID,
-    new_config: PolicyEnsemble,
-}
-
 public struct CommitmentExtended has copy, drop {
-    escrow_id:     ID,
-    new_policy:    CommitmentPolicy,
-    new_expiry_ms: u64,
-    timestamp_ms:  u64,
+    escrow_id:           ID,
+    commitment_policy:   String,
+    commitment_floor_ms: Option<u64>,
+    new_expiry_ms:       u64,
+    timestamp_ms:        u64,
 }
 
 public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
@@ -886,7 +878,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
     let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, cycle: _ }) => {
-            event::emit(ConfigUpdated { escrow_id: raw_escrow_id, new_config: new_ensemble });
+            policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
             let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&core.ensemble.active));
@@ -896,19 +888,19 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
         },
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
-            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_ensemble });
+            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, raw_escrow_id);
             core.ensemble.pending = option::some(new_ensemble);
             AssetState::Waiting(WaitingState::Descent { asset, auction, cycle })
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
-            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_ensemble });
+            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, raw_escrow_id);
             core.ensemble.pending = option::some(new_ensemble);
             AssetState::Renting(RentingState::Occupied { asset, terms, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
-            event::emit(ConfigUpdateScheduled { escrow_id: raw_escrow_id, new_config: new_ensemble });
+            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, raw_escrow_id);
             core.ensemble.pending = option::some(new_ensemble);
             AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle })
         },
@@ -1055,10 +1047,11 @@ public(package) fun execute_extend_commitment<CoinType>(
         old_expiry,
     );
     event::emit(CommitmentExtended {
-        escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
-        new_policy,
-        new_expiry_ms: phases::timestamp_ms(new_expiry),
-        timestamp_ms:  phases::timestamp_ms(now),
+        escrow_id:           escrow_identity::escrow_id(core.escrow_identity),
+        commitment_policy:   commitment_policy::proj_commitment_policy(&new_policy),
+        commitment_floor_ms: commitment_policy::proj_commitment_floor_ms(&new_policy),
+        new_expiry_ms:       phases::timestamp_ms(new_expiry),
+        timestamp_ms:        phases::timestamp_ms(now),
     });
     core.commitment.policy = new_policy;
     core.commitment.anchor = old_expiry;
@@ -1513,7 +1506,7 @@ fun do_auction_expiry<Asset: key + store>(
     event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
     if (ensemble.pending.is_some()) {
         let new_ensemble = ensemble.pending.extract();
-        event::emit(ConfigUpdated { escrow_id: escrow_identity::escrow_id(escrow_identity), new_config: new_ensemble });
+        policy_ensemble::emit_ensemble_updated(&new_ensemble, escrow_identity::escrow_id(escrow_identity));
         ensemble.active = new_ensemble;
     };
     let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble.active));
@@ -1895,7 +1888,9 @@ public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64       
 public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64        { e.amount }
 
 #[test_only]
-public(package) fun config_updated_new_config(e: &ConfigUpdated): PolicyEnsemble { e.new_config }
+public(package) fun commitment_extended_policy(e: &CommitmentExtended): String { e.commitment_policy }
+#[test_only]
+public(package) fun commitment_extended_floor_ms(e: &CommitmentExtended): Option<u64> { e.commitment_floor_ms }
 
 #[test_only]
 public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(

@@ -5,6 +5,7 @@ module usufruct::commitment_policy;
 
 // === Imports ===
 
+use std::string::String;
 use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 // === Errors ===
@@ -37,6 +38,19 @@ public(package) fun proj_is_deferred(policy: &CommitmentPolicy): bool {
 public(package) fun proj_floor_ms(policy: &CommitmentPolicy): Option<Duration> {
     match (policy) {
         CommitmentPolicy::Deferred { floor } => option::some(*floor),
+        CommitmentPolicy::Immediate          => option::none(),
+    }
+}
+
+public(package) fun proj_commitment_policy(policy: &CommitmentPolicy): String {
+    match (policy) {
+        CommitmentPolicy::Immediate    => b"Immediate".to_string(),
+        CommitmentPolicy::Deferred {..} => b"Deferred".to_string(),
+    }
+}
+public(package) fun proj_commitment_floor_ms(policy: &CommitmentPolicy): Option<u64> {
+    match (policy) {
+        CommitmentPolicy::Deferred { floor } => option::some(phases::duration_ms(*floor)),
         CommitmentPolicy::Immediate          => option::none(),
     }
 }

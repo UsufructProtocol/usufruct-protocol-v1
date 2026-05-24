@@ -5,6 +5,7 @@ module usufruct::curve_shape_policy;
 
 // === Imports ===
 
+use std::string::String;
 use usufruct::math;
 
 // === Errors ===
@@ -89,6 +90,16 @@ public(package) fun proj_exponential_alpha_abs(s: &CurveShapePolicy): Option<u8>
 }
 public(package) fun proj_exponential_alpha_neg(s: &CurveShapePolicy): Option<bool> {
     match (s) { CurveShapePolicy::Exponential { alpha_neg, .. } => option::some(*alpha_neg), _ => option::none() }
+}
+
+public(package) fun proj_curve_shape_policy(s: &CurveShapePolicy): String {
+    match (s) {
+        CurveShapePolicy::Linear           => b"Linear".to_string(),
+        CurveShapePolicy::Smoothstep       => b"Smoothstep".to_string(),
+        CurveShapePolicy::Logistic         => b"Logistic".to_string(),
+        CurveShapePolicy::PowerLaw { .. }  => b"PowerLaw".to_string(),
+        CurveShapePolicy::Exponential {..} => b"Exponential".to_string(),
+    }
 }
 
 // === Admin Functions ===

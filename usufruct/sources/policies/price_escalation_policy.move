@@ -6,6 +6,7 @@ module usufruct::price_escalation_policy;
 // === Imports ===
 
 use std::u64;
+use std::string::String;
 use usufruct::{
     math::{Self, BasisPoints},
     monetary::{Self, Price},
@@ -57,6 +58,25 @@ public(package) fun proj_compound_delta_bps(p: &PriceEscalationPolicy): Option<B
 }
 public(package) fun proj_compound_delta_delta(p: &PriceEscalationPolicy): Option<Price> {
     match (p) { PriceEscalationPolicy::CompoundDelta { delta, .. } => option::some(*delta), _ => option::none() }
+}
+
+public(package) fun proj_price_escalation_policy(p: &PriceEscalationPolicy): String {
+    match (p) {
+        PriceEscalationPolicy::FixedDelta    { .. } => b"FixedDelta".to_string(),
+        PriceEscalationPolicy::CompoundDelta { .. } => b"CompoundDelta".to_string(),
+    }
+}
+public(package) fun proj_price_escalation_delta_mist(p: &PriceEscalationPolicy): u64 {
+    match (p) {
+        PriceEscalationPolicy::FixedDelta    { delta }    => monetary::price_mist(*delta),
+        PriceEscalationPolicy::CompoundDelta { delta, .. } => monetary::price_mist(*delta),
+    }
+}
+public(package) fun proj_price_escalation_bps(p: &PriceEscalationPolicy): Option<u64> {
+    match (p) {
+        PriceEscalationPolicy::CompoundDelta { bps, .. } => option::some(math::bps_value(*bps)),
+        _                                                 => option::none(),
+    }
 }
 
 // === Admin Functions ===

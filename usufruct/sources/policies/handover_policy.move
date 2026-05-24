@@ -5,6 +5,7 @@ module usufruct::handover_policy;
 
 // === Imports ===
 
+use std::string::String;
 use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 // === Errors ===
@@ -44,6 +45,20 @@ public(package) fun proj_fixed_floor_ms(policy: &HandoverPolicy): Option<Duratio
     match (policy) {
         HandoverPolicy::Fixed { floor } => option::some(*floor),
         _ => option::none(),
+    }
+}
+
+public(package) fun proj_handover_policy(policy: &HandoverPolicy): String {
+    match (policy) {
+        HandoverPolicy::Off          => b"Off".to_string(),
+        HandoverPolicy::FullTenure   => b"FullTenure".to_string(),
+        HandoverPolicy::Fixed { .. } => b"Fixed".to_string(),
+    }
+}
+public(package) fun proj_handover_floor_ms(policy: &HandoverPolicy): Option<u64> {
+    match (policy) {
+        HandoverPolicy::Fixed { floor } => option::some(phases::duration_ms(*floor)),
+        _                               => option::none(),
     }
 }
 

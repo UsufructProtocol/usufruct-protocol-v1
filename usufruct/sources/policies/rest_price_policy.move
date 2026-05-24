@@ -5,6 +5,7 @@ module usufruct::rest_price_policy;
 
 // === Imports ===
 
+use std::string::String;
 use usufruct::monetary::{Self, Price};
 
 // === Errors ===
@@ -33,6 +34,13 @@ public(package) fun proj_is_fixed(_policy: &RestPricePolicy): bool { true }
 
 public(package) fun proj_fixed_price(policy: &RestPricePolicy): Option<Price> {
     match (policy) { RestPricePolicy::Fixed { price } => option::some(*price) }
+}
+
+public(package) fun proj_rest_price_policy(_policy: &RestPricePolicy): String {
+    b"Fixed".to_string()
+}
+public(package) fun proj_rest_price_mist(policy: &RestPricePolicy): u64 {
+    match (policy) { RestPricePolicy::Fixed { price } => monetary::price_mist(*price) }
 }
 
 // === Admin Functions ===

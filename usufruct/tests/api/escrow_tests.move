@@ -28,11 +28,9 @@ use usufruct::{
         RetireFlagSet,
         AssetBorrowed,
         AssetReturned,
-        ConfigUpdated,
-        ConfigUpdateScheduled,
     },
 
-    policy_ensemble,
+    policy_ensemble::{Self, EnsembleUpdated, EnsembleUpdateScheduled},
     curve_shape_policy,
     tenures,
     auction_window_policy,
@@ -5083,8 +5081,8 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 // without applying it.
 
 // Test 1: Idle → immediate apply ─────────────────────────────────────────────
-/// update_config from Idle: config changes immediately, ConfigUpdated emitted,
-/// ConfigUpdateScheduled NOT emitted, pending flag stays false.
+/// update_config from Idle: config changes immediately, EnsembleUpdated emitted,
+/// EnsembleUpdateScheduled NOT emitted, pending flag stays false.
 #[test]
 fun update_config_idle_applies_immediately() {
     let mut sc = setup();
@@ -5099,9 +5097,9 @@ fun update_config_idle_applies_immediately() {
     assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 1);
     assert!(!escrow::has_pending_config_update(&escrow), 2);
 
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
-    let scheduled = event::events_by_type<ConfigUpdateScheduled>();
+    let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
     assert_eq!(scheduled.length(), 0);
 
     test_scenario::return_shared(escrow);
@@ -5112,7 +5110,7 @@ fun update_config_idle_applies_immediately() {
 
 // Test 2: Descent → schedule without cancelling ───────────────────────────────
 /// update_config from DescentAuction: new config is buffered, state stays
-/// Descent, ConfigUpdateScheduled emitted, ConfigUpdated NOT emitted.
+/// Descent, EnsembleUpdateScheduled emitted, EnsembleUpdated NOT emitted.
 #[test]
 fun update_config_descent_schedules_without_cancelling() {
     let mut sc = setup();
@@ -5140,9 +5138,9 @@ fun update_config_descent_schedules_without_cancelling() {
     assert!(escrow::has_pending_config_update(&escrow), 1);
     assert!(escrow::policy_ensemble(&escrow) != new_ensemble, 2);
 
-    let scheduled = event::events_by_type<ConfigUpdateScheduled>();
+    let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 0);
 
     test_scenario::return_shared(escrow);
@@ -5153,7 +5151,7 @@ fun update_config_descent_schedules_without_cancelling() {
 
 // Test 3: Renting → schedule without interrupting ─────────────────────────────
 /// update_config from Occupied (Renting): new config buffered, state
-/// stays Renting, ConfigUpdateScheduled emitted, ConfigUpdated NOT emitted.
+/// stays Renting, EnsembleUpdateScheduled emitted, EnsembleUpdated NOT emitted.
 #[test]
 fun update_config_renting_schedules_without_interrupting() {
     let mut sc = setup();
@@ -5172,9 +5170,9 @@ fun update_config_renting_schedules_without_interrupting() {
     assert!(escrow::has_pending_config_update(&escrow), 1);
     assert!(escrow::policy_ensemble(&escrow) == original_cfg, 2);
 
-    let scheduled = event::events_by_type<ConfigUpdateScheduled>();
+    let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -5209,7 +5207,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
     assert!(escrow::has_pending_config_update(&escrow), 1);
     assert!(escrow::policy_ensemble(&escrow) == ensemble, 2);
 
-    let resets_mid = event::events_by_type<ConfigUpdated>();
+    let resets_mid = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets_mid.length(), 0);
 
     // Auction expiry via production APT → fire's Descent arm applies pending_config → Idle.
@@ -5220,7 +5218,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
     assert!(!escrow::has_pending_config_update(&escrow), 4);
     assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 5);
 
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
     let auction_expired = event::events_by_type<AuctionExpired>();
     assert_eq!(auction_expired.length(), 1);
@@ -5269,7 +5267,7 @@ fun update_config_handover_preserves_pending_does_not_apply() {
     assert!(escrow::has_pending_config_update(&escrow), 1);
     assert!(escrow::policy_ensemble(&escrow) == original_cfg, 2);
 
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -5313,7 +5311,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
     assert!(escrow::is_in_descent(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
 
-    let resets_mid = event::events_by_type<ConfigUpdated>();
+    let resets_mid = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets_mid.length(), 0);
 
     // Auction expiry via production APT → Idle with new config applied.
@@ -5322,7 +5320,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
     assert!(escrow::is_idle(&escrow), 2);
     assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 3);
 
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
     let auction_expired = event::events_by_type<AuctionExpired>();
     assert_eq!(auction_expired.length(), 1);
@@ -5337,7 +5335,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
 // Test 7: last write wins — second update_config overrides first ───────────────
 /// Two successive update_config calls while Renting: last write wins.
 /// At auction expiry only cfg_b (the second config) is applied.
-/// Exactly 1 ConfigUpdated emitted (not two), 2 ConfigUpdateScheduled emitted.
+/// Exactly 1 EnsembleUpdated emitted (not two), 2 EnsembleUpdateScheduled emitted.
 #[test]
 fun update_config_override_last_write_wins() {
     let mut sc = setup();
@@ -5370,13 +5368,15 @@ fun update_config_override_last_write_wins() {
     assert!(escrow::is_idle(&escrow), 2);
     assert!(escrow::policy_ensemble(&escrow) == cfg_b, 3);
 
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
 
-    let cfg_from_event = asset_state::config_updated_new_config(resets.borrow(0));
-    assert!(cfg_from_event == cfg_b, 4);
+    // cfg_b = by_tag(1): h=0 → auction_window Off, c=0 → handover Off
+    let evt = resets.borrow(0);
+    assert_eq!(policy_ensemble::ensemble_updated_auction_window_policy(evt), b"Off".to_string());
+    assert_eq!(policy_ensemble::ensemble_updated_handover_policy(evt), b"Off".to_string());
 
-    let scheduled = event::events_by_type<ConfigUpdateScheduled>();
+    let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
     assert_eq!(scheduled.length(), 2);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -5389,7 +5389,7 @@ fun update_config_override_last_write_wins() {
 // Test 8: retire wins — discards pending reset silently ───────────────────────
 /// retire() from Renting discards any pending config reset.
 /// The retiring flag takes precedence: tenure expiry → Retired, not Idle.
-/// ConfigUpdated is NOT emitted; the config never changes.
+/// EnsembleUpdated is NOT emitted; the config never changes.
 #[test]
 fun update_config_retire_wins_discards_pending_silently() {
     let mut sc = setup();
@@ -5420,7 +5420,7 @@ fun update_config_retire_wins_discards_pending_silently() {
     assert!(escrow::policy_ensemble(&escrow) != new_ensemble, 3);
     assert!(escrow::policy_ensemble(&escrow) == original_cfg, 4);
 
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -5477,7 +5477,7 @@ fun update_config_on_retiring_aborts() {
 // Test 11: Descent natural expiry applies pending reset ───────────────────────
 /// update_config scheduled while Descent; auction expires naturally via the
 /// production APT path. On natural expiry the pending reset is applied,
-/// ConfigUpdated emitted, AND AuctionExpired also emitted.
+/// EnsembleUpdated emitted, AND AuctionExpired also emitted.
 #[test]
 fun update_config_descent_natural_expiry_applies_pending() {
     let mut sc = setup();
@@ -5513,7 +5513,7 @@ fun update_config_descent_natural_expiry_applies_pending() {
     assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 2);
     assert!(!escrow::has_pending_config_update(&escrow), 3);
 
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
     let auction_expired = event::events_by_type<AuctionExpired>();
     assert_eq!(auction_expired.length(), 1);
@@ -5532,7 +5532,7 @@ fun update_config_descent_natural_expiry_applies_pending() {
 
 // Invariant 1: pending_config survives a chain of handovers untouched ─────────
 /// Two consecutive handovers with a buffered reset: after each handover the
-/// escrow is still Renting, the old config is still active, and no ConfigUpdated
+/// escrow is still Renting, the old config is still active, and no EnsembleUpdated
 /// has been emitted. The pending survives intact through both transitions.
 #[test]
 fun update_config_pending_survives_multiple_handovers() {
@@ -5556,7 +5556,7 @@ fun update_config_pending_survives_multiple_handovers() {
     assert!(escrow::is_rented(&escrow), 0);
     assert!(escrow::has_pending_config_update(&escrow), 1);
     assert!(escrow::policy_ensemble(&escrow) == original_cfg, 2);
-    assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
+    assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
 
     // Second handover: T2 → T1.
     escrow::drive_to_demand_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), tenure / 2);
@@ -5565,8 +5565,8 @@ fun update_config_pending_survives_multiple_handovers() {
     assert!(escrow::is_rented(&escrow), 3);
     assert!(escrow::has_pending_config_update(&escrow), 4);
     assert!(escrow::policy_ensemble(&escrow) == original_cfg, 5);
-    assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
-    assert_eq!(event::events_by_type<ConfigUpdateScheduled>().length(), 1);
+    assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
+    assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -5603,7 +5603,7 @@ fun update_config_descent_old_config_active_until_auction_expiry() {
     assert!(escrow::is_in_descent(&escrow), 2);
     assert!(escrow::has_pending_config_update(&escrow), 3);
     assert!(escrow::policy_ensemble(&escrow) == original_cfg, 4);
-    assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
+    assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
 
     // Auction expiry → new config applied.
     clock::set_for_testing(&mut clk, escrow_corpus::descent_window_h1_const() + 1);
@@ -5612,7 +5612,7 @@ fun update_config_descent_old_config_active_until_auction_expiry() {
     assert!(escrow::is_idle(&escrow), 5);
     assert!(escrow::policy_ensemble(&escrow) == new_ensemble, 6);
     assert!(!escrow::has_pending_config_update(&escrow), 7);
-    assert_eq!(event::events_by_type<ConfigUpdated>().length(), 1);
+    assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 1);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
     test_scenario::return_shared(escrow);
@@ -5624,7 +5624,7 @@ fun update_config_descent_old_config_active_until_auction_expiry() {
 // Invariant 3: cross-phase last write wins (Renting → Descent) ───────────────
 /// update_config in Renting sets cfg_a; tenure expires → Descent (cfg_a still
 /// pending); update_config in Descent overrides to cfg_b. At auction expiry only
-/// cfg_b is applied. Exactly 1 ConfigUpdated (cfg_b), 2 ConfigUpdateScheduled.
+/// cfg_b is applied. Exactly 1 EnsembleUpdated (cfg_b), 2 EnsembleUpdateScheduled.
 #[test]
 fun update_config_descent_overrides_renting_pending() {
     let mut sc = setup();
@@ -5647,8 +5647,8 @@ fun update_config_descent_overrides_renting_pending() {
     // Override pending from Descent: cfg_b wins.
     escrow::update_config(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
     assert!(escrow::has_pending_config_update(&escrow), 2);
-    assert_eq!(event::events_by_type<ConfigUpdated>().length(), 0);
-    assert_eq!(event::events_by_type<ConfigUpdateScheduled>().length(), 2);
+    assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
+    assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 2);
 
     // Auction expiry → Idle with cfg_b (not cfg_a).
     clock::set_for_testing(&mut clk, tenure + escrow_corpus::descent_window_h1_const() + 1);
@@ -5658,9 +5658,13 @@ fun update_config_descent_overrides_renting_pending() {
     assert!(escrow::policy_ensemble(&escrow) == cfg_b, 4);
     assert!(!escrow::has_pending_config_update(&escrow), 5);
 
-    let resets = event::events_by_type<ConfigUpdated>();
+    let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
-    assert!(asset_state::config_updated_new_config(resets.borrow(0)) == cfg_b, 6);
+
+    // cfg_b = by_tag(1): h=0 → auction_window Off (cfg_a has h=1 Fixed), c=0 → handover Off (cfg_a has c=1 Fixed)
+    let evt = resets.borrow(0);
+    assert_eq!(policy_ensemble::ensemble_updated_auction_window_policy(evt), b"Off".to_string());
+    assert_eq!(policy_ensemble::ensemble_updated_handover_policy(evt), b"Off".to_string());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -5694,7 +5698,7 @@ fun update_config_state_clean_after_application() {
     assert!(escrow::is_idle(&escrow), 0);
     assert!(escrow::policy_ensemble(&escrow) == cfg_cycle1, 1);
     assert!(!escrow::has_pending_config_update(&escrow), 2);
-    assert_eq!(event::events_by_type<ConfigUpdated>().length(), 1);
+    assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 1);
 
     // update_config from Idle → immediate, no schedule.
     escrow::update_config(&mut escrow, &owner_cap, cfg_cycle2, &clk, sc.ctx());
@@ -5702,8 +5706,8 @@ fun update_config_state_clean_after_application() {
     assert!(escrow::is_idle(&escrow), 3);
     assert!(escrow::policy_ensemble(&escrow) == cfg_cycle2, 4);
     assert!(!escrow::has_pending_config_update(&escrow), 5);
-    assert_eq!(event::events_by_type<ConfigUpdated>().length(), 2);
-    assert_eq!(event::events_by_type<ConfigUpdateScheduled>().length(), 1);
+    assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 2);
+    assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -8394,7 +8398,7 @@ fun update_config_demand_schedules_pending() {
     assert!(escrow::has_pending_config_update(&escrow), 2);
     assert!(escrow::policy_ensemble(&escrow) == ensemble, 3);
 
-    let scheduled = event::events_by_type<ConfigUpdateScheduled>();
+    let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);
 
     transfer::public_transfer(cap_t1, OWNER);

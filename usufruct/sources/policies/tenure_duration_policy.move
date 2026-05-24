@@ -5,6 +5,7 @@ module usufruct::tenure_duration_policy;
 
 // === Imports ===
 
+use std::string::String;
 use usufruct::phases::{Self, Duration};
 
 // === Errors ===
@@ -33,6 +34,13 @@ public(package) fun proj_is_fixed(_policy: &TenureDurationPolicy): bool { true }
 
 public(package) fun proj_fixed_ceiling(policy: &TenureDurationPolicy): Option<Duration> {
     match (policy) { TenureDurationPolicy::Fixed { ceiling } => option::some(*ceiling) }
+}
+
+public(package) fun proj_tenure_duration_policy(_policy: &TenureDurationPolicy): String {
+    b"Fixed".to_string()
+}
+public(package) fun proj_tenure_duration_ms(policy: &TenureDurationPolicy): u64 {
+    match (policy) { TenureDurationPolicy::Fixed { ceiling } => phases::duration_ms(*ceiling) }
 }
 
 // === Admin Functions ===

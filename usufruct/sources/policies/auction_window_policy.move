@@ -5,6 +5,7 @@ module usufruct::auction_window_policy;
 
 // === Imports ===
 
+use std::string::String;
 use usufruct::phases::{Self, Timestamp, Duration, Boundary};
 
 // === Errors ===
@@ -41,6 +42,19 @@ public(package) fun proj_fixed_ceiling(policy: &AuctionWindowPolicy): Option<Dur
     match (policy) {
         AuctionWindowPolicy::Fixed { ceiling } => option::some(*ceiling),
         _ => option::none(),
+    }
+}
+
+public(package) fun proj_auction_window_policy(policy: &AuctionWindowPolicy): String {
+    match (policy) {
+        AuctionWindowPolicy::Off          => b"Off".to_string(),
+        AuctionWindowPolicy::Fixed { .. } => b"Fixed".to_string(),
+    }
+}
+public(package) fun proj_auction_window_ceiling_ms(policy: &AuctionWindowPolicy): Option<u64> {
+    match (policy) {
+        AuctionWindowPolicy::Fixed { ceiling } => option::some(phases::duration_ms(*ceiling)),
+        _                                       => option::none(),
     }
 }
 

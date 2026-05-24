@@ -5,6 +5,7 @@ module usufruct::tenure_extend_policy;
 
 // === Imports ===
 
+use std::string::String;
 use usufruct::tenures::{Self, Tenures};
 
 // === Errors ===
@@ -36,6 +37,13 @@ public(package) fun proj_is_single(policy: &TenureExtendPolicy): bool {
 
 public(package) fun proj_is_multi(policy: &TenureExtendPolicy): bool {
     match (policy) { TenureExtendPolicy::Multi => true, _ => false }
+}
+
+public(package) fun proj_tenure_extend_policy(policy: &TenureExtendPolicy): String {
+    match (policy) {
+        TenureExtendPolicy::Single => b"Single".to_string(),
+        TenureExtendPolicy::Multi  => b"Multi".to_string(),
+    }
 }
 
 // === Admin Functions ===

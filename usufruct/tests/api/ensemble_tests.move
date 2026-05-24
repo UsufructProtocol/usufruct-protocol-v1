@@ -5,11 +5,14 @@
 module usufruct::ensemble_tests;
 
 use sui::{
+    balance,
     clock,
+    coin,
     sui::SUI,
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
+    commitment_policy,
     ensemble,
     math,
     escrow::{Self, Escrow},
@@ -45,6 +48,36 @@ fun v1_duration_feeds_policy_constructors() {
     let _ = ensemble::new_handover_fixed(ensemble::duration(30_000));
     let _ = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
     let _ = ensemble::new_commitment_deferred(ensemble::duration(10_000_000));
+}
+
+// V2: tenures is accepted by rent.
+#[test]
+fun v2_tenures_feeds_rent() {
+    let mut sc    = setup();
+    sc.next_tx(OWNER);
+
+    let fee_ref   = sc.take_immutable<ProtocolFeeRef>();
+    let clk       = clock::create_for_testing(sc.ctx());
+    let asset     = mk_demo_asset(sc.ctx());
+    let owner_cap = escrow::integrate<DemoAsset, SUI>(
+        asset, escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+    );
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+
+    sc.next_tx(OWNER);
+    let mut escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let clk2       = clock::create_for_testing(sc.ctx());
+    let payment    = coin::from_balance(balance::create_for_testing<SUI>(10_000_000_000), sc.ctx());
+    let tenant_cap = escrow::rent<DemoAsset, SUI>(
+        &mut escrow, payment, ensemble::tenures(1), &clk2, sc.ctx(),
+    );
+    clock::destroy_for_testing(clk2);
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(tenant_cap, OWNER);
+    owner_cap::burn(owner_cap, OWNER);
+    sc.end();
 }
 
 // ─── E — PTB chain integration ─────────────────────────────────────────────────

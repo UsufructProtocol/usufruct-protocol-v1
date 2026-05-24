@@ -8810,3 +8810,66 @@ fun compute_handover_settlement_aborts_on_descent() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §XX. Policy kind projectors ──────────────────────────────────────────────
+
+/// All *_kind views and price_fn_delta_mist return the correct string/value
+/// for a freshly integrated tag-0 escrow (Off handover, Linear curves,
+/// FixedDelta pricing, Immediate commitment).
+#[test]
+fun policy_kind_views_tag0() {
+    let mut sc = setup();
+    let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+
+    assert_eq!(escrow::rest_price_policy_kind(&escrow),        b"Fixed".to_string());
+    assert_eq!(escrow::tenure_duration_policy_kind(&escrow),   b"Fixed".to_string());
+    assert_eq!(escrow::tenure_extend_policy_kind(&escrow),     b"Single".to_string());
+    assert_eq!(escrow::handover_policy_kind(&escrow),          b"Off".to_string());
+    assert_eq!(escrow::auction_window_policy_kind(&escrow),    b"Off".to_string());
+    assert_eq!(escrow::credit_shape_kind(&escrow),             b"Linear".to_string());
+    assert_eq!(escrow::auction_shape_kind(&escrow),            b"Linear".to_string());
+    assert_eq!(escrow::price_fn_kind(&escrow),                 b"FixedDelta".to_string());
+    assert_eq!(escrow::price_fn_delta_mist(&escrow),           escrow_corpus::fixed_delta_value_const());
+    assert_eq!(escrow::commitment_policy_kind(&escrow),        b"Immediate".to_string());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// commitment_anchor_ms equals integrated_at_ms for a fresh escrow.
+/// commitment_remaining_ms is 0 for Immediate at any time.
+#[test]
+fun commitment_anchor_and_remaining_immediate() {
+    let mut sc = setup();
+    let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+
+    assert_eq!(escrow::commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
+    assert_eq!(escrow::commitment_remaining_ms(&escrow, 0),   0);
+    assert_eq!(escrow::commitment_remaining_ms(&escrow, 999), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// commitment_remaining_ms reflects the floor for a Deferred policy.
+#[test]
+fun commitment_anchor_and_remaining_deferred() {
+    let mut sc = setup();
+    let floor = escrow_corpus::retire_deferred_f1_const();
+    let (escrow, cap) = integrate_and_take_with_commitment(
+        escrow_corpus::by_tag(0),
+        commitment_policy::new_deferred(phases::duration(floor)),
+        &mut sc,
+    );
+
+    assert_eq!(escrow::commitment_anchor_ms(&escrow), 0);
+    assert_eq!(escrow::commitment_remaining_ms(&escrow, 0),        floor);
+    assert_eq!(escrow::commitment_remaining_ms(&escrow, floor / 2), floor - floor / 2);
+    assert_eq!(escrow::commitment_remaining_ms(&escrow, floor),    0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}

@@ -96,3 +96,29 @@ fun projectors_deferred_variant() {
     assert!(p.proj_is_deferred());
     assert_eq!(phases::duration_ms(p.proj_floor_ms().destroy_some()), 50);
 }
+
+// ─── proj_commitment_policy ───────────────────────────────────────────────────
+
+#[test]
+fun proj_commitment_policy_immediate() {
+    let p = commitment_policy::new_immediate();
+    assert_eq!(commitment_policy::proj_commitment_policy(&p), b"Immediate".to_string());
+}
+
+#[test]
+fun proj_commitment_policy_deferred() {
+    let p = commitment_policy::new_deferred(phases::duration(50));
+    assert_eq!(commitment_policy::proj_commitment_policy(&p), b"Deferred".to_string());
+}
+
+// ─── proj_commitment_floor_ms ────────────────────────────────────────────────
+
+#[test]
+fun proj_commitment_floor_ms_immediate_is_none() {
+    assert!(commitment_policy::proj_commitment_floor_ms(&commitment_policy::new_immediate()).is_none(), 0);
+}
+
+#[test]
+fun proj_commitment_floor_ms_deferred_is_some() {
+    assert_eq!(commitment_policy::proj_commitment_floor_ms(&commitment_policy::new_deferred(phases::duration(50))), option::some(50));
+}

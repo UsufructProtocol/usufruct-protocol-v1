@@ -38,13 +38,13 @@ fun setup(): Scenario {
 
 // ─── V — Value type constructors ───────────────────────────────────────────────
 
-// V1: duration_ms is accepted by policy constructors that take Duration.
+// V1: duration is accepted by policy constructors that take Duration.
 #[test]
-fun v1_duration_ms_feeds_policy_constructors() {
-    let _ = ensemble::new_descent_fixed(ensemble::duration_ms(60_000));
-    let _ = ensemble::new_handover_fixed(ensemble::duration_ms(30_000));
-    let _ = ensemble::new_tenure_duration_fixed(ensemble::duration_ms(100_000));
-    let _ = ensemble::new_commitment_deferred(ensemble::duration_ms(10_000_000));
+fun v1_duration_feeds_policy_constructors() {
+    let _ = ensemble::new_descent_fixed(ensemble::duration(60_000));
+    let _ = ensemble::new_handover_fixed(ensemble::duration(30_000));
+    let _ = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
+    let _ = ensemble::new_commitment_deferred(ensemble::duration(10_000_000));
 }
 
 // ─── E — PTB chain integration ─────────────────────────────────────────────────
@@ -58,7 +58,7 @@ fun e1_full_ptb_chain_from_api_produces_idle_escrow() {
 
     let ensemble = ensemble::new_ensemble(
         ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000)),
-        ensemble::new_tenure_duration_fixed(ensemble::duration_ms(100_000)),
+        ensemble::new_tenure_duration_fixed(ensemble::duration(100_000)),
         ensemble::new_tenure_single(),
         ensemble::new_handover_off(),
         ensemble::new_descent_off(),
@@ -93,7 +93,7 @@ fun e2_all_curve_shapes_accepted_by_integrate() {
     sc.next_tx(OWNER);
 
     let rp  = ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000));
-    let td  = ensemble::new_tenure_duration_fixed(ensemble::duration_ms(100_000));
+    let td  = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
     let hnd = ensemble::new_handover_off();
     let aw  = ensemble::new_descent_off();
     let pf  = ensemble::new_price_fixed_delta(ensemble::price(10_000_000_000));
@@ -147,7 +147,7 @@ fun e3_commitment_immediate_and_deferred_accepted() {
     let clk   = clock::create_for_testing(sc.ctx());
     let asset = mk_demo_asset(sc.ctx());
     let cap   = escrow::integrate<DemoAsset, SUI>(
-        asset, ens, ensemble::new_commitment_deferred(ensemble::duration_ms(10_000_000)), &fee_ref, &clk, sc.ctx(),
+        asset, ens, ensemble::new_commitment_deferred(ensemble::duration(10_000_000)), &fee_ref, &clk, sc.ctx(),
     );
     clock::destroy_for_testing(clk);
     owner_cap::burn(cap, OWNER);
@@ -164,7 +164,7 @@ fun e4_compound_delta_price_escalation_accepted() {
 
     let ens = ensemble::new_ensemble(
         ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000)),
-        ensemble::new_tenure_duration_fixed(ensemble::duration_ms(100_000)),
+        ensemble::new_tenure_duration_fixed(ensemble::duration(100_000)),
         ensemble::new_tenure_single(),
         ensemble::new_handover_off(),
         ensemble::new_descent_off(),
@@ -192,7 +192,7 @@ fun e5_multi_tenure_extend_accepted() {
 
     let ens = ensemble::new_ensemble(
         ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000)),
-        ensemble::new_tenure_duration_fixed(ensemble::duration_ms(100_000)),
+        ensemble::new_tenure_duration_fixed(ensemble::duration(100_000)),
         ensemble::new_tenure_multi(),
         ensemble::new_handover_off(),
         ensemble::new_descent_off(),
@@ -219,7 +219,7 @@ fun e6_all_handover_policies_accepted() {
     sc.next_tx(OWNER);
 
     let rp   = ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000));
-    let td   = ensemble::new_tenure_duration_fixed(ensemble::duration_ms(100_000));
+    let td   = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
     let te   = ensemble::new_tenure_single();
     let aw   = ensemble::new_descent_off();
     let cs   = ensemble::new_linear();
@@ -230,7 +230,7 @@ fun e6_all_handover_policies_accepted() {
 
     let policies = vector[
         ensemble::new_handover_off(),
-        ensemble::new_handover_fixed(ensemble::duration_ms(25_000)),
+        ensemble::new_handover_fixed(ensemble::duration(25_000)),
         ensemble::new_handover_full_tenure(),
     ];
 
@@ -256,7 +256,7 @@ fun e7_auction_window_policies_accepted() {
     sc.next_tx(OWNER);
 
     let rp  = ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000));
-    let td  = ensemble::new_tenure_duration_fixed(ensemble::duration_ms(100_000));
+    let td  = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
     let te  = ensemble::new_tenure_single();
     let hnd = ensemble::new_handover_off();
     let cs  = ensemble::new_linear();
@@ -267,7 +267,7 @@ fun e7_auction_window_policies_accepted() {
 
     let windows = vector[
         ensemble::new_descent_off(),
-        ensemble::new_descent_fixed(ensemble::duration_ms(100_000)),
+        ensemble::new_descent_fixed(ensemble::duration(100_000)),
     ];
 
     let mut i = 0;

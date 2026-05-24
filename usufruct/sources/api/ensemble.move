@@ -39,7 +39,7 @@ use usufruct::{
 
 public fun price(mist: u64): Price { monetary::price(mist) }
 
-public fun duration_ms(ms: u64): Duration { phases::duration(ms) }
+public fun duration(ms: u64): Duration { phases::duration(ms) }
 
 public fun tenures(n: u64): Tenures { tenures::tenures(n) }
 

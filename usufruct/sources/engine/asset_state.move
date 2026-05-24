@@ -1020,11 +1020,14 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>, Coin<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
     let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
-    let timestamp_ms = clock::timestamp_ms(clock);
-    let owner_cap_id = object::id(owner_cap);
-    let owner_addr   = ctx.sender();
     let (coin, amount) = do_withdraw(&mut core.owner, owner_cap, ctx);
-    event::emit(EarningsWithdrawn { escrow_id: escrow_identity::escrow_id(core.escrow_identity), owner_cap_id, owner: owner_addr, amount: monetary::stake_mist(amount), timestamp_ms });
+    event::emit(EarningsWithdrawn {
+        escrow_id:    escrow_identity::escrow_id(core.escrow_identity),
+        owner_cap_id: object::id(owner_cap),
+        owner:        ctx.sender(),
+        amount:       monetary::stake_mist(amount),
+        timestamp_ms: clock::timestamp_ms(clock),
+    });
     (s, core, coin)
 }
 
@@ -1270,18 +1273,17 @@ fun do_place_bid<Asset: key + store, CoinType>(
     now:             Timestamp,
     ctx:             &mut TxContext,
 ): (RentingState<Asset, CoinType>, TenantCap) {
-    let current_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-    let current_addr   = tenant_addr(&terms.current);
-    let current_stake  = tenant_seat::proj_stake_value(&terms.current);
-    let expiry         = handover_policy::compute_expiry_at(terms.schedule.handover_total, terms.schedule.ceiling_total, now, terms.schedule.phase_start);
-    let pending_addr   = ctx.sender();
-    let bid_amount     = coin::value(&payment);
-    let raw_escrow_id  = escrow_identity::escrow_id(escrow_identity);
-    let cap            = tenant_cap::new(escrow_identity, pending_addr, ctx);
-    let cap_identity   = tenant_cap::identity(&cap);
+    let expiry       = handover_policy::compute_expiry_at(terms.schedule.handover_total, terms.schedule.ceiling_total, now, terms.schedule.phase_start);
+    let pending_addr = ctx.sender();
+    let bid_amount   = coin::value(&payment);
+    let cap          = tenant_cap::new(escrow_identity, pending_addr, ctx);
+    let cap_identity = tenant_cap::identity(&cap);
     let t = tenant_seat::new<CoinType>(cap_identity, pending_addr, coin::into_balance(payment));
+    let current_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
+    let current_addr  = tenant_addr(&terms.current);
+    let current_stake = tenant_seat::proj_stake_value(&terms.current);
     event::emit(BidPlaced {
-        escrow_id: raw_escrow_id,
+        escrow_id:                 escrow_identity::escrow_id(escrow_identity),
         current_tenant_cap_id:     tenant_cap::proj_id(current_cap_identity),
         current_tenant_addr:       current_addr,
         current_tenant_stake:      monetary::stake_mist(current_stake),
@@ -1323,25 +1325,23 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
 ): (RentingState<Asset, CoinType>, TenantCap) {
     let DemandTerms { pending, handover: HandoverTerms { expiry: handover_expiry, tenures: _ } } = bid;
 
-    let protected_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-    let protected_addr   = tenant_addr(&terms.current);
-    let protected_stake  = tenant_seat::proj_stake_value(&terms.current);
     let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&pending));
     let displaced_addr   = tenant_addr(&pending);
     let refunded_amount  = tenant_seat::proj_stake_value(&pending);
 
-    let raw_escrow_id  = escrow_identity::escrow_id(escrow_identity);
     let new_bidder     = ctx.sender();
     let new_bid_amount = coin::value(&payment);
-    let cap          = tenant_cap::new(escrow_identity, new_bidder, ctx);
-    let cap_identity = tenant_cap::identity(&cap);
+    let cap            = tenant_cap::new(escrow_identity, new_bidder, ctx);
+    let cap_identity   = tenant_cap::identity(&cap);
     let t = tenant_seat::new<CoinType>(cap_identity, new_bidder, coin::into_balance(payment));
-
     let refund = refund_state::total(pending);
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
+    let protected_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
+    let protected_addr  = tenant_addr(&terms.current);
+    let protected_stake = tenant_seat::proj_stake_value(&terms.current);
     event::emit(BidSuperseded {
-        escrow_id: raw_escrow_id,
+        escrow_id:                 escrow_identity::escrow_id(escrow_identity),
         protected_tenant_cap_id:   tenant_cap::proj_id(protected_cap_identity),
         protected_tenant_addr:     protected_addr,
         protected_tenant_stake:    monetary::stake_mist(protected_stake),
@@ -1468,12 +1468,10 @@ fun do_install<Asset: key + store, CoinType>(
     now:             Timestamp,
     ctx:             &mut TxContext,
 ): (RentingState<Asset, CoinType>, TenantCap) {
-    let price_paid    = coin::value(&payment);
-    let tenant_addr   = ctx.sender();
-    let now_ms        = phases::timestamp_ms(now);
-    let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
-    let cap           = tenant_cap::new(escrow_identity, tenant_addr, ctx);
-    let cap_identity  = tenant_cap::identity(&cap);
+    let price_paid   = coin::value(&payment);
+    let tenant_addr  = ctx.sender();
+    let cap          = tenant_cap::new(escrow_identity, tenant_addr, ctx);
+    let cap_identity = tenant_cap::identity(&cap);
     let t = tenant_seat::new<CoinType>(cap_identity, tenant_addr, coin::into_balance(payment));
     let wrapped = asset_custody::open_tenancy(locked, escrow_identity);
     let schedule = TenancySchedule {
@@ -1483,8 +1481,12 @@ fun do_install<Asset: key + store, CoinType>(
         committed_tenures: tenures,
     };
     event::emit(RentStarted {
-        escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant: tenant_addr,
-        phase_start_ms: now_ms, price_paid, floor_price: monetary::price_mist(floor),
+        escrow_id:      escrow_identity::escrow_id(escrow_identity),
+        tenant_cap_id:  tenant_cap::proj_id(cap_identity),
+        tenant:         tenant_addr,
+        phase_start_ms: phases::timestamp_ms(now),
+        price_paid,
+        floor_price:    monetary::price_mist(floor),
     });
     (
         RentingState::Occupied {

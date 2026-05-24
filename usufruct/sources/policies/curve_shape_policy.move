@@ -70,28 +70,6 @@ public enum CurveShapePolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public(package) fun new_linear(): CurveShapePolicy { CurveShapePolicy::Linear }
-
-public(package) fun new_smoothstep(): CurveShapePolicy { CurveShapePolicy::Smoothstep }
-
-public(package) fun new_logistic(): CurveShapePolicy { CurveShapePolicy::Logistic }
-
-public(package) fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShapePolicy {
-    assert!(alpha_num >= 1 && alpha_num <= 8, EAlphaNumRange);
-    assert!(alpha_den >= 1 && alpha_den <= 4, EAlphaDenRange);
-    assert!(alpha_num != alpha_den,           EDegenerateLinear);
-    let g = gcd_u8(alpha_num, alpha_den);
-    CurveShapePolicy::PowerLaw {
-        alpha_num: alpha_num / g,
-        alpha_den: alpha_den / g,
-    }
-}
-
-public(package) fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapePolicy {
-    assert!(alpha_abs >= 1 && alpha_abs <= 8, EAlphaAbsRange);
-    CurveShapePolicy::Exponential { alpha_abs, alpha_neg }
-}
-
 // === View Functions ===
 
 public(package) fun proj_is_linear(s: &CurveShapePolicy):     bool { match (s) { CurveShapePolicy::Linear      => true, _ => false } }
@@ -116,6 +94,28 @@ public(package) fun proj_exponential_alpha_neg(s: &CurveShapePolicy): Option<boo
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun new_linear(): CurveShapePolicy { CurveShapePolicy::Linear }
+
+public(package) fun new_smoothstep(): CurveShapePolicy { CurveShapePolicy::Smoothstep }
+
+public(package) fun new_logistic(): CurveShapePolicy { CurveShapePolicy::Logistic }
+
+public(package) fun new_power_law(alpha_num: u8, alpha_den: u8): CurveShapePolicy {
+    assert!(alpha_num >= 1 && alpha_num <= 8, EAlphaNumRange);
+    assert!(alpha_den >= 1 && alpha_den <= 4, EAlphaDenRange);
+    assert!(alpha_num != alpha_den,           EDegenerateLinear);
+    let g = gcd_u8(alpha_num, alpha_den);
+    CurveShapePolicy::PowerLaw {
+        alpha_num: alpha_num / g,
+        alpha_den: alpha_den / g,
+    }
+}
+
+public(package) fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapePolicy {
+    assert!(alpha_abs >= 1 && alpha_abs <= 8, EAlphaAbsRange);
+    CurveShapePolicy::Exponential { alpha_abs, alpha_neg }
+}
 
 public(package) fun proj_value(h: CurveHeight): u64 { h.h }
 

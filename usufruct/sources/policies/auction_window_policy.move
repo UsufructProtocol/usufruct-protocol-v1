@@ -29,13 +29,6 @@ public enum AuctionWindowPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public(package) fun new_descent_off(): AuctionWindowPolicy { AuctionWindowPolicy::Off }
-
-public(package) fun new_descent_fixed(ceiling: Duration): AuctionWindowPolicy {
-    assert!(phases::duration_ms(ceiling) > 0, EDescentCeilingZero);
-    AuctionWindowPolicy::Fixed { ceiling }
-}
-
 // === View Functions ===
 
 public(package) fun proj_is_off(policy: &AuctionWindowPolicy): bool {
@@ -54,6 +47,13 @@ public(package) fun proj_fixed_ceiling(policy: &AuctionWindowPolicy): Option<Dur
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun new_descent_off(): AuctionWindowPolicy { AuctionWindowPolicy::Off }
+
+public(package) fun new_descent_fixed(ceiling: Duration): AuctionWindowPolicy {
+    assert!(phases::duration_ms(ceiling) > 0, EDescentCeilingZero);
+    AuctionWindowPolicy::Fixed { ceiling }
+}
 
 public(package) fun compute_duration(policy: &AuctionWindowPolicy): Duration {
     match (policy) {

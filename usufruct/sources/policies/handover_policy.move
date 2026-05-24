@@ -29,14 +29,6 @@ public enum HandoverPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public(package) fun new_handover_off():    HandoverPolicy { HandoverPolicy::Off }
-public(package) fun new_handover_full_tenure(): HandoverPolicy { HandoverPolicy::FullTenure }
-
-public(package) fun new_handover_fixed(floor: Duration): HandoverPolicy {
-    assert!(phases::duration_ms(floor) > 0, EHandoverFloorZero);
-    HandoverPolicy::Fixed { floor }
-}
-
 // === View Functions ===
 
 public(package) fun proj_is_off(policy: &HandoverPolicy): bool {
@@ -58,6 +50,14 @@ public(package) fun proj_fixed_floor_ms(policy: &HandoverPolicy): Option<Duratio
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun new_handover_off():    HandoverPolicy { HandoverPolicy::Off }
+public(package) fun new_handover_full_tenure(): HandoverPolicy { HandoverPolicy::FullTenure }
+
+public(package) fun new_handover_fixed(floor: Duration): HandoverPolicy {
+    assert!(phases::duration_ms(floor) > 0, EHandoverFloorZero);
+    HandoverPolicy::Fixed { floor }
+}
 
 public(package) fun compute_countdown_floor_lt(policy: &HandoverPolicy, ceiling: Duration): bool {
     match (policy) {

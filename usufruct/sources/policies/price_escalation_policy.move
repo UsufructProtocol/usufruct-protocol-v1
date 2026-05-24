@@ -38,18 +38,6 @@ public enum PriceEscalationPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public(package) fun new_fixed_delta(delta: Price): PriceEscalationPolicy {
-    assert!(monetary::price_mist(delta) > 0, EDeltaZero);
-    PriceEscalationPolicy::FixedDelta { delta }
-}
-
-public(package) fun new_compound_delta(bps: BasisPoints, delta: Price): PriceEscalationPolicy {
-    let bps_val = math::bps_value(bps);
-    assert!(bps_val >= 1 && bps_val <= bps_upper(), EBpsRange);
-    assert!(monetary::price_mist(delta) > 0, EDeltaZero);
-    PriceEscalationPolicy::CompoundDelta { bps, delta }
-}
-
 // === View Functions ===
 
 public(package) fun proj_is_fixed_delta(p: &PriceEscalationPolicy): bool {
@@ -74,6 +62,18 @@ public(package) fun proj_compound_delta_delta(p: &PriceEscalationPolicy): Option
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun new_fixed_delta(delta: Price): PriceEscalationPolicy {
+    assert!(monetary::price_mist(delta) > 0, EDeltaZero);
+    PriceEscalationPolicy::FixedDelta { delta }
+}
+
+public(package) fun new_compound_delta(bps: BasisPoints, delta: Price): PriceEscalationPolicy {
+    let bps_val = math::bps_value(bps);
+    assert!(bps_val >= 1 && bps_val <= bps_upper(), EBpsRange);
+    assert!(monetary::price_mist(delta) > 0, EDeltaZero);
+    PriceEscalationPolicy::CompoundDelta { bps, delta }
+}
 
 public(package) fun compute_next_price(
     price_fn: &PriceEscalationPolicy,

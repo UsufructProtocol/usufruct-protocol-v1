@@ -27,11 +27,6 @@ public enum TenureDurationPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public(package) fun new_fixed(ceiling: Duration): TenureDurationPolicy {
-    assert!(phases::duration_ms(ceiling) > 0, EDurationZero);
-    TenureDurationPolicy::Fixed { ceiling }
-}
-
 // === View Functions ===
 
 public(package) fun proj_is_fixed(_policy: &TenureDurationPolicy): bool { true }
@@ -43,6 +38,11 @@ public(package) fun proj_fixed_ceiling(policy: &TenureDurationPolicy): Option<Du
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun new_fixed(ceiling: Duration): TenureDurationPolicy {
+    assert!(phases::duration_ms(ceiling) > 0, EDurationZero);
+    TenureDurationPolicy::Fixed { ceiling }
+}
 
 public(package) fun proj_min_ceiling(policy: &TenureDurationPolicy): Duration {
     match (policy) { TenureDurationPolicy::Fixed { ceiling } => *ceiling }

@@ -25,18 +25,18 @@ public struct Tenures has copy, drop, store { count: u64 }
 
 // === Public Functions ===
 
+// === View Functions ===
+
+// === Admin Functions ===
+
+// === Package Functions ===
+
 public(package) fun tenures(n: u64): Tenures {
     assert!(n > 0, ETenuresZero);
     Tenures { count: n }
 }
 
 public(package) fun tenures_count(c: Tenures): u64 { c.count }
-
-// === View Functions ===
-
-// === Admin Functions ===
-
-// === Package Functions ===
 
 public(package) fun proj_is_single(c: Tenures): bool { c.count == 1 }
 

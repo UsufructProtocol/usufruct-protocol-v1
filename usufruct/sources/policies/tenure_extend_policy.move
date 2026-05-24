@@ -28,9 +28,6 @@ public enum TenureExtendPolicy has copy, drop, store {
 
 // === Public Functions ===
 
-public(package) fun new_single(): TenureExtendPolicy { TenureExtendPolicy::Single }
-public(package) fun new_multi():  TenureExtendPolicy { TenureExtendPolicy::Multi  }
-
 // === View Functions ===
 
 public(package) fun proj_is_single(policy: &TenureExtendPolicy): bool {
@@ -44,6 +41,9 @@ public(package) fun proj_is_multi(policy: &TenureExtendPolicy): bool {
 // === Admin Functions ===
 
 // === Package Functions ===
+
+public(package) fun new_single(): TenureExtendPolicy { TenureExtendPolicy::Single }
+public(package) fun new_multi():  TenureExtendPolicy { TenureExtendPolicy::Multi  }
 
 public(package) fun validate(policy: &TenureExtendPolicy, cycles: Tenures) {
     match (policy) {

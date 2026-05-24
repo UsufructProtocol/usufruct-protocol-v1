@@ -79,6 +79,35 @@ Dependencies flow strictly downward. A module may only import modules in layers 
 
 ---
 
+## The api/ layer — surface vs implementation
+
+In Move, a `public fun` does two things at once: it declares an API and it contains logic. That conflation works while a module is small, but it does not scale — every `public fun` in every module becomes part of the protocol's external contract, whether it was intended to or not.
+
+This protocol separates those two responsibilities using a distinction the compiler already provides. Every `public fun` lives in `sources/api/`. Every function outside `api/` is `public(package)`. The rule is enforced structurally, not by convention:
+
+```
+api/          public fun        — callable from any PTB, any package
+engine/
+fees/         public(package) fun   — callable within this package only
+policies/
+entities/
+domain/
+```
+
+The consequence is that `api/` is a contract and the rest is an implementation. A caller reading `api/escrow.move` sees exactly what the protocol exposes — nothing more, nothing hidden one directory away. The compiler rejects any attempt to call `public(package)` functions from outside the package, so the boundary cannot drift silently.
+
+This also means the internal layers can be refactored freely. Function signatures can change, logic can move between modules, new internal helpers can be added — none of that is visible to callers as long as `api/` stays stable. The public contract is as narrow as it was designed to be, and it stays that way without ongoing discipline at review time.
+
+The invariant can be verified with a single command:
+
+```bash
+grep -r "public fun" sources/ | grep -v "/api/"
+```
+
+The only expected matches are event field projectors in `entities/cap/` and `fees/fee_message.move` — these are `public` because event structs are decoded off-chain by indexers and SDKs, not called from PTBs.
+
+---
+
 ## The two objects
 
 `Escrow<Asset, CoinType>` is the only shared object. `OwnerCap` and `TenantCap` are owned objects that authorize operations on the shared escrow.

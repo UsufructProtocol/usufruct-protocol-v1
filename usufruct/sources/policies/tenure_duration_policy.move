@@ -56,6 +56,5 @@ public(package) fun compute_duration(policy: &TenureDurationPolicy): Duration {
 
 // === Test Functions ===
 
-#[test_only]
-public fun e_duration_zero(): u64 { EDurationZero }
+
 

@@ -107,6 +107,5 @@ public(package) fun compute_expiry_at(
 
 // === Test Functions ===
 
-#[test_only]
-public fun e_handover_floor_zero(): u64 { EHandoverFloorZero }
+
 

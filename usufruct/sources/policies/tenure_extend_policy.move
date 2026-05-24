@@ -56,6 +56,5 @@ public(package) fun validate(policy: &TenureExtendPolicy, cycles: Tenures) {
 
 // === Test Functions ===
 
-#[test_only]
-public fun e_multi_cycle_not_allowed(): u64 { EMultiCycleNotAllowed }
+
 

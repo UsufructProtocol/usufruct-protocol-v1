@@ -83,10 +83,7 @@ public(package) fun compute_expiry_at(
 // === Test Functions ===
 
 #[test_only]
-public fun e_descent_ceiling_zero(): u64 { EDescentCeilingZero }
-
-#[test_only]
-public fun fixed_ceiling(policy: &AuctionWindowPolicy): Duration {
+public(package) fun fixed_ceiling(policy: &AuctionWindowPolicy): Duration {
     match (policy) {
         AuctionWindowPolicy::Fixed { ceiling } => *ceiling,
         AuctionWindowPolicy::Off               => abort EDescentOffNoFixed,

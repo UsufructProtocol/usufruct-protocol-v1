@@ -60,6 +60,4 @@ public(package) fun compute_rescaled_duration(d: Duration, from: Tenures, to: Te
 
 // === Test Functions ===
 
-#[test_only]
-public fun e_tenures_zero(): u64 { ETenuresZero }
 

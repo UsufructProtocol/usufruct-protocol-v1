@@ -19,7 +19,8 @@ Dependencies flow strictly downward. A module may only import modules in layers 
 ```
 ┌────────────────────────────────────────────────────────┐
 │                   LAYER 5 — PUBLIC API                 │
-│                     api/escrow.move                    │
+│  api/escrow.move    api/ensemble.move    api/cap.move  │
+│  api/fee_inbox.move                                    │
 │          Escrow<Asset, CoinType>  (key, shared)        │
 │   mutations · views · cap operations · integrations    │
 └───────────────────────────┬────────────────────────────┘
@@ -64,7 +65,7 @@ Dependencies flow strictly downward. A module may only import modules in layers 
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Layer 5 (api/)** — `escrow.move` is the sole public entry point. It owns the `Escrow` shared object and exposes every PTB-reachable function. No state machine logic lives here — it delegates entirely to `asset_state.move`.
+**Layer 5 (api/)** — The exclusive home of every `public fun` in the protocol. `escrow.move` owns the `Escrow` shared object and exposes all mutations, views, and cap operations. `ensemble.move` exposes the PTB construction chain for `PolicyEnsemble` (value type constructors + all policy constructors). `cap.move` exposes `OwnerCap` and `TenantCap` projectors. `fee_inbox.move` exposes fee collection and inbox introspection. No state machine logic lives in this layer — every function delegates to the layer below. Internal modules use `public(package)` visibility exclusively.
 
 **Layer 4 (engine/)** — `asset_state.move` is the FSM engine. Every state transition, all credit and pricing arithmetic, and all event emissions originate here. `EscrowCore` and `AssetState` are defined here and never appear in layer 5 except as `Option` fields.
 

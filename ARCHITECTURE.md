@@ -234,17 +234,68 @@ Balance (store, CoinType)  — typed wrapper over sui::Balance
 
 ## Fee layer
 
-The fee system uses a three-part design to handle the fact that `ProtocolFeeInbox` is an owned object — it cannot be passed by reference in a transaction that also touches the shared `Escrow`.
+### The problem
+
+Every mutating operation on `Escrow` (a shared object) may produce a protocol fee. The
+naive solution — a shared `ProtocolFeeInbox` that receives a balance transfer on each
+operation — creates a write-contention bottleneck: every `rent`, `apply_transitions`,
+`retire`, etc. would need to acquire a write lock on the same shared object, serializing
+all fee-producing operations across the entire protocol.
+
+Making the inbox an **owned object** eliminates that bottleneck, but introduces a
+different constraint: Sui's PTB execution model does not allow an owned object and a
+shared object to be accessed by the same transaction. Passing the inbox directly into
+every escrow operation is therefore not possible.
+
+### The solution: frozen pointer + transfer-to-object
+
+The fee system resolves this with three decoupled phases and five types:
 
 ```
-ProtocolFeeRef  (frozen)      — immutable pointer to the inbox; passed at integrate time
-FeeInboxIdentity (copy+drop)  — the inbox's ID, carried inside EscrowCore
-FeeShare<C>      (store)      — typed balance destined for the inbox
-FeeMessage<C>    (key+store)  — FeeShare wrapped as a Sui object; transferred to the inbox
-ProtocolFeeInbox (key+store)  — owned object; collects FeeMessages via Receiving<T>
+ProtocolFeeRef   (frozen)      — immutable pointer to the inbox; readable in any PTB
+FeeInboxIdentity (copy+drop)   — the inbox's object ID, carried inside every EscrowCore
+FeeShare<C>      (store)       — typed balance computed during settlement; no object overhead
+FeeMessage<C>    (key+store)   — FeeShare wrapped as a Sui object; mailed to the inbox address
+ProtocolFeeInbox (key+store)   — owned object; collects FeeMessages via transfer::receive
 ```
 
-At settlement, `fee_message::post` wraps `FeeShare<C>` into a `FeeMessage<C>` object and transfers it to the inbox address. The protocol owner later calls `protocol_fee_inbox::collect` to drain accumulated messages. No direct balance transfer between shared and owned objects occurs.
+**Phase 1 — bootstrap (once at deploy).**
+`ProtocolFeeInbox` is created and transferred to the protocol owner's address.
+`ProtocolFeeRef` is created as a frozen (immutable) object holding only the inbox's
+object ID. Because it is immutable, it can be passed as `&ProtocolFeeRef` in any PTB
+regardless of what other objects are present — including the shared `Escrow`.
+
+**Phase 2 — fee posting (every fee-producing operation, in the user's PTB).**
+`integrate` reads `&ProtocolFeeRef`, extracts the inbox's ID as a `FeeInboxIdentity`
+(`copy + drop` value), and stores it inside `EscrowCore`. From that point on, no
+protocol object touches the inbox during any user operation. When `apply_transitions`
+settles a state transition that carries a fee, it calls `fee_message::post`:
+
+```
+FeeShare<C>  →  wrap into FeeMessage<C>  →  transfer::transfer(msg, inbox_id.to_address())
+```
+
+The `FeeMessage` becomes an owned object at the inbox's address. The user's PTB is
+complete — it touched only the shared `Escrow` and created one new owned object. The
+inbox itself was never an input. Zero write contention on any accumulator.
+
+**Phase 3 — collection (protocol owner, any time).**
+The protocol owner constructs a PTB passing `&mut ProtocolFeeInbox` and one or more
+`Receiving<FeeMessage<C>>` tickets. `fee_message::collect` calls
+`transfer::receive(&mut inbox.id, ticket)` for each ticket, draining the balance into
+the inbox. The `FeeMessage` objects are destroyed; their storage rebate exceeds the
+computation cost, making collection self-funding at N ≥ 2 messages (see FINDINGS.md §4).
+This PTB involves no shared objects — collection runs at owned-object speed.
+
+### Contention profile
+
+| Phase | Shared objects touched | Owned objects touched | Contention |
+|---|---|---|---|
+| User operation (rent / apply / retire) | `Escrow` | none (FeeMessage created fresh) | per-escrow only |
+| Collection | none | `ProtocolFeeInbox` | none |
+
+No two user transactions contend on the fee layer. Each `FeeMessage` is an independent
+object; parallel operations on different escrows never conflict at the accumulator level.
 
 ---
 

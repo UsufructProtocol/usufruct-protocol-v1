@@ -5,6 +5,7 @@ module usufruct::escrow;
 
 // === Imports ===
 
+use std::string::String;
 use std::type_name::{Self, TypeName};
 use sui::{
     clock::Clock,
@@ -18,6 +19,7 @@ use usufruct::{
     asset_state::{Self, EscrowCore, AssetState, AssetReceipt},
     handover_policy,
     rest_price_policy,
+    tenure_extend_policy,
     math,
     tenure_duration_policy,
     monetary,
@@ -774,6 +776,37 @@ public fun price_fn_compound_delta_bps<Asset: key + store, CoinType>(escrow: &Es
 
 public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): Option<u64> {
     price_escalation_policy::proj_compound_delta_delta(policy_ensemble::proj_price_escalation(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
+}
+
+public fun rest_price_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    rest_price_policy::proj_rest_price_policy(policy_ensemble::proj_rest_price(read_ensemble(escrow)))
+}
+public fun tenure_duration_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    tenure_duration_policy::proj_tenure_duration_policy(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
+}
+public fun tenure_extend_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    tenure_extend_policy::proj_tenure_extend_policy(policy_ensemble::proj_tenure_extend(read_ensemble(escrow)))
+}
+public fun handover_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    handover_policy::proj_handover_policy(policy_ensemble::proj_handover(read_ensemble(escrow)))
+}
+public fun auction_window_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    auction_window_policy::proj_auction_window_policy(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
+}
+public fun credit_shape_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    curve::proj_curve_shape_policy(policy_ensemble::proj_credit_shape(read_ensemble(escrow)))
+}
+public fun auction_shape_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    curve::proj_curve_shape_policy(policy_ensemble::proj_auction_shape(read_ensemble(escrow)))
+}
+public fun price_fn_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    price_escalation_policy::proj_price_escalation_policy(policy_ensemble::proj_price_escalation(read_ensemble(escrow)))
+}
+public fun price_fn_delta_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): u64 {
+    price_escalation_policy::proj_price_escalation_delta_mist(policy_ensemble::proj_price_escalation(read_ensemble(escrow)))
+}
+public fun commitment_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    commitment_policy::proj_commitment_policy(&asset_state::proj_commitment_policy(read_core(escrow)))
 }
 
 // === Admin Functions ===

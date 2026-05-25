@@ -65,20 +65,20 @@ async function setupOneEscrow(
   // integrate
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const p  = (m: bigint) => tx1.moveCall({ target: `${pkg}::monetary::price`, arguments: [tx1.pure.u64(m)] });
-  const dr = (m: bigint) => tx1.moveCall({ target: `${pkg}::phases::duration`, arguments: [tx1.pure.u64(m)] });
-  const ens = tx1.moveCall({ target: `${pkg}::policy_ensemble::new_ensemble`, arguments: [
-    tx1.moveCall({ target: `${pkg}::rest_price_policy::new_fixed`,          arguments: [p(FLOOR_PRICE_MIST)] }),
-    tx1.moveCall({ target: `${pkg}::tenure_duration_policy::new_fixed`,     arguments: [dr(1n)] }),
-    tx1.moveCall({ target: `${pkg}::tenure_extend_policy::new_single` }),
-    tx1.moveCall({ target: `${pkg}::handover_policy::new_handover_off` }),
-    tx1.moveCall({ target: `${pkg}::auction_window_policy::new_descent_off` }),
-    tx1.moveCall({ target: `${pkg}::curve_shape_policy::new_linear` }),
-    tx1.moveCall({ target: `${pkg}::curve_shape_policy::new_linear` }),
-    tx1.moveCall({ target: `${pkg}::price_escalation_policy::new_fixed_delta`, arguments: [p(1n)] }),
+  const p  = (m: bigint) => tx1.moveCall({ target: `${pkg}::ensemble::price`, arguments: [tx1.pure.u64(m)] });
+  const dr = (m: bigint) => tx1.moveCall({ target: `${pkg}::ensemble::duration`, arguments: [tx1.pure.u64(m)] });
+  const ens = tx1.moveCall({ target: `${pkg}::ensemble::new_ensemble`, arguments: [
+    tx1.moveCall({ target: `${pkg}::ensemble::new_rest_price_fixed`,          arguments: [p(FLOOR_PRICE_MIST)] }),
+    tx1.moveCall({ target: `${pkg}::ensemble::new_tenure_duration_fixed`,     arguments: [dr(1n)] }),
+    tx1.moveCall({ target: `${pkg}::ensemble::new_tenure_single` }),
+    tx1.moveCall({ target: `${pkg}::ensemble::new_handover_off` }),
+    tx1.moveCall({ target: `${pkg}::ensemble::new_descent_off` }),
+    tx1.moveCall({ target: `${pkg}::ensemble::new_linear` }),
+    tx1.moveCall({ target: `${pkg}::ensemble::new_linear` }),
+    tx1.moveCall({ target: `${pkg}::ensemble::new_price_fixed_delta`, arguments: [p(1n)] }),
   ]});
   const asset = tx1.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
-  const comm  = tx1.moveCall({ target: `${pkg}::commitment_policy::new_immediate` });
+  const comm  = tx1.moveCall({ target: `${pkg}::ensemble::new_commitment_immediate` });
   const oc    = tx1.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
     arguments: [asset, ens, comm, tx1.object(d.protocolFeeRefId), clock(tx1)] });
   tx1.transferObjects([oc], d.owner.address);
@@ -98,7 +98,7 @@ async function setupOneEscrow(
   const tx2 = new Transaction();
   tx2.setSender(d.tenant1.address);
   const [pay] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(FLOOR_PRICE_MIST)]);
-  const cyc   = tx2.moveCall({ target: `${pkg}::tenures::tenures`, arguments: [tx2.pure.u64(1n)] });
+  const cyc   = tx2.moveCall({ target: `${pkg}::ensemble::tenures`, arguments: [tx2.pure.u64(1n)] });
   const cap   = tx2.moveCall({ target: `${pkg}::escrow::rent`, typeArguments: TA(d),
     arguments: [tx2.object(escrowId), pay, cyc, clock(tx2)] });
   tx2.transferObjects([cap], d.tenant1.address);
@@ -146,20 +146,20 @@ async function generateFeeMessages(
     const pkg = d.usufructPackageId;
     const tx  = new Transaction();
     tx.setSender(d.owner.address);
-    const p  = (m: bigint) => tx.moveCall({ target: `${pkg}::monetary::price`, arguments: [tx.pure.u64(m)] });
-    const dr = (m: bigint) => tx.moveCall({ target: `${pkg}::phases::duration`, arguments: [tx.pure.u64(m)] });
-    const ens = tx.moveCall({ target: `${pkg}::policy_ensemble::new_ensemble`, arguments: [
-      tx.moveCall({ target: `${pkg}::rest_price_policy::new_fixed`,          arguments: [p(FLOOR_PRICE_MIST)] }),
-      tx.moveCall({ target: `${pkg}::tenure_duration_policy::new_fixed`,     arguments: [dr(1n)] }),
-      tx.moveCall({ target: `${pkg}::tenure_extend_policy::new_single` }),
-      tx.moveCall({ target: `${pkg}::handover_policy::new_handover_off` }),
-      tx.moveCall({ target: `${pkg}::auction_window_policy::new_descent_off` }),
-      tx.moveCall({ target: `${pkg}::curve_shape_policy::new_linear` }),
-      tx.moveCall({ target: `${pkg}::curve_shape_policy::new_linear` }),
-      tx.moveCall({ target: `${pkg}::price_escalation_policy::new_fixed_delta`, arguments: [p(1n)] }),
+    const p  = (m: bigint) => tx.moveCall({ target: `${pkg}::ensemble::price`, arguments: [tx.pure.u64(m)] });
+    const dr = (m: bigint) => tx.moveCall({ target: `${pkg}::ensemble::duration`, arguments: [tx.pure.u64(m)] });
+    const ens = tx.moveCall({ target: `${pkg}::ensemble::new_ensemble`, arguments: [
+      tx.moveCall({ target: `${pkg}::ensemble::new_rest_price_fixed`,          arguments: [p(FLOOR_PRICE_MIST)] }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_tenure_duration_fixed`,     arguments: [dr(1n)] }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_tenure_single` }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_handover_off` }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_descent_off` }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_linear` }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_linear` }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_price_fixed_delta`, arguments: [p(1n)] }),
     ]});
     const asset = tx.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
-    const comm  = tx.moveCall({ target: `${pkg}::commitment_policy::new_immediate` });
+    const comm  = tx.moveCall({ target: `${pkg}::ensemble::new_commitment_immediate` });
     const oc    = tx.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
       arguments: [asset, ens, comm, tx.object(d.protocolFeeRefId), clock(tx)] });
     tx.transferObjects([oc], d.owner.address);
@@ -183,7 +183,7 @@ async function generateFeeMessages(
     const tx = new Transaction();
     tx.setSender(d.tenant1.address);
     const [pay] = tx.splitCoins(tx.gas, [tx.pure.u64(FLOOR_PRICE_MIST)]);
-    const cyc   = tx.moveCall({ target: `${d.usufructPackageId}::tenures::tenures`, arguments: [tx.pure.u64(1n)] });
+    const cyc   = tx.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [tx.pure.u64(1n)] });
     const cap   = tx.moveCall({ target: `${d.usufructPackageId}::escrow::rent`, typeArguments: TA(d),
       arguments: [tx.object(escrows[i]), pay, cyc, clock(tx)] });
     tx.transferObjects([cap], d.tenant1.address);
@@ -258,7 +258,7 @@ async function measureCollect(
     const tickets  = chunk.map(r => tx.receivingRef({ objectId: r.objectId, version: r.version, digest: r.digest }));
     const ticketVec = tx.makeMoveVec({ type: receivingType, elements: tickets });
     const coin = tx.moveCall({
-      target: `${d.usufructPackageId}::fee_message::collect_fee_messages`,
+      target: `${d.usufructPackageId}::fee_inbox::collect_fee_messages`,
       typeArguments: [SUI],
       arguments: [tx.object(d.protocolFeeInboxId), ticketVec],
     });

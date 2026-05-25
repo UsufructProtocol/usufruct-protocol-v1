@@ -49,7 +49,7 @@ async function main() {
   const tx2 = new Transaction();
   tx2.setSender(d.tenant1.address);
   const [pay1] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(FLOOR_PRICE_MIST)]);
-  const cyc1  = tx2.moveCall({ target: `${d.usufructPackageId}::tenures::tenures`, arguments: [tx2.pure.u64(1n)] });
+  const cyc1  = tx2.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [tx2.pure.u64(1n)] });
   const cap1  = tx2.moveCall({
     target: `${d.usufructPackageId}::escrow::rent`,
     typeArguments: typeArgs,
@@ -68,7 +68,7 @@ async function main() {
   const tx3 = new Transaction();
   tx3.setSender(d.tenant2.address);
   const [pay2] = tx3.splitCoins(tx3.gas, [tx3.pure.u64(FLOOR_PRICE_MIST * 2n)]); // 2x for escalation
-  const cyc2  = tx3.moveCall({ target: `${d.usufructPackageId}::tenures::tenures`, arguments: [tx3.pure.u64(1n)] });
+  const cyc2  = tx3.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [tx3.pure.u64(1n)] });
   const cap2  = tx3.moveCall({
     target: `${d.usufructPackageId}::escrow::rent`,
     typeArguments: typeArgs,

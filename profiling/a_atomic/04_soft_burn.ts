@@ -30,20 +30,20 @@ const SHORT_TENURE_MS = 2_000n;
 
 function buildShortTenureEnsemble(tx: Transaction, pkg: string): TransactionArgument {
   const price = (mist: bigint) =>
-    tx.moveCall({ target: `${pkg}::monetary::price`, arguments: [tx.pure.u64(mist)] });
+    tx.moveCall({ target: `${pkg}::ensemble::price`, arguments: [tx.pure.u64(mist)] });
   const dur = (ms: bigint) =>
-    tx.moveCall({ target: `${pkg}::phases::duration`, arguments: [tx.pure.u64(ms)] });
+    tx.moveCall({ target: `${pkg}::ensemble::duration`, arguments: [tx.pure.u64(ms)] });
 
-  const restPrice      = tx.moveCall({ target: `${pkg}::rest_price_policy::new_fixed`,          arguments: [price(1_000_000n)] });
-  const tenureDuration = tx.moveCall({ target: `${pkg}::tenure_duration_policy::new_fixed`,     arguments: [dur(SHORT_TENURE_MS)] });
-  const tenureExtend   = tx.moveCall({ target: `${pkg}::tenure_extend_policy::new_multi` });
-  const handover       = tx.moveCall({ target: `${pkg}::handover_policy::new_handover_full_tenure` });
-  const auctionWin     = tx.moveCall({ target: `${pkg}::auction_window_policy::new_descent_off` });
-  const creditShape    = tx.moveCall({ target: `${pkg}::curve_shape_policy::new_linear` });
-  const auctionShape   = tx.moveCall({ target: `${pkg}::curve_shape_policy::new_linear` });
-  const escalation     = tx.moveCall({ target: `${pkg}::price_escalation_policy::new_fixed_delta`, arguments: [price(1n)] });
+  const restPrice      = tx.moveCall({ target: `${pkg}::ensemble::new_rest_price_fixed`,          arguments: [price(1_000_000n)] });
+  const tenureDuration = tx.moveCall({ target: `${pkg}::ensemble::new_tenure_duration_fixed`,     arguments: [dur(SHORT_TENURE_MS)] });
+  const tenureExtend   = tx.moveCall({ target: `${pkg}::ensemble::new_tenure_multi` });
+  const handover       = tx.moveCall({ target: `${pkg}::ensemble::new_handover_full_tenure` });
+  const auctionWin     = tx.moveCall({ target: `${pkg}::ensemble::new_descent_off` });
+  const creditShape    = tx.moveCall({ target: `${pkg}::ensemble::new_linear` });
+  const auctionShape   = tx.moveCall({ target: `${pkg}::ensemble::new_linear` });
+  const escalation     = tx.moveCall({ target: `${pkg}::ensemble::new_price_fixed_delta`, arguments: [price(1n)] });
   return tx.moveCall({
-    target: `${pkg}::policy_ensemble::new_ensemble`,
+    target: `${pkg}::ensemble::new_ensemble`,
     arguments: [restPrice, tenureDuration, tenureExtend, handover, auctionWin, creditShape, auctionShape, escalation],
   });
 }
@@ -86,7 +86,7 @@ async function setupDemandState(
   tx3.setSender(d.tenant2.address);
   const [payment2] = tx3.splitCoins(tx3.gas, [tx3.pure.u64(2_000_000n)]);
   const cycles2 = tx3.moveCall({
-    target: `${d.usufructPackageId}::tenures::tenures`,
+    target: `${d.usufructPackageId}::ensemble::tenures`,
     arguments: [tx3.pure.u64(1n)],
   });
   const cap2 = tx3.moveCall({

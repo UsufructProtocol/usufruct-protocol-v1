@@ -62,7 +62,7 @@ async function main() {
 
     const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(FLOOR_PRICE_MIST * BigInt(N))]);
     const cycles = tx.moveCall({
-      target: `${d.usufructPackageId}::tenures::tenures`,
+      target: `${d.usufructPackageId}::ensemble::tenures`,
       arguments: [tx.pure.u64(N)],
     });
     const tenantCap = tx.moveCall({

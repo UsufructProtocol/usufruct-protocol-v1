@@ -3,9 +3,9 @@
  * Phase A / 13 — curve shape gas cost
  *
  * Measures borrow_asset + return_asset with 10 CurveShapePolicy variants as
- * creditShape. The curve math fires at t ≈ t_max/2 (3 s into a 6 s tenure).
- * Without the sleep, t ≈ 0 at borrow_return time and compute_curve_height
- * short-circuits to 0 before any variant-specific code runs.
+ * creditShape. Uses a 60s tenure with a 2s sleep after rent so t > 0 at
+ * measure time, ensuring compute_curve_height runs the variant-specific branch
+ * and does not short-circuit to 0.
  *
  * Variants:
  *   linear (baseline), smoothstep,
@@ -38,8 +38,8 @@ const DIR         = dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = resolve(DIR, '../results');
 
 // Short tenure so we don't wait 1 hour; sleep puts t/t_max ≈ 0.5 at measure time.
-const CURVE_TENURE_MS     = 6_000n;
-const SLEEP_AFTER_RENT_MS = 3_000;
+const CURVE_TENURE_MS     = 60_000n; // 60s — ample margin over setup time (~3s) + sleep
+const SLEEP_AFTER_RENT_MS = 2_000;   // 2s is enough to advance past t=0 and run curve math
 
 type CurveBuilder = (tx: Transaction, pkg: string) => TransactionArgument;
 
@@ -49,21 +49,21 @@ function buildCurveEnsemble(
   buildCurve: CurveBuilder,
 ): TransactionArgument {
   const p = (mist: bigint) =>
-    tx.moveCall({ target: `${pkg}::monetary::price`,    arguments: [tx.pure.u64(mist)] });
+    tx.moveCall({ target: `${pkg}::ensemble::price`,    arguments: [tx.pure.u64(mist)] });
   const d = (ms: bigint) =>
-    tx.moveCall({ target: `${pkg}::phases::duration`,   arguments: [tx.pure.u64(ms)] });
+    tx.moveCall({ target: `${pkg}::ensemble::duration`,   arguments: [tx.pure.u64(ms)] });
 
-  const restPrice      = tx.moveCall({ target: `${pkg}::rest_price_policy::new_fixed`,          arguments: [p(FLOOR_PRICE_MIST)] });
-  const tenureDuration = tx.moveCall({ target: `${pkg}::tenure_duration_policy::new_fixed`,     arguments: [d(CURVE_TENURE_MS)] });
-  const tenureExtend   = tx.moveCall({ target: `${pkg}::tenure_extend_policy::new_multi` });
-  const handover       = tx.moveCall({ target: `${pkg}::handover_policy::new_handover_off` });
-  const auctionWin     = tx.moveCall({ target: `${pkg}::auction_window_policy::new_descent_off` });
+  const restPrice      = tx.moveCall({ target: `${pkg}::ensemble::new_rest_price_fixed`,          arguments: [p(FLOOR_PRICE_MIST)] });
+  const tenureDuration = tx.moveCall({ target: `${pkg}::ensemble::new_tenure_duration_fixed`,     arguments: [d(CURVE_TENURE_MS)] });
+  const tenureExtend   = tx.moveCall({ target: `${pkg}::ensemble::new_tenure_multi` });
+  const handover       = tx.moveCall({ target: `${pkg}::ensemble::new_handover_off` });
+  const auctionWin     = tx.moveCall({ target: `${pkg}::ensemble::new_descent_off` });
   const creditShape    = buildCurve(tx, pkg);
-  const auctionShape   = tx.moveCall({ target: `${pkg}::curve_shape_policy::new_linear` });
-  const escalation     = tx.moveCall({ target: `${pkg}::price_escalation_policy::new_fixed_delta`, arguments: [p(DELTA_PRICE_MIST)] });
+  const auctionShape   = tx.moveCall({ target: `${pkg}::ensemble::new_linear` });
+  const escalation     = tx.moveCall({ target: `${pkg}::ensemble::new_price_fixed_delta`, arguments: [p(DELTA_PRICE_MIST)] });
 
   return tx.moveCall({
-    target: `${pkg}::policy_ensemble::new_ensemble`,
+    target: `${pkg}::ensemble::new_ensemble`,
     arguments: [restPrice, tenureDuration, tenureExtend, handover, auctionWin, creditShape, auctionShape, escalation],
   });
 }
@@ -73,20 +73,20 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
     label: 'linear',
     slug:  'linear',
     buildCurve: (tx, pkg) =>
-      tx.moveCall({ target: `${pkg}::curve_shape_policy::new_linear` }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_linear` }),
   },
   {
     label: 'smoothstep',
     slug:  'smoothstep',
     buildCurve: (tx, pkg) =>
-      tx.moveCall({ target: `${pkg}::curve_shape_policy::new_smoothstep` }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_smoothstep` }),
   },
   {
     label: 'power_law(2/1)',
     slug:  'power_law_2_1',
     buildCurve: (tx, pkg) =>
       tx.moveCall({
-        target:    `${pkg}::curve_shape_policy::new_power_law`,
+        target:    `${pkg}::ensemble::new_power_law`,
         arguments: [tx.pure.u8(2), tx.pure.u8(1)],
       }),
   },
@@ -95,7 +95,7 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
     slug:  'power_law_8_1',
     buildCurve: (tx, pkg) =>
       tx.moveCall({
-        target:    `${pkg}::curve_shape_policy::new_power_law`,
+        target:    `${pkg}::ensemble::new_power_law`,
         arguments: [tx.pure.u8(8), tx.pure.u8(1)],
       }),
   },
@@ -104,7 +104,7 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
     slug:  'power_law_3_2',
     buildCurve: (tx, pkg) =>
       tx.moveCall({
-        target:    `${pkg}::curve_shape_policy::new_power_law`,
+        target:    `${pkg}::ensemble::new_power_law`,
         arguments: [tx.pure.u8(3), tx.pure.u8(2)],
       }),
   },
@@ -113,7 +113,7 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
     slug:  'power_law_8_3',
     buildCurve: (tx, pkg) =>
       tx.moveCall({
-        target:    `${pkg}::curve_shape_policy::new_power_law`,
+        target:    `${pkg}::ensemble::new_power_law`,
         arguments: [tx.pure.u8(8), tx.pure.u8(3)],
       }),
   },
@@ -122,7 +122,7 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
     slug:  'exp_1_pos',
     buildCurve: (tx, pkg) =>
       tx.moveCall({
-        target:    `${pkg}::curve_shape_policy::new_exponential`,
+        target:    `${pkg}::ensemble::new_exponential`,
         arguments: [tx.pure.u8(1), tx.pure.bool(false)],
       }),
   },
@@ -131,7 +131,7 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
     slug:  'exp_8_pos',
     buildCurve: (tx, pkg) =>
       tx.moveCall({
-        target:    `${pkg}::curve_shape_policy::new_exponential`,
+        target:    `${pkg}::ensemble::new_exponential`,
         arguments: [tx.pure.u8(8), tx.pure.bool(false)],
       }),
   },
@@ -140,7 +140,7 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
     slug:  'exp_8_neg',
     buildCurve: (tx, pkg) =>
       tx.moveCall({
-        target:    `${pkg}::curve_shape_policy::new_exponential`,
+        target:    `${pkg}::ensemble::new_exponential`,
         arguments: [tx.pure.u8(8), tx.pure.bool(true)],
       }),
   },
@@ -148,7 +148,7 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
     label: 'logistic',
     slug:  'logistic',
     buildCurve: (tx, pkg) =>
-      tx.moveCall({ target: `${pkg}::curve_shape_policy::new_logistic` }),
+      tx.moveCall({ target: `${pkg}::ensemble::new_logistic` }),
   },
 ];
 
@@ -166,7 +166,7 @@ async function setupOccupiedEscrow(
   tx1.setSender(d.owner.address);
   const asset      = tx1.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
   const ensemble   = buildCurveEnsemble(tx1, d.usufructPackageId, buildCurve);
-  const commitment = tx1.moveCall({ target: `${d.usufructPackageId}::commitment_policy::new_immediate` });
+  const commitment = tx1.moveCall({ target: `${d.usufructPackageId}::ensemble::new_commitment_immediate` });
   const ownerCap   = tx1.moveCall({
     target:        `${d.usufructPackageId}::escrow::integrate`,
     typeArguments: ta,
@@ -186,7 +186,7 @@ async function setupOccupiedEscrow(
   tx2.setSender(d.tenant1.address);
   const [payment] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(FLOOR_PRICE_MIST)]);
   const cycles    = tx2.moveCall({
-    target:    `${d.usufructPackageId}::tenures::tenures`,
+    target:    `${d.usufructPackageId}::ensemble::tenures`,
     arguments: [tx2.pure.u64(1n)],
   });
   const tenantCap = tx2.moveCall({

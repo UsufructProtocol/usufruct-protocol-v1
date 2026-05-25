@@ -13,7 +13,8 @@ import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
-import { buildIntegrate, buildImmediateCommitment, clock } from '../builders.ts';
+import { buildIntegrate, clock } from '../builders.ts';
+import { TENURE_DURATION_MS } from '../env.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -57,7 +58,14 @@ async function main() {
     const tx = new Transaction();
     tx.setSender(d.owner.address);
 
-    const newCommitment = buildImmediateCommitment(tx, d.usufructPackageId);
+    const dur = tx.moveCall({
+      target: `${d.usufructPackageId}::ensemble::duration`,
+      arguments: [tx.pure.u64(TENURE_DURATION_MS)],
+    });
+    const newCommitment = tx.moveCall({
+      target: `${d.usufructPackageId}::ensemble::new_commitment_deferred`,
+      arguments: [dur],
+    });
     tx.moveCall({
       target: `${d.usufructPackageId}::escrow::extend_commitment`,
       typeArguments: typeArgs,

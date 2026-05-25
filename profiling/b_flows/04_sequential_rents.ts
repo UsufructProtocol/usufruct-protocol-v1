@@ -62,7 +62,7 @@ async function main() {
     const txRent = new Transaction();
     txRent.setSender(addrT);
     const [pay] = txRent.splitCoins(txRent.gas, [txRent.pure.u64(payAmt)]);
-    const cyc  = txRent.moveCall({ target: `${d.usufructPackageId}::tenures::tenures`, arguments: [txRent.pure.u64(1n)] });
+    const cyc  = txRent.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [txRent.pure.u64(1n)] });
     const cap  = txRent.moveCall({
       target: `${d.usufructPackageId}::escrow::rent`,
       typeArguments: typeArgs,

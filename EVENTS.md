@@ -93,122 +93,153 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 | `OwnerCapMinted` | Owner cap created at integration | `owner_cap_id`, `escrow_id`, `owner` |
 | `OwnerCapBurned` | Owner cap destroyed | `owner_cap_id`, `escrow_id`, `owner` |
 
-## 3. Canonical Analytical Queries
+## 3. What You Can Build
 
-These queries assume a PostgreSQL indexer where each event type maps to a table of the same name, with one row per event and columns matching the event fields. `policy_ensemble_registered` is the policy snapshot table (one row per integration; updated rows come from `ensemble_updated`).
+The event stream is sufficient to build any of the following without touching on-chain objects:
 
-### Q1 — Which `credit_shape` yields the most owner earnings, by coin type?
+**Marketplace listing page** — active escrows, their current policy (floor price, tenure duration), and last activity timestamp. Filter by coin type via the `AssetIntegrated` event type parameter.
 
-```sql
-SELECT
-    p.credit_shape_policy,
-    p.price_escalation_policy,
-    SUM(e.amount)            AS total_earnings,
-    COUNT(DISTINCT e.escrow_id) AS escrow_count,
-    AVG(e.amount)            AS avg_per_withdrawal
-FROM earnings_withdrawn e
-JOIN LATERAL (
-    SELECT credit_shape_policy, price_escalation_policy
-    FROM policy_ensemble_registered
-    WHERE escrow_id = e.escrow_id
-    ORDER BY integrated_at_ms DESC
-    LIMIT 1
-) p ON true
-GROUP BY p.credit_shape_policy, p.price_escalation_policy
-ORDER BY total_earnings DESC;
-```
+**Owner dashboard** — all escrows an owner has ever integrated (via `owner` field on `AssetIntegrated`), total lifetime earnings (`SUM(EarningsWithdrawn.amount)`), current active tenants, and pending fee messages not yet collected.
 
-The lateral join picks the active policy at integration time. For escrows that received an `EnsembleUpdated`, use the most recent policy snapshot before the withdrawal timestamp instead.
+**Tenant portfolio** — all tenancies a wallet has held cross-escrow, filtering on `tenant` address in `RentStarted`. Includes completed tenancies, active ones, and bids currently in Demand state via `BidPlaced`.
 
-### Q2 — Which `auction_shape` drives the most competitive bidding?
+**Escrow activity feed** — ordered timeline of all events for a single `escrow_id`. Sufficient to render a complete history page: integrated → rented → bid placed → handover → rented again → expired → claimed.
 
-```sql
--- Ratio of bid amount to floor price, by auction curve shape
-SELECT
-    p.auction_shape_policy,
-    AVG(b.bid_amount::float / NULLIF(b.floor_price, 0)) AS avg_bid_premium,
-    COUNT(*)                                             AS bid_count,
-    COUNT(DISTINCT b.escrow_id)                          AS escrow_count
-FROM bid_placed b
-JOIN policy_ensemble_registered p ON p.escrow_id = b.escrow_id
-GROUP BY p.auction_shape_policy
-ORDER BY avg_bid_premium DESC;
-```
+**Bid competition tracker** — live view of escrows currently in Demand state, showing `BidPlaced.bid_amount`, `handover_countdown_expiry`, and whether a `BidSuperseded` has already fired in this cycle.
 
-### Q3 — What `handover_floor_ms` correlates with bid supersession (real competition)?
+**Protocol fee dashboard** — `FeeMessageSent` vs `FeeMessageCollected` per `fee_inbox_id`, showing collected vs. pending fees by coin type.
+
+**Policy change audit log** — sequence of `PolicyEnsembleRegistered → EnsembleUpdateScheduled → EnsembleUpdated` events for any escrow, showing exactly what changed and when it took effect.
+
+**Configuration analytics (protocol-level)** — which combinations of `credit_shape`, `auction_shape`, and `price_escalation` appear most often, and how they correlate with tenure duration and earnings. Useful for documentation, recommendations, or a config simulator.
+
+---
+
+## 4. Canonical Queries
+
+These queries assume a PostgreSQL indexer where each event type maps to a table of the same name, one row per event, columns matching event fields. `policy_ensemble_registered` holds the active policy snapshot per escrow (updated when `EnsembleUpdated` fires).
+
+### Q1 — All active escrows
 
 ```sql
-SELECT
-    p.handover_floor_ms,
-    COUNT(s.escrow_id)                         AS superseded_count,
-    COUNT(b.escrow_id)                         AS placed_count,
-    COUNT(s.escrow_id)::float
-        / NULLIF(COUNT(b.escrow_id), 0)        AS supersession_rate
-FROM bid_placed b
-LEFT JOIN bid_superseded s
-    ON s.escrow_id = b.escrow_id
-    AND s.new_tenant_cap_id = b.tenant_cap_id
-JOIN policy_ensemble_registered p ON p.escrow_id = b.escrow_id
-GROUP BY p.handover_floor_ms
-ORDER BY p.handover_floor_ms;
+SELECT i.escrow_id, i.owner, i.asset_id, i.integrated_at_ms
+FROM asset_integrated i
+WHERE NOT EXISTS (SELECT 1 FROM asset_retired  r WHERE r.escrow_id = i.escrow_id)
+  AND NOT EXISTS (SELECT 1 FROM asset_claimed  c WHERE c.escrow_id = i.escrow_id)
+ORDER BY i.integrated_at_ms DESC;
 ```
 
-### Q4 — Which `price_escalation_bps` retains tenants longest?
-
-```sql
--- Average tenure duration in ms, by price escalation configuration
-SELECT
-    p.price_escalation_policy,
-    p.price_escalation_bps,
-    AVG(t.timestamp_ms - r.phase_start_ms) AS avg_tenure_ms,
-    COUNT(*)                                AS tenure_count
-FROM tenure_expired t
-JOIN rent_started r
-    ON r.escrow_id = t.escrow_id
-    AND r.tenant_cap_id = t.tenant_cap_id
-JOIN policy_ensemble_registered p ON p.escrow_id = t.escrow_id
-GROUP BY p.price_escalation_policy, p.price_escalation_bps
-ORDER BY avg_tenure_ms DESC;
-```
-
-### Q5 — How efficiently does `HandoverCompleted` convert credit into owner earnings?
-
-```sql
--- For each credit_shape, what fraction of used_credit ends up as owner_share?
-SELECT
-    p.credit_shape_policy,
-    SUM(h.owner_share)::float
-        / NULLIF(SUM(h.used_credit), 0)  AS credit_to_owner_ratio,
-    SUM(h.protocol_fee)::float
-        / NULLIF(SUM(h.used_credit), 0)  AS credit_to_fee_ratio,
-    SUM(h.remain_credit)::float
-        / NULLIF(SUM(h.used_credit + h.remain_credit), 0) AS credit_wasted_ratio,
-    COUNT(*)                              AS handover_count
-FROM handover_completed h
-JOIN policy_ensemble_registered p ON p.escrow_id = h.escrow_id
-GROUP BY p.credit_shape_policy
-ORDER BY credit_to_owner_ratio DESC;
-```
-
-### Q6 — Full asset lifecycle duration and terminal event
+### Q2 — All escrows for an owner, with lifetime earnings
 
 ```sql
 SELECT
     i.escrow_id,
     i.integrated_at_ms,
-    COALESCE(c.timestamp_ms, r.timestamp_ms)          AS closed_at_ms,
-    COALESCE(c.timestamp_ms, r.timestamp_ms)
-        - i.integrated_at_ms                          AS lifetime_ms,
+    COALESCE(SUM(e.amount), 0)              AS total_withdrawn,
+    COUNT(DISTINCT r.tenant_cap_id)         AS total_tenancies,
     CASE
-        WHEN c.escrow_id IS NOT NULL THEN 'claimed'
-        WHEN r.escrow_id IS NOT NULL THEN 'retired'
+        WHEN cl.escrow_id IS NOT NULL THEN 'claimed'
+        WHEN re.escrow_id IS NOT NULL THEN 'retired'
         ELSE 'active'
-    END                                               AS terminal_state,
-    COALESCE(c.swept_earnings, 0)                     AS swept_at_claim
+    END                                     AS status
 FROM asset_integrated i
-LEFT JOIN asset_claimed  c ON c.escrow_id = i.escrow_id
-LEFT JOIN asset_retired  r ON r.escrow_id = i.escrow_id
-ORDER BY lifetime_ms DESC NULLS LAST;
+LEFT JOIN earnings_withdrawn e  ON e.escrow_id = i.escrow_id
+LEFT JOIN rent_started       r  ON r.escrow_id = i.escrow_id
+LEFT JOIN asset_claimed      cl ON cl.escrow_id = i.escrow_id
+LEFT JOIN asset_retired      re ON re.escrow_id = i.escrow_id
+WHERE i.owner = $owner_address
+GROUP BY i.escrow_id, i.integrated_at_ms, cl.escrow_id, re.escrow_id
+ORDER BY i.integrated_at_ms DESC;
+```
+
+### Q3 — Full activity timeline for one escrow
+
+```sql
+SELECT timestamp_ms, 'RentStarted'       AS event, tenant      AS actor, price_paid  AS amount FROM rent_started       WHERE escrow_id = $id
+UNION ALL
+SELECT timestamp_ms, 'TenureExpired'     AS event, tenant      AS actor, owner_share AS amount FROM tenure_expired     WHERE escrow_id = $id
+UNION ALL
+SELECT timestamp_ms, 'HandoverCompleted' AS event, new_tenant_addr AS actor, new_rent_price AS amount FROM handover_completed WHERE escrow_id = $id
+UNION ALL
+SELECT timestamp_ms, 'EarningsWithdrawn' AS event, owner       AS actor, amount      AS amount FROM earnings_withdrawn WHERE escrow_id = $id
+UNION ALL
+SELECT timestamp_ms, 'BidPlaced'         AS event, pending_tenant  AS actor, bid_amount  AS amount FROM bid_placed         WHERE escrow_id = $id
+UNION ALL
+SELECT timestamp_ms, 'AssetRetired'      AS event, NULL         AS actor, NULL       AS amount FROM asset_retired      WHERE escrow_id = $id
+ORDER BY timestamp_ms;
+```
+
+### Q4 — Tenant portfolio: all tenancies for a wallet
+
+```sql
+SELECT
+    r.escrow_id,
+    r.tenant_cap_id,
+    r.phase_start_ms                                    AS started_ms,
+    COALESCE(t.timestamp_ms, h.timestamp_ms)            AS ended_ms,
+    r.price_paid,
+    CASE
+        WHEN t.escrow_id IS NOT NULL THEN 'expired'
+        WHEN h.escrow_id IS NOT NULL THEN 'displaced'
+        ELSE 'active'
+    END                                                 AS outcome
+FROM rent_started r
+LEFT JOIN tenure_expired      t ON t.tenant_cap_id = r.tenant_cap_id
+LEFT JOIN handover_completed  h ON h.displaced_tenant_cap_id = r.tenant_cap_id
+WHERE r.tenant = $tenant_address
+ORDER BY r.phase_start_ms DESC;
+```
+
+### Q5 — Escrows currently in Demand (bid placed, countdown live)
+
+```sql
+SELECT
+    b.escrow_id,
+    b.current_tenant_addr,
+    b.pending_tenant,
+    b.bid_amount,
+    b.floor_price,
+    b.handover_countdown_expiry
+FROM bid_placed b
+WHERE NOT EXISTS (
+    SELECT 1 FROM handover_completed h
+    WHERE h.escrow_id = b.escrow_id
+      AND h.new_tenant_cap_id = b.tenant_cap_id
+)
+AND NOT EXISTS (
+    SELECT 1 FROM tenure_expired t
+    WHERE t.escrow_id = b.escrow_id
+      AND t.phase_start_ms = b.current_phase_start_ms
+)
+ORDER BY b.handover_countdown_expiry ASC;
+```
+
+### Q6 — Protocol fee collected vs. pending, by coin type
+
+```sql
+-- coin type is encoded in the event table name; query per-table
+SELECT
+    s.fee_inbox_id,
+    SUM(s.amount)                            AS total_sent,
+    COALESCE(SUM(c.amount), 0)              AS total_collected,
+    SUM(s.amount) - COALESCE(SUM(c.amount), 0) AS pending
+FROM fee_message_sent s           -- replace suffix for each CoinType table
+LEFT JOIN fee_message_collected c ON c.fee_message_id = s.fee_message_id
+GROUP BY s.fee_inbox_id;
+```
+
+### Q7 — Configuration analytics: which `credit_shape` yields the most owner earnings?
+
+```sql
+SELECT
+    p.credit_shape_policy,
+    SUM(e.amount)               AS total_earnings,
+    COUNT(DISTINCT e.escrow_id) AS escrow_count,
+    AVG(e.amount)               AS avg_per_withdrawal
+FROM earnings_withdrawn e
+JOIN policy_ensemble_registered p ON p.escrow_id = e.escrow_id
+GROUP BY p.credit_shape_policy
+ORDER BY total_earnings DESC;
 ```
 
 ## 4. What Events Cannot Answer

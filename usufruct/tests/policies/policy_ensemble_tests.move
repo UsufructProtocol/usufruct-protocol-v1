@@ -14,6 +14,8 @@ use usufruct::{
         Self,
         PolicyEnsemble,
         PolicyEnsembleRegistered,
+        EnsembleUpdated,
+        EnsembleUpdateScheduled,
     },
     curve_shape_policy,
     auction_window_policy::{Self, AuctionWindowPolicy},
@@ -489,6 +491,150 @@ fun emit_registration_e3_not_idempotent_caller_contract() {
         assert_eq!(policy_ensemble::registered_rest_price_mist(&events[0]),    policy_ensemble::registered_rest_price_mist(&events[1]));
         assert_eq!(policy_ensemble::registered_escrow_identity(&events[0]),    policy_ensemble::registered_escrow_identity(&events[1]));
         assert_eq!(policy_ensemble::registered_auction_window_policy(&events[0]), policy_ensemble::registered_auction_window_policy(&events[1]));
+    };
+    scenario.end();
+}
+
+// ─── §7.5 — Full 23-field payload pin: all three emitters ─────────────────────
+//
+// Fixture: credit=PowerLaw(3,2), auction=Exponential(5,true), CompoundDelta, Multi.
+// This combination makes every optional field take a distinct Some/None value so
+// a transposition between any two fields (num↔den, credit↔auction, abs↔neg,
+// bps↔delta) produces a distinguishable wrong value.
+
+const MX_REST_PRICE:  u64 = 5_000_000;
+const MX_TENURE_MS:   u64 = 48_000_000;
+const MX_HANDOVER_MS: u64 = 2_000_000;
+const MX_WINDOW_MS:   u64 = 12_000_000;
+const MX_ESCAL_DELTA: u64 = 200;
+const MX_ESCAL_BPS:   u64 = 750;
+
+fun mixed_config(): PolicyEnsemble {
+    policy_ensemble::new_ensemble(
+        rest_price_policy::new_fixed(monetary::price(MX_REST_PRICE)),
+        tenure_duration_policy::new_fixed(phases::duration(MX_TENURE_MS)),
+        tenure_extend_policy::new_multi(),
+        handover_policy::new_handover_fixed(phases::duration(MX_HANDOVER_MS)),
+        auction_window_policy::new_descent_fixed(phases::duration(MX_WINDOW_MS)),
+        curve_shape_policy::new_power_law(3, 2),
+        curve_shape_policy::new_exponential(5, true),
+        price_escalation_policy::new_compound_delta(math::bps(MX_ESCAL_BPS), monetary::price(MX_ESCAL_DELTA)),
+    )
+}
+
+// E4: emit_registration — full 23-field pin with mixed variants.
+#[test]
+fun emit_registration_e4_full_payload_mixed_variants() {
+    let ensemble = mixed_config();
+    let ei       = escrow_identity::new(object::id_from_address(@0xEC01));
+    let mut scenario = test_scenario::begin(@0xA);
+    scenario.next_tx(@0xA);
+    {
+        policy_ensemble::emit_registration(&ensemble, ei);
+        let events = event::events_by_type<PolicyEnsembleRegistered>();
+        assert_eq!(events.length(), 1);
+        let e = &events[0];
+        assert_eq!(policy_ensemble::registered_escrow_identity(e),             escrow_identity::escrow_id(ei));
+        assert_eq!(policy_ensemble::registered_rest_price_policy(e),           b"Fixed".to_string());
+        assert_eq!(policy_ensemble::registered_rest_price_mist(e),             MX_REST_PRICE);
+        assert_eq!(policy_ensemble::registered_tenure_duration_policy(e),      b"Fixed".to_string());
+        assert_eq!(policy_ensemble::registered_tenure_duration_ms(e),          MX_TENURE_MS);
+        assert_eq!(policy_ensemble::registered_tenure_extend_policy(e),        b"Multi".to_string());
+        assert_eq!(policy_ensemble::registered_handover_policy(e),             b"Fixed".to_string());
+        assert_eq!(policy_ensemble::registered_handover_floor_ms(e),           option::some(MX_HANDOVER_MS));
+        assert_eq!(policy_ensemble::registered_auction_window_policy(e),       b"Fixed".to_string());
+        assert_eq!(policy_ensemble::registered_auction_window_ceiling_ms(e),   option::some(MX_WINDOW_MS));
+        assert_eq!(policy_ensemble::registered_credit_shape_policy(e),         b"PowerLaw".to_string());
+        assert_eq!(policy_ensemble::registered_credit_alpha_num(e),            option::some(3u8));
+        assert_eq!(policy_ensemble::registered_credit_alpha_den(e),            option::some(2u8));
+        assert_eq!(policy_ensemble::registered_credit_alpha_abs(e),            option::none());
+        assert_eq!(policy_ensemble::registered_credit_alpha_neg(e),            option::none());
+        assert_eq!(policy_ensemble::registered_auction_shape_policy(e),        b"Exponential".to_string());
+        assert_eq!(policy_ensemble::registered_auction_alpha_num(e),           option::none());
+        assert_eq!(policy_ensemble::registered_auction_alpha_den(e),           option::none());
+        assert_eq!(policy_ensemble::registered_auction_alpha_abs(e),           option::some(5u8));
+        assert_eq!(policy_ensemble::registered_auction_alpha_neg(e),           option::some(true));
+        assert_eq!(policy_ensemble::registered_price_escalation_policy(e),     b"CompoundDelta".to_string());
+        assert_eq!(policy_ensemble::registered_price_escalation_delta(e),      MX_ESCAL_DELTA);
+        assert_eq!(policy_ensemble::registered_price_escalation_bps(e),        option::some(MX_ESCAL_BPS));
+    };
+    scenario.end();
+}
+
+// EU1: emit_ensemble_updated — full 23-field pin with mixed variants.
+#[test]
+fun emit_ensemble_updated_eu1_full_payload_mixed_variants() {
+    let ensemble  = mixed_config();
+    let escrow_id = object::id_from_address(@0xEC02);
+    let mut scenario = test_scenario::begin(@0xA);
+    scenario.next_tx(@0xA);
+    {
+        policy_ensemble::emit_ensemble_updated(&ensemble, escrow_id);
+        let events = event::events_by_type<EnsembleUpdated>();
+        assert_eq!(events.length(), 1);
+        let e = &events[0];
+        assert_eq!(policy_ensemble::ensemble_updated_escrow_id(e),                  escrow_id);
+        assert_eq!(policy_ensemble::ensemble_updated_rest_price_policy(e),           b"Fixed".to_string());
+        assert_eq!(policy_ensemble::ensemble_updated_rest_price_mist(e),             MX_REST_PRICE);
+        assert_eq!(policy_ensemble::ensemble_updated_tenure_duration_policy(e),      b"Fixed".to_string());
+        assert_eq!(policy_ensemble::ensemble_updated_tenure_duration_ms(e),          MX_TENURE_MS);
+        assert_eq!(policy_ensemble::ensemble_updated_tenure_extend_policy(e),        b"Multi".to_string());
+        assert_eq!(policy_ensemble::ensemble_updated_handover_policy(e),             b"Fixed".to_string());
+        assert_eq!(policy_ensemble::ensemble_updated_handover_floor_ms(e),           option::some(MX_HANDOVER_MS));
+        assert_eq!(policy_ensemble::ensemble_updated_auction_window_policy(e),       b"Fixed".to_string());
+        assert_eq!(policy_ensemble::ensemble_updated_auction_window_ceiling_ms(e),   option::some(MX_WINDOW_MS));
+        assert_eq!(policy_ensemble::ensemble_updated_credit_shape_policy(e),         b"PowerLaw".to_string());
+        assert_eq!(policy_ensemble::ensemble_updated_credit_alpha_num(e),            option::some(3u8));
+        assert_eq!(policy_ensemble::ensemble_updated_credit_alpha_den(e),            option::some(2u8));
+        assert_eq!(policy_ensemble::ensemble_updated_credit_alpha_abs(e),            option::none());
+        assert_eq!(policy_ensemble::ensemble_updated_credit_alpha_neg(e),            option::none());
+        assert_eq!(policy_ensemble::ensemble_updated_auction_shape_policy(e),        b"Exponential".to_string());
+        assert_eq!(policy_ensemble::ensemble_updated_auction_alpha_num(e),           option::none());
+        assert_eq!(policy_ensemble::ensemble_updated_auction_alpha_den(e),           option::none());
+        assert_eq!(policy_ensemble::ensemble_updated_auction_alpha_abs(e),           option::some(5u8));
+        assert_eq!(policy_ensemble::ensemble_updated_auction_alpha_neg(e),           option::some(true));
+        assert_eq!(policy_ensemble::ensemble_updated_price_escalation_policy(e),     b"CompoundDelta".to_string());
+        assert_eq!(policy_ensemble::ensemble_updated_price_escalation_delta(e),      MX_ESCAL_DELTA);
+        assert_eq!(policy_ensemble::ensemble_updated_price_escalation_bps(e),        option::some(MX_ESCAL_BPS));
+    };
+    scenario.end();
+}
+
+// EUS1: emit_ensemble_update_scheduled — full 23-field pin with mixed variants.
+#[test]
+fun emit_ensemble_update_scheduled_eus1_full_payload_mixed_variants() {
+    let ensemble  = mixed_config();
+    let escrow_id = object::id_from_address(@0xEC03);
+    let mut scenario = test_scenario::begin(@0xA);
+    scenario.next_tx(@0xA);
+    {
+        policy_ensemble::emit_ensemble_update_scheduled(&ensemble, escrow_id);
+        let events = event::events_by_type<EnsembleUpdateScheduled>();
+        assert_eq!(events.length(), 1);
+        let e = &events[0];
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_escrow_id(e),                  escrow_id);
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_rest_price_policy(e),           b"Fixed".to_string());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_rest_price_mist(e),             MX_REST_PRICE);
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_tenure_duration_policy(e),      b"Fixed".to_string());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_tenure_duration_ms(e),          MX_TENURE_MS);
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_tenure_extend_policy(e),        b"Multi".to_string());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_handover_policy(e),             b"Fixed".to_string());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_handover_floor_ms(e),           option::some(MX_HANDOVER_MS));
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_auction_window_policy(e),       b"Fixed".to_string());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_auction_window_ceiling_ms(e),   option::some(MX_WINDOW_MS));
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_credit_shape_policy(e),         b"PowerLaw".to_string());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_credit_alpha_num(e),            option::some(3u8));
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_credit_alpha_den(e),            option::some(2u8));
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_credit_alpha_abs(e),            option::none());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_credit_alpha_neg(e),            option::none());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_auction_shape_policy(e),        b"Exponential".to_string());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_auction_alpha_num(e),           option::none());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_auction_alpha_den(e),           option::none());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_auction_alpha_abs(e),           option::some(5u8));
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_auction_alpha_neg(e),           option::some(true));
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_price_escalation_policy(e),     b"CompoundDelta".to_string());
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_price_escalation_delta(e),      MX_ESCAL_DELTA);
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_price_escalation_bps(e),        option::some(MX_ESCAL_BPS));
     };
     scenario.end();
 }

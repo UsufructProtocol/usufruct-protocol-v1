@@ -318,3 +318,105 @@ public fun ensemble_updated_handover_floor_ms(e: &EnsembleUpdated): Option<u64> 
 public fun ensemble_update_scheduled_escrow_id(e: &EnsembleUpdateScheduled): ID { e.escrow_id }
 #[test_only]
 public fun ensemble_update_scheduled_rest_price_mist(e: &EnsembleUpdateScheduled): u64 { e.rest_price }
+
+// PolicyEnsembleRegistered — missing fields
+#[test_only]
+public fun registered_rest_price_policy(e: &PolicyEnsembleRegistered): String { e.rest_price_policy }
+#[test_only]
+public fun registered_tenure_duration_policy(e: &PolicyEnsembleRegistered): String { e.tenure_duration_policy }
+#[test_only]
+public fun registered_tenure_extend_policy(e: &PolicyEnsembleRegistered): String { e.tenure_extend_policy }
+#[test_only]
+public fun registered_credit_alpha_abs(e: &PolicyEnsembleRegistered): Option<u8>   { e.credit_alpha_abs }
+#[test_only]
+public fun registered_credit_alpha_neg(e: &PolicyEnsembleRegistered): Option<bool> { e.credit_alpha_neg }
+#[test_only]
+public fun registered_auction_alpha_abs(e: &PolicyEnsembleRegistered): Option<u8>   { e.auction_alpha_abs }
+#[test_only]
+public fun registered_auction_alpha_neg(e: &PolicyEnsembleRegistered): Option<bool> { e.auction_alpha_neg }
+#[test_only]
+public fun registered_price_escalation_policy(e: &PolicyEnsembleRegistered): String     { e.price_escalation_policy }
+#[test_only]
+public fun registered_price_escalation_delta(e: &PolicyEnsembleRegistered): u64         { e.price_escalation_delta }
+#[test_only]
+public fun registered_price_escalation_bps(e: &PolicyEnsembleRegistered): Option<u64>  { e.price_escalation_bps }
+
+// EnsembleUpdated — missing fields
+#[test_only]
+public fun ensemble_updated_rest_price_policy(e: &EnsembleUpdated): String     { e.rest_price_policy }
+#[test_only]
+public fun ensemble_updated_tenure_duration_policy(e: &EnsembleUpdated): String { e.tenure_duration_policy }
+#[test_only]
+public fun ensemble_updated_tenure_duration_ms(e: &EnsembleUpdated): u64       { e.tenure_duration_ms }
+#[test_only]
+public fun ensemble_updated_tenure_extend_policy(e: &EnsembleUpdated): String  { e.tenure_extend_policy }
+#[test_only]
+public fun ensemble_updated_credit_shape_policy(e: &EnsembleUpdated): String   { e.credit_shape_policy }
+#[test_only]
+public fun ensemble_updated_credit_alpha_num(e: &EnsembleUpdated): Option<u8>  { e.credit_alpha_num }
+#[test_only]
+public fun ensemble_updated_credit_alpha_den(e: &EnsembleUpdated): Option<u8>  { e.credit_alpha_den }
+#[test_only]
+public fun ensemble_updated_credit_alpha_abs(e: &EnsembleUpdated): Option<u8>   { e.credit_alpha_abs }
+#[test_only]
+public fun ensemble_updated_credit_alpha_neg(e: &EnsembleUpdated): Option<bool> { e.credit_alpha_neg }
+#[test_only]
+public fun ensemble_updated_auction_shape_policy(e: &EnsembleUpdated): String   { e.auction_shape_policy }
+#[test_only]
+public fun ensemble_updated_auction_alpha_num(e: &EnsembleUpdated): Option<u8>  { e.auction_alpha_num }
+#[test_only]
+public fun ensemble_updated_auction_alpha_den(e: &EnsembleUpdated): Option<u8>  { e.auction_alpha_den }
+#[test_only]
+public fun ensemble_updated_auction_alpha_abs(e: &EnsembleUpdated): Option<u8>   { e.auction_alpha_abs }
+#[test_only]
+public fun ensemble_updated_auction_alpha_neg(e: &EnsembleUpdated): Option<bool> { e.auction_alpha_neg }
+#[test_only]
+public fun ensemble_updated_price_escalation_policy(e: &EnsembleUpdated): String    { e.price_escalation_policy }
+#[test_only]
+public fun ensemble_updated_price_escalation_delta(e: &EnsembleUpdated): u64        { e.price_escalation_delta }
+#[test_only]
+public fun ensemble_updated_price_escalation_bps(e: &EnsembleUpdated): Option<u64> { e.price_escalation_bps }
+
+// EnsembleUpdateScheduled — missing fields
+#[test_only]
+public fun ensemble_update_scheduled_rest_price_policy(e: &EnsembleUpdateScheduled): String     { e.rest_price_policy }
+#[test_only]
+public fun ensemble_update_scheduled_tenure_duration_policy(e: &EnsembleUpdateScheduled): String { e.tenure_duration_policy }
+#[test_only]
+public fun ensemble_update_scheduled_tenure_duration_ms(e: &EnsembleUpdateScheduled): u64       { e.tenure_duration_ms }
+#[test_only]
+public fun ensemble_update_scheduled_tenure_extend_policy(e: &EnsembleUpdateScheduled): String  { e.tenure_extend_policy }
+#[test_only]
+public fun ensemble_update_scheduled_handover_policy(e: &EnsembleUpdateScheduled): String       { e.handover_policy }
+#[test_only]
+public fun ensemble_update_scheduled_handover_floor_ms(e: &EnsembleUpdateScheduled): Option<u64> { e.handover_floor_ms }
+#[test_only]
+public fun ensemble_update_scheduled_auction_window_policy(e: &EnsembleUpdateScheduled): String     { e.auction_window_policy }
+#[test_only]
+public fun ensemble_update_scheduled_auction_window_ceiling_ms(e: &EnsembleUpdateScheduled): Option<u64> { e.auction_window_ceiling_ms }
+#[test_only]
+public fun ensemble_update_scheduled_credit_shape_policy(e: &EnsembleUpdateScheduled): String   { e.credit_shape_policy }
+#[test_only]
+public fun ensemble_update_scheduled_credit_alpha_num(e: &EnsembleUpdateScheduled): Option<u8>  { e.credit_alpha_num }
+#[test_only]
+public fun ensemble_update_scheduled_credit_alpha_den(e: &EnsembleUpdateScheduled): Option<u8>  { e.credit_alpha_den }
+#[test_only]
+public fun ensemble_update_scheduled_credit_alpha_abs(e: &EnsembleUpdateScheduled): Option<u8>   { e.credit_alpha_abs }
+#[test_only]
+public fun ensemble_update_scheduled_credit_alpha_neg(e: &EnsembleUpdateScheduled): Option<bool> { e.credit_alpha_neg }
+#[test_only]
+public fun ensemble_update_scheduled_auction_shape_policy(e: &EnsembleUpdateScheduled): String   { e.auction_shape_policy }
+#[test_only]
+public fun ensemble_update_scheduled_auction_alpha_num(e: &EnsembleUpdateScheduled): Option<u8>  { e.auction_alpha_num }
+#[test_only]
+public fun ensemble_update_scheduled_auction_alpha_den(e: &EnsembleUpdateScheduled): Option<u8>  { e.auction_alpha_den }
+#[test_only]
+public fun ensemble_update_scheduled_auction_alpha_abs(e: &EnsembleUpdateScheduled): Option<u8>   { e.auction_alpha_abs }
+#[test_only]
+public fun ensemble_update_scheduled_auction_alpha_neg(e: &EnsembleUpdateScheduled): Option<bool> { e.auction_alpha_neg }
+#[test_only]
+public fun ensemble_update_scheduled_price_escalation_policy(e: &EnsembleUpdateScheduled): String    { e.price_escalation_policy }
+#[test_only]
+public fun ensemble_update_scheduled_price_escalation_delta(e: &EnsembleUpdateScheduled): u64        { e.price_escalation_delta }
+#[test_only]
+public fun ensemble_update_scheduled_price_escalation_bps(e: &EnsembleUpdateScheduled): Option<u64> { e.price_escalation_bps }

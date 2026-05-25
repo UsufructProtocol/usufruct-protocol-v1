@@ -16,6 +16,7 @@ use sui::{
 use usufruct::{
     asset_state::{
         Self,
+        AssetIntegrated,
         RentStarted,
         AuctionExpired,
         AssetRetired,
@@ -23,6 +24,7 @@ use usufruct::{
         EarningsWithdrawn,
         BidPlaced,
         BidSuperseded,
+        CommitmentExtended,
         HandoverCompleted,
         TenureExpired,
         RetireFlagSet,
@@ -48,7 +50,7 @@ use usufruct::{
     owner_cap::{Self, OwnerCap},
     phases,
     protocol_fee_inbox,
-    protocol_fee_ref::ProtocolFeeRef,
+    protocol_fee_ref::{Self, ProtocolFeeRef},
     tenant_seat::{Self, TenantSeat},
     tenant_cap,
 };
@@ -8871,5 +8873,571 @@ fun commitment_anchor_and_remaining_deferred() {
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+// ─── §EV-PINS: event payload pins ───────────────────────────────────────────
+//
+// One test per event pins every field with assert_eq! so any transposition
+// of projectors in event::emit(...) produces a test failure.
+
+// ─── AssetIntegrated payload pin ────────────────────────────────────────────
+
+#[test]
+fun event_pin_asset_integrated_all_fields() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+
+    let ensemble = escrow_corpus::by_tag(0);
+    let fee_ref  = sc.take_immutable<ProtocolFeeRef>();
+    let mut clk  = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, 42_000);
+    let asset    = mk_demo_asset(sc.ctx());
+    let asset_id = object::id(&asset);
+
+    let cap      = escrow::integrate<DemoAsset, SUI>(
+        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+    );
+    let escrow_id     = owner_cap::proj_escrow_id(&cap);
+    let owner_cap_id  = object::id(&cap);
+
+    let evts = event::events_by_type<AssetIntegrated<DemoAsset, SUI>>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::asset_integrated_escrow_id(e),         escrow_id);
+    assert_eq!(asset_state::asset_integrated_owner_cap_id(e),      owner_cap_id);
+    assert_eq!(asset_state::asset_integrated_owner(e),             OWNER);
+    assert_eq!(asset_state::asset_integrated_asset_id(e),          asset_id);
+    assert_eq!(asset_state::asset_integrated_fee_inbox_id(e),      protocol_fee_ref::proj_inbox_id(&fee_ref));
+    assert_eq!(asset_state::asset_integrated_integrated_at_ms(e),  42_000);
+
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+    sc.next_tx(OWNER);
+    let escrow_obj = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    test_scenario::return_shared(escrow_obj);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+// ─── RentStarted payload pin ─────────────────────────────────────────────────
+
+#[test]
+fun event_pin_rent_started_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, 7_000);
+
+    let escrow_id    = owner_cap::proj_escrow_id(&owner_cap);
+    let floor        = escrow_corpus::min_rent_price_const();
+    let payment      = mk_payment(floor, sc.ctx());
+    let cap_t1       = escrow::rent(&mut escrow, payment, tenures::tenures(1), &clk, sc.ctx());
+
+    let evts = event::events_by_type<RentStarted>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::rent_started_escrow_id(e),        escrow_id);
+    assert_eq!(asset_state::rent_started_tenant_cap_id(e),    object::id(&cap_t1));
+    assert_eq!(asset_state::rent_started_tenant(e),           OWNER);
+    assert_eq!(asset_state::rent_started_phase_start_ms(e),   7_000);
+    assert_eq!(asset_state::rent_started_price_paid(e),       floor);
+    assert_eq!(asset_state::rent_started_floor_price(e),      floor);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── AuctionExpired payload pin ──────────────────────────────────────────────
+
+#[test]
+fun event_pin_auction_expired_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let last_acq  = escrow_corpus::min_rent_price_const() * 2;
+    let phase_start_ms = escrow_corpus::tenure_ceiling_const();
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow,
+        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        0,
+    );
+    escrow::drive_to_descent_for_testing(
+        &mut escrow, STAKE_T1, 0, last_acq, phase_start_ms,
+    );
+
+    let boundary_ms = phase_start_ms + escrow_corpus::descent_window_h1_const();
+    escrow::fire_do_auction_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms));
+
+    let evts = event::events_by_type<AuctionExpired>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::auction_expired_escrow_id(e),       escrow_id);
+    assert_eq!(asset_state::auction_expired_phase_start_ms(e),  phase_start_ms);
+    assert_eq!(asset_state::auction_expired_last_acq_price(e),  last_acq);
+    assert_eq!(asset_state::auction_expired_timestamp_ms(e),    boundary_ms);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    sc.end();
+}
+
+// ─── AssetRetired payload pin ────────────────────────────────────────────────
+
+#[test]
+fun event_pin_asset_retired_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, 99_000);
+
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+
+    let evts = event::events_by_type<AssetRetired>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::asset_retired_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::asset_retired_timestamp_ms(e), 99_000);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── RetireFlagSet payload pin ───────────────────────────────────────────────
+
+#[test]
+fun event_pin_retire_flag_set_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk      = clock::create_for_testing(sc.ctx());
+
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+
+    let p1    = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+
+    let evts = event::events_by_type<RetireFlagSet>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::retire_flag_set_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::retire_flag_set_owner(e),        OWNER);
+    assert_eq!(asset_state::retire_flag_set_timestamp_ms(e), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── BidPlaced payload pin ───────────────────────────────────────────────────
+
+#[test]
+fun event_pin_bid_placed_all_fields() {
+    let mut sc   = setup();
+    // c=1 Fixed so handover_countdown_expiry is non-zero and deterministic.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+
+    let escrow_id    = owner_cap::proj_escrow_id(&owner_cap);
+    let floor        = escrow_corpus::min_rent_price_const();
+
+    // T1 rents: Idle → Occupied at t=0.
+    let p1    = mk_payment(floor, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    // T2 bids: Occupied → Demand at t=5_000.
+    let now2  = 5_000u64;
+    clock::set_for_testing(&mut clk, now2);
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2     = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // handover_countdown_expiry for c=1 Fixed = min(now2 + C1, phase_start + ceiling)
+    //   = min(5_000 + 25_000, 0 + 100_000) = 30_000.
+    let expected_expiry = now2 + escrow_corpus::handover_countdown_c1_const();
+
+    let evts = event::events_by_type<BidPlaced>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::bid_placed_escrow_id(e),                 escrow_id);
+    assert_eq!(asset_state::bid_placed_current_tenant_cap_id(e),     object::id(&cap_t1));
+    assert_eq!(asset_state::bid_placed_current_tenant_addr(e),       OWNER);
+    assert_eq!(asset_state::bid_placed_current_tenant_stake(e),      floor);
+    assert_eq!(asset_state::bid_placed_current_phase_start_ms(e),    0);
+    assert_eq!(asset_state::bid_placed_tenant_cap_id(e),             object::id(&cap_t2));
+    assert_eq!(asset_state::bid_placed_pending_tenant(e),            OWNER);
+    assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
+    assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);
+    assert_eq!(asset_state::bid_placed_handover_countdown_expiry(e), expected_expiry);
+    assert_eq!(asset_state::bid_placed_timestamp_ms(e),              now2);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── BidSuperseded payload pin ───────────────────────────────────────────────
+
+#[test]
+fun event_pin_bid_superseded_all_fields() {
+    let mut sc   = setup();
+    // c=1 Fixed — non-zero handover countdown so supersede can run.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let floor     = escrow_corpus::min_rent_price_const();
+
+    // T1 rents at t=0: Idle → Occupied.
+    let p1     = mk_payment(floor, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    // T2 bids at t=0: Occupied → Demand.
+    let p2_amt = floor * 2;
+    let p2     = mk_payment(p2_amt, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // T3 supersedes T2 at t=1_000.
+    let now3 = 1_000u64;
+    clock::set_for_testing(&mut clk, now3);
+    let floor3 = escrow::compute_floor_price(&escrow, &clk);
+    let p3     = mk_payment(floor3, sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
+
+    // handover_countdown_expiry is the one stamped at the BidPlaced time (t=0),
+    // c=1 Fixed: min(0 + 25_000, 0 + 100_000) = 25_000.
+    let expected_expiry = escrow_corpus::handover_countdown_c1_const();
+
+    let evts = event::events_by_type<BidSuperseded>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::bid_superseded_escrow_id(e),                  escrow_id);
+    assert_eq!(asset_state::bid_superseded_protected_cap_id(e),           object::id(&cap_t1));
+    assert_eq!(asset_state::bid_superseded_protected_addr(e),             OWNER);
+    assert_eq!(asset_state::bid_superseded_protected_stake(e),            floor);
+    assert_eq!(asset_state::bid_superseded_protected_phase_start_ms(e),   0);
+    assert_eq!(asset_state::bid_superseded_displaced_cap_id(e),           object::id(&cap_t2));
+    assert_eq!(asset_state::bid_superseded_new_cap_id(e),                 object::id(&cap_t3));
+    assert_eq!(asset_state::bid_superseded_displaced_bidder(e),           OWNER);
+    assert_eq!(asset_state::bid_superseded_refunded_amount(e),            p2_amt);
+    assert_eq!(asset_state::bid_superseded_new_bidder(e),                 OWNER);
+    assert_eq!(asset_state::bid_superseded_new_bid_amount(e),             floor3);
+    assert_eq!(asset_state::bid_superseded_floor_price(e),                floor3);
+    assert_eq!(asset_state::bid_superseded_handover_countdown_expiry(e),  expected_expiry);
+    assert_eq!(asset_state::bid_superseded_timestamp_ms(e),               now3);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── EarningsWithdrawn payload pin ───────────────────────────────────────────
+
+#[test]
+fun event_pin_earnings_withdrawn_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+
+    let escrow_id    = owner_cap::proj_escrow_id(&owner_cap);
+    let owner_cap_id = object::id(&owner_cap);
+    let principal    = escrow_corpus::min_rent_price_const();
+    let p1           = mk_payment(principal, sc.ctx());
+    let cap_t1       = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    escrow::fire_do_tenure_expiry_for_testing(
+        &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
+    );
+
+    clock::set_for_testing(&mut clk, 500_000);
+    let coin = escrow::withdraw_earnings(&mut escrow, &owner_cap, &clk, sc.ctx());
+    let owner_share = principal - principal / 10;
+
+    let evts = event::events_by_type<EarningsWithdrawn>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::earnings_withdrawn_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::earnings_withdrawn_owner_cap_id(e), owner_cap_id);
+    assert_eq!(asset_state::earnings_withdrawn_owner(e),        OWNER);
+    assert_eq!(asset_state::earnings_withdrawn_amount(e),       owner_share);
+    assert_eq!(asset_state::earnings_withdrawn_timestamp_ms(e), 500_000);
+
+    coin::burn_for_testing(coin);
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── CommitmentExtended payload pin ─────────────────────────────────────────
+
+#[test]
+fun event_pin_commitment_extended_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, 3_000);
+
+    let escrow_id   = owner_cap::proj_escrow_id(&owner_cap);
+    let deferred_ms = escrow_corpus::retire_deferred_f1_const();
+    let new_policy  = commitment_policy::new_deferred(phases::duration(deferred_ms));
+
+    escrow::extend_commitment(&mut escrow, &owner_cap, new_policy, &clk);
+
+    // Immediate has duration=0 so old_expiry = anchor + 0 = 0.
+    // new_expiry = old_expiry + deferred_ms = 0 + 10_000_000.
+    let expected_new_expiry = deferred_ms;
+
+    let evts = event::events_by_type<CommitmentExtended>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::commitment_extended_escrow_id(e),      escrow_id);
+    assert_eq!(asset_state::commitment_extended_new_expiry_ms(e),  expected_new_expiry);
+    assert_eq!(asset_state::commitment_extended_timestamp_ms(e),   3_000);
+    // floor_ms is Some(deferred_ms) for a Deferred policy.
+    assert_eq!(asset_state::commitment_extended_floor_ms(e),       option::some(deferred_ms));
+    // policy string is the canonical label emitted by commitment_policy.
+    assert_eq!(asset_state::commitment_extended_policy(e),
+               commitment_policy::proj_commitment_policy(&new_policy));
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── AssetClaimed payload pin ────────────────────────────────────────────────
+
+#[test]
+fun event_pin_asset_claimed_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+
+    let escrow_id    = owner_cap::proj_escrow_id(&owner_cap);
+    let owner_cap_id = object::id(&owner_cap);
+    let principal    = escrow_corpus::min_rent_price_const();
+    let p1           = mk_payment(principal, sc.ctx());
+    let cap_t1       = escrow::rent(&mut escrow_handle, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    escrow::fire_do_tenure_expiry_for_testing(
+        &mut escrow_handle, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
+    );
+    escrow::fire_do_auction_expiry_for_testing(
+        &mut escrow_handle,
+        phases::timestamp(escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const()),
+    );
+    escrow::drive_to_retired_for_testing(&mut escrow_handle);
+
+    test_scenario::return_shared(escrow_handle);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+
+    clock::set_for_testing(&mut clk, 777_000);
+    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    let owner_share = principal - principal / 10;
+
+    let evts = event::events_by_type<AssetClaimed>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::asset_claimed_escrow_id(e),       escrow_id);
+    assert_eq!(asset_state::asset_claimed_owner_cap_id(e),    owner_cap_id);
+    assert_eq!(asset_state::asset_claimed_owner(e),           OWNER);
+    assert_eq!(asset_state::asset_claimed_swept_earnings(e),  owner_share);
+    assert_eq!(asset_state::asset_claimed_timestamp_ms(e),    777_000);
+
+    coin::burn_for_testing(earnings);
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap_t1, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── TenureExpired payload pin ───────────────────────────────────────────────
+
+#[test]
+fun event_pin_tenure_expired_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk      = clock::create_for_testing(sc.ctx());
+
+    let escrow_id  = owner_cap::proj_escrow_id(&owner_cap);
+    let principal  = escrow_corpus::min_rent_price_const();
+    let p1         = mk_payment(principal, sc.ctx());
+    let cap_t1     = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    let boundary   = escrow_corpus::tenure_ceiling_const();
+
+    escrow::fire_do_tenure_expiry_for_testing(
+        &mut escrow, phases::timestamp(boundary), sc.ctx(),
+    );
+
+    let owner_share = principal - principal / 10;
+    let fee         = principal / 10;
+
+    let evts = event::events_by_type<TenureExpired>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::tenure_expired_escrow_id(e),         escrow_id);
+    assert_eq!(asset_state::tenure_expired_tenant_cap_id(e),     object::id(&cap_t1));
+    assert_eq!(asset_state::tenure_expired_tenant(e),            OWNER);
+    assert_eq!(asset_state::tenure_expired_phase_start_ms(e),    0);
+    assert_eq!(asset_state::tenure_expired_owner_share(e),       owner_share);
+    assert_eq!(asset_state::tenure_expired_protocol_fee(e),      fee);
+    assert_eq!(asset_state::tenure_expired_last_acq_price(e),    principal);
+    assert_eq!(asset_state::tenure_expired_timestamp_ms(e),      boundary);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── HandoverCompleted payload pin ───────────────────────────────────────────
+
+#[test]
+fun event_pin_handover_completed_all_fields() {
+    let mut sc   = setup();
+    // c=1 Fixed, e=0 Linear: deterministic used_credit mid-tenure.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let floor     = escrow_corpus::min_rent_price_const();
+
+    // T1 rents at t=0: Idle → Occupied.
+    let p1     = mk_payment(floor, sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    // T2 bids at t=5_000: Occupied → Demand.
+    let now2   = 5_000u64;
+    clock::set_for_testing(&mut clk, now2);
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let p2     = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // Fire handover at c=1 Fixed expiry = now2 + C1 = 30_000.
+    let boundary_ms = now2 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, boundary_ms);
+    let used_credit = escrow::compute_used_credit(&escrow, &clk);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
+
+    let owner_share_val = used_credit - used_credit / 10;
+    let protocol_fee_val = used_credit / 10;
+    let remain_val       = floor - used_credit;
+
+    let evts = event::events_by_type<HandoverCompleted>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::handover_completed_escrow_id(e),               escrow_id);
+    assert_eq!(asset_state::handover_completed_displaced_cap_id(e),        object::id(&cap_t1));
+    assert_eq!(asset_state::handover_completed_displaced_tenant(e),        OWNER);
+    assert_eq!(asset_state::handover_completed_displaced_phase_start_ms(e),0);
+    assert_eq!(asset_state::handover_completed_new_cap_id(e),              object::id(&cap_t2));
+    assert_eq!(asset_state::handover_completed_new_tenant_addr(e),         OWNER);
+    assert_eq!(asset_state::handover_completed_new_tenant_stake(e),        floor2);
+    assert_eq!(asset_state::handover_completed_used_credit(e),             used_credit);
+    assert_eq!(asset_state::handover_completed_owner_share(e),             owner_share_val);
+    assert_eq!(asset_state::handover_completed_protocol_fee(e),            protocol_fee_val);
+    assert_eq!(asset_state::handover_completed_remain_credit(e),           remain_val);
+    assert_eq!(asset_state::handover_completed_timestamp_ms(e),            boundary_ms);
+    // new_rent_price: ascending_floor_price based on floor2 stake.
+    let new_rent = asset_state::handover_completed_new_rent_price(e);
+    assert!(new_rent > 0, 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── AssetBorrowed payload pin ───────────────────────────────────────────────
+
+#[test]
+fun event_pin_asset_borrowed_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk      = clock::create_for_testing(sc.ctx());
+
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let p1        = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1    = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    let (asset_out, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
+
+    let evts = event::events_by_type<AssetBorrowed>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::asset_borrowed_escrow_id(e),     escrow_id);
+    assert_eq!(asset_state::asset_borrowed_tenant_cap_id(e), object::id(&cap_t1));
+    assert_eq!(asset_state::asset_borrowed_tenant(e),        OWNER);
+
+    escrow::return_asset(&mut escrow, asset_out, receipt);
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── AssetReturned payload pin ───────────────────────────────────────────────
+
+#[test]
+fun event_pin_asset_returned_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk      = clock::create_for_testing(sc.ctx());
+
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let p1        = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1    = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    let (asset_out, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
+    escrow::return_asset(&mut escrow, asset_out, receipt);
+
+    let evts = event::events_by_type<AssetReturned>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::asset_returned_escrow_id(e),     escrow_id);
+    assert_eq!(asset_state::asset_returned_tenant_cap_id(e), object::id(&cap_t1));
+    assert_eq!(asset_state::asset_returned_tenant(e),        OWNER);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
     sc.end();
 }

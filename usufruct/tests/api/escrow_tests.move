@@ -5,6 +5,8 @@
 module usufruct::escrow_tests;
 
 use std::unit_test::assert_eq;
+use std::string;
+use std::type_name;
 use sui::{
     balance,
     clock,
@@ -8901,15 +8903,17 @@ fun event_pin_asset_integrated_all_fields() {
     let escrow_id     = owner_cap::proj_escrow_id(&cap);
     let owner_cap_id  = object::id(&cap);
 
-    let evts = event::events_by_type<AssetIntegrated<DemoAsset, SUI>>();
+    let evts = event::events_by_type<AssetIntegrated>();
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::asset_integrated_escrow_id(e),         escrow_id);
     assert_eq!(asset_state::asset_integrated_owner_cap_id(e),      owner_cap_id);
-    assert_eq!(asset_state::asset_integrated_owner_address(e),             OWNER);
+    assert_eq!(asset_state::asset_integrated_owner_address(e),     OWNER);
     assert_eq!(asset_state::asset_integrated_asset_id(e),          asset_id);
     assert_eq!(asset_state::asset_integrated_fee_inbox_id(e),      protocol_fee_ref::proj_inbox_id(&fee_ref));
     assert_eq!(asset_state::asset_integrated_integrated_at_ms(e),  42_000);
+    assert_eq!(asset_state::asset_integrated_asset_type(e),        string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::asset_integrated_coin_type(e),         string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);

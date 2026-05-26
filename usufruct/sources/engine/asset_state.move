@@ -5,7 +5,8 @@ module usufruct::asset_state;
 
 // === Imports ===
 
-use std::string::String;
+use std::string::{Self, String};
+use std::type_name;
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
@@ -190,13 +191,15 @@ public struct CommitmentExtended has copy, drop {
     timestamp_ms:        u64,
 }
 
-public struct AssetIntegrated<phantom Asset, phantom CoinType> has copy, drop {
+public struct AssetIntegrated has copy, drop {
     escrow_id:        ID,
     owner_cap_id:     ID,
     owner_address:    address,
     asset_id:         ID,
     fee_inbox_id:     ID,
     integrated_at_ms: u64,
+    asset_type:       String,
+    coin_type:        String,
 }
 
 public struct AssetClaimed has copy, drop {
@@ -760,13 +763,15 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
         asset: asset_custody::lock(asset),
         cycle: CycleParams { floor, ceiling, handover, descent },
     });
-    event::emit(AssetIntegrated<Asset, CoinType> {
+    event::emit(AssetIntegrated {
         escrow_id:        raw_escrow_id,
         owner_cap_id:     owner_cap::proj_id(owner_cap_identity),
         owner_address:    owner_addr,
         asset_id,
         fee_inbox_id:     protocol_fee_ref::proj_id(fee_inbox_identity),
         integrated_at_ms: phases::timestamp_ms(integrated_at),
+        asset_type:       string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:        string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
     });
     (core, state, owner_cap)
 }
@@ -1997,17 +2002,21 @@ public(package) fun commitment_extended_new_expiry_ms(e: &CommitmentExtended): u
 public(package) fun commitment_extended_timestamp_ms(e: &CommitmentExtended): u64   { e.timestamp_ms }
 
 #[test_only]
-public(package) fun asset_integrated_escrow_id<A, C>(e: &AssetIntegrated<A, C>): ID          { e.escrow_id }
+public(package) fun asset_integrated_escrow_id(e: &AssetIntegrated): ID          { e.escrow_id }
 #[test_only]
-public(package) fun asset_integrated_owner_cap_id<A, C>(e: &AssetIntegrated<A, C>): ID       { e.owner_cap_id }
+public(package) fun asset_integrated_owner_cap_id(e: &AssetIntegrated): ID       { e.owner_cap_id }
 #[test_only]
-public(package) fun asset_integrated_owner_address<A, C>(e: &AssetIntegrated<A, C>): address { e.owner_address }
+public(package) fun asset_integrated_owner_address(e: &AssetIntegrated): address { e.owner_address }
 #[test_only]
-public(package) fun asset_integrated_asset_id<A, C>(e: &AssetIntegrated<A, C>): ID           { e.asset_id }
+public(package) fun asset_integrated_asset_id(e: &AssetIntegrated): ID           { e.asset_id }
 #[test_only]
-public(package) fun asset_integrated_fee_inbox_id<A, C>(e: &AssetIntegrated<A, C>): ID       { e.fee_inbox_id }
+public(package) fun asset_integrated_fee_inbox_id(e: &AssetIntegrated): ID       { e.fee_inbox_id }
 #[test_only]
-public(package) fun asset_integrated_integrated_at_ms<A, C>(e: &AssetIntegrated<A, C>): u64  { e.integrated_at_ms }
+public(package) fun asset_integrated_integrated_at_ms(e: &AssetIntegrated): u64  { e.integrated_at_ms }
+#[test_only]
+public(package) fun asset_integrated_asset_type(e: &AssetIntegrated): String     { e.asset_type }
+#[test_only]
+public(package) fun asset_integrated_coin_type(e: &AssetIntegrated): String      { e.coin_type }
 
 #[test_only]
 public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(

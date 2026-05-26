@@ -5,6 +5,7 @@
 module usufruct::escrow_runtime_view_tests;
 
 use std::unit_test::assert_eq;
+use std::string;
 use std::type_name;
 use sui::{
     balance,
@@ -166,8 +167,8 @@ fun idle_views_post_integrate() {
     let _aid = escrow::asset_id(&escrow);
     assert_eq!(escrow::owner_cap_id(&escrow), object::id(&cap));
     let _fid = escrow::fee_inbox_id(&escrow);
-    assert_eq!(escrow::asset_type_name(&escrow), type_name::with_defining_ids<DemoAsset>());
-    assert_eq!(escrow::coin_type_name(&escrow),  type_name::with_defining_ids<SUI>());
+    assert_eq!(escrow::asset_type_name(&escrow), string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(escrow::coin_type_name(&escrow),  string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 
     // — Always-present temporal/financial —
     assert_eq!(escrow::tenure_ceiling_ms(&escrow), escrow_corpus::tenure_ceiling_const());

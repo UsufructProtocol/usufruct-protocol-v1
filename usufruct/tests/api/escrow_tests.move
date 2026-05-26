@@ -3508,8 +3508,8 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     assert_eq!(sup.length(), 1);
     let se = sup.borrow(0);
     // Core: same address displaced and re-entered.
-    assert_eq!(asset_state::bid_superseded_displaced_bidder(se),
-               asset_state::bid_superseded_new_bidder(se));
+    assert_eq!(asset_state::bid_superseded_displaced_bidder_address(se),
+               asset_state::bid_superseded_new_bidder_address(se));
     assert_eq!(asset_state::bid_superseded_refunded_amount(se), price_2);
     assert_eq!(asset_state::bid_superseded_new_bid_amount(se), price_3);
 
@@ -3520,7 +3520,7 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     let hc = event::events_by_type<HandoverCompleted>();
     assert_eq!(hc.length(), 1);
     let he = hc.borrow(0);
-    assert_eq!(asset_state::handover_completed_displaced_tenant(he), OWNER);
+    assert_eq!(asset_state::handover_completed_displaced_tenant_address(he), OWNER);
     // new_rent_price is the next floor (price_3 + delta), not the stake itself.
     assert_eq!(asset_state::handover_completed_new_rent_price(he),
                price_3 + escrow_corpus::fixed_delta_value_const());
@@ -3576,8 +3576,8 @@ fun e2e_current_tenant_defends_against_challenger() {
     let sup = event::events_by_type<BidSuperseded>();
     assert_eq!(sup.length(), 1);
     let se = sup.borrow(0);
-    assert_eq!(asset_state::bid_superseded_displaced_bidder(se), CHALLENGER);
-    assert_eq!(asset_state::bid_superseded_new_bidder(se), OWNER);
+    assert_eq!(asset_state::bid_superseded_displaced_bidder_address(se), CHALLENGER);
+    assert_eq!(asset_state::bid_superseded_new_bidder_address(se), OWNER);
     assert_eq!(asset_state::bid_superseded_refunded_amount(se), floor_2);
 
     // APT past T1_new's countdown → T1 defends tenure at floor_3.
@@ -8906,7 +8906,7 @@ fun event_pin_asset_integrated_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::asset_integrated_escrow_id(e),         escrow_id);
     assert_eq!(asset_state::asset_integrated_owner_cap_id(e),      owner_cap_id);
-    assert_eq!(asset_state::asset_integrated_owner(e),             OWNER);
+    assert_eq!(asset_state::asset_integrated_owner_address(e),             OWNER);
     assert_eq!(asset_state::asset_integrated_asset_id(e),          asset_id);
     assert_eq!(asset_state::asset_integrated_fee_inbox_id(e),      protocol_fee_ref::proj_inbox_id(&fee_ref));
     assert_eq!(asset_state::asset_integrated_integrated_at_ms(e),  42_000);
@@ -8940,7 +8940,7 @@ fun event_pin_rent_started_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::rent_started_escrow_id(e),        escrow_id);
     assert_eq!(asset_state::rent_started_tenant_cap_id(e),    object::id(&cap_t1));
-    assert_eq!(asset_state::rent_started_tenant(e),           OWNER);
+    assert_eq!(asset_state::rent_started_tenant_address(e),           OWNER);
     assert_eq!(asset_state::rent_started_phase_start_ms(e),   7_000);
     assert_eq!(asset_state::rent_started_price_paid(e),       floor);
     assert_eq!(asset_state::rent_started_floor_price(e),      floor);
@@ -9033,7 +9033,7 @@ fun event_pin_retire_flag_set_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::retire_flag_set_escrow_id(e),    escrow_id);
-    assert_eq!(asset_state::retire_flag_set_owner(e),        OWNER);
+    assert_eq!(asset_state::retire_flag_set_owner_address(e),        OWNER);
     assert_eq!(asset_state::retire_flag_set_timestamp_ms(e), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -9076,11 +9076,11 @@ fun event_pin_bid_placed_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::bid_placed_escrow_id(e),                 escrow_id);
     assert_eq!(asset_state::bid_placed_current_tenant_cap_id(e),     object::id(&cap_t1));
-    assert_eq!(asset_state::bid_placed_current_tenant_addr(e),       OWNER);
+    assert_eq!(asset_state::bid_placed_current_tenant_address(e),       OWNER);
     assert_eq!(asset_state::bid_placed_current_tenant_stake(e),      floor);
     assert_eq!(asset_state::bid_placed_current_phase_start_ms(e),    0);
     assert_eq!(asset_state::bid_placed_tenant_cap_id(e),             object::id(&cap_t2));
-    assert_eq!(asset_state::bid_placed_pending_tenant(e),            OWNER);
+    assert_eq!(asset_state::bid_placed_pending_tenant_address(e),            OWNER);
     assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
     assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);
     assert_eq!(asset_state::bid_placed_handover_countdown_expiry(e), expected_expiry);
@@ -9132,14 +9132,14 @@ fun event_pin_bid_superseded_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::bid_superseded_escrow_id(e),                  escrow_id);
     assert_eq!(asset_state::bid_superseded_protected_cap_id(e),           object::id(&cap_t1));
-    assert_eq!(asset_state::bid_superseded_protected_addr(e),             OWNER);
+    assert_eq!(asset_state::bid_superseded_protected_address(e),             OWNER);
     assert_eq!(asset_state::bid_superseded_protected_stake(e),            floor);
     assert_eq!(asset_state::bid_superseded_protected_phase_start_ms(e),   0);
     assert_eq!(asset_state::bid_superseded_displaced_cap_id(e),           object::id(&cap_t2));
     assert_eq!(asset_state::bid_superseded_new_cap_id(e),                 object::id(&cap_t3));
-    assert_eq!(asset_state::bid_superseded_displaced_bidder(e),           OWNER);
+    assert_eq!(asset_state::bid_superseded_displaced_bidder_address(e),           OWNER);
     assert_eq!(asset_state::bid_superseded_refunded_amount(e),            p2_amt);
-    assert_eq!(asset_state::bid_superseded_new_bidder(e),                 OWNER);
+    assert_eq!(asset_state::bid_superseded_new_bidder_address(e),                 OWNER);
     assert_eq!(asset_state::bid_superseded_new_bid_amount(e),             floor3);
     assert_eq!(asset_state::bid_superseded_floor_price(e),                floor3);
     assert_eq!(asset_state::bid_superseded_handover_countdown_expiry(e),  expected_expiry);
@@ -9182,7 +9182,7 @@ fun event_pin_earnings_withdrawn_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::earnings_withdrawn_escrow_id(e),    escrow_id);
     assert_eq!(asset_state::earnings_withdrawn_owner_cap_id(e), owner_cap_id);
-    assert_eq!(asset_state::earnings_withdrawn_owner(e),        OWNER);
+    assert_eq!(asset_state::earnings_withdrawn_owner_address(e),        OWNER);
     assert_eq!(asset_state::earnings_withdrawn_amount(e),       owner_share);
     assert_eq!(asset_state::earnings_withdrawn_timestamp_ms(e), 500_000);
 
@@ -9269,7 +9269,7 @@ fun event_pin_asset_claimed_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::asset_claimed_escrow_id(e),       escrow_id);
     assert_eq!(asset_state::asset_claimed_owner_cap_id(e),    owner_cap_id);
-    assert_eq!(asset_state::asset_claimed_owner(e),           OWNER);
+    assert_eq!(asset_state::asset_claimed_owner_address(e),           OWNER);
     assert_eq!(asset_state::asset_claimed_swept_earnings(e),  owner_share);
     assert_eq!(asset_state::asset_claimed_timestamp_ms(e),    777_000);
 
@@ -9307,7 +9307,7 @@ fun event_pin_tenure_expired_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::tenure_expired_escrow_id(e),         escrow_id);
     assert_eq!(asset_state::tenure_expired_tenant_cap_id(e),     object::id(&cap_t1));
-    assert_eq!(asset_state::tenure_expired_tenant(e),            OWNER);
+    assert_eq!(asset_state::tenure_expired_tenant_address(e),            OWNER);
     assert_eq!(asset_state::tenure_expired_phase_start_ms(e),    0);
     assert_eq!(asset_state::tenure_expired_owner_share(e),       owner_share);
     assert_eq!(asset_state::tenure_expired_protocol_fee(e),      fee);
@@ -9360,10 +9360,10 @@ fun event_pin_handover_completed_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::handover_completed_escrow_id(e),               escrow_id);
     assert_eq!(asset_state::handover_completed_displaced_cap_id(e),        object::id(&cap_t1));
-    assert_eq!(asset_state::handover_completed_displaced_tenant(e),        OWNER);
+    assert_eq!(asset_state::handover_completed_displaced_tenant_address(e),        OWNER);
     assert_eq!(asset_state::handover_completed_displaced_phase_start_ms(e),0);
     assert_eq!(asset_state::handover_completed_new_cap_id(e),              object::id(&cap_t2));
-    assert_eq!(asset_state::handover_completed_new_tenant_addr(e),         OWNER);
+    assert_eq!(asset_state::handover_completed_new_tenant_address(e),         OWNER);
     assert_eq!(asset_state::handover_completed_new_tenant_stake(e),        floor2);
     assert_eq!(asset_state::handover_completed_used_credit(e),             used_credit);
     assert_eq!(asset_state::handover_completed_owner_share(e),             owner_share_val);
@@ -9402,7 +9402,7 @@ fun event_pin_asset_borrowed_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::asset_borrowed_escrow_id(e),     escrow_id);
     assert_eq!(asset_state::asset_borrowed_tenant_cap_id(e), object::id(&cap_t1));
-    assert_eq!(asset_state::asset_borrowed_tenant(e),        OWNER);
+    assert_eq!(asset_state::asset_borrowed_tenant_address(e),        OWNER);
 
     escrow::return_asset(&mut escrow, asset_out, receipt);
     transfer::public_transfer(cap_t1, OWNER);
@@ -9433,7 +9433,7 @@ fun event_pin_asset_returned_all_fields() {
     let e = &evts[0];
     assert_eq!(asset_state::asset_returned_escrow_id(e),     escrow_id);
     assert_eq!(asset_state::asset_returned_tenant_cap_id(e), object::id(&cap_t1));
-    assert_eq!(asset_state::asset_returned_tenant(e),        OWNER);
+    assert_eq!(asset_state::asset_returned_tenant_address(e),        OWNER);
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);

@@ -312,7 +312,7 @@ public fun asset_id<Asset: key + store, CoinType>(
 public fun asset_type_name<Asset: key + store, CoinType>(
     _escrow: &Escrow<Asset, CoinType>,
 ): String {
-    string::from_ascii(type_name::with_defining_ids<Asset>().into_string())
+    string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()))
 }
 
 public fun coin_type_name<Asset: key + store, CoinType>(

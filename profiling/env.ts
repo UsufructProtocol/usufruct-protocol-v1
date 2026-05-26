@@ -26,10 +26,10 @@ export const FAUCET_URL = process.env.SUI_FAUCET ?? 'http://127.0.0.1:9123/gas';
 export const CLOCK_ID  = '0x0000000000000000000000000000000000000000000000000000000000000006';
 export const RANDOM_ID = '0x0000000000000000000000000000000000000000000000000000000000000008';
 
-export const RUNS = 10;
+export const RUNS = 5;
 
 // Default profiling config values
-export const FLOOR_PRICE_MIST    = 1_000_000n;  // 0.001 SUI
+export const FLOOR_PRICE_MIST    = 1_000n;       // 0.000001 SUI — minimal stake for testnet budget
 export const TENURE_DURATION_MS  = 3_600_000n;  // 1 hour
 export const HANDOVER_FLOOR_MS   = 600_000n;    // 10 minutes (must be < tenure)
 export const DELTA_PRICE_MIST    = 1n;          // minimal escalation

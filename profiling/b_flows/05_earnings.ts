@@ -100,15 +100,6 @@ async function main() {
   });
   steps.push(await measure(client, kp.owner, 'retire', 0, txRet));
 
-  const txApp = new Transaction();
-  txApp.setSender(d.owner.address);
-  txApp.moveCall({
-    target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
-    typeArguments: typeArgs,
-    arguments: [txApp.object(escrowId), clock(txApp)],
-  });
-  steps.push(await measure(client, kp.owner, 'apply_final', 0, txApp));
-
   const txC = new Transaction();
   txC.setSender(d.owner.address);
   const [asset, finalEarnings] = txC.moveCall({

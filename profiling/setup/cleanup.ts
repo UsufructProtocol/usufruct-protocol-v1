@@ -3,8 +3,9 @@
  * Retires + claims all abandoned profiling escrows on testnet.
  *
  * Finds every OwnerCap in the owner's wallet, reads the escrow state,
- * and for each idle escrow fires retire → apply_pending → claim_asset
- * in a single PTB. Rented escrows (tenure not yet expired) are skipped
+ * and for each idle escrow fires retire → claim_asset in a single PTB.
+ * (retire already calls apply_pending_transition_states internally.)
+ * Rented escrows (tenure not yet expired) are skipped
  * with a note — run again after 1 hour.
  *
  * Usage:
@@ -99,18 +100,11 @@ async function tryClaimEscrow(
   const cap     = tx.object(capId);
   const clock   = tx.object(CLOCK_ID);
 
-  // retire (marks retiring flag; no-op if already retired)
+  // retire — internally calls apply_pending_transition_states
   tx.moveCall({
     target:        `${pkg}::escrow::retire`,
     typeArguments: typeArgs,
     arguments:     [escrow, cap, clock],
-  });
-
-  // apply pending — fires Idle→Retired transition with immediate commitment
-  tx.moveCall({
-    target:        `${pkg}::escrow::apply_pending_transition_states`,
-    typeArguments: typeArgs,
-    arguments:     [escrow, clock],
   });
 
   // claim_asset — consumes escrow + cap, returns (Asset, Coin<SUI>)

@@ -99,16 +99,6 @@ async function main() {
   const rRet = await measure(client, kp.owner, 'retire', 0, txRet);
   steps.push(rRet);
 
-  const txA = new Transaction();
-  txA.setSender(d.owner.address);
-  txA.moveCall({
-    target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
-    typeArguments: typeArgs,
-    arguments: [txA.object(escrowId), clock(txA)],
-  });
-  const rA = await measure(client, kp.owner, 'apply_final', 0, txA);
-  steps.push(rA);
-
   const txC = new Transaction();
   txC.setSender(d.owner.address);
   const [asset, earnings] = txC.moveCall({

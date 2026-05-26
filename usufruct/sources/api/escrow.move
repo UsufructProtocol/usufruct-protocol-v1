@@ -5,8 +5,8 @@ module usufruct::escrow;
 
 // === Imports ===
 
-use std::string::String;
-use std::type_name::{Self, TypeName};
+use std::string::{Self, String};
+use std::type_name;
 use sui::{
     clock::Clock,
     coin::Coin,
@@ -311,14 +311,14 @@ public fun asset_id<Asset: key + store, CoinType>(
 
 public fun asset_type_name<Asset: key + store, CoinType>(
     _escrow: &Escrow<Asset, CoinType>,
-): TypeName {
-    type_name::with_defining_ids<Asset>()
+): String {
+    string::from_ascii(type_name::with_defining_ids<Asset>().into_string())
 }
 
 public fun coin_type_name<Asset: key + store, CoinType>(
     _escrow: &Escrow<Asset, CoinType>,
-): TypeName {
-    type_name::with_defining_ids<CoinType>()
+): String {
+    string::from_ascii(type_name::with_defining_ids<CoinType>().into_string())
 }
 
 public fun owner_cap_id<Asset: key + store, CoinType>(

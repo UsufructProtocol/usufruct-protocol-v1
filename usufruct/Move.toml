@@ -2,10 +2,15 @@
 name = "usufruct"
 version = "1.0.0"
 edition = "2024"
+published-at = "0xe4662b44e47ce58beabdd6d45a541346636fbbffec0c7d4feb18d3f30bd95aaf"
 license = "Apache-2.0"
 authors = ["Antonio Jiménez <build@0xkurious.xyz>"]
 
 [environments]
 localnet = "e62bf6b6"
+testnet = "4c78adac"
+
+[addresses]
+usufruct = "0xe4662b44e47ce58beabdd6d45a541346636fbbffec0c7d4feb18d3f30bd95aaf"
 
 [dependencies]

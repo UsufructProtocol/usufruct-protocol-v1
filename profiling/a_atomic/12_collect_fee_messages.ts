@@ -98,9 +98,9 @@ async function setupOneEscrow(
   const tx2 = new Transaction();
   tx2.setSender(d.tenant1.address);
   const [pay] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(FLOOR_PRICE_MIST)]);
-  const cyc   = tx2.moveCall({ target: `${pkg}::ensemble::tenures`, arguments: [tx2.pure.u64(1n)] });
+  const tenures   = tx2.moveCall({ target: `${pkg}::ensemble::tenures`, arguments: [tx2.pure.u64(1n)] });
   const cap   = tx2.moveCall({ target: `${pkg}::escrow::rent`, typeArguments: TA(d),
-    arguments: [tx2.object(escrowId), pay, cyc, clock(tx2)] });
+    arguments: [tx2.object(escrowId), pay, tenures, clock(tx2)] });
   tx2.transferObjects([cap], d.tenant1.address);
 
   const r2 = await client.signAndExecuteTransaction({
@@ -183,9 +183,9 @@ async function generateFeeMessages(
     const tx = new Transaction();
     tx.setSender(d.tenant1.address);
     const [pay] = tx.splitCoins(tx.gas, [tx.pure.u64(FLOOR_PRICE_MIST)]);
-    const cyc   = tx.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [tx.pure.u64(1n)] });
+    const tenures   = tx.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [tx.pure.u64(1n)] });
     const cap   = tx.moveCall({ target: `${d.usufructPackageId}::escrow::rent`, typeArguments: TA(d),
-      arguments: [tx.object(escrows[i]), pay, cyc, clock(tx)] });
+      arguments: [tx.object(escrows[i]), pay, tenures, clock(tx)] });
     tx.transferObjects([cap], d.tenant1.address);
     const r = await client.signAndExecuteTransaction({
       transaction: tx, signer: kp.tenant1, options: { showEffects: true },

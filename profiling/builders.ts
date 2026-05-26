@@ -153,13 +153,13 @@ export function buildRent(
   escrowId:    string,
 ): TransactionArgument {
   const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(FLOOR_PRICE_MIST)]);
-  const cycles    = tx.moveCall({
+  const tenures   = tx.moveCall({
     target: `${usufructPkg}::ensemble::tenures`,
     arguments: [tx.pure.u64(1n)],
   });
   return tx.moveCall({
     target: `${usufructPkg}::escrow::rent`,
     typeArguments: [`${dummyPkg}::dummy_asset::DummyAsset`, '0x2::sui::SUI'],
-    arguments: [tx.object(escrowId), payment, cycles, clock(tx)],
+    arguments: [tx.object(escrowId), payment, tenures, clock(tx)],
   });
 }

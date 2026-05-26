@@ -185,14 +185,14 @@ async function setupOccupiedEscrow(
   const tx2 = new Transaction();
   tx2.setSender(d.tenant1.address);
   const [payment] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(FLOOR_PRICE_MIST)]);
-  const cycles    = tx2.moveCall({
+  const tenures    = tx2.moveCall({
     target:    `${d.usufructPackageId}::ensemble::tenures`,
     arguments: [tx2.pure.u64(1n)],
   });
   const tenantCap = tx2.moveCall({
     target:        `${d.usufructPackageId}::escrow::rent`,
     typeArguments: ta,
-    arguments:     [tx2.object(escrowId), payment, cycles, clock(tx2)],
+    arguments:     [tx2.object(escrowId), payment, tenures, clock(tx2)],
   });
   tx2.transferObjects([tenantCap], d.tenant1.address);
   const r2 = await execSetup(client, tenant1, tx2);

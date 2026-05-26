@@ -76,11 +76,11 @@ async function setupWithEarnings(
   const tx2 = new Transaction();
   tx2.setSender(d.tenant1.address);
   const [payment] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(1_000_000n)]);
-  const cycles    = tx2.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [tx2.pure.u64(1n)] });
+  const tenures    = tx2.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [tx2.pure.u64(1n)] });
   const tenantCap = tx2.moveCall({
     target: `${d.usufructPackageId}::escrow::rent`,
     typeArguments: typeArgs,
-    arguments: [tx2.object(escrowObj.objectId), payment, cycles, clock(tx2)],
+    arguments: [tx2.object(escrowObj.objectId), payment, tenures, clock(tx2)],
   });
   tx2.transferObjects([tenantCap], d.tenant1.address);
   await execSetup(client, tenant1, tx2);

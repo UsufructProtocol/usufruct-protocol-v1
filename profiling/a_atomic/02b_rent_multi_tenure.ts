@@ -61,14 +61,14 @@ async function main() {
     tx.setSender(d.tenant1.address);
 
     const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(FLOOR_PRICE_MIST * BigInt(N))]);
-    const cycles = tx.moveCall({
+    const tenures = tx.moveCall({
       target: `${d.usufructPackageId}::ensemble::tenures`,
       arguments: [tx.pure.u64(N)],
     });
     const tenantCap = tx.moveCall({
       target: `${d.usufructPackageId}::escrow::rent`,
       typeArguments: ta,
-      arguments: [tx.object(escrowId), payment, cycles, clock(tx)],
+      arguments: [tx.object(escrowId), payment, tenures, clock(tx)],
     });
     tx.transferObjects([tenantCap], d.tenant1.address);
 

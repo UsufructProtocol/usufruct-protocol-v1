@@ -53,9 +53,9 @@ public(package) fun proj_tenure_extend_policy(policy: &TenureExtendPolicy): Stri
 public(package) fun new_single(): TenureExtendPolicy { TenureExtendPolicy::Single }
 public(package) fun new_multi():  TenureExtendPolicy { TenureExtendPolicy::Multi  }
 
-public(package) fun validate(policy: &TenureExtendPolicy, cycles: Tenures) {
+public(package) fun validate(policy: &TenureExtendPolicy, tenures: Tenures) {
     match (policy) {
-        TenureExtendPolicy::Single => assert!(tenures::proj_is_single(cycles), EMultiCycleNotAllowed),
+        TenureExtendPolicy::Single => assert!(tenures::proj_is_single(tenures), EMultiCycleNotAllowed),
         TenureExtendPolicy::Multi  => (),
     }
 }

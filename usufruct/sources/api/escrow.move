@@ -147,13 +147,13 @@ public fun update_config<Asset: key + store, CoinType>(
 public fun rent<Asset: key + store, CoinType>(
     escrow:  &mut Escrow<Asset, CoinType>,
     payment: Coin<CoinType>,
-    cycles:  Tenures,
+    tenures: Tenures,
     clock:   &Clock,
     ctx:     &mut TxContext,
 ): TenantCap {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (rs, new_core, cap) = asset_state::execute_rent(state, core, payment, cycles, clock, ctx);
+    let (rs, new_core, cap) = asset_state::execute_rent(state, core, payment, tenures, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, asset_state::renting_into_state(rs));
     cap

@@ -62,11 +62,11 @@ async function main() {
     const txRent = new Transaction();
     txRent.setSender(addrT);
     const [pay] = txRent.splitCoins(txRent.gas, [txRent.pure.u64(payAmt)]);
-    const cyc  = txRent.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [txRent.pure.u64(1n)] });
+    const tenures  = txRent.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [txRent.pure.u64(1n)] });
     const cap  = txRent.moveCall({
       target: `${d.usufructPackageId}::escrow::rent`,
       typeArguments: typeArgs,
-      arguments: [txRent.object(escrowId), pay, cyc, clock(txRent)],
+      arguments: [txRent.object(escrowId), pay, tenures, clock(txRent)],
     });
     txRent.transferObjects([cap], addrT);
     const rRent = await measure(client, kpT, `rent_${i}`, 0, txRent);

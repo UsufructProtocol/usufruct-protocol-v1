@@ -3,13 +3,16 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "setup:deploy": "tsx setup/deploy.ts",
-    "setup:fund":   "tsx setup/fund.ts",
-    "a":            "tsx run_all.ts --phase=a",
-    "b":            "tsx run_all.ts --phase=b",
-    "run":          "tsx run_all.ts",
-    "curves":       "tsx a_atomic/13_curve_shapes.ts",
-    "report":       "tsx report.ts"
+    "setup:deploy":       "tsx setup/deploy.ts",
+    "setup:fund":         "tsx setup/fund.ts",
+    "setup:testnet":      "SUI_RPC=https://fullnode.testnet.sui.io:443 SUI_FAUCET=https://faucet.testnet.sui.io/gas tsx setup/deploy-testnet.ts",
+    "setup:fund:testnet": "SUI_RPC=https://fullnode.testnet.sui.io:443 SUI_FAUCET=https://faucet.testnet.sui.io/gas tsx setup/fund.ts",
+    "a":                  "tsx run_all.ts --phase=a",
+    "b":                  "tsx run_all.ts --phase=b",
+    "run":                "tsx run_all.ts",
+    "run:testnet":        "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx run_all.ts",
+    "curves":             "tsx a_atomic/13_curve_shapes.ts",
+    "report":             "tsx report.ts"
   },
   "dependencies": {
     "@mysten/sui": "^1.0.0"

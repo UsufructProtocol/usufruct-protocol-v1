@@ -8,7 +8,7 @@ module usufruct::refund_state;
 use usufruct::{
     fee_message::{Self, FeeShare},
     owner_seat::{Self, OwnerSeat},
-    owner_earning::{Self, OwnerEarnings},
+    owner_earning::OwnerEarnings,
     protocol_fee_ref::FeeInboxIdentity,
     refund_address,
     tenant_seat::{Self, TenantSeat},
@@ -112,6 +112,7 @@ public(package) fun distribute<C>(
 
 #[test_only]
 public fun destroy_for_testing<C>(rs: RefundState<C>) {
+    use usufruct::owner_earning;
     match (rs) {
         RefundState::Nothing { fee_share, owner_earnings } => {
             fee_message::destroy_share_for_testing(fee_share);

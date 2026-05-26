@@ -54,7 +54,7 @@ async function getOwnerCaps(address: string, pkg: string): Promise<{ id: string;
     for (const obj of page.data) {
       const content = (obj.data?.content as any);
       if (!content?.fields) continue;
-      const escrowId = content.fields.escrow_id?.id ?? content.fields.escrow_id;
+      const escrowId = content.fields.escrow_identity?.fields?.id;
       if (escrowId) caps.push({ id: obj.data!.objectId, escrowId });
     }
 
@@ -134,16 +134,13 @@ async function tryClaimEscrow(
     const status = (result.effects as any)?.status?.status;
     if (status === 'success') return 'claimed';
     const err = (result.effects as any)?.status?.error ?? '';
-    if (err.includes('InvalidTransitionFromRented') || err.includes('EIsRented') || err.includes('rented')) {
-      return 'rented';
-    }
+    // ENotRetired = 12 — escrow is rented, tenure not yet expired
+    if (/MoveAbort.*},\s*12\)/.test(err)) return 'rented';
     console.error(`  error: ${err}`);
     return 'error';
   } catch (e: any) {
     const msg = e?.message ?? String(e);
-    if (msg.includes('rented') || msg.includes('Rented') || msg.includes('InvalidTransition')) {
-      return 'rented';
-    }
+    if (/MoveAbort.*},\s*12\)/.test(msg)) return 'rented';
     console.error(`  exception: ${msg.slice(0, 200)}`);
     return 'error';
   }

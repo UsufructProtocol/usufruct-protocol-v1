@@ -2,14 +2,20 @@
 /**
  * Retires + claims all abandoned profiling escrows on testnet.
  *
- * For each OwnerCap in the owner's wallet:
- *   1. Reads escrow state via getObject (is_retired view).
- *   2. If NOT retired: sends a `retire` tx and waits for confirmation.
- *   3. Sends a `claim_asset` tx.
+ * State machine for each OwnerCap:
  *
- * Two separate transactions are required because `claim_asset` receives the
- * escrow by value (at its chain-committed state). Chaining retire+claim in a
- * single PTB passes the pre-retire state to claim_asset, causing ENotRetired.
+ *   is_retired  → claim_asset
+ *   is_retiring → tenure_expiry_ms < now
+ *                   yes → claim_asset  (internal apply_pending fires
+ *                          Occupied{Retiring} → Waiting::Retired)
+ *                   no  → skip (rented, wait for expiry)
+ *   neither     → retire (calls apply_pending internally: if tenure expired
+ *                  it goes directly to Waiting::Retired; otherwise sets the
+ *                  Retiring flag) → if now retired: claim_asset, else skip
+ *
+ * Two separate transactions are required for retire → claim_asset because
+ * claim_asset receives the escrow by value at its chain-committed state.
+ * Chaining them in one PTB passes the pre-retire state, causing ENotRetired.
  *
  * Usage:
  *   SUI_RPC=https://fullnode.testnet.sui.io:443 npm run cleanup:testnet
@@ -88,8 +94,24 @@ async function viewBool(
 function makeViewers(sender: string, pkg: string, typeArgs: string[]) {
   const v = (fn: string, ids: string[]) => viewBool(sender, `${pkg}::escrow::${fn}`, typeArgs, ids);
   return {
-    isRetired: (escrowId: string) => v('is_retired', [escrowId]),
+    isRetired:  (escrowId: string) => v('is_retired',  [escrowId]),
+    isRetiring: (escrowId: string) => v('is_retiring', [escrowId]),
   };
+}
+
+// Returns the tenure expiry timestamp in ms, or null if not rented.
+async function getTenureExpiryMs(
+  sender:    string,
+  pkg:       string,
+  typeArgs:  string[],
+  escrowId:  string,
+): Promise<number | null> {
+  const tx = new Transaction();
+  tx.moveCall({ target: `${pkg}::escrow::tenure_expiry_ms`, typeArguments: typeArgs, arguments: [tx.object(escrowId)] });
+  const result = await client.devInspectTransactionBlock({ transactionBlock: tx, sender });
+  const bytes  = result.results?.[0]?.returnValues?.[0]?.[0];
+  if (!Array.isArray(bytes) || bytes[0] === 0) return null;
+  return Number(Buffer.from(bytes.slice(1, 9)).readBigUInt64LE(0));
 }
 
 async function tryClaimEscrow(
@@ -106,29 +128,36 @@ async function tryClaimEscrow(
   const view = makeViewers(ownerAddr, pkg, typeArgs);
 
   try {
-    // 1. If not already retired, call retire unconditionally.
-    //    retire calls apply_pending internally: if tenure has expired it fires
-    //    Occupied → Idle → Retired in one tx. If the tenure is still active it
-    //    sets the Retiring flag and returns, leaving the escrow in Occupied.
     if (!await view.isRetired(escrowId)) {
-      const txRet = new Transaction();
-      txRet.setSender(ownerAddr);
-      txRet.setGasBudget(20_000_000);
-      txRet.moveCall({
-        target:        `${pkg}::escrow::retire`,
-        typeArguments: typeArgs,
-        arguments:     [txRet.object(escrowId), txRet.object(capId), txRet.object(CLOCK_ID)],
-      });
-      const retResult = await signAndExecute(txRet, keypair);
-      if ((retResult.effects as any)?.status?.status !== 'success') {
-        const err = (retResult.effects as any)?.status?.error ?? 'unknown';
-        console.error(`  retire failed: ${err}`);
-        return 'error';
+      if (await view.isRetiring(escrowId)) {
+        // Retiring flag already set. Check if tenure has expired:
+        // claim_asset calls apply_pending internally, which fires
+        // Occupied{Retiring} → Waiting::Retired when tenure is past.
+        // If tenure is still active, skip — nothing to do yet.
+        const expiry = await getTenureExpiryMs(ownerAddr, pkg, typeArgs, escrowId);
+        if (expiry === null || expiry > Date.now()) return 'rented';
+        // Tenure expired — fall through to claim_asset.
+      } else {
+        // First time: call retire. Internally calls apply_pending — if tenure
+        // has expired the escrow goes directly to Waiting::Retired; otherwise
+        // the Retiring flag is set and the escrow auto-retires on expiry.
+        const txRet = new Transaction();
+        txRet.setSender(ownerAddr);
+        txRet.setGasBudget(20_000_000);
+        txRet.moveCall({
+          target:        `${pkg}::escrow::retire`,
+          typeArguments: typeArgs,
+          arguments:     [txRet.object(escrowId), txRet.object(capId), txRet.object(CLOCK_ID)],
+        });
+        const retResult = await signAndExecute(txRet, keypair);
+        if ((retResult.effects as any)?.status?.status !== 'success') {
+          const err = (retResult.effects as any)?.status?.error ?? 'unknown';
+          console.error(`  retire failed: ${err}`);
+          return 'error';
+        }
+        if (!await view.isRetired(escrowId)) return 'rented';
+        // Tenure expired and retire fired immediately — fall through to claim.
       }
-
-      // 2. After retire, check if now Waiting::Retired. If not, the tenure is
-      //    still active — the Retiring flag is set and it will auto-retire later.
-      if (!await view.isRetired(escrowId)) return 'rented';
     }
 
     // 3. claim_asset — sees committed Waiting::Retired state.

@@ -1486,7 +1486,7 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             if (proj_auction_is_firable(&auction, &cycle, now)) {
                 let boundary = auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start);
-                AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary))
+                AssetState::Waiting(do_auction_expiry(asset, auction, cycle, &mut core.ensemble, core.escrow_identity, boundary))
             } else {
                 AssetState::Waiting(WaitingState::Descent { asset, auction, cycle })
             }
@@ -1552,6 +1552,7 @@ fun do_install<Asset: key + store, CoinType>(
 fun do_auction_expiry<Asset: key + store>(
     asset:           asset_custody::AssetCustodyLocked<Asset>,
     auction:         AuctionTerms,
+    cycle:           CycleParams,
     ensemble:        &mut EnsembleSlot,
     escrow_identity: EscrowIdentity,
     boundary:        Timestamp,
@@ -1564,7 +1565,7 @@ fun do_auction_expiry<Asset: key + store>(
         ensemble.active = new_ensemble;
         resolve_and_emit_cycle_params(&ensemble.active, raw_escrow_id, phases::timestamp_ms(boundary))
     } else {
-        resolve_cycle_params(&ensemble.active)
+        cycle
     };
     WaitingState::Idle { asset, cycle }
 }
@@ -1856,8 +1857,8 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     boundary: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Waiting(WaitingState::Descent { asset, auction, .. }) =>
-            AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary)),
+        AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) =>
+            AssetState::Waiting(do_auction_expiry(asset, auction, cycle, &mut core.ensemble, core.escrow_identity, boundary)),
         AssetState::Waiting(_ws) => abort ENotRented,
         AssetState::Renting(_rs) => abort ENotRented,
     }

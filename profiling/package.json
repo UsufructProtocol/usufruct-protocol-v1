@@ -14,7 +14,8 @@
     "run:testnet":        "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx run_all.ts",
     "curves":             "tsx a_atomic/13_curve_shapes.ts",
     "report":             "tsx report.ts",
-    "cleanup:testnet":    "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx setup/cleanup.ts"
+    "cleanup:testnet":       "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx setup/cleanup.ts",
+    "collect:fees:testnet":  "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx setup/collect_fees.ts"
   },
   "dependencies": {
     "@mysten/sui": "^1.0.0"

@@ -173,6 +173,15 @@ public struct AuctionExpired has copy, drop {
     timestamp_ms:   u64,
 }
 
+public struct CycleParamsResolved has copy, drop {
+    escrow_id:    ID,
+    floor_mist:   u64,
+    ceiling_ms:   u64,
+    handover_ms:  u64,
+    descent_ms:   u64,
+    timestamp_ms: u64,
+}
+
 public struct AssetRetired has copy, drop {
     escrow_id:    ID,
     timestamp_ms: u64,
@@ -757,7 +766,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let asset_id           = object::id(&asset);
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
     policy_ensemble::emit_registration(&ensemble, escrow_identity);
-    let cycle = resolve_cycle_params(&ensemble);
+    let cycle = resolve_and_emit_cycle_params(&ensemble, raw_escrow_id, phases::timestamp_ms(integrated_at));
     let core = EscrowCore {
         owner:              owner_seat::new<CoinType>(owner_cap_identity),
         ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
@@ -894,7 +903,7 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
-            let cycle = resolve_cycle_params(&core.ensemble.active);
+            let cycle = resolve_and_emit_cycle_params(&core.ensemble.active, raw_escrow_id, phases::timestamp_ms(phases::now(clock)));
             AssetState::Waiting(WaitingState::Idle { asset, cycle })
         },
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
@@ -1109,6 +1118,19 @@ fun resolve_cycle_params(ensemble: &PolicyEnsemble): CycleParams {
     let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(ensemble), ceiling);
     let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(ensemble));
     CycleParams { floor, ceiling, handover, descent }
+}
+
+fun resolve_and_emit_cycle_params(ensemble: &PolicyEnsemble, escrow_id: ID, timestamp_ms: u64): CycleParams {
+    let cycle = resolve_cycle_params(ensemble);
+    event::emit(CycleParamsResolved {
+        escrow_id,
+        floor_mist:   monetary::price_mist(cycle.floor),
+        ceiling_ms:   phases::duration_ms(cycle.ceiling),
+        handover_ms:  phases::duration_ms(cycle.handover),
+        descent_ms:   phases::duration_ms(cycle.descent),
+        timestamp_ms,
+    });
+    cycle
 }
 
 fun assert_owner_cap_binds<CoinType>(cap: &OwnerCap, core: &EscrowCore<CoinType>) {
@@ -1534,13 +1556,16 @@ fun do_auction_expiry<Asset: key + store>(
     escrow_identity: EscrowIdentity,
     boundary:        Timestamp,
 ): WaitingState<Asset> {
-    event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
-    if (ensemble.pending.is_some()) {
+    let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
+    event::emit(AuctionExpired { escrow_id: raw_escrow_id, phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
+    let cycle = if (ensemble.pending.is_some()) {
         let new_ensemble = ensemble.pending.extract();
-        policy_ensemble::emit_ensemble_updated(&new_ensemble, escrow_identity::escrow_id(escrow_identity));
+        policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
         ensemble.active = new_ensemble;
+        resolve_and_emit_cycle_params(&ensemble.active, raw_escrow_id, phases::timestamp_ms(boundary))
+    } else {
+        resolve_cycle_params(&ensemble.active)
     };
-    let cycle = resolve_cycle_params(&ensemble.active);
     WaitingState::Idle { asset, cycle }
 }
 
@@ -2019,6 +2044,19 @@ public(package) fun auction_expired_phase_start_ms(e: &AuctionExpired): u64     
 public(package) fun auction_expired_last_acq_price(e: &AuctionExpired): u64     { e.last_acq_price }
 #[test_only]
 public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64        { e.timestamp_ms }
+
+#[test_only]
+public(package) fun cycle_params_resolved_escrow_id(e: &CycleParamsResolved): ID    { e.escrow_id }
+#[test_only]
+public(package) fun cycle_params_resolved_floor_mist(e: &CycleParamsResolved): u64  { e.floor_mist }
+#[test_only]
+public(package) fun cycle_params_resolved_ceiling_ms(e: &CycleParamsResolved): u64  { e.ceiling_ms }
+#[test_only]
+public(package) fun cycle_params_resolved_handover_ms(e: &CycleParamsResolved): u64 { e.handover_ms }
+#[test_only]
+public(package) fun cycle_params_resolved_descent_ms(e: &CycleParamsResolved): u64  { e.descent_ms }
+#[test_only]
+public(package) fun cycle_params_resolved_timestamp_ms(e: &CycleParamsResolved): u64 { e.timestamp_ms }
 
 #[test_only]
 public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID               { e.escrow_id }

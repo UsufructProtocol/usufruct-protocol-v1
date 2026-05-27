@@ -286,6 +286,14 @@ AuctionExpired {
 Emitted when the dutch auction window elapses with no bid; escrow returns to `Idle`.
 
 ```
+CycleParamsResolved {
+    escrow_id: ID, floor_mist: u64, ceiling_ms: u64,
+    handover_ms: u64, descent_ms: u64, timestamp_ms: u64
+}
+```
+Emitted by `resolve_and_emit_cycle_params` when the engine adopts a new active ensemble — at `execute_integrate`, at `execute_update_config` when applied immediately (Idle), and at `do_auction_expiry` when a pending ensemble is applied. Carries the resolved parameters the engine operates on (a pure function of the active ensemble), so consumers need not replay the policy resolution. Not emitted on the auction-expiry recompute with no pending ensemble, since the parameters are unchanged there.
+
+```
 AssetRetired { escrow_id: ID, timestamp_ms: u64 }
 ```
 Emitted when the escrow enters `Retired` — both on immediate retire and on tenure-expiry-with-retire-flag.

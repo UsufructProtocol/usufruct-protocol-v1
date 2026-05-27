@@ -32,6 +32,7 @@ use usufruct::{
         RetireFlagSet,
         AssetBorrowed,
         AssetReturned,
+        CycleParamsResolved,
     },
 
     policy_ensemble::{Self, EnsembleUpdated, EnsembleUpdateScheduled},
@@ -8990,6 +8991,69 @@ fun event_pin_auction_expired_all_fields() {
     assert_eq!(asset_state::auction_expired_phase_start_ms(e),  phase_start_ms);
     assert_eq!(asset_state::auction_expired_last_acq_price(e),  last_acq);
     assert_eq!(asset_state::auction_expired_timestamp_ms(e),    boundary_ms);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    sc.end();
+}
+
+// ─── CycleParamsResolved payload pin + change-only semantics ─────────────────
+
+#[test]
+fun event_pin_cycle_params_resolved_all_fields() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+
+    // c=1 Fixed handover, h=1 Fixed descent: every resolved field is a known const.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let fee_ref  = sc.take_immutable<ProtocolFeeRef>();
+    let mut clk  = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, 42_000);
+    let asset    = mk_demo_asset(sc.ctx());
+
+    let cap = escrow::integrate<DemoAsset, SUI>(
+        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+    );
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
+
+    let evts = event::events_by_type<CycleParamsResolved>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::cycle_params_resolved_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::cycle_params_resolved_floor_mist(e),   escrow_corpus::min_rent_price_const());
+    assert_eq!(asset_state::cycle_params_resolved_ceiling_ms(e),   escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::cycle_params_resolved_handover_ms(e),  escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(asset_state::cycle_params_resolved_descent_ms(e),   escrow_corpus::descent_window_h1_const());
+    assert_eq!(asset_state::cycle_params_resolved_timestamp_ms(e), 42_000);
+
+    test_scenario::return_immutable(fee_ref);
+    transfer::public_transfer(cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Auction expiry with no pending ensemble recomputes the same CycleParams, so
+/// it must NOT re-emit CycleParamsResolved — the event marks adoption of new
+/// engine parameters, not every cycle boundary.
+#[test]
+fun cycle_params_resolved_not_emitted_on_unchanged_auction_expiry() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // no pending config
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+
+    let last_acq       = escrow_corpus::min_rent_price_const() * 2;
+    let phase_start_ms = escrow_corpus::tenure_ceiling_const();
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_descent_for_testing(&mut escrow, STAKE_T1, 0, last_acq, phase_start_ms);
+
+    let boundary_ms = phase_start_ms + escrow_corpus::descent_window_h1_const();
+    escrow::fire_do_auction_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms));
+
+    // No pending ensemble adopted in this tx → no CycleParamsResolved emitted.
+    assert_eq!(event::events_by_type<CycleParamsResolved>().length(), 0);
+    assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);

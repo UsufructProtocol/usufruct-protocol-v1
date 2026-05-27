@@ -48,6 +48,9 @@ Events are grouped by lifecycle phase. All amounts are in MIST (u64). All timest
 | `PolicyEnsembleRegistered` | First `integrate` call | Full 23-field snapshot of all policies + `escrow_id` |
 | `EnsembleUpdated` | Policy change applied immediately (escrow was Idle) | Same 23-field snapshot |
 | `EnsembleUpdateScheduled` | Policy change queued (escrow was active) | Same 23-field snapshot |
+| `CycleParamsResolved` | Engine adopts new operating parameters (integrate, immediate update, or auction expiry that applies a pending ensemble) | `escrow_id`, `floor_mist`, `ceiling_ms`, `handover_ms`, `descent_ms`, `timestamp_ms` |
+
+`CycleParamsResolved` carries the *resolved* parameters the engine actually operates on — the floor price, tenure ceiling, handover (protection) window, and descent window — as opposed to the policy snapshot, which carries the *inputs*. They are a pure function of the active ensemble, so an indexer could recompute them by joining the latest snapshot and replaying the resolution; emitting them directly avoids that async temporal join and pins the values the engine used as ground truth. It fires only when a new ensemble is adopted, **not** on the no-op recompute at an auction expiry with no pending ensemble (the parameters are unchanged there).
 
 The 23 fields include: `rest_price_policy`, `rest_price`, `tenure_duration_policy`, `tenure_duration_ms`, `tenure_extend_policy`, `handover_policy`, `handover_floor_ms`, `auction_window_policy`, `auction_window_ceiling_ms`, `credit_shape_policy`, `credit_alpha_num/den/abs/neg`, `auction_shape_policy`, `auction_alpha_num/den/abs/neg`, `price_escalation_policy`, `price_escalation_delta`, `price_escalation_bps`.
 

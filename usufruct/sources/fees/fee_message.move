@@ -5,6 +5,8 @@ module usufruct::fee_message;
 
 // === Imports ===
 
+use std::string::{Self, String};
+use std::type_name;
 use sui::{
     balance::{Self, Balance},
     coin::Coin,
@@ -42,6 +44,7 @@ public struct FeeMessageSent<phantom CoinType> has copy, drop {
     fee_inbox_id:   ID,
     escrow_id:      ID,
     amount:         u64,
+    coin_type:      String,
 }
 
 public struct FeeMessageCollected<phantom CoinType> has copy, drop {
@@ -50,6 +53,7 @@ public struct FeeMessageCollected<phantom CoinType> has copy, drop {
     escrow_id:      ID,
     amount:         u64,
     collector:      address,
+    coin_type:      String,
 }
 
 // === Method Aliases ===
@@ -101,7 +105,7 @@ public(package) fun post<C>(
     };
     let fee_message_id = object::uid_to_inner(&msg.id);
     transfer::transfer(msg, fee_inbox_id.to_address());
-    event::emit(FeeMessageSent<C> { fee_message_id, fee_inbox_id, escrow_id, amount });
+    event::emit(FeeMessageSent<C> { fee_message_id, fee_inbox_id, escrow_id, amount, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
 }
 
 // === Private Functions ===
@@ -124,7 +128,7 @@ fun consume_message<C>(
     let fee_inbox_id   = protocol_fee_ref::proj_id(fee_inbox_identity);
     let escrow_id      = escrow_identity::escrow_id(escrow_identity);
     id.delete();
-    event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount, collector });
+    event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount, collector, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
     balance
 }
 
@@ -163,6 +167,8 @@ public fun sent_fee_inbox_id<C>(e: &FeeMessageSent<C>): ID { e.fee_inbox_id }
 public fun sent_escrow_id<C>(e: &FeeMessageSent<C>): ID { e.escrow_id }
 #[test_only]
 public fun sent_amount<C>(e: &FeeMessageSent<C>): u64 { e.amount }
+#[test_only]
+public fun sent_coin_type<C>(e: &FeeMessageSent<C>): String { e.coin_type }
 
 #[test_only]
 public fun collected_fee_message_id<C>(e: &FeeMessageCollected<C>): ID { e.fee_message_id }
@@ -174,4 +180,6 @@ public fun collected_escrow_id<C>(e: &FeeMessageCollected<C>): ID { e.escrow_id 
 public fun collected_amount<C>(e: &FeeMessageCollected<C>): u64 { e.amount }
 #[test_only]
 public fun collected_collector<C>(e: &FeeMessageCollected<C>): address { e.collector }
+#[test_only]
+public fun collected_coin_type<C>(e: &FeeMessageCollected<C>): String { e.coin_type }
 

@@ -52,9 +52,10 @@ FeeMessageSent<CoinType> {
     fee_inbox_id:   ID,
     escrow_id:      ID,
     amount:         u64,
+    coin_type:      String,
 }
 ```
-Emitted when a `FeeShare` is posted to the inbox as a `FeeMessage`.
+Emitted when a `FeeShare` is posted to the inbox as a `FeeMessage`. `coin_type` is the fully-qualified type string of `CoinType`, redundant with the generic event type but kept so the event is self-describing by field.
 
 ```
 FeeMessageCollected<CoinType> {
@@ -63,6 +64,7 @@ FeeMessageCollected<CoinType> {
     escrow_id:      ID,
     amount:         u64,
     collector:      address,
+    coin_type:      String,
 }
 ```
-Emitted once per message when `collect_fee_messages` drains it. `collector` is the transaction sender.
+Emitted once per message when `collect_fee_messages` drains it. `collector` is the transaction sender; `coin_type` mirrors `FeeMessageSent`.

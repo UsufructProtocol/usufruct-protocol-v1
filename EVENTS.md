@@ -84,10 +84,10 @@ The schedule fields that open a tenancy — emitted on both `RentStarted` and `H
 | Event | Trigger | Key fields |
 |-------|---------|------------|
 | `EarningsWithdrawn` | Owner withdraws accumulated earnings | `escrow_id`, `owner_cap_id`, `owner_address`, `amount`, `timestamp_ms` |
-| `FeeMessageSent<CoinType>` | Protocol fee posted to inbox after a transition | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount` |
-| `FeeMessageCollected<CoinType>` | Admin collects fee message | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `collector` |
+| `FeeMessageSent<CoinType>` | Protocol fee posted to inbox after a transition | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `coin_type` |
+| `FeeMessageCollected<CoinType>` | Admin collects fee message | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `collector`, `coin_type` |
 
-`FeeMessageSent` and `FeeMessageCollected` are generic over `CoinType`. The coin type is encoded in the Sui event type name, not as a field, so filtering by currency is done by event type filter rather than by field.
+`FeeMessageSent` and `FeeMessageCollected` are generic over `CoinType`. The coin type is available two ways: encoded in the Sui event type name (so it can be filtered by event type) and as the explicit `coin_type` field (the fully-qualified type string), which keeps every event self-describing by field without parsing the generic type argument — consistent with `AssetIntegrated.coin_type`.
 
 ### Cap lifecycle
 

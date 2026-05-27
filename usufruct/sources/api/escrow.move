@@ -14,7 +14,7 @@ use sui::{
 use usufruct::{
     policy_ensemble::{Self, PolicyEnsemble},
     curve_shape_policy::{Self as curve, CurveShapePolicy},
-    tenures::Tenures,
+    tenures::{Self, Tenures},
     auction_window_policy,
     asset_state::{Self, EscrowCore, AssetState, AssetReceipt},
     handover_policy,
@@ -363,6 +363,18 @@ public fun pending_stake<Asset: key + store, CoinType>(
     asset_state::proj_pending_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
+public fun current_committed_tenures<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    asset_state::proj_current_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
+}
+
+public fun pending_committed_tenures<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    asset_state::proj_pending_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
+}
+
 public fun phase_start_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
@@ -627,6 +639,12 @@ public fun has_pending_config_update<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     asset_state::proj_pending_config(read_core(escrow)).is_some()
+}
+
+public fun pending_config<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<PolicyEnsemble> {
+    asset_state::proj_pending_config(read_core(escrow))
 }
 
 public fun protocol_fee_bps(): u64 { asset_state::protocol_fee_bps() }

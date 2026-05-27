@@ -507,6 +507,26 @@ public(package) fun proj_handover_expiry<Asset: key + store, CoinType>(
     }
 }
 
+public(package) fun proj_current_committed_tenures<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): Option<Tenures> {
+    match (s) {
+        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
+            option::some(terms.schedule.committed_tenures),
+        _ => option::none(),
+    }
+}
+
+public(package) fun proj_pending_committed_tenures<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): Option<Tenures> {
+    match (s) {
+        AssetState::Renting(RentingState::Demand { bid, .. }) =>
+            option::some(bid.handover.tenures),
+        _ => option::none(),
+    }
+}
+
 public(package) fun proj_resolved_ceiling<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Duration> {

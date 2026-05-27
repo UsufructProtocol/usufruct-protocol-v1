@@ -9591,3 +9591,72 @@ fun event_pin_asset_returned_all_fields() {
     clock::destroy_for_testing(clk);
     sc.end();
 }
+
+// ─── §sync views — committed_tenures and pending_config ───────────────────────
+
+/// current_committed_tenures reflects the occupant, pending_committed_tenures the
+/// bidder; both are none outside their phases. Distinct values (3 vs 2) prove each
+/// reads its own schedule slot.
+#[test]
+fun committed_tenures_views_reflect_current_and_pending() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let floor = escrow_corpus::min_rent_price_const();
+
+    // Idle: no occupant, no bidder.
+    assert!(escrow::current_committed_tenures(&escrow).is_none(), 0);
+    assert!(escrow::pending_committed_tenures(&escrow).is_none(), 1);
+
+    // T1 rents 3 tenures → Occupied.
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
+    assert_eq!(*escrow::current_committed_tenures(&escrow).borrow(), 3);
+    assert!(escrow::pending_committed_tenures(&escrow).is_none(), 2);
+
+    // T2 bids 2 tenures → Demand.
+    sc.next_tx(TENANT_ADDR_2);
+    let bid_floor = escrow::compute_floor_price(&escrow, &clk);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
+    assert_eq!(*escrow::current_committed_tenures(&escrow).borrow(), 3); // occupant unchanged
+    assert_eq!(*escrow::pending_committed_tenures(&escrow).borrow(), 2); // bidder's commitment
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// pending_config exposes the full scheduled ensemble, not just a bool.
+#[test]
+fun pending_config_view_exposes_scheduled_ensemble() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    assert!(escrow::pending_config(&escrow).is_none(), 0);
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_descent_for_testing(
+        &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
+        escrow_corpus::min_rent_price_const() * 2, 0,
+    );
+
+    let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+
+    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::pending_config(&escrow).is_some(), 2);
+    assert!(*escrow::pending_config(&escrow).borrow() == new_ensemble, 3);
+    assert!(escrow::policy_ensemble(&escrow) != new_ensemble, 4); // active still old
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}

@@ -270,6 +270,7 @@ public struct TenureExpired has copy, drop {
 
 public struct RetireFlagSet has copy, drop {
     escrow_id:     ID,
+    owner_cap_id:  ID,
     owner_address: address,
     timestamp_ms:  u64,
 }
@@ -278,6 +279,7 @@ public struct AssetBorrowed has copy, drop {
     escrow_id:      ID,
     tenant_cap_id:  ID,
     tenant_address: address,
+    timestamp_ms:   u64,
 }
 
 public struct AssetReturned has copy, drop {
@@ -849,19 +851,20 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let escrow_identity = core.escrow_identity;
     let raw_escrow_id   = escrow_identity::escrow_id(escrow_identity);
     let now_ms          = phases::timestamp_ms(now);
+    let owner_cap_id    = object::id(owner_cap);
     let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately(asset, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately(asset, owner_cap_id, escrow_identity, now, ctx)),
         AssetState::Waiting(WaitingState::Descent { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately(asset, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately(asset, owner_cap_id, escrow_identity, now, ctx)),
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
-            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
+            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, current, retire } = terms;
             AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
-            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
+            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, current, retire } = terms;
             AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, bid, cycle })
         },
@@ -924,6 +927,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
+    let now_ms        = phases::timestamp_ms(phases::now(clock));
     match (s) {
         AssetState::Renting(RentingState::Occupied { mut asset, terms, cycle }) => {
             assert_borrow_authorized(cap_identity,
@@ -936,7 +940,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Occupied { asset, terms, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, timestamp_ms: now_ms });
             (u, receipt, core)
         },
         AssetState::Renting(RentingState::Demand { mut asset, terms, bid, cycle }) => {
@@ -950,7 +954,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Demand { asset, terms, bid, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, timestamp_ms: now_ms });
             (u, receipt, core)
         },
         _s => abort EStaleTenantCap,
@@ -1525,13 +1529,14 @@ fun do_auction_expiry<Asset: key + store>(
 
 fun do_retire_immediately<Asset: key + store>(
     asset:           asset_custody::AssetCustodyLocked<Asset>,
+    owner_cap_id:    ID,
     escrow_identity: EscrowIdentity,
     now:             Timestamp,
     ctx:             &TxContext,
 ): WaitingState<Asset> {
     let timestamp_ms  = phases::timestamp_ms(now);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
-    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_address: ctx.sender(), timestamp_ms });
+    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms });
     event::emit(AssetRetired { escrow_id: raw_escrow_id, timestamp_ms });
     WaitingState::Retired { asset }
 }
@@ -1719,6 +1724,8 @@ public(package) fun asset_borrowed_escrow_id(e: &AssetBorrowed): ID             
 public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID              { e.tenant_cap_id }
 #[test_only]
 public(package) fun asset_borrowed_tenant_address(e: &AssetBorrowed): address       { e.tenant_address }
+#[test_only]
+public(package) fun asset_borrowed_timestamp_ms(e: &AssetBorrowed): u64              { e.timestamp_ms }
 
 #[test_only]
 public(package) fun asset_returned_escrow_id(e: &AssetReturned): ID                 { e.escrow_id }
@@ -1974,6 +1981,8 @@ public(package) fun asset_retired_timestamp_ms(e: &AssetRetired): u64           
 
 #[test_only]
 public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID            { e.escrow_id }
+#[test_only]
+public(package) fun retire_flag_set_owner_cap_id(e: &RetireFlagSet): ID         { e.owner_cap_id }
 #[test_only]
 public(package) fun retire_flag_set_owner_address(e: &RetireFlagSet): address   { e.owner_address }
 #[test_only]

@@ -295,7 +295,7 @@ AssetClaimed {
 Emitted on `execute_claim`.
 
 ```
-AssetBorrowed { escrow_id: ID, tenant_cap_id: ID, tenant: address }
+AssetBorrowed { escrow_id: ID, tenant_cap_id: ID, tenant: address, timestamp_ms: u64 }
 ```
 Emitted when a tenant extracts the asset via `execute_borrow`.
 
@@ -331,6 +331,6 @@ CommitmentExtended {
 Emitted on `execute_extend_commitment`.
 
 ```
-RetireFlagSet { escrow_id: ID, owner: address, timestamp_ms: u64 }
+RetireFlagSet { escrow_id: ID, owner_cap_id: ID, owner: address, timestamp_ms: u64 }
 ```
 Emitted whenever the owner signals retirement intent — both when the flag is set on an occupied/demand escrow (deferred retire) and when `do_retire_immediately` fires from Idle or AtDutch (immediate retire). Always paired with `AssetRetired` in the immediate case.

@@ -9037,6 +9037,7 @@ fun event_pin_retire_flag_set_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::retire_flag_set_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::retire_flag_set_owner_cap_id(e), object::id(&owner_cap));
     assert_eq!(asset_state::retire_flag_set_owner_address(e),        OWNER);
     assert_eq!(asset_state::retire_flag_set_timestamp_ms(e), 0);
 
@@ -9407,6 +9408,7 @@ fun event_pin_asset_borrowed_all_fields() {
     assert_eq!(asset_state::asset_borrowed_escrow_id(e),     escrow_id);
     assert_eq!(asset_state::asset_borrowed_tenant_cap_id(e), object::id(&cap_t1));
     assert_eq!(asset_state::asset_borrowed_tenant_address(e),        OWNER);
+    assert_eq!(asset_state::asset_borrowed_timestamp_ms(e),  0);
 
     escrow::return_asset(&mut escrow, asset_out, receipt);
     transfer::public_transfer(cap_t1, OWNER);

@@ -757,10 +757,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let asset_id           = object::id(&asset);
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
     policy_ensemble::emit_registration(&ensemble, escrow_identity);
-    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble));
-    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble));
-    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble), ceiling);
-    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble));
+    let cycle = resolve_cycle_params(&ensemble);
     let core = EscrowCore {
         owner:              owner_seat::new<CoinType>(owner_cap_identity),
         ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
@@ -771,7 +768,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     };
     let state = AssetState::Waiting(WaitingState::Idle {
         asset: asset_custody::lock(asset),
-        cycle: CycleParams { floor, ceiling, handover, descent },
+        cycle,
     });
     event::emit(AssetIntegrated {
         escrow_id:        raw_escrow_id,
@@ -897,11 +894,8 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
-            let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&core.ensemble.active));
-            let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&core.ensemble.active));
-            let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&core.ensemble.active), ceiling);
-            let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&core.ensemble.active));
-            AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
+            let cycle = resolve_cycle_params(&core.ensemble.active);
+            AssetState::Waiting(WaitingState::Idle { asset, cycle })
         },
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, raw_escrow_id);
@@ -1108,6 +1102,14 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
 }
 
 // === Private Functions ===
+
+fun resolve_cycle_params(ensemble: &PolicyEnsemble): CycleParams {
+    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(ensemble));
+    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(ensemble));
+    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(ensemble), ceiling);
+    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(ensemble));
+    CycleParams { floor, ceiling, handover, descent }
+}
 
 fun assert_owner_cap_binds<CoinType>(cap: &OwnerCap, core: &EscrowCore<CoinType>) {
     assert!(owner_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowOwnerCap)
@@ -1538,11 +1540,8 @@ fun do_auction_expiry<Asset: key + store>(
         policy_ensemble::emit_ensemble_updated(&new_ensemble, escrow_identity::escrow_id(escrow_identity));
         ensemble.active = new_ensemble;
     };
-    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble.active));
-    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble.active));
-    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble.active), ceiling);
-    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble.active));
-    WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
+    let cycle = resolve_cycle_params(&ensemble.active);
+    WaitingState::Idle { asset, cycle }
 }
 
 fun do_retire_immediately<Asset: key + store>(
@@ -1633,6 +1632,19 @@ fun descending_floor_price(
 }
 
 // === Test Functions ===
+
+#[test_only]
+public(package) fun resolve_cycle_params_for_testing(ensemble: &PolicyEnsemble): CycleParams {
+    resolve_cycle_params(ensemble)
+}
+#[test_only]
+public(package) fun cycle_params_floor_mist(c: &CycleParams): u64 { monetary::price_mist(c.floor) }
+#[test_only]
+public(package) fun cycle_params_ceiling_ms(c: &CycleParams): u64 { phases::duration_ms(c.ceiling) }
+#[test_only]
+public(package) fun cycle_params_handover_ms(c: &CycleParams): u64 { phases::duration_ms(c.handover) }
+#[test_only]
+public(package) fun cycle_params_descent_ms(c: &CycleParams): u64 { phases::duration_ms(c.descent) }
 
 #[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {

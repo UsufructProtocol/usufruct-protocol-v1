@@ -30,8 +30,8 @@ export const RUNS = 5;
 
 // Default profiling config values
 export const FLOOR_PRICE_MIST    = 1_000n;       // 0.000001 SUI — minimal stake for testnet budget
-export const TENURE_DURATION_MS  = 3_600_000n;  // 1 hour
-export const HANDOVER_FLOOR_MS   = 600_000n;    // 10 minutes (must be < tenure)
+export const TENURE_DURATION_MS  = 60_000n;     // 1 minute (testnet: keeps N×tenure lock manageable)
+export const HANDOVER_FLOOR_MS   = 30_000n;     // 30 seconds (must be < tenure)
 export const DELTA_PRICE_MIST    = 1n;          // minimal escalation
 
 export function loadDeployment(): Deployment {

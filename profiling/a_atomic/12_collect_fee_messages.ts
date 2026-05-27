@@ -235,6 +235,17 @@ async function getFeeMessageRefs(
 }
 
 // ── Collect N FeeMessages (batched at MAX_BATCH per PTB) ──────────────────
+//
+// ProtocolFeeInbox is owned by whoever deployed the package. On localnet the
+// deployer is the same as the profiling owner; on testnet they differ.
+// Pass DEPLOYER_SECRET_KEY + DEPLOYER_ADDRESS env vars for the testnet case.
+
+function loadCollectorKeypair(d: D): { keypair: Ed25519Keypair; address: string } {
+  const sk  = process.env.DEPLOYER_SECRET_KEY;
+  const addr = process.env.DEPLOYER_ADDRESS;
+  if (sk && addr) return { keypair: Ed25519Keypair.fromSecretKey(sk), address: addr };
+  return { keypair: Ed25519Keypair.fromSecretKey(d.owner.secretKey), address: d.owner.address };
+}
 
 async function measureCollect(
   client: SuiClient, kp: KP, d: D, n: number,
@@ -246,25 +257,26 @@ async function measureCollect(
   const chunks = [] as Ref[][];
   for (let i = 0; i < n; i += MAX_BATCH) chunks.push(batch.slice(i, i + MAX_BATCH));
 
-  const feeType      = `${d.usufructPackageId}::fee_message::FeeMessage<${SUI}>`;
+  const feeType       = `${d.usufructPackageId}::fee_message::FeeMessage<${SUI}>`;
   const receivingType = `0x2::transfer::Receiving<${feeType}>`;
+  const { keypair: collector, address: collectorAddr } = loadCollectorKeypair(d);
 
   let totalNet = 0n;
   let numCalls = 0;
 
   for (const chunk of chunks) {
     const tx = new Transaction();
-    tx.setSender(d.owner.address);
-    const tickets  = chunk.map(r => tx.receivingRef({ objectId: r.objectId, version: r.version, digest: r.digest }));
+    tx.setSender(collectorAddr);
+    const tickets   = chunk.map(r => tx.receivingRef({ objectId: r.objectId, version: r.version, digest: r.digest }));
     const ticketVec = tx.makeMoveVec({ type: receivingType, elements: tickets });
     const coin = tx.moveCall({
       target: `${d.usufructPackageId}::fee_inbox::collect_fee_messages`,
       typeArguments: [SUI],
       arguments: [tx.object(d.protocolFeeInboxId), ticketVec],
     });
-    tx.transferObjects([coin], d.owner.address);
+    tx.transferObjects([coin], collectorAddr);
 
-    const rec = await measure(client, kp.owner, `collect_${n}_c${numCalls}`, numCalls, tx);
+    const rec = await measure(client, collector, `collect_${n}_c${numCalls}`, numCalls, tx);
     totalNet += rec.net;
     numCalls++;
   }

@@ -9,6 +9,8 @@
 module usufruct::fee_message_tests;
 
 use std::unit_test::assert_eq;
+use std::string;
+use std::type_name;
 use sui::{
     balance,
     coin,
@@ -117,6 +119,7 @@ fun n4_post_forwards_share_fields_to_event() {
         assert_eq!(sent.length(), 1);
         assert_eq!(fee_message::sent_escrow_id(&sent[0]), escrow_id);
         assert_eq!(fee_message::sent_amount(&sent[0]),    99);
+        assert_eq!(fee_message::sent_coin_type(&sent[0]), string::from_ascii(type_name::into_string(type_name::with_defining_ids<sui::sui::SUI>())));
     };
     scenario.end();
 }
@@ -304,6 +307,7 @@ fun c1_consume_message_returns_balance_and_emits_collected_event() {
         assert_eq!(fee_message::collected_escrow_id(&coll[0]),      fake_escrow_id());
         assert_eq!(fee_message::collected_amount(&coll[0]),          500);
         assert_eq!(fee_message::collected_collector(&coll[0]),       ADMIN);
+        assert_eq!(fee_message::collected_coin_type(&coll[0]),       string::from_ascii(type_name::into_string(type_name::with_defining_ids<sui::sui::SUI>())));
 
         scenario.return_to_sender(inbox);
     };

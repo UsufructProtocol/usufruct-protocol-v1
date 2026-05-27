@@ -4,6 +4,7 @@
 #[test_only]
 module usufruct::asset_state_tests;
 
+use std::unit_test::assert_eq;
 use sui::{
     balance,
     clock,
@@ -487,5 +488,43 @@ fun return_with_swapped_asset_aborts() {
     transfer::public_transfer(cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
+}
+
+// ─── resolve_cycle_params ─────────────────────────────────────────────────────
+//
+// Each field must resolve from its own policy slot, and `handover` must receive
+// the resolved `ceiling` (the one cross-field dependency in the resolution).
+
+#[test]
+fun resolve_cycle_params_maps_each_policy() {
+    // c=1 Fixed handover, h=1 Fixed descent: every field resolves to a known const.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let cycle    = asset_state::resolve_cycle_params_for_testing(&ensemble);
+
+    assert_eq!(asset_state::cycle_params_floor_mist(&cycle),  escrow_corpus::min_rent_price_const());
+    assert_eq!(asset_state::cycle_params_ceiling_ms(&cycle),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::cycle_params_handover_ms(&cycle), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(asset_state::cycle_params_descent_ms(&cycle),  escrow_corpus::descent_window_h1_const());
+}
+
+#[test]
+fun resolve_cycle_params_threads_ceiling_into_handover() {
+    // c=2 FullTenure: handover must equal the resolved ceiling, proving ceiling
+    // is passed into handover_policy::compute_duration rather than computed blind.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 1, 0));
+    let cycle    = asset_state::resolve_cycle_params_for_testing(&ensemble);
+
+    assert_eq!(asset_state::cycle_params_handover_ms(&cycle), asset_state::cycle_params_ceiling_ms(&cycle));
+    assert_eq!(asset_state::cycle_params_handover_ms(&cycle), escrow_corpus::tenure_ceiling_const());
+}
+
+#[test]
+fun resolve_cycle_params_off_policies_resolve_to_zero() {
+    // c=0 handover Off, h=0 descent Off → both resolve to zero duration.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let cycle    = asset_state::resolve_cycle_params_for_testing(&ensemble);
+
+    assert_eq!(asset_state::cycle_params_handover_ms(&cycle), 0);
+    assert_eq!(asset_state::cycle_params_descent_ms(&cycle),  0);
 }
 

@@ -36,10 +36,10 @@ Events are grouped by lifecycle phase. All amounts are in MIST (u64). All timest
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `AssetIntegrated<Asset, CoinType>` | Owner calls `integrate` | `escrow_id`, `owner_cap_id`, `owner`, `asset_id`, `fee_inbox_id`, `integrated_at_ms` |
+| `AssetIntegrated<Asset, CoinType>` | Owner calls `integrate` | `escrow_id`, `owner_cap_id`, `owner_address`, `asset_id`, `fee_inbox_id`, `integrated_at_ms`, `asset_type`, `coin_type` |
 | `AssetRetired` | Asset leaves protocol (retire path or claim) | `escrow_id`, `timestamp_ms` |
-| `AssetClaimed` | Owner reclaims asset after retirement | `escrow_id`, `owner_cap_id`, `owner`, `swept_earnings`, `timestamp_ms` |
-| `RetireFlagSet` | Owner signals intent to retire | `escrow_id`, `owner`, `timestamp_ms` |
+| `AssetClaimed` | Owner reclaims asset after retirement | `escrow_id`, `owner_cap_id`, `owner_address`, `swept_earnings`, `timestamp_ms` |
+| `RetireFlagSet` | Owner signals intent to retire | `escrow_id`, `owner_cap_id`, `owner_address`, `timestamp_ms` |
 
 ### Policy configuration
 
@@ -48,6 +48,9 @@ Events are grouped by lifecycle phase. All amounts are in MIST (u64). All timest
 | `PolicyEnsembleRegistered` | First `integrate` call | Full 23-field snapshot of all policies + `escrow_id` |
 | `EnsembleUpdated` | Policy change applied immediately (escrow was Idle) | Same 23-field snapshot |
 | `EnsembleUpdateScheduled` | Policy change queued (escrow was active) | Same 23-field snapshot |
+| `CycleParamsResolved` | Engine adopts new operating parameters (integrate, immediate update, or auction expiry that applies a pending ensemble) | `escrow_id`, `floor_mist`, `ceiling_ms`, `handover_ms`, `descent_ms`, `timestamp_ms` |
+
+`CycleParamsResolved` carries the *resolved* parameters the engine actually operates on — the floor price, tenure ceiling, handover (protection) window, and descent window — as opposed to the policy snapshot, which carries the *inputs*. They are a pure function of the active ensemble, so an indexer could recompute them by joining the latest snapshot and replaying the resolution; emitting them directly avoids that async temporal join and pins the values the engine used as ground truth. It fires only when a new ensemble is adopted, **not** on the no-op recompute at an auction expiry with no pending ensemble (the parameters are unchanged there).
 
 The 23 fields include: `rest_price_policy`, `rest_price`, `tenure_duration_policy`, `tenure_duration_ms`, `tenure_extend_policy`, `handover_policy`, `handover_floor_ms`, `auction_window_policy`, `auction_window_ceiling_ms`, `credit_shape_policy`, `credit_alpha_num/den/abs/neg`, `auction_shape_policy`, `auction_alpha_num/den/abs/neg`, `price_escalation_policy`, `price_escalation_delta`, `price_escalation_bps`.
 
@@ -57,41 +60,45 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `RentStarted` | Tenant enters Occupied state | `escrow_id`, `tenant_cap_id`, `tenant`, `phase_start_ms`, `price_paid`, `floor_price` |
-| `TenureExpired` | Tenure ceiling reached without handover | `escrow_id`, `tenant_cap_id`, `tenant`, `phase_start_ms`, `owner_share`, `protocol_fee`, `last_acquisition_price`, `timestamp_ms` |
+| `RentStarted` | Tenant enters Occupied state | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `price_paid`, `floor_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms` |
+| `TenureExpired` | Tenure ceiling reached without handover | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `owner_share`, `protocol_fee`, `last_acquisition_price`, `timestamp_ms` |
 | `CommitmentExtended` | Deferred commitment deadline extended | `escrow_id`, `commitment_policy`, `commitment_floor_ms`, `new_expiry_ms`, `timestamp_ms` |
-| `AssetBorrowed` | Tenant takes physical custody of asset | `escrow_id`, `tenant_cap_id`, `tenant` |
-| `AssetReturned` | Tenant returns physical custody | `escrow_id`, `tenant_cap_id`, `tenant` |
+| `AssetBorrowed` | Tenant takes physical custody of asset | `escrow_id`, `tenant_cap_id`, `tenant_address`, `timestamp_ms` |
+| `AssetReturned` | Tenant returns physical custody | `escrow_id`, `tenant_cap_id`, `tenant_address` |
 
 ### Auction and handover
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `BidPlaced` | Incoming tenant outbids current tenant | `escrow_id`, `current_tenant_cap_id`, `current_tenant_addr`, `current_tenant_stake`, `current_phase_start_ms`, `tenant_cap_id`, `pending_tenant`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `timestamp_ms` |
-| `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id/addr/stake/phase_start_ms`, `displaced_tenant_cap_id`, `new_tenant_cap_id`, `displaced_bidder`, `refunded_amount`, `new_bidder`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `timestamp_ms` |
-| `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant`, `displaced_phase_start_ms`, `new_tenant_cap_id`, `new_tenant_addr`, `new_tenant_stake`, `used_credit`, `owner_share`, `protocol_fee`, `remain_credit`, `new_rent_price`, `timestamp_ms` |
+| `BidPlaced` | Incoming tenant outbids current tenant | `escrow_id`, `current_tenant_cap_id`, `current_tenant_address`, `current_tenant_stake`, `current_phase_start_ms`, `tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
+| `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `new_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
+| `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `owner_share`, `protocol_fee`, `remain_credit`, `new_rent_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms`, `timestamp_ms` |
 | `AuctionExpired` | Descent auction window closes with no bid | `escrow_id`, `phase_start_ms`, `last_acq_price`, `timestamp_ms` |
 
 `BidPlaced` captures a snapshot of the current tenant's state at the moment the bid arrives. `BidSuperseded` captures a three-party snapshot: protected (current), displaced (first bidder), new (second bidder). This makes bid competition fully reconstructable without any on-chain read.
+
+The schedule fields that open a tenancy — emitted on both `RentStarted` and `HandoverCompleted` — describe the incoming tenant's terms: `committed_tenures` is the number of tenures paid for; `ceiling_total_ms` is the total tenure duration (so projected expiry = `phase_start_ms + ceiling_total_ms`); `handover_total_ms` is the incumbent's protection window — how long the countdown runs before a challenger can take over. Emitting these on `HandoverCompleted` (where they are rescaled from the displaced tenant's schedule by the incoming/outgoing tenure ratio) keeps every tenancy self-describing from a single row, with no need to walk the handover chain back to the originating `RentStarted`.
 
 ### Financial
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `EarningsWithdrawn` | Owner withdraws accumulated earnings | `escrow_id`, `owner_cap_id`, `owner`, `amount`, `timestamp_ms` |
-| `FeeMessageSent<CoinType>` | Protocol fee posted to inbox after a transition | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount` |
-| `FeeMessageCollected<CoinType>` | Admin collects fee message | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `collector` |
+| `EarningsWithdrawn` | Owner withdraws accumulated earnings | `escrow_id`, `owner_cap_id`, `owner_address`, `amount`, `timestamp_ms` |
+| `FeeMessageSent<CoinType>` | Protocol fee posted to inbox after a transition | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `coin_type` |
+| `FeeMessageCollected<CoinType>` | Admin collects fee message | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `collector`, `coin_type` |
 
-`FeeMessageSent` and `FeeMessageCollected` are generic over `CoinType`. The coin type is encoded in the Sui event type name, not as a field, so filtering by currency is done by event type filter rather than by field.
+`FeeMessageSent` and `FeeMessageCollected` are generic over `CoinType`. The coin type is available two ways: encoded in the Sui event type name (so it can be filtered by event type) and as the explicit `coin_type` field (the fully-qualified type string), which keeps every event self-describing by field without parsing the generic type argument — consistent with `AssetIntegrated.coin_type`.
 
 ### Cap lifecycle
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `TenantCapMinted` | Tenant enters protocol | `tenant_cap_id`, `escrow_id`, `tenant` |
-| `TenantCapBurned` | Tenant cap destroyed (soft burn or claim) | `tenant_cap_id`, `escrow_id`, `tenant` |
-| `OwnerCapMinted` | Owner cap created at integration | `owner_cap_id`, `escrow_id`, `owner` |
-| `OwnerCapBurned` | Owner cap destroyed | `owner_cap_id`, `escrow_id`, `owner` |
+| `TenantCapMinted` | Tenant enters protocol | `tenant_cap_id`, `escrow_id`, `tenant_address` |
+| `TenantCapBurned` | Tenant cap destroyed (soft burn or claim) | `tenant_cap_id`, `escrow_id`, `tenant_address` |
+| `OwnerCapMinted` | Owner cap created at integration | `owner_cap_id`, `escrow_id`, `owner_address` |
+| `OwnerCapBurned` | Owner cap destroyed | `owner_cap_id`, `escrow_id`, `owner_address` |
+
+`TenantCapBurned` is emitted by the `tenant_cap` module only when the cap holder explicitly soft/hard-burns the cap (`escrow::soft_burn_tenant_cap` / `hard_burn_tenant_cap`). It is **not** emitted at `HandoverCompleted` or `TenureExpired`: those settle the tenant's seat internally, but the `TenantCap` object lives in the holder's wallet and is not an input to that transaction, so the protocol cannot burn it there. Consequently the logical end of a tenancy is `HandoverCompleted` / `TenureExpired` (keyed by `tenant_cap_id`), and the absence of a `TenantCapBurned` does **not** imply the tenancy is still live — the cap may simply be a dead object the holder never cleaned up.
 
 ## 3. What You Can Build
 
@@ -99,9 +106,9 @@ The event stream is sufficient to build any of the following without touching on
 
 **Marketplace listing page** — active escrows, their current policy (floor price, tenure duration), and last activity timestamp. Filter by coin type via the `AssetIntegrated` event type parameter.
 
-**Owner dashboard** — all escrows an owner has ever integrated (via `owner` field on `AssetIntegrated`), total lifetime earnings (`SUM(EarningsWithdrawn.amount)`), current active tenants, and pending fee messages not yet collected.
+**Owner dashboard** — all escrows an owner has ever integrated (via `owner_address` field on `AssetIntegrated`), total lifetime earnings (`SUM(EarningsWithdrawn.amount)`), current active tenants, and pending fee messages not yet collected.
 
-**Tenant portfolio** — all tenancies a wallet has held cross-escrow, filtering on `tenant` address in `RentStarted`. Includes completed tenancies, active ones, and bids currently in Demand state via `BidPlaced`.
+**Tenant portfolio** — all tenancies a wallet has held cross-escrow, filtering on `tenant_address` in `RentStarted`. Includes completed tenancies, active ones, and bids currently in Demand state via `BidPlaced`.
 
 **Escrow activity feed** — ordered timeline of all events for a single `escrow_id`. Sufficient to render a complete history page: integrated → rented → bid placed → handover → rented again → expired → claimed.
 
@@ -122,7 +129,7 @@ These queries assume a PostgreSQL indexer where each event type maps to a table 
 ### Q1 — All active escrows
 
 ```sql
-SELECT i.escrow_id, i.owner, i.asset_id, i.integrated_at_ms
+SELECT i.escrow_id, i.owner_address, i.asset_id, i.integrated_at_ms
 FROM asset_integrated i
 WHERE NOT EXISTS (SELECT 1 FROM asset_retired  r WHERE r.escrow_id = i.escrow_id)
   AND NOT EXISTS (SELECT 1 FROM asset_claimed  c WHERE c.escrow_id = i.escrow_id)
@@ -147,7 +154,7 @@ LEFT JOIN earnings_withdrawn e  ON e.escrow_id = i.escrow_id
 LEFT JOIN rent_started       r  ON r.escrow_id = i.escrow_id
 LEFT JOIN asset_claimed      cl ON cl.escrow_id = i.escrow_id
 LEFT JOIN asset_retired      re ON re.escrow_id = i.escrow_id
-WHERE i.owner = $owner_address
+WHERE i.owner_address = $owner_address
 GROUP BY i.escrow_id, i.integrated_at_ms, cl.escrow_id, re.escrow_id
 ORDER BY i.integrated_at_ms DESC;
 ```
@@ -155,15 +162,15 @@ ORDER BY i.integrated_at_ms DESC;
 ### Q3 — Full activity timeline for one escrow
 
 ```sql
-SELECT timestamp_ms, 'RentStarted'       AS event, tenant      AS actor, price_paid  AS amount FROM rent_started       WHERE escrow_id = $id
+SELECT timestamp_ms, 'RentStarted'       AS event, tenant_address  AS actor, price_paid  AS amount FROM rent_started       WHERE escrow_id = $id
 UNION ALL
-SELECT timestamp_ms, 'TenureExpired'     AS event, tenant      AS actor, owner_share AS amount FROM tenure_expired     WHERE escrow_id = $id
+SELECT timestamp_ms, 'TenureExpired'     AS event, tenant_address  AS actor, owner_share AS amount FROM tenure_expired     WHERE escrow_id = $id
 UNION ALL
-SELECT timestamp_ms, 'HandoverCompleted' AS event, new_tenant_addr AS actor, new_rent_price AS amount FROM handover_completed WHERE escrow_id = $id
+SELECT timestamp_ms, 'HandoverCompleted' AS event, new_tenant_address AS actor, new_rent_price AS amount FROM handover_completed WHERE escrow_id = $id
 UNION ALL
-SELECT timestamp_ms, 'EarningsWithdrawn' AS event, owner       AS actor, amount      AS amount FROM earnings_withdrawn WHERE escrow_id = $id
+SELECT timestamp_ms, 'EarningsWithdrawn' AS event, owner_address   AS actor, amount      AS amount FROM earnings_withdrawn WHERE escrow_id = $id
 UNION ALL
-SELECT timestamp_ms, 'BidPlaced'         AS event, pending_tenant  AS actor, bid_amount  AS amount FROM bid_placed         WHERE escrow_id = $id
+SELECT timestamp_ms, 'BidPlaced'         AS event, pending_tenant_address AS actor, bid_amount  AS amount FROM bid_placed         WHERE escrow_id = $id
 UNION ALL
 SELECT timestamp_ms, 'AssetRetired'      AS event, NULL         AS actor, NULL       AS amount FROM asset_retired      WHERE escrow_id = $id
 ORDER BY timestamp_ms;
@@ -186,7 +193,7 @@ SELECT
 FROM rent_started r
 LEFT JOIN tenure_expired      t ON t.tenant_cap_id = r.tenant_cap_id
 LEFT JOIN handover_completed  h ON h.displaced_tenant_cap_id = r.tenant_cap_id
-WHERE r.tenant = $tenant_address
+WHERE r.tenant_address = $tenant_address
 ORDER BY r.phase_start_ms DESC;
 ```
 
@@ -195,8 +202,8 @@ ORDER BY r.phase_start_ms DESC;
 ```sql
 SELECT
     b.escrow_id,
-    b.current_tenant_addr,
-    b.pending_tenant,
+    b.current_tenant_address,
+    b.pending_tenant_address,
     b.bid_amount,
     b.floor_price,
     b.handover_countdown_expiry

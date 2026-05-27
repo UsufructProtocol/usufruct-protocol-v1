@@ -42,6 +42,8 @@ Most rental markets close when someone checks in. usufruct doesn't.
 
 **No keeper required.** State transitions execute lazily on the next transaction that touches the escrow. No off-chain coordinator, no cron job, no external dependency on liveness.
 
+**Protocol revenue scales without contention.** Settled fees never touch a shared accumulator. Each transition posts an independent `FeeMessage` object to the protocol inbox's address; the inbox is never an input in any user PTB. User throughput is never gated by fee collection, at any escrow count.
+
 **Zero external dependencies.** The package imports only the Sui standard library. No oracle, no AMM, no third-party protocol. Any Sui object integrates without taking a dependency on an external ecosystem, and the protocol itself carries no upgrade or governance risk from outside parties.
 
 **The asset is the interface.** Any object your protocol already issues integrates directly — no adapter code, no permission required, no contract rewrite. If your object has `key + store`, your protocol is already compatible with usufruct.
@@ -154,7 +156,7 @@ The result is a state machine where illegal states have no type representation a
 
 ## Further reading
 
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — module layers, state hierarchy, FSM engine
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — module layers, state hierarchy, FSM engine, fee layer
 - [`PATTERNS.md`](./PATTERNS.md) — integration patterns and the design space they open
 - [`CODE_PRINCIPLES.md`](./CODE_PRINCIPLES.md) — design principles applied across the codebase
 - [`UPGRADE_STRATEGY.md`](./UPGRADE_STRATEGY.md) — why usufruct versions instead of upgrading, and what that means for integrators

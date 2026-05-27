@@ -41,7 +41,7 @@ fun n1_new_returns_cap_and_emits_minted_event() {
         assert_eq!(events.length(), 1);
         assert_eq!(owner_cap::minted_owner_cap_id(&events[0]), object::id(&cap));
         assert_eq!(owner_cap::minted_escrow_id(&events[0]),    escrow_id_1());
-        assert_eq!(owner_cap::minted_owner(&events[0]),         ALICE);
+        assert_eq!(owner_cap::minted_owner_address(&events[0]),         ALICE);
 
         transfer::public_transfer(cap, ALICE);
     };
@@ -65,10 +65,10 @@ fun n2_two_new_calls_produce_distinct_caps_and_events() {
         assert_eq!(events.length(), 2);
         assert_eq!(owner_cap::minted_owner_cap_id(&events[0]), object::id(&cap0));
         assert_eq!(owner_cap::minted_escrow_id(&events[0]),    escrow_id_1());
-        assert_eq!(owner_cap::minted_owner(&events[0]),         ALICE);
+        assert_eq!(owner_cap::minted_owner_address(&events[0]),         ALICE);
         assert_eq!(owner_cap::minted_owner_cap_id(&events[1]), object::id(&cap1));
         assert_eq!(owner_cap::minted_escrow_id(&events[1]),    escrow_id_2());
-        assert_eq!(owner_cap::minted_owner(&events[1]),         BOB);
+        assert_eq!(owner_cap::minted_owner_address(&events[1]),         BOB);
 
         transfer::public_transfer(cap0, ALICE);
         transfer::public_transfer(cap1, BOB);
@@ -84,7 +84,7 @@ fun n3_owner_is_declarative_not_sender() {
     {
         let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
         let events = event::events_by_type<OwnerCapMinted>();
-        assert_eq!(owner_cap::minted_owner(&events[0]), BOB);
+        assert_eq!(owner_cap::minted_owner_address(&events[0]), BOB);
         transfer::public_transfer(cap, BOB);
     };
     scenario.end();
@@ -98,7 +98,7 @@ fun n4_owner_zero_address_accepted() {
     {
         let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ZERO, scenario.ctx());
         let events = event::events_by_type<OwnerCapMinted>();
-        assert_eq!(owner_cap::minted_owner(&events[0]), ZERO);
+        assert_eq!(owner_cap::minted_owner_address(&events[0]), ZERO);
         transfer::public_transfer(cap, ALICE);
     };
     scenario.end();
@@ -167,7 +167,7 @@ fun b1_burn_deletes_cap_and_emits_burned_event() {
         assert_eq!(events.length(), 1);
         assert_eq!(owner_cap::burned_owner_cap_id(&events[0]), cap_id);
         assert_eq!(owner_cap::burned_escrow_id(&events[0]),    escrow_id_1());
-        assert_eq!(owner_cap::burned_owner(&events[0]),         ALICE);
+        assert_eq!(owner_cap::burned_owner_address(&events[0]),         ALICE);
     };
     assert!(!test_scenario::has_most_recent_for_address<OwnerCap>(ALICE));
     scenario.end();
@@ -195,7 +195,7 @@ fun b3_burned_owner_reflects_burn_time_holder() {
 
         let events = event::events_by_type<OwnerCapBurned>();
         assert_eq!(owner_cap::burned_owner_cap_id(&events[0]), cap_id);
-        assert_eq!(owner_cap::burned_owner(&events[0]),         BOB);
+        assert_eq!(owner_cap::burned_owner_address(&events[0]),         BOB);
     };
     scenario.end();
 }
@@ -210,7 +210,7 @@ fun b4_burned_owner_is_declarative_not_sender() {
         owner_cap::burn(cap, BOB);
 
         let events = event::events_by_type<OwnerCapBurned>();
-        assert_eq!(owner_cap::burned_owner(&events[0]), BOB);
+        assert_eq!(owner_cap::burned_owner_address(&events[0]), BOB);
     };
     scenario.end();
 }
@@ -288,7 +288,7 @@ fun l1_full_lifecycle_mint_then_burn() {
         assert_eq!(minted.length(), 1);
         assert_eq!(owner_cap::minted_owner_cap_id(&minted[0]), cap_id);
         assert_eq!(owner_cap::minted_escrow_id(&minted[0]),    escrow_id_1());
-        assert_eq!(owner_cap::minted_owner(&minted[0]),         ALICE);
+        assert_eq!(owner_cap::minted_owner_address(&minted[0]),         ALICE);
         transfer::public_transfer(cap, ALICE);
     };
     let mint_effects = scenario.next_tx(ALICE);
@@ -300,7 +300,7 @@ fun l1_full_lifecycle_mint_then_burn() {
         assert_eq!(burned.length(), 1);
         assert_eq!(owner_cap::burned_owner_cap_id(&burned[0]), cap_id);
         assert_eq!(owner_cap::burned_escrow_id(&burned[0]),    escrow_id_1());
-        assert_eq!(owner_cap::burned_owner(&burned[0]),         ALICE);
+        assert_eq!(owner_cap::burned_owner_address(&burned[0]),         ALICE);
     };
     let burn_effects = scenario.end();
     assert_eq!(burn_effects.num_user_events(), 1);
@@ -317,7 +317,7 @@ fun l2_custody_handoff_mint_transfer_burn() {
         let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         cap_id = object::id(&cap);
         let minted = event::events_by_type<OwnerCapMinted>();
-        assert_eq!(owner_cap::minted_owner(&minted[0]), ALICE);
+        assert_eq!(owner_cap::minted_owner_address(&minted[0]), ALICE);
         transfer::public_transfer(cap, BOB);
     };
     scenario.next_tx(BOB);
@@ -327,7 +327,7 @@ fun l2_custody_handoff_mint_transfer_burn() {
         let burned = event::events_by_type<OwnerCapBurned>();
         assert_eq!(owner_cap::burned_owner_cap_id(&burned[0]), cap_id);
         assert_eq!(owner_cap::burned_escrow_id(&burned[0]),    escrow_id_1());
-        assert_eq!(owner_cap::burned_owner(&burned[0]),         BOB);
+        assert_eq!(owner_cap::burned_owner_address(&burned[0]),         BOB);
     };
     scenario.end();
 }

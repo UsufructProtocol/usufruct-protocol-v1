@@ -215,7 +215,8 @@ A single call can therefore chain `Demand → Occupied → AtDutch` or `Demand �
 ```
 AssetIntegrated<Asset, CoinType> {
     escrow_id: ID, owner_cap_id: ID, owner: address,
-    asset_id: ID, fee_inbox_id: ID, integrated_at_ms: u64
+    asset_id: ID, fee_inbox_id: ID, integrated_at_ms: u64,
+    asset_type: String, coin_type: String
 }
 ```
 Emitted once at `execute_integrate`.
@@ -223,7 +224,8 @@ Emitted once at `execute_integrate`.
 ```
 RentStarted {
     escrow_id: ID, tenant_cap_id: ID, tenant: address,
-    phase_start_ms: u64, price_paid: u64, floor_price: u64
+    phase_start_ms: u64, price_paid: u64, floor_price: u64,
+    committed_tenures: u64, ceiling_total_ms: u64, handover_total_ms: u64
 }
 ```
 Emitted when a tenant enters `Occupied` from `Idle` or `AtDutch` via `do_install`.
@@ -235,7 +237,7 @@ BidPlaced {
     current_tenant_stake: u64, current_phase_start_ms: u64,
     tenant_cap_id: ID, pending_tenant: address,
     bid_amount: u64, floor_price: u64,
-    handover_countdown_expiry: u64, timestamp_ms: u64
+    handover_countdown_expiry: u64, committed_tenures: u64, timestamp_ms: u64
 }
 ```
 Emitted when a new tenant bid is placed on an occupied asset via `do_place_bid`.
@@ -248,7 +250,7 @@ BidSuperseded {
     displaced_tenant_cap_id: ID, new_tenant_cap_id: ID,
     displaced_bidder: address, refunded_amount: u64,
     new_bidder: address, new_bid_amount: u64,
-    floor_price: u64, handover_countdown_expiry: u64, timestamp_ms: u64
+    floor_price: u64, handover_countdown_expiry: u64, committed_tenures: u64, timestamp_ms: u64
 }
 ```
 Emitted when a pending bid is replaced by a newer bid via `do_supersede_bid`. Carries both the protected (current) tenant context and the full displacement record.
@@ -259,10 +261,12 @@ HandoverCompleted {
     displaced_tenant_cap_id: ID, displaced_tenant: address, displaced_phase_start_ms: u64,
     new_tenant_cap_id: ID, new_tenant_addr: address, new_tenant_stake: u64,
     used_credit: u64, owner_share: u64, protocol_fee: u64,
-    remain_credit: u64, new_rent_price: u64, timestamp_ms: u64
+    remain_credit: u64, new_rent_price: u64,
+    committed_tenures: u64, ceiling_total_ms: u64, handover_total_ms: u64,
+    timestamp_ms: u64
 }
 ```
-Emitted when the handover countdown fires and the pending tenant becomes the current occupant.
+Emitted when the handover countdown fires and the pending tenant becomes the current occupant. The schedule fields (`committed_tenures`, `ceiling_total_ms`, `handover_total_ms`) describe the incoming tenant's terms, rescaled from the displaced tenant's schedule by the incoming/outgoing tenure ratio, so the new tenancy is self-describing without walking back to its originating `RentStarted`.
 
 ```
 TenureExpired {
@@ -282,6 +286,14 @@ AuctionExpired {
 Emitted when the dutch auction window elapses with no bid; escrow returns to `Idle`.
 
 ```
+CycleParamsResolved {
+    escrow_id: ID, floor_mist: u64, ceiling_ms: u64,
+    handover_ms: u64, descent_ms: u64, timestamp_ms: u64
+}
+```
+Emitted by `resolve_and_emit_cycle_params` when the engine adopts a new active ensemble — at `execute_integrate`, at `execute_update_config` when applied immediately (Idle), and at `do_auction_expiry` when a pending ensemble is applied. Carries the resolved parameters the engine operates on (a pure function of the active ensemble), so consumers need not replay the policy resolution. Not emitted on the auction-expiry recompute with no pending ensemble, since the parameters are unchanged there.
+
+```
 AssetRetired { escrow_id: ID, timestamp_ms: u64 }
 ```
 Emitted when the escrow enters `Retired` — both on immediate retire and on tenure-expiry-with-retire-flag.
@@ -295,14 +307,14 @@ AssetClaimed {
 Emitted on `execute_claim`.
 
 ```
-AssetBorrowed { escrow_id: ID, tenant_cap_id: ID, tenant: address }
+AssetBorrowed { escrow_id: ID, tenant_cap_id: ID, tenant: address, timestamp_ms: u64 }
 ```
 Emitted when a tenant extracts the asset via `execute_borrow`.
 
 ```
 AssetReturned { escrow_id: ID, tenant_cap_id: ID, tenant: address }
 ```
-Emitted when the asset is re-inserted via `execute_return`.
+Emitted when the asset is re-inserted via `execute_return`. Carries no `timestamp_ms`: `AssetReceipt` is a hot potato (no `drop`/`store`/`key`/`copy`), so it must be consumed by `execute_return` in the same transaction that produced it via `execute_borrow`. A `Clock` is read-only within a transaction — its `timestamp_ms` is fixed by the consensus commit prologue before user code runs and cannot be mutated by it — so a return timestamp would always equal the value already pinned by `AssetBorrowed`. The borrow timestamp dates the whole borrow↔return interval.
 
 ```
 EarningsWithdrawn {
@@ -331,6 +343,6 @@ CommitmentExtended {
 Emitted on `execute_extend_commitment`.
 
 ```
-RetireFlagSet { escrow_id: ID, owner: address, timestamp_ms: u64 }
+RetireFlagSet { escrow_id: ID, owner_cap_id: ID, owner: address, timestamp_ms: u64 }
 ```
 Emitted whenever the owner signals retirement intent — both when the flag is set on an occupied/demand escrow (deferred retire) and when `do_retire_immediately` fires from Idle or AtDutch (immediate retire). Always paired with `AssetRetired` in the immediate case.

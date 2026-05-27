@@ -32,6 +32,7 @@ use usufruct::{
         RetireFlagSet,
         AssetBorrowed,
         AssetReturned,
+        CycleParamsResolved,
     },
 
     policy_ensemble::{Self, EnsembleUpdated, EnsembleUpdateScheduled},
@@ -8948,6 +8949,9 @@ fun event_pin_rent_started_all_fields() {
     assert_eq!(asset_state::rent_started_phase_start_ms(e),   7_000);
     assert_eq!(asset_state::rent_started_price_paid(e),       floor);
     assert_eq!(asset_state::rent_started_floor_price(e),      floor);
+    assert_eq!(asset_state::rent_started_committed_tenures(e), 1);
+    assert_eq!(asset_state::rent_started_ceiling_total_ms(e), escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::rent_started_handover_total_ms(e), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -8990,6 +8994,141 @@ fun event_pin_auction_expired_all_fields() {
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
+    sc.end();
+}
+
+// ─── CycleParamsResolved payload pin + change-only semantics ─────────────────
+
+#[test]
+fun event_pin_cycle_params_resolved_all_fields() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+
+    // c=1 Fixed handover, h=1 Fixed descent: every resolved field is a known const.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let fee_ref  = sc.take_immutable<ProtocolFeeRef>();
+    let mut clk  = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, 42_000);
+    let asset    = mk_demo_asset(sc.ctx());
+
+    let cap = escrow::integrate<DemoAsset, SUI>(
+        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+    );
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
+
+    let evts = event::events_by_type<CycleParamsResolved>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::cycle_params_resolved_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::cycle_params_resolved_floor_mist(e),   escrow_corpus::min_rent_price_const());
+    assert_eq!(asset_state::cycle_params_resolved_ceiling_ms(e),   escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::cycle_params_resolved_handover_ms(e),  escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(asset_state::cycle_params_resolved_descent_ms(e),   escrow_corpus::descent_window_h1_const());
+    assert_eq!(asset_state::cycle_params_resolved_timestamp_ms(e), 42_000);
+
+    test_scenario::return_immutable(fee_ref);
+    transfer::public_transfer(cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Auction expiry with no pending ensemble recomputes the same CycleParams, so
+/// it must NOT re-emit CycleParamsResolved — the event marks adoption of new
+/// engine parameters, not every cycle boundary.
+#[test]
+fun cycle_params_resolved_not_emitted_on_unchanged_auction_expiry() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // no pending config
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+
+    let last_acq       = escrow_corpus::min_rent_price_const() * 2;
+    let phase_start_ms = escrow_corpus::tenure_ceiling_const();
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_descent_for_testing(&mut escrow, STAKE_T1, 0, last_acq, phase_start_ms);
+
+    let boundary_ms = phase_start_ms + escrow_corpus::descent_window_h1_const();
+    escrow::fire_do_auction_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms));
+
+    // No pending ensemble adopted in this tx → no CycleParamsResolved emitted.
+    assert_eq!(event::events_by_type<CycleParamsResolved>().length(), 0);
+    assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    sc.end();
+}
+
+/// Invariant: scheduling a pending ensemble does NOT emit CycleParamsResolved.
+/// While the change is queued, the engine still operates under the active
+/// ensemble, so no resolved-params event fires until adoption.
+#[test]
+fun cycle_params_resolved_not_emitted_while_pending() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // A: handover Off
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_descent_for_testing(
+        &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
+        escrow_corpus::min_rent_price_const() * 2, 0,
+    );
+
+    // Queue ensemble B (handover Fixed) while in Descent — buffered, not adopted.
+    let pending = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    escrow::update_config(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
+
+    assert!(escrow::has_pending_config_update(&escrow), 0);
+    assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
+    // Pending is not active → no resolved-params event in this tx.
+    assert_eq!(event::events_by_type<CycleParamsResolved>().length(), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Invariant: adopting a pending ensemble emits exactly one CycleParamsResolved,
+/// and its values reflect the newly-active ensemble (B), never the prior one (A).
+/// A has handover Off (0); B has handover Fixed (25_000) — the emitted value must
+/// be B's, proving the event tracks the active ensemble, not the stale resolution.
+#[test]
+fun cycle_params_resolved_on_adoption_reflects_new_ensemble() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // A: handover Off
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_descent_for_testing(
+        &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
+        escrow_corpus::min_rent_price_const() * 2, 0,
+    );
+
+    let pending = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // B: handover Fixed
+    escrow::update_config(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
+
+    // Adopt the pending at auction expiry via the production path.
+    let boundary_ms =
+        escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const();
+    clock::set_for_testing(&mut clk, boundary_ms);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+
+    // Scheduling emitted 0; adoption emits exactly 1 → count is 1, reflecting B.
+    let evts = event::events_by_type<CycleParamsResolved>();
+    assert_eq!(evts.length(), 1);
+    assert_eq!(asset_state::cycle_params_resolved_handover_ms(&evts[0]), escrow_corpus::handover_countdown_c1_const());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
     sc.end();
 }
 
@@ -9037,6 +9176,7 @@ fun event_pin_retire_flag_set_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::retire_flag_set_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::retire_flag_set_owner_cap_id(e), object::id(&owner_cap));
     assert_eq!(asset_state::retire_flag_set_owner_address(e),        OWNER);
     assert_eq!(asset_state::retire_flag_set_timestamp_ms(e), 0);
 
@@ -9088,6 +9228,7 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
     assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);
     assert_eq!(asset_state::bid_placed_handover_countdown_expiry(e), expected_expiry);
+    assert_eq!(asset_state::bid_placed_committed_tenures(e),         1);
     assert_eq!(asset_state::bid_placed_timestamp_ms(e),              now2);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -9147,6 +9288,7 @@ fun event_pin_bid_superseded_all_fields() {
     assert_eq!(asset_state::bid_superseded_new_bid_amount(e),             floor3);
     assert_eq!(asset_state::bid_superseded_floor_price(e),                floor3);
     assert_eq!(asset_state::bid_superseded_handover_countdown_expiry(e),  expected_expiry);
+    assert_eq!(asset_state::bid_superseded_committed_tenures(e),          1);
     assert_eq!(asset_state::bid_superseded_timestamp_ms(e),               now3);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -9373,6 +9515,9 @@ fun event_pin_handover_completed_all_fields() {
     assert_eq!(asset_state::handover_completed_owner_share(e),             owner_share_val);
     assert_eq!(asset_state::handover_completed_protocol_fee(e),            protocol_fee_val);
     assert_eq!(asset_state::handover_completed_remain_credit(e),           remain_val);
+    assert_eq!(asset_state::handover_completed_committed_tenures(e),       1);
+    assert_eq!(asset_state::handover_completed_ceiling_total_ms(e),        escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::handover_completed_handover_total_ms(e),       escrow_corpus::handover_countdown_c1_const());
     assert_eq!(asset_state::handover_completed_timestamp_ms(e),            boundary_ms);
     // new_rent_price: ascending_floor_price based on floor2 stake.
     let new_rent = asset_state::handover_completed_new_rent_price(e);
@@ -9407,6 +9552,7 @@ fun event_pin_asset_borrowed_all_fields() {
     assert_eq!(asset_state::asset_borrowed_escrow_id(e),     escrow_id);
     assert_eq!(asset_state::asset_borrowed_tenant_cap_id(e), object::id(&cap_t1));
     assert_eq!(asset_state::asset_borrowed_tenant_address(e),        OWNER);
+    assert_eq!(asset_state::asset_borrowed_timestamp_ms(e),  0);
 
     escrow::return_asset(&mut escrow, asset_out, receipt);
     transfer::public_transfer(cap_t1, OWNER);

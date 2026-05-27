@@ -155,12 +155,15 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 // === Events ===
 
 public struct RentStarted has copy, drop {
-    escrow_id:       ID,
-    tenant_cap_id:   ID,
-    tenant_address:  address,
-    phase_start_ms:  u64,
-    price_paid:      u64,
-    floor_price:     u64,
+    escrow_id:         ID,
+    tenant_cap_id:     ID,
+    tenant_address:    address,
+    phase_start_ms:    u64,
+    price_paid:        u64,
+    floor_price:       u64,
+    committed_tenures: u64,
+    ceiling_total_ms:  u64,
+    handover_total_ms: u64,
 }
 
 public struct AuctionExpired has copy, drop {
@@ -168,6 +171,15 @@ public struct AuctionExpired has copy, drop {
     phase_start_ms: u64,
     last_acq_price: u64,
     timestamp_ms:   u64,
+}
+
+public struct CycleParamsResolved has copy, drop {
+    escrow_id:    ID,
+    floor_mist:   u64,
+    ceiling_ms:   u64,
+    handover_ms:  u64,
+    descent_ms:   u64,
+    timestamp_ms: u64,
 }
 
 public struct AssetRetired has copy, drop {
@@ -221,6 +233,7 @@ public struct BidPlaced has copy, drop {
     bid_amount:                u64,
     floor_price:               u64,
     handover_countdown_expiry: u64,
+    committed_tenures:         u64,
     timestamp_ms:              u64,
 }
 
@@ -238,6 +251,7 @@ public struct BidSuperseded has copy, drop {
     new_bid_amount:            u64,
     floor_price:               u64,
     handover_countdown_expiry: u64,
+    committed_tenures:         u64,
     timestamp_ms:              u64,
 }
 
@@ -254,6 +268,9 @@ public struct HandoverCompleted has copy, drop {
     protocol_fee:             u64,
     remain_credit:            u64,
     new_rent_price:           u64,
+    committed_tenures:        u64,
+    ceiling_total_ms:         u64,
+    handover_total_ms:        u64,
     timestamp_ms:             u64,
 }
 
@@ -270,6 +287,7 @@ public struct TenureExpired has copy, drop {
 
 public struct RetireFlagSet has copy, drop {
     escrow_id:     ID,
+    owner_cap_id:  ID,
     owner_address: address,
     timestamp_ms:  u64,
 }
@@ -278,6 +296,7 @@ public struct AssetBorrowed has copy, drop {
     escrow_id:      ID,
     tenant_cap_id:  ID,
     tenant_address: address,
+    timestamp_ms:   u64,
 }
 
 public struct AssetReturned has copy, drop {
@@ -747,10 +766,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let asset_id           = object::id(&asset);
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
     policy_ensemble::emit_registration(&ensemble, escrow_identity);
-    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble));
-    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble));
-    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble), ceiling);
-    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble));
+    let cycle = resolve_and_emit_cycle_params(&ensemble, raw_escrow_id, phases::timestamp_ms(integrated_at));
     let core = EscrowCore {
         owner:              owner_seat::new<CoinType>(owner_cap_identity),
         ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
@@ -761,7 +777,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     };
     let state = AssetState::Waiting(WaitingState::Idle {
         asset: asset_custody::lock(asset),
-        cycle: CycleParams { floor, ceiling, handover, descent },
+        cycle,
     });
     event::emit(AssetIntegrated {
         escrow_id:        raw_escrow_id,
@@ -849,19 +865,20 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let escrow_identity = core.escrow_identity;
     let raw_escrow_id   = escrow_identity::escrow_id(escrow_identity);
     let now_ms          = phases::timestamp_ms(now);
+    let owner_cap_id    = object::id(owner_cap);
     let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately(asset, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately(asset, owner_cap_id, escrow_identity, now, ctx)),
         AssetState::Waiting(WaitingState::Descent { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately(asset, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately(asset, owner_cap_id, escrow_identity, now, ctx)),
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
-            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
+            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, current, retire } = terms;
             AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
-            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
+            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, current, retire } = terms;
             AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, bid, cycle })
         },
@@ -886,11 +903,8 @@ public(package) fun execute_update_config<Asset: key + store, CoinType>(
             policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
-            let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&core.ensemble.active));
-            let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&core.ensemble.active));
-            let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&core.ensemble.active), ceiling);
-            let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&core.ensemble.active));
-            AssetState::Waiting(WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } })
+            let cycle = resolve_and_emit_cycle_params(&core.ensemble.active, raw_escrow_id, phases::timestamp_ms(phases::now(clock)));
+            AssetState::Waiting(WaitingState::Idle { asset, cycle })
         },
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, raw_escrow_id);
@@ -924,6 +938,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     let cap_identity  = tenant_cap::identity(tenant_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
+    let now_ms        = phases::timestamp_ms(phases::now(clock));
     match (s) {
         AssetState::Renting(RentingState::Occupied { mut asset, terms, cycle }) => {
             assert_borrow_authorized(cap_identity,
@@ -936,7 +951,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Occupied { asset, terms, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, timestamp_ms: now_ms });
             (u, receipt, core)
         },
         AssetState::Renting(RentingState::Demand { mut asset, terms, bid, cycle }) => {
@@ -950,7 +965,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Demand { asset, terms, bid, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, timestamp_ms: now_ms });
             (u, receipt, core)
         },
         _s => abort EStaleTenantCap,
@@ -1097,6 +1112,27 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
 
 // === Private Functions ===
 
+fun resolve_cycle_params(ensemble: &PolicyEnsemble): CycleParams {
+    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(ensemble));
+    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(ensemble));
+    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(ensemble), ceiling);
+    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(ensemble));
+    CycleParams { floor, ceiling, handover, descent }
+}
+
+fun resolve_and_emit_cycle_params(ensemble: &PolicyEnsemble, escrow_id: ID, timestamp_ms: u64): CycleParams {
+    let cycle = resolve_cycle_params(ensemble);
+    event::emit(CycleParamsResolved {
+        escrow_id,
+        floor_mist:   monetary::price_mist(cycle.floor),
+        ceiling_ms:   phases::duration_ms(cycle.ceiling),
+        handover_ms:  phases::duration_ms(cycle.handover),
+        descent_ms:   phases::duration_ms(cycle.descent),
+        timestamp_ms,
+    });
+    cycle
+}
+
 fun assert_owner_cap_binds<CoinType>(cap: &OwnerCap, core: &EscrowCore<CoinType>) {
     assert!(owner_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowOwnerCap)
 }
@@ -1186,6 +1222,8 @@ fun do_handover<Asset: key + store, CoinType>(
     let new_stake        = tenant_seat::proj_stake_value(&pending);
     let new_rent_price = monetary::price_mist(ascending_floor_price(new_stake, config));
     let boundary_ms = phases::timestamp_ms(boundary);
+    let new_ceiling_total  = tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures);
+    let new_handover_total = tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures);
 
     event::emit(HandoverCompleted {
         escrow_id: escrow_identity::escrow_id(escrow_identity),
@@ -1200,13 +1238,16 @@ fun do_handover<Asset: key + store, CoinType>(
         protocol_fee:             fee_mist,
         remain_credit:            monetary::stake_mist(remain_credit),
         new_rent_price,
+        committed_tenures:        tenures::tenures_count(incoming_tenures),
+        ceiling_total_ms:         phases::duration_ms(new_ceiling_total),
+        handover_total_ms:        phases::duration_ms(new_handover_total),
         timestamp_ms:             boundary_ms,
     });
 
     let new_schedule = TenancySchedule {
         phase_start:      boundary,
-        ceiling_total:    tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures),
-        handover_total:   tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures),
+        ceiling_total:    new_ceiling_total,
+        handover_total:   new_handover_total,
         committed_tenures: incoming_tenures,
     };
     RentingState::Occupied {
@@ -1298,6 +1339,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
         bid_amount,
         floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(expiry),
+        committed_tenures:         tenures::tenures_count(tenures),
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
@@ -1359,6 +1401,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         new_bid_amount,
         floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
+        committed_tenures:         tenures::tenures_count(incoming_tenures),
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
@@ -1443,7 +1486,7 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             if (proj_auction_is_firable(&auction, &cycle, now)) {
                 let boundary = auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start);
-                AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary))
+                AssetState::Waiting(do_auction_expiry(asset, auction, cycle, &mut core.ensemble, core.escrow_identity, boundary))
             } else {
                 AssetState::Waiting(WaitingState::Descent { asset, auction, cycle })
             }
@@ -1492,6 +1535,9 @@ fun do_install<Asset: key + store, CoinType>(
         phase_start_ms: phases::timestamp_ms(now),
         price_paid,
         floor_price:    monetary::price_mist(floor),
+        committed_tenures: tenures::tenures_count(tenures),
+        ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
+        handover_total_ms: phases::duration_ms(schedule.handover_total),
     });
     (
         RentingState::Occupied {
@@ -1506,32 +1552,34 @@ fun do_install<Asset: key + store, CoinType>(
 fun do_auction_expiry<Asset: key + store>(
     asset:           asset_custody::AssetCustodyLocked<Asset>,
     auction:         AuctionTerms,
+    cycle:           CycleParams,
     ensemble:        &mut EnsembleSlot,
     escrow_identity: EscrowIdentity,
     boundary:        Timestamp,
 ): WaitingState<Asset> {
-    event::emit(AuctionExpired { escrow_id: escrow_identity::escrow_id(escrow_identity), phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
-    if (ensemble.pending.is_some()) {
+    let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
+    event::emit(AuctionExpired { escrow_id: raw_escrow_id, phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
+    let cycle = if (ensemble.pending.is_some()) {
         let new_ensemble = ensemble.pending.extract();
-        policy_ensemble::emit_ensemble_updated(&new_ensemble, escrow_identity::escrow_id(escrow_identity));
+        policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
         ensemble.active = new_ensemble;
+        resolve_and_emit_cycle_params(&ensemble.active, raw_escrow_id, phases::timestamp_ms(boundary))
+    } else {
+        cycle
     };
-    let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(&ensemble.active));
-    let ceiling  = tenure_duration_policy::compute_duration(policy_ensemble::proj_tenure_duration(&ensemble.active));
-    let handover = handover_policy::compute_duration(policy_ensemble::proj_handover(&ensemble.active), ceiling);
-    let descent  = auction_window_policy::compute_duration(policy_ensemble::proj_auction_window(&ensemble.active));
-    WaitingState::Idle { asset, cycle: CycleParams { floor, ceiling, handover, descent } }
+    WaitingState::Idle { asset, cycle }
 }
 
 fun do_retire_immediately<Asset: key + store>(
     asset:           asset_custody::AssetCustodyLocked<Asset>,
+    owner_cap_id:    ID,
     escrow_identity: EscrowIdentity,
     now:             Timestamp,
     ctx:             &TxContext,
 ): WaitingState<Asset> {
     let timestamp_ms  = phases::timestamp_ms(now);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
-    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_address: ctx.sender(), timestamp_ms });
+    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms });
     event::emit(AssetRetired { escrow_id: raw_escrow_id, timestamp_ms });
     WaitingState::Retired { asset }
 }
@@ -1612,6 +1660,19 @@ fun descending_floor_price(
 // === Test Functions ===
 
 #[test_only]
+public(package) fun resolve_cycle_params_for_testing(ensemble: &PolicyEnsemble): CycleParams {
+    resolve_cycle_params(ensemble)
+}
+#[test_only]
+public(package) fun cycle_params_floor_mist(c: &CycleParams): u64 { monetary::price_mist(c.floor) }
+#[test_only]
+public(package) fun cycle_params_ceiling_ms(c: &CycleParams): u64 { phases::duration_ms(c.ceiling) }
+#[test_only]
+public(package) fun cycle_params_handover_ms(c: &CycleParams): u64 { phases::duration_ms(c.handover) }
+#[test_only]
+public(package) fun cycle_params_descent_ms(c: &CycleParams): u64 { phases::duration_ms(c.descent) }
+
+#[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
     let (owner, fee) = split_fee_amounts(monetary::stake(amount));
     (monetary::stake_mist(owner), monetary::stake_mist(fee))
@@ -1639,6 +1700,8 @@ public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                  
 public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64     { e.handover_countdown_expiry }
 #[test_only]
 public(package) fun bid_placed_timestamp_ms(e: &BidPlaced): u64                      { e.timestamp_ms }
+#[test_only]
+public(package) fun bid_placed_committed_tenures(e: &BidPlaced): u64             { e.committed_tenures }
 
 #[test_only]
 public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID                      { e.escrow_id }
@@ -1668,6 +1731,8 @@ public(package) fun bid_superseded_floor_price(e: &BidSuperseded): u64          
 public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded): u64  { e.handover_countdown_expiry }
 #[test_only]
 public(package) fun bid_superseded_timestamp_ms(e: &BidSuperseded): u64              { e.timestamp_ms }
+#[test_only]
+public(package) fun bid_superseded_committed_tenures(e: &BidSuperseded): u64         { e.committed_tenures }
 
 #[test_only]
 public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
@@ -1694,6 +1759,12 @@ public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64
 #[test_only]
 public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u64            { e.new_rent_price }
 #[test_only]
+public(package) fun handover_completed_committed_tenures(e: &HandoverCompleted): u64         { e.committed_tenures }
+#[test_only]
+public(package) fun handover_completed_ceiling_total_ms(e: &HandoverCompleted): u64          { e.ceiling_total_ms }
+#[test_only]
+public(package) fun handover_completed_handover_total_ms(e: &HandoverCompleted): u64         { e.handover_total_ms }
+#[test_only]
 public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64              { e.timestamp_ms }
 
 #[test_only]
@@ -1719,6 +1790,8 @@ public(package) fun asset_borrowed_escrow_id(e: &AssetBorrowed): ID             
 public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID              { e.tenant_cap_id }
 #[test_only]
 public(package) fun asset_borrowed_tenant_address(e: &AssetBorrowed): address       { e.tenant_address }
+#[test_only]
+public(package) fun asset_borrowed_timestamp_ms(e: &AssetBorrowed): u64              { e.timestamp_ms }
 
 #[test_only]
 public(package) fun asset_returned_escrow_id(e: &AssetReturned): ID                 { e.escrow_id }
@@ -1784,8 +1857,8 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
     boundary: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
-        AssetState::Waiting(WaitingState::Descent { asset, auction, .. }) =>
-            AssetState::Waiting(do_auction_expiry(asset, auction, &mut core.ensemble, core.escrow_identity, boundary)),
+        AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) =>
+            AssetState::Waiting(do_auction_expiry(asset, auction, cycle, &mut core.ensemble, core.escrow_identity, boundary)),
         AssetState::Waiting(_ws) => abort ENotRented,
         AssetState::Renting(_rs) => abort ENotRented,
     }
@@ -1957,6 +2030,12 @@ public(package) fun rent_started_phase_start_ms(e: &RentStarted): u64           
 public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
 #[test_only]
 public(package) fun rent_started_floor_price(e: &RentStarted): u64               { e.floor_price }
+#[test_only]
+public(package) fun rent_started_committed_tenures(e: &RentStarted): u64         { e.committed_tenures }
+#[test_only]
+public(package) fun rent_started_ceiling_total_ms(e: &RentStarted): u64          { e.ceiling_total_ms }
+#[test_only]
+public(package) fun rent_started_handover_total_ms(e: &RentStarted): u64         { e.handover_total_ms }
 
 #[test_only]
 public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID           { e.escrow_id }
@@ -1968,12 +2047,27 @@ public(package) fun auction_expired_last_acq_price(e: &AuctionExpired): u64     
 public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64        { e.timestamp_ms }
 
 #[test_only]
+public(package) fun cycle_params_resolved_escrow_id(e: &CycleParamsResolved): ID    { e.escrow_id }
+#[test_only]
+public(package) fun cycle_params_resolved_floor_mist(e: &CycleParamsResolved): u64  { e.floor_mist }
+#[test_only]
+public(package) fun cycle_params_resolved_ceiling_ms(e: &CycleParamsResolved): u64  { e.ceiling_ms }
+#[test_only]
+public(package) fun cycle_params_resolved_handover_ms(e: &CycleParamsResolved): u64 { e.handover_ms }
+#[test_only]
+public(package) fun cycle_params_resolved_descent_ms(e: &CycleParamsResolved): u64  { e.descent_ms }
+#[test_only]
+public(package) fun cycle_params_resolved_timestamp_ms(e: &CycleParamsResolved): u64 { e.timestamp_ms }
+
+#[test_only]
 public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID               { e.escrow_id }
 #[test_only]
 public(package) fun asset_retired_timestamp_ms(e: &AssetRetired): u64           { e.timestamp_ms }
 
 #[test_only]
 public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID            { e.escrow_id }
+#[test_only]
+public(package) fun retire_flag_set_owner_cap_id(e: &RetireFlagSet): ID         { e.owner_cap_id }
 #[test_only]
 public(package) fun retire_flag_set_owner_address(e: &RetireFlagSet): address   { e.owner_address }
 #[test_only]

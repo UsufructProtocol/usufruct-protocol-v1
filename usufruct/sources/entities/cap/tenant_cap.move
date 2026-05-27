@@ -24,15 +24,15 @@ public struct TenantCapIdentity has copy, drop, store { id: ID }
 // === Events ===
 
 public struct TenantCapMinted has copy, drop {
-    tenant_cap_id: ID,
-    escrow_id:     ID,
-    tenant:        address,
+    tenant_cap_id:  ID,
+    escrow_id:      ID,
+    tenant_address: address,
 }
 
 public struct TenantCapBurned has copy, drop {
-    tenant_cap_id: ID,
-    escrow_id:     ID,
-    tenant:        address,
+    tenant_cap_id:  ID,
+    escrow_id:      ID,
+    tenant_address: address,
 }
 
 // === Method Aliases ===
@@ -68,7 +68,7 @@ public(package) fun new(
 ): TenantCap {
     let cap           = TenantCap { id: object::new(ctx), escrow_identity };
     let tenant_cap_id = object::id(&cap);
-    event::emit(TenantCapMinted { tenant_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), tenant });
+    event::emit(TenantCapMinted { tenant_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), tenant_address: tenant });
     cap
 }
 
@@ -77,7 +77,7 @@ public(package) fun burn(cap: TenantCap, ctx: &TxContext) {
     let tenant_cap_id = object::uid_to_inner(&id);
     let tenant        = ctx.sender();
     id.delete();
-    event::emit(TenantCapBurned { tenant_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), tenant });
+    event::emit(TenantCapBurned { tenant_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), tenant_address: tenant });
 }
 
 // === Private Functions ===
@@ -89,14 +89,14 @@ public fun minted_tenant_cap_id(e: &TenantCapMinted): ID { e.tenant_cap_id }
 #[test_only]
 public fun minted_escrow_id(e: &TenantCapMinted): ID { e.escrow_id }
 #[test_only]
-public fun minted_tenant(e: &TenantCapMinted): address { e.tenant }
+public fun minted_tenant_address(e: &TenantCapMinted): address { e.tenant_address }
 
 #[test_only]
 public fun burned_tenant_cap_id(e: &TenantCapBurned): ID { e.tenant_cap_id }
 #[test_only]
 public fun burned_escrow_id(e: &TenantCapBurned): ID { e.escrow_id }
 #[test_only]
-public fun burned_tenant(e: &TenantCapBurned): address { e.tenant }
+public fun burned_tenant_address(e: &TenantCapBurned): address { e.tenant_address }
 
 #[test_only]
 public fun mint_then_burn_for_testing(escrow_identity: EscrowIdentity, tenant: address, ctx: &mut TxContext) {

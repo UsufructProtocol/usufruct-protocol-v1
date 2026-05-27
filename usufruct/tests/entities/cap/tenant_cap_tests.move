@@ -31,13 +31,13 @@ fun escrow_id_2(): ID { object::id_from_address(@0xE5C2) }
 fun assert_minted(e: &TenantCapMinted, cap_id: ID, escrow_id: ID, tenant: address) {
     assert_eq!(tenant_cap::minted_tenant_cap_id(e), cap_id);
     assert_eq!(tenant_cap::minted_escrow_id(e),     escrow_id);
-    assert_eq!(tenant_cap::minted_tenant(e),         tenant);
+    assert_eq!(tenant_cap::minted_tenant_address(e),         tenant);
 }
 
 fun assert_burned(e: &TenantCapBurned, cap_id: ID, escrow_id: ID, tenant: address) {
     assert_eq!(tenant_cap::burned_tenant_cap_id(e), cap_id);
     assert_eq!(tenant_cap::burned_escrow_id(e),     escrow_id);
-    assert_eq!(tenant_cap::burned_tenant(e),         tenant);
+    assert_eq!(tenant_cap::burned_tenant_address(e),         tenant);
 }
 
 // ─── N — new ───────────────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ fun b4_burned_tenant_reflects_burn_time_sender() {
         let id = object::id(&cap);
         cap_id = id;
         let minted = event::events_by_type<TenantCapMinted>();
-        assert_eq!(tenant_cap::minted_tenant(&minted[0]), ALICE);
+        assert_eq!(tenant_cap::minted_tenant_address(&minted[0]), ALICE);
         transfer::public_transfer(cap, BOB);
     };
     scenario.next_tx(BOB);
@@ -525,10 +525,10 @@ fun l4_multi_stale_cleanup() {
         let burned = event::events_by_type<TenantCapBurned>();
         assert_eq!(burned.length(), 2);
         assert_eq!(tenant_cap::burned_tenant_cap_id(&burned[0]), first_id);
-        assert_eq!(tenant_cap::burned_tenant(&burned[0]),         ALICE);
+        assert_eq!(tenant_cap::burned_tenant_address(&burned[0]),         ALICE);
         assert_eq!(tenant_cap::burned_escrow_id(&burned[0]),     escrow_id_1());
         assert_eq!(tenant_cap::burned_tenant_cap_id(&burned[1]), second_id);
-        assert_eq!(tenant_cap::burned_tenant(&burned[1]),         ALICE);
+        assert_eq!(tenant_cap::burned_tenant_address(&burned[1]),         ALICE);
         assert_eq!(tenant_cap::burned_escrow_id(&burned[1]),     escrow_id_1());
     };
     scenario.end();
@@ -585,8 +585,8 @@ fun l6_one_shot_ptb_lifecycle() {
             tenant_cap::minted_tenant_cap_id(&minted[0]),
             tenant_cap::burned_tenant_cap_id(&burned[0]),
         );
-        assert_eq!(tenant_cap::minted_tenant(&minted[0]), ALICE);
-        assert_eq!(tenant_cap::burned_tenant(&burned[0]),  ALICE);
+        assert_eq!(tenant_cap::minted_tenant_address(&minted[0]), ALICE);
+        assert_eq!(tenant_cap::burned_tenant_address(&burned[0]),  ALICE);
     };
     let effects = scenario.end();
     assert_eq!(effects.num_user_events(), 2);

@@ -36,7 +36,7 @@ Events are grouped by lifecycle phase. All amounts are in MIST (u64). All timest
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `AssetIntegrated<Asset, CoinType>` | Owner calls `integrate` | `escrow_id`, `owner_cap_id`, `owner_address`, `asset_id`, `fee_inbox_id`, `integrated_at_ms` |
+| `AssetIntegrated<Asset, CoinType>` | Owner calls `integrate` | `escrow_id`, `owner_cap_id`, `owner_address`, `asset_id`, `fee_inbox_id`, `integrated_at_ms`, `asset_type`, `coin_type` |
 | `AssetRetired` | Asset leaves protocol (retire path or claim) | `escrow_id`, `timestamp_ms` |
 | `AssetClaimed` | Owner reclaims asset after retirement | `escrow_id`, `owner_cap_id`, `owner_address`, `swept_earnings`, `timestamp_ms` |
 | `RetireFlagSet` | Owner signals intent to retire | `escrow_id`, `owner_cap_id`, `owner_address`, `timestamp_ms` |
@@ -57,7 +57,7 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `RentStarted` | Tenant enters Occupied state | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `price_paid`, `floor_price` |
+| `RentStarted` | Tenant enters Occupied state | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `price_paid`, `floor_price`, `committed_tenures`, `ceiling_total_ms` |
 | `TenureExpired` | Tenure ceiling reached without handover | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `owner_share`, `protocol_fee`, `last_acquisition_price`, `timestamp_ms` |
 | `CommitmentExtended` | Deferred commitment deadline extended | `escrow_id`, `commitment_policy`, `commitment_floor_ms`, `new_expiry_ms`, `timestamp_ms` |
 | `AssetBorrowed` | Tenant takes physical custody of asset | `escrow_id`, `tenant_cap_id`, `tenant_address`, `timestamp_ms` |
@@ -67,8 +67,8 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `BidPlaced` | Incoming tenant outbids current tenant | `escrow_id`, `current_tenant_cap_id`, `current_tenant_address`, `current_tenant_stake`, `current_phase_start_ms`, `tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `timestamp_ms` |
-| `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `new_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `timestamp_ms` |
+| `BidPlaced` | Incoming tenant outbids current tenant | `escrow_id`, `current_tenant_cap_id`, `current_tenant_address`, `current_tenant_stake`, `current_phase_start_ms`, `tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
+| `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `new_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
 | `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `owner_share`, `protocol_fee`, `remain_credit`, `new_rent_price`, `timestamp_ms` |
 | `AuctionExpired` | Descent auction window closes with no bid | `escrow_id`, `phase_start_ms`, `last_acq_price`, `timestamp_ms` |
 
@@ -92,6 +92,8 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 | `TenantCapBurned` | Tenant cap destroyed (soft burn or claim) | `tenant_cap_id`, `escrow_id`, `tenant_address` |
 | `OwnerCapMinted` | Owner cap created at integration | `owner_cap_id`, `escrow_id`, `owner_address` |
 | `OwnerCapBurned` | Owner cap destroyed | `owner_cap_id`, `escrow_id`, `owner_address` |
+
+`TenantCapBurned` is emitted by the `tenant_cap` module only when the cap holder explicitly soft/hard-burns the cap (`escrow::soft_burn_tenant_cap` / `hard_burn_tenant_cap`). It is **not** emitted at `HandoverCompleted` or `TenureExpired`: those settle the tenant's seat internally, but the `TenantCap` object lives in the holder's wallet and is not an input to that transaction, so the protocol cannot burn it there. Consequently the logical end of a tenancy is `HandoverCompleted` / `TenureExpired` (keyed by `tenant_cap_id`), and the absence of a `TenantCapBurned` does **not** imply the tenancy is still live — the cap may simply be a dead object the holder never cleaned up.
 
 ## 3. What You Can Build
 

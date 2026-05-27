@@ -215,7 +215,8 @@ A single call can therefore chain `Demand → Occupied → AtDutch` or `Demand �
 ```
 AssetIntegrated<Asset, CoinType> {
     escrow_id: ID, owner_cap_id: ID, owner: address,
-    asset_id: ID, fee_inbox_id: ID, integrated_at_ms: u64
+    asset_id: ID, fee_inbox_id: ID, integrated_at_ms: u64,
+    asset_type: String, coin_type: String
 }
 ```
 Emitted once at `execute_integrate`.
@@ -223,7 +224,8 @@ Emitted once at `execute_integrate`.
 ```
 RentStarted {
     escrow_id: ID, tenant_cap_id: ID, tenant: address,
-    phase_start_ms: u64, price_paid: u64, floor_price: u64
+    phase_start_ms: u64, price_paid: u64, floor_price: u64,
+    committed_tenures: u64, ceiling_total_ms: u64
 }
 ```
 Emitted when a tenant enters `Occupied` from `Idle` or `AtDutch` via `do_install`.
@@ -235,7 +237,7 @@ BidPlaced {
     current_tenant_stake: u64, current_phase_start_ms: u64,
     tenant_cap_id: ID, pending_tenant: address,
     bid_amount: u64, floor_price: u64,
-    handover_countdown_expiry: u64, timestamp_ms: u64
+    handover_countdown_expiry: u64, committed_tenures: u64, timestamp_ms: u64
 }
 ```
 Emitted when a new tenant bid is placed on an occupied asset via `do_place_bid`.
@@ -248,7 +250,7 @@ BidSuperseded {
     displaced_tenant_cap_id: ID, new_tenant_cap_id: ID,
     displaced_bidder: address, refunded_amount: u64,
     new_bidder: address, new_bid_amount: u64,
-    floor_price: u64, handover_countdown_expiry: u64, timestamp_ms: u64
+    floor_price: u64, handover_countdown_expiry: u64, committed_tenures: u64, timestamp_ms: u64
 }
 ```
 Emitted when a pending bid is replaced by a newer bid via `do_supersede_bid`. Carries both the protected (current) tenant context and the full displacement record.

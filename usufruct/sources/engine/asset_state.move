@@ -155,12 +155,14 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 // === Events ===
 
 public struct RentStarted has copy, drop {
-    escrow_id:       ID,
-    tenant_cap_id:   ID,
-    tenant_address:  address,
-    phase_start_ms:  u64,
-    price_paid:      u64,
-    floor_price:     u64,
+    escrow_id:         ID,
+    tenant_cap_id:     ID,
+    tenant_address:    address,
+    phase_start_ms:    u64,
+    price_paid:        u64,
+    floor_price:       u64,
+    committed_tenures: u64,
+    ceiling_total_ms:  u64,
 }
 
 public struct AuctionExpired has copy, drop {
@@ -221,6 +223,7 @@ public struct BidPlaced has copy, drop {
     bid_amount:                u64,
     floor_price:               u64,
     handover_countdown_expiry: u64,
+    committed_tenures:         u64,
     timestamp_ms:              u64,
 }
 
@@ -238,6 +241,7 @@ public struct BidSuperseded has copy, drop {
     new_bid_amount:            u64,
     floor_price:               u64,
     handover_countdown_expiry: u64,
+    committed_tenures:         u64,
     timestamp_ms:              u64,
 }
 
@@ -1302,6 +1306,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
         bid_amount,
         floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(expiry),
+        committed_tenures:         tenures::tenures_count(tenures),
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
@@ -1363,6 +1368,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         new_bid_amount,
         floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
+        committed_tenures:         tenures::tenures_count(incoming_tenures),
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
@@ -1496,6 +1502,8 @@ fun do_install<Asset: key + store, CoinType>(
         phase_start_ms: phases::timestamp_ms(now),
         price_paid,
         floor_price:    monetary::price_mist(floor),
+        committed_tenures: tenures::tenures_count(tenures),
+        ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
     });
     (
         RentingState::Occupied {
@@ -1644,6 +1652,8 @@ public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                  
 public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64     { e.handover_countdown_expiry }
 #[test_only]
 public(package) fun bid_placed_timestamp_ms(e: &BidPlaced): u64                      { e.timestamp_ms }
+#[test_only]
+public(package) fun bid_placed_committed_tenures(e: &BidPlaced): u64             { e.committed_tenures }
 
 #[test_only]
 public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID                      { e.escrow_id }
@@ -1673,6 +1683,8 @@ public(package) fun bid_superseded_floor_price(e: &BidSuperseded): u64          
 public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded): u64  { e.handover_countdown_expiry }
 #[test_only]
 public(package) fun bid_superseded_timestamp_ms(e: &BidSuperseded): u64              { e.timestamp_ms }
+#[test_only]
+public(package) fun bid_superseded_committed_tenures(e: &BidSuperseded): u64         { e.committed_tenures }
 
 #[test_only]
 public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
@@ -1964,6 +1976,10 @@ public(package) fun rent_started_phase_start_ms(e: &RentStarted): u64           
 public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
 #[test_only]
 public(package) fun rent_started_floor_price(e: &RentStarted): u64               { e.floor_price }
+#[test_only]
+public(package) fun rent_started_committed_tenures(e: &RentStarted): u64         { e.committed_tenures }
+#[test_only]
+public(package) fun rent_started_ceiling_total_ms(e: &RentStarted): u64          { e.ceiling_total_ms }
 
 #[test_only]
 public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID           { e.escrow_id }

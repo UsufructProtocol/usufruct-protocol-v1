@@ -8948,6 +8948,8 @@ fun event_pin_rent_started_all_fields() {
     assert_eq!(asset_state::rent_started_phase_start_ms(e),   7_000);
     assert_eq!(asset_state::rent_started_price_paid(e),       floor);
     assert_eq!(asset_state::rent_started_floor_price(e),      floor);
+    assert_eq!(asset_state::rent_started_committed_tenures(e), 1);
+    assert_eq!(asset_state::rent_started_ceiling_total_ms(e), escrow_corpus::tenure_ceiling_const());
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -9089,6 +9091,7 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
     assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);
     assert_eq!(asset_state::bid_placed_handover_countdown_expiry(e), expected_expiry);
+    assert_eq!(asset_state::bid_placed_committed_tenures(e),         1);
     assert_eq!(asset_state::bid_placed_timestamp_ms(e),              now2);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -9148,6 +9151,7 @@ fun event_pin_bid_superseded_all_fields() {
     assert_eq!(asset_state::bid_superseded_new_bid_amount(e),             floor3);
     assert_eq!(asset_state::bid_superseded_floor_price(e),                floor3);
     assert_eq!(asset_state::bid_superseded_handover_countdown_expiry(e),  expected_expiry);
+    assert_eq!(asset_state::bid_superseded_committed_tenures(e),          1);
     assert_eq!(asset_state::bid_superseded_timestamp_ms(e),               now3);
 
     transfer::public_transfer(cap_t1, OWNER);

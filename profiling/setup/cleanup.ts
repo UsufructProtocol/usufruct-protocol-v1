@@ -2,11 +2,14 @@
 /**
  * Retires + claims all abandoned profiling escrows on testnet.
  *
- * Finds every OwnerCap in the owner's wallet, reads the escrow state,
- * and for each idle escrow fires retire → claim_asset in a single PTB.
- * (retire already calls apply_pending_transition_states internally.)
- * Rented escrows (tenure not yet expired) are skipped
- * with a note — run again after 1 hour.
+ * For each OwnerCap in the owner's wallet:
+ *   1. Reads escrow state via getObject (is_retired view).
+ *   2. If NOT retired: sends a `retire` tx and waits for confirmation.
+ *   3. Sends a `claim_asset` tx.
+ *
+ * Two separate transactions are required because `claim_asset` receives the
+ * escrow by value (at its chain-committed state). Chaining retire+claim in a
+ * single PTB passes the pre-retire state to claim_asset, causing ENotRetired.
  *
  * Usage:
  *   SUI_RPC=https://fullnode.testnet.sui.io:443 npm run cleanup:testnet
@@ -32,11 +35,13 @@ function run(cmd: string): string {
 async function signAndExecute(tx: Transaction, keypair: Ed25519Keypair) {
   const bytes = await tx.build({ client });
   const sig   = await keypair.signTransaction(bytes);
-  return client.executeTransactionBlock({
+  const result = await client.executeTransactionBlock({
     transactionBlock: bytes,
     signature:        sig.signature,
-    options:          { showEffects: true, showObjectChanges: true },
+    options:          { showEffects: true },
   });
+  await client.waitForTransaction({ digest: result.digest });
+  return result;
 }
 
 // Fetch all OwnerCap objects for an address
@@ -46,8 +51,8 @@ async function getOwnerCaps(address: string, pkg: string): Promise<{ id: string;
 
   while (true) {
     const page = await client.getOwnedObjects({
-      owner:  address,
-      filter: { StructType: `${pkg}::owner_cap::OwnerCap` },
+      owner:   address,
+      filter:  { StructType: `${pkg}::owner_cap::OwnerCap` },
       options: { showContent: true },
       cursor,
     });
@@ -66,76 +71,89 @@ async function getOwnerCaps(address: string, pkg: string): Promise<{ id: string;
   return caps;
 }
 
-// Read escrow state discriminant from on-chain content
-async function getEscrowIsIdle(escrowId: string): Promise<boolean | null> {
-  const obj = await client.getObject({
-    id:      escrowId,
-    options: { showContent: true },
-  });
-  const content = (obj.data?.content as any);
-  if (!content?.fields?.state) return null;
+// Calls a pure bool view function via devInspect.
+async function viewBool(
+  sender:   string,
+  target:   string,
+  typeArgs: string[],
+  objIds:   string[],
+): Promise<boolean> {
+  const tx = new Transaction();
+  tx.moveCall({ target, typeArguments: typeArgs, arguments: objIds.map(id => tx.object(id)) });
+  const result = await client.devInspectTransactionBlock({ transactionBlock: tx, sender });
+  const bytes = result.results?.[0]?.returnValues?.[0]?.[0];
+  return Array.isArray(bytes) ? bytes[0] === 1 : false;
+}
 
-  // state is an Option<AssetState> — if the state Option has a variant field
-  // we look at the inner discriminant. Simpler: call the view function.
-  return null; // fall back to attempting the PTB
+function makeViewers(sender: string, pkg: string, typeArgs: string[]) {
+  const v = (fn: string, ids: string[]) => viewBool(sender, `${pkg}::escrow::${fn}`, typeArgs, ids);
+  return {
+    isRetired: (escrowId: string) => v('is_retired', [escrowId]),
+  };
 }
 
 async function tryClaimEscrow(
-  escrowId:   string,
-  capId:      string,
-  d:          ReturnType<typeof loadDeployment>,
-  keypair:    Ed25519Keypair,
-  ownerAddr:  string,
+  escrowId:  string,
+  capId:     string,
+  d:         ReturnType<typeof loadDeployment>,
+  keypair:   Ed25519Keypair,
+  ownerAddr: string,
 ): Promise<'claimed' | 'rented' | 'error'> {
   const pkg      = d.usufructPackageId;
   const dummyPkg = d.dummyAssetPackageId;
-  const assetType   = `${dummyPkg}::dummy_asset::DummyAsset`;
-  const typeArgs    = [assetType, '0x2::sui::SUI'];
+  const typeArgs = [`${dummyPkg}::dummy_asset::DummyAsset`, '0x2::sui::SUI'];
 
-  const tx = new Transaction();
-  tx.setSender(ownerAddr);
-  tx.setGasBudget(50_000_000);
-
-  const escrow  = tx.object(escrowId);
-  const cap     = tx.object(capId);
-  const clock   = tx.object(CLOCK_ID);
-
-  // retire — internally calls apply_pending_transition_states
-  tx.moveCall({
-    target:        `${pkg}::escrow::retire`,
-    typeArguments: typeArgs,
-    arguments:     [escrow, cap, clock],
-  });
-
-  // claim_asset — consumes escrow + cap, returns (Asset, Coin<SUI>)
-  const [asset, earnings] = tx.moveCall({
-    target:        `${pkg}::escrow::claim_asset`,
-    typeArguments: typeArgs,
-    arguments:     [escrow, cap, clock],
-  }) as [any, any];
-
-  // burn the dummy asset
-  tx.moveCall({
-    target:    `${dummyPkg}::dummy_asset::burn`,
-    arguments: [asset],
-  });
-
-  // transfer any earnings back to owner
-  tx.transferObjects([earnings], ownerAddr);
+  const view = makeViewers(ownerAddr, pkg, typeArgs);
 
   try {
-    const result = await signAndExecute(tx, keypair);
-    const status = (result.effects as any)?.status?.status;
-    if (status === 'success') return 'claimed';
-    const err = (result.effects as any)?.status?.error ?? '';
-    // ENotRetired = 12 — escrow is rented, tenure not yet expired
-    if (/MoveAbort.*},\s*12\)/.test(err)) return 'rented';
-    console.error(`  error: ${err}`);
-    return 'error';
+    // 1. If not already retired, call retire unconditionally.
+    //    retire calls apply_pending internally: if tenure has expired it fires
+    //    Occupied → Idle → Retired in one tx. If the tenure is still active it
+    //    sets the Retiring flag and returns, leaving the escrow in Occupied.
+    if (!await view.isRetired(escrowId)) {
+      const txRet = new Transaction();
+      txRet.setSender(ownerAddr);
+      txRet.setGasBudget(20_000_000);
+      txRet.moveCall({
+        target:        `${pkg}::escrow::retire`,
+        typeArguments: typeArgs,
+        arguments:     [txRet.object(escrowId), txRet.object(capId), txRet.object(CLOCK_ID)],
+      });
+      const retResult = await signAndExecute(txRet, keypair);
+      if ((retResult.effects as any)?.status?.status !== 'success') {
+        const err = (retResult.effects as any)?.status?.error ?? 'unknown';
+        console.error(`  retire failed: ${err}`);
+        return 'error';
+      }
+
+      // 2. After retire, check if now Waiting::Retired. If not, the tenure is
+      //    still active — the Retiring flag is set and it will auto-retire later.
+      if (!await view.isRetired(escrowId)) return 'rented';
+    }
+
+    // 3. claim_asset — sees committed Waiting::Retired state.
+    const txClaim = new Transaction();
+    txClaim.setSender(ownerAddr);
+    txClaim.setGasBudget(20_000_000);
+    const [asset, earnings] = txClaim.moveCall({
+      target:        `${pkg}::escrow::claim_asset`,
+      typeArguments: typeArgs,
+      arguments:     [txClaim.object(escrowId), txClaim.object(capId), txClaim.object(CLOCK_ID)],
+    }) as [any, any];
+    txClaim.moveCall({ target: `${dummyPkg}::dummy_asset::burn`, arguments: [asset] });
+    txClaim.transferObjects([earnings], ownerAddr);
+
+    const claimResult = await signAndExecute(txClaim, keypair);
+    if ((claimResult.effects as any)?.status?.status !== 'success') {
+      const err = (claimResult.effects as any)?.status?.error ?? 'unknown';
+      console.error(`  claim failed: ${err}`);
+      return 'error';
+    }
+
+    return 'claimed';
+
   } catch (e: any) {
-    const msg = e?.message ?? String(e);
-    if (/MoveAbort.*},\s*12\)/.test(msg)) return 'rented';
-    console.error(`  exception: ${msg.slice(0, 200)}`);
+    console.error(`  exception: ${(e?.message ?? String(e)).slice(0, 200)}`);
     return 'error';
   }
 }
@@ -168,7 +186,8 @@ async function main() {
   for (const { id: capId, escrowId } of caps) {
     process.stdout.write(`  escrow ${escrowId.slice(0, 10)}…  cap ${capId.slice(0, 10)}… → `);
     const result = await tryClaimEscrow(escrowId, capId, d, keypair, ownerAddr);
-    console.log(result);
+    if (result !== 'claimed') process.stdout.write(result === 'rented' ? 'rented\n' : '');
+    else console.log('claimed');
     if (result === 'claimed') claimed++;
     else if (result === 'rented') rented++;
     else errors++;
@@ -176,8 +195,7 @@ async function main() {
 
   console.log(`\nDone — claimed: ${claimed}  rented (skipped): ${rented}  errors: ${errors}`);
   if (rented > 0) {
-    console.log(`\nRented escrows have a 1-hour tenure. Run again after they expire:`);
-    console.log(`  SUI_RPC=https://fullnode.testnet.sui.io:443 npm run cleanup:testnet`);
+    console.log(`\nRented escrows still within their tenure window. Run again after they expire.`);
   }
 }
 

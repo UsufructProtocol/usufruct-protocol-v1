@@ -302,7 +302,7 @@ Emitted when a tenant extracts the asset via `execute_borrow`.
 ```
 AssetReturned { escrow_id: ID, tenant_cap_id: ID, tenant: address }
 ```
-Emitted when the asset is re-inserted via `execute_return`.
+Emitted when the asset is re-inserted via `execute_return`. Carries no `timestamp_ms`: `AssetReceipt` is a hot potato (no `drop`/`store`/`key`/`copy`), so it must be consumed by `execute_return` in the same transaction that produced it via `execute_borrow`. A `Clock` is read-only within a transaction — its `timestamp_ms` is fixed by the consensus commit prologue before user code runs and cannot be mutated by it — so a return timestamp would always equal the value already pinned by `AssetBorrowed`. The borrow timestamp dates the whole borrow↔return interval.
 
 ```
 EarningsWithdrawn {

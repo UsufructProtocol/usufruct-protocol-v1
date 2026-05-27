@@ -57,7 +57,7 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `RentStarted` | Tenant enters Occupied state | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `price_paid`, `floor_price`, `committed_tenures`, `ceiling_total_ms` |
+| `RentStarted` | Tenant enters Occupied state | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `price_paid`, `floor_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms` |
 | `TenureExpired` | Tenure ceiling reached without handover | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `owner_share`, `protocol_fee`, `last_acquisition_price`, `timestamp_ms` |
 | `CommitmentExtended` | Deferred commitment deadline extended | `escrow_id`, `commitment_policy`, `commitment_floor_ms`, `new_expiry_ms`, `timestamp_ms` |
 | `AssetBorrowed` | Tenant takes physical custody of asset | `escrow_id`, `tenant_cap_id`, `tenant_address`, `timestamp_ms` |
@@ -69,10 +69,12 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 |-------|---------|------------|
 | `BidPlaced` | Incoming tenant outbids current tenant | `escrow_id`, `current_tenant_cap_id`, `current_tenant_address`, `current_tenant_stake`, `current_phase_start_ms`, `tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
 | `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `new_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
-| `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `owner_share`, `protocol_fee`, `remain_credit`, `new_rent_price`, `timestamp_ms` |
+| `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `owner_share`, `protocol_fee`, `remain_credit`, `new_rent_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms`, `timestamp_ms` |
 | `AuctionExpired` | Descent auction window closes with no bid | `escrow_id`, `phase_start_ms`, `last_acq_price`, `timestamp_ms` |
 
 `BidPlaced` captures a snapshot of the current tenant's state at the moment the bid arrives. `BidSuperseded` captures a three-party snapshot: protected (current), displaced (first bidder), new (second bidder). This makes bid competition fully reconstructable without any on-chain read.
+
+The schedule fields that open a tenancy — emitted on both `RentStarted` and `HandoverCompleted` — describe the incoming tenant's terms: `committed_tenures` is the number of tenures paid for; `ceiling_total_ms` is the total tenure duration (so projected expiry = `phase_start_ms + ceiling_total_ms`); `handover_total_ms` is the incumbent's protection window — how long the countdown runs before a challenger can take over. Emitting these on `HandoverCompleted` (where they are rescaled from the displaced tenant's schedule by the incoming/outgoing tenure ratio) keeps every tenancy self-describing from a single row, with no need to walk the handover chain back to the originating `RentStarted`.
 
 ### Financial
 

@@ -8950,6 +8950,7 @@ fun event_pin_rent_started_all_fields() {
     assert_eq!(asset_state::rent_started_floor_price(e),      floor);
     assert_eq!(asset_state::rent_started_committed_tenures(e), 1);
     assert_eq!(asset_state::rent_started_ceiling_total_ms(e), escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::rent_started_handover_total_ms(e), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -9378,6 +9379,9 @@ fun event_pin_handover_completed_all_fields() {
     assert_eq!(asset_state::handover_completed_owner_share(e),             owner_share_val);
     assert_eq!(asset_state::handover_completed_protocol_fee(e),            protocol_fee_val);
     assert_eq!(asset_state::handover_completed_remain_credit(e),           remain_val);
+    assert_eq!(asset_state::handover_completed_committed_tenures(e),       1);
+    assert_eq!(asset_state::handover_completed_ceiling_total_ms(e),        escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::handover_completed_handover_total_ms(e),       escrow_corpus::handover_countdown_c1_const());
     assert_eq!(asset_state::handover_completed_timestamp_ms(e),            boundary_ms);
     // new_rent_price: ascending_floor_price based on floor2 stake.
     let new_rent = asset_state::handover_completed_new_rent_price(e);

@@ -163,6 +163,7 @@ public struct RentStarted has copy, drop {
     floor_price:       u64,
     committed_tenures: u64,
     ceiling_total_ms:  u64,
+    handover_total_ms: u64,
 }
 
 public struct AuctionExpired has copy, drop {
@@ -258,6 +259,9 @@ public struct HandoverCompleted has copy, drop {
     protocol_fee:             u64,
     remain_credit:            u64,
     new_rent_price:           u64,
+    committed_tenures:        u64,
+    ceiling_total_ms:         u64,
+    handover_total_ms:        u64,
     timestamp_ms:             u64,
 }
 
@@ -1194,6 +1198,8 @@ fun do_handover<Asset: key + store, CoinType>(
     let new_stake        = tenant_seat::proj_stake_value(&pending);
     let new_rent_price = monetary::price_mist(ascending_floor_price(new_stake, config));
     let boundary_ms = phases::timestamp_ms(boundary);
+    let new_ceiling_total  = tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures);
+    let new_handover_total = tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures);
 
     event::emit(HandoverCompleted {
         escrow_id: escrow_identity::escrow_id(escrow_identity),
@@ -1208,13 +1214,16 @@ fun do_handover<Asset: key + store, CoinType>(
         protocol_fee:             fee_mist,
         remain_credit:            monetary::stake_mist(remain_credit),
         new_rent_price,
+        committed_tenures:        tenures::tenures_count(incoming_tenures),
+        ceiling_total_ms:         phases::duration_ms(new_ceiling_total),
+        handover_total_ms:        phases::duration_ms(new_handover_total),
         timestamp_ms:             boundary_ms,
     });
 
     let new_schedule = TenancySchedule {
         phase_start:      boundary,
-        ceiling_total:    tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures),
-        handover_total:   tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures),
+        ceiling_total:    new_ceiling_total,
+        handover_total:   new_handover_total,
         committed_tenures: incoming_tenures,
     };
     RentingState::Occupied {
@@ -1504,6 +1513,7 @@ fun do_install<Asset: key + store, CoinType>(
         floor_price:    monetary::price_mist(floor),
         committed_tenures: tenures::tenures_count(tenures),
         ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
+        handover_total_ms: phases::duration_ms(schedule.handover_total),
     });
     (
         RentingState::Occupied {
@@ -1710,6 +1720,12 @@ public(package) fun handover_completed_protocol_fee(e: &HandoverCompleted): u64 
 public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64             { e.remain_credit }
 #[test_only]
 public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u64            { e.new_rent_price }
+#[test_only]
+public(package) fun handover_completed_committed_tenures(e: &HandoverCompleted): u64         { e.committed_tenures }
+#[test_only]
+public(package) fun handover_completed_ceiling_total_ms(e: &HandoverCompleted): u64          { e.ceiling_total_ms }
+#[test_only]
+public(package) fun handover_completed_handover_total_ms(e: &HandoverCompleted): u64         { e.handover_total_ms }
 #[test_only]
 public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64              { e.timestamp_ms }
 
@@ -1980,6 +1996,8 @@ public(package) fun rent_started_floor_price(e: &RentStarted): u64              
 public(package) fun rent_started_committed_tenures(e: &RentStarted): u64         { e.committed_tenures }
 #[test_only]
 public(package) fun rent_started_ceiling_total_ms(e: &RentStarted): u64          { e.ceiling_total_ms }
+#[test_only]
+public(package) fun rent_started_handover_total_ms(e: &RentStarted): u64         { e.handover_total_ms }
 
 #[test_only]
 public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID           { e.escrow_id }

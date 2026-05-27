@@ -225,7 +225,7 @@ Emitted once at `execute_integrate`.
 RentStarted {
     escrow_id: ID, tenant_cap_id: ID, tenant: address,
     phase_start_ms: u64, price_paid: u64, floor_price: u64,
-    committed_tenures: u64, ceiling_total_ms: u64
+    committed_tenures: u64, ceiling_total_ms: u64, handover_total_ms: u64
 }
 ```
 Emitted when a tenant enters `Occupied` from `Idle` or `AtDutch` via `do_install`.
@@ -261,10 +261,12 @@ HandoverCompleted {
     displaced_tenant_cap_id: ID, displaced_tenant: address, displaced_phase_start_ms: u64,
     new_tenant_cap_id: ID, new_tenant_addr: address, new_tenant_stake: u64,
     used_credit: u64, owner_share: u64, protocol_fee: u64,
-    remain_credit: u64, new_rent_price: u64, timestamp_ms: u64
+    remain_credit: u64, new_rent_price: u64,
+    committed_tenures: u64, ceiling_total_ms: u64, handover_total_ms: u64,
+    timestamp_ms: u64
 }
 ```
-Emitted when the handover countdown fires and the pending tenant becomes the current occupant.
+Emitted when the handover countdown fires and the pending tenant becomes the current occupant. The schedule fields (`committed_tenures`, `ceiling_total_ms`, `handover_total_ms`) describe the incoming tenant's terms, rescaled from the displaced tenant's schedule by the incoming/outgoing tenure ratio, so the new tenancy is self-describing without walking back to its originating `RentStarted`.
 
 ```
 TenureExpired {

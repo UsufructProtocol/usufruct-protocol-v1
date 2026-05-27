@@ -266,3 +266,96 @@ between the localnet deploy and the testnet deploy (integrator object rebate).
 **Conclusion:** Sui's gas model is fully deterministic for Move execution.
 Localnet profiling is a reliable predictor of mainnet cost.
 The numbers in this document are production costs, not approximations.
+
+---
+
+## Narrative conclusion
+
+### The meta-finding: localnet = testnet, to the bit
+
+The first and most important result is not a number — it is a validation of method.
+Every operation measured on localnet matches testnet exactly: same MIST, same object
+count, same behaviour. This means production gas costs are available from day one:
+run localnet, know mainnet. No surprises at deployment.
+
+### Everything is O(1) in system volume
+
+No operation depends on global state: not on the number of escrows, not on elapsed
+tenures, not on the size of the user base. The cost of `rent` with one escrow in the
+world is identical to the cost with one million. This is not obvious — many protocols
+accumulate gas debt as they grow through global registries, growing tables, or
+iteration over shared lists. Usufruct has none of those patterns.
+
+### `rent(tenures(N))` is O(1) in N — and the gap is brutal
+
+`tenures(N)` stores a multiplied duration; it does not create N objects or iterate N
+times. A tenant committing to 100 periods pays exactly the same as one committing to 1:
+
+| Commitment | Gas |
+|---|---|
+| `rent(tenures(1))` | 0.004040 SUI |
+| `rent(tenures(100))` | 0.004040 SUI |
+| 100 × sequential `rent(tenures(1))` | **0.5914 SUI** |
+
+The last row is 146× more expensive for the same economic outcome. The protocol
+rewards long-term commitment with O(1) gas.
+
+### The universal floor of ~0.001180 SUI
+
+Every mutating function pays ~1.18M MIST as a fixed base cost. This is
+`apply_pending_transition_states` — the correctness invariant that ensures no prior
+state transition is silently dropped before a mutation. It does not grow with time or
+volume.
+
+The proportion is striking: in `borrow_return`, the actual borrow+return logic costs
+~26k MIST, but the invariant costs 1,180k MIST — **the safety guarantee is 45× more
+expensive than the operation itself**. This is not a scaling problem; it is the
+explicit, fixed price of a protocol that cannot forget a state transition.
+
+When the invariant fires (creating a FeeMessage), it rises from 1,180k to 1,874k
+MIST. The +694k is exactly the Sui storage cost for one new object.
+
+### `collect_fee_messages` is self-funding at scale
+
+Each destroyed FeeMessage returns more storage rebate than computation costs.
+Break-even is N=2. At N=50, the protocol receives **~1.93M MIST net per message**
+in a single PTB that handles up to 500 messages. The fee inbox is not a maintenance
+burden — it is economically incentivized to be collected. Larger collections are more
+profitable per message.
+
+### On-chain arithmetic is effectively free
+
+Ten `CurveShapePolicy` variants — from `linear` (one mul_div) to `exp(8, pos)` (a
+Taylor series with ~28 iterations) to `power_law(8/3)` (Newton-Raphson cube root) —
+all cost within **152 MIST of each other**. That is 0.000000152 SUI.
+
+The 152 MIST gap does not come from arithmetic. It comes from enum field
+destructuring: variants with payload fields (`PowerLaw`, `Exponential`) need one
+extra destructuring instruction versus unit variants (`Linear`, `Smoothstep`,
+`Logistic`). Tens of multiplications, divisions, and loop iterations are invisible
+to the gas meter.
+
+Integrators choose their `CurveShapePolicy` based on the economic shape they want —
+concave growth, S-curve, logistic dampening — with zero gas consequence for the
+tenant.
+
+### Complete flows in perspective
+
+| Flow | Cost | Context |
+|---|---|---|
+| Full asset lifecycle (integrate→rent→borrow/return→retire→claim) | ~0.012 SUI | |
+| Handover between two tenants | ~0.016 SUI | |
+| 10 sequential rent cycles + retire + claim | ~0.064 SUI | |
+| One rent cycle (rent + apply) | 0.005914 SUI | ≈ 6 SUI transfers |
+
+A rent cycle — the core unit of protocol work — costs the same order as a handful
+of simple SUI transfers. The protocol is not expensive because it is complex; it is
+expensive in exactly the measure that creating and destroying Sui objects costs.
+
+### Verdict
+
+Usufruct scales correctly across all dimensions that matter for an on-chain rental
+market. It does not accumulate gas debt, does not penalise long commitments, and does
+not depend on system volume. The sole structural cost is the `apply_pending` floor —
+fixed, auditable, and the explicit price of the protocol's correctness invariant: no
+state transition is ever silently dropped.

@@ -9060,6 +9060,78 @@ fun cycle_params_resolved_not_emitted_on_unchanged_auction_expiry() {
     sc.end();
 }
 
+/// Invariant: scheduling a pending ensemble does NOT emit CycleParamsResolved.
+/// While the change is queued, the engine still operates under the active
+/// ensemble, so no resolved-params event fires until adoption.
+#[test]
+fun cycle_params_resolved_not_emitted_while_pending() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // A: handover Off
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_descent_for_testing(
+        &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
+        escrow_corpus::min_rent_price_const() * 2, 0,
+    );
+
+    // Queue ensemble B (handover Fixed) while in Descent — buffered, not adopted.
+    let pending = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    escrow::update_config(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
+
+    assert!(escrow::has_pending_config_update(&escrow), 0);
+    assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
+    // Pending is not active → no resolved-params event in this tx.
+    assert_eq!(event::events_by_type<CycleParamsResolved>().length(), 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Invariant: adopting a pending ensemble emits exactly one CycleParamsResolved,
+/// and its values reflect the newly-active ensemble (B), never the prior one (A).
+/// A has handover Off (0); B has handover Fixed (25_000) — the emitted value must
+/// be B's, proving the event tracks the active ensemble, not the stale resolution.
+#[test]
+fun cycle_params_resolved_on_adoption_reflects_new_ensemble() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // A: handover Off
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+    );
+    escrow::drive_to_descent_for_testing(
+        &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
+        escrow_corpus::min_rent_price_const() * 2, 0,
+    );
+
+    let pending = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // B: handover Fixed
+    escrow::update_config(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
+
+    // Adopt the pending at auction expiry via the production path.
+    let boundary_ms =
+        escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const();
+    clock::set_for_testing(&mut clk, boundary_ms);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+
+    // Scheduling emitted 0; adoption emits exactly 1 → count is 1, reflecting B.
+    let evts = event::events_by_type<CycleParamsResolved>();
+    assert_eq!(evts.length(), 1);
+    assert_eq!(asset_state::cycle_params_resolved_handover_ms(&evts[0]), escrow_corpus::handover_countdown_c1_const());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── AssetRetired payload pin ────────────────────────────────────────────────
 
 #[test]

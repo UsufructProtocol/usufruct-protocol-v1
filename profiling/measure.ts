@@ -4,23 +4,11 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction }    from '@mysten/sui/transactions';
 
 // Setup helper: sign + execute + explicit waitForTransaction.
-// Explicitly selects the largest coin as gas to avoid picking earnings
-// fragments (~1000 MIST) that accumulate after repeated rent cycles.
 export async function execSetup(
   client: SuiClient,
   signer: Ed25519Keypair,
   tx:     Transaction,
 ): Promise<{ objectChanges: any[] }> {
-  const addr  = signer.toSuiAddress();
-  const coins = await client.getCoins({ owner: addr });
-  const sorted = coins.data.sort((a, b) => Number(BigInt(b.balance) - BigInt(a.balance)));
-  if (sorted.length > 0) {
-    tx.setGasPayment(sorted.slice(0, 1).map(c => ({
-      objectId: c.coinObjectId,
-      version:  c.version,
-      digest:   c.digest,
-    })));
-  }
   const result = await client.signAndExecuteTransaction({
     transaction: tx,
     signer,
@@ -50,16 +38,6 @@ export async function measure(
   run:    number,
   tx:     Transaction,
 ): Promise<GasRecord> {
-  const addr   = signer.toSuiAddress();
-  const coins  = await client.getCoins({ owner: addr });
-  const sorted = coins.data.sort((a, b) => Number(BigInt(b.balance) - BigInt(a.balance)));
-  if (sorted.length > 0) {
-    tx.setGasPayment(sorted.slice(0, 1).map(c => ({
-      objectId: c.coinObjectId,
-      version:  c.version,
-      digest:   c.digest,
-    })));
-  }
   const result = await client.signAndExecuteTransaction({
     transaction: tx,
     signer,

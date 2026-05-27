@@ -12,6 +12,7 @@
     "b":                  "tsx run_all.ts --phase=b",
     "run":                "tsx run_all.ts",
     "run:testnet":        "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx run_all.ts",
+    "run:testnet:resume": "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx run_all.ts --resume",
     "curves":             "tsx a_atomic/13_curve_shapes.ts",
     "report":             "tsx report.ts",
     "cleanup:testnet":       "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx setup/cleanup.ts",

@@ -22,7 +22,7 @@ The asset never leaves the market. There is always a price at which the usus is 
 
 ## Usufruct Playground: Learn How the Protocol Works by Playing
 
-Before reading specs or code, build intuition interactively. The [usufruct playground](https://github.com/0xkurious/usufruct-protocol-playground) lets you configure policies, run rental scenarios, and observe how price, credit, and handover mechanics interact — without deploying anything.
+Before reading specs or code, build intuition interactively. The [usufruct playground](https://playground.usufruct.io/) lets you configure policies, run rental scenarios, and observe how price, credit, and handover mechanics interact — without deploying anything.
 
 ---
 

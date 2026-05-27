@@ -1,4 +1,4 @@
-# Source Verification — usufruct v1.0.0 testnet
+# Source Verification — usufruct v1.1.0 testnet
 
 ## Why this file exists
 
@@ -19,10 +19,10 @@ In the meantime, any developer can verify independently using `verify.py`.
 | Field      | Value                                                                  |
 |------------|------------------------------------------------------------------------|
 | Network    | Sui testnet                                                            |
-| Package ID | `0xe4662b44e47ce58beabdd6d45a541346636fbbffec0c7d4feb18d3f30bd95aaf` |
-| Commit     | `7c75828` — `chore: bump version to 1.0.0 ahead of testnet deploy`    |
-| Tx digest  | `GoZByPfMgeEEZPkK7USnGtuKcXRibFijPHYUYbhLVTX4`                       |
-| Deployed   | 2026-05-26                                                             |
+| Package ID | `0x2615bed67854d3d628ebd64750742ce6db4b75f0de00b0d69054881fac7bae7c` |
+| Commit     | `51c653c` — `chore: bump version to 1.1.0 ahead of testnet deploy`    |
+| Tx digest  | `7iivzCnZjWaB1absq9gKPE1dXLyFCEEfayAdjwu4a673`                       |
+| Deployed   | 2026-05-27                                                             |
 | UpgradeCap | Burned atomically — package is immutable                               |
 
 ---
@@ -34,7 +34,7 @@ package address normalized to `0x0` (canonical pre-publish form — the chain
 performs this substitution on publish):
 
 ```
-2933c39334392156ed75baa785461ea48c5b672df6839b4192e136fb78904100
+1d7deb8b1686bda303ac6c8c012ec5fb1d7b05e022db8678658add44125c200d
 ```
 
 ---
@@ -42,8 +42,9 @@ performs this substitution on publish):
 ## How to verify
 
 ```sh
-git checkout 7c75828
-python3 verify.py
+git checkout 51c653c
+cd usufruct/
+python3 ../verify.py
 ```
 
 Expected output:
@@ -54,10 +55,10 @@ Building locally...
 Fetching on-chain bytecode...
   36 modules on-chain
 
-Canonical hash: 2933c39334392156ed75baa785461ea48c5b672df6839b4192e136fb78904100
-Expected hash:  2933c39334392156ed75baa785461ea48c5b672df6839b4192e136fb78904100
+Canonical hash: 1d7deb8b1686bda303ac6c8c012ec5fb1d7b05e022db8678658add44125c200d
+Expected hash:  1d7deb8b1686bda303ac6c8c012ec5fb1d7b05e022db8678658add44125c200d
 
-✓ VERIFIED — on-chain bytecode matches source at commit 7c75828
+✓ VERIFIED — on-chain bytecode matches source at commit 51c653c
 ```
 
 ### What the script does
@@ -67,3 +68,11 @@ Expected hash:  2933c39334392156ed75baa785461ea48c5b672df6839b4192e136fb78904100
 3. Normalizes both sides: replaces the deployed package address with `0x0`
 4. Computes SHA-256 over all modules sorted by name
 5. Compares against the expected hash above
+
+---
+
+## Previous deployments
+
+| Version | Package ID | Deployed |
+|---------|-----------|----------|
+| v1.0.0  | `0xe4662b44e47ce58beabdd6d45a541346636fbbffec0c7d4feb18d3f30bd95aaf` | 2026-05-26 |

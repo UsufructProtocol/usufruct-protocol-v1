@@ -27,8 +27,8 @@ import subprocess
 import sys
 import urllib.request
 
-PACKAGE_ID   = "0xe4662b44e47ce58beabdd6d45a541346636fbbffec0c7d4feb18d3f30bd95aaf"
-EXPECTED_HASH = "2933c39334392156ed75baa785461ea48c5b672df6839b4192e136fb78904100"
+PACKAGE_ID   = "0x2615bed67854d3d628ebd64750742ce6db4b75f0de00b0d69054881fac7bae7c"
+EXPECTED_HASH = "1d7deb8b1686bda303ac6c8c012ec5fb1d7b05e022db8678658add44125c200d"
 RPC_URL      = "https://fullnode.testnet.sui.io:443"
 ADDR_BYTES   = bytes.fromhex(PACKAGE_ID[2:])  # strip 0x
 ZERO_BYTES   = bytes(32)

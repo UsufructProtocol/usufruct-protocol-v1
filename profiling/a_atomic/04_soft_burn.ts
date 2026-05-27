@@ -16,7 +16,7 @@ import { Transaction }    from '@mysten/sui/transactions';
 import { SuiClient }      from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import {
-  loadDeployment, loadKeypairs, makeClient, RUNS,
+  loadDeployment, loadKeypairs, makeClient, RUNS, FLOOR_PRICE_MIST,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
 import { buildIntegrate, buildRent, clock } from '../builders.ts';
@@ -34,7 +34,7 @@ function buildShortTenureEnsemble(tx: Transaction, pkg: string): TransactionArgu
   const dur = (ms: bigint) =>
     tx.moveCall({ target: `${pkg}::ensemble::duration`, arguments: [tx.pure.u64(ms)] });
 
-  const restPrice      = tx.moveCall({ target: `${pkg}::ensemble::new_rest_price_fixed`,          arguments: [price(1_000_000n)] });
+  const restPrice      = tx.moveCall({ target: `${pkg}::ensemble::new_rest_price_fixed`,          arguments: [price(FLOOR_PRICE_MIST)] });
   const tenureDuration = tx.moveCall({ target: `${pkg}::ensemble::new_tenure_duration_fixed`,     arguments: [dur(SHORT_TENURE_MS)] });
   const tenureExtend   = tx.moveCall({ target: `${pkg}::ensemble::new_tenure_multi` });
   const handover       = tx.moveCall({ target: `${pkg}::ensemble::new_handover_full_tenure` });
@@ -84,7 +84,7 @@ async function setupDemandState(
   // on-chain via next_floor_price_mist; excess becomes stake, returned on exit)
   const tx3 = new Transaction();
   tx3.setSender(d.tenant2.address);
-  const [payment2] = tx3.splitCoins(tx3.gas, [tx3.pure.u64(2_000_000n)]);
+  const [payment2] = tx3.splitCoins(tx3.gas, [tx3.pure.u64(FLOOR_PRICE_MIST * 2n)]);
   const cycles2 = tx3.moveCall({
     target: `${d.usufructPackageId}::ensemble::tenures`,
     arguments: [tx3.pure.u64(1n)],

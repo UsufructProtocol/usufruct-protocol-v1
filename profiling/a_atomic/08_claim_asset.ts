@@ -56,16 +56,6 @@ async function setupRetiredEscrow(
   });
   await execSetup(client, owner, tx2);
 
-  // apply pending to finalize retire
-  const tx3 = new Transaction();
-  tx3.setSender(d.owner.address);
-  tx3.moveCall({
-    target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
-    typeArguments: typeArgs,
-    arguments: [tx3.object(escrowObj.objectId), clock(tx3)],
-  });
-  await execSetup(client, owner, tx3);
-
   return { escrowId: escrowObj.objectId, ownerCapId: capObj.objectId };
 }
 

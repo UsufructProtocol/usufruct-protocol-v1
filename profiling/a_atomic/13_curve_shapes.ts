@@ -20,7 +20,7 @@
  *          Run standalone: npx tsx a_atomic/13_curve_shapes.ts
  */
 
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { resolve, dirname }       from 'path';
 import { fileURLToPath }          from 'url';
 import { Transaction }            from '@mysten/sui/transactions';
@@ -218,6 +218,14 @@ async function main() {
 
   for (const { label, slug, buildCurve } of VARIANTS) {
     console.log(`\n${'─'.repeat(60)}`);
+    const outFile = resolve(RESULTS_DIR, `a_13_${slug}.json`);
+    if (existsSync(outFile)) {
+      console.log(`✓ borrow_return  creditShape = ${label}  (skipped — result exists)`);
+      const saved = JSON.parse(readFileSync(outFile, 'utf8'));
+      const net = BigInt(saved[Math.floor(saved.length / 2)].net);
+      variantMedians.push({ label, net });
+      continue;
+    }
     console.log(`▶ borrow_return  creditShape = ${label}`);
     console.log('─'.repeat(60));
 

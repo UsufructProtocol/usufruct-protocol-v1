@@ -63,8 +63,15 @@ async function main() {
 
   const summaries: Summary[] = [];
 
+  const scalabilityFiles: { file: string; records: any[] }[] = [];
+
   for (const file of files) {
     const raw: RawRecord[] = JSON.parse(readFileSync(resolve(RESULTS_DIR, file), 'utf8'));
+    // Skip files with custom (non-GasRecord) format
+    if (!raw[0] || raw[0].computation === undefined) {
+      scalabilityFiles.push({ file, records: raw });
+      continue;
+    }
     const isFlow = file.startsWith('b_');
 
     if (isFlow) {
@@ -154,6 +161,23 @@ async function main() {
         `  ${step.padEnd(26)} net=${formatMist(s.medNet).trim().padStart(12)} MIST` +
         `  +${s.medCreated} -${s.medDeleted}`,
       );
+    }
+  }
+
+  // ── Scalability (collect_fee_messages) ────────────────────────────────────
+  if (scalabilityFiles.length > 0) {
+    for (const { file, records } of scalabilityFiles) {
+      console.log(`\n=== ${file.replace('.json', '')} (scalability) ===\n`);
+      console.log('N'.padEnd(8) + 'Total net (MIST)'.padStart(20) + 'Per msg (MIST)'.padStart(18) + 'PTB calls'.padStart(12));
+      console.log('─'.repeat(58));
+      for (const r of records) {
+        console.log(
+          String(r.n).padEnd(8) +
+          BigInt(r.totalNet).toLocaleString('en-US').padStart(20) +
+          BigInt(r.perMessage).toLocaleString('en-US').padStart(18) +
+          String(r.numCalls).padStart(12),
+        );
+      }
     }
   }
 

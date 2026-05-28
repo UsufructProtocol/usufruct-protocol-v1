@@ -2361,7 +2361,7 @@ fun update_tenant_refund_address_e2e_active_update_overrides_pending_update_thro
 }
 
 #[test]
-fun update_tenant_refund_address_e2e_repeated_updates_last_wins_through_handover() {
+fun update_tenant_refund_address_e2e_repeated_active_updates_last_wins_through_handover() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -2370,7 +2370,9 @@ fun update_tenant_refund_address_e2e_repeated_updates_last_wins_through_handover
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
 
-    // Three updates in succession; only the last must persist into the seat.
+    // Three updates while T1 is in the ACTIVE phase (Occupied state, no bid yet).
+    // All three exercise the `Occupied → terms.active` branch of the dispatch.
+    // Only the last write must persist; the refund on handover routes to addr_c.
     let addr_a = @0xCAFE10;
     let addr_b = @0xCAFE20;
     let addr_c = @0xCAFE30;
@@ -2415,6 +2417,71 @@ fun update_tenant_refund_address_e2e_repeated_updates_last_wins_through_handover
     sc.next_tx(addr_c);
     let refund_coin = sc.take_from_sender<coin::Coin<SUI>>();
     assert_eq!(coin::value(&refund_coin), remain);
+    transfer::public_transfer(refund_coin, addr_c);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_e2e_repeated_pending_updates_last_wins_through_supersede() {
+    let mut sc = setup();
+    // c=1 (Fixed) — non-zero handover countdown so APT doesn't fire handover
+    // between T2's bid and T3's supersede; otherwise we'd exit Demand early.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents → Occupied (active = T1).
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    // T2 bids → Demand (pending = T2, full stake parked).
+    let p2_amt = escrow_corpus::min_rent_price_const() * 2;
+    let p2 = mk_payment(p2_amt, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // Three updates while T2 is in the PENDING phase (Demand.bid.pending).
+    // All three exercise the `Demand → bid.pending` branch of the dispatch
+    // (a different code path than the active branch covered above).
+    // Only the last write must persist; the refund on supersede routes to addr_c.
+    let addr_a = @0xCAFE40;
+    let addr_b = @0xCAFE50;
+    let addr_c = @0xCAFE60;
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_a), &clk, sc.ctx());
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_b), &clk, sc.ctx());
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_c), &clk, sc.ctx());
+
+    // T3 supersedes T2's bid.
+    let now3 = 1_000;
+    clock::set_for_testing(&mut clk, now3);
+    let p3 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
+
+    let superseded = event::events_by_type<BidSuperseded>();
+    assert_eq!(superseded.length(), 1);
+    assert_eq!(asset_state::bid_superseded_displaced_bidder_address(&superseded[0]), addr_c);
+    assert_eq!(asset_state::bid_superseded_refunded_amount(&superseded[0]), p2_amt);
+
+    // Three Pending events emitted with chained old→new (initial = OWNER from T2's rent).
+    let pending_evts = event::events_by_type<PendingTenantRefundAddressUpdated>();
+    assert_eq!(pending_evts.length(), 3);
+    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), addr_a);
+    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[1]), addr_b);
+    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[2]), addr_c);
+    assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[1]), addr_a);
+    assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[2]), addr_b);
+    // Active branch never touched in this scenario.
+    assert_eq!(event::events_by_type<ActiveTenantRefundAddressUpdated>().length(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+
+    // Coin arrives at addr_c with the full bid amount.
+    sc.next_tx(addr_c);
+    let refund_coin = sc.take_from_sender<coin::Coin<SUI>>();
+    assert_eq!(coin::value(&refund_coin), p2_amt);
     transfer::public_transfer(refund_coin, addr_c);
     sc.end();
 }

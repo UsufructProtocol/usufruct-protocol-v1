@@ -2486,6 +2486,55 @@ fun update_tenant_refund_address_e2e_repeated_pending_updates_last_wins_through_
     sc.end();
 }
 
+/// Commercial invariant: the `TenantCap` is `key + store` and can be sold
+/// or otherwise transferred. The buyer (new holder) must be able to redirect
+/// the refund without any coordination with the original tenant, because the
+/// protocol authenticates by `tenant_cap::identity(&cap)` — a function of the
+/// cap object — not by `ctx.sender()`. This pins the property that makes
+/// secondary markets for caps economically coherent.
+#[test]
+fun update_tenant_refund_address_e2e_transferred_cap_grants_authority_to_new_holder() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // OWNER rents → cap_t1 minted; original refund address = OWNER ("seller").
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    // Secondary-market sale: OWNER transfers the cap to a buyer at @0xBEEF.
+    // The coin leg of the trade (buyer → seller) is outside the protocol's
+    // observable surface; only the cap transfer matters for the invariant.
+    let buyer = @0xBEEF;
+    transfer::public_transfer(cap_t1, buyer);
+    test_scenario::return_shared(escrow);
+
+    // Buyer's transaction. They take possession of the cap and redirect.
+    // The sender is the buyer; OWNER is not involved.
+    sc.next_tx(buyer);
+    let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
+    let cap_t1 = sc.take_from_sender<tenant_cap::TenantCap>();
+    let buyer_refund = @0xBE71;
+    escrow::update_tenant_refund_address(
+        &mut escrow, &cap_t1, refund_address::new(buyer_refund), &clk, sc.ctx(),
+    );
+
+    // The seat now refunds to the buyer's chosen address, not to OWNER.
+    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(), buyer_refund);
+    let evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    assert_eq!(evts.length(), 1);
+    assert_eq!(asset_state::active_refund_updated_old_address(&evts[0]), OWNER);
+    assert_eq!(asset_state::active_refund_updated_new_address(&evts[0]), buyer_refund);
+    assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&evts[0]), object::id(&cap_t1));
+
+    transfer::public_transfer(cap_t1, buyer);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §15.3 escrow locked while asset borrowed ────────────────────────────────
 //
 // While `escrow.state` is `None` (asset on loan), every call that

@@ -54,6 +54,7 @@ use usufruct::{
     phases,
     protocol_fee_inbox,
     protocol_fee_ref::{Self, ProtocolFeeRef},
+    refund_address,
     tenant_seat::{Self, TenantSeat},
     tenant_cap,
 };
@@ -114,7 +115,7 @@ fun cap_id_1(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_f
 fun cap_id_2(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA2)) }
 
 fun mk_tenant(stake: u64, addr: address, cap: tenant_cap::TenantCapIdentity): TenantSeat<SUI> {
-    tenant_seat::new(cap, addr, balance::create_for_testing<SUI>(stake))
+    tenant_seat::new(cap, refund_address::new(addr), balance::create_for_testing<SUI>(stake))
 }
 
 fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {

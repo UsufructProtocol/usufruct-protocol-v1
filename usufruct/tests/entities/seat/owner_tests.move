@@ -13,6 +13,7 @@ use usufruct::{
     owner_earning::{Self, OwnerEarnings},
     owner_identity,
     owner_cap::{Self, OwnerCap, OwnerCapIdentity},
+    refund_address,
     tenant_cap,
 };
 
@@ -212,7 +213,7 @@ fun take_owner_earnings_then_deposit_round_trip() {
 
         let mut t = tenant_seat::new<TEST_COIN>(
             tenant_cap::from_id(object::id_from_address(@0xCA1)),
-            @0xA1,
+            refund_address::new(@0xA1),
             balance::create_for_testing<TEST_COIN>(1_000),
         );
         let earn = tenant_seat::take_owner_earnings(&mut t, monetary::stake(250));

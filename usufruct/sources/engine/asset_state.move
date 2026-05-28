@@ -1355,7 +1355,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let bid_amount   = coin::value(&payment);
     let cap          = tenant_cap::new(escrow_identity, pending_addr, ctx);
     let cap_identity = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, pending_addr, coin::into_balance(payment));
+    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(pending_addr), coin::into_balance(payment));
     let active_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
     let active_addr  = tenant_addr(&terms.active);
     let active_stake = tenant_seat::proj_stake_value(&terms.active);
@@ -1411,7 +1411,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let new_bid_amount = coin::value(&payment);
     let cap            = tenant_cap::new(escrow_identity, new_bidder, ctx);
     let cap_identity   = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, new_bidder, coin::into_balance(payment));
+    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(new_bidder), coin::into_balance(payment));
     let refund = refund_state::total(pending);
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
@@ -1551,7 +1551,7 @@ fun do_install<Asset: key + store, CoinType>(
     let tenant_addr  = ctx.sender();
     let cap          = tenant_cap::new(escrow_identity, tenant_addr, ctx);
     let cap_identity = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, tenant_addr, coin::into_balance(payment));
+    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(tenant_addr), coin::into_balance(payment));
     let wrapped = asset_custody::open_tenancy(locked, escrow_identity);
     let schedule = TenancySchedule {
         phase_start:      now,

@@ -22,6 +22,7 @@ use usufruct::{
     owner_cap::{Self, OwnerCap},
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
+    refund_address,
     tenant_seat::{Self, TenantSeat},
     tenant_cap::{Self, TenantCapIdentity},
 };
@@ -47,7 +48,7 @@ fun cap_id_1(): TenantCapIdentity { tenant_cap::from_id(object::id_from_address(
 fun cap_id_2(): TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA2)) }
 
 fun mk_tenant(stake: u64, addr: address, cap: TenantCapIdentity): TenantSeat<SUI> {
-    tenant_seat::new(cap, addr, balance::create_for_testing<SUI>(stake))
+    tenant_seat::new(cap, refund_address::new(addr), balance::create_for_testing<SUI>(stake))
 }
 
 fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {

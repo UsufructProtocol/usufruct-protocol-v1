@@ -9,6 +9,7 @@ use usufruct::{
     fee_message::{Self, FeeShare},
     owner_earning::{Self, OwnerEarnings},
     escrow_identity,
+    refund_address,
     refund_state,
     tenant_seat::{Self, TenantSeat},
     tenant_identity,
@@ -25,7 +26,7 @@ fun cap_t1(): ID { object::id_from_address(@0xCA1) }
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 
 fun mk_seat(amount: u64): TenantSeat<TEST_COIN> {
-    tenant_seat::new<TEST_COIN>(tenant_cap::from_id(cap_t1()), ADDR_T1, balance::create_for_testing(amount))
+    tenant_seat::new<TEST_COIN>(tenant_cap::from_id(cap_t1()), refund_address::new(ADDR_T1), balance::create_for_testing(amount))
 }
 
 fun fee_share(amount: u64): FeeShare<TEST_COIN> {

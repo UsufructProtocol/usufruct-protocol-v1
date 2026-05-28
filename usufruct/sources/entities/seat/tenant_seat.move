@@ -61,6 +61,10 @@ public(package) fun unbundle<C>(t: TenantSeat<C>): (TenantIdentity, TenantStake<
     (identity, stake)
 }
 
+public(package) fun set_refund_address<C>(t: &mut TenantSeat<C>, new: RefundAddress) {
+    tenant_identity::set_address(&mut t.identity, new);
+}
+
 public(package) fun take_fee_share<C>(
     t:               &mut TenantSeat<C>,
     amount:          Stake,

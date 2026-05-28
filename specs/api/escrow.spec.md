@@ -39,6 +39,7 @@ Shared object. One per integrated asset. `state` is `None` while the asset is bo
 - `escrow::return_asset<Asset, C>(&mut Escrow, asset: Asset, receipt_in: AssetReceipt<Asset, C>)` — validates identity; re-inserts asset into custody; fills `escrow.state`. Borrows core immutably — no state machine advance.
 - `escrow::soft_burn_tenant_cap<Asset, C>(&mut Escrow, cap: TenantCap, random, clock, ctx)` — advances state machine; burns a stale cap. Aborts if cap is current or pending.
 - `escrow::hard_burn_tenant_cap(cap: TenantCap, ctx)` — burns a cap directly with no escrow context; valid for any cap the caller holds.
+- `escrow::update_tenant_refund_address<Asset, C>(&mut Escrow, cap: &TenantCap, new_address: RefundAddress, clock, ctx)` — advances state machine; redirects the refund destination of the seat whose `cap_identity` matches the presented cap. Required because `TenantCap` is transferable but the address was fixed at `rent`/`bid` time; without this, refunds on tenure expiry or bid supersession go to the original `ctx.sender()` regardless of who holds the cap now. Aborts if the cap does not match the active or pending seat (`ETenantCapStale`) or belongs to a different escrow.
 
 **State machine**
 - `escrow::apply_pending_transition_states<Asset, C>(&mut Escrow, random, clock, ctx)` — manually advances the FSM. Called by the protocol automatically at the start of most operations; exposed publicly so keepers can trigger transitions without performing any other action.

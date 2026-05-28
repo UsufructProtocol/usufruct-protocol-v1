@@ -29,6 +29,7 @@ use usufruct::{
     escrow_identity,
     protocol_fee_ref::{Self, ProtocolFeeRef},
     commitment_policy::{Self, CommitmentPolicy},
+    refund_address::RefundAddress,
     tenant_cap::{Self, TenantCap},
 };
 
@@ -191,6 +192,20 @@ public fun soft_burn_tenant_cap<Asset: key + store, CoinType>(
     let state = take_state(escrow);
     let core  = take_core(escrow);
     let (new_state, new_core) = asset_state::execute_soft_burn_tenant_cap(state, core, cap, clock, ctx);
+    put_core(escrow, new_core);
+    put_state(escrow, new_state);
+}
+
+public fun update_tenant_refund_address<Asset: key + store, CoinType>(
+    escrow:      &mut Escrow<Asset, CoinType>,
+    cap:         &TenantCap,
+    new_address: RefundAddress,
+    clock:       &Clock,
+    ctx:         &mut TxContext,
+) {
+    let state = take_state(escrow);
+    let core  = take_core(escrow);
+    let (new_state, new_core) = asset_state::execute_update_tenant_refund_address(state, core, cap, new_address, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }

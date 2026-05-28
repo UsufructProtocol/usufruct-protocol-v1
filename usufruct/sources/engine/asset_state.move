@@ -35,7 +35,7 @@ use usufruct::{
     escrow_identity::{Self, EscrowIdentity},
     protocol_fee_ref::{Self, FeeInboxIdentity},
     tenant_cap::{Self, TenantCap, TenantCapIdentity},
-    refund_address,
+    refund_address::{Self, RefundAddress},
     refund_state,
     tenant_seat::{Self, TenantSeat},
     tenant_identity,
@@ -62,6 +62,7 @@ const ERetireAlreadyScheduled:  u64 = 16;
 const ECommitmentNotExtended:   u64 = 17;
 const EReturnedDifferentAsset: u64 = 19;
 const EAlreadyRetiring:        u64 = 20;
+const ETenantCapStale:         u64 = 21;
 
 // === Constants ===
 
@@ -303,6 +304,22 @@ public struct AssetReturned has copy, drop {
     escrow_id:      ID,
     tenant_cap_id:  ID,
     tenant_address: address,
+}
+
+public struct ActiveTenantRefundAddressUpdated has copy, drop {
+    escrow_id:     ID,
+    tenant_cap_id: ID,
+    old_address:   address,
+    new_address:   address,
+    timestamp_ms:  u64,
+}
+
+public struct PendingTenantRefundAddressUpdated has copy, drop {
+    escrow_id:     ID,
+    tenant_cap_id: ID,
+    old_address:   address,
+    new_address:   address,
+    timestamp_ms:  u64,
 }
 
 // === Method Aliases ===
@@ -1059,6 +1076,69 @@ public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
         _ => {},
     };
     tenant_cap::burn(cap, ctx);
+    (s, core)
+}
+
+public(package) fun execute_update_tenant_refund_address<Asset: key + store, CoinType>(
+    s:           AssetState<Asset, CoinType>,
+    core:        EscrowCore<CoinType>,
+    cap:         &TenantCap,
+    new_address: RefundAddress,
+    clock:       &Clock,
+    ctx:         &mut TxContext,
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
+    assert_tenant_cap_binds(cap, &core);
+    let (mut s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
+    let cap_identity = tenant_cap::identity(cap);
+    let escrow_id    = escrow_identity::escrow_id(core.escrow_identity);
+    let timestamp_ms = clock::timestamp_ms(clock);
+    let new_addr_raw = refund_address::addr(new_address);
+    match (&mut s) {
+        AssetState::Renting(RentingState::Occupied { terms, .. }) => {
+            let active_id = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+            if (cap_identity == active_id) {
+                let old_address = tenant_addr(&terms.active);
+                tenant_seat::set_refund_address(&mut terms.active, new_address);
+                event::emit(ActiveTenantRefundAddressUpdated {
+                    escrow_id,
+                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    old_address,
+                    new_address:   new_addr_raw,
+                    timestamp_ms,
+                });
+            } else {
+                abort ETenantCapStale
+            }
+        },
+        AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
+            let active_id  = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+            let pending_id = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending));
+            if (cap_identity == active_id) {
+                let old_address = tenant_addr(&terms.active);
+                tenant_seat::set_refund_address(&mut terms.active, new_address);
+                event::emit(ActiveTenantRefundAddressUpdated {
+                    escrow_id,
+                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    old_address,
+                    new_address:   new_addr_raw,
+                    timestamp_ms,
+                });
+            } else if (cap_identity == pending_id) {
+                let old_address = tenant_addr(&bid.pending);
+                tenant_seat::set_refund_address(&mut bid.pending, new_address);
+                event::emit(PendingTenantRefundAddressUpdated {
+                    escrow_id,
+                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    old_address,
+                    new_address:   new_addr_raw,
+                    timestamp_ms,
+                });
+            } else {
+                abort ETenantCapStale
+            }
+        },
+        _ => abort ETenantCapStale,
+    };
     (s, core)
 }
 

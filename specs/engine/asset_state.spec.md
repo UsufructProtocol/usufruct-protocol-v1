@@ -141,6 +141,7 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
 
 **Cap management**
 - `asset_state::execute_soft_burn_tenant_cap<Asset, C>(&AssetState, &EscrowCore<C>, cap: TenantCap, rng, clock, ctx)` — burns a stale cap; asserts it is neither current nor pending.
+- `asset_state::execute_update_tenant_refund_address<Asset, C>(AssetState, EscrowCore<C>, cap: &TenantCap, new_address: RefundAddress, clock, ctx): (AssetState, EscrowCore<C>)` — advances state machine first; matches the presented cap's identity against the active and pending seats and mutates the refund address of the matching one via `tenant_seat::set_refund_address`. Emits `ActiveTenantRefundAddressUpdated` or `PendingTenantRefundAddressUpdated` depending on which seat matched. Aborts with `ETenantCapStale` if the cap matches neither (including `Waiting` states where no seat exists). The cap is taken by reference, so its identity (and the historical link to past events) is preserved. Idempotent: emits even if `new_address == old_address`.
 
 **View functions** (package)
 - State shape: `proj_is_idle`, `proj_is_at_dutch`, `proj_is_occupied`, `proj_is_demand`, `proj_is_active`, `proj_is_retired`, `proj_is_rented`, `proj_is_retiring`
@@ -346,3 +347,19 @@ Emitted on `execute_extend_commitment`.
 RetireFlagSet { escrow_id: ID, owner_cap_id: ID, owner: address, timestamp_ms: u64 }
 ```
 Emitted whenever the owner signals retirement intent — both when the flag is set on an occupied/demand escrow (deferred retire) and when `do_retire_immediately` fires from Idle or AtDutch (immediate retire). Always paired with `AssetRetired` in the immediate case.
+
+```
+ActiveTenantRefundAddressUpdated {
+    escrow_id: ID, tenant_cap_id: ID,
+    old_address: address, new_address: address, timestamp_ms: u64
+}
+```
+Emitted by `execute_update_tenant_refund_address` when the presented cap matches the **active** tenant seat (`Occupied.terms.active`, or `Demand.terms.active`). Records the address transition so off-chain consumers can rewrite their refund routing without re-reading the seat.
+
+```
+PendingTenantRefundAddressUpdated {
+    escrow_id: ID, tenant_cap_id: ID,
+    old_address: address, new_address: address, timestamp_ms: u64
+}
+```
+Emitted by `execute_update_tenant_refund_address` when the presented cap matches the **pending** bidder seat (`Demand.bid.pending`). The address transition applies to the refund returned on bid supersession (`do_supersede_bid`).

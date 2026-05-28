@@ -6,7 +6,7 @@ module usufruct::tenant_identity;
 // === Imports ===
 
 use usufruct::{
-    refund_address::RefundAddress,
+    refund_address::{Self, RefundAddress},
     tenant_cap::TenantCapIdentity,
 };
 
@@ -40,6 +40,10 @@ public(package) fun proj_address(id: &TenantIdentity):      RefundAddress      {
 
 public(package) fun new(cap_identity: TenantCapIdentity, address: RefundAddress): TenantIdentity {
     TenantIdentity { cap_identity, address }
+}
+
+public(package) fun set_address(id: &mut TenantIdentity, new: RefundAddress) {
+    refund_address::set(&mut id.address, new);
 }
 
 // === Private Functions ===

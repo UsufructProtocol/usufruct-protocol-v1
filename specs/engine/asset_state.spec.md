@@ -144,7 +144,7 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
 
 **View functions** (package)
 - State shape: `proj_is_idle`, `proj_is_at_dutch`, `proj_is_occupied`, `proj_is_demand`, `proj_is_active`, `proj_is_retired`, `proj_is_rented`, `proj_is_retiring`
-- Asset & tenant: `proj_asset_id`, `proj_current_addr`, `proj_current_cap_id`, `proj_pending_addr`, `proj_pending_cap_id`, `proj_current_stake`, `proj_pending_stake`
+- Asset & tenant: `proj_asset_id`, `proj_active_addr`, `proj_active_cap_id`, `proj_pending_addr`, `proj_pending_cap_id`, `proj_active_stake`, `proj_pending_stake`
 - Timing: `proj_phase_start`, `proj_handover_expiry`, `proj_resolved_ceiling`, `proj_resolved_handover`, `proj_resolved_floor`, `proj_commitment_policy`, `proj_commitment_anchor`, `proj_owner_balance`
 - Pricing: `compute_floor_price_at<C>(state, core, now): Price` — `Idle`: the resolved rest price from `CycleParams`; `AtDutch`: descending from last acquisition price toward floor; `Occupied`: escalated from current tenant's per-tenure stake; `Demand`: escalated from the **pending** bid's per-tenure stake (the most recent market signal); `Retired`: aborts.
 - Credit: `compute_used_credit_at<C>(state, core, now): Stake` — amount of the current tenant's stake considered consumed at `now`.
@@ -154,7 +154,7 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
   - `proj_tenure_settlement<C>(state): (Stake, Stake)` — (owner share, protocol fee) if the tenure expired now; full principal consumed.
 - Waiting state projections: `proj_waiting_resolved_floor`, `proj_waiting_resolved_ceiling`, `proj_waiting_resolved_handover`, `proj_waiting_resolved_descent`, `proj_last_acq_price`
 - Credit state projections: `proj_credit_stake`, `proj_credit_phase_start`, `proj_credit_is_accruing`, `proj_credit_is_capped`, `proj_credit_expiry`
-- Cap validation: `cap_is_current`, `cap_is_pending`, `cap_is_stale`
+- Cap validation: `cap_is_active`, `cap_is_pending`, `cap_is_stale`
 - Next firing: `compute_next_pending<C>(state, clock): Option<Timestamp>` — earliest timestamp at which a state transition can fire.
 
 ## § INVARIANTS
@@ -233,8 +233,8 @@ Emitted when a tenant enters `Occupied` from `Idle` or `AtDutch` via `do_install
 ```
 BidPlaced {
     escrow_id: ID,
-    current_tenant_cap_id: ID, current_tenant_addr: address,
-    current_tenant_stake: u64, current_phase_start_ms: u64,
+    active_tenant_cap_id: ID, active_tenant_addr: address,
+    active_tenant_stake: u64, active_phase_start_ms: u64,
     tenant_cap_id: ID, pending_tenant: address,
     bid_amount: u64, floor_price: u64,
     handover_countdown_expiry: u64, committed_tenures: u64, timestamp_ms: u64

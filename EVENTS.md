@@ -70,7 +70,7 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `BidPlaced` | Incoming tenant outbids current tenant | `escrow_id`, `current_tenant_cap_id`, `current_tenant_address`, `current_tenant_stake`, `current_phase_start_ms`, `tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
+| `BidPlaced` | Incoming tenant outbids active tenant | `escrow_id`, `active_tenant_cap_id`, `active_tenant_address`, `active_tenant_stake`, `active_phase_start_ms`, `tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
 | `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `new_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
 | `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `owner_share`, `protocol_fee`, `remain_credit`, `new_rent_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms`, `timestamp_ms` |
 | `AuctionExpired` | Descent auction window closes with no bid | `escrow_id`, `phase_start_ms`, `last_acq_price`, `timestamp_ms` |
@@ -202,7 +202,7 @@ ORDER BY r.phase_start_ms DESC;
 ```sql
 SELECT
     b.escrow_id,
-    b.current_tenant_address,
+    b.active_tenant_address,
     b.pending_tenant_address,
     b.bid_amount,
     b.floor_price,
@@ -216,7 +216,7 @@ WHERE NOT EXISTS (
 AND NOT EXISTS (
     SELECT 1 FROM tenure_expired t
     WHERE t.escrow_id = b.escrow_id
-      AND t.phase_start_ms = b.current_phase_start_ms
+      AND t.phase_start_ms = b.active_phase_start_ms
 )
 ORDER BY b.handover_countdown_expiry ASC;
 ```

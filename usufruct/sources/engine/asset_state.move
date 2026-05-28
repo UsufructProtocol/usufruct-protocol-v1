@@ -111,7 +111,7 @@ public struct CommitmentSlot has copy, drop, store {
 
 public struct OccupiedTerms<phantom CoinType> has store {
     schedule: TenancySchedule,
-    current:  TenantSeat<CoinType>,
+    active:  TenantSeat<CoinType>,
     retire:   RetireCondition,
 }
 
@@ -224,10 +224,10 @@ public struct AssetClaimed has copy, drop {
 
 public struct BidPlaced has copy, drop {
     escrow_id:                 ID,
-    current_tenant_cap_id:     ID,
-    current_tenant_address:    address,
-    current_tenant_stake:      u64,
-    current_phase_start_ms:    u64,
+    active_tenant_cap_id:     ID,
+    active_tenant_address:    address,
+    active_tenant_stake:      u64,
+    active_phase_start_ms:    u64,
     tenant_cap_id:             ID,
     pending_tenant_address:    address,
     bid_amount:                u64,
@@ -427,22 +427,22 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun proj_current_addr<Asset: key + store, CoinType>(
+public(package) fun proj_active_addr<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<address> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_addr(&terms.current)),
+            option::some(tenant_addr(&terms.active)),
         _ => option::none(),
     }
 }
 
-public(package) fun proj_current_cap_id<Asset: key + store, CoinType>(
+public(package) fun proj_active_cap_id<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<ID> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_cap::proj_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)))),
+            option::some(tenant_cap::proj_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active)))),
         _ => option::none(),
     }
 }
@@ -467,22 +467,22 @@ public(package) fun proj_pending_cap_id<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun proj_current_stake<Asset: key + store, CoinType>(
+public(package) fun proj_active_stake<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Stake> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_seat::proj_stake_value(&terms.current)),
+            option::some(tenant_seat::proj_stake_value(&terms.active)),
         _ => option::none(),
     }
 }
 
-public(package) fun proj_current_stake_value<Asset: key + store, CoinType>(
+public(package) fun proj_active_stake_value<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Stake {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            tenant_seat::proj_stake_value(&terms.current),
+            tenant_seat::proj_stake_value(&terms.active),
         _ => abort ENotRented,
     }
 }
@@ -518,7 +518,7 @@ public(package) fun proj_handover_expiry<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun proj_current_committed_tenures<Asset: key + store, CoinType>(
+public(package) fun proj_active_committed_tenures<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Tenures> {
     match (s) {
@@ -622,7 +622,7 @@ public(package) fun proj_credit_stake<Asset: key + store, CoinType>(
 ): Option<Stake> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_seat::proj_stake_value(&terms.current)),
+            option::some(tenant_seat::proj_stake_value(&terms.active)),
         _ => option::none(),
     }
 }
@@ -670,7 +670,7 @@ public(package) fun compute_floor_price_at<Asset: key + store, CoinType>(
         },
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            ascending_floor_price(tenures::compute_per_tenure_stake(tenant_seat::proj_stake_value(&terms.current), terms.schedule.committed_tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::compute_per_tenure_stake(tenant_seat::proj_stake_value(&terms.active), terms.schedule.committed_tenures), &core.ensemble.active)
         },
         AssetState::Renting(RentingState::Demand { bid, .. }) => {
             ascending_floor_price(tenures::compute_per_tenure_stake(tenant_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
@@ -685,10 +685,10 @@ public(package) fun compute_used_credit_at<Asset: key + store, CoinType>(
 ): Stake {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            accruing_used_credit(tenant_seat::proj_stake_value(&terms.current), terms.schedule.phase_start, &core.ensemble.active, terms.schedule.ceiling_total, now)
+            accruing_used_credit(tenant_seat::proj_stake_value(&terms.active), terms.schedule.phase_start, &core.ensemble.active, terms.schedule.ceiling_total, now)
         },
         AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
-            capped_used_credit(tenant_seat::proj_stake_value(&terms.current), terms.schedule.phase_start, bid.handover.expiry, &core.ensemble.active, terms.schedule.ceiling_total, now)
+            capped_used_credit(tenant_seat::proj_stake_value(&terms.active), terms.schedule.phase_start, bid.handover.expiry, &core.ensemble.active, terms.schedule.ceiling_total, now)
         },
         _ => abort ENotRented,
     }
@@ -699,7 +699,7 @@ public(package) fun proj_handover_settlement<Asset: key + store, CoinType>(
     core: &EscrowCore<CoinType>,
     now:  Timestamp,
 ): (Stake, Stake, Stake) {
-    let stake = proj_current_stake_value(s);
+    let stake = proj_active_stake_value(s);
     let used  = compute_used_credit_at(s, core, now);
     let (owner_share, protocol_fee) = split_fee_amounts(used);
     (
@@ -713,16 +713,16 @@ public(package) fun proj_tenure_settlement<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): (Stake, Stake) {
     assert!(proj_is_rented(s), ENotRented);
-    split_fee_amounts(proj_current_stake_value(s))
+    split_fee_amounts(proj_active_stake_value(s))
 }
 
-public(package) fun cap_is_current<Asset: key + store, CoinType>(
+public(package) fun cap_is_active<Asset: key + store, CoinType>(
     s:   &AssetState<Asset, CoinType>,
     cap: TenantCapIdentity,
 ): bool {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            cap == tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)),
+            cap == tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active)),
         _ => false,
     }
 }
@@ -742,7 +742,7 @@ public(package) fun cap_is_stale<Asset: key + store, CoinType>(
     s:   &AssetState<Asset, CoinType>,
     cap: TenantCapIdentity,
 ): bool {
-    !cap_is_current(s, cap) && !cap_is_pending(s, cap)
+    !cap_is_active(s, cap) && !cap_is_pending(s, cap)
 }
 
 public(package) fun compute_next_pending<Asset: key + store, CoinType>(
@@ -863,7 +863,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
-            let stake = tenant_seat::proj_stake_value(&terms.current);
+            let stake = tenant_seat::proj_stake_value(&terms.active);
             let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
@@ -905,13 +905,13 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
             AssetState::Waiting(do_retire_immediately(asset, owner_cap_id, escrow_identity, now, ctx)),
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
-            let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, cycle })
+            let OccupiedTerms { schedule, active, retire } = terms;
+            AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, active, retire: retire_condition_set(retire) }, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
-            let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set(retire) }, bid, cycle })
+            let OccupiedTerms { schedule, active, retire } = terms;
+            AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, active, retire: retire_condition_set(retire) }, bid, cycle })
         },
     };
     (new_s, core)
@@ -973,9 +973,9 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
     match (s) {
         AssetState::Renting(RentingState::Occupied { mut asset, terms, cycle }) => {
             assert_borrow_authorized(cap_identity,
-                tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)),
+                tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active)),
                 option::none());
-            let tenant_addr = tenant_addr(&terms.current);
+            let tenant_addr = tenant_addr(&terms.active);
             let asset_id    = asset_custody::proj_asset_id(&asset);
             let u           = asset_custody::take(&mut asset);
             let receipt     = AssetReceipt {
@@ -987,9 +987,9 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
         },
         AssetState::Renting(RentingState::Demand { mut asset, terms, bid, cycle }) => {
             assert_borrow_authorized(cap_identity,
-                tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current)),
+                tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active)),
                 option::some(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending))));
-            let tenant_addr = tenant_addr(&terms.current);
+            let tenant_addr = tenant_addr(&terms.active);
             let asset_id    = asset_custody::proj_asset_id(&asset);
             let u           = asset_custody::take(&mut asset);
             let receipt     = AssetReceipt {
@@ -1012,8 +1012,8 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     assert_return_valid(&identity, &asset_in, core.escrow_identity);
     match (renting) {
         RentingState::Occupied { mut asset, terms, cycle } => {
-            let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-            let tenant_addr = tenant_addr(&terms.current);
+            let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+            let tenant_addr = tenant_addr(&terms.active);
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
@@ -1023,8 +1023,8 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
             RentingState::Occupied { asset, terms, cycle }
         },
         RentingState::Demand { mut asset, terms, bid, cycle } => {
-            let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-            let tenant_addr = tenant_addr(&terms.current);
+            let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+            let tenant_addr = tenant_addr(&terms.active);
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
@@ -1048,13 +1048,13 @@ public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
     let cap_identity = tenant_cap::identity(&cap);
     match (&s) {
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            let current = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-            if (cap_identity == current) abort ETenantCapNotStale;
+            let active = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+            if (cap_identity == active) abort ETenantCapNotStale;
         },
         AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
-            let current = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
+            let active = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
             let pending = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending));
-            if (cap_identity == current || cap_identity == pending) abort ETenantCapNotStale;
+            if (cap_identity == active || cap_identity == pending) abort ETenantCapNotStale;
         },
         _ => {},
     };
@@ -1189,10 +1189,10 @@ fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timest
 
 fun assert_borrow_authorized(
     cap:     TenantCapIdentity,
-    current: TenantCapIdentity,
+    active: TenantCapIdentity,
     pending: Option<TenantCapIdentity>,
 ) {
-    if (cap == current) return;
+    if (cap == active) return;
     if (option::contains(&pending, &cap)) abort EPendingTenantCap;
     abort EStaleTenantCap;
 }
@@ -1224,19 +1224,19 @@ fun do_handover<Asset: key + store, CoinType>(
     boundary:           Timestamp,
     ctx:                &mut TxContext,
 ): RentingState<Asset, CoinType> {
-    let OccupiedTerms { schedule, current, retire } = terms;
+    let OccupiedTerms { schedule, active, retire } = terms;
     let DemandTerms { pending, handover: HandoverTerms { expiry: _, tenures: incoming_tenures } } = bid;
 
-    let principal   = tenant_seat::proj_stake_value(&current);
+    let principal   = tenant_seat::proj_stake_value(&active);
     let used_credit = capped_used_credit(principal, schedule.phase_start, boundary, config, schedule.ceiling_total, boundary);
     let used_mist     = monetary::stake_mist(used_credit);
     let fee_mist      = math::compute_apply_bps(used_mist, math::bps(PROTOCOL_FEE_BPS));
     let remain_credit = monetary::compute_stake_sub(principal, used_credit);
 
-    let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&current));
-    let displaced_addr   = tenant_addr(&current);
+    let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&active));
+    let displaced_addr   = tenant_addr(&active);
 
-    let mut departing  = current;
+    let mut departing  = active;
     let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
     let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
     let refund = if (monetary::stake_mist(tenant_seat::proj_stake_value(&departing)) > 0) {
@@ -1283,7 +1283,7 @@ fun do_handover<Asset: key + store, CoinType>(
     };
     RentingState::Occupied {
         asset,
-        terms: OccupiedTerms { schedule: new_schedule, current: pending, retire },
+        terms: OccupiedTerms { schedule: new_schedule, active: pending, retire },
         cycle,
     }
 }
@@ -1299,7 +1299,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     boundary:           Timestamp,
     ctx:                &mut TxContext,
 ): WaitingState<Asset> {
-    let OccupiedTerms { schedule, current: tenant, retire } = terms;
+    let OccupiedTerms { schedule, active: tenant, retire } = terms;
 
     let principal            = tenant_seat::proj_stake_value(&tenant);
     let tenant_cap_identity  = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&tenant));
@@ -1356,15 +1356,15 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let cap          = tenant_cap::new(escrow_identity, pending_addr, ctx);
     let cap_identity = tenant_cap::identity(&cap);
     let t = tenant_seat::new<CoinType>(cap_identity, pending_addr, coin::into_balance(payment));
-    let current_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-    let current_addr  = tenant_addr(&terms.current);
-    let current_stake = tenant_seat::proj_stake_value(&terms.current);
+    let active_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+    let active_addr  = tenant_addr(&terms.active);
+    let active_stake = tenant_seat::proj_stake_value(&terms.active);
     event::emit(BidPlaced {
         escrow_id:                 escrow_identity::escrow_id(escrow_identity),
-        current_tenant_cap_id:     tenant_cap::proj_id(current_cap_identity),
-        current_tenant_address:    current_addr,
-        current_tenant_stake:      monetary::stake_mist(current_stake),
-        current_phase_start_ms:    phases::timestamp_ms(terms.schedule.phase_start),
+        active_tenant_cap_id:     tenant_cap::proj_id(active_cap_identity),
+        active_tenant_address:    active_addr,
+        active_tenant_stake:      monetary::stake_mist(active_stake),
+        active_phase_start_ms:    phases::timestamp_ms(terms.schedule.phase_start),
         tenant_cap_id:             tenant_cap::proj_id(cap_identity),
         pending_tenant_address:    pending_addr,
         bid_amount,
@@ -1415,9 +1415,9 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let refund = refund_state::total(pending);
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
-    let protected_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.current));
-    let protected_addr  = tenant_addr(&terms.current);
-    let protected_stake = tenant_seat::proj_stake_value(&terms.current);
+    let protected_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+    let protected_addr  = tenant_addr(&terms.active);
+    let protected_stake = tenant_seat::proj_stake_value(&terms.active);
     event::emit(BidSuperseded {
         escrow_id:                 escrow_identity::escrow_id(escrow_identity),
         protected_tenant_cap_id:   tenant_cap::proj_id(protected_cap_identity),
@@ -1573,7 +1573,7 @@ fun do_install<Asset: key + store, CoinType>(
     (
         RentingState::Occupied {
             asset: wrapped,
-            terms: OccupiedTerms { schedule, current: t, retire: retire_condition_new() },
+            terms: OccupiedTerms { schedule, active: t, retire: retire_condition_new() },
             cycle,
         },
         cap,
@@ -1704,13 +1704,13 @@ public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
 #[test_only]
 public(package) fun bid_placed_escrow_id(e: &BidPlaced): ID                          { e.escrow_id }
 #[test_only]
-public(package) fun bid_placed_current_tenant_cap_id(e: &BidPlaced): ID              { e.current_tenant_cap_id }
+public(package) fun bid_placed_active_tenant_cap_id(e: &BidPlaced): ID              { e.active_tenant_cap_id }
 #[test_only]
-public(package) fun bid_placed_current_tenant_address(e: &BidPlaced): address        { e.current_tenant_address }
+public(package) fun bid_placed_active_tenant_address(e: &BidPlaced): address        { e.active_tenant_address }
 #[test_only]
-public(package) fun bid_placed_current_tenant_stake(e: &BidPlaced): u64              { e.current_tenant_stake }
+public(package) fun bid_placed_active_tenant_stake(e: &BidPlaced): u64              { e.active_tenant_stake }
 #[test_only]
-public(package) fun bid_placed_current_phase_start_ms(e: &BidPlaced): u64            { e.current_phase_start_ms }
+public(package) fun bid_placed_active_phase_start_ms(e: &BidPlaced): u64            { e.active_phase_start_ms }
 #[test_only]
 public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
 #[test_only]
@@ -1904,7 +1904,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
             };
             AssetState::Renting(RentingState::Occupied {
                 asset: asset_custody::open_tenancy(asset, core.escrow_identity),
-                terms: OccupiedTerms { schedule, current: tenant_in, retire: retire_condition_new() },
+                terms: OccupiedTerms { schedule, active: tenant_in, retire: retire_condition_new() },
                 cycle,
             })
         },
@@ -1946,7 +1946,7 @@ public(package) fun drive_to_descent_for_testing<Asset: key + store, CoinType>(
 ): AssetState<Asset, CoinType> {
     match (state) {
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
-            let OccupiedTerms { schedule: _, current: mut tenant, retire: _ } = terms;
+            let OccupiedTerms { schedule: _, active: mut tenant, retire: _ } = terms;
             let owner_earnings = tenant_seat::take_owner_earnings(&mut tenant, monetary::stake(owner_amount));
             let fee_share      = tenant_seat::take_fee_share(&mut tenant, monetary::stake(fee_amount), core.escrow_identity);
             let refund = if (monetary::stake_mist(tenant_seat::proj_stake_value(&tenant)) > 0) {
@@ -1986,12 +1986,12 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
 ): AssetState<Asset, CoinType> {
     match (state) {
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
-            let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set_for_testing(retire) }, cycle })
+            let OccupiedTerms { schedule, active, retire } = terms;
+            AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, active, retire: retire_condition_set_for_testing(retire) }, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
-            let OccupiedTerms { schedule, current, retire } = terms;
-            AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, current, retire: retire_condition_set_for_testing(retire) }, bid, cycle })
+            let OccupiedTerms { schedule, active, retire } = terms;
+            AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, active, retire: retire_condition_set_for_testing(retire) }, bid, cycle })
         },
         AssetState::Waiting(_ws) => abort ENotRented,
     }

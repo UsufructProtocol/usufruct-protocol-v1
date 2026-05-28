@@ -268,7 +268,7 @@ fun rented_views_post_rent() {
     assert!(escrow::credit_phase_start_ms(&escrow).is_some());
 
     // — Cap status on the actual tenant cap —
-    assert!(escrow::tenant_cap_is_current(&escrow, object::id(&t_cap)));
+    assert!(escrow::tenant_cap_is_active(&escrow, object::id(&t_cap)));
 
     // — Owner balance: rent payment is collected and split; owner_balance ≥ 0 —
     let _bal = escrow::owner_balance(&escrow);
@@ -313,7 +313,7 @@ fun settlement_views_in_rented_state() {
 
 /// Settlement views in Demand state: tenure_settlement and
 /// handover_settlement operate on the *current* tenant's stake (not the
-/// pending bidder's). Covers the Demand arm of `proj_current_stake_value`
+/// pending bidder's). Covers the Demand arm of `proj_active_stake_value`
 /// and `proj_tenure_settlement`.
 #[test]
 fun settlement_views_in_demand_state() {
@@ -485,7 +485,7 @@ fun demand_views_after_handover_bid() {
     assert!(escrow::pending_stake(&escrow).is_some());
 
     // — Cap status: t1 current, t2 pending —
-    assert!(escrow::tenant_cap_is_current(&escrow, object::id(&t1_cap)));
+    assert!(escrow::tenant_cap_is_active(&escrow, object::id(&t1_cap)));
     assert!(escrow::tenant_cap_is_pending(&escrow, object::id(&t2_cap)));
 
     // — Handover countdown is active; expiry is recorded —
@@ -616,7 +616,7 @@ fun cartesian_state_projector_matrix() {
 
 // ─── cap_is_* false-arm coverage ─────────────────────────────────────────────
 //
-// tenant_cap_is_current/pending/stale call the internal cap_is_* predicates.
+// tenant_cap_is_active/pending/stale call the internal cap_is_* predicates.
 // The `_ => false` arms for Descent and Retired were uncovered because existing
 // tests only used Idle or Renting states.
 
@@ -638,7 +638,7 @@ fun tenant_cap_views_in_descent_state() {
 
     // In Descent: no active tenancy — any cap is stale.
     let cap_id = object::id(&t_cap);
-    assert!(!escrow::tenant_cap_is_current(&escrow, cap_id), 1);
+    assert!(!escrow::tenant_cap_is_active(&escrow, cap_id), 1);
     assert!(!escrow::tenant_cap_is_pending(&escrow, cap_id), 2);
     assert!(escrow::tenant_cap_is_stale(&escrow, cap_id),   3);
 
@@ -660,7 +660,7 @@ fun tenant_cap_views_in_retired_state() {
 
     // Use a synthetic cap ID — no active tenancy means any cap is stale.
     let synthetic_id = object::id_from_address(@0xCA1);
-    assert!(!escrow::tenant_cap_is_current(&escrow, synthetic_id), 0);
+    assert!(!escrow::tenant_cap_is_active(&escrow, synthetic_id), 0);
     assert!(!escrow::tenant_cap_is_pending(&escrow, synthetic_id), 1);
     assert!(escrow::tenant_cap_is_stale(&escrow, synthetic_id),   2);
 
@@ -684,7 +684,7 @@ fun tenant_cap_is_pending_in_occupied_returns_false() {
 
     // In Occupied there is a current cap but no pending — is_pending is false.
     let cap_id = object::id(&t_cap);
-    assert!( escrow::tenant_cap_is_current(&escrow, cap_id), 1);
+    assert!( escrow::tenant_cap_is_active(&escrow, cap_id), 1);
     assert!(!escrow::tenant_cap_is_pending(&escrow, cap_id), 2);
     assert!(!escrow::tenant_cap_is_stale(&escrow, cap_id),  3);
 

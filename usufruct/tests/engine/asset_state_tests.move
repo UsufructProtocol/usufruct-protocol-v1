@@ -299,7 +299,7 @@ fun burn_foreign_cap_in_retired_aborts() {
 }
 
 #[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
-fun burn_live_current_cap_in_demand_aborts() {
+fun burn_live_active_cap_in_demand_aborts() {
     let mut sc = setup();
     // Fixed handover (c=1) — without this, the Instant handover (c=0)
     // would fire on APT at the start of soft_burn_tenant_cap and Demand would

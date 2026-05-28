@@ -330,13 +330,13 @@ public fun owner_cap_id<Asset: key + store, CoinType>(
 public fun active_tenant_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
-    asset_state::proj_current_addr(read_state(escrow))
+    asset_state::proj_active_addr(read_state(escrow))
 }
 
 public fun active_tenant_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
-    asset_state::proj_current_cap_id(read_state(escrow))
+    asset_state::proj_active_cap_id(read_state(escrow))
 }
 
 public fun pending_tenant_addr<Asset: key + store, CoinType>(
@@ -354,7 +354,7 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
 public fun active_stake<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_state::proj_current_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
+    asset_state::proj_active_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
 public fun pending_stake<Asset: key + store, CoinType>(
@@ -366,7 +366,7 @@ public fun pending_stake<Asset: key + store, CoinType>(
 public fun active_committed_tenures<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_state::proj_current_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
+    asset_state::proj_active_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
 }
 
 public fun pending_committed_tenures<Asset: key + store, CoinType>(
@@ -416,7 +416,7 @@ public fun active_cycle_descent_ms<Asset: key + store, CoinType>(
     asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
 }
 
-// Tenancy totals: base cycle ceiling/handover scaled by the current tenant's committed_tenures.
+// Tenancy totals: base cycle ceiling/handover scaled by the active tenant's committed_tenures.
 public fun active_tenure_ceiling_total_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
@@ -537,11 +537,11 @@ public fun owner_cap_is_valid<Asset: key + store, CoinType>(
     asset_state::proj_owner_cap_id(read_core(escrow)) == object::id(owner_cap)
 }
 
-public fun tenant_cap_is_current<Asset: key + store, CoinType>(
+public fun tenant_cap_is_active<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
 ): bool {
-    asset_state::cap_is_current(read_state(escrow), tenant_cap::from_id(cap_id))
+    asset_state::cap_is_active(read_state(escrow), tenant_cap::from_id(cap_id))
 }
 
 public fun tenant_cap_is_pending<Asset: key + store, CoinType>(

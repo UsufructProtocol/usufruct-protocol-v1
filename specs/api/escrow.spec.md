@@ -106,7 +106,7 @@ Shared object. One per integrated asset. `state` is `None` while the asset is bo
 
 **View — cap validation**
 - `owner_cap_is_valid(owner_cap): bool`
-- `tenant_cap_is_current(cap_id): bool`, `tenant_cap_is_pending(cap_id): bool`, `tenant_cap_is_stale(cap_id): bool`
+- `tenant_cap_is_active(cap_id): bool`, `tenant_cap_is_pending(cap_id): bool`, `tenant_cap_is_stale(cap_id): bool`
 
 **View — policy detail** (introspection into the active ensemble)
 - `min_rent_price()`, `min_rent_price_is_fixed()`, `min_rent_price_is_random_in_range()`, `min_rent_price_fixed_mist()`, `min_rent_price_range_min_mist()`, `min_rent_price_range_max_mist()`

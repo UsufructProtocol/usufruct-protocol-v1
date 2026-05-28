@@ -349,7 +349,7 @@ fun floor_price_idle_returns_min_rent_price() {
 /// the D axis (PriceEscalationPolicy): d=0 (FixedDelta) and d=1 (CompoundDelta)
 /// — the only axis compute_next_rent_price actually consumes.
 #[test]
-fun floor_price_occupied_escalates_current_stake() {
+fun floor_price_occupied_escalates_active_stake() {
     let mut sc = setup();
     let mut m = 0u8;
     while (m <= 1) {
@@ -1800,7 +1800,7 @@ fun soft_burn_tenant_cap_burns_displaced_bidder_cap() {
 }
 
 #[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
-fun soft_burn_tenant_cap_on_live_current_cap_aborts() {
+fun soft_burn_tenant_cap_on_live_active_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -3548,7 +3548,7 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
 /// The current tenant uses the same rent() entry point as any bidder;
 /// the protocol does not privilege or restrict based on role.
 #[test]
-fun e2e_current_tenant_defends_against_challenger() {
+fun e2e_active_tenant_defends_against_challenger() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
@@ -3711,7 +3711,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
 ///   floor_HC (wrong)   = T1_stake + δ = 10 + 10 = 20 SUI  ← floor_HO, no escalation
 /// The test asserts the correct value and documents the wrong one as a comment.
 #[test]
-fun e2e_hc_floor_uses_pending_stake_not_current_stake() {
+fun e2e_hc_floor_uses_pending_stake_not_active_stake() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
@@ -9219,10 +9219,10 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::bid_placed_escrow_id(e),                 escrow_id);
-    assert_eq!(asset_state::bid_placed_current_tenant_cap_id(e),     object::id(&cap_t1));
-    assert_eq!(asset_state::bid_placed_current_tenant_address(e),       OWNER);
-    assert_eq!(asset_state::bid_placed_current_tenant_stake(e),      floor);
-    assert_eq!(asset_state::bid_placed_current_phase_start_ms(e),    0);
+    assert_eq!(asset_state::bid_placed_active_tenant_cap_id(e),     object::id(&cap_t1));
+    assert_eq!(asset_state::bid_placed_active_tenant_address(e),       OWNER);
+    assert_eq!(asset_state::bid_placed_active_tenant_stake(e),      floor);
+    assert_eq!(asset_state::bid_placed_active_phase_start_ms(e),    0);
     assert_eq!(asset_state::bid_placed_tenant_cap_id(e),             object::id(&cap_t2));
     assert_eq!(asset_state::bid_placed_pending_tenant_address(e),            OWNER);
     assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
@@ -9598,7 +9598,7 @@ fun event_pin_asset_returned_all_fields() {
 /// bidder; both are none outside their phases. Distinct values (3 vs 2) prove each
 /// reads its own schedule slot.
 #[test]
-fun committed_tenures_views_reflect_current_and_pending() {
+fun committed_tenures_views_reflect_active_and_pending() {
     let mut sc = setup();
     let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());

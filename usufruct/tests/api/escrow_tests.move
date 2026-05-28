@@ -785,7 +785,7 @@ fun rent_from_occupied_places_bid() {
             // Verify a BidPlaced event was emitted with cap_t2.
             let placed = event::events_by_type<BidPlaced>();
             assert!(placed.length() == 1, tag_cfg);
-            assert_eq!(asset_state::bid_placed_tenant_cap_id(&placed[0]), object::id(&cap_t2));
+            assert_eq!(asset_state::bid_placed_pending_tenant_cap_id(&placed[0]), object::id(&cap_t2));
             // The expiry was stamped — its specific value depends on c
             // (Instant: now+0 = now2; Fixed: min(now2+25_000, phase_start+ceiling);
             // FullTenure: phase_start+ceiling). Property: expiry > 0.
@@ -1908,6 +1908,7 @@ fun update_tenant_refund_address_in_occupied_changes_active_address() {
 
     let active_evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
     assert_eq!(active_evts.length(), 1);
+    assert_eq!(asset_state::active_refund_updated_escrow_id(&active_evts[0]), object::id(&escrow));
     assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&active_evts[0]), object::id(&cap_t1));
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), old_addr);
     assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
@@ -1983,6 +1984,7 @@ fun update_tenant_refund_address_in_demand_with_pending_cap_changes_pending_only
 
     let pending_evts = event::events_by_type<PendingTenantRefundAddressUpdated>();
     assert_eq!(pending_evts.length(), 1);
+    assert_eq!(asset_state::pending_refund_updated_escrow_id(&pending_evts[0]), object::id(&escrow));
     assert_eq!(asset_state::pending_refund_updated_tenant_cap_id(&pending_evts[0]), object::id(&cap_t2));
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[0]), pending_old);
     assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), new_addr);
@@ -6785,7 +6787,7 @@ fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
     let bp = event::events_by_type<BidPlaced>();
     assert_eq!(bp.length(), 1);
     assert_eq!(
-        asset_state::bid_placed_tenant_cap_id(bp.borrow(0)),
+        asset_state::bid_placed_pending_tenant_cap_id(bp.borrow(0)),
         object::id(&cap_t2),
     );
 
@@ -9884,7 +9886,7 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(asset_state::bid_placed_active_tenant_address(e),       OWNER);
     assert_eq!(asset_state::bid_placed_active_tenant_stake(e),      floor);
     assert_eq!(asset_state::bid_placed_active_phase_start_ms(e),    0);
-    assert_eq!(asset_state::bid_placed_tenant_cap_id(e),             object::id(&cap_t2));
+    assert_eq!(asset_state::bid_placed_pending_tenant_cap_id(e),             object::id(&cap_t2));
     assert_eq!(asset_state::bid_placed_pending_tenant_address(e),            OWNER);
     assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
     assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);

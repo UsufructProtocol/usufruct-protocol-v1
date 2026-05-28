@@ -4,7 +4,7 @@ Usufruct is fully observable through its event stream. Every state transition em
 
 ## 1. Star Schema on `escrow_id`
 
-Every event in the protocol carries `escrow_id` as its first field. This is the root foreign key of a SQL star schema: each event type is a fact table, and `escrow_id` is the join key across all of them.
+Every event in the protocol carries `escrow_id`. For asset, tenancy, auction, and policy events it is the *first* field; the cap events (`*CapMinted`/`*CapBurned`) and fee events (`FeeMessageSent`/`Collected`) lead with their own primary key (`*_cap_id` / `fee_message_id`) and carry `escrow_id` immediately after. Either way `escrow_id` is the root foreign key of a SQL star schema: each event type is a fact table, and `escrow_id` is the join key across all of them.
 
 ```
                     PolicyEnsembleRegistered ──┐
@@ -14,6 +14,7 @@ Every event in the protocol carries `escrow_id` as its first field. This is the 
                                RentStarted ────┼──── escrow_id (root FK)
                   BidPlaced / BidSuperseded ───┤
                          HandoverCompleted ────┤
+   Active/PendingTenantRefundAddressUpdated ───┤
                               TenureExpired ───┤
                           EarningsWithdrawn ───┤
                FeeMessageSent/Collected    ────┤
@@ -23,7 +24,7 @@ Every event in the protocol carries `escrow_id` as its first field. This is the 
 
 Two secondary join keys appear in multiple events and act as dimension PKs:
 
-- **`tenant_cap_id`** — links `TenantCapMinted → RentStarted → BidPlaced → BidSuperseded → HandoverCompleted → TenureExpired → TenantCapBurned`. The complete history of a single tenancy is reconstructable by filtering on this key.
+- **`tenant_cap_id`** — links `TenantCapMinted → RentStarted → BidPlaced → BidSuperseded → HandoverCompleted → TenureExpired → TenantCapBurned`, plus `Active/PendingTenantRefundAddressUpdated` for any seat whose refund address was redirected. The complete history of a single tenancy is reconstructable by filtering on this key.
 - **`owner_cap_id`** — links `OwnerCapMinted → AssetIntegrated → EarningsWithdrawn → AssetClaimed → OwnerCapBurned`.
 
 All other fields (addresses, amounts, timestamps, policy strings) are attributes of the fact rows — they never require a secondary lookup.
@@ -36,7 +37,7 @@ Events are grouped by lifecycle phase. All amounts are in MIST (u64). All timest
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `AssetIntegrated<Asset, CoinType>` | Owner calls `integrate` | `escrow_id`, `owner_cap_id`, `owner_address`, `asset_id`, `fee_inbox_id`, `integrated_at_ms`, `asset_type`, `coin_type` |
+| `AssetIntegrated<Asset, CoinType>` | Owner calls `integrate` | `escrow_id`, `owner_cap_id`, `owner_address`, `asset_id`, `fee_inbox_id`, `asset_type`, `coin_type`, `integrated_at_ms` |
 | `AssetRetired` | Asset leaves protocol (retire path or claim) | `escrow_id`, `timestamp_ms` |
 | `AssetClaimed` | Owner reclaims asset after retirement | `escrow_id`, `owner_cap_id`, `owner_address`, `swept_earnings`, `timestamp_ms` |
 | `RetireFlagSet` | Owner signals intent to retire | `escrow_id`, `owner_cap_id`, `owner_address`, `timestamp_ms` |
@@ -65,14 +66,16 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 | `CommitmentExtended` | Deferred commitment deadline extended | `escrow_id`, `commitment_policy`, `commitment_floor_ms`, `new_expiry_ms`, `timestamp_ms` |
 | `AssetBorrowed` | Tenant takes physical custody of asset | `escrow_id`, `tenant_cap_id`, `tenant_address`, `timestamp_ms` |
 | `AssetReturned` | Tenant returns physical custody | `escrow_id`, `tenant_cap_id`, `tenant_address` |
+| `ActiveTenantRefundAddressUpdated` | Active (Occupied) tenant redirects refund address | `escrow_id`, `tenant_cap_id`, `old_address`, `new_address`, `timestamp_ms` |
+| `PendingTenantRefundAddressUpdated` | Pending bidder (Demand) redirects refund address | `escrow_id`, `tenant_cap_id`, `old_address`, `new_address`, `timestamp_ms` |
 
 ### Auction and handover
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `BidPlaced` | Incoming tenant outbids active tenant | `escrow_id`, `active_tenant_cap_id`, `active_tenant_address`, `active_tenant_stake`, `active_phase_start_ms`, `tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
-| `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `new_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
-| `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `owner_share`, `protocol_fee`, `remain_credit`, `new_rent_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms`, `timestamp_ms` |
+| `BidPlaced` | Incoming tenant outbids active tenant | `escrow_id`, `active_tenant_cap_id`, `active_tenant_address`, `active_tenant_stake`, `active_phase_start_ms`, `pending_tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
+| `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_tenant_cap_id`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
+| `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `remain_credit`, `owner_share`, `protocol_fee`, `new_rent_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms`, `timestamp_ms` |
 | `AuctionExpired` | Descent auction window closes with no bid | `escrow_id`, `phase_start_ms`, `last_acq_price`, `timestamp_ms` |
 
 `BidPlaced` captures a snapshot of the current tenant's state at the moment the bid arrives. `BidSuperseded` captures a three-party snapshot: protected (current), displaced (first bidder), new (second bidder). This makes bid competition fully reconstructable without any on-chain read.
@@ -211,7 +214,7 @@ FROM bid_placed b
 WHERE NOT EXISTS (
     SELECT 1 FROM handover_completed h
     WHERE h.escrow_id = b.escrow_id
-      AND h.new_tenant_cap_id = b.tenant_cap_id
+      AND h.new_tenant_cap_id = b.pending_tenant_cap_id
 )
 AND NOT EXISTS (
     SELECT 1 FROM tenure_expired t

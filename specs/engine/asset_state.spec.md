@@ -220,8 +220,8 @@ A single call can therefore chain `Demand → Occupied → AtDutch` or `Demand �
 ```
 AssetIntegrated<Asset, CoinType> {
     escrow_id: ID, owner_cap_id: ID, owner: address,
-    asset_id: ID, fee_inbox_id: ID, integrated_at_ms: u64,
-    asset_type: String, coin_type: String
+    asset_id: ID, fee_inbox_id: ID,
+    asset_type: String, coin_type: String, integrated_at_ms: u64
 }
 ```
 Emitted once at `execute_integrate`.
@@ -240,7 +240,7 @@ BidPlaced {
     escrow_id: ID,
     active_tenant_cap_id: ID, active_tenant_addr: address,
     active_tenant_stake: u64, active_phase_start_ms: u64,
-    tenant_cap_id: ID, pending_tenant: address,
+    pending_tenant_cap_id: ID, pending_tenant: address,
     bid_amount: u64, floor_price: u64,
     handover_countdown_expiry: u64, committed_tenures: u64, timestamp_ms: u64
 }
@@ -252,9 +252,8 @@ BidSuperseded {
     escrow_id: ID,
     protected_tenant_cap_id: ID, protected_tenant_addr: address,
     protected_tenant_stake: u64, protected_phase_start_ms: u64,
-    displaced_tenant_cap_id: ID, new_tenant_cap_id: ID,
-    displaced_bidder: address, refunded_amount: u64,
-    new_bidder: address, new_bid_amount: u64,
+    displaced_tenant_cap_id: ID, displaced_bidder: address, refunded_amount: u64,
+    new_tenant_cap_id: ID, new_bidder: address, new_bid_amount: u64,
     floor_price: u64, handover_countdown_expiry: u64, committed_tenures: u64, timestamp_ms: u64
 }
 ```
@@ -265,8 +264,8 @@ HandoverCompleted {
     escrow_id: ID,
     displaced_tenant_cap_id: ID, displaced_tenant: address, displaced_phase_start_ms: u64,
     new_tenant_cap_id: ID, new_tenant_addr: address, new_tenant_stake: u64,
-    used_credit: u64, owner_share: u64, protocol_fee: u64,
-    remain_credit: u64, new_rent_price: u64,
+    used_credit: u64, remain_credit: u64,
+    owner_share: u64, protocol_fee: u64, new_rent_price: u64,
     committed_tenures: u64, ceiling_total_ms: u64, handover_total_ms: u64,
     timestamp_ms: u64
 }

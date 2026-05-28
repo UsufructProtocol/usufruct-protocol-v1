@@ -210,9 +210,9 @@ public struct AssetIntegrated has copy, drop {
     owner_address:    address,
     asset_id:         ID,
     fee_inbox_id:     ID,
-    integrated_at_ms: u64,
     asset_type:       String,
     coin_type:        String,
+    integrated_at_ms: u64,
 }
 
 public struct AssetClaimed has copy, drop {
@@ -229,7 +229,7 @@ public struct BidPlaced has copy, drop {
     active_tenant_address:    address,
     active_tenant_stake:      u64,
     active_phase_start_ms:    u64,
-    tenant_cap_id:             ID,
+    pending_tenant_cap_id:     ID,
     pending_tenant_address:    address,
     bid_amount:                u64,
     floor_price:               u64,
@@ -245,9 +245,9 @@ public struct BidSuperseded has copy, drop {
     protected_tenant_stake:    u64,
     protected_phase_start_ms:  u64,
     displaced_tenant_cap_id:   ID,
-    new_tenant_cap_id:         ID,
     displaced_bidder_address:  address,
     refunded_amount:           u64,
+    new_tenant_cap_id:         ID,
     new_bidder_address:        address,
     new_bid_amount:            u64,
     floor_price:               u64,
@@ -265,9 +265,9 @@ public struct HandoverCompleted has copy, drop {
     new_tenant_address:       address,
     new_tenant_stake:         u64,
     used_credit:              u64,
+    remain_credit:            u64,
     owner_share:              u64,
     protocol_fee:             u64,
-    remain_credit:            u64,
     new_rent_price:           u64,
     committed_tenures:        u64,
     ceiling_total_ms:         u64,
@@ -833,9 +833,9 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
         owner_address:    owner_addr,
         asset_id,
         fee_inbox_id:     protocol_fee_ref::proj_id(fee_inbox_identity),
-        integrated_at_ms: phases::timestamp_ms(integrated_at),
         asset_type:       string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
         coin_type:        string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
+        integrated_at_ms: phases::timestamp_ms(integrated_at),
     });
     (core, state, owner_cap)
 }
@@ -1345,9 +1345,9 @@ fun do_handover<Asset: key + store, CoinType>(
         new_tenant_address:       new_addr,
         new_tenant_stake:         monetary::stake_mist(new_stake),
         used_credit:              used_mist,
+        remain_credit:            monetary::stake_mist(remain_credit),
         owner_share:              used_mist - fee_mist,
         protocol_fee:             fee_mist,
-        remain_credit:            monetary::stake_mist(remain_credit),
         new_rent_price,
         committed_tenures:        tenures::tenures_count(incoming_tenures),
         ceiling_total_ms:         phases::duration_ms(new_ceiling_total),
@@ -1445,7 +1445,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
         active_tenant_address:    active_addr,
         active_tenant_stake:      monetary::stake_mist(active_stake),
         active_phase_start_ms:    phases::timestamp_ms(terms.schedule.phase_start),
-        tenant_cap_id:             tenant_cap::proj_id(cap_identity),
+        pending_tenant_cap_id:     tenant_cap::proj_id(cap_identity),
         pending_tenant_address:    pending_addr,
         bid_amount,
         floor_price:               monetary::price_mist(floor),
@@ -1505,9 +1505,9 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         protected_tenant_stake:    monetary::stake_mist(protected_stake),
         protected_phase_start_ms:  phases::timestamp_ms(terms.schedule.phase_start),
         displaced_tenant_cap_id:   tenant_cap::proj_id(displaced_cap_identity),
-        new_tenant_cap_id:         tenant_cap::proj_id(cap_identity),
         displaced_bidder_address:  displaced_addr,
         refunded_amount:           monetary::stake_mist(refunded_amount),
+        new_tenant_cap_id:         tenant_cap::proj_id(cap_identity),
         new_bidder_address:        new_bidder,
         new_bid_amount,
         floor_price:               monetary::price_mist(floor),
@@ -1792,7 +1792,7 @@ public(package) fun bid_placed_active_tenant_stake(e: &BidPlaced): u64          
 #[test_only]
 public(package) fun bid_placed_active_phase_start_ms(e: &BidPlaced): u64            { e.active_phase_start_ms }
 #[test_only]
-public(package) fun bid_placed_tenant_cap_id(e: &BidPlaced): ID                  { e.tenant_cap_id }
+public(package) fun bid_placed_pending_tenant_cap_id(e: &BidPlaced): ID          { e.pending_tenant_cap_id }
 #[test_only]
 public(package) fun bid_placed_pending_tenant_address(e: &BidPlaced): address        { e.pending_tenant_address }
 #[test_only]
@@ -1819,11 +1819,11 @@ public(package) fun bid_superseded_protected_phase_start_ms(e: &BidSuperseded): 
 #[test_only]
 public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID           { e.displaced_tenant_cap_id }
 #[test_only]
-public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID                 { e.new_tenant_cap_id }
-#[test_only]
 public(package) fun bid_superseded_displaced_bidder_address(e: &BidSuperseded): address { e.displaced_bidder_address }
 #[test_only]
 public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64           { e.refunded_amount }
+#[test_only]
+public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID                 { e.new_tenant_cap_id }
 #[test_only]
 public(package) fun bid_superseded_new_bidder_address(e: &BidSuperseded): address    { e.new_bidder_address }
 #[test_only]
@@ -1854,11 +1854,11 @@ public(package) fun handover_completed_new_tenant_stake(e: &HandoverCompleted): 
 #[test_only]
 public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64               { e.used_credit }
 #[test_only]
+public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64             { e.remain_credit }
+#[test_only]
 public(package) fun handover_completed_owner_share(e: &HandoverCompleted): u64               { e.owner_share }
 #[test_only]
 public(package) fun handover_completed_protocol_fee(e: &HandoverCompleted): u64              { e.protocol_fee }
-#[test_only]
-public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64             { e.remain_credit }
 #[test_only]
 public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u64            { e.new_rent_price }
 #[test_only]
@@ -2209,11 +2209,11 @@ public(package) fun asset_integrated_asset_id(e: &AssetIntegrated): ID          
 #[test_only]
 public(package) fun asset_integrated_fee_inbox_id(e: &AssetIntegrated): ID       { e.fee_inbox_id }
 #[test_only]
-public(package) fun asset_integrated_integrated_at_ms(e: &AssetIntegrated): u64  { e.integrated_at_ms }
-#[test_only]
 public(package) fun asset_integrated_asset_type(e: &AssetIntegrated): String     { e.asset_type }
 #[test_only]
 public(package) fun asset_integrated_coin_type(e: &AssetIntegrated): String      { e.coin_type }
+#[test_only]
+public(package) fun asset_integrated_integrated_at_ms(e: &AssetIntegrated): u64  { e.integrated_at_ms }
 
 #[test_only]
 public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(

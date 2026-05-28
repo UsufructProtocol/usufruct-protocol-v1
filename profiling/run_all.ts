@@ -36,6 +36,7 @@ const SENTINEL: Record<string, string> = {
   'a_atomic/11_update_config.ts':           'results/a_11_update_config.json',
   'a_atomic/12_collect_fee_messages.ts':    'results/a_12_collect_fee_messages.json',
   'a_atomic/13_curve_shapes.ts':            'results/a_13_logistic.json',
+  'a_atomic/14_update_tenant_refund_address.ts': 'results/a_14_update_tenant_refund_address.json',
   'b_flows/01_minimal.ts':                  'results/b_01_minimal.json',
   'b_flows/02_asset_lifecycle.ts':          'results/b_02_asset_lifecycle.json',
   'b_flows/03_handover.ts':                 'results/b_03_handover.json',
@@ -43,6 +44,7 @@ const SENTINEL: Record<string, string> = {
   'b_flows/04_sequential_rents.ts 5':       'results/b_04_multi_tenure_N5.json',
   'b_flows/04_sequential_rents.ts 10':      'results/b_04_multi_tenure_N10.json',
   'b_flows/05_earnings.ts':                 'results/b_05_earnings.json',
+  'b_flows/06_refund_redirect_then_handover.ts': 'results/b_06_refund_redirect_then_handover.json',
 };
 
 const A_SCRIPTS = [
@@ -62,6 +64,7 @@ const A_SCRIPTS = [
   'a_atomic/11_update_config.ts',
   'a_atomic/12_collect_fee_messages.ts',
   'a_atomic/13_curve_shapes.ts',
+  'a_atomic/14_update_tenant_refund_address.ts',
 ];
 
 const B_SCRIPTS = [
@@ -72,6 +75,7 @@ const B_SCRIPTS = [
   'b_flows/04_sequential_rents.ts 5',
   'b_flows/04_sequential_rents.ts 10',
   'b_flows/05_earnings.ts',
+  'b_flows/06_refund_redirect_then_handover.ts',
 ];
 
 const toRun = [

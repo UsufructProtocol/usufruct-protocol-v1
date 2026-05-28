@@ -36,13 +36,27 @@ export const DELTA_PRICE_MIST    = 1n;          // minimal escalation
 
 export function loadDeployment(): Deployment {
   const path = resolve(DIR, 'deployment.json');
+  let base: Deployment;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as Deployment;
+    base = JSON.parse(readFileSync(path, 'utf8')) as Deployment;
   } catch {
     throw new Error(
       'deployment.json not found — run `npm run setup:deploy` first',
     );
   }
+  // Protocol IDs can be overridden per-invocation via env vars.
+  // Wallet keys always come from deployment.json (they are account-specific).
+  //
+  //   USUFRUCT_PACKAGE_ID=0x...   PROTOCOL_FEE_INBOX_ID=0x...   PROTOCOL_FEE_REF_ID=0x...
+  //
+  // Example — target v1.0.0 without touching deployment.json:
+  //   USUFRUCT_PACKAGE_ID=0xe466... PROTOCOL_FEE_INBOX_ID=0x0fca... npm run cleanup:testnet
+  return {
+    ...base,
+    usufructPackageId:  process.env.USUFRUCT_PACKAGE_ID   ?? base.usufructPackageId,
+    protocolFeeInboxId: process.env.PROTOCOL_FEE_INBOX_ID ?? base.protocolFeeInboxId,
+    protocolFeeRefId:   process.env.PROTOCOL_FEE_REF_ID   ?? base.protocolFeeRefId,
+  };
 }
 
 export function makeClient(): SuiClient {

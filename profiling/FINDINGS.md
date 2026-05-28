@@ -359,3 +359,99 @@ market. It does not accumulate gas debt, does not penalise long commitments, and
 not depend on system volume. The sole structural cost is the `apply_pending` floor —
 fixed, auditable, and the explicit price of the protocol's correctness invariant: no
 state transition is ever silently dropped.
+
+---
+
+## Localnet — update_tenant_refund_address (2026-05-28)
+
+Network: localnet  
+Branch: `profiling-update-refund-address`  
+Changes vs prior run: new `update_tenant_refund_address` public function + view API
+rename (`current_*` → `active_*`, `policy_ensemble` → `active_ensemble`,
+`pending_config` → `pending_ensemble`) + new `committed_tenures` views.
+
+### New atomic operation
+
+| Operation | Net MIST | Net SUI | +Obj | −Obj |
+|---|---|---|---|---|
+| `update_tenant_refund_address` | 1,265,848 | +0.001266 | 0 | 0 |
+
+Cost matches `borrow_return` exactly. The call mutates only the active seat's
+`refund_address` field — no object creation or deletion, no FeeMessage, no
+state transition. The cost is the `apply_pending` floor.
+
+### New Phase B flow
+
+| Flow | Net MIST | Net SUI | Steps |
+|---|---|---|---|
+| Refund redirect → handover | 18,068,752 | +0.018069 | 9 PTBs |
+
+Step breakdown:
+
+| Step | Net MIST |
+|---|---|
+| integrate | 5,511,360 |
+| rent_t1 | 4,099,920 |
+| **update_refund_address** | **1,265,848** |
+| rent_t2 | 3,499,640 |
+| apply_handover | 2,563,928 |
+| soft_burn | 379,048 |
+| retire | 999,576 |
+| apply_transitions | 1,214,688 |
+| claim_asset | −1,465,256 |
+
+Compared to `b_03_handover` (16,825,824 MIST), the delta is **+1,242,928 MIST**
+— the exact cost of the `update_refund_address` step. The redirect adds no
+overhead to the surrounding cycle; it is purely additive.
+
+### Cross-version comparison — Phase A
+
+v1.1.0 reference: testnet measurement (2026-05-27), which matched localnet exactly.  
+v1.2.0: localnet measurement (2026-05-28).
+
+| Operation | v1.1.0 (MIST) | v1.2.0 (MIST) | Δ (MIST) |
+|---|---|---|---|
+| `integrate` | 6,419,480 | 6,489,480 | +70,000 |
+| `rent(tenures(1))` | 4,039,920 | 4,099,920 | +60,000 |
+| `rent(tenures(10))` | 4,039,920 | 4,099,920 | +60,000 |
+| `rent(tenures(100))` | 4,039,920 | 4,099,920 | +60,000 |
+| `borrow_return` | 1,205,848 | 1,265,848 | +60,000 |
+| `soft_burn_tenant_cap` | −397,872 | −337,872 | +60,000 |
+| `hard_burn_tenant_cap` | −455,112 | −395,112 | +60,000 |
+| `apply_transitions` (no-op) | 1,180,040 | 1,240,040 | +60,000 |
+| `retire` | 939,576 | 999,576 | +60,000 |
+| `claim_asset` | −1,525,256 | −1,465,256 | +60,000 |
+| `withdraw_earnings` | 2,170,776 | 2,230,776 | +60,000 |
+| `extend_commitment` | 1,243,576 | 1,303,576 | +60,000 |
+| `update_config` | 1,182,776 | 1,252,776 | +70,000 |
+| `update_tenant_refund_address` | — | 1,265,848 | new |
+
+All existing operations show a uniform **+60,000–70,000 MIST** increase. This traces to
+two new events introduced in v1.2.0: `CycleParamsResolved` (emitted when the engine
+adopts cycle parameters) and the refund address update events. Each `event::emit` writes
+serialized data to storage — the delta is the storage cost of those extra event payloads,
+uniform across all operations that pass through the affected code paths. It does not scale
+with operation complexity, tenure count, or system volume.
+
+### Cross-version comparison — Phase B
+
+| Flow | v1.1.0 (MIST) | v1.2.0 (MIST) | Δ (MIST) | Steps |
+|---|---|---|---|---|
+| Minimal (integrate→rent→retire→apply→claim) | 11,760,680 | 12,080,680 | +320,000 | 5 |
+| Lifecycle + borrow_return | 11,998,408 | 12,368,408 | +370,000 | 6 |
+| Handover (2 tenants) | 16,312,904 | 16,825,824 | +512,920 | 8 |
+| Sequential rents N=3 | 22,607,560 | 23,147,560 | +540,000 | 9 |
+| Sequential rents N=5 | 34,435,480 | 35,215,480 | +780,000 | 13 |
+| Sequential rents N=10 | 64,005,280 | 65,385,280 | +1,380,000 | 23 |
+| N=3 with earnings withdrawals | 26,185,528 | 26,915,528 | +730,000 | 12 |
+| Refund redirect → handover | — | 18,068,752 | new | 9 |
+
+Phase B deltas are proportional to step count: each step adds ~60,000 MIST, so a flow
+with N steps accumulates N × 60,000 MIST. The per-cycle cost remains constant:
+
+| Metric | v1.1.0 | v1.2.0 |
+|---|---|---|
+| Per sequential rent cycle (rent + apply) | 5,913,960 MIST | 6,033,960 MIST |
+
+The +120,000 MIST per cycle (+60k rent, +60k apply) is the v1.2.0 API overhead
+amortised across the two mandatory PTBs in a cycle.

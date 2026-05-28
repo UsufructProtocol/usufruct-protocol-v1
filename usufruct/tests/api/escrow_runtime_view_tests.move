@@ -115,9 +115,9 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert!(!escrow::is_retiring(escrow));
 
     // — Tenant slots: current populated under Renting; pending only under Demand —
-    assert_eq!(escrow::current_tenant_addr(escrow).is_some(),   in_renting);
-    assert_eq!(escrow::current_tenant_cap_id(escrow).is_some(), in_renting);
-    assert_eq!(escrow::current_stake(escrow).is_some(),         in_renting);
+    assert_eq!(escrow::active_tenant_addr(escrow).is_some(),   in_renting);
+    assert_eq!(escrow::active_tenant_cap_id(escrow).is_some(), in_renting);
+    assert_eq!(escrow::active_stake(escrow).is_some(),         in_renting);
     assert_eq!(escrow::pending_tenant_addr(escrow).is_some(),   in_demand);
     assert_eq!(escrow::pending_tenant_cap_id(escrow).is_some(), in_demand);
     assert_eq!(escrow::pending_stake(escrow).is_some(),         in_demand);
@@ -128,9 +128,9 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::tenure_expiry_ms(escrow).is_some(), in_renting);
 
     // — active_* resolved values: live in TenancyEnvelope, only Renting —
-    assert_eq!(escrow::active_tenure_ceiling_ms(escrow).is_some(),    in_renting);
-    assert_eq!(escrow::active_handover_duration_ms(escrow).is_some(), in_renting);
-    assert_eq!(escrow::active_floor_price_mist(escrow).is_some(),     in_renting);
+    assert_eq!(escrow::active_tenure_ceiling_total_ms(escrow).is_some(),    in_renting);
+    assert_eq!(escrow::active_handover_total_ms(escrow).is_some(), in_renting);
+    assert_eq!(escrow::active_cycle_floor_mist(escrow).is_some(),     in_renting);
 
     // — next_* (waiting-resolved): live in WaitingState::Idle and Descent —
     assert_eq!(escrow::next_floor_price_mist(escrow).is_some(),     in_waiting_with_resolved);
@@ -183,19 +183,19 @@ fun idle_views_post_integrate() {
     assert!(escrow::owner_cap_is_valid(&escrow, &cap));
 
     // — Tenant slots — all none in idle —
-    assert!(escrow::current_tenant_addr(&escrow).is_none());
-    assert!(escrow::current_tenant_cap_id(&escrow).is_none());
+    assert!(escrow::active_tenant_addr(&escrow).is_none());
+    assert!(escrow::active_tenant_cap_id(&escrow).is_none());
     assert!(escrow::pending_tenant_addr(&escrow).is_none());
     assert!(escrow::pending_tenant_cap_id(&escrow).is_none());
-    assert!(escrow::current_stake(&escrow).is_none());
+    assert!(escrow::active_stake(&escrow).is_none());
     assert!(escrow::pending_stake(&escrow).is_none());
 
     // — Phase / active tenancy — all none in idle (no Renting yet) —
     assert!(escrow::phase_start_ms(&escrow).is_none());
     assert!(escrow::tenure_expiry_ms(&escrow).is_none());
-    assert!(escrow::active_tenure_ceiling_ms(&escrow).is_none());
-    assert!(escrow::active_handover_duration_ms(&escrow).is_none());
-    assert!(escrow::active_floor_price_mist(&escrow).is_none());
+    assert!(escrow::active_tenure_ceiling_total_ms(&escrow).is_none());
+    assert!(escrow::active_handover_total_ms(&escrow).is_none());
+    assert!(escrow::active_cycle_floor_mist(&escrow).is_none());
     assert!(escrow::handover_countdown_expiry_ms(&escrow).is_none());
     assert!(escrow::compute_handover_expiry_at(&escrow, 1_000).is_none());
     assert!(escrow::last_acq_price(&escrow).is_none());
@@ -246,20 +246,20 @@ fun rented_views_post_rent() {
     let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &clk, sc.ctx());
 
     // — Tenant slots — current populated, pending still empty —
-    assert_eq!(escrow::current_tenant_addr(&escrow).destroy_some(),   TENANT_ADDR);
-    assert_eq!(escrow::current_tenant_cap_id(&escrow).destroy_some(), object::id(&t_cap));
+    assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(),   TENANT_ADDR);
+    assert_eq!(escrow::active_tenant_cap_id(&escrow).destroy_some(), object::id(&t_cap));
     assert!(escrow::pending_tenant_addr(&escrow).is_none());
     assert!(escrow::pending_tenant_cap_id(&escrow).is_none());
-    assert_eq!(escrow::current_stake(&escrow).destroy_some(), STAKE);
+    assert_eq!(escrow::active_stake(&escrow).destroy_some(), STAKE);
     assert!(escrow::pending_stake(&escrow).is_none());
 
     // — Phase / runtime resolution — all populated under Renting state —
     let phase_start = escrow::phase_start_ms(&escrow).destroy_some();
     let expected_expiry = phase_start + escrow_corpus::tenure_ceiling_const();
     assert_eq!(escrow::tenure_expiry_ms(&escrow).destroy_some(), expected_expiry);
-    assert_eq!(escrow::active_tenure_ceiling_ms(&escrow).destroy_some(), escrow_corpus::tenure_ceiling_const());
-    let _ahd = escrow::active_handover_duration_ms(&escrow); // Some (resolved at rent time)
-    let _afp = escrow::active_floor_price_mist(&escrow);     // Some
+    assert_eq!(escrow::active_tenure_ceiling_total_ms(&escrow).destroy_some(), escrow_corpus::tenure_ceiling_const());
+    let _ahd = escrow::active_handover_total_ms(&escrow); // Some (resolved at rent time)
+    let _afp = escrow::active_cycle_floor_mist(&escrow);     // Some
     // last_acq_price is recorded only on Descent transitions, not on rent from Idle.
     assert!(escrow::last_acq_price(&escrow).is_none());
 
@@ -431,9 +431,9 @@ fun retired_views_after_retire_from_idle() {
     assert!(!escrow::is_retiring(&escrow));
 
     // — Tenant / phase / runtime resolution — all none in Retired —
-    assert!(escrow::current_tenant_addr(&escrow).is_none());
+    assert!(escrow::active_tenant_addr(&escrow).is_none());
     assert!(escrow::pending_tenant_addr(&escrow).is_none());
-    assert!(escrow::current_stake(&escrow).is_none());
+    assert!(escrow::active_stake(&escrow).is_none());
     assert!(escrow::phase_start_ms(&escrow).is_none());
     assert!(escrow::tenure_expiry_ms(&escrow).is_none());
     assert!(escrow::next_floor_price_mist(&escrow).is_none()); // Retired has no resolved-for-next
@@ -477,11 +477,11 @@ fun demand_views_after_handover_bid() {
     assert!(!escrow::is_retiring(&escrow));
 
     // — Both tenant slots populated —
-    assert_eq!(escrow::current_tenant_addr(&escrow).destroy_some(),   TENANT_ADDR);
-    assert_eq!(escrow::current_tenant_cap_id(&escrow).destroy_some(), object::id(&t1_cap));
+    assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(),   TENANT_ADDR);
+    assert_eq!(escrow::active_tenant_cap_id(&escrow).destroy_some(), object::id(&t1_cap));
     assert_eq!(escrow::pending_tenant_addr(&escrow).destroy_some(),   second_tenant);
     assert_eq!(escrow::pending_tenant_cap_id(&escrow).destroy_some(), object::id(&t2_cap));
-    assert!(escrow::current_stake(&escrow).is_some());
+    assert!(escrow::active_stake(&escrow).is_some());
     assert!(escrow::pending_stake(&escrow).is_some());
 
     // — Cap status: t1 current, t2 pending —
@@ -533,7 +533,7 @@ fun retiring_flag_views_after_retire_during_renting() {
     assert!(!escrow::is_retired(&escrow));
 
     // — Current tenant unchanged by retire-flag-set —
-    assert_eq!(escrow::current_tenant_addr(&escrow).destroy_some(), TENANT_ADDR);
+    assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(), TENANT_ADDR);
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
     clock::destroy_for_testing(clk);
@@ -719,11 +719,11 @@ fun views_flip_across_tenure_expiry_to_idle() {
     assert!( escrow::is_occupied(&escrow));
     assert!(!escrow::is_idle(&escrow));
     assert!( escrow::is_rented(&escrow));
-    assert!( escrow::current_tenant_addr(&escrow).is_some());
-    assert!( escrow::current_stake(&escrow).is_some());
+    assert!( escrow::active_tenant_addr(&escrow).is_some());
+    assert!( escrow::active_stake(&escrow).is_some());
     assert!( escrow::tenure_expiry_ms(&escrow).is_some());
-    assert!( escrow::active_floor_price_mist(&escrow).is_some());
-    assert!( escrow::active_tenure_ceiling_ms(&escrow).is_some());
+    assert!( escrow::active_cycle_floor_mist(&escrow).is_some());
+    assert!( escrow::active_tenure_ceiling_total_ms(&escrow).is_some());
     assert!( escrow::next_floor_price_mist(&escrow).is_none());
     assert!( escrow::next_tenure_ceiling_ms(&escrow).is_none());
     assert!( escrow::auction_descent_duration_ms(&escrow).is_none());
@@ -739,11 +739,11 @@ fun views_flip_across_tenure_expiry_to_idle() {
     assert!(!escrow::is_occupied(&escrow));
     assert!( escrow::is_idle(&escrow));
     assert!(!escrow::is_rented(&escrow));
-    assert!( escrow::current_tenant_addr(&escrow).is_none());
-    assert!( escrow::current_stake(&escrow).is_none());
+    assert!( escrow::active_tenant_addr(&escrow).is_none());
+    assert!( escrow::active_stake(&escrow).is_none());
     assert!( escrow::tenure_expiry_ms(&escrow).is_none());
-    assert!( escrow::active_floor_price_mist(&escrow).is_none());
-    assert!( escrow::active_tenure_ceiling_ms(&escrow).is_none());
+    assert!( escrow::active_cycle_floor_mist(&escrow).is_none());
+    assert!( escrow::active_tenure_ceiling_total_ms(&escrow).is_none());
     assert!( escrow::next_floor_price_mist(&escrow).is_some());
     assert!( escrow::next_tenure_ceiling_ms(&escrow).is_some());
     assert!( escrow::auction_descent_duration_ms(&escrow).is_some());
@@ -776,9 +776,9 @@ fun views_flip_across_tenure_expiry_to_descent() {
     assert!( escrow::is_occupied(&escrow));
     assert!(!escrow::is_in_descent(&escrow));
     assert!( escrow::is_rented(&escrow));
-    assert!( escrow::current_tenant_addr(&escrow).is_some());
-    assert!( escrow::current_stake(&escrow).is_some());
-    assert!( escrow::active_floor_price_mist(&escrow).is_some());
+    assert!( escrow::active_tenant_addr(&escrow).is_some());
+    assert!( escrow::active_stake(&escrow).is_some());
+    assert!( escrow::active_cycle_floor_mist(&escrow).is_some());
     assert!( escrow::last_acq_price(&escrow).is_none());
     assert!( escrow::next_floor_price_mist(&escrow).is_none());
     assert!( escrow::next_tenure_ceiling_ms(&escrow).is_none());
@@ -796,9 +796,9 @@ fun views_flip_across_tenure_expiry_to_descent() {
     assert!(!escrow::is_occupied(&escrow));
     assert!( escrow::is_in_descent(&escrow));
     assert!(!escrow::is_rented(&escrow));
-    assert!( escrow::current_tenant_addr(&escrow).is_none());
-    assert!( escrow::current_stake(&escrow).is_none());
-    assert!( escrow::active_floor_price_mist(&escrow).is_none());
+    assert!( escrow::active_tenant_addr(&escrow).is_none());
+    assert!( escrow::active_stake(&escrow).is_none());
+    assert!( escrow::active_cycle_floor_mist(&escrow).is_none());
     assert!( escrow::last_acq_price(&escrow).is_some());
     assert!( escrow::next_floor_price_mist(&escrow).is_some());
     assert!( escrow::next_tenure_ceiling_ms(&escrow).is_some());
@@ -889,7 +889,7 @@ fun views_flip_across_handover_countdown_expiry() {
     // ── Before APT ────────────────────────────────────────────────────────────
     assert!( escrow::is_demand(&escrow));
     assert!(!escrow::is_occupied(&escrow));
-    assert_eq!(escrow::current_tenant_addr(&escrow).destroy_some(), t1_addr);
+    assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(), t1_addr);
     assert_eq!(escrow::pending_tenant_addr(&escrow).destroy_some(), t2_addr);
     assert!( escrow::pending_stake(&escrow).is_some());
     assert!( escrow::handover_countdown_expiry_ms(&escrow).is_some());
@@ -905,7 +905,7 @@ fun views_flip_across_handover_countdown_expiry() {
     // ── After APT ─────────────────────────────────────────────────────────────
     assert!(!escrow::is_demand(&escrow));
     assert!( escrow::is_occupied(&escrow));
-    assert_eq!(escrow::current_tenant_addr(&escrow).destroy_some(), t2_addr);
+    assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(), t2_addr);
     assert!( escrow::pending_tenant_addr(&escrow).is_none());
     assert!( escrow::pending_stake(&escrow).is_none());
     assert!( escrow::handover_countdown_expiry_ms(&escrow).is_none());

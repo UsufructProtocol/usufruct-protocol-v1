@@ -57,15 +57,14 @@ Shared object. One per integrated asset. `state` is `None` while the asset is bo
 - `active_ensemble(): PolicyEnsemble`, `pending_ensemble(): Option<PolicyEnsemble>`, `has_pending_config_update(): bool`
 
 **View — tenant**
-- `current_tenant_addr(): Option<address>`, `current_tenant_cap_id(): Option<ID>`, `current_stake(): Option<u64>`, `current_committed_tenures(): Option<u64>`
+- `active_tenant_addr(): Option<address>`, `active_tenant_cap_id(): Option<ID>`, `active_stake(): Option<u64>`, `active_committed_tenures(): Option<u64>`
 - `pending_tenant_addr(): Option<address>`, `pending_tenant_cap_id(): Option<ID>`, `pending_stake(): Option<u64>`, `pending_committed_tenures(): Option<u64>`
 
 **View — timing (active tenure)**
 - `phase_start_ms(): Option<u64>` — when current occupancy began
 - `tenure_expiry_ms(): Option<u64>` — absolute deadline of the current tenure
-- `active_tenure_ceiling_ms(): Option<u64>` — resolved ceiling duration for the current cycle
-- `active_handover_duration_ms(): Option<u64>` — resolved handover window for the current cycle
-- `active_floor_price_mist(): Option<u64>` — resolved rest price for the current cycle
+- `active_tenure_ceiling_total_ms(): Option<u64>` — active tenant's total tenure ceiling, scaled by committed_tenures
+- `active_handover_total_ms(): Option<u64>` — active tenant's total handover window, scaled by committed_tenures
 - `handover_countdown_expiry_ms(): Option<u64>` — absolute deadline after which handover can fire (Demand only)
 - `compute_handover_expiry_at(bid_time_ms: u64): Option<u64>` — hypothetical handover deadline if a bid were placed at `bid_time_ms` (Occupied only)
 
@@ -76,6 +75,10 @@ Shared object. One per integrated asset. `state` is `None` while the asset is bo
 - `auction_descent_duration_ms(): Option<u64>` — descent window resolved for the current AtDutch phase
 - `last_acq_price(): Option<u64>` — last acquisition price stored in `AuctionTerms` (AtDutch only)
 - `tenure_ceiling_ms(): u64` — deterministic lower bound of the tenure ceiling from policy (always available)
+
+**View — cycle params (base, resolved per ensemble; never tenant-scaled)**
+- `active_cycle_floor_mist()`, `active_cycle_ceiling_ms()`, `active_cycle_handover_ms()`, `active_cycle_descent_ms()`: `Option<u64>` — the active ensemble's resolved cycle params (read from the stored cycle; `Some` only while rented)
+- `pending_cycle_floor_mist()`, `pending_cycle_ceiling_ms()`, `pending_cycle_handover_ms()`, `pending_cycle_descent_ms()`: `Option<u64>` — what the queued ensemble would resolve to, computed on demand (`Some` only while a pending ensemble exists). Lets a caller preview a config change without decoding `PolicyEnsemble` or replaying resolution.
 
 **View — commitment**
 - `commitment_unlocks_at_ms(): u64`, `commitment_anchor_ms(): u64`, `commitment_remaining_ms(now_ms): u64`

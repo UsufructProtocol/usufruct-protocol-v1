@@ -328,6 +328,17 @@ public(package) fun proj_pending_config<CoinType>(
     core: &EscrowCore<CoinType>,
 ): Option<PolicyEnsemble> { core.ensemble.pending }
 
+public(package) fun proj_pending_cycle_params<CoinType>(
+    core: &EscrowCore<CoinType>,
+): Option<CycleParams> {
+    core.ensemble.pending.map!(|e| resolve_cycle_params(&e))
+}
+
+public(package) fun cycle_params_floor_mist(c: &CycleParams): u64    { monetary::price_mist(c.floor) }
+public(package) fun cycle_params_ceiling_ms(c: &CycleParams): u64    { phases::duration_ms(c.ceiling) }
+public(package) fun cycle_params_handover_ms(c: &CycleParams): u64   { phases::duration_ms(c.handover) }
+public(package) fun cycle_params_descent_ms(c: &CycleParams): u64    { phases::duration_ms(c.descent) }
+
 public(package) fun proj_commitment_policy<CoinType>(
     core: &EscrowCore<CoinType>,
 ): CommitmentPolicy { core.commitment.policy }
@@ -547,12 +558,12 @@ public(package) fun proj_resolved_handover<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun proj_resolved_floor<Asset: key + store, CoinType>(
+public(package) fun proj_active_cycle_params<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
-): Option<Price> {
+): Option<CycleParams> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) =>
-            option::some(cycle.floor),
+            option::some(*cycle),
         _ => option::none(),
     }
 }
@@ -1683,14 +1694,6 @@ fun descending_floor_price(
 public(package) fun resolve_cycle_params_for_testing(ensemble: &PolicyEnsemble): CycleParams {
     resolve_cycle_params(ensemble)
 }
-#[test_only]
-public(package) fun cycle_params_floor_mist(c: &CycleParams): u64 { monetary::price_mist(c.floor) }
-#[test_only]
-public(package) fun cycle_params_ceiling_ms(c: &CycleParams): u64 { phases::duration_ms(c.ceiling) }
-#[test_only]
-public(package) fun cycle_params_handover_ms(c: &CycleParams): u64 { phases::duration_ms(c.handover) }
-#[test_only]
-public(package) fun cycle_params_descent_ms(c: &CycleParams): u64 { phases::duration_ms(c.descent) }
 
 #[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {

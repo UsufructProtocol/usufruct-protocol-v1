@@ -9605,20 +9605,20 @@ fun committed_tenures_views_reflect_current_and_pending() {
     let floor = escrow_corpus::min_rent_price_const();
 
     // Idle: no occupant, no bidder.
-    assert!(escrow::current_committed_tenures(&escrow).is_none(), 0);
+    assert!(escrow::active_committed_tenures(&escrow).is_none(), 0);
     assert!(escrow::pending_committed_tenures(&escrow).is_none(), 1);
 
     // T1 rents 3 tenures → Occupied.
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
-    assert_eq!(*escrow::current_committed_tenures(&escrow).borrow(), 3);
+    assert_eq!(*escrow::active_committed_tenures(&escrow).borrow(), 3);
     assert!(escrow::pending_committed_tenures(&escrow).is_none(), 2);
 
     // T2 bids 2 tenures → Demand.
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor = escrow::compute_floor_price(&escrow, &clk);
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
-    assert_eq!(*escrow::current_committed_tenures(&escrow).borrow(), 3); // occupant unchanged
+    assert_eq!(*escrow::active_committed_tenures(&escrow).borrow(), 3); // occupant unchanged
     assert_eq!(*escrow::pending_committed_tenures(&escrow).borrow(), 2); // bidder's commitment
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -9655,6 +9655,39 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     assert!(*escrow::pending_ensemble(&escrow).borrow() == new_ensemble, 3);
     assert!(escrow::active_ensemble(&escrow) != new_ensemble, 4); // active still old
 
+    // pending_cycle_* resolve the queued ensemble on demand (tag 1,0,0,1,0).
+    assert_eq!(*escrow::pending_cycle_floor_mist(&escrow).borrow(),  escrow_corpus::min_rent_price_const());
+    assert_eq!(*escrow::pending_cycle_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(*escrow::pending_cycle_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(*escrow::pending_cycle_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// active_cycle_* expose the resolved cycle params of the active ensemble while rented.
+#[test]
+fun active_cycle_views_resolve_active_ensemble() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // c=1 handover, h=1 descent
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let floor = escrow_corpus::min_rent_price_const();
+
+    // Idle: cycle params live in the tenancy envelope → none until rented.
+    assert!(escrow::active_cycle_floor_mist(&escrow).is_none(), 0);
+
+    sc.next_tx(TENANT_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    assert_eq!(*escrow::active_cycle_floor_mist(&escrow).borrow(),  floor);
+    assert_eq!(*escrow::active_cycle_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(*escrow::active_cycle_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(*escrow::active_cycle_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
+
+    transfer::public_transfer(cap1, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);

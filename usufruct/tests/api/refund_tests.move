@@ -98,3 +98,54 @@ fun r2_refund_address_feeds_update_tenant_refund_address() {
     owner_cap::burn(owner_cap, OWNER);
     sc.end();
 }
+
+// R3: the wrapper output is accepted on the pending seat too — mirrors R2 for
+// the Demand → bid.pending branch of the dispatch. The active address stays
+// pinned, confirming branch isolation when the call goes through the wrapper.
+#[test]
+fun r3_refund_address_feeds_update_on_pending_seat() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+
+    // c=1 (Fixed handover) — keeps the bid pending instead of resolving handover.
+    let ensemble  = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let fee_ref   = sc.take_immutable<ProtocolFeeRef>();
+    let clk       = clock::create_for_testing(sc.ctx());
+    let asset     = mk_demo_asset(sc.ctx());
+    let owner_cap = escrow::integrate<DemoAsset, SUI>(
+        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+    );
+    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let clk2       = clock::create_for_testing(sc.ctx());
+
+    let payment1 = mk_payment(STAKE, sc.ctx());
+    let cap_t1   = escrow::rent<DemoAsset, SUI>(
+        &mut escrow, payment1, tenures::tenures(1), &clk2, sc.ctx(),
+    );
+    let payment2 = mk_payment(STAKE * 2, sc.ctx());
+    let cap_t2   = escrow::rent<DemoAsset, SUI>(
+        &mut escrow, payment2, tenures::tenures(1), &clk2, sc.ctx(),
+    );
+    assert!(escrow::is_demand(&escrow), 0);
+
+    let active_before = *escrow::active_tenant_addr(&escrow).borrow();
+
+    escrow::update_tenant_refund_address(
+        &mut escrow, &cap_t2, refund::refund_address(NEW_REFUND), &clk2, sc.ctx(),
+    );
+
+    assert_eq!(*escrow::pending_tenant_addr(&escrow).borrow(), NEW_REFUND);
+    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(),  active_before);
+
+    transfer::public_transfer(cap_t1, TENANT_ADDR);
+    transfer::public_transfer(cap_t2, TENANT_ADDR);
+    test_scenario::return_shared(escrow);
+    clock::destroy_for_testing(clk2);
+    owner_cap::burn(owner_cap, OWNER);
+    sc.end();
+}

@@ -27,6 +27,7 @@ use usufruct::{
     phases,
     protocol_fee_inbox::{Self, ProtocolFeeInbox},
     protocol_fee_ref::ProtocolFeeRef,
+    refund_address,
     tenant_cap,
     tenant_seat,
 };
@@ -47,7 +48,7 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
 fun mk_tenant_seat(stake: u64): tenant_seat::TenantSeat<SUI> {
     tenant_seat::new(
         tenant_cap::from_id(object::id_from_address(@0xCA1)),
-        TENANT,
+        refund_address::new(TENANT),
         balance::create_for_testing<SUI>(stake),
     )
 }

@@ -125,6 +125,8 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
   - From `Demand` → `do_supersede_bid` → `Demand` with new pending tenant; displaced tenant receives `Total` refund. The new bidder **inherits the same `handover_expiry`** from the displaced bid — the countdown is not reset.
   - From `Retired` → aborts.
 
+  In every branch that mints a new `TenantSeat` (`do_install`, `do_place_bid`, `do_supersede_bid`), the seat's refund destination is set at construction time to `ctx.sender()` — that is the initial address where any future refund routed through this seat will land (on `do_handover` for the active, on `do_supersede_bid` for the pending). Because `TenantCap` is `key + store` and freely transferable, this initial pinning can become stale once the cap changes hands; `execute_update_tenant_refund_address` (see Cap management below) is the only mechanism that mutates this address after construction.
+
 **Asset access**
 - `asset_state::execute_borrow<Asset, C>(AssetState, EscrowCore<C>, tenant_cap, rng, clock, ctx): (Asset, AssetReceipt<Asset, C>, EscrowCore<C>)` — advances state machine, then extracts the asset from custody. Only the **current** tenant's cap is authorised; a pending cap is explicitly rejected (`EPendingTenantCap`), and a stale cap aborts (`EStaleTenantCap`). Valid in both `Occupied` and `Demand` states — the current tenant retains borrow rights even while a pending bid is waiting.
 - `asset_state::execute_return<Asset, C>(AssetReceipt<Asset, C>, &EscrowCore<C>, asset: Asset): RentingState<Asset, C>` — validates both that the receipt's escrow identity matches and that the returned asset object ID matches the borrowed one; re-inserts asset into custody; returns the reconstituted `RentingState`.
@@ -141,6 +143,9 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
 
 **Cap management**
 - `asset_state::execute_soft_burn_tenant_cap<Asset, C>(&AssetState, &EscrowCore<C>, cap: TenantCap, rng, clock, ctx)` — burns a stale cap; asserts it is neither current nor pending.
+- `asset_state::execute_update_tenant_refund_address<Asset, C>(AssetState, EscrowCore<C>, cap: &TenantCap, new_address: RefundAddress, clock, ctx): (AssetState, EscrowCore<C>)` — advances state machine first; matches the presented cap's identity against the active and pending seats and mutates the refund address of the matching one via `tenant_seat::set_refund_address`. The address being overwritten is the one captured by `execute_rent` at construction time from `ctx.sender()` (see Rental above), or any subsequent redirect on the same seat. Authority derives from the cap reference alone — the call's sender is **not** consulted; only `tenant_cap::identity(&cap)` matters. Emits `ActiveTenantRefundAddressUpdated` or `PendingTenantRefundAddressUpdated` depending on which seat matched. Aborts with `ETenantCapStale` if the cap matches neither (including `Waiting` states where no seat exists). The cap is taken by reference, so its identity (and the historical link to past events) is preserved. Idempotent: emits even if `new_address == old_address`.
+
+  No `OwnerCap` analogue exists, and none is needed. Owner operations that disburse value (`execute_withdraw_earnings`, `execute_claim`) return `Coin<C>` as part of their tuple return — Sui delivers it to the transaction sender, who by construction is the cap holder. The asymmetry is structural: tenant refunds (`do_handover`, `do_supersede_bid`) are **event-initiated** from a third party's transaction, with the displaced tenant absent at payout, so a pre-stored destination on the `TenantSeat` is required. Owner payouts are **caller-initiated**; the cap holder is always present, so no stored destination ever exists on the `OwnerSeat`.
 
 **View functions** (package)
 - State shape: `proj_is_idle`, `proj_is_at_dutch`, `proj_is_occupied`, `proj_is_demand`, `proj_is_active`, `proj_is_retired`, `proj_is_rented`, `proj_is_retiring`
@@ -346,3 +351,19 @@ Emitted on `execute_extend_commitment`.
 RetireFlagSet { escrow_id: ID, owner_cap_id: ID, owner: address, timestamp_ms: u64 }
 ```
 Emitted whenever the owner signals retirement intent — both when the flag is set on an occupied/demand escrow (deferred retire) and when `do_retire_immediately` fires from Idle or AtDutch (immediate retire). Always paired with `AssetRetired` in the immediate case.
+
+```
+ActiveTenantRefundAddressUpdated {
+    escrow_id: ID, tenant_cap_id: ID,
+    old_address: address, new_address: address, timestamp_ms: u64
+}
+```
+Emitted by `execute_update_tenant_refund_address` when the presented cap matches the **active** tenant seat (`Occupied.terms.active`, or `Demand.terms.active`). Records the address transition so off-chain consumers can rewrite their refund routing without re-reading the seat.
+
+```
+PendingTenantRefundAddressUpdated {
+    escrow_id: ID, tenant_cap_id: ID,
+    old_address: address, new_address: address, timestamp_ms: u64
+}
+```
+Emitted by `execute_update_tenant_refund_address` when the presented cap matches the **pending** bidder seat (`Demand.bid.pending`). The address transition applies to the refund returned on bid supersession (`do_supersede_bid`).

@@ -35,7 +35,7 @@ use usufruct::{
     escrow_identity::{Self, EscrowIdentity},
     protocol_fee_ref::{Self, FeeInboxIdentity},
     tenant_cap::{Self, TenantCap, TenantCapIdentity},
-    refund_address,
+    refund_address::{Self, RefundAddress},
     refund_state,
     tenant_seat::{Self, TenantSeat},
     tenant_identity,
@@ -62,6 +62,7 @@ const ERetireAlreadyScheduled:  u64 = 16;
 const ECommitmentNotExtended:   u64 = 17;
 const EReturnedDifferentAsset: u64 = 19;
 const EAlreadyRetiring:        u64 = 20;
+const ETenantCapStale:         u64 = 21;
 
 // === Constants ===
 
@@ -303,6 +304,22 @@ public struct AssetReturned has copy, drop {
     escrow_id:      ID,
     tenant_cap_id:  ID,
     tenant_address: address,
+}
+
+public struct ActiveTenantRefundAddressUpdated has copy, drop {
+    escrow_id:     ID,
+    tenant_cap_id: ID,
+    old_address:   address,
+    new_address:   address,
+    timestamp_ms:  u64,
+}
+
+public struct PendingTenantRefundAddressUpdated has copy, drop {
+    escrow_id:     ID,
+    tenant_cap_id: ID,
+    old_address:   address,
+    new_address:   address,
+    timestamp_ms:  u64,
 }
 
 // === Method Aliases ===
@@ -1062,6 +1079,69 @@ public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
     (s, core)
 }
 
+public(package) fun execute_update_tenant_refund_address<Asset: key + store, CoinType>(
+    s:           AssetState<Asset, CoinType>,
+    core:        EscrowCore<CoinType>,
+    cap:         &TenantCap,
+    new_address: RefundAddress,
+    clock:       &Clock,
+    ctx:         &mut TxContext,
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
+    assert_tenant_cap_binds(cap, &core);
+    let (mut s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
+    let cap_identity = tenant_cap::identity(cap);
+    let escrow_id    = escrow_identity::escrow_id(core.escrow_identity);
+    let timestamp_ms = clock::timestamp_ms(clock);
+    let new_addr_raw = refund_address::addr(new_address);
+    match (&mut s) {
+        AssetState::Renting(RentingState::Occupied { terms, .. }) => {
+            let active_id = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+            if (cap_identity == active_id) {
+                let old_address = tenant_addr(&terms.active);
+                tenant_seat::set_refund_address(&mut terms.active, new_address);
+                event::emit(ActiveTenantRefundAddressUpdated {
+                    escrow_id,
+                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    old_address,
+                    new_address:   new_addr_raw,
+                    timestamp_ms,
+                });
+            } else {
+                abort ETenantCapStale
+            }
+        },
+        AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
+            let active_id  = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+            let pending_id = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending));
+            if (cap_identity == active_id) {
+                let old_address = tenant_addr(&terms.active);
+                tenant_seat::set_refund_address(&mut terms.active, new_address);
+                event::emit(ActiveTenantRefundAddressUpdated {
+                    escrow_id,
+                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    old_address,
+                    new_address:   new_addr_raw,
+                    timestamp_ms,
+                });
+            } else if (cap_identity == pending_id) {
+                let old_address = tenant_addr(&bid.pending);
+                tenant_seat::set_refund_address(&mut bid.pending, new_address);
+                event::emit(PendingTenantRefundAddressUpdated {
+                    escrow_id,
+                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    old_address,
+                    new_address:   new_addr_raw,
+                    timestamp_ms,
+                });
+            } else {
+                abort ETenantCapStale
+            }
+        },
+        _ => abort ETenantCapStale,
+    };
+    (s, core)
+}
+
 public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
@@ -1355,7 +1435,7 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let bid_amount   = coin::value(&payment);
     let cap          = tenant_cap::new(escrow_identity, pending_addr, ctx);
     let cap_identity = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, pending_addr, coin::into_balance(payment));
+    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(pending_addr), coin::into_balance(payment));
     let active_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
     let active_addr  = tenant_addr(&terms.active);
     let active_stake = tenant_seat::proj_stake_value(&terms.active);
@@ -1411,7 +1491,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let new_bid_amount = coin::value(&payment);
     let cap            = tenant_cap::new(escrow_identity, new_bidder, ctx);
     let cap_identity   = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, new_bidder, coin::into_balance(payment));
+    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(new_bidder), coin::into_balance(payment));
     let refund = refund_state::total(pending);
     refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
 
@@ -1551,7 +1631,7 @@ fun do_install<Asset: key + store, CoinType>(
     let tenant_addr  = ctx.sender();
     let cap          = tenant_cap::new(escrow_identity, tenant_addr, ctx);
     let cap_identity = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, tenant_addr, coin::into_balance(payment));
+    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(tenant_addr), coin::into_balance(payment));
     let wrapped = asset_custody::open_tenancy(locked, escrow_identity);
     let schedule = TenancySchedule {
         phase_start:      now,
@@ -2187,4 +2267,26 @@ public(package) fun retire_condition_set_for_testing(r: RetireCondition): Retire
     let _ = r;
     RetireCondition::Retiring
 }
+
+#[test_only]
+public(package) fun active_refund_updated_escrow_id(e: &ActiveTenantRefundAddressUpdated): ID         { e.escrow_id }
+#[test_only]
+public(package) fun active_refund_updated_tenant_cap_id(e: &ActiveTenantRefundAddressUpdated): ID     { e.tenant_cap_id }
+#[test_only]
+public(package) fun active_refund_updated_old_address(e: &ActiveTenantRefundAddressUpdated): address  { e.old_address }
+#[test_only]
+public(package) fun active_refund_updated_new_address(e: &ActiveTenantRefundAddressUpdated): address  { e.new_address }
+#[test_only]
+public(package) fun active_refund_updated_timestamp_ms(e: &ActiveTenantRefundAddressUpdated): u64     { e.timestamp_ms }
+
+#[test_only]
+public(package) fun pending_refund_updated_escrow_id(e: &PendingTenantRefundAddressUpdated): ID        { e.escrow_id }
+#[test_only]
+public(package) fun pending_refund_updated_tenant_cap_id(e: &PendingTenantRefundAddressUpdated): ID    { e.tenant_cap_id }
+#[test_only]
+public(package) fun pending_refund_updated_old_address(e: &PendingTenantRefundAddressUpdated): address { e.old_address }
+#[test_only]
+public(package) fun pending_refund_updated_new_address(e: &PendingTenantRefundAddressUpdated): address { e.new_address }
+#[test_only]
+public(package) fun pending_refund_updated_timestamp_ms(e: &PendingTenantRefundAddressUpdated): u64    { e.timestamp_ms }
 

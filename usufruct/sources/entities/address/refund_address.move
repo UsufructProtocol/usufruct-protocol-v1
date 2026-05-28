@@ -31,6 +31,8 @@ public(package) fun addr(r: RefundAddress): address { r.addr }
 
 public(package) fun new(addr: address): RefundAddress { RefundAddress { addr } }
 
+public(package) fun set(r: &mut RefundAddress, new: RefundAddress) { *r = new; }
+
 // === Private Functions ===
 
 // === Test Functions ===

@@ -33,6 +33,8 @@ use usufruct::{
         AssetBorrowed,
         AssetReturned,
         CycleParamsResolved,
+        ActiveTenantRefundAddressUpdated,
+        PendingTenantRefundAddressUpdated,
     },
 
     policy_ensemble::{Self, EnsembleUpdated, EnsembleUpdateScheduled},
@@ -54,6 +56,7 @@ use usufruct::{
     phases,
     protocol_fee_inbox,
     protocol_fee_ref::{Self, ProtocolFeeRef},
+    refund_address,
     tenant_seat::{Self, TenantSeat},
     tenant_cap,
 };
@@ -114,7 +117,7 @@ fun cap_id_1(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_f
 fun cap_id_2(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA2)) }
 
 fun mk_tenant(stake: u64, addr: address, cap: tenant_cap::TenantCapIdentity): TenantSeat<SUI> {
-    tenant_seat::new(cap, addr, balance::create_for_testing<SUI>(stake))
+    tenant_seat::new(cap, refund_address::new(addr), balance::create_for_testing<SUI>(stake))
 }
 
 fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {
@@ -1870,6 +1873,664 @@ fun hard_burn_tenant_cap_destroys_orphaned_cap_post_claim() {
 
     coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §15.2c update_tenant_refund_address ─────────────────────────────────────
+//
+// The refund address is captured at rent/bid time from `ctx.sender()` and
+// stored inside the `TenantSeat`. Because `TenantCap` has `key + store` it
+// can be transferred to a different holder afterwards, who must be able to
+// redirect refunds without re-minting the cap. The new entry mutates the
+// seat whose `cap_identity` matches the presented cap (active or pending,
+// across Occupied and Demand). Mismatch — including stale caps in renting
+// states and any cap presented while waiting — aborts `ETenantCapStale`.
+// Cross-escrow attempts trip the prior gate (`EWrongEscrowTenantCap`).
+
+#[test]
+fun update_tenant_refund_address_in_occupied_changes_active_address() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    let old_addr = *escrow::active_tenant_addr(&escrow).borrow();
+
+    let new_addr = @0xCAFE;
+    escrow::update_tenant_refund_address(
+        &mut escrow, &cap_t1, refund_address::new(new_addr), &clk, sc.ctx(),
+    );
+
+    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(), new_addr);
+
+    let active_evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    assert_eq!(active_evts.length(), 1);
+    assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&active_evts[0]), object::id(&cap_t1));
+    assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), old_addr);
+    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
+    assert_eq!(event::events_by_type<PendingTenantRefundAddressUpdated>().length(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_in_demand_with_active_cap_changes_active_only() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    let p2 = mk_payment(escrow_corpus::min_rent_price_const() * 2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+    let active_old  = *escrow::active_tenant_addr(&escrow).borrow();
+    let pending_old = *escrow::pending_tenant_addr(&escrow).borrow();
+
+    let new_addr = @0xC0FF;
+    escrow::update_tenant_refund_address(
+        &mut escrow, &cap_t1, refund_address::new(new_addr), &clk, sc.ctx(),
+    );
+
+    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(),  new_addr);
+    assert_eq!(*escrow::pending_tenant_addr(&escrow).borrow(), pending_old);
+
+    let active_evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    assert_eq!(active_evts.length(), 1);
+    assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&active_evts[0]), object::id(&cap_t1));
+    assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), active_old);
+    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
+    assert_eq!(event::events_by_type<PendingTenantRefundAddressUpdated>().length(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_in_demand_with_pending_cap_changes_pending_only() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    let p2 = mk_payment(escrow_corpus::min_rent_price_const() * 2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+    let active_old  = *escrow::active_tenant_addr(&escrow).borrow();
+    let pending_old = *escrow::pending_tenant_addr(&escrow).borrow();
+
+    let new_addr = @0xC0FF;
+    escrow::update_tenant_refund_address(
+        &mut escrow, &cap_t2, refund_address::new(new_addr), &clk, sc.ctx(),
+    );
+
+    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(),  active_old);
+    assert_eq!(*escrow::pending_tenant_addr(&escrow).borrow(), new_addr);
+
+    let pending_evts = event::events_by_type<PendingTenantRefundAddressUpdated>();
+    assert_eq!(pending_evts.length(), 1);
+    assert_eq!(asset_state::pending_refund_updated_tenant_cap_id(&pending_evts[0]), object::id(&cap_t2));
+    assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[0]), pending_old);
+    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), new_addr);
+    assert_eq!(event::events_by_type<ActiveTenantRefundAddressUpdated>().length(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
+fun update_tenant_refund_address_with_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+    let foreign = tenant_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), TENANT_ADDR_1, sc.ctx());
+
+    escrow::update_tenant_refund_address(&mut escrow, &foreign, refund_address::new(@0xCAFE), &clk, sc.ctx());
+
+    transfer::public_transfer(foreign, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
+fun update_tenant_refund_address_with_stale_cap_in_renting_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    let p2 = mk_payment(escrow_corpus::min_rent_price_const() * 2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+    // t3 supersedes t2 — cap_t2 becomes stale (no longer in any seat).
+    let now3 = 1_000;
+    clock::set_for_testing(&mut clk, now3);
+    let p3 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
+
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(@0xCAFE), &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
+fun update_tenant_refund_address_in_idle_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Cap bound to this escrow but no seat exists (escrow is Idle).
+    let bound_cap = tenant_cap::new(escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx());
+    escrow::update_tenant_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
+
+    transfer::public_transfer(bound_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
+fun update_tenant_refund_address_in_descent_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_rented_for_testing(
+        &mut escrow,
+        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        0,
+    );
+    escrow::drive_to_descent_for_testing(
+        &mut escrow, STAKE_T1, 0, escrow_corpus::min_rent_price_const() * 2, 100_000,
+    );
+    let bound_cap = tenant_cap::new(escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx());
+
+    escrow::update_tenant_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
+
+    transfer::public_transfer(bound_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
+fun update_tenant_refund_address_in_retired_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_retired_for_testing(&mut escrow);
+    let bound_cap = tenant_cap::new(escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx());
+
+    escrow::update_tenant_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
+
+    transfer::public_transfer(bound_cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_with_same_address_emits_event_no_abort() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    let current = *escrow::active_tenant_addr(&escrow).borrow();
+
+    // Idempotent: same address is allowed; emits event for audit history.
+    escrow::update_tenant_refund_address(
+        &mut escrow, &cap_t1, refund_address::new(current), &clk, sc.ctx(),
+    );
+
+    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(), current);
+    let evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    assert_eq!(evts.length(), 1);
+    assert_eq!(asset_state::active_refund_updated_old_address(&evts[0]), current);
+    assert_eq!(asset_state::active_refund_updated_new_address(&evts[0]), current);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── §15.2d update_tenant_refund_address — e2e refund routing ────────────────
+//
+// The unit tests above pin the setter chain, the dispatch and the event
+// emission. These integration tests close the loop: after a redirect, the
+// actual Coin<SUI> produced by `tenant_stake::liquidate` during a refund-
+// bearing transition (`do_handover` for the displaced active,
+// `do_supersede_bid` for the displaced pending) arrives at the wallet the
+// holder specified, not at the original `ctx.sender()` of `rent`. Each test
+// asserts BOTH the event-field (off-chain observability) and the on-chain
+// Coin destination (the money actually moves).
+
+#[test]
+fun update_tenant_refund_address_e2e_active_then_handover_routes_to_new() {
+    let mut sc = setup();
+    // c=1 (Fixed handover) → finite countdown, non-trivial remain_credit possible.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents at phase_start=0. Original refund address = ctx.sender() = OWNER.
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    // T1 redirects refund to NEW_T1.
+    let new_t1 = @0xCAFE01;
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t1, refund_address::new(new_t1), &clk, sc.ctx());
+
+    // T2 places bid, escrow → Demand.
+    let now2 = 5_000;
+    clock::set_for_testing(&mut clk, now2);
+    let p2 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // Fire do_handover at countdown expiry → T1 displaced.
+    let boundary = now2 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, boundary);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
+
+    // Event field reflects the updated address.
+    let completed = event::events_by_type<HandoverCompleted>();
+    assert_eq!(completed.length(), 1);
+    assert_eq!(asset_state::handover_completed_displaced_tenant_address(&completed[0]), new_t1);
+    let remain_credit = asset_state::handover_completed_remain_credit(&completed[0]);
+    assert!(remain_credit > 0, 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+
+    // The refund Coin physically arrived at NEW_T1.
+    sc.next_tx(new_t1);
+    let refund_coin = sc.take_from_sender<coin::Coin<SUI>>();
+    assert_eq!(coin::value(&refund_coin), remain_credit);
+    transfer::public_transfer(refund_coin, new_t1);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_e2e_pending_then_supersede_routes_to_new() {
+    let mut sc = setup();
+    // c=1 (Fixed) — non-zero handover countdown so APT does NOT fire handover
+    // before the third rent runs (otherwise we never reach supersede).
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    // T2 places bid (Demand).
+    let p2_amt = escrow_corpus::min_rent_price_const() * 2;
+    let p2 = mk_payment(p2_amt, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // T2 redirects refund while still pending.
+    let new_t2 = @0xCAFE02;
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(new_t2), &clk, sc.ctx());
+
+    // T3 supersedes T2.
+    let now3 = 1_000;
+    clock::set_for_testing(&mut clk, now3);
+    let p3 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
+
+    // Event records the updated address; refund amount = T2's full bid.
+    let superseded = event::events_by_type<BidSuperseded>();
+    assert_eq!(superseded.length(), 1);
+    assert_eq!(asset_state::bid_superseded_displaced_bidder_address(&superseded[0]), new_t2);
+    assert_eq!(asset_state::bid_superseded_refunded_amount(&superseded[0]), p2_amt);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+
+    // Refund Coin lands at NEW_T2.
+    sc.next_tx(new_t2);
+    let refund_coin = sc.take_from_sender<coin::Coin<SUI>>();
+    assert_eq!(coin::value(&refund_coin), p2_amt);
+    transfer::public_transfer(refund_coin, new_t2);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_e2e_pending_update_survives_promotion_through_handover() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents → active at phase_start=0.
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    // T2 bids at clock=5_000 → Demand.
+    let now2 = 5_000;
+    clock::set_for_testing(&mut clk, now2);
+    let p2 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // T2 redirects refund while still pending.
+    let new_t2 = @0xCAFE03;
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(new_t2), &clk, sc.ctx());
+
+    // Handover #1 → T1 displaced (refund to OWNER, ignored), T2 promoted to active.
+    let boundary1 = now2 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, boundary1);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary1), sc.ctx());
+    assert!(escrow::is_occupied(&escrow), 0);
+
+    // T3 bids → Demand again.
+    let now3 = boundary1 + 5_000;
+    clock::set_for_testing(&mut clk, now3);
+    let p3 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
+
+    // Handover #2 → T2 (now active) displaced. Refund destination must be NEW_T2,
+    // the address T2 set while still pending — preserved across the promotion.
+    let boundary2 = now3 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, boundary2);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary2), sc.ctx());
+
+    let completed = event::events_by_type<HandoverCompleted>();
+    assert_eq!(completed.length(), 2);
+    // [0] = handover #1 (T1 displaced to OWNER), [1] = handover #2 (T2 displaced to NEW_T2).
+    assert_eq!(asset_state::handover_completed_displaced_tenant_address(&completed[1]), new_t2);
+    let t2_remain = asset_state::handover_completed_remain_credit(&completed[1]);
+    assert!(t2_remain > 0, 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+
+    // Coin at NEW_T2 with the expected amount.
+    sc.next_tx(new_t2);
+    let refund_coin = sc.take_from_sender<coin::Coin<SUI>>();
+    assert_eq!(coin::value(&refund_coin), t2_remain);
+    transfer::public_transfer(refund_coin, new_t2);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_e2e_active_update_overrides_pending_update_through_handover() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    let now2 = 5_000;
+    clock::set_for_testing(&mut clk, now2);
+    let p2 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // T2 sets a "pending-time" address — should be overridden later.
+    let pending_addr = @0xCAFE04;
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(pending_addr), &clk, sc.ctx());
+
+    // Handover #1: T1 displaced, T2 promoted (carries `pending_addr` for now).
+    let boundary1 = now2 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, boundary1);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary1), sc.ctx());
+
+    // T2 updates again, this time as active. This is the address that must win.
+    let active_addr = @0xCAFE05;
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(active_addr), &clk, sc.ctx());
+
+    // T3 bids → Demand again.
+    let now3 = boundary1 + 5_000;
+    clock::set_for_testing(&mut clk, now3);
+    let p3 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
+
+    // Handover #2: T2 displaced. Refund destination must be `active_addr`,
+    // not `pending_addr` (last-write-wins through a promotion).
+    let boundary2 = now3 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, boundary2);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary2), sc.ctx());
+
+    let completed = event::events_by_type<HandoverCompleted>();
+    assert_eq!(completed.length(), 2);
+    assert_eq!(asset_state::handover_completed_displaced_tenant_address(&completed[1]), active_addr);
+    let t2_remain = asset_state::handover_completed_remain_credit(&completed[1]);
+    assert!(t2_remain > 0, 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+
+    // Coin at active_addr — pending_addr gets nothing (would-be take_from_sender
+    // there would abort, since only one transfer was made by the protocol).
+    sc.next_tx(active_addr);
+    let refund_coin = sc.take_from_sender<coin::Coin<SUI>>();
+    assert_eq!(coin::value(&refund_coin), t2_remain);
+    transfer::public_transfer(refund_coin, active_addr);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_e2e_repeated_active_updates_last_wins_through_handover() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    // Three updates while T1 is in the ACTIVE phase (Occupied state, no bid yet).
+    // All three exercise the `Occupied → terms.active` branch of the dispatch.
+    // Only the last write must persist; the refund on handover routes to addr_c.
+    let addr_a = @0xCAFE10;
+    let addr_b = @0xCAFE20;
+    let addr_c = @0xCAFE30;
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_a), &clk, sc.ctx());
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_b), &clk, sc.ctx());
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_c), &clk, sc.ctx());
+
+    // T2 bids → Demand.
+    let now2 = 5_000;
+    clock::set_for_testing(&mut clk, now2);
+    let p2 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // Handover fires → T1 displaced, refund destination = addr_c (last write).
+    let boundary = now2 + escrow_corpus::handover_countdown_c1_const();
+    clock::set_for_testing(&mut clk, boundary);
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
+
+    let completed = event::events_by_type<HandoverCompleted>();
+    assert_eq!(completed.length(), 1);
+    assert_eq!(asset_state::handover_completed_displaced_tenant_address(&completed[0]), addr_c);
+    let remain = asset_state::handover_completed_remain_credit(&completed[0]);
+    assert!(remain > 0, 0);
+
+    // Three Active events were emitted (A, B, C); each carries its own old/new pair.
+    let active_evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    assert_eq!(active_evts.length(), 3);
+    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), addr_a);
+    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[1]), addr_b);
+    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[2]), addr_c);
+    // Chained old→new: addr_b's old = addr_a, addr_c's old = addr_b.
+    assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[1]), addr_a);
+    assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[2]), addr_b);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+
+    // Coin at addr_c.
+    sc.next_tx(addr_c);
+    let refund_coin = sc.take_from_sender<coin::Coin<SUI>>();
+    assert_eq!(coin::value(&refund_coin), remain);
+    transfer::public_transfer(refund_coin, addr_c);
+    sc.end();
+}
+
+#[test]
+fun update_tenant_refund_address_e2e_repeated_pending_updates_last_wins_through_supersede() {
+    let mut sc = setup();
+    // c=1 (Fixed) — non-zero handover countdown so APT doesn't fire handover
+    // between T2's bid and T3's supersede; otherwise we'd exit Demand early.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // T1 rents → Occupied (active = T1).
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    // T2 bids → Demand (pending = T2, full stake parked).
+    let p2_amt = escrow_corpus::min_rent_price_const() * 2;
+    let p2 = mk_payment(p2_amt, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+
+    // Three updates while T2 is in the PENDING phase (Demand.bid.pending).
+    // All three exercise the `Demand → bid.pending` branch of the dispatch
+    // (a different code path than the active branch covered above).
+    // Only the last write must persist; the refund on supersede routes to addr_c.
+    let addr_a = @0xCAFE40;
+    let addr_b = @0xCAFE50;
+    let addr_c = @0xCAFE60;
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_a), &clk, sc.ctx());
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_b), &clk, sc.ctx());
+    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_c), &clk, sc.ctx());
+
+    // T3 supersedes T2's bid.
+    let now3 = 1_000;
+    clock::set_for_testing(&mut clk, now3);
+    let p3 = mk_payment(escrow::compute_floor_price(&escrow, &clk), sc.ctx());
+    let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
+
+    let superseded = event::events_by_type<BidSuperseded>();
+    assert_eq!(superseded.length(), 1);
+    assert_eq!(asset_state::bid_superseded_displaced_bidder_address(&superseded[0]), addr_c);
+    assert_eq!(asset_state::bid_superseded_refunded_amount(&superseded[0]), p2_amt);
+
+    // Three Pending events emitted with chained old→new (initial = OWNER from T2's rent).
+    let pending_evts = event::events_by_type<PendingTenantRefundAddressUpdated>();
+    assert_eq!(pending_evts.length(), 3);
+    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), addr_a);
+    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[1]), addr_b);
+    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[2]), addr_c);
+    assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[1]), addr_a);
+    assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[2]), addr_b);
+    // Active branch never touched in this scenario.
+    assert_eq!(event::events_by_type<ActiveTenantRefundAddressUpdated>().length(), 0);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+
+    // Coin arrives at addr_c with the full bid amount.
+    sc.next_tx(addr_c);
+    let refund_coin = sc.take_from_sender<coin::Coin<SUI>>();
+    assert_eq!(coin::value(&refund_coin), p2_amt);
+    transfer::public_transfer(refund_coin, addr_c);
+    sc.end();
+}
+
+/// Commercial invariant: the `TenantCap` is `key + store` and can be sold
+/// or otherwise transferred. The buyer (new holder) must be able to redirect
+/// the refund without any coordination with the original tenant, because the
+/// protocol authenticates by `tenant_cap::identity(&cap)` — a function of the
+/// cap object — not by `ctx.sender()`. This pins the property that makes
+/// secondary markets for caps economically coherent.
+#[test]
+fun update_tenant_refund_address_e2e_transferred_cap_grants_authority_to_new_holder() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // OWNER rents → cap_t1 minted; original refund address = OWNER ("seller").
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    // Secondary-market sale: OWNER transfers the cap to a buyer at @0xBEEF.
+    // The coin leg of the trade (buyer → seller) is outside the protocol's
+    // observable surface; only the cap transfer matters for the invariant.
+    let buyer = @0xBEEF;
+    transfer::public_transfer(cap_t1, buyer);
+    test_scenario::return_shared(escrow);
+
+    // Buyer's transaction. They take possession of the cap and redirect.
+    // The sender is the buyer; OWNER is not involved.
+    sc.next_tx(buyer);
+    let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
+    let cap_t1 = sc.take_from_sender<tenant_cap::TenantCap>();
+    let buyer_refund = @0xBE71;
+    escrow::update_tenant_refund_address(
+        &mut escrow, &cap_t1, refund_address::new(buyer_refund), &clk, sc.ctx(),
+    );
+
+    // The seat now refunds to the buyer's chosen address, not to OWNER.
+    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(), buyer_refund);
+    let evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    assert_eq!(evts.length(), 1);
+    assert_eq!(asset_state::active_refund_updated_old_address(&evts[0]), OWNER);
+    assert_eq!(asset_state::active_refund_updated_new_address(&evts[0]), buyer_refund);
+    assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&evts[0]), object::id(&cap_t1));
+
+    transfer::public_transfer(cap_t1, buyer);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }

@@ -32,7 +32,7 @@ fun cap_t1(): TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 
 fun t1(): TenantSeat<TEST_COIN> {
-    tenant_seat::new(cap_t1(), ADDR_T1, balance::create_for_testing<TEST_COIN>(STAKE_T1))
+    tenant_seat::new(cap_t1(), refund_address::new(ADDR_T1), balance::create_for_testing<TEST_COIN>(STAKE_T1))
 }
 
 // ─── §1. Constructor and accessors ─────────────────────────────────────────────
@@ -71,7 +71,7 @@ fun unbundle_returns_identity_and_stake() {
 
 #[test]
 fun destroy_empty_stake_ok_on_zero() {
-    let t = tenant_seat::new<TEST_COIN>(cap_t1(), ADDR_T1, balance::zero<TEST_COIN>());
+    let t = tenant_seat::new<TEST_COIN>(cap_t1(), refund_address::new(ADDR_T1), balance::zero<TEST_COIN>());
     let (_id, stake) = tenant_seat::unbundle(t);
     tenant_stake::destroy_zero(stake);
 }
@@ -138,7 +138,7 @@ fun liquidate_zero_stake_sends_zero_coin() {
     let mut sc = test_scenario::begin(@0xCAFE);
     sc.next_tx(@0xCAFE);
     {
-        let zero_t = tenant_seat::new<TEST_COIN>(cap_t1(), ADDR_T1, balance::zero<TEST_COIN>());
+        let zero_t = tenant_seat::new<TEST_COIN>(cap_t1(), refund_address::new(ADDR_T1), balance::zero<TEST_COIN>());
         let (_id, stake) = tenant_seat::unbundle(zero_t);
         tenant_stake::liquidate(stake, ADDR_T1, sc.ctx());
     };

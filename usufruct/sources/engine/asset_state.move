@@ -2268,3 +2268,25 @@ public(package) fun retire_condition_set_for_testing(r: RetireCondition): Retire
     RetireCondition::Retiring
 }
 
+#[test_only]
+public(package) fun active_refund_updated_escrow_id(e: &ActiveTenantRefundAddressUpdated): ID         { e.escrow_id }
+#[test_only]
+public(package) fun active_refund_updated_tenant_cap_id(e: &ActiveTenantRefundAddressUpdated): ID     { e.tenant_cap_id }
+#[test_only]
+public(package) fun active_refund_updated_old_address(e: &ActiveTenantRefundAddressUpdated): address  { e.old_address }
+#[test_only]
+public(package) fun active_refund_updated_new_address(e: &ActiveTenantRefundAddressUpdated): address  { e.new_address }
+#[test_only]
+public(package) fun active_refund_updated_timestamp_ms(e: &ActiveTenantRefundAddressUpdated): u64     { e.timestamp_ms }
+
+#[test_only]
+public(package) fun pending_refund_updated_escrow_id(e: &PendingTenantRefundAddressUpdated): ID        { e.escrow_id }
+#[test_only]
+public(package) fun pending_refund_updated_tenant_cap_id(e: &PendingTenantRefundAddressUpdated): ID    { e.tenant_cap_id }
+#[test_only]
+public(package) fun pending_refund_updated_old_address(e: &PendingTenantRefundAddressUpdated): address { e.old_address }
+#[test_only]
+public(package) fun pending_refund_updated_new_address(e: &PendingTenantRefundAddressUpdated): address { e.new_address }
+#[test_only]
+public(package) fun pending_refund_updated_timestamp_ms(e: &PendingTenantRefundAddressUpdated): u64    { e.timestamp_ms }
+

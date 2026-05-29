@@ -234,7 +234,7 @@ public fun is_idle<Asset: key + store, CoinType>(
     asset_state::proj_is_idle(read_state(escrow))
 }
 
-public fun is_in_descent<Asset: key + store, CoinType>(
+public fun is_descending<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     asset_state::proj_is_descent(read_state(escrow))
@@ -469,12 +469,6 @@ public fun pending_cycle_descent_ms<Asset: key + store, CoinType>(
     asset_state::proj_pending_cycle_params(read_core(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
 }
 
-public fun next_floor_price_mist<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_waiting_resolved_floor(read_state(escrow)).map!(|v| monetary::price_mist(v))
-}
-
 public fun next_tenure_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
@@ -487,7 +481,7 @@ public fun next_handover_duration_ms<Asset: key + store, CoinType>(
     asset_state::proj_waiting_resolved_handover(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-public fun auction_descent_duration_ms<Asset: key + store, CoinType>(
+public fun next_descent_duration_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_waiting_resolved_descent(read_state(escrow)).map!(|v| phases::duration_ms(v))
@@ -526,7 +520,7 @@ public fun active_tenant_stake_remaining_mist<Asset: key + store, CoinType>(
     option::some(remaining)
 }
 
-public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
+public fun handover_expiry_if_bid_at<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     bid_time_ms: u64,
 ): Option<u64> {
@@ -601,7 +595,7 @@ public fun tenant_cap_is_stale<Asset: key + store, CoinType>(
 }
 
 
-public fun has_pending_transition_states<Asset: key + store, CoinType>(
+public fun transition_is_ready<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     now_ms: u64,
 ): bool {
@@ -616,28 +610,28 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
         .map!(|t| phases::timestamp_ms(t))
 }
 
-public fun compute_used_credit<Asset: key + store, CoinType>(
+public fun accrued_credit_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     now_ms: u64,
 ): u64 {
     monetary::stake_mist(asset_state::compute_used_credit_at(read_state(escrow), read_core(escrow), phases::timestamp(now_ms)))
 }
 
-public fun compute_floor_price<Asset: key + store, CoinType>(
+public fun floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     now_ms: u64,
 ): u64 {
     monetary::price_mist(asset_state::compute_floor_price_at(read_state(escrow), read_core(escrow), phases::timestamp(now_ms)))
 }
 
-public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
+public fun next_floor_price_mist<Asset: key + store, CoinType>(
     escrow:     &Escrow<Asset, CoinType>,
     bid_amount: u64,
 ): u64 {
     monetary::price_mist(price_escalation_policy::compute_next_price(policy_ensemble::proj_price_escalation(read_ensemble(escrow)), monetary::price(bid_amount)))
 }
 
-public fun last_acq_price<Asset: key + store, CoinType>(
+public fun last_rent_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_last_acq_price(read_state(escrow)).map!(|v| monetary::price_mist(v))
@@ -653,12 +647,6 @@ public fun credit_is_capped<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     asset_state::proj_credit_is_capped(read_state(escrow))
-}
-
-public fun credit_stake_mist<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_credit_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
 public fun credit_phase_start_ms<Asset: key + store, CoinType>(

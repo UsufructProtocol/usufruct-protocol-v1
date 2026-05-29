@@ -921,3 +921,153 @@ fun views_flip_across_handover_countdown_expiry() {
     dispose_escrow(escrow, cap);
     sc.end();
 }
+
+// ─── active_tenant_time_remaining_ms ─────────────────────────────────
+
+/// Occupied: remaining decreases as the clock advances; hits 0 at expiry.
+#[test]
+fun time_remaining_in_occupied_decreases_to_zero() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let payment  = mk_payment(STAKE, sc.ctx());
+    let t_cap    = escrow::rent(&mut escrow, payment, tenures::tenures(1), &clk, sc.ctx());
+
+    let expiry_ms = escrow::tenure_expiry_ms(&escrow).destroy_some();
+    let ceiling   = escrow_corpus::tenure_ceiling_const();
+
+    // At phase start: full ceiling remains.
+    let r0 = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    assert!(r0 <= ceiling, 0);
+
+    // At mid-tenure: roughly half remains.
+    clock::set_for_testing(&mut clk, expiry_ms - ceiling / 2);
+    let r1 = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    assert!(r1 <= ceiling / 2 + 1, 1);
+    assert!(r1 > 0, 2);
+
+    // At expiry: 0 remains (boundary crossed, clamped).
+    clock::set_for_testing(&mut clk, expiry_ms);
+    let r2 = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    assert_eq!(r2, 0);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+/// Demand: remaining is measured against the handover countdown, not the tenure ceiling.
+/// After a bid, the active tenant's horizon shrinks to the countdown expiry.
+#[test]
+fun time_remaining_in_demand_uses_handover_countdown() {
+    let mut sc = setup();
+    // c=1 Fixed handover → second rent enters Demand instead of firing through.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let p1      = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let t1_cap  = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+
+    let second_tenant: address = @0xA2;
+    sc.next_tx(second_tenant);
+    clock::set_for_testing(&mut clk, 5_000);
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let t2_cap = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    assert!(escrow::is_demand(&escrow), 0);
+
+    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let tenure_expiry    = escrow::tenure_expiry_ms(&escrow).destroy_some();
+
+    // Remaining is bounded by countdown, not tenure ceiling.
+    let remaining = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    assert!(remaining <= countdown_expiry - 5_000, 1);
+    assert!(remaining < tenure_expiry - 5_000,     2);
+
+    // At countdown expiry: 0 remains.
+    clock::set_for_testing(&mut clk, countdown_expiry);
+    let r2 = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    assert_eq!(r2, 0);
+
+    transfer::public_transfer(t1_cap, TENANT_ADDR);
+    transfer::public_transfer(t2_cap, second_tenant);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+/// Non-renting states return None.
+#[test]
+fun time_remaining_is_none_outside_renting() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (escrow, cap) = build_escrow(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    assert!(escrow::active_tenant_time_remaining_ms(&escrow, &clk).is_none(), 0);
+
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+/// E2E: tenant has time remaining → bid arrives → remaining drops to countdown window.
+#[test]
+fun time_remaining_drops_when_bid_arrives() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let t1_cap  = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    let before_bid = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+
+    let second_tenant: address = @0xA2;
+    sc.next_tx(second_tenant);
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor2 = escrow::compute_floor_price(&escrow, &clk);
+    let t2_cap  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    let after_bid = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+
+    assert!(after_bid < before_bid, 0);
+
+    transfer::public_transfer(t1_cap, TENANT_ADDR);
+    transfer::public_transfer(t2_cap, second_tenant);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+/// E2E: tenant has time remaining → tenure expires with no next tenant → None.
+#[test]
+fun time_remaining_becomes_none_after_tenure_expiry() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    assert!(escrow::active_tenant_time_remaining_ms(&escrow, &clk).is_some(), 0);
+
+    let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
+    clock::set_for_testing(&mut clk, expiry);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+
+    assert!(escrow::active_tenant_time_remaining_ms(&escrow, &clk).is_none(), 1);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}

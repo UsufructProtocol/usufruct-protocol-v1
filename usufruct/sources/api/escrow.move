@@ -499,6 +499,25 @@ public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
     asset_state::proj_handover_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
+public fun active_tenant_time_remaining_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+    clock:  &Clock,
+): Option<u64> {
+    let s      = read_state(escrow);
+    let now_ms = phases::timestamp_ms(phases::now(clock));
+    if (asset_state::proj_is_occupied(s)) {
+        let ps         = *asset_state::proj_phase_start(s).borrow();
+        let ceiling    = *asset_state::proj_resolved_ceiling(s).borrow();
+        let expiry_ms  = phases::timestamp_ms(phases::compute_boundary_at(ps, ceiling));
+        option::some(if (expiry_ms > now_ms) { expiry_ms - now_ms } else { 0 })
+    } else if (asset_state::proj_is_demand(s)) {
+        let expiry_ms = phases::timestamp_ms(*asset_state::proj_handover_expiry(s).borrow());
+        option::some(if (expiry_ms > now_ms) { expiry_ms - now_ms } else { 0 })
+    } else {
+        option::none()
+    }
+}
+
 public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     bid_time_ms: u64,

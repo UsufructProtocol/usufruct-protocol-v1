@@ -149,6 +149,18 @@ fun rent_n_with_floor_price(
     escrow::rent(escrow, mk_payment(floor * n, sc.ctx()), tenures::tenures(n), clk, sc.ctx())
 }
 
+/// One mist below floor_price_mist: the largest payment rent() must reject.
+/// Pairs with rent_with_floor_price (exact floor succeeds) to pin floor as
+/// the exact minimum. Always aborts EInsufficientPayment on a rentable state.
+fun rent_one_below_floor_price(
+    escrow: &mut Escrow<DemoAsset, SUI>,
+    clk:    &clock::Clock,
+    sc:     &mut Scenario,
+): tenant_cap::TenantCap {
+    let floor = escrow::floor_price_mist(escrow, clock::timestamp_ms(clk));
+    escrow::rent(escrow, mk_payment(floor - 1, sc.ctx()), tenures::tenures(1), clk, sc.ctx())
+}
+
 /// Integrate, share, then take the shared escrow back. Returns the
 /// escrow + cap. Uses Immediate commitment (no retire floor) by default.
 fun integrate_and_take(
@@ -480,6 +492,99 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle_multitenure() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     transfer::public_transfer(cap_t4, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── floor_price_mist is the exact minimum — floor − 1 aborts everywhere ──────
+//
+// The e2e lifecycle walks prove exact-floor succeeds in every rentable state.
+// These four pin the boundary from below: one mist under floor_price_mist
+// aborts EInsufficientPayment, so floor_price_mist is the exact minimum in
+// Idle, Occupied, Demand, and Descent.
+
+#[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
+fun floor_price_mist_minus_one_aborts_in_idle() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 0);
+    let cap = rent_one_below_floor_price(&mut escrow, &clk, &mut sc);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
+fun floor_price_mist_minus_one_aborts_in_occupied() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_occupied(&escrow), 0);
+
+    clock::set_for_testing(&mut clk, 1_000);
+    let cap = rent_one_below_floor_price(&mut escrow, &clk, &mut sc);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
+fun floor_price_mist_minus_one_aborts_in_demand() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    clock::set_for_testing(&mut clk, 1_000);
+    let cap_t2 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_demand(&escrow), 0);
+
+    clock::set_for_testing(&mut clk, 2_000);
+    let cap = rent_one_below_floor_price(&mut escrow, &clk, &mut sc);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+#[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
+fun floor_price_mist_minus_one_aborts_in_descent() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+
+    let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
+    clock::set_for_testing(&mut clk, expiry);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_descending(&escrow), 0);
+
+    let cap = rent_one_below_floor_price(&mut escrow, &clk, &mut sc);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);

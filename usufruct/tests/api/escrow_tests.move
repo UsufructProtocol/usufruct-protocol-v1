@@ -133,8 +133,20 @@ fun rent_with_floor_price(
     clk:    &clock::Clock,
     sc:     &mut Scenario,
 ): tenant_cap::TenantCap {
+    rent_n_with_floor_price(escrow, 1, clk, sc)
+}
+
+/// Multi-tenure variant: floor_price_mist is the per-tenure floor, so the
+/// total payment for n tenures is floor * n (the same compute_total_price
+/// rent() asserts against). Requires the Multi tenure-extend policy.
+fun rent_n_with_floor_price(
+    escrow: &mut Escrow<DemoAsset, SUI>,
+    n:      u64,
+    clk:    &clock::Clock,
+    sc:     &mut Scenario,
+): tenant_cap::TenantCap {
     let floor = escrow::floor_price_mist(escrow, clock::timestamp_ms(clk));
-    escrow::rent(escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), clk, sc.ctx())
+    escrow::rent(escrow, mk_payment(floor * n, sc.ctx()), tenures::tenures(n), clk, sc.ctx())
 }
 
 /// Integrate, share, then take the shared escrow back. Returns the
@@ -407,6 +419,61 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle() {
 
     // Descent → Occupied: T4 rents at floor.
     let cap_t4 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_occupied(&escrow), 6);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t4, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Multi-tenure twin of e2e_rent_with_floor_price_drives_full_lifecycle.
+/// Every tenant rents N tenures paying floor_price_mist * N. The state
+/// machine and the floor invariant are identical; only the tenure count
+/// (and so the tenure ceiling, queried dynamically) changes.
+///
+///   m=1 (Multi tenure-extend) → N-tenure rents are permitted
+#[test]
+fun e2e_rent_with_floor_price_drives_full_lifecycle_multitenure() {
+    let mut sc = setup();
+    let n = 3;
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag_with_cycles(1, 0, 0, 1, 0, 1));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // Idle → Occupied: T1 rents N tenures at floor.
+    assert!(escrow::is_idle(&escrow), 0);
+    let cap_t1 = rent_n_with_floor_price(&mut escrow, n, &clk, &mut sc);
+    assert!(escrow::is_occupied(&escrow), 1);
+
+    // Occupied → Demand: T2 bids N tenures at floor.
+    clock::set_for_testing(&mut clk, 1_000);
+    let cap_t2 = rent_n_with_floor_price(&mut escrow, n, &clk, &mut sc);
+    assert!(escrow::is_demand(&escrow), 2);
+
+    // Demand → Demand: T3 supersedes T2 with N tenures at floor.
+    clock::set_for_testing(&mut clk, 2_000);
+    let cap_t3 = rent_n_with_floor_price(&mut escrow, n, &clk, &mut sc);
+    assert!(escrow::is_demand(&escrow), 3);
+
+    // Demand → Occupied: handover fires, T3 promoted to current.
+    let countdown = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    clock::set_for_testing(&mut clk, countdown);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_occupied(&escrow), 4);
+
+    // Occupied → Descent: T3's N-tenure ceiling expires (h=1).
+    let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
+    clock::set_for_testing(&mut clk, expiry);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_descending(&escrow), 5);
+
+    // Descent → Occupied: T4 rents N tenures at floor.
+    let cap_t4 = rent_n_with_floor_price(&mut escrow, n, &clk, &mut sc);
     assert!(escrow::is_occupied(&escrow), 6);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -6713,7 +6780,7 @@ fun update_config_behavior_price_function_floor_escalation() {
 fun next_floor_price_mist_scales_per_tenure() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0); // FixedDelta: next = bid + FIXED_DELTA
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let base = escrow_corpus::min_rent_price_const();

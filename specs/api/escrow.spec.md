@@ -24,31 +24,31 @@ Shared object. One per integrated asset. `state` is `None` while the asset is bo
 ## § API
 
 **Integration**
-- `escrow::integrate<Asset, C>(asset, ensemble, commitment, fee_ref: &ProtocolFeeRef, random, clock, ctx): OwnerCap` — creates and shares the `Escrow`; delegates to `asset_state::execute_integrate`; returns the `OwnerCap` to the transaction sender.
+- `escrow::integrate<Asset, C>(asset, ensemble, commitment, fee_ref: &ProtocolFeeRef, clock, ctx): OwnerCap` — creates and shares the `Escrow`; delegates to `asset_state::execute_integrate`; returns the `OwnerCap` to the transaction sender.
 
 **Owner operations**
-- `escrow::withdraw_earnings<Asset, C>(&mut Escrow, owner_cap: &OwnerCap, random, clock, ctx): Coin<C>` — advances state machine; drains owner accumulated balance.
-- `escrow::claim_asset<Asset, C>(Escrow, owner_cap: OwnerCap, random, clock, ctx): (Asset, Coin<C>)` — consumes the `Escrow` by value; burns the `OwnerCap`; deletes the UID; returns the asset and swept earnings. State must be `Retired` after the state machine advance.
-- `escrow::retire<Asset, C>(&mut Escrow, owner_cap: &OwnerCap, random, clock, ctx)` — sets the retire flag (if rented) or retires immediately (if idle/at_dutch). Validates commitment has elapsed.
+- `escrow::withdraw_earnings<Asset, C>(&mut Escrow, owner_cap: &OwnerCap, clock, ctx): Coin<C>` — advances state machine; drains owner accumulated balance.
+- `escrow::claim_asset<Asset, C>(Escrow, owner_cap: OwnerCap, clock, ctx): (Asset, Coin<C>)` — consumes the `Escrow` by value; burns the `OwnerCap`; deletes the UID; returns the asset and swept earnings. State must be `Retired` after the state machine advance.
+- `escrow::retire<Asset, C>(&mut Escrow, owner_cap: &OwnerCap, clock, ctx)` — sets the retire flag (if rented) or retires immediately (if idle/descending). Validates commitment has elapsed.
 - `escrow::extend_commitment<Asset, C>(&mut Escrow, owner_cap: &OwnerCap, new_policy: CommitmentPolicy, clock)` — extends the commitment; does not advance the state machine.
-- `escrow::update_config<Asset, C>(&mut Escrow, owner_cap: &OwnerCap, new_ensemble: PolicyEnsemble, random, clock, ctx)` — stages or applies config update depending on state.
+- `escrow::update_config<Asset, C>(&mut Escrow, owner_cap: &OwnerCap, new_ensemble: PolicyEnsemble, clock, ctx)` — stages or applies config update depending on state.
 
 **Tenant operations**
-- `escrow::rent<Asset, C>(&mut Escrow, payment: Coin<C>, cycles: Tenures, random, clock, ctx): TenantCap` — advances state machine; installs, bids, or supersedes. Returns a freshly-minted `TenantCap` to the transaction sender. The new seat's refund destination is **captured at this moment from `ctx.sender()`** — that is the initial address where any future refund routed through this seat will land:
+- `escrow::rent<Asset, C>(&mut Escrow, payment: Coin<C>, tenures: Tenures, clock, ctx): TenantCap` — advances state machine; installs, bids, or supersedes. Returns a freshly-minted `TenantCap` to the transaction sender. The new seat's refund destination is **captured at this moment from `ctx.sender()`** — that is the initial address where any future refund routed through this seat will land:
     - on `do_handover`, if this seat is the active that gets displaced;
     - on `do_supersede_bid`, if this seat is the pending bid that gets displaced.
 
   Because `TenantCap` is `key + store` and freely transferable, this initial pinning can become stale the moment the cap changes hands (sale on a secondary market, transfer to a cold wallet, deposit into a vault, etc.). The current holder of the cap can redirect the destination at any later point via `escrow::update_tenant_refund_address` — see that entry below.
-- `escrow::borrow_asset<Asset, C>(&mut Escrow, tenant_cap: &TenantCap, random, clock, ctx): (Asset, AssetReceipt<Asset, C>)` — advances state machine; extracts the asset; sets `escrow.state = None`. Only the current tenant's cap is authorised.
+- `escrow::borrow_asset<Asset, C>(&mut Escrow, tenant_cap: &TenantCap, clock, ctx): (Asset, AssetReceipt<Asset, C>)` — advances state machine; extracts the asset; sets `escrow.state = None`. Only the current tenant's cap is authorised.
 - `escrow::return_asset<Asset, C>(&mut Escrow, asset: Asset, receipt_in: AssetReceipt<Asset, C>)` — validates identity; re-inserts asset into custody; fills `escrow.state`. Borrows core immutably — no state machine advance.
-- `escrow::soft_burn_tenant_cap<Asset, C>(&mut Escrow, cap: TenantCap, random, clock, ctx)` — advances state machine; burns a stale cap. Aborts if cap is current or pending.
+- `escrow::soft_burn_tenant_cap<Asset, C>(&mut Escrow, cap: TenantCap, clock, ctx)` — advances state machine; burns a stale cap. Aborts if cap is current or pending.
 - `escrow::hard_burn_tenant_cap(cap: TenantCap, ctx)` — burns a cap directly with no escrow context; valid for any cap the caller holds.
 - `escrow::update_tenant_refund_address<Asset, C>(&mut Escrow, cap: &TenantCap, new_address: RefundAddress, clock, ctx)` — advances state machine; redirects the refund destination of the seat whose `cap_identity` matches the presented cap. The address being overwritten is the one captured at `rent` time from `ctx.sender()` (see `rent` above), or any subsequent redirect on the same seat. Authority derives entirely from holding the cap: the call's sender is **not** consulted, only `tenant_cap::identity(&cap)` is. This is what makes the cap economically self-contained — a buyer on a secondary market can take possession of the cap and redirect refunds without any coordination with the original tenant. Aborts with `ETenantCapStale` if the cap does not match the active or pending seat (a stale cap in renting, or any cap presented while waiting), or `EWrongEscrowTenantCap` if it belongs to a different escrow.
 
   Note — no `OwnerCap` analogue exists, and none is needed. Owner operations that disburse value (`withdraw_earnings`, `claim_asset`) return the resulting `Coin<C>` directly as the function's return value, which Sui delivers to the transaction sender — the owner cap holder is always present at the call and receives the payout immediately. The asymmetry is structural: tenant refunds (`do_handover`, `do_supersede_bid`) are **event-initiated** from a third party's transaction (the new bidder, or any keeper calling `apply_pending_transition_states`), with the displaced tenant absent at the moment of payout; the protocol must therefore carry a pre-stored destination on each `TenantSeat`. Owner payouts are **caller-initiated** by the cap holder themselves, so no such destination is ever needed on the owner side.
 
 **State machine**
-- `escrow::apply_pending_transition_states<Asset, C>(&mut Escrow, random, clock, ctx)` — manually advances the FSM. Called by the protocol automatically at the start of most operations; exposed publicly so keepers can trigger transitions without performing any other action.
+- `escrow::apply_pending_transition_states<Asset, C>(&mut Escrow, clock, ctx)` — manually advances the FSM. Called by the protocol automatically at the start of most operations; exposed publicly so keepers can trigger transitions without performing any other action.
 
 **View — runtime state (which lifecycle state the escrow is in)**
 - `is_idle(): bool` — Waiting, no tenant, asset resting at the floor

@@ -317,7 +317,7 @@ fun burn_live_active_cap_in_demand_aborts() {
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     // Rent #2: Occupied → Demand (place_bid). cap_t2 becomes pending,
     // cap_t1 stays current.
-    let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::compute_floor_price(&escrow, &clk)), sc.ctx());
+    let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk))), sc.ctx());
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
 
     // Burn the live current cap — must abort.
@@ -341,7 +341,7 @@ fun burn_live_pending_cap_in_demand_aborts() {
 
     let p1     = coin::from_balance(balance::create_for_testing<SUI>(escrow_corpus::min_rent_price_const()), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
-    let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::compute_floor_price(&escrow, &clk)), sc.ctx());
+    let p2     = coin::from_balance(balance::create_for_testing<SUI>(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk))), sc.ctx());
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
 
     // Burn the live pending cap — must abort. This case is distinct

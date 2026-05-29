@@ -127,7 +127,7 @@ public fun extend_commitment<Asset: key + store, CoinType>(
     clock:      &Clock,
 ) {
     let core     = take_core(escrow);
-    let new_core = asset_state::execute_extend_commitment(core, owner_cap, new_policy, clock);
+    let new_core = asset_state::execute_extend_commitment<Asset, CoinType>(core, owner_cap, new_policy, clock);
     put_core(escrow, new_core);
 }
 
@@ -234,7 +234,7 @@ public fun is_idle<Asset: key + store, CoinType>(
     asset_state::proj_is_idle(read_state(escrow))
 }
 
-public fun is_in_descent<Asset: key + store, CoinType>(
+public fun is_descending<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     asset_state::proj_is_descent(read_state(escrow))
@@ -252,10 +252,10 @@ public fun is_demand<Asset: key + store, CoinType>(
     asset_state::proj_is_demand(read_state(escrow))
 }
 
-public fun is_active<Asset: key + store, CoinType>(
+public fun is_live<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_state::proj_is_active(read_state(escrow))
+    asset_state::proj_is_live(read_state(escrow))
 }
 
 public fun is_retired<Asset: key + store, CoinType>(
@@ -270,43 +270,43 @@ public fun is_rented<Asset: key + store, CoinType>(
     asset_state::proj_is_rented(read_state(escrow))
 }
 
-public fun is_descent_skipped<Asset: key + store, CoinType>(
+public fun auction_window_is_off<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     auction_window_policy::proj_is_off(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
-public fun is_descent_window<Asset: key + store, CoinType>(
+public fun auction_window_is_fixed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     auction_window_policy::proj_is_fixed(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
-public fun is_commitment_immediate<Asset: key + store, CoinType>(
+public fun commitment_is_immediate<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     commitment_policy::proj_is_immediate(&asset_state::proj_commitment_policy(read_core(escrow)))
 }
 
-public fun is_commitment_deferred<Asset: key + store, CoinType>(
+public fun commitment_is_deferred<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     commitment_policy::proj_is_deferred(&asset_state::proj_commitment_policy(read_core(escrow)))
 }
 
-public fun is_handover_off<Asset: key + store, CoinType>(
+public fun handover_is_off<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     handover_policy::proj_is_off(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
-public fun is_handover_full_tenure<Asset: key + store, CoinType>(
+public fun handover_is_full_tenure<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     handover_policy::proj_is_full_tenure(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
-public fun is_handover_fixed<Asset: key + store, CoinType>(
+public fun handover_is_fixed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     handover_policy::proj_is_fixed(policy_ensemble::proj_handover(read_ensemble(escrow)))
@@ -366,25 +366,25 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
     asset_state::proj_pending_cap_id(read_state(escrow))
 }
 
-public fun active_stake<Asset: key + store, CoinType>(
+public fun active_tenant_stake_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
-public fun pending_stake<Asset: key + store, CoinType>(
+public fun pending_tenant_stake_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
-public fun active_committed_tenures<Asset: key + store, CoinType>(
+public fun active_tenant_committed_tenures<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
 }
 
-public fun pending_committed_tenures<Asset: key + store, CoinType>(
+public fun pending_tenant_committed_tenures<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
@@ -406,33 +406,31 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
     option::some(phases::timestamp_ms(phases::compute_boundary_at(ps, ceiling)))
 }
 
-// Base cycle params resolved from the ACTIVE ensemble (never tenant-scaled).
-public fun active_cycle_floor_mist<Asset: key + store, CoinType>(
+public fun active_ensemble_floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_floor_mist(&c))
 }
 
-public fun active_cycle_ceiling_ms<Asset: key + store, CoinType>(
+public fun active_ensemble_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_ceiling_ms(&c))
 }
 
-public fun active_cycle_handover_ms<Asset: key + store, CoinType>(
+public fun active_ensemble_handover_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_handover_ms(&c))
 }
 
-public fun active_cycle_descent_ms<Asset: key + store, CoinType>(
+public fun active_ensemble_descent_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
 }
 
-// Tenancy totals: base cycle ceiling/handover scaled by the active tenant's committed_tenures.
-public fun active_tenure_ceiling_total_ms<Asset: key + store, CoinType>(
+public fun active_ceiling_total_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_resolved_ceiling(read_state(escrow)).map!(|v| phases::duration_ms(v))
@@ -444,62 +442,88 @@ public fun active_handover_total_ms<Asset: key + store, CoinType>(
     asset_state::proj_resolved_handover(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-// Base cycle params the PENDING (queued) ensemble would resolve to, computed on demand.
-public fun pending_cycle_floor_mist<Asset: key + store, CoinType>(
+public fun pending_ensemble_floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_cycle_params(read_core(escrow)).map!(|c| asset_state::cycle_params_floor_mist(&c))
 }
 
-public fun pending_cycle_ceiling_ms<Asset: key + store, CoinType>(
+public fun pending_ensemble_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_cycle_params(read_core(escrow)).map!(|c| asset_state::cycle_params_ceiling_ms(&c))
 }
 
-public fun pending_cycle_handover_ms<Asset: key + store, CoinType>(
+public fun pending_ensemble_handover_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_cycle_params(read_core(escrow)).map!(|c| asset_state::cycle_params_handover_ms(&c))
 }
 
-public fun pending_cycle_descent_ms<Asset: key + store, CoinType>(
+public fun pending_ensemble_descent_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_cycle_params(read_core(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
 }
 
-public fun next_floor_price_mist<Asset: key + store, CoinType>(
+public fun next_ensemble_floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_waiting_resolved_floor(read_state(escrow)).map!(|v| monetary::price_mist(v))
 }
 
-public fun next_tenure_ceiling_ms<Asset: key + store, CoinType>(
+public fun next_ensemble_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_waiting_resolved_ceiling(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-public fun next_handover_duration_ms<Asset: key + store, CoinType>(
+public fun next_ensemble_handover_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_waiting_resolved_handover(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-public fun auction_descent_duration_ms<Asset: key + store, CoinType>(
+public fun next_ensemble_descent_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_waiting_resolved_descent(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
+public fun handover_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_handover_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
-public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
+public fun active_tenant_time_remaining_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+    now_ms: u64,
+): Option<u64> {
+    let s = read_state(escrow);
+    if (asset_state::proj_is_occupied(s)) {
+        let ps        = *asset_state::proj_phase_start(s).borrow();
+        let ceiling   = *asset_state::proj_resolved_ceiling(s).borrow();
+        let expiry_ms = phases::timestamp_ms(phases::compute_boundary_at(ps, ceiling));
+        option::some(if (expiry_ms > now_ms) { expiry_ms - now_ms } else { 0 })
+    } else if (asset_state::proj_is_demand(s)) {
+        let expiry_ms = phases::timestamp_ms(*asset_state::proj_handover_expiry(s).borrow());
+        option::some(if (expiry_ms > now_ms) { expiry_ms - now_ms } else { 0 })
+    } else {
+        option::none()
+    }
+}
+
+public fun active_tenant_stake_remaining_mist<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+    now_ms: u64,
+): Option<u64> {
+    if (!asset_state::proj_is_rented(read_state(escrow))) return option::none();
+    let (remaining, _, _) = handover_settlement(escrow, now_ms);
+    option::some(remaining)
+}
+
+public fun handover_expiry_if_bid_at<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     bid_time_ms: u64,
 ): Option<u64> {
@@ -546,10 +570,10 @@ public fun commitment_remaining_ms<Asset: key + store, CoinType>(
 }
 
 public fun owner_cap_is_valid<Asset: key + store, CoinType>(
-    escrow:    &Escrow<Asset, CoinType>,
-    owner_cap: &OwnerCap,
+    escrow: &Escrow<Asset, CoinType>,
+    cap_id: ID,
 ): bool {
-    asset_state::proj_owner_cap_id(read_core(escrow)) == object::id(owner_cap)
+    asset_state::proj_owner_cap_id(read_core(escrow)) == cap_id
 }
 
 public fun tenant_cap_is_active<Asset: key + store, CoinType>(
@@ -574,57 +598,45 @@ public fun tenant_cap_is_stale<Asset: key + store, CoinType>(
 }
 
 
-public fun has_pending_transition_states<Asset: key + store, CoinType>(
+public fun transition_is_ready<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): bool {
-    asset_state::compute_next_pending(read_state(escrow), clock).is_some()
+    asset_state::compute_next_pending(read_state(escrow), phases::timestamp(now_ms)).is_some()
 }
 
 public fun next_transition_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): Option<u64> {
-    asset_state::compute_next_pending(read_state(escrow), clock)
+    asset_state::compute_next_pending(read_state(escrow), phases::timestamp(now_ms))
         .map!(|t| phases::timestamp_ms(t))
 }
 
-public fun compute_used_credit<Asset: key + store, CoinType>(
+public fun accrued_credit_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): u64 {
-    monetary::stake_mist(asset_state::compute_used_credit_at(read_state(escrow), read_core(escrow), phases::now(clock)))
+    monetary::stake_mist(asset_state::compute_used_credit_at(read_state(escrow), read_core(escrow), phases::timestamp(now_ms)))
 }
 
-public fun compute_used_credit_at_ms<Asset: key + store, CoinType>(
-    escrow:       &Escrow<Asset, CoinType>,
-    timestamp_ms: u64,
-): u64 {
-    monetary::stake_mist(asset_state::compute_used_credit_at(read_state(escrow), read_core(escrow), phases::timestamp(timestamp_ms)))
-}
-
-public fun compute_floor_price<Asset: key + store, CoinType>(
+public fun floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): u64 {
-    monetary::price_mist(asset_state::compute_floor_price_at(read_state(escrow), read_core(escrow), phases::now(clock)))
+    monetary::price_mist(asset_state::compute_floor_price_at(read_state(escrow), read_core(escrow), phases::timestamp(now_ms)))
 }
 
-public fun compute_floor_price_at_ms<Asset: key + store, CoinType>(
-    escrow:       &Escrow<Asset, CoinType>,
-    timestamp_ms: u64,
+public fun next_floor_price_mist<Asset: key + store, CoinType>(
+    escrow:          &Escrow<Asset, CoinType>,
+    total_bid_mist:  u64,
+    tenures:         u64,
 ): u64 {
-    monetary::price_mist(asset_state::compute_floor_price_at(read_state(escrow), read_core(escrow), phases::timestamp(timestamp_ms)))
+    let per_tenure_mist = math::compute_mul_div(total_bid_mist, 1, tenures);
+    monetary::price_mist(price_escalation_policy::compute_next_price(policy_ensemble::proj_price_escalation(read_ensemble(escrow)), monetary::price(per_tenure_mist)))
 }
 
-public fun compute_next_ascending_floor<Asset: key + store, CoinType>(
-    escrow:     &Escrow<Asset, CoinType>,
-    bid_amount: u64,
-): u64 {
-    monetary::price_mist(price_escalation_policy::compute_next_price(policy_ensemble::proj_price_escalation(read_ensemble(escrow)), monetary::price(bid_amount)))
-}
-
-public fun last_acq_price<Asset: key + store, CoinType>(
+public fun last_rent_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_last_acq_price(read_state(escrow)).map!(|v| monetary::price_mist(v))
@@ -642,25 +654,13 @@ public fun credit_is_capped<Asset: key + store, CoinType>(
     asset_state::proj_credit_is_capped(read_state(escrow))
 }
 
-public fun credit_stake_mist<Asset: key + store, CoinType>(
+public fun credit_capped_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_state::proj_credit_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
+    asset_state::proj_credit_capped_at(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
-public fun credit_phase_start_ms<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_credit_phase_start(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
-}
-
-public fun credit_expiry_ms<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_credit_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
-}
-
-public fun compute_handover_settlement<Asset: key + store, CoinType>(
+public fun handover_settlement<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     boundary_ms: u64,
 ): (u64, u64, u64) {
@@ -670,7 +670,7 @@ public fun compute_handover_settlement<Asset: key + store, CoinType>(
     (monetary::stake_mist(remaining), monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
-public fun compute_tenure_settlement<Asset: key + store, CoinType>(
+public fun tenure_settlement<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): (u64, u64) {
     let (owner, fee) = asset_state::proj_tenure_settlement(read_state(escrow));
@@ -710,7 +710,7 @@ public fun pending_ensemble<Asset: key + store, CoinType>(
 public fun protocol_fee_bps(): u64 { asset_state::protocol_fee_bps() }
 public fun bps_denominator():  u64 { asset_state::bps_denominator() }
 
-public fun min_rent_price<Asset: key + store, CoinType>(
+public fun rest_price_floor_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     monetary::price_mist(rest_price_policy::compute_floor_price(policy_ensemble::proj_rest_price(read_ensemble(escrow))))
@@ -722,7 +722,7 @@ public fun descent_ceiling_ms<Asset: key + store, CoinType>(
     auction_window_policy::proj_fixed_ceiling(policy_ensemble::proj_auction_window(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
-public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
+public fun handover_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     handover_policy::proj_fixed_floor_ms(policy_ensemble::proj_handover(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
@@ -746,13 +746,13 @@ public fun auction_shape<Asset: key + store, CoinType>(
     *policy_ensemble::proj_auction_shape(read_ensemble(escrow))
 }
 
-public fun ascending_price_function_state<Asset: key + store, CoinType>(
+public fun price_fn<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): PriceEscalationPolicy {
     *policy_ensemble::proj_price_escalation(read_ensemble(escrow))
 }
 
-public fun tenure_ceiling_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+public fun tenure_duration_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
     tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
 }
 
@@ -760,7 +760,7 @@ public fun tenure_ceiling_fixed_ms<Asset: key + store, CoinType>(escrow: &Escrow
     phases::duration_ms(tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))).destroy_some())
 }
 
-public fun min_rent_price_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): u64 {
+public fun rest_price_floor_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): u64 {
     monetary::price_mist(rest_price_policy::proj_fixed_price(policy_ensemble::proj_rest_price(read_ensemble(escrow))).destroy_some())
 }
 
@@ -856,19 +856,19 @@ public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &
     price_escalation_policy::proj_compound_delta_delta(policy_ensemble::proj_price_escalation(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
-public fun rest_price_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun rest_price_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     rest_price_policy::proj_rest_price_policy(policy_ensemble::proj_rest_price(read_ensemble(escrow)))
 }
-public fun tenure_duration_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun tenure_duration_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     tenure_duration_policy::proj_tenure_duration_policy(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
 }
-public fun tenure_extend_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun tenure_extend_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     tenure_extend_policy::proj_tenure_extend_policy(policy_ensemble::proj_tenure_extend(read_ensemble(escrow)))
 }
-public fun handover_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun handover_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     handover_policy::proj_handover_policy(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
-public fun auction_window_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun auction_window_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     auction_window_policy::proj_auction_window_policy(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 public fun credit_shape_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
@@ -883,7 +883,7 @@ public fun price_fn_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, Co
 public fun price_fn_delta_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): u64 {
     price_escalation_policy::proj_price_escalation_delta_mist(policy_ensemble::proj_price_escalation(read_ensemble(escrow)))
 }
-public fun commitment_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun commitment_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     commitment_policy::proj_commitment_policy(&asset_state::proj_commitment_policy(read_core(escrow)))
 }
 

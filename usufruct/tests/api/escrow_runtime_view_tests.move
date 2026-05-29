@@ -720,6 +720,7 @@ fun views_flip_across_tenure_expiry_to_idle() {
     assert!( escrow::tenure_expiry_ms(&escrow).is_some());
     assert!( escrow::active_ensemble_floor_price_mist(&escrow).is_some());
     assert!( escrow::active_ceiling_total_ms(&escrow).is_some());
+    assert!( escrow::next_ensemble_floor_price_mist(&escrow).is_none());
     assert!( escrow::next_ensemble_ceiling_ms(&escrow).is_none());
     assert!( escrow::next_ensemble_descent_ms(&escrow).is_none());
     assert!( escrow::credit_is_accruing(&escrow));
@@ -739,6 +740,7 @@ fun views_flip_across_tenure_expiry_to_idle() {
     assert!( escrow::tenure_expiry_ms(&escrow).is_none());
     assert!( escrow::active_ensemble_floor_price_mist(&escrow).is_none());
     assert!( escrow::active_ceiling_total_ms(&escrow).is_none());
+    assert!( escrow::next_ensemble_floor_price_mist(&escrow).is_some());
     assert!( escrow::next_ensemble_ceiling_ms(&escrow).is_some());
     assert!( escrow::next_ensemble_descent_ms(&escrow).is_some());
     assert!(!escrow::credit_is_accruing(&escrow));

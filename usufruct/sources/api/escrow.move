@@ -406,7 +406,6 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
     option::some(phases::timestamp_ms(phases::compute_boundary_at(ps, ceiling)))
 }
 
-// Base cycle params resolved from the ACTIVE ensemble (never tenant-scaled).
 public fun active_ensemble_floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
@@ -431,7 +430,6 @@ public fun active_ensemble_descent_ms<Asset: key + store, CoinType>(
     asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
 }
 
-// Tenancy totals: base cycle ceiling/handover scaled by the active tenant's committed_tenures.
 public fun active_ceiling_total_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
@@ -444,7 +442,6 @@ public fun active_handover_total_ms<Asset: key + store, CoinType>(
     asset_state::proj_resolved_handover(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-// Base cycle params the PENDING (queued) ensemble would resolve to, computed on demand.
 public fun pending_ensemble_floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
@@ -467,6 +464,12 @@ public fun pending_ensemble_descent_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_cycle_params(read_core(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
+}
+
+public fun next_ensemble_floor_price_mist<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    asset_state::proj_waiting_resolved_floor(read_state(escrow)).map!(|v| monetary::price_mist(v))
 }
 
 public fun next_ensemble_ceiling_ms<Asset: key + store, CoinType>(

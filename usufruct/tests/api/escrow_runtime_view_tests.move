@@ -1390,3 +1390,67 @@ fun stake_remaining_boundaries_are_full_stake_and_zero() {
     dispose_escrow(escrow, cap);
     sc.end();
 }
+
+// ─── has_pending_transition_states / next_transition_ms — off-by-one ─────────
+
+/// At tenure_expiry - 1 no transition is pending; at tenure_expiry exactly
+/// one is. Boundary is now.ms >= boundary_ms (strict >=), so one millisecond
+/// flips the predicate. u64 is passed directly — no clock object required.
+#[test]
+fun pending_transition_flips_at_tenure_expiry_boundary() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let clk   = clock::create_for_testing(sc.ctx());
+    let t_cap = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
+
+    assert!(!escrow::has_pending_transition_states(&escrow, expiry - 1));
+    assert!( escrow::next_transition_ms(&escrow, expiry - 1).is_none());
+
+    assert!( escrow::has_pending_transition_states(&escrow, expiry));
+    assert_eq!(escrow::next_transition_ms(&escrow, expiry).destroy_some(), expiry);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+/// At handover_countdown_expiry - 1 no transition is pending; at
+/// handover_countdown_expiry exactly one is. Same >= semantics as tenure expiry.
+#[test]
+fun pending_transition_flips_at_handover_countdown_boundary() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
+
+    let second_tenant: address = @0xA2;
+
+    sc.next_tx(TENANT_ADDR);
+    let mut clk = clock::create_for_testing(sc.ctx());
+    let t1_cap  = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    sc.next_tx(second_tenant);
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor2  = escrow::compute_floor_price(&escrow, clock::timestamp_ms(&clk));
+    let t2_cap  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    assert!(escrow::is_demand(&escrow));
+    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+
+    assert!(!escrow::has_pending_transition_states(&escrow, countdown_expiry - 1));
+    assert!( escrow::next_transition_ms(&escrow, countdown_expiry - 1).is_none());
+
+    assert!( escrow::has_pending_transition_states(&escrow, countdown_expiry));
+    assert_eq!(escrow::next_transition_ms(&escrow, countdown_expiry).destroy_some(), countdown_expiry);
+
+    transfer::public_transfer(t1_cap, TENANT_ADDR);
+    transfer::public_transfer(t2_cap, second_tenant);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}

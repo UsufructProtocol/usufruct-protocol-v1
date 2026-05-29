@@ -2016,7 +2016,7 @@ fun update_tenant_refund_address_with_foreign_escrow_cap_aborts() {
 }
 
 #[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
-fun update_tenant_refund_address_with_stale_cap_in_renting_aborts() {
+fun update_tenant_refund_address_in_demand_with_stale_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -2037,6 +2037,29 @@ fun update_tenant_refund_address_with_stale_cap_in_renting_aborts() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// In Occupied state, a cap that doesn't match the active seat is stale.
+#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
+fun update_tenant_refund_address_in_occupied_with_stale_cap_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    // Escrow is Occupied. A cap bound to this escrow but with a different identity is stale.
+    let wrong_cap = tenant_cap::new(escrow_identity::new(object::id(&escrow)), TENANT_ADDR_2, sc.ctx());
+
+    escrow::update_tenant_refund_address(&mut escrow, &wrong_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(wrong_cap, OWNER);
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
@@ -10301,6 +10324,10 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     let clk = clock::create_for_testing(sc.ctx());
 
     assert!(escrow::pending_ensemble(&escrow).is_none(), 0);
+    assert!(escrow::pending_cycle_floor_mist(&escrow).is_none(), 1);
+    assert!(escrow::pending_cycle_ceiling_ms(&escrow).is_none(), 2);
+    assert!(escrow::pending_cycle_handover_ms(&escrow).is_none(), 3);
+    assert!(escrow::pending_cycle_descent_ms(&escrow).is_none(), 4);
 
     escrow::drive_to_rented_for_testing(
         &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
@@ -10341,6 +10368,9 @@ fun active_cycle_views_resolve_active_ensemble() {
 
     // Idle: cycle params live in the tenancy envelope → none until rented.
     assert!(escrow::active_cycle_floor_mist(&escrow).is_none(), 0);
+    assert!(escrow::active_cycle_ceiling_ms(&escrow).is_none(), 1);
+    assert!(escrow::active_cycle_handover_ms(&escrow).is_none(), 2);
+    assert!(escrow::active_cycle_descent_ms(&escrow).is_none(), 3);
 
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());

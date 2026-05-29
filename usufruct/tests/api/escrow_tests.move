@@ -9638,6 +9638,8 @@ fun event_pin_rent_started_all_fields() {
     assert_eq!(asset_state::rent_started_committed_tenures(e), 1);
     assert_eq!(asset_state::rent_started_ceiling_total_ms(e), escrow_corpus::tenure_ceiling_const());
     assert_eq!(asset_state::rent_started_handover_total_ms(e), 0);
+    assert_eq!(asset_state::rent_started_asset_type(e),        string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::rent_started_coin_type(e),         string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -9676,6 +9678,8 @@ fun event_pin_auction_expired_all_fields() {
     assert_eq!(asset_state::auction_expired_escrow_id(e),       escrow_id);
     assert_eq!(asset_state::auction_expired_phase_start_ms(e),  phase_start_ms);
     assert_eq!(asset_state::auction_expired_last_acq_price(e),  last_acq);
+    assert_eq!(asset_state::auction_expired_asset_type(e),      string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::auction_expired_coin_type(e),       string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::auction_expired_timestamp_ms(e),    boundary_ms);
 
     test_scenario::return_shared(escrow);
@@ -9864,6 +9868,8 @@ fun event_pin_retire_flag_set_all_fields() {
     assert_eq!(asset_state::retire_flag_set_escrow_id(e),    escrow_id);
     assert_eq!(asset_state::retire_flag_set_owner_cap_id(e), object::id(&owner_cap));
     assert_eq!(asset_state::retire_flag_set_owner_address(e),        OWNER);
+    assert_eq!(asset_state::retire_flag_set_asset_type(e),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::retire_flag_set_coin_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::retire_flag_set_timestamp_ms(e), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -9915,6 +9921,8 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);
     assert_eq!(asset_state::bid_placed_handover_countdown_expiry(e), expected_expiry);
     assert_eq!(asset_state::bid_placed_committed_tenures(e),         1);
+    assert_eq!(asset_state::bid_placed_asset_type(e),                string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::bid_placed_coin_type(e),                 string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::bid_placed_timestamp_ms(e),              now2);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -9975,6 +9983,8 @@ fun event_pin_bid_superseded_all_fields() {
     assert_eq!(asset_state::bid_superseded_floor_price(e),                floor3);
     assert_eq!(asset_state::bid_superseded_handover_countdown_expiry(e),  expected_expiry);
     assert_eq!(asset_state::bid_superseded_committed_tenures(e),          1);
+    assert_eq!(asset_state::bid_superseded_asset_type(e),                 string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::bid_superseded_coin_type(e),                  string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::bid_superseded_timestamp_ms(e),               now3);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -10016,6 +10026,8 @@ fun event_pin_earnings_withdrawn_all_fields() {
     assert_eq!(asset_state::earnings_withdrawn_owner_cap_id(e), owner_cap_id);
     assert_eq!(asset_state::earnings_withdrawn_owner_address(e),        OWNER);
     assert_eq!(asset_state::earnings_withdrawn_amount(e),       owner_share);
+    assert_eq!(asset_state::earnings_withdrawn_asset_type(e),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::earnings_withdrawn_coin_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::earnings_withdrawn_timestamp_ms(e), 500_000);
 
     coin::burn_for_testing(coin);
@@ -10057,6 +10069,10 @@ fun event_pin_commitment_extended_all_fields() {
     // policy string is the canonical label emitted by commitment_policy.
     assert_eq!(asset_state::commitment_extended_policy(e),
                commitment_policy::proj_commitment_policy(&new_policy));
+    assert_eq!(asset_state::commitment_extended_coin_type(e),
+               string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
+    assert_eq!(asset_state::commitment_extended_asset_type(e),
+               string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -10103,6 +10119,8 @@ fun event_pin_asset_claimed_all_fields() {
     assert_eq!(asset_state::asset_claimed_owner_cap_id(e),    owner_cap_id);
     assert_eq!(asset_state::asset_claimed_owner_address(e),           OWNER);
     assert_eq!(asset_state::asset_claimed_swept_earnings(e),  owner_share);
+    assert_eq!(asset_state::asset_claimed_asset_type(e),      string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::asset_claimed_coin_type(e),       string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::asset_claimed_timestamp_ms(e),    777_000);
 
     coin::burn_for_testing(earnings);
@@ -10144,6 +10162,8 @@ fun event_pin_tenure_expired_all_fields() {
     assert_eq!(asset_state::tenure_expired_owner_share(e),       owner_share);
     assert_eq!(asset_state::tenure_expired_protocol_fee(e),      fee);
     assert_eq!(asset_state::tenure_expired_last_acq_price(e),    principal);
+    assert_eq!(asset_state::tenure_expired_asset_type(e),        string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::tenure_expired_coin_type(e),         string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::tenure_expired_timestamp_ms(e),      boundary);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -10206,6 +10226,8 @@ fun event_pin_handover_completed_all_fields() {
     assert_eq!(asset_state::handover_completed_committed_tenures(e),       1);
     assert_eq!(asset_state::handover_completed_ceiling_total_ms(e),        escrow_corpus::tenure_ceiling_const());
     assert_eq!(asset_state::handover_completed_handover_total_ms(e),       escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(asset_state::handover_completed_asset_type(e),              string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::handover_completed_coin_type(e),               string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::handover_completed_timestamp_ms(e),            boundary_ms);
     // new_rent_price: ascending_floor_price based on floor2 stake.
     let new_rent = asset_state::handover_completed_new_rent_price(e);
@@ -10240,6 +10262,8 @@ fun event_pin_asset_borrowed_all_fields() {
     assert_eq!(asset_state::asset_borrowed_escrow_id(e),     escrow_id);
     assert_eq!(asset_state::asset_borrowed_tenant_cap_id(e), object::id(&cap_t1));
     assert_eq!(asset_state::asset_borrowed_tenant_address(e),        OWNER);
+    assert_eq!(asset_state::asset_borrowed_asset_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::asset_borrowed_coin_type(e),     string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::asset_borrowed_timestamp_ms(e),  0);
 
     escrow::return_asset(&mut escrow, asset_out, receipt);
@@ -10272,6 +10296,8 @@ fun event_pin_asset_returned_all_fields() {
     assert_eq!(asset_state::asset_returned_escrow_id(e),     escrow_id);
     assert_eq!(asset_state::asset_returned_tenant_cap_id(e), object::id(&cap_t1));
     assert_eq!(asset_state::asset_returned_tenant_address(e),        OWNER);
+    assert_eq!(asset_state::asset_returned_asset_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::asset_returned_coin_type(e),     string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);

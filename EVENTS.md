@@ -31,16 +31,16 @@ All other fields (addresses, amounts, timestamps, policy strings) are attributes
 
 ## 2. Event Catalogue
 
-Events are grouped by lifecycle phase. All amounts are in MIST (u64). All timestamps are epoch milliseconds (u64).
+Events are grouped by lifecycle phase. All amounts are in MIST (u64). All timestamps are epoch milliseconds (u64). Every financial event carries `asset_type` and `coin_type` as fully-qualified type strings (the same format as `AssetIntegrated`). Policy and cap events carry neither — they are not financial and predate the escrow's type binding. This makes every financial event self-describing without a join to `AssetIntegrated`.
 
 ### Asset lifecycle
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
 | `AssetIntegrated<Asset, CoinType>` | Owner calls `integrate` | `escrow_id`, `owner_cap_id`, `owner_address`, `asset_id`, `fee_inbox_id`, `asset_type`, `coin_type`, `integrated_at_ms` |
-| `AssetRetired` | Asset leaves protocol (retire path or claim) | `escrow_id`, `timestamp_ms` |
-| `AssetClaimed` | Owner reclaims asset after retirement | `escrow_id`, `owner_cap_id`, `owner_address`, `swept_earnings`, `timestamp_ms` |
-| `RetireFlagSet` | Owner signals intent to retire | `escrow_id`, `owner_cap_id`, `owner_address`, `timestamp_ms` |
+| `AssetRetired` | Asset leaves protocol (retire path or claim) | `escrow_id`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `AssetClaimed` | Owner reclaims asset after retirement | `escrow_id`, `owner_cap_id`, `owner_address`, `swept_earnings`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `RetireFlagSet` | Owner signals intent to retire | `escrow_id`, `owner_cap_id`, `owner_address`, `asset_type`, `coin_type`, `timestamp_ms` |
 
 ### Policy configuration
 
@@ -61,22 +61,22 @@ Policy events carry the complete configuration snapshot at the moment of the eve
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `RentStarted` | Tenant enters Occupied state | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `price_paid`, `floor_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms` |
-| `TenureExpired` | Tenure ceiling reached without handover | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `owner_share`, `protocol_fee`, `last_acquisition_price`, `timestamp_ms` |
-| `CommitmentExtended` | Deferred commitment deadline extended | `escrow_id`, `commitment_policy`, `commitment_floor_ms`, `new_expiry_ms`, `timestamp_ms` |
-| `AssetBorrowed` | Tenant takes physical custody of asset | `escrow_id`, `tenant_cap_id`, `tenant_address`, `timestamp_ms` |
-| `AssetReturned` | Tenant returns physical custody | `escrow_id`, `tenant_cap_id`, `tenant_address` |
-| `ActiveTenantRefundAddressUpdated` | Active (Occupied) tenant redirects refund address | `escrow_id`, `tenant_cap_id`, `old_address`, `new_address`, `timestamp_ms` |
-| `PendingTenantRefundAddressUpdated` | Pending bidder (Demand) redirects refund address | `escrow_id`, `tenant_cap_id`, `old_address`, `new_address`, `timestamp_ms` |
+| `RentStarted` | Tenant enters Occupied state | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `price_paid`, `floor_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms`, `asset_type`, `coin_type` |
+| `TenureExpired` | Tenure ceiling reached without handover | `escrow_id`, `tenant_cap_id`, `tenant_address`, `phase_start_ms`, `owner_share`, `protocol_fee`, `last_acquisition_price`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `CommitmentExtended` | Deferred commitment deadline extended | `escrow_id`, `commitment_policy`, `commitment_floor_ms`, `new_expiry_ms`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `AssetBorrowed` | Tenant takes physical custody of asset | `escrow_id`, `tenant_cap_id`, `tenant_address`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `AssetReturned` | Tenant returns physical custody | `escrow_id`, `tenant_cap_id`, `tenant_address`, `asset_type`, `coin_type` |
+| `ActiveTenantRefundAddressUpdated` | Active (Occupied) tenant redirects refund address | `escrow_id`, `tenant_cap_id`, `old_address`, `new_address`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `PendingTenantRefundAddressUpdated` | Pending bidder (Demand) redirects refund address | `escrow_id`, `tenant_cap_id`, `old_address`, `new_address`, `asset_type`, `coin_type`, `timestamp_ms` |
 
 ### Auction and handover
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `BidPlaced` | Incoming tenant outbids active tenant | `escrow_id`, `active_tenant_cap_id`, `active_tenant_address`, `active_tenant_stake`, `active_phase_start_ms`, `pending_tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
-| `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_tenant_cap_id`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `timestamp_ms` |
-| `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `displaced_ceiling_total_ms`, `displaced_handover_total_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `remain_credit`, `owner_share`, `protocol_fee`, `new_rent_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms`, `timestamp_ms` |
-| `AuctionExpired` | Descent auction window closes with no bid | `escrow_id`, `phase_start_ms`, `last_acq_price`, `timestamp_ms` |
+| `BidPlaced` | Incoming tenant outbids active tenant | `escrow_id`, `active_tenant_cap_id`, `active_tenant_address`, `active_tenant_stake`, `active_phase_start_ms`, `pending_tenant_cap_id`, `pending_tenant_address`, `bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `BidSuperseded` | Second incoming tenant outbids first | `escrow_id`, `protected_tenant_cap_id`, `protected_tenant_address`, `protected_tenant_stake`, `protected_phase_start_ms`, `displaced_tenant_cap_id`, `displaced_bidder_address`, `refunded_amount`, `new_tenant_cap_id`, `new_bidder_address`, `new_bid_amount`, `floor_price`, `handover_countdown_expiry`, `committed_tenures`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `HandoverCompleted` | Countdown expires; incoming tenant takes over | `escrow_id`, `displaced_tenant_cap_id`, `displaced_tenant_address`, `displaced_phase_start_ms`, `displaced_ceiling_total_ms`, `displaced_handover_total_ms`, `new_tenant_cap_id`, `new_tenant_address`, `new_tenant_stake`, `used_credit`, `remain_credit`, `owner_share`, `protocol_fee`, `new_rent_price`, `committed_tenures`, `ceiling_total_ms`, `handover_total_ms`, `asset_type`, `coin_type`, `timestamp_ms` |
+| `AuctionExpired` | Descent auction window closes with no bid | `escrow_id`, `phase_start_ms`, `last_acq_price`, `asset_type`, `coin_type`, `timestamp_ms` |
 
 `BidPlaced` captures a snapshot of the current tenant's state at the moment the bid arrives. `BidSuperseded` captures a three-party snapshot: protected (current), displaced (first bidder), new (second bidder). This makes bid competition fully reconstructable without any on-chain read.
 
@@ -86,7 +86,7 @@ The schedule fields that open a tenancy — emitted on both `RentStarted` and `H
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `EarningsWithdrawn` | Owner withdraws accumulated earnings | `escrow_id`, `owner_cap_id`, `owner_address`, `amount`, `timestamp_ms` |
+| `EarningsWithdrawn` | Owner withdraws accumulated earnings | `escrow_id`, `owner_cap_id`, `owner_address`, `amount`, `asset_type`, `coin_type`, `timestamp_ms` |
 | `FeeMessageSent<CoinType>` | Protocol fee posted to inbox after a transition | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `coin_type` |
 | `FeeMessageCollected<CoinType>` | Admin collects fee message | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `collector`, `coin_type` |
 

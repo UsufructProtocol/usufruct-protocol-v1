@@ -133,6 +133,7 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::active_ensemble_floor_price_mist(escrow).is_some(),     in_renting);
 
     // — next_* (waiting-resolved): live in WaitingState::Idle and Descent —
+    assert_eq!(escrow::next_ensemble_floor_price_mist(escrow).is_some(), in_waiting_with_resolved);
     assert_eq!(escrow::next_ensemble_ceiling_ms(escrow).is_some(),    in_waiting_with_resolved);
     assert_eq!(escrow::next_ensemble_handover_ms(escrow).is_some(), in_waiting_with_resolved);
 

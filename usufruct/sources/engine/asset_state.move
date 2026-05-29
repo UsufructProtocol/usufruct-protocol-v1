@@ -666,16 +666,6 @@ public(package) fun proj_last_acq_price<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun proj_credit_stake<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Option<Stake> {
-    match (s) {
-        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_seat::proj_stake_value(&terms.active)),
-        _ => option::none(),
-    }
-}
-
 public(package) fun proj_credit_is_accruing<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {

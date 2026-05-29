@@ -90,7 +90,7 @@ fun min_rent_price_views_match_variants() {
 
     let cfg_fixed = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (escrow, cap) = build_escrow(cfg_fixed, &mut sc);
-    assert_eq!(escrow::min_rent_price_fixed_mist(&escrow), escrow_corpus::min_rent_price_const());
+    assert_eq!(escrow::rest_price_floor_fixed_mist(&escrow), escrow_corpus::min_rent_price_const());
     dispose(escrow, cap);
 
     sc.end();

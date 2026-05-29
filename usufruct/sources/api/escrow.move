@@ -710,7 +710,7 @@ public fun pending_ensemble<Asset: key + store, CoinType>(
 public fun protocol_fee_bps(): u64 { asset_state::protocol_fee_bps() }
 public fun bps_denominator():  u64 { asset_state::bps_denominator() }
 
-public fun min_rent_price<Asset: key + store, CoinType>(
+public fun rest_price_floor_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     monetary::price_mist(rest_price_policy::compute_floor_price(policy_ensemble::proj_rest_price(read_ensemble(escrow))))
@@ -760,7 +760,7 @@ public fun tenure_ceiling_fixed_ms<Asset: key + store, CoinType>(escrow: &Escrow
     phases::duration_ms(tenure_duration_policy::proj_fixed_ceiling(policy_ensemble::proj_tenure_duration(read_ensemble(escrow))).destroy_some())
 }
 
-public fun min_rent_price_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): u64 {
+public fun rest_price_floor_fixed_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): u64 {
     monetary::price_mist(rest_price_policy::proj_fixed_price(policy_ensemble::proj_rest_price(read_ensemble(escrow))).destroy_some())
 }
 

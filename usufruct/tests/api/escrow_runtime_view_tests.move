@@ -170,7 +170,7 @@ fun idle_views_post_integrate() {
 
     // — Always-present temporal/financial —
     assert_eq!(escrow::tenure_ceiling_ms(&escrow), escrow_corpus::tenure_ceiling_const());
-    assert_eq!(escrow::min_rent_price(&escrow),    escrow_corpus::min_rent_price_const());
+    assert_eq!(escrow::rest_price_floor_mist(&escrow),    escrow_corpus::min_rent_price_const());
     assert_eq!(escrow::owner_balance(&escrow),     0);
     let _iat = escrow::integrated_at_ms(&escrow);     // monotonic w.r.t. clock; nonzero-ness not asserted
     let _can = escrow::commitment_anchor_ms(&escrow);

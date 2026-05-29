@@ -208,7 +208,7 @@ public struct CommitmentExtended has copy, drop {
     escrow_id:           ID,
     commitment_policy:   String,
     commitment_floor_ms: Option<u64>,
-    new_expiry_ms:       u64,
+    new_unlock_at_ms:       u64,
     asset_type:          String,
     coin_type:           String,
     timestamp_ms:        u64,
@@ -1219,7 +1219,7 @@ public(package) fun execute_extend_commitment<Asset: key + store, CoinType>(
         escrow_id:           escrow_identity::escrow_id(core.escrow_identity),
         commitment_policy:   commitment_policy::proj_commitment_policy(&new_policy),
         commitment_floor_ms: commitment_policy::proj_commitment_floor_ms(&new_policy),
-        new_expiry_ms:       phases::timestamp_ms(new_expiry),
+        new_unlock_at_ms:       phases::timestamp_ms(new_expiry),
         asset_type:          string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
         coin_type:           string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
         timestamp_ms:        phases::timestamp_ms(now),
@@ -2304,7 +2304,7 @@ public(package) fun commitment_extended_policy(e: &CommitmentExtended): String {
 #[test_only]
 public(package) fun commitment_extended_floor_ms(e: &CommitmentExtended): Option<u64> { e.commitment_floor_ms }
 #[test_only]
-public(package) fun commitment_extended_new_expiry_ms(e: &CommitmentExtended): u64  { e.new_expiry_ms }
+public(package) fun commitment_extended_new_unlock_at_ms(e: &CommitmentExtended): u64  { e.new_unlock_at_ms }
 #[test_only]
 public(package) fun commitment_extended_asset_type(e: &CommitmentExtended): String  { e.asset_type }
 #[test_only]

@@ -10394,7 +10394,7 @@ fun event_pin_commitment_extended_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::commitment_extended_escrow_id(e),      escrow_id);
-    assert_eq!(asset_state::commitment_extended_new_expiry_ms(e),  expected_new_expiry);
+    assert_eq!(asset_state::commitment_extended_new_unlock_at_ms(e),  expected_new_expiry);
     assert_eq!(asset_state::commitment_extended_timestamp_ms(e),   3_000);
     // floor_ms is Some(deferred_ms) for a Deferred policy.
     assert_eq!(asset_state::commitment_extended_floor_ms(e),       option::some(deferred_ms));

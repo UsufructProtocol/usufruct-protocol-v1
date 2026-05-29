@@ -133,8 +133,8 @@ fun descent_views_match_variants() {
         let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, h, 0));
         let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
-        assert_eq!(escrow::is_descent_skipped(&escrow), h == 0);
-        assert_eq!(escrow::is_descent_window(&escrow),  h == 1);
+        assert_eq!(escrow::is_auction_window_off(&escrow), h == 0);
+        assert_eq!(escrow::is_auction_window_fixed(&escrow),  h == 1);
 
         // descent_ceiling_ms wraps proj_fixed_ceiling — Some only on Window
         if (h == 1) {

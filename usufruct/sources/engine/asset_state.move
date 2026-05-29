@@ -376,7 +376,7 @@ public(package) fun proj_owner_cap_id<CoinType>(
     owner_cap::proj_id(owner_identity::proj_cap_identity(owner_seat::proj_identity(&core.owner)))
 }
 
-public(package) fun proj_is_active<Asset: key + store, CoinType>(
+public(package) fun proj_is_live<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
     match (s) {

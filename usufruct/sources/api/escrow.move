@@ -252,10 +252,10 @@ public fun is_demand<Asset: key + store, CoinType>(
     asset_state::proj_is_demand(read_state(escrow))
 }
 
-public fun is_active<Asset: key + store, CoinType>(
+public fun is_live<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_state::proj_is_active(read_state(escrow))
+    asset_state::proj_is_live(read_state(escrow))
 }
 
 public fun is_retired<Asset: key + store, CoinType>(
@@ -270,13 +270,13 @@ public fun is_rented<Asset: key + store, CoinType>(
     asset_state::proj_is_rented(read_state(escrow))
 }
 
-public fun is_descent_skipped<Asset: key + store, CoinType>(
+public fun is_auction_window_off<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     auction_window_policy::proj_is_off(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
-public fun is_descent_window<Asset: key + store, CoinType>(
+public fun is_auction_window_fixed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     auction_window_policy::proj_is_fixed(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
@@ -432,7 +432,7 @@ public fun active_ensemble_descent_ms<Asset: key + store, CoinType>(
 }
 
 // Tenancy totals: base cycle ceiling/handover scaled by the active tenant's committed_tenures.
-public fun active_tenure_ceiling_total_ms<Asset: key + store, CoinType>(
+public fun active_ceiling_total_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_resolved_ceiling(read_state(escrow)).map!(|v| phases::duration_ms(v))
@@ -469,19 +469,19 @@ public fun pending_ensemble_descent_ms<Asset: key + store, CoinType>(
     asset_state::proj_pending_cycle_params(read_core(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
 }
 
-public fun next_tenure_ceiling_ms<Asset: key + store, CoinType>(
+public fun next_ensemble_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_waiting_resolved_ceiling(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-public fun next_handover_duration_ms<Asset: key + store, CoinType>(
+public fun next_ensemble_handover_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_waiting_resolved_handover(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-public fun next_descent_duration_ms<Asset: key + store, CoinType>(
+public fun next_ensemble_descent_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_waiting_resolved_descent(read_state(escrow)).map!(|v| phases::duration_ms(v))

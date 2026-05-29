@@ -117,10 +117,10 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     // — Tenant slots: current populated under Renting; pending only under Demand —
     assert_eq!(escrow::active_tenant_addr(escrow).is_some(),   in_renting);
     assert_eq!(escrow::active_tenant_cap_id(escrow).is_some(), in_renting);
-    assert_eq!(escrow::active_stake(escrow).is_some(),         in_renting);
+    assert_eq!(escrow::active_tenant_stake_mist(escrow).is_some(),         in_renting);
     assert_eq!(escrow::pending_tenant_addr(escrow).is_some(),   in_demand);
     assert_eq!(escrow::pending_tenant_cap_id(escrow).is_some(), in_demand);
-    assert_eq!(escrow::pending_stake(escrow).is_some(),         in_demand);
+    assert_eq!(escrow::pending_tenant_stake_mist(escrow).is_some(),         in_demand);
 
     // — phase_start: tenancy envelope (Renting) or state (Descent) —
     assert_eq!(escrow::phase_start_ms(escrow).is_some(), in_renting || in_descent);
@@ -148,7 +148,7 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     // — Credit context: Accruing in Occupied, Capped in Demand —
     assert_eq!(escrow::credit_is_accruing(escrow), state_id == STATE_OCCUPIED);
     assert_eq!(escrow::credit_is_capped(escrow),   in_demand);
-    assert_eq!(escrow::active_stake(escrow).is_some(),      in_renting);
+    assert_eq!(escrow::active_tenant_stake_mist(escrow).is_some(),      in_renting);
     assert_eq!(escrow::credit_capped_at_ms(escrow).is_some(),       in_demand);
 }
 
@@ -185,8 +185,8 @@ fun idle_views_post_integrate() {
     assert!(escrow::active_tenant_cap_id(&escrow).is_none());
     assert!(escrow::pending_tenant_addr(&escrow).is_none());
     assert!(escrow::pending_tenant_cap_id(&escrow).is_none());
-    assert!(escrow::active_stake(&escrow).is_none());
-    assert!(escrow::pending_stake(&escrow).is_none());
+    assert!(escrow::active_tenant_stake_mist(&escrow).is_none());
+    assert!(escrow::pending_tenant_stake_mist(&escrow).is_none());
 
     // — Phase / active tenancy — all none in idle (no Renting yet) —
     assert!(escrow::phase_start_ms(&escrow).is_none());
@@ -208,7 +208,7 @@ fun idle_views_post_integrate() {
     // — Credit context — no tenancy → all none / false —
     assert!(!escrow::credit_is_accruing(&escrow));
     assert!(!escrow::credit_is_capped(&escrow));
-    assert!(escrow::active_stake(&escrow).is_none());
+    assert!(escrow::active_tenant_stake_mist(&escrow).is_none());
     assert!(escrow::credit_capped_at_ms(&escrow).is_none());
 
     // — Pending transitions / config update — none in idle —
@@ -246,8 +246,8 @@ fun rented_views_post_rent() {
     assert_eq!(escrow::active_tenant_cap_id(&escrow).destroy_some(), object::id(&t_cap));
     assert!(escrow::pending_tenant_addr(&escrow).is_none());
     assert!(escrow::pending_tenant_cap_id(&escrow).is_none());
-    assert_eq!(escrow::active_stake(&escrow).destroy_some(), STAKE);
-    assert!(escrow::pending_stake(&escrow).is_none());
+    assert_eq!(escrow::active_tenant_stake_mist(&escrow).destroy_some(), STAKE);
+    assert!(escrow::pending_tenant_stake_mist(&escrow).is_none());
 
     // — Phase / runtime resolution — all populated under Renting state —
     let phase_start = escrow::phase_start_ms(&escrow).destroy_some();
@@ -260,7 +260,7 @@ fun rented_views_post_rent() {
     assert!(escrow::last_rent_price_mist(&escrow).is_none());
 
     // — Credit context — accruing in Occupied-like Renting state —
-    assert!(escrow::active_stake(&escrow).is_some());
+    assert!(escrow::active_tenant_stake_mist(&escrow).is_some());
 
     // — Cap status on the actual tenant cap —
     assert!(escrow::tenant_cap_is_active(&escrow, object::id(&t_cap)));
@@ -427,7 +427,7 @@ fun retired_views_after_retire_from_idle() {
     // — Tenant / phase / runtime resolution — all none in Retired —
     assert!(escrow::active_tenant_addr(&escrow).is_none());
     assert!(escrow::pending_tenant_addr(&escrow).is_none());
-    assert!(escrow::active_stake(&escrow).is_none());
+    assert!(escrow::active_tenant_stake_mist(&escrow).is_none());
     assert!(escrow::phase_start_ms(&escrow).is_none());
     assert!(escrow::tenure_expiry_ms(&escrow).is_none());
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
@@ -474,8 +474,8 @@ fun demand_views_after_handover_bid() {
     assert_eq!(escrow::active_tenant_cap_id(&escrow).destroy_some(), object::id(&t1_cap));
     assert_eq!(escrow::pending_tenant_addr(&escrow).destroy_some(),   second_tenant);
     assert_eq!(escrow::pending_tenant_cap_id(&escrow).destroy_some(), object::id(&t2_cap));
-    assert!(escrow::active_stake(&escrow).is_some());
-    assert!(escrow::pending_stake(&escrow).is_some());
+    assert!(escrow::active_tenant_stake_mist(&escrow).is_some());
+    assert!(escrow::pending_tenant_stake_mist(&escrow).is_some());
 
     // — Cap status: t1 current, t2 pending —
     assert!(escrow::tenant_cap_is_active(&escrow, object::id(&t1_cap)));
@@ -713,7 +713,7 @@ fun views_flip_across_tenure_expiry_to_idle() {
     assert!(!escrow::is_idle(&escrow));
     assert!( escrow::is_rented(&escrow));
     assert!( escrow::active_tenant_addr(&escrow).is_some());
-    assert!( escrow::active_stake(&escrow).is_some());
+    assert!( escrow::active_tenant_stake_mist(&escrow).is_some());
     assert!( escrow::tenure_expiry_ms(&escrow).is_some());
     assert!( escrow::active_ensemble_floor_price_mist(&escrow).is_some());
     assert!( escrow::active_ceiling_total_ms(&escrow).is_some());
@@ -721,7 +721,7 @@ fun views_flip_across_tenure_expiry_to_idle() {
     assert!( escrow::next_ensemble_ceiling_ms(&escrow).is_none());
     assert!( escrow::next_ensemble_descent_ms(&escrow).is_none());
     assert!( escrow::credit_is_accruing(&escrow));
-    assert!( escrow::active_stake(&escrow).is_some());
+    assert!( escrow::active_tenant_stake_mist(&escrow).is_some());
     assert!( escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!( escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_some());
 
@@ -733,7 +733,7 @@ fun views_flip_across_tenure_expiry_to_idle() {
     assert!( escrow::is_idle(&escrow));
     assert!(!escrow::is_rented(&escrow));
     assert!( escrow::active_tenant_addr(&escrow).is_none());
-    assert!( escrow::active_stake(&escrow).is_none());
+    assert!( escrow::active_tenant_stake_mist(&escrow).is_none());
     assert!( escrow::tenure_expiry_ms(&escrow).is_none());
     assert!( escrow::active_ensemble_floor_price_mist(&escrow).is_none());
     assert!( escrow::active_ceiling_total_ms(&escrow).is_none());
@@ -741,7 +741,7 @@ fun views_flip_across_tenure_expiry_to_idle() {
     assert!( escrow::next_ensemble_ceiling_ms(&escrow).is_some());
     assert!( escrow::next_ensemble_descent_ms(&escrow).is_some());
     assert!(!escrow::credit_is_accruing(&escrow));
-    assert!( escrow::active_stake(&escrow).is_none());
+    assert!( escrow::active_tenant_stake_mist(&escrow).is_none());
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!( escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_none());
 
@@ -770,13 +770,13 @@ fun views_flip_across_tenure_expiry_to_descent() {
     assert!(!escrow::is_descending(&escrow));
     assert!( escrow::is_rented(&escrow));
     assert!( escrow::active_tenant_addr(&escrow).is_some());
-    assert!( escrow::active_stake(&escrow).is_some());
+    assert!( escrow::active_tenant_stake_mist(&escrow).is_some());
     assert!( escrow::active_ensemble_floor_price_mist(&escrow).is_some());
     assert!( escrow::last_rent_price_mist(&escrow).is_none());
     assert!( escrow::next_ensemble_ceiling_ms(&escrow).is_none());
     assert!( escrow::next_ensemble_descent_ms(&escrow).is_none());
     assert!( escrow::credit_is_accruing(&escrow));
-    assert!( escrow::active_stake(&escrow).is_some());
+    assert!( escrow::active_tenant_stake_mist(&escrow).is_some());
     assert!( escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!( escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_some());
 
@@ -789,13 +789,13 @@ fun views_flip_across_tenure_expiry_to_descent() {
     assert!( escrow::is_descending(&escrow));
     assert!(!escrow::is_rented(&escrow));
     assert!( escrow::active_tenant_addr(&escrow).is_none());
-    assert!( escrow::active_stake(&escrow).is_none());
+    assert!( escrow::active_tenant_stake_mist(&escrow).is_none());
     assert!( escrow::active_ensemble_floor_price_mist(&escrow).is_none());
     assert!( escrow::last_rent_price_mist(&escrow).is_some());
     assert!( escrow::next_ensemble_ceiling_ms(&escrow).is_some());
     assert!( escrow::next_ensemble_descent_ms(&escrow).is_some());
     assert!(!escrow::credit_is_accruing(&escrow));
-    assert!( escrow::active_stake(&escrow).is_none());
+    assert!( escrow::active_tenant_stake_mist(&escrow).is_none());
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!( escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_none());
 
@@ -882,7 +882,7 @@ fun views_flip_across_handover_countdown_expiry() {
     assert!(!escrow::is_occupied(&escrow));
     assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(), t1_addr);
     assert_eq!(escrow::pending_tenant_addr(&escrow).destroy_some(), t2_addr);
-    assert!( escrow::pending_stake(&escrow).is_some());
+    assert!( escrow::pending_tenant_stake_mist(&escrow).is_some());
     assert!( escrow::handover_expiry_ms(&escrow).is_some());
     assert!(!escrow::credit_is_accruing(&escrow));
     assert!( escrow::credit_is_capped(&escrow));
@@ -898,7 +898,7 @@ fun views_flip_across_handover_countdown_expiry() {
     assert!( escrow::is_occupied(&escrow));
     assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(), t2_addr);
     assert!( escrow::pending_tenant_addr(&escrow).is_none());
-    assert!( escrow::pending_stake(&escrow).is_none());
+    assert!( escrow::pending_tenant_stake_mist(&escrow).is_none());
     assert!( escrow::handover_expiry_ms(&escrow).is_none());
     assert!( escrow::credit_is_accruing(&escrow));
     assert!(!escrow::credit_is_capped(&escrow));

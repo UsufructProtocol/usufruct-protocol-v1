@@ -6916,8 +6916,8 @@ fun floor_price_mist_equals_next_floor_price_mist_in_occupied() {
 
     assert!(escrow::is_occupied(&escrow), 0);
 
-    let stake           = escrow::active_stake(&escrow).destroy_some();
-    let committed       = escrow::active_committed_tenures(&escrow).destroy_some();
+    let stake           = escrow::active_tenant_stake_mist(&escrow).destroy_some();
+    let committed       = escrow::active_tenant_committed_tenures(&escrow).destroy_some();
     let from_floor_view = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let from_next_view  = escrow::next_floor_price_mist(&escrow, stake, committed);
     assert_eq!(from_floor_view, from_next_view);
@@ -6949,9 +6949,9 @@ fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
 
     assert!(escrow::is_demand(&escrow), 0);
 
-    let pending_stake  = escrow::pending_stake(&escrow).destroy_some();
-    let pending_tenures = escrow::pending_committed_tenures(&escrow).destroy_some();
-    let active_stake   = escrow::active_stake(&escrow).destroy_some();
+    let pending_stake  = escrow::pending_tenant_stake_mist(&escrow).destroy_some();
+    let pending_tenures = escrow::pending_tenant_committed_tenures(&escrow).destroy_some();
+    let active_stake   = escrow::active_tenant_stake_mist(&escrow).destroy_some();
 
     let via_floor      = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let via_pending    = escrow::next_floor_price_mist(&escrow, pending_stake, pending_tenures);
@@ -10651,21 +10651,21 @@ fun committed_tenures_views_reflect_active_and_pending() {
     let floor = escrow_corpus::min_rent_price_const();
 
     // Idle: no occupant, no bidder.
-    assert!(escrow::active_committed_tenures(&escrow).is_none(), 0);
-    assert!(escrow::pending_committed_tenures(&escrow).is_none(), 1);
+    assert!(escrow::active_tenant_committed_tenures(&escrow).is_none(), 0);
+    assert!(escrow::pending_tenant_committed_tenures(&escrow).is_none(), 1);
 
     // T1 rents 3 tenures → Occupied.
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
-    assert_eq!(*escrow::active_committed_tenures(&escrow).borrow(), 3);
-    assert!(escrow::pending_committed_tenures(&escrow).is_none(), 2);
+    assert_eq!(*escrow::active_tenant_committed_tenures(&escrow).borrow(), 3);
+    assert!(escrow::pending_tenant_committed_tenures(&escrow).is_none(), 2);
 
     // T2 bids 2 tenures → Demand.
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
-    assert_eq!(*escrow::active_committed_tenures(&escrow).borrow(), 3); // occupant unchanged
-    assert_eq!(*escrow::pending_committed_tenures(&escrow).borrow(), 2); // bidder's commitment
+    assert_eq!(*escrow::active_tenant_committed_tenures(&escrow).borrow(), 3); // occupant unchanged
+    assert_eq!(*escrow::pending_tenant_committed_tenures(&escrow).borrow(), 2); // bidder's commitment
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);

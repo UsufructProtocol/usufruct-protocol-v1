@@ -366,25 +366,25 @@ public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
     asset_state::proj_pending_cap_id(read_state(escrow))
 }
 
-public fun active_stake<Asset: key + store, CoinType>(
+public fun active_tenant_stake_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
-public fun pending_stake<Asset: key + store, CoinType>(
+public fun pending_tenant_stake_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
-public fun active_committed_tenures<Asset: key + store, CoinType>(
+public fun active_tenant_committed_tenures<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
 }
 
-public fun pending_committed_tenures<Asset: key + store, CoinType>(
+public fun pending_tenant_committed_tenures<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))

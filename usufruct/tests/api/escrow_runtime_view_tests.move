@@ -180,7 +180,7 @@ fun idle_views_post_integrate() {
     assert_eq!(escrow::commitment_remaining_ms(&escrow, escrow::commitment_unlocks_at_ms(&escrow)), 0);
 
     // — owner_cap_is_valid: round-trips its own cap —
-    assert!(escrow::owner_cap_is_valid(&escrow, &cap));
+    assert!(escrow::owner_cap_is_valid(&escrow, object::id(&cap)));
 
     // — Tenant slots — all none in idle —
     assert!(escrow::active_tenant_addr(&escrow).is_none());

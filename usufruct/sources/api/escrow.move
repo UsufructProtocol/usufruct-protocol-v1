@@ -546,10 +546,10 @@ public fun commitment_remaining_ms<Asset: key + store, CoinType>(
 }
 
 public fun owner_cap_is_valid<Asset: key + store, CoinType>(
-    escrow:    &Escrow<Asset, CoinType>,
-    owner_cap: &OwnerCap,
+    escrow: &Escrow<Asset, CoinType>,
+    cap_id: ID,
 ): bool {
-    asset_state::proj_owner_cap_id(read_core(escrow)) == object::id(owner_cap)
+    asset_state::proj_owner_cap_id(read_core(escrow)) == cap_id
 }
 
 public fun tenant_cap_is_active<Asset: key + store, CoinType>(

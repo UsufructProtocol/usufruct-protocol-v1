@@ -127,7 +127,7 @@ public fun extend_commitment<Asset: key + store, CoinType>(
     clock:      &Clock,
 ) {
     let core     = take_core(escrow);
-    let new_core = asset_state::execute_extend_commitment(core, owner_cap, new_policy, clock);
+    let new_core = asset_state::execute_extend_commitment<Asset, CoinType>(core, owner_cap, new_policy, clock);
     put_core(escrow, new_core);
 }
 

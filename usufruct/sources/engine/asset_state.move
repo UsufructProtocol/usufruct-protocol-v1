@@ -165,12 +165,16 @@ public struct RentStarted has copy, drop {
     committed_tenures: u64,
     ceiling_total_ms:  u64,
     handover_total_ms: u64,
+    asset_type:        String,
+    coin_type:         String,
 }
 
 public struct AuctionExpired has copy, drop {
     escrow_id:      ID,
     phase_start_ms: u64,
     last_acq_price: u64,
+    asset_type:     String,
+    coin_type:      String,
     timestamp_ms:   u64,
 }
 
@@ -185,6 +189,8 @@ public struct CycleParamsResolved has copy, drop {
 
 public struct AssetRetired has copy, drop {
     escrow_id:    ID,
+    asset_type:   String,
+    coin_type:    String,
     timestamp_ms: u64,
 }
 
@@ -193,6 +199,8 @@ public struct EarningsWithdrawn has copy, drop {
     owner_cap_id:  ID,
     owner_address: address,
     amount:        u64,
+    asset_type:    String,
+    coin_type:     String,
     timestamp_ms:  u64,
 }
 
@@ -201,6 +209,8 @@ public struct CommitmentExtended has copy, drop {
     commitment_policy:   String,
     commitment_floor_ms: Option<u64>,
     new_expiry_ms:       u64,
+    asset_type:          String,
+    coin_type:           String,
     timestamp_ms:        u64,
 }
 
@@ -220,6 +230,8 @@ public struct AssetClaimed has copy, drop {
     owner_cap_id:   ID,
     owner_address:  address,
     swept_earnings: u64,
+    asset_type:     String,
+    coin_type:      String,
     timestamp_ms:   u64,
 }
 
@@ -235,6 +247,8 @@ public struct BidPlaced has copy, drop {
     floor_price:               u64,
     handover_countdown_expiry: u64,
     committed_tenures:         u64,
+    asset_type:                String,
+    coin_type:                 String,
     timestamp_ms:              u64,
 }
 
@@ -253,26 +267,32 @@ public struct BidSuperseded has copy, drop {
     floor_price:               u64,
     handover_countdown_expiry: u64,
     committed_tenures:         u64,
+    asset_type:                String,
+    coin_type:                 String,
     timestamp_ms:              u64,
 }
 
 public struct HandoverCompleted has copy, drop {
-    escrow_id:                ID,
-    displaced_tenant_cap_id:  ID,
-    displaced_tenant_address: address,
-    displaced_phase_start_ms: u64,
-    new_tenant_cap_id:        ID,
-    new_tenant_address:       address,
-    new_tenant_stake:         u64,
-    used_credit:              u64,
-    remain_credit:            u64,
-    owner_share:              u64,
-    protocol_fee:             u64,
-    new_rent_price:           u64,
-    committed_tenures:        u64,
-    ceiling_total_ms:         u64,
-    handover_total_ms:        u64,
-    timestamp_ms:             u64,
+    escrow_id:                    ID,
+    displaced_tenant_cap_id:      ID,
+    displaced_tenant_address:     address,
+    displaced_phase_start_ms:     u64,
+    displaced_ceiling_total_ms:   u64,
+    displaced_handover_total_ms:  u64,
+    new_tenant_cap_id:            ID,
+    new_tenant_address:           address,
+    new_tenant_stake:             u64,
+    used_credit:                  u64,
+    remain_credit:                u64,
+    owner_share:                  u64,
+    protocol_fee:                 u64,
+    new_rent_price:               u64,
+    committed_tenures:            u64,
+    ceiling_total_ms:             u64,
+    handover_total_ms:            u64,
+    asset_type:                   String,
+    coin_type:                    String,
+    timestamp_ms:                 u64,
 }
 
 public struct TenureExpired has copy, drop {
@@ -283,6 +303,8 @@ public struct TenureExpired has copy, drop {
     owner_share:            u64,
     protocol_fee:           u64,
     last_acquisition_price: u64,
+    asset_type:             String,
+    coin_type:              String,
     timestamp_ms:           u64,
 }
 
@@ -290,6 +312,8 @@ public struct RetireFlagSet has copy, drop {
     escrow_id:     ID,
     owner_cap_id:  ID,
     owner_address: address,
+    asset_type:    String,
+    coin_type:     String,
     timestamp_ms:  u64,
 }
 
@@ -297,6 +321,8 @@ public struct AssetBorrowed has copy, drop {
     escrow_id:      ID,
     tenant_cap_id:  ID,
     tenant_address: address,
+    asset_type:     String,
+    coin_type:      String,
     timestamp_ms:   u64,
 }
 
@@ -304,6 +330,8 @@ public struct AssetReturned has copy, drop {
     escrow_id:      ID,
     tenant_cap_id:  ID,
     tenant_address: address,
+    asset_type:     String,
+    coin_type:      String,
 }
 
 public struct ActiveTenantRefundAddressUpdated has copy, drop {
@@ -311,6 +339,8 @@ public struct ActiveTenantRefundAddressUpdated has copy, drop {
     tenant_cap_id: ID,
     old_address:   address,
     new_address:   address,
+    asset_type:    String,
+    coin_type:     String,
     timestamp_ms:  u64,
 }
 
@@ -319,6 +349,8 @@ public struct PendingTenantRefundAddressUpdated has copy, drop {
     tenant_cap_id: ID,
     old_address:   address,
     new_address:   address,
+    asset_type:    String,
+    coin_type:     String,
     timestamp_ms:  u64,
 }
 
@@ -916,16 +948,16 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately(asset, owner_cap_id, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, owner_cap, escrow_identity, now, ctx)),
         AssetState::Waiting(WaitingState::Descent { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately(asset, owner_cap_id, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, owner_cap, escrow_identity, now, ctx)),
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
-            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
+            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, active, retire } = terms;
             AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, active, retire: retire_condition_set(retire) }, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
-            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms: now_ms });
+            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, active, retire } = terms;
             AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, active, retire: retire_condition_set(retire) }, bid, cycle })
         },
@@ -998,7 +1030,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Occupied { asset, terms, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, timestamp_ms: now_ms });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             (u, receipt, core)
         },
         AssetState::Renting(RentingState::Demand { mut asset, terms, bid, cycle }) => {
@@ -1012,7 +1044,7 @@ public(package) fun execute_borrow<Asset: key + store, CoinType>(
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Demand { asset, terms, bid, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, timestamp_ms: now_ms });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             (u, receipt, core)
         },
         _s => abort EStaleTenantCap,
@@ -1032,9 +1064,11 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
             let tenant_addr = tenant_addr(&terms.active);
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
-                escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
+                escrow_id:      escrow_identity::escrow_id(core.escrow_identity),
                 tenant_cap_id:  tenant_cap::proj_id(cap_id),
                 tenant_address: tenant_addr,
+                asset_type:     string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+                coin_type:      string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
             });
             RentingState::Occupied { asset, terms, cycle }
         },
@@ -1043,9 +1077,11 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
             let tenant_addr = tenant_addr(&terms.active);
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
-                escrow_id:     escrow_identity::escrow_id(core.escrow_identity),
+                escrow_id:      escrow_identity::escrow_id(core.escrow_identity),
                 tenant_cap_id:  tenant_cap::proj_id(cap_id),
                 tenant_address: tenant_addr,
+                asset_type:     string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+                coin_type:      string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
             });
             RentingState::Demand { asset, terms, bid, cycle }
         },
@@ -1092,6 +1128,8 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
     let escrow_id    = escrow_identity::escrow_id(core.escrow_identity);
     let timestamp_ms = clock::timestamp_ms(clock);
     let new_addr_raw = refund_address::addr(new_address);
+    let asset_type   = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
+    let coin_type    = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
     match (&mut s) {
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
             let active_id = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
@@ -1103,6 +1141,8 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
                     tenant_cap_id: tenant_cap::proj_id(cap_identity),
                     old_address,
                     new_address:   new_addr_raw,
+                    asset_type,
+                    coin_type,
                     timestamp_ms,
                 });
             } else {
@@ -1120,6 +1160,8 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
                     tenant_cap_id: tenant_cap::proj_id(cap_identity),
                     old_address,
                     new_address:   new_addr_raw,
+                    asset_type,
+                    coin_type,
                     timestamp_ms,
                 });
             } else if (cap_identity == pending_id) {
@@ -1130,6 +1172,8 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
                     tenant_cap_id: tenant_cap::proj_id(cap_identity),
                     old_address,
                     new_address:   new_addr_raw,
+                    asset_type,
+                    coin_type,
                     timestamp_ms,
                 });
             } else {
@@ -1156,12 +1200,14 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
         owner_cap_id:  object::id(owner_cap),
         owner_address: ctx.sender(),
         amount:        monetary::stake_mist(amount),
+        asset_type:   string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:    string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
         timestamp_ms: clock::timestamp_ms(clock),
     });
     (s, core, coin)
 }
 
-public(package) fun execute_extend_commitment<CoinType>(
+public(package) fun execute_extend_commitment<Asset: key + store, CoinType>(
     mut core:   EscrowCore<CoinType>,
     owner_cap:  &OwnerCap,
     new_policy: CommitmentPolicy,
@@ -1184,6 +1230,8 @@ public(package) fun execute_extend_commitment<CoinType>(
         commitment_policy:   commitment_policy::proj_commitment_policy(&new_policy),
         commitment_floor_ms: commitment_policy::proj_commitment_floor_ms(&new_policy),
         new_expiry_ms:       phases::timestamp_ms(new_expiry),
+        asset_type:          string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:           string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
         timestamp_ms:        phases::timestamp_ms(now),
     });
     core.commitment.policy = new_policy;
@@ -1207,11 +1255,13 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
             let swept_earnings = coin::value(&coin);
             owner_seat::destroy_empty(owner);
             event::emit(AssetClaimed {
-                escrow_id:    escrow_identity::escrow_id(escrow_identity),
+                escrow_id:     escrow_identity::escrow_id(escrow_identity),
                 owner_cap_id:  object::id(owner_cap),
                 owner_address: ctx.sender(),
                 swept_earnings,
-                timestamp_ms: clock::timestamp_ms(clock),
+                asset_type:    string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+                coin_type:     string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
+                timestamp_ms:  clock::timestamp_ms(clock),
             });
             (asset_custody::unlock(asset), coin)
         },
@@ -1336,22 +1386,26 @@ fun do_handover<Asset: key + store, CoinType>(
     let new_handover_total = tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures);
 
     event::emit(HandoverCompleted {
-        escrow_id: escrow_identity::escrow_id(escrow_identity),
-        displaced_tenant_cap_id:  tenant_cap::proj_id(displaced_cap_identity),
-        displaced_tenant_address: displaced_addr,
-        displaced_phase_start_ms: phases::timestamp_ms(schedule.phase_start),
-        new_tenant_cap_id:        tenant_cap::proj_id(new_cap_identity),
-        new_tenant_address:       new_addr,
-        new_tenant_stake:         monetary::stake_mist(new_stake),
-        used_credit:              used_mist,
-        remain_credit:            monetary::stake_mist(remain_credit),
-        owner_share:              used_mist - fee_mist,
-        protocol_fee:             fee_mist,
+        escrow_id:                   escrow_identity::escrow_id(escrow_identity),
+        displaced_tenant_cap_id:     tenant_cap::proj_id(displaced_cap_identity),
+        displaced_tenant_address:    displaced_addr,
+        displaced_phase_start_ms:    phases::timestamp_ms(schedule.phase_start),
+        displaced_ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
+        displaced_handover_total_ms: phases::duration_ms(schedule.handover_total),
+        new_tenant_cap_id:           tenant_cap::proj_id(new_cap_identity),
+        new_tenant_address:          new_addr,
+        new_tenant_stake:            monetary::stake_mist(new_stake),
+        used_credit:                 used_mist,
+        remain_credit:               monetary::stake_mist(remain_credit),
+        owner_share:                 used_mist - fee_mist,
+        protocol_fee:                fee_mist,
         new_rent_price,
-        committed_tenures:        tenures::tenures_count(incoming_tenures),
-        ceiling_total_ms:         phases::duration_ms(new_ceiling_total),
-        handover_total_ms:        phases::duration_ms(new_handover_total),
-        timestamp_ms:             boundary_ms,
+        committed_tenures:           tenures::tenures_count(incoming_tenures),
+        ceiling_total_ms:            phases::duration_ms(new_ceiling_total),
+        handover_total_ms:           phases::duration_ms(new_handover_total),
+        asset_type:                  string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:                   string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
+        timestamp_ms:                boundary_ms,
     });
 
     let new_schedule = TenancySchedule {
@@ -1393,20 +1447,24 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     tenant_stake::destroy_zero(stake);
     refund_state::distribute(refund_state::nothing(fee_share, owner_earnings), owner, fee_inbox_identity, ctx);
 
+    let asset_type = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
+    let coin_type  = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
     event::emit(TenureExpired {
         escrow_id:              escrow_identity::escrow_id(escrow_identity),
-        tenant_cap_id:   tenant_cap::proj_id(tenant_cap_identity),
-        tenant_address:  tenant_addr,
+        tenant_cap_id:          tenant_cap::proj_id(tenant_cap_identity),
+        tenant_address:         tenant_addr,
         phase_start_ms:         phases::timestamp_ms(schedule.phase_start),
         owner_share:            principal_mist - fee_mist,
         protocol_fee:           fee_mist,
         last_acquisition_price: principal_mist,
+        asset_type,
+        coin_type,
         timestamp_ms:           phases::timestamp_ms(boundary),
     });
 
     let locked = asset_custody::close_tenancy(asset);
     if (retire_condition_is_retiring(&retire)) {
-        event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(escrow_identity), timestamp_ms: phases::timestamp_ms(boundary) });
+        event::emit(AssetRetired { escrow_id: escrow_identity::escrow_id(escrow_identity), asset_type, coin_type, timestamp_ms: phases::timestamp_ms(boundary) });
         config.pending = option::none();
         WaitingState::Retired { asset: locked }
     } else {
@@ -1440,16 +1498,18 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let active_stake = tenant_seat::proj_stake_value(&terms.active);
     event::emit(BidPlaced {
         escrow_id:                 escrow_identity::escrow_id(escrow_identity),
-        active_tenant_cap_id:     tenant_cap::proj_id(active_cap_identity),
-        active_tenant_address:    active_addr,
-        active_tenant_stake:      monetary::stake_mist(active_stake),
-        active_phase_start_ms:    phases::timestamp_ms(terms.schedule.phase_start),
+        active_tenant_cap_id:      tenant_cap::proj_id(active_cap_identity),
+        active_tenant_address:     active_addr,
+        active_tenant_stake:       monetary::stake_mist(active_stake),
+        active_phase_start_ms:     phases::timestamp_ms(terms.schedule.phase_start),
         pending_tenant_cap_id:     tenant_cap::proj_id(cap_identity),
         pending_tenant_address:    pending_addr,
         bid_amount,
         floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(expiry),
         committed_tenures:         tenures::tenures_count(tenures),
+        asset_type:                string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:                 string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
@@ -1512,6 +1572,8 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
         floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
         committed_tenures:         tenures::tenures_count(incoming_tenures),
+        asset_type:                string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:                 string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
         timestamp_ms:              phases::timestamp_ms(now),
     });
     (
@@ -1596,7 +1658,7 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             if (proj_auction_is_firable(&auction, &cycle, now)) {
                 let boundary = auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start);
-                AssetState::Waiting(do_auction_expiry(asset, auction, cycle, &mut core.ensemble, core.escrow_identity, boundary))
+                AssetState::Waiting(do_auction_expiry<Asset, CoinType>(asset, auction, cycle, &mut core.ensemble, core.escrow_identity, boundary))
             } else {
                 AssetState::Waiting(WaitingState::Descent { asset, auction, cycle })
             }
@@ -1639,15 +1701,17 @@ fun do_install<Asset: key + store, CoinType>(
         committed_tenures: tenures,
     };
     event::emit(RentStarted {
-        escrow_id:      escrow_identity::escrow_id(escrow_identity),
-        tenant_cap_id:  tenant_cap::proj_id(cap_identity),
-        tenant_address: tenant_addr,
-        phase_start_ms: phases::timestamp_ms(now),
+        escrow_id:         escrow_identity::escrow_id(escrow_identity),
+        tenant_cap_id:     tenant_cap::proj_id(cap_identity),
+        tenant_address:    tenant_addr,
+        phase_start_ms:    phases::timestamp_ms(now),
         price_paid,
-        floor_price:    monetary::price_mist(floor),
+        floor_price:       monetary::price_mist(floor),
         committed_tenures: tenures::tenures_count(tenures),
         ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
         handover_total_ms: phases::duration_ms(schedule.handover_total),
+        asset_type:        string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:         string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
     });
     (
         RentingState::Occupied {
@@ -1659,7 +1723,7 @@ fun do_install<Asset: key + store, CoinType>(
     )
 }
 
-fun do_auction_expiry<Asset: key + store>(
+fun do_auction_expiry<Asset: key + store, CoinType>(
     asset:           asset_custody::AssetCustodyLocked<Asset>,
     auction:         AuctionTerms,
     cycle:           CycleParams,
@@ -1668,7 +1732,9 @@ fun do_auction_expiry<Asset: key + store>(
     boundary:        Timestamp,
 ): WaitingState<Asset> {
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
-    event::emit(AuctionExpired { escrow_id: raw_escrow_id, phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), timestamp_ms: phases::timestamp_ms(boundary) });
+    let asset_type    = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
+    let coin_type     = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
+    event::emit(AuctionExpired { escrow_id: raw_escrow_id, phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), asset_type, coin_type, timestamp_ms: phases::timestamp_ms(boundary) });
     let cycle = if (ensemble.pending.is_some()) {
         let new_ensemble = ensemble.pending.extract();
         policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
@@ -1680,17 +1746,20 @@ fun do_auction_expiry<Asset: key + store>(
     WaitingState::Idle { asset, cycle }
 }
 
-fun do_retire_immediately<Asset: key + store>(
+fun do_retire_immediately<Asset: key + store, CoinType>(
     asset:           asset_custody::AssetCustodyLocked<Asset>,
-    owner_cap_id:    ID,
+    owner_cap:       &OwnerCap,
     escrow_identity: EscrowIdentity,
     now:             Timestamp,
     ctx:             &TxContext,
 ): WaitingState<Asset> {
     let timestamp_ms  = phases::timestamp_ms(now);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
-    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), timestamp_ms });
-    event::emit(AssetRetired { escrow_id: raw_escrow_id, timestamp_ms });
+    let owner_cap_id  = owner_cap::proj_id(owner_cap::identity(owner_cap));
+    let asset_type    = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
+    let coin_type     = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
+    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), asset_type, coin_type, timestamp_ms });
+    event::emit(AssetRetired { escrow_id: raw_escrow_id, asset_type, coin_type, timestamp_ms });
     WaitingState::Retired { asset }
 }
 
@@ -1804,6 +1873,10 @@ public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64    
 public(package) fun bid_placed_timestamp_ms(e: &BidPlaced): u64                      { e.timestamp_ms }
 #[test_only]
 public(package) fun bid_placed_committed_tenures(e: &BidPlaced): u64             { e.committed_tenures }
+#[test_only]
+public(package) fun bid_placed_asset_type(e: &BidPlaced): String                 { e.asset_type }
+#[test_only]
+public(package) fun bid_placed_coin_type(e: &BidPlaced): String                  { e.coin_type }
 
 #[test_only]
 public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID                      { e.escrow_id }
@@ -1835,6 +1908,10 @@ public(package) fun bid_superseded_handover_countdown_expiry(e: &BidSuperseded):
 public(package) fun bid_superseded_timestamp_ms(e: &BidSuperseded): u64              { e.timestamp_ms }
 #[test_only]
 public(package) fun bid_superseded_committed_tenures(e: &BidSuperseded): u64         { e.committed_tenures }
+#[test_only]
+public(package) fun bid_superseded_asset_type(e: &BidSuperseded): String             { e.asset_type }
+#[test_only]
+public(package) fun bid_superseded_coin_type(e: &BidSuperseded): String              { e.coin_type }
 
 #[test_only]
 public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
@@ -1844,6 +1921,10 @@ public(package) fun handover_completed_displaced_cap_id(e: &HandoverCompleted): 
 public(package) fun handover_completed_displaced_tenant_address(e: &HandoverCompleted): address { e.displaced_tenant_address }
 #[test_only]
 public(package) fun handover_completed_displaced_phase_start_ms(e: &HandoverCompleted): u64  { e.displaced_phase_start_ms }
+#[test_only]
+public(package) fun handover_completed_displaced_ceiling_total_ms(e: &HandoverCompleted): u64  { e.displaced_ceiling_total_ms }
+#[test_only]
+public(package) fun handover_completed_displaced_handover_total_ms(e: &HandoverCompleted): u64 { e.displaced_handover_total_ms }
 #[test_only]
 public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                 { e.new_tenant_cap_id }
 #[test_only]
@@ -1867,6 +1948,10 @@ public(package) fun handover_completed_ceiling_total_ms(e: &HandoverCompleted): 
 #[test_only]
 public(package) fun handover_completed_handover_total_ms(e: &HandoverCompleted): u64         { e.handover_total_ms }
 #[test_only]
+public(package) fun handover_completed_asset_type(e: &HandoverCompleted): String             { e.asset_type }
+#[test_only]
+public(package) fun handover_completed_coin_type(e: &HandoverCompleted): String              { e.coin_type }
+#[test_only]
 public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64              { e.timestamp_ms }
 
 #[test_only]
@@ -1884,6 +1969,10 @@ public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64         
 #[test_only]
 public(package) fun tenure_expired_last_acq_price(e: &TenureExpired): u64            { e.last_acquisition_price }
 #[test_only]
+public(package) fun tenure_expired_asset_type(e: &TenureExpired): String             { e.asset_type }
+#[test_only]
+public(package) fun tenure_expired_coin_type(e: &TenureExpired): String              { e.coin_type }
+#[test_only]
 public(package) fun tenure_expired_timestamp_ms(e: &TenureExpired): u64              { e.timestamp_ms }
 
 #[test_only]
@@ -1893,6 +1982,10 @@ public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID         
 #[test_only]
 public(package) fun asset_borrowed_tenant_address(e: &AssetBorrowed): address       { e.tenant_address }
 #[test_only]
+public(package) fun asset_borrowed_asset_type(e: &AssetBorrowed): String             { e.asset_type }
+#[test_only]
+public(package) fun asset_borrowed_coin_type(e: &AssetBorrowed): String              { e.coin_type }
+#[test_only]
 public(package) fun asset_borrowed_timestamp_ms(e: &AssetBorrowed): u64              { e.timestamp_ms }
 
 #[test_only]
@@ -1901,6 +1994,10 @@ public(package) fun asset_returned_escrow_id(e: &AssetReturned): ID             
 public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID              { e.tenant_cap_id }
 #[test_only]
 public(package) fun asset_returned_tenant_address(e: &AssetReturned): address       { e.tenant_address }
+#[test_only]
+public(package) fun asset_returned_asset_type(e: &AssetReturned): String            { e.asset_type }
+#[test_only]
+public(package) fun asset_returned_coin_type(e: &AssetReturned): String             { e.coin_type }
 
 #[test_only]
 public(package) fun asset_claimed_escrow_id(e: &AssetClaimed): ID                   { e.escrow_id }
@@ -1910,6 +2007,10 @@ public(package) fun asset_claimed_owner_cap_id(e: &AssetClaimed): ID            
 public(package) fun asset_claimed_owner_address(e: &AssetClaimed): address          { e.owner_address }
 #[test_only]
 public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64              { e.swept_earnings }
+#[test_only]
+public(package) fun asset_claimed_asset_type(e: &AssetClaimed): String              { e.asset_type }
+#[test_only]
+public(package) fun asset_claimed_coin_type(e: &AssetClaimed): String               { e.coin_type }
 #[test_only]
 public(package) fun asset_claimed_timestamp_ms(e: &AssetClaimed): u64               { e.timestamp_ms }
 
@@ -1960,7 +2061,7 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
 ): AssetState<Asset, CoinType> {
     match (state) {
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) =>
-            AssetState::Waiting(do_auction_expiry(asset, auction, cycle, &mut core.ensemble, core.escrow_identity, boundary)),
+            AssetState::Waiting(do_auction_expiry<Asset, CoinType>(asset, auction, cycle, &mut core.ensemble, core.escrow_identity, boundary)),
         AssetState::Waiting(_ws) => abort ENotRented,
         AssetState::Renting(_rs) => abort ENotRented,
     }
@@ -2138,6 +2239,10 @@ public(package) fun rent_started_committed_tenures(e: &RentStarted): u64        
 public(package) fun rent_started_ceiling_total_ms(e: &RentStarted): u64          { e.ceiling_total_ms }
 #[test_only]
 public(package) fun rent_started_handover_total_ms(e: &RentStarted): u64         { e.handover_total_ms }
+#[test_only]
+public(package) fun rent_started_asset_type(e: &RentStarted): String             { e.asset_type }
+#[test_only]
+public(package) fun rent_started_coin_type(e: &RentStarted): String              { e.coin_type }
 
 #[test_only]
 public(package) fun auction_expired_escrow_id(e: &AuctionExpired): ID           { e.escrow_id }
@@ -2147,6 +2252,10 @@ public(package) fun auction_expired_phase_start_ms(e: &AuctionExpired): u64     
 public(package) fun auction_expired_last_acq_price(e: &AuctionExpired): u64     { e.last_acq_price }
 #[test_only]
 public(package) fun auction_expired_timestamp_ms(e: &AuctionExpired): u64        { e.timestamp_ms }
+#[test_only]
+public(package) fun auction_expired_asset_type(e: &AuctionExpired): String       { e.asset_type }
+#[test_only]
+public(package) fun auction_expired_coin_type(e: &AuctionExpired): String        { e.coin_type }
 
 #[test_only]
 public(package) fun cycle_params_resolved_escrow_id(e: &CycleParamsResolved): ID    { e.escrow_id }
@@ -2164,6 +2273,10 @@ public(package) fun cycle_params_resolved_timestamp_ms(e: &CycleParamsResolved):
 #[test_only]
 public(package) fun asset_retired_escrow_id(e: &AssetRetired): ID               { e.escrow_id }
 #[test_only]
+public(package) fun asset_retired_asset_type(e: &AssetRetired): String          { e.asset_type }
+#[test_only]
+public(package) fun asset_retired_coin_type(e: &AssetRetired): String           { e.coin_type }
+#[test_only]
 public(package) fun asset_retired_timestamp_ms(e: &AssetRetired): u64           { e.timestamp_ms }
 
 #[test_only]
@@ -2172,6 +2285,10 @@ public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID            
 public(package) fun retire_flag_set_owner_cap_id(e: &RetireFlagSet): ID         { e.owner_cap_id }
 #[test_only]
 public(package) fun retire_flag_set_owner_address(e: &RetireFlagSet): address   { e.owner_address }
+#[test_only]
+public(package) fun retire_flag_set_asset_type(e: &RetireFlagSet): String       { e.asset_type }
+#[test_only]
+public(package) fun retire_flag_set_coin_type(e: &RetireFlagSet): String        { e.coin_type }
 #[test_only]
 public(package) fun retire_flag_set_timestamp_ms(e: &RetireFlagSet): u64        { e.timestamp_ms }
 
@@ -2184,6 +2301,10 @@ public(package) fun earnings_withdrawn_owner_address(e: &EarningsWithdrawn): add
 #[test_only]
 public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64        { e.amount }
 #[test_only]
+public(package) fun earnings_withdrawn_asset_type(e: &EarningsWithdrawn): String { e.asset_type }
+#[test_only]
+public(package) fun earnings_withdrawn_coin_type(e: &EarningsWithdrawn): String  { e.coin_type }
+#[test_only]
 public(package) fun earnings_withdrawn_timestamp_ms(e: &EarningsWithdrawn): u64 { e.timestamp_ms }
 
 #[test_only]
@@ -2194,6 +2315,10 @@ public(package) fun commitment_extended_policy(e: &CommitmentExtended): String {
 public(package) fun commitment_extended_floor_ms(e: &CommitmentExtended): Option<u64> { e.commitment_floor_ms }
 #[test_only]
 public(package) fun commitment_extended_new_expiry_ms(e: &CommitmentExtended): u64  { e.new_expiry_ms }
+#[test_only]
+public(package) fun commitment_extended_asset_type(e: &CommitmentExtended): String  { e.asset_type }
+#[test_only]
+public(package) fun commitment_extended_coin_type(e: &CommitmentExtended): String   { e.coin_type }
 #[test_only]
 public(package) fun commitment_extended_timestamp_ms(e: &CommitmentExtended): u64   { e.timestamp_ms }
 
@@ -2276,6 +2401,10 @@ public(package) fun active_refund_updated_old_address(e: &ActiveTenantRefundAddr
 #[test_only]
 public(package) fun active_refund_updated_new_address(e: &ActiveTenantRefundAddressUpdated): address  { e.new_address }
 #[test_only]
+public(package) fun active_refund_updated_asset_type(e: &ActiveTenantRefundAddressUpdated): String    { e.asset_type }
+#[test_only]
+public(package) fun active_refund_updated_coin_type(e: &ActiveTenantRefundAddressUpdated): String     { e.coin_type }
+#[test_only]
 public(package) fun active_refund_updated_timestamp_ms(e: &ActiveTenantRefundAddressUpdated): u64     { e.timestamp_ms }
 
 #[test_only]
@@ -2286,6 +2415,10 @@ public(package) fun pending_refund_updated_tenant_cap_id(e: &PendingTenantRefund
 public(package) fun pending_refund_updated_old_address(e: &PendingTenantRefundAddressUpdated): address { e.old_address }
 #[test_only]
 public(package) fun pending_refund_updated_new_address(e: &PendingTenantRefundAddressUpdated): address { e.new_address }
+#[test_only]
+public(package) fun pending_refund_updated_asset_type(e: &PendingTenantRefundAddressUpdated): String   { e.asset_type }
+#[test_only]
+public(package) fun pending_refund_updated_coin_type(e: &PendingTenantRefundAddressUpdated): String    { e.coin_type }
 #[test_only]
 public(package) fun pending_refund_updated_timestamp_ms(e: &PendingTenantRefundAddressUpdated): u64    { e.timestamp_ms }
 

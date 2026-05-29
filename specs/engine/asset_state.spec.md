@@ -262,7 +262,8 @@ Emitted when a pending bid is replaced by a newer bid via `do_supersede_bid`. Ca
 ```
 HandoverCompleted {
     escrow_id: ID,
-    displaced_tenant_cap_id: ID, displaced_tenant: address, displaced_phase_start_ms: u64,
+    displaced_tenant_cap_id: ID, displaced_tenant: address,
+    displaced_phase_start_ms: u64, displaced_ceiling_total_ms: u64, displaced_handover_total_ms: u64,
     new_tenant_cap_id: ID, new_tenant_addr: address, new_tenant_stake: u64,
     used_credit: u64, remain_credit: u64,
     owner_share: u64, protocol_fee: u64, new_rent_price: u64,
@@ -270,7 +271,7 @@ HandoverCompleted {
     timestamp_ms: u64
 }
 ```
-Emitted when the handover countdown fires and the pending tenant becomes the current occupant. The schedule fields (`committed_tenures`, `ceiling_total_ms`, `handover_total_ms`) describe the incoming tenant's terms, rescaled from the displaced tenant's schedule by the incoming/outgoing tenure ratio, so the new tenancy is self-describing without walking back to its originating `RentStarted`.
+Emitted when the handover countdown fires and the pending tenant becomes the current occupant. The displaced bundle (`displaced_phase_start_ms`, `displaced_ceiling_total_ms`, `displaced_handover_total_ms`) gives the full temporal context of the outgoing tenancy — including the original planned ceiling — so consumers can compute the shortfall without a look-back join. The incoming schedule fields (`committed_tenures`, `ceiling_total_ms`, `handover_total_ms`) describe the new tenant's terms, rescaled from the displaced tenant's schedule by the incoming/outgoing tenure ratio.
 
 ```
 TenureExpired {

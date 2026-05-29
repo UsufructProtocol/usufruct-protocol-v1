@@ -343,6 +343,7 @@ fun floor_price_idle_returns_min_rent_price() {
     let price = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     assert_eq!(price, escrow_corpus::min_rent_price_const());
+    assert_eq!(price, escrow::min_rent_price_fixed_mist(&escrow));
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();

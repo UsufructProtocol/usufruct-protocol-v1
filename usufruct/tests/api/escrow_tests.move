@@ -124,6 +124,19 @@ fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {
     coin::from_balance(balance::create_for_testing<SUI>(amount), ctx)
 }
 
+/// The SDK's canonical entry path: read floor_price_mist at the clock's
+/// current time, then rent one tenure paying exactly that floor. Because
+/// floor_price_mist yields a valid payment in every rentable state, this
+/// helper never aborts on a healthy escrow.
+fun rent_with_floor_price(
+    escrow: &mut Escrow<DemoAsset, SUI>,
+    clk:    &clock::Clock,
+    sc:     &mut Scenario,
+): tenant_cap::TenantCap {
+    let floor = escrow::floor_price_mist(escrow, clock::timestamp_ms(clk));
+    escrow::rent(escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), clk, sc.ctx())
+}
+
 /// Integrate, share, then take the shared escrow back. Returns the
 /// escrow + cap. Uses Immediate commitment (no retire floor) by default.
 fun integrate_and_take(
@@ -346,6 +359,63 @@ fun floor_price_idle_returns_min_rent_price() {
     assert_eq!(price, escrow::min_rent_price_fixed_mist(&escrow));
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// e2e: floor_price_mist drives the escrow through its natural lifecycle.
+/// At every rentable state the next tenant pays exactly floor_price_mist —
+/// the SDK invariant that this query always precedes a non-aborting rent().
+///
+///   Idle ─rent→ Occupied ─rent→ Demand ─rent→ Demand
+///        ─APT→ Occupied ─APT→ Descent ─rent→ Occupied
+///
+///   c=1 (handover=Fixed)  → Occupied→Demand on a bid, Demand persists on supersede
+///   h=1 (descent=Fixed)   → Occupied→Descent at tenure expiry
+#[test]
+fun e2e_rent_with_floor_price_drives_full_lifecycle() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // Idle → Occupied: T1 rents at floor.
+    assert!(escrow::is_idle(&escrow), 0);
+    let cap_t1 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_occupied(&escrow), 1);
+
+    // Occupied → Demand: T2 bids at floor.
+    clock::set_for_testing(&mut clk, 1_000);
+    let cap_t2 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_demand(&escrow), 2);
+
+    // Demand → Demand: T3 supersedes T2 at floor.
+    clock::set_for_testing(&mut clk, 2_000);
+    let cap_t3 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_demand(&escrow), 3);
+
+    // Demand → Occupied: handover fires, T3 promoted to current.
+    let countdown = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    clock::set_for_testing(&mut clk, countdown);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_occupied(&escrow), 4);
+
+    // Occupied → Descent: T3's tenure expires (h=1).
+    let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
+    clock::set_for_testing(&mut clk, expiry);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+    assert!(escrow::is_descending(&escrow), 5);
+
+    // Descent → Occupied: T4 rents at floor.
+    let cap_t4 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_occupied(&escrow), 6);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t4, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
     sc.end();
 }
 

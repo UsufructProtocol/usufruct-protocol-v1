@@ -1328,3 +1328,65 @@ fun stake_remaining_switches_to_new_tenant_after_handover() {
     dispose_escrow(escrow, cap);
     sc.end();
 }
+
+/// At tenure start (now_ms = phase_start) the full ceiling remains;
+/// at tenure end (now_ms = phase_start + ceiling) remaining is 0.
+/// The u64 is passed directly — no clock required.
+#[test]
+fun time_remaining_boundaries_are_full_ceiling_and_zero() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &clk, sc.ctx());
+
+    let phase_start = clock::timestamp_ms(&clk);
+    let ceiling     = escrow_corpus::tenure_ceiling_const();
+
+    let at_start = escrow::active_tenant_time_remaining_ms(&escrow, phase_start).destroy_some();
+    assert_eq!(at_start, ceiling);
+
+    let at_end = escrow::active_tenant_time_remaining_ms(&escrow, phase_start + ceiling).destroy_some();
+    assert_eq!(at_end, 0);
+
+    let past_end = escrow::active_tenant_time_remaining_ms(&escrow, phase_start + ceiling + 50_000).destroy_some();
+    assert_eq!(past_end, 0);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}
+
+/// At tenure start (now_ms = phase_start) the full stake is unspent;
+/// at tenure end (now_ms = phase_start + ceiling) credit equals the full
+/// principal so remaining stake is 0.
+/// The u64 is passed directly — no clock required.
+#[test]
+fun stake_remaining_boundaries_are_full_stake_and_zero() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
+    let (mut escrow, cap) = build_escrow(ensemble, &mut sc);
+
+    sc.next_tx(TENANT_ADDR);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let payment = mk_payment(STAKE, sc.ctx());
+    let t_cap   = escrow::rent(&mut escrow, payment, tenures::tenures(1), &clk, sc.ctx());
+
+    let phase_start = clock::timestamp_ms(&clk);
+    let ceiling     = escrow_corpus::tenure_ceiling_const();
+
+    let at_start = escrow::active_tenant_stake_remaining_mist(&escrow, phase_start).destroy_some();
+    assert_eq!(at_start, STAKE);
+
+    let at_end = escrow::active_tenant_stake_remaining_mist(&escrow, phase_start + ceiling).destroy_some();
+    assert_eq!(at_end, 0);
+
+    transfer::public_transfer(t_cap, TENANT_ADDR);
+    clock::destroy_for_testing(clk);
+    dispose_escrow(escrow, cap);
+    sc.end();
+}

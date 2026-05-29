@@ -490,7 +490,7 @@ public fun next_ensemble_descent_ms<Asset: key + store, CoinType>(
     asset_state::proj_waiting_resolved_descent(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
-public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
+public fun handover_expiry_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_handover_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
@@ -722,7 +722,7 @@ public fun descent_ceiling_ms<Asset: key + store, CoinType>(
     auction_window_policy::proj_fixed_ceiling(policy_ensemble::proj_auction_window(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
-public fun handover_countdown_floor_ms<Asset: key + store, CoinType>(
+public fun handover_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     handover_policy::proj_fixed_floor_ms(policy_ensemble::proj_handover(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))

@@ -112,9 +112,9 @@ fun handover_views_match_variants() {
 
         // Fixed floor: only present on c=1
         if (c == 1) {
-            assert_eq!(escrow::handover_countdown_floor_ms(&escrow).destroy_some(), escrow_corpus::handover_countdown_c1_const());
+            assert_eq!(escrow::handover_floor_ms(&escrow).destroy_some(), escrow_corpus::handover_countdown_c1_const());
         } else {
-            assert!(escrow::handover_countdown_floor_ms(&escrow).is_none());
+            assert!(escrow::handover_floor_ms(&escrow).is_none());
         };
 
         dispose(escrow, cap);

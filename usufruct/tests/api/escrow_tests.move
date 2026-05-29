@@ -418,7 +418,7 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle() {
     assert!(escrow::is_demand(&escrow), 3);
 
     // Demand → Occupied: handover fires, T3 promoted to current.
-    let countdown = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown = escrow::handover_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), 4);
@@ -473,7 +473,7 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle_multitenure() {
     assert!(escrow::is_demand(&escrow), 3);
 
     // Demand → Occupied: handover fires, T3 promoted to current.
-    let countdown = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown = escrow::handover_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), 4);
@@ -7615,7 +7615,7 @@ fun multi_cycle_full_tenure_tenant_consumes_full_ceiling() {
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // Fixed expiry must equal the full 3-cycle ceiling.
-    let handover_expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    let handover_expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry), tenure * 3);
 
     // Handover only fires at tenure × 3 — T1 consumed all paid cycles.
@@ -7753,7 +7753,7 @@ fun multi_cycle_full_tenure_handover_tracks_new_ceiling() {
     let cap3 = escrow::rent(&mut escrow, mk_payment(bid_floor_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // FullTenure: T3's handover expiry = T2.phase_start + T2.ceiling = tenure×3 + tenure×2.
-    let handover_expiry_t3 = escrow::handover_countdown_expiry_ms(&escrow);
+    let handover_expiry_t3 = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry_t3), boundary_t2 + tenure * 2);
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -7791,7 +7791,7 @@ fun multi_cycle_countdown_scales_with_committed_tenures() {
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
 
     // Verify T2's handover expiry = 75k (= countdown × 3), not 25k.
-    let expiry_demand = escrow::handover_countdown_expiry_ms(&escrow);
+    let expiry_demand = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry_demand), countdown * 3);
 
     // T2 wins at boundary = 75k.
@@ -7814,7 +7814,7 @@ fun multi_cycle_countdown_scales_with_committed_tenures() {
     // T2.handover = 50k. expiry = min(175k + 50k, 75k + 200k) = min(225k, 275k) = 225k.
     let expected_expiry = bid_time_t3 + countdown * 2; // 175k + 50k = 225k
     assert!(expected_expiry < boundary_t2 + tenure * 2, 0); // < T2.phase_start + T2.ceiling
-    let handover_expiry_t3 = escrow::handover_countdown_expiry_ms(&escrow);
+    let handover_expiry_t3 = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry_t3), expected_expiry);
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -7939,7 +7939,7 @@ fun degeneration_full_tenure_expiry_cycles_one() {
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    let expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), tenure);
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -7977,7 +7977,7 @@ fun degeneration_countdown_expiry_cycles_one() {
     // bid_time + countdown = 50k + 25k = 75k < tenure = 100k → countdown wins.
     let expected = bid_time + countdown;
     assert!(expected < tenure, 0);
-    let expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    let expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), expected);
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -8292,7 +8292,7 @@ fun handover_scaling_countdown_expiry_exact_at_bid_zero() {
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    let expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), countdown * 3); // exact — no truncation
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -8336,7 +8336,7 @@ fun handover_scaling_no_double_scaling_across_handover_chain() {
     let floor_t3 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap3 = escrow::rent(&mut escrow, mk_payment(floor_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let expiry_t3 = escrow::handover_countdown_expiry_ms(&escrow);
+    let expiry_t3 = escrow::handover_expiry_ms(&escrow);
     // T2.handover = countdown × 2 = 50k (T2's committed_tenures, not T1's × T2's).
     // expiry = 75k + 50k = 125k.
     // Wrong double-scaling would give: 75k + countdown×3×2 = 225k.
@@ -8352,7 +8352,7 @@ fun handover_scaling_no_double_scaling_across_handover_chain() {
     sc.next_tx(@0xD1);
     let floor_t4 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap4 = escrow::rent(&mut escrow, mk_payment(floor_t4, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    let expiry_t4 = escrow::handover_countdown_expiry_ms(&escrow);
+    let expiry_t4 = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry_t4), boundary_t3 + countdown); // countdown × 1 — no accumulation
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -8386,7 +8386,7 @@ fun handover_scaling_instant_stays_zero_for_any_cycles() {
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    let expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), bid_time); // exactly bid_time, not bid_time + 5×anything
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -8418,7 +8418,7 @@ fun handover_scaling_full_tenure_expiry_equals_tenure_expiry() {
     sc.next_tx(TENANT_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    let expiry_at_zero = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow));
+    let expiry_at_zero = *option::borrow(&escrow::handover_expiry_ms(&escrow));
 
     // T2 wins at tenure_expiry. T3 bids mid-tenure of T2.
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(tenure_expiry), sc.ctx());
@@ -8429,7 +8429,7 @@ fun handover_scaling_full_tenure_expiry_equals_tenure_expiry() {
     clock::set_for_testing(&mut clk, mid);
     let bid_floor_t3 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap3 = escrow::rent(&mut escrow, mk_payment(bid_floor_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    let expiry_at_mid = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow));
+    let expiry_at_mid = *option::borrow(&escrow::handover_expiry_ms(&escrow));
 
     // Both bids see handover expiry == tenure expiry — bid time is irrelevant for FullTenure.
     assert_eq!(expiry_at_zero, tenure_expiry);
@@ -8465,7 +8465,7 @@ fun handover_scaling_rate_symmetry_per_committed_cycle() {
     sc.next_tx(TENANT_ADDR_2);
     let floor_a2 = escrow::floor_price_mist(&escrow_a, clock::timestamp_ms(&clk));
     let cap_a2 = escrow::rent(&mut escrow_a, mk_payment(floor_a2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    let expiry_a = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow_a));
+    let expiry_a = *option::borrow(&escrow::handover_expiry_ms(&escrow_a));
 
     // Escrow B: T1b rents 3 cycles (same per-cycle rate).
     sc.next_tx(TENANT_ADDR_1);
@@ -8473,7 +8473,7 @@ fun handover_scaling_rate_symmetry_per_committed_cycle() {
     sc.next_tx(TENANT_ADDR_2);
     let floor_b2 = escrow::floor_price_mist(&escrow_b, clock::timestamp_ms(&clk));
     let cap_b2 = escrow::rent(&mut escrow_b, mk_payment(floor_b2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    let expiry_b = *option::borrow(&escrow::handover_countdown_expiry_ms(&escrow_b));
+    let expiry_b = *option::borrow(&escrow::handover_expiry_ms(&escrow_b));
 
     // expiry_a = countdown × 1. expiry_b = countdown × 3.
     // Ratio: expiry / committed_tenures = countdown in both cases.
@@ -8533,7 +8533,7 @@ fun normalization_rescale_is_exact_across_handover_chain() {
     let floor_t4 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap4 = escrow::rent(&mut escrow, mk_payment(floor_t4, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    let expiry = escrow::handover_expiry_ms(&escrow);
     // T3.handover must be exactly countdown — no accumulated rounding error.
     assert_eq!(*option::borrow(&expiry), countdown * 3 + countdown * 2 + countdown);
 
@@ -8628,7 +8628,7 @@ fun normalization_descent_handover_also_normalized_after_multi_cycle_expiry() {
     sc.next_tx(TENANT_ADDR_1); // bid from a third party
     let floor_t3 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2_b = escrow::rent(&mut escrow, mk_payment(floor_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    let handover_expiry = escrow::handover_countdown_expiry_ms(&escrow);
+    let handover_expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry), entry_time + countdown * 2);
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
@@ -8721,7 +8721,7 @@ fun normalization_same_cycle_count_is_identity() {
     sc.next_tx(@0xC1);
     let floor_t3 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap3 = escrow::rent(&mut escrow, mk_payment(floor_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    let handover_t3 = escrow::handover_countdown_expiry_ms(&escrow);
+    let handover_t3 = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_t3), countdown * 3 + countdown * 3); // bid + 75k
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);

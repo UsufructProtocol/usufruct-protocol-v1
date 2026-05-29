@@ -143,7 +143,7 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::last_rent_price_mist(escrow).is_some(),              in_descent);
 
     // — Demand-only fields (handover countdown active) —
-    assert_eq!(escrow::handover_countdown_expiry_ms(escrow).is_some(), in_demand);
+    assert_eq!(escrow::handover_expiry_ms(escrow).is_some(), in_demand);
 
     // — Credit context: Accruing in Occupied, Capped in Demand —
     assert_eq!(escrow::credit_is_accruing(escrow), state_id == STATE_OCCUPIED);
@@ -194,7 +194,7 @@ fun idle_views_post_integrate() {
     assert!(escrow::active_ceiling_total_ms(&escrow).is_none());
     assert!(escrow::active_handover_total_ms(&escrow).is_none());
     assert!(escrow::active_ensemble_floor_price_mist(&escrow).is_none());
-    assert!(escrow::handover_countdown_expiry_ms(&escrow).is_none());
+    assert!(escrow::handover_expiry_ms(&escrow).is_none());
     assert!(escrow::handover_expiry_if_bid_at(&escrow, 1_000).is_none());
     assert!(escrow::last_rent_price_mist(&escrow).is_none());
 
@@ -482,7 +482,7 @@ fun demand_views_after_handover_bid() {
     assert!(escrow::tenant_cap_is_pending(&escrow, object::id(&t2_cap)));
 
     // — Handover countdown is active; expiry is recorded —
-    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown_expiry = escrow::handover_expiry_ms(&escrow).destroy_some();
 
     // — Credit context flips Accruing → Capped on entering Demand; the cap is
     //   the handover countdown expiry so accrual freezes there.
@@ -874,7 +874,7 @@ fun views_flip_across_handover_countdown_expiry() {
     let t2_cap  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // Advance to handover countdown expiry.
-    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown_expiry = escrow::handover_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown_expiry);
 
     // ── Before APT ────────────────────────────────────────────────────────────
@@ -883,7 +883,7 @@ fun views_flip_across_handover_countdown_expiry() {
     assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(), t1_addr);
     assert_eq!(escrow::pending_tenant_addr(&escrow).destroy_some(), t2_addr);
     assert!( escrow::pending_stake(&escrow).is_some());
-    assert!( escrow::handover_countdown_expiry_ms(&escrow).is_some());
+    assert!( escrow::handover_expiry_ms(&escrow).is_some());
     assert!(!escrow::credit_is_accruing(&escrow));
     assert!( escrow::credit_is_capped(&escrow));
     assert!( escrow::credit_capped_at_ms(&escrow).is_some());
@@ -899,7 +899,7 @@ fun views_flip_across_handover_countdown_expiry() {
     assert_eq!(escrow::active_tenant_addr(&escrow).destroy_some(), t2_addr);
     assert!( escrow::pending_tenant_addr(&escrow).is_none());
     assert!( escrow::pending_stake(&escrow).is_none());
-    assert!( escrow::handover_countdown_expiry_ms(&escrow).is_none());
+    assert!( escrow::handover_expiry_ms(&escrow).is_none());
     assert!( escrow::credit_is_accruing(&escrow));
     assert!(!escrow::credit_is_capped(&escrow));
     assert!( escrow::credit_capped_at_ms(&escrow).is_none());
@@ -973,7 +973,7 @@ fun time_remaining_in_demand_uses_handover_countdown() {
 
     assert!(escrow::is_demand(&escrow), 0);
 
-    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown_expiry = escrow::handover_expiry_ms(&escrow).destroy_some();
     let tenure_expiry    = escrow::tenure_expiry_ms(&escrow).destroy_some();
 
     // Remaining is bounded by countdown, not tenure ceiling.
@@ -1085,7 +1085,7 @@ fun time_remaining_switches_to_new_tenant_after_handover() {
     assert!(escrow::is_demand(&escrow), 0);
     let t1_remaining_before_apt = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
 
-    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown_expiry = escrow::handover_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown_expiry);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
@@ -1150,7 +1150,7 @@ fun stake_remaining_freezes_when_bid_arrives() {
 
     assert!(escrow::is_demand(&escrow), 0);
 
-    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown_expiry = escrow::handover_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown_expiry + 1);
     let frozen = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
 
@@ -1302,7 +1302,7 @@ fun stake_remaining_switches_to_new_tenant_after_handover() {
     assert!(escrow::is_demand(&escrow), 0);
     let t1_remaining_before_apt = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
 
-    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown_expiry = escrow::handover_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown_expiry);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
@@ -1431,7 +1431,7 @@ fun pending_transition_flips_at_handover_countdown_boundary() {
     let t2_cap  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     assert!(escrow::is_demand(&escrow));
-    let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
+    let countdown_expiry = escrow::handover_expiry_ms(&escrow).destroy_some();
 
     assert!(!escrow::transition_is_ready(&escrow, countdown_expiry - 1));
     assert!( escrow::next_transition_ms(&escrow, countdown_expiry - 1).is_none());

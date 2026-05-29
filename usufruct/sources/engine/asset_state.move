@@ -949,9 +949,9 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, owner_cap_id, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, owner_cap, escrow_identity, now, ctx)),
         AssetState::Waiting(WaitingState::Descent { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, owner_cap_id, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, owner_cap, escrow_identity, now, ctx)),
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, active, retire } = terms;
@@ -1749,13 +1749,14 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
 
 fun do_retire_immediately<Asset: key + store, CoinType>(
     asset:           asset_custody::AssetCustodyLocked<Asset>,
-    owner_cap_id:    ID,
+    owner_cap:       &OwnerCap,
     escrow_identity: EscrowIdentity,
     now:             Timestamp,
     ctx:             &TxContext,
 ): WaitingState<Asset> {
     let timestamp_ms  = phases::timestamp_ms(now);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
+    let owner_cap_id  = owner_cap::proj_id(owner_cap::identity(owner_cap));
     let asset_type    = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
     let coin_type     = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
     event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), asset_type, coin_type, timestamp_ms });

@@ -270,43 +270,43 @@ public fun is_rented<Asset: key + store, CoinType>(
     asset_state::proj_is_rented(read_state(escrow))
 }
 
-public fun is_auction_window_off<Asset: key + store, CoinType>(
+public fun auction_window_is_off<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     auction_window_policy::proj_is_off(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
-public fun is_auction_window_fixed<Asset: key + store, CoinType>(
+public fun auction_window_is_fixed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     auction_window_policy::proj_is_fixed(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
-public fun is_commitment_immediate<Asset: key + store, CoinType>(
+public fun commitment_is_immediate<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     commitment_policy::proj_is_immediate(&asset_state::proj_commitment_policy(read_core(escrow)))
 }
 
-public fun is_commitment_deferred<Asset: key + store, CoinType>(
+public fun commitment_is_deferred<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     commitment_policy::proj_is_deferred(&asset_state::proj_commitment_policy(read_core(escrow)))
 }
 
-public fun is_handover_off<Asset: key + store, CoinType>(
+public fun handover_is_off<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     handover_policy::proj_is_off(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
-public fun is_handover_full_tenure<Asset: key + store, CoinType>(
+public fun handover_is_full_tenure<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     handover_policy::proj_is_full_tenure(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
 
-public fun is_handover_fixed<Asset: key + store, CoinType>(
+public fun handover_is_fixed<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
     handover_policy::proj_is_fixed(policy_ensemble::proj_handover(read_ensemble(escrow)))
@@ -746,7 +746,7 @@ public fun auction_shape<Asset: key + store, CoinType>(
     *policy_ensemble::proj_auction_shape(read_ensemble(escrow))
 }
 
-public fun ascending_price_function_state<Asset: key + store, CoinType>(
+public fun price_fn<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): PriceEscalationPolicy {
     *policy_ensemble::proj_price_escalation(read_ensemble(escrow))
@@ -856,19 +856,19 @@ public fun price_fn_compound_delta_delta<Asset: key + store, CoinType>(escrow: &
     price_escalation_policy::proj_compound_delta_delta(policy_ensemble::proj_price_escalation(read_ensemble(escrow))).map!(|v| monetary::price_mist(v))
 }
 
-public fun rest_price_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun rest_price_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     rest_price_policy::proj_rest_price_policy(policy_ensemble::proj_rest_price(read_ensemble(escrow)))
 }
-public fun tenure_duration_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun tenure_duration_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     tenure_duration_policy::proj_tenure_duration_policy(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
 }
-public fun tenure_extend_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun tenure_extend_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     tenure_extend_policy::proj_tenure_extend_policy(policy_ensemble::proj_tenure_extend(read_ensemble(escrow)))
 }
-public fun handover_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun handover_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     handover_policy::proj_handover_policy(policy_ensemble::proj_handover(read_ensemble(escrow)))
 }
-public fun auction_window_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun auction_window_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     auction_window_policy::proj_auction_window_policy(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 public fun credit_shape_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
@@ -883,7 +883,7 @@ public fun price_fn_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, Co
 public fun price_fn_delta_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): u64 {
     price_escalation_policy::proj_price_escalation_delta_mist(policy_ensemble::proj_price_escalation(read_ensemble(escrow)))
 }
-public fun commitment_policy_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+public fun commitment_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     commitment_policy::proj_commitment_policy(&asset_state::proj_commitment_policy(read_core(escrow)))
 }
 

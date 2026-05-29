@@ -8882,7 +8882,7 @@ fun commitment_init_immediate_floor_ms_is_none() {
     let (escrow, cap) = integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
 
     assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
-    assert!(escrow::is_commitment_immediate(&escrow), 1);
+    assert!(escrow::commitment_is_immediate(&escrow), 1);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
@@ -8900,7 +8900,7 @@ fun commitment_init_deferred_floor_ms_is_some_n() {
     );
 
     assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
-    assert!(escrow::is_commitment_deferred(&escrow), 0);
+    assert!(escrow::commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
@@ -8944,7 +8944,7 @@ fun commitment_update_config_does_not_change_policy() {
 
     // Commitment is still Deferred(floor) — update_config cannot change it.
     assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
-    assert!(escrow::is_commitment_deferred(&escrow), 0);
+    assert!(escrow::commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9086,7 +9086,7 @@ fun commitment_extend_immediate_to_deferred() {
         &clk,
     );
 
-    assert!(escrow::is_commitment_deferred(&escrow), 0);
+    assert!(escrow::commitment_is_deferred(&escrow), 0);
     assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
@@ -9844,16 +9844,16 @@ fun policy_kind_views_tag0() {
     let mut sc = setup();
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
 
-    assert_eq!(escrow::rest_price_policy_kind(&escrow),        b"Fixed".to_string());
-    assert_eq!(escrow::tenure_duration_policy_kind(&escrow),   b"Fixed".to_string());
-    assert_eq!(escrow::tenure_extend_policy_kind(&escrow),     b"Single".to_string());
-    assert_eq!(escrow::handover_policy_kind(&escrow),          b"Off".to_string());
-    assert_eq!(escrow::auction_window_policy_kind(&escrow),    b"Off".to_string());
+    assert_eq!(escrow::rest_price_kind(&escrow),        b"Fixed".to_string());
+    assert_eq!(escrow::tenure_duration_kind(&escrow),   b"Fixed".to_string());
+    assert_eq!(escrow::tenure_extend_kind(&escrow),     b"Single".to_string());
+    assert_eq!(escrow::handover_kind(&escrow),          b"Off".to_string());
+    assert_eq!(escrow::auction_window_kind(&escrow),    b"Off".to_string());
     assert_eq!(escrow::credit_shape_kind(&escrow),             b"Linear".to_string());
     assert_eq!(escrow::auction_shape_kind(&escrow),            b"Linear".to_string());
     assert_eq!(escrow::price_fn_kind(&escrow),                 b"FixedDelta".to_string());
     assert_eq!(escrow::price_fn_delta_mist(&escrow),           escrow_corpus::fixed_delta_value_const());
-    assert_eq!(escrow::commitment_policy_kind(&escrow),        b"Immediate".to_string());
+    assert_eq!(escrow::commitment_kind(&escrow),        b"Immediate".to_string());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);

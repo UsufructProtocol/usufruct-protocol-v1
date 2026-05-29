@@ -106,9 +106,9 @@ fun handover_views_match_variants() {
         let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(c, 0, 0, 0, 0));
         let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
-        assert_eq!(escrow::is_handover_off(&escrow),     c == 0);
-        assert_eq!(escrow::is_handover_fixed(&escrow),   c == 1);
-        assert_eq!(escrow::is_handover_full_tenure(&escrow),  c == 2);
+        assert_eq!(escrow::handover_is_off(&escrow),     c == 0);
+        assert_eq!(escrow::handover_is_fixed(&escrow),   c == 1);
+        assert_eq!(escrow::handover_is_full_tenure(&escrow),  c == 2);
 
         // Fixed floor: only present on c=1
         if (c == 1) {
@@ -133,8 +133,8 @@ fun descent_views_match_variants() {
         let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, h, 0));
         let (escrow, cap) = build_escrow(ensemble, &mut sc);
 
-        assert_eq!(escrow::is_auction_window_off(&escrow), h == 0);
-        assert_eq!(escrow::is_auction_window_fixed(&escrow),  h == 1);
+        assert_eq!(escrow::auction_window_is_off(&escrow), h == 0);
+        assert_eq!(escrow::auction_window_is_fixed(&escrow),  h == 1);
 
         // descent_ceiling_ms wraps proj_fixed_ceiling — Some only on Window
         if (h == 1) {
@@ -254,8 +254,8 @@ fun commitment_policy_views_match_variants() {
 
     // Immediate
     let (escrow, cap) = build_escrow_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
-    assert!(escrow::is_commitment_immediate(&escrow));
-    assert!(!escrow::is_commitment_deferred(&escrow));
+    assert!(escrow::commitment_is_immediate(&escrow));
+    assert!(!escrow::commitment_is_deferred(&escrow));
     assert!(escrow::commitment_floor_ms(&escrow).is_none());
     dispose(escrow, cap);
 
@@ -263,8 +263,8 @@ fun commitment_policy_views_match_variants() {
     let deferred_floor = escrow_corpus::retire_deferred_f1_const();
     let commitment = commitment_policy::new_deferred(usufruct::phases::duration(deferred_floor));
     let (escrow, cap) = build_escrow_with_commitment(ensemble, commitment, &mut sc);
-    assert!(!escrow::is_commitment_immediate(&escrow));
-    assert!(escrow::is_commitment_deferred(&escrow));
+    assert!(!escrow::commitment_is_immediate(&escrow));
+    assert!(escrow::commitment_is_deferred(&escrow));
     assert_eq!(escrow::commitment_floor_ms(&escrow).destroy_some(), deferred_floor);
 
     // commitment_remaining_ms — exercise both branches of the now<unlocks
@@ -295,7 +295,7 @@ fun whole_struct_view_getters_return_configured_objects() {
     assert_eq!(escrow::credit_shape(&escrow),  usufruct::curve_shape_policy::new_linear());
     assert_eq!(escrow::auction_shape(&escrow), usufruct::curve_shape_policy::new_linear());
     assert_eq!(
-        escrow::ascending_price_function_state(&escrow),
+        escrow::price_fn(&escrow),
         usufruct::price_escalation_policy::new_fixed_delta(usufruct::monetary::price(escrow_corpus::fixed_delta_value_const())),
     );
 

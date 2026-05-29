@@ -654,16 +654,10 @@ public fun credit_is_capped<Asset: key + store, CoinType>(
     asset_state::proj_credit_is_capped(read_state(escrow))
 }
 
-public fun credit_phase_start_ms<Asset: key + store, CoinType>(
+public fun credit_capped_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_state::proj_credit_phase_start(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
-}
-
-public fun credit_expiry_ms<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_credit_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
+    asset_state::proj_credit_capped_at(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
 public fun handover_settlement<Asset: key + store, CoinType>(

@@ -149,8 +149,7 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::credit_is_accruing(escrow), state_id == STATE_OCCUPIED);
     assert_eq!(escrow::credit_is_capped(escrow),   in_demand);
     assert_eq!(escrow::active_stake(escrow).is_some(),      in_renting);
-    assert_eq!(escrow::credit_phase_start_ms(escrow).is_some(),  in_renting);
-    assert_eq!(escrow::credit_expiry_ms(escrow).is_some(),       in_demand);
+    assert_eq!(escrow::credit_capped_at_ms(escrow).is_some(),       in_demand);
 }
 
 // ─── idle views ───────────────────────────────────────────────────────────────
@@ -210,8 +209,7 @@ fun idle_views_post_integrate() {
     assert!(!escrow::credit_is_accruing(&escrow));
     assert!(!escrow::credit_is_capped(&escrow));
     assert!(escrow::active_stake(&escrow).is_none());
-    assert!(escrow::credit_phase_start_ms(&escrow).is_none());
-    assert!(escrow::credit_expiry_ms(&escrow).is_none());
+    assert!(escrow::credit_capped_at_ms(&escrow).is_none());
 
     // — Pending transitions / config update — none in idle —
     let clk = clock::create_for_testing(sc.ctx());
@@ -263,7 +261,6 @@ fun rented_views_post_rent() {
 
     // — Credit context — accruing in Occupied-like Renting state —
     assert!(escrow::active_stake(&escrow).is_some());
-    assert!(escrow::credit_phase_start_ms(&escrow).is_some());
 
     // — Cap status on the actual tenant cap —
     assert!(escrow::tenant_cap_is_active(&escrow, object::id(&t_cap)));
@@ -491,7 +488,7 @@ fun demand_views_after_handover_bid() {
     //   the handover countdown expiry so accrual freezes there.
     assert!(escrow::credit_is_capped(&escrow));
     assert!(!escrow::credit_is_accruing(&escrow));
-    assert_eq!(escrow::credit_expiry_ms(&escrow).destroy_some(), countdown_expiry);
+    assert_eq!(escrow::credit_capped_at_ms(&escrow).destroy_some(), countdown_expiry);
 
     transfer::public_transfer(t1_cap, TENANT_ADDR);
     transfer::public_transfer(t2_cap, second_tenant);
@@ -889,7 +886,7 @@ fun views_flip_across_handover_countdown_expiry() {
     assert!( escrow::handover_countdown_expiry_ms(&escrow).is_some());
     assert!(!escrow::credit_is_accruing(&escrow));
     assert!( escrow::credit_is_capped(&escrow));
-    assert!( escrow::credit_expiry_ms(&escrow).is_some());
+    assert!( escrow::credit_capped_at_ms(&escrow).is_some());
     assert!( escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!( escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_some());
 
@@ -905,7 +902,7 @@ fun views_flip_across_handover_countdown_expiry() {
     assert!( escrow::handover_countdown_expiry_ms(&escrow).is_none());
     assert!( escrow::credit_is_accruing(&escrow));
     assert!(!escrow::credit_is_capped(&escrow));
-    assert!( escrow::credit_expiry_ms(&escrow).is_none());
+    assert!( escrow::credit_capped_at_ms(&escrow).is_none());
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!( escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_none());
 

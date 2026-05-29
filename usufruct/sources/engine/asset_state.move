@@ -676,16 +676,6 @@ public(package) fun proj_credit_stake<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun proj_credit_phase_start<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Option<Timestamp> {
-    match (s) {
-        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(terms.schedule.phase_start),
-        _ => option::none(),
-    }
-}
-
 public(package) fun proj_credit_is_accruing<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): bool {
@@ -698,7 +688,7 @@ public(package) fun proj_credit_is_capped<Asset: key + store, CoinType>(
     match (s) { AssetState::Renting(RentingState::Demand { .. }) => true, _ => false }
 }
 
-public(package) fun proj_credit_expiry<Asset: key + store, CoinType>(
+public(package) fun proj_credit_capped_at<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<Timestamp> {
     match (s) {

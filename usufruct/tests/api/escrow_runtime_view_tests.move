@@ -293,14 +293,14 @@ fun settlement_views_in_rented_state() {
 
     // tenure_settlement: aborts unless rented; here it succeeds and the
     // (owner + fee) split equals the current stake (no credit consumed yet).
-    let (t_owner, t_fee) = escrow::compute_tenure_settlement(&escrow);
+    let (t_owner, t_fee) = escrow::tenure_settlement(&escrow);
     assert_eq!(t_owner + t_fee, STAKE);
 
     // handover_settlement at a mid-tenancy boundary: remaining + owner + fee
     // partition the current stake, with `remaining` being stake - used_credit.
     let phase_start = escrow::phase_start_ms(&escrow).destroy_some();
     let mid_boundary = phase_start + escrow_corpus::tenure_ceiling_const() / 2;
-    let (h_rem, h_owner, h_fee) = escrow::compute_handover_settlement(&escrow, mid_boundary);
+    let (h_rem, h_owner, h_fee) = escrow::handover_settlement(&escrow, mid_boundary);
     assert_eq!(h_rem + h_owner + h_fee, STAKE);
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
@@ -336,14 +336,14 @@ fun settlement_views_in_demand_state() {
 
     // tenure_settlement in Demand: (owner + fee) partitions the current
     // tenant's stake.
-    let (t_owner, t_fee) = escrow::compute_tenure_settlement(&escrow);
+    let (t_owner, t_fee) = escrow::tenure_settlement(&escrow);
     assert_eq!(t_owner + t_fee, STAKE);
 
     // handover_settlement in Demand: remaining + owner + fee partitions the
     // current tenant's stake at the requested boundary.
     let phase_start = escrow::phase_start_ms(&escrow).destroy_some();
     let boundary    = phase_start + escrow_corpus::tenure_ceiling_const() / 2;
-    let (h_rem, h_owner, h_fee) = escrow::compute_handover_settlement(&escrow, boundary);
+    let (h_rem, h_owner, h_fee) = escrow::handover_settlement(&escrow, boundary);
     assert_eq!(h_rem + h_owner + h_fee, STAKE);
 
     transfer::public_transfer(t_cap1, TENANT_ADDR);

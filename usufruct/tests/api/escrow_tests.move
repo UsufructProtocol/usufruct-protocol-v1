@@ -9700,25 +9700,25 @@ fun claim_asset_aborts_in_descent_with_window_descent() {
     sc.end();
 }
 
-// ── proj_tenure_settlement / compute_tenure_settlement: non-rented abort ─────
+// ── proj_tenure_settlement / tenure_settlement: non-rented abort ─────
 
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
-fun compute_tenure_settlement_aborts_on_idle() {
+fun tenure_settlement_aborts_on_idle() {
     let mut sc = setup();
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
-    let (_, _) = escrow::compute_tenure_settlement(&escrow);
+    let (_, _) = escrow::tenure_settlement(&escrow);
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-// ── proj_current_stake_value / compute_handover_settlement: non-rented abort ─
+// ── proj_current_stake_value / handover_settlement: non-rented abort ─
 
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
-fun compute_handover_settlement_aborts_on_idle() {
+fun handover_settlement_aborts_on_idle() {
     let mut sc = setup();
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
-    let (_, _, _) = escrow::compute_handover_settlement(&escrow, 0);
+    let (_, _, _) = escrow::handover_settlement(&escrow, 0);
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
@@ -9802,21 +9802,21 @@ fun burn_stale_cap_in_retired_succeeds() {
     sc.end();
 }
 
-/// proj_current_stake_value: Retired abort via compute_handover_settlement.
+/// proj_current_stake_value: Retired abort via handover_settlement.
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
-fun compute_handover_settlement_aborts_on_retired() {
+fun handover_settlement_aborts_on_retired() {
     let mut sc = setup();
     let (mut escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     escrow::drive_to_retired_for_testing(&mut escrow);
-    let (_, _, _) = escrow::compute_handover_settlement(&escrow, 0);
+    let (_, _, _) = escrow::handover_settlement(&escrow, 0);
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// proj_current_stake_value: Descent abort via compute_handover_settlement.
+/// proj_current_stake_value: Descent abort via handover_settlement.
 #[test, expected_failure(abort_code = asset_state::ENotRented, location = usufruct::asset_state)]
-fun compute_handover_settlement_aborts_on_descent() {
+fun handover_settlement_aborts_on_descent() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
@@ -9826,7 +9826,7 @@ fun compute_handover_settlement_aborts_on_descent() {
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_descending(&escrow), 0);
-    let (_, _, _) = escrow::compute_handover_settlement(&escrow, 0);
+    let (_, _, _) = escrow::handover_settlement(&escrow, 0);
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);

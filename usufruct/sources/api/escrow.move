@@ -516,7 +516,7 @@ public fun active_tenant_stake_remaining_mist<Asset: key + store, CoinType>(
     now_ms: u64,
 ): Option<u64> {
     if (!asset_state::proj_is_rented(read_state(escrow))) return option::none();
-    let (remaining, _, _) = compute_handover_settlement(escrow, now_ms);
+    let (remaining, _, _) = handover_settlement(escrow, now_ms);
     option::some(remaining)
 }
 
@@ -663,7 +663,7 @@ public fun credit_expiry_ms<Asset: key + store, CoinType>(
     asset_state::proj_credit_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
-public fun compute_handover_settlement<Asset: key + store, CoinType>(
+public fun handover_settlement<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     boundary_ms: u64,
 ): (u64, u64, u64) {
@@ -673,7 +673,7 @@ public fun compute_handover_settlement<Asset: key + store, CoinType>(
     (monetary::stake_mist(remaining), monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
-public fun compute_tenure_settlement<Asset: key + store, CoinType>(
+public fun tenure_settlement<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): (u64, u64) {
     let (owner, fee) = asset_state::proj_tenure_settlement(read_state(escrow));

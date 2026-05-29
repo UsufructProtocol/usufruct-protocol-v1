@@ -518,6 +518,15 @@ public fun active_tenant_time_remaining_ms<Asset: key + store, CoinType>(
     }
 }
 
+public fun active_tenant_stake_remaining_mist<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+    clock:  &Clock,
+): Option<u64> {
+    if (!asset_state::proj_is_rented(read_state(escrow))) return option::none();
+    let (remaining, _, _) = compute_handover_settlement(escrow, phases::timestamp_ms(phases::now(clock)));
+    option::some(remaining)
+}
+
 public fun compute_handover_expiry_at<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     bid_time_ms: u64,

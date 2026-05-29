@@ -10193,8 +10193,10 @@ fun event_pin_handover_completed_all_fields() {
     assert_eq!(asset_state::handover_completed_escrow_id(e),               escrow_id);
     assert_eq!(asset_state::handover_completed_displaced_cap_id(e),        object::id(&cap_t1));
     assert_eq!(asset_state::handover_completed_displaced_tenant_address(e),        OWNER);
-    assert_eq!(asset_state::handover_completed_displaced_phase_start_ms(e),0);
-    assert_eq!(asset_state::handover_completed_new_cap_id(e),              object::id(&cap_t2));
+    assert_eq!(asset_state::handover_completed_displaced_phase_start_ms(e),    0);
+    assert_eq!(asset_state::handover_completed_displaced_ceiling_total_ms(e),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::handover_completed_displaced_handover_total_ms(e), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(asset_state::handover_completed_new_cap_id(e),                  object::id(&cap_t2));
     assert_eq!(asset_state::handover_completed_new_tenant_address(e),         OWNER);
     assert_eq!(asset_state::handover_completed_new_tenant_stake(e),        floor2);
     assert_eq!(asset_state::handover_completed_used_credit(e),             used_credit);

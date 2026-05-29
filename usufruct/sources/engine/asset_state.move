@@ -257,22 +257,24 @@ public struct BidSuperseded has copy, drop {
 }
 
 public struct HandoverCompleted has copy, drop {
-    escrow_id:                ID,
-    displaced_tenant_cap_id:  ID,
-    displaced_tenant_address: address,
-    displaced_phase_start_ms: u64,
-    new_tenant_cap_id:        ID,
-    new_tenant_address:       address,
-    new_tenant_stake:         u64,
-    used_credit:              u64,
-    remain_credit:            u64,
-    owner_share:              u64,
-    protocol_fee:             u64,
-    new_rent_price:           u64,
-    committed_tenures:        u64,
-    ceiling_total_ms:         u64,
-    handover_total_ms:        u64,
-    timestamp_ms:             u64,
+    escrow_id:                    ID,
+    displaced_tenant_cap_id:      ID,
+    displaced_tenant_address:     address,
+    displaced_phase_start_ms:     u64,
+    displaced_ceiling_total_ms:   u64,
+    displaced_handover_total_ms:  u64,
+    new_tenant_cap_id:            ID,
+    new_tenant_address:           address,
+    new_tenant_stake:             u64,
+    used_credit:                  u64,
+    remain_credit:                u64,
+    owner_share:                  u64,
+    protocol_fee:                 u64,
+    new_rent_price:               u64,
+    committed_tenures:            u64,
+    ceiling_total_ms:             u64,
+    handover_total_ms:            u64,
+    timestamp_ms:                 u64,
 }
 
 public struct TenureExpired has copy, drop {
@@ -1338,21 +1340,23 @@ fun do_handover<Asset: key + store, CoinType>(
 
     event::emit(HandoverCompleted {
         escrow_id: escrow_identity::escrow_id(escrow_identity),
-        displaced_tenant_cap_id:  tenant_cap::proj_id(displaced_cap_identity),
-        displaced_tenant_address: displaced_addr,
-        displaced_phase_start_ms: phases::timestamp_ms(schedule.phase_start),
-        new_tenant_cap_id:        tenant_cap::proj_id(new_cap_identity),
-        new_tenant_address:       new_addr,
-        new_tenant_stake:         monetary::stake_mist(new_stake),
-        used_credit:              used_mist,
-        remain_credit:            monetary::stake_mist(remain_credit),
-        owner_share:              used_mist - fee_mist,
-        protocol_fee:             fee_mist,
+        displaced_tenant_cap_id:     tenant_cap::proj_id(displaced_cap_identity),
+        displaced_tenant_address:    displaced_addr,
+        displaced_phase_start_ms:    phases::timestamp_ms(schedule.phase_start),
+        displaced_ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
+        displaced_handover_total_ms: phases::duration_ms(schedule.handover_total),
+        new_tenant_cap_id:           tenant_cap::proj_id(new_cap_identity),
+        new_tenant_address:          new_addr,
+        new_tenant_stake:            monetary::stake_mist(new_stake),
+        used_credit:                 used_mist,
+        remain_credit:               monetary::stake_mist(remain_credit),
+        owner_share:                 used_mist - fee_mist,
+        protocol_fee:                fee_mist,
         new_rent_price,
-        committed_tenures:        tenures::tenures_count(incoming_tenures),
-        ceiling_total_ms:         phases::duration_ms(new_ceiling_total),
-        handover_total_ms:        phases::duration_ms(new_handover_total),
-        timestamp_ms:             boundary_ms,
+        committed_tenures:           tenures::tenures_count(incoming_tenures),
+        ceiling_total_ms:            phases::duration_ms(new_ceiling_total),
+        handover_total_ms:           phases::duration_ms(new_handover_total),
+        timestamp_ms:                boundary_ms,
     });
 
     let new_schedule = TenancySchedule {
@@ -1845,6 +1849,10 @@ public(package) fun handover_completed_displaced_cap_id(e: &HandoverCompleted): 
 public(package) fun handover_completed_displaced_tenant_address(e: &HandoverCompleted): address { e.displaced_tenant_address }
 #[test_only]
 public(package) fun handover_completed_displaced_phase_start_ms(e: &HandoverCompleted): u64  { e.displaced_phase_start_ms }
+#[test_only]
+public(package) fun handover_completed_displaced_ceiling_total_ms(e: &HandoverCompleted): u64  { e.displaced_ceiling_total_ms }
+#[test_only]
+public(package) fun handover_completed_displaced_handover_total_ms(e: &HandoverCompleted): u64 { e.displaced_handover_total_ms }
 #[test_only]
 public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                 { e.new_tenant_cap_id }
 #[test_only]

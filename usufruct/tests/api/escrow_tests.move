@@ -6636,6 +6636,56 @@ fun update_config_behavior_price_function_floor_escalation() {
     sc.end();
 }
 
+/// next_floor_price_mist divides by tenures before escalating: a 3-tenure bid
+/// at 3× the base produces the same next floor as a 1-tenure bid at 1×.
+#[test]
+fun next_floor_price_mist_scales_per_tenure() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0); // FixedDelta: next = bid + FIXED_DELTA
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let base = escrow_corpus::min_rent_price_const();
+
+    let single = escrow::next_floor_price_mist(&escrow, base,     1);
+    let multi  = escrow::next_floor_price_mist(&escrow, base * 3, 3);
+    assert_eq!(single, multi);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// floor_price_mist in Occupied equals next_floor_price_mist(active_stake, tenures):
+/// both apply escalation to the same per-tenure value, confirming the composition
+/// f(now) == next(active_stake, committed_tenures) holds as an invariant.
+#[test]
+fun floor_price_mist_equals_next_floor_price_mist_in_occupied() {
+    let mut sc = setup();
+    // m=1 → TenureExtendPolicy::Multi; d=0 → FixedDelta escalation.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag_with_cycles(0, 0, 0, 0, 0, 1));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let base = escrow_corpus::min_rent_price_const();
+    let cap  = escrow::rent(&mut escrow, mk_payment(base * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
+
+    assert!(escrow::is_occupied(&escrow), 0);
+
+    let stake           = escrow::active_stake(&escrow).destroy_some();
+    let committed       = escrow::active_committed_tenures(&escrow).destroy_some();
+    let from_floor_view = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
+    let from_next_view  = escrow::next_floor_price_mist(&escrow, stake, committed);
+    assert_eq!(from_floor_view, from_next_view);
+
+    transfer::public_transfer(cap, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // Test BD-6: commitment floor observable at integrate and after extend ─────────
 /// commitment_floor_ms reflects the CommitmentPolicy set at integration
 /// and updated by extend_commitment. update_config does not affect it.

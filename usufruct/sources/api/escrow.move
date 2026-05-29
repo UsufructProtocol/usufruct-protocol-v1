@@ -629,7 +629,7 @@ public fun next_floor_price_mist<Asset: key + store, CoinType>(
     total_bid_mist:  u64,
     tenures:         u64,
 ): u64 {
-    let per_tenure_mist = total_bid_mist / tenures;
+    let per_tenure_mist = math::compute_mul_div(total_bid_mist, 1, tenures);
     monetary::price_mist(price_escalation_policy::compute_next_price(policy_ensemble::proj_price_escalation(read_ensemble(escrow)), monetary::price(per_tenure_mist)))
 }
 

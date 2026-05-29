@@ -501,14 +501,13 @@ public fun handover_countdown_expiry_ms<Asset: key + store, CoinType>(
 
 public fun active_tenant_time_remaining_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): Option<u64> {
-    let s      = read_state(escrow);
-    let now_ms = phases::timestamp_ms(phases::now(clock));
+    let s = read_state(escrow);
     if (asset_state::proj_is_occupied(s)) {
-        let ps         = *asset_state::proj_phase_start(s).borrow();
-        let ceiling    = *asset_state::proj_resolved_ceiling(s).borrow();
-        let expiry_ms  = phases::timestamp_ms(phases::compute_boundary_at(ps, ceiling));
+        let ps        = *asset_state::proj_phase_start(s).borrow();
+        let ceiling   = *asset_state::proj_resolved_ceiling(s).borrow();
+        let expiry_ms = phases::timestamp_ms(phases::compute_boundary_at(ps, ceiling));
         option::some(if (expiry_ms > now_ms) { expiry_ms - now_ms } else { 0 })
     } else if (asset_state::proj_is_demand(s)) {
         let expiry_ms = phases::timestamp_ms(*asset_state::proj_handover_expiry(s).borrow());
@@ -520,10 +519,10 @@ public fun active_tenant_time_remaining_ms<Asset: key + store, CoinType>(
 
 public fun active_tenant_stake_remaining_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): Option<u64> {
     if (!asset_state::proj_is_rented(read_state(escrow))) return option::none();
-    let (remaining, _, _) = compute_handover_settlement(escrow, phases::timestamp_ms(phases::now(clock)));
+    let (remaining, _, _) = compute_handover_settlement(escrow, now_ms);
     option::some(remaining)
 }
 

@@ -940,18 +940,18 @@ fun time_remaining_in_occupied_decreases_to_zero() {
     let ceiling   = escrow_corpus::tenure_ceiling_const();
 
     // At phase start: full ceiling remains.
-    let r0 = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let r0 = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert!(r0 <= ceiling, 0);
 
     // At mid-tenure: roughly half remains.
     clock::set_for_testing(&mut clk, expiry_ms - ceiling / 2);
-    let r1 = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let r1 = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert!(r1 <= ceiling / 2 + 1, 1);
     assert!(r1 > 0, 2);
 
     // At expiry: 0 remains (boundary crossed, clamped).
     clock::set_for_testing(&mut clk, expiry_ms);
-    let r2 = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let r2 = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert_eq!(r2, 0);
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
@@ -986,13 +986,13 @@ fun time_remaining_in_demand_uses_handover_countdown() {
     let tenure_expiry    = escrow::tenure_expiry_ms(&escrow).destroy_some();
 
     // Remaining is bounded by countdown, not tenure ceiling.
-    let remaining = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let remaining = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert!(remaining <= countdown_expiry - 5_000, 1);
     assert!(remaining < tenure_expiry - 5_000,     2);
 
     // At countdown expiry: 0 remains.
     clock::set_for_testing(&mut clk, countdown_expiry);
-    let r2 = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let r2 = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert_eq!(r2, 0);
 
     transfer::public_transfer(t1_cap, TENANT_ADDR);
@@ -1010,7 +1010,7 @@ fun time_remaining_is_none_outside_renting() {
     let (escrow, cap) = build_escrow(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    assert!(escrow::active_tenant_time_remaining_ms(&escrow, &clk).is_none(), 0);
+    assert!(escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).is_none(), 0);
 
     clock::destroy_for_testing(clk);
     dispose_escrow(escrow, cap);
@@ -1028,7 +1028,7 @@ fun time_remaining_drops_when_bid_arrives() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let t1_cap  = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let before_bid = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let before_bid = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
 
     let second_tenant: address = @0xA2;
     sc.next_tx(second_tenant);
@@ -1036,7 +1036,7 @@ fun time_remaining_drops_when_bid_arrives() {
     let floor2 = escrow::compute_floor_price(&escrow, &clk);
     let t2_cap  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let after_bid = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let after_bid = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
 
     assert!(after_bid < before_bid, 0);
 
@@ -1058,13 +1058,13 @@ fun time_remaining_becomes_none_after_tenure_expiry() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let t_cap   = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    assert!(escrow::active_tenant_time_remaining_ms(&escrow, &clk).is_some(), 0);
+    assert!(escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).is_some(), 0);
 
     let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, expiry);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
-    assert!(escrow::active_tenant_time_remaining_ms(&escrow, &clk).is_none(), 1);
+    assert!(escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).is_none(), 1);
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
     clock::destroy_for_testing(clk);
@@ -1092,7 +1092,7 @@ fun time_remaining_switches_to_new_tenant_after_handover() {
     let t2_cap  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     assert!(escrow::is_demand(&escrow), 0);
-    let t1_remaining_before_apt = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let t1_remaining_before_apt = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
 
     let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown_expiry);
@@ -1101,7 +1101,7 @@ fun time_remaining_switches_to_new_tenant_after_handover() {
     assert!(escrow::is_occupied(&escrow), 1);
     assert_eq!(escrow::active_tenant_cap_id(&escrow).destroy_some(), object::id(&t2_cap));
 
-    let t2_remaining = escrow::active_tenant_time_remaining_ms(&escrow, &clk).destroy_some();
+    let t2_remaining = escrow::active_tenant_time_remaining_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert_eq!(t2_remaining, escrow_corpus::tenure_ceiling_const());
     assert!(t2_remaining != t1_remaining_before_apt, 2);
 
@@ -1125,12 +1125,12 @@ fun stake_remaining_in_occupied_decreases_over_time() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let t_cap   = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let r0 = escrow::active_tenant_stake_remaining_mist(&escrow, &clk).destroy_some();
+    let r0 = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert_eq!(r0, STAKE);
 
     let expiry_ms = escrow::tenure_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, expiry_ms / 2);
-    let r1 = escrow::active_tenant_stake_remaining_mist(&escrow, &clk).destroy_some();
+    let r1 = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert!(r1 < STAKE, 1);
     assert!(r1 > 0, 2);
 
@@ -1161,10 +1161,10 @@ fun stake_remaining_freezes_when_bid_arrives() {
 
     let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown_expiry + 1);
-    let frozen = escrow::active_tenant_stake_remaining_mist(&escrow, &clk).destroy_some();
+    let frozen = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
 
     clock::set_for_testing(&mut clk, countdown_expiry + 10_000);
-    let still_frozen = escrow::active_tenant_stake_remaining_mist(&escrow, &clk).destroy_some();
+    let still_frozen = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert_eq!(frozen, still_frozen);
 
     transfer::public_transfer(t1_cap, TENANT_ADDR);
@@ -1182,7 +1182,7 @@ fun stake_remaining_is_none_outside_renting() {
     let (escrow, cap) = build_escrow(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    assert!(escrow::active_tenant_stake_remaining_mist(&escrow, &clk).is_none(), 0);
+    assert!(escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).is_none(), 0);
 
     clock::destroy_for_testing(clk);
     dispose_escrow(escrow, cap);
@@ -1200,7 +1200,7 @@ fun stake_remaining_drops_when_bid_arrives() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let t1_cap  = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let before_bid = escrow::active_tenant_stake_remaining_mist(&escrow, &clk).destroy_some();
+    let before_bid = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert_eq!(before_bid, STAKE);
 
     let second_tenant: address = @0xA2;
@@ -1209,7 +1209,7 @@ fun stake_remaining_drops_when_bid_arrives() {
     let floor2 = escrow::compute_floor_price(&escrow, &clk);
     let t2_cap  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    let after_bid = escrow::active_tenant_stake_remaining_mist(&escrow, &clk).destroy_some();
+    let after_bid = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert!(after_bid < before_bid, 0);
 
     transfer::public_transfer(t1_cap, TENANT_ADDR);
@@ -1230,13 +1230,13 @@ fun stake_remaining_becomes_none_after_tenure_expiry() {
     let mut clk = clock::create_for_testing(sc.ctx());
     let t_cap   = escrow::rent(&mut escrow, mk_payment(STAKE, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    assert!(escrow::active_tenant_stake_remaining_mist(&escrow, &clk).is_some(), 0);
+    assert!(escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).is_some(), 0);
 
     let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, expiry);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
-    assert!(escrow::active_tenant_stake_remaining_mist(&escrow, &clk).is_none(), 1);
+    assert!(escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).is_none(), 1);
 
     transfer::public_transfer(t_cap, TENANT_ADDR);
     clock::destroy_for_testing(clk);
@@ -1274,8 +1274,8 @@ fun stake_remaining_in_demand_exceeds_occupied_at_late_time() {
     let tenure_expiry = escrow::tenure_expiry_ms(&escrow_a).destroy_some();
     clock::set_for_testing(&mut clk, tenure_expiry);
 
-    let remaining_occupied = escrow::active_tenant_stake_remaining_mist(&escrow_a, &clk).destroy_some();
-    let remaining_demand   = escrow::active_tenant_stake_remaining_mist(&escrow_b, &clk).destroy_some();
+    let remaining_occupied = escrow::active_tenant_stake_remaining_mist(&escrow_a, clock::timestamp_ms(&clk)).destroy_some();
+    let remaining_demand   = escrow::active_tenant_stake_remaining_mist(&escrow_b, clock::timestamp_ms(&clk)).destroy_some();
 
     assert!(remaining_demand > remaining_occupied, 1);
 
@@ -1309,7 +1309,7 @@ fun stake_remaining_switches_to_new_tenant_after_handover() {
     let t2_cap   = escrow::rent(&mut escrow, mk_payment(t2_stake, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     assert!(escrow::is_demand(&escrow), 0);
-    let t1_remaining_before_apt = escrow::active_tenant_stake_remaining_mist(&escrow, &clk).destroy_some();
+    let t1_remaining_before_apt = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
 
     let countdown_expiry = escrow::handover_countdown_expiry_ms(&escrow).destroy_some();
     clock::set_for_testing(&mut clk, countdown_expiry);
@@ -1318,7 +1318,7 @@ fun stake_remaining_switches_to_new_tenant_after_handover() {
     assert!(escrow::is_occupied(&escrow), 1);
     assert_eq!(escrow::active_tenant_cap_id(&escrow).destroy_some(), object::id(&t2_cap));
 
-    let t2_remaining = escrow::active_tenant_stake_remaining_mist(&escrow, &clk).destroy_some();
+    let t2_remaining = escrow::active_tenant_stake_remaining_mist(&escrow, clock::timestamp_ms(&clk)).destroy_some();
     assert_eq!(t2_remaining, t2_stake);
     assert!(t2_remaining != t1_remaining_before_apt, 2);
 

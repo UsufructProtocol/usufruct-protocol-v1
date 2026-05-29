@@ -752,7 +752,7 @@ public fun price_fn<Asset: key + store, CoinType>(
     *policy_ensemble::proj_price_escalation(read_ensemble(escrow))
 }
 
-public fun tenure_ceiling_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
+public fun tenure_duration_is_fixed<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): bool {
     tenure_duration_policy::proj_is_fixed(policy_ensemble::proj_tenure_duration(read_ensemble(escrow)))
 }
 

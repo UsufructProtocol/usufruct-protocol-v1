@@ -75,7 +75,7 @@ fun tenure_ceiling_views_match_variants() {
     // Fixed (default in corpus)
     let cfg_fixed = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
     let (escrow, cap) = build_escrow(cfg_fixed, &mut sc);
-    assert!(escrow::tenure_ceiling_is_fixed(&escrow));
+    assert!(escrow::tenure_duration_is_fixed(&escrow));
     assert_eq!(escrow::tenure_ceiling_fixed_ms(&escrow), escrow_corpus::tenure_ceiling_const());
     dispose(escrow, cap);
 

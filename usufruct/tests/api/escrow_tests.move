@@ -6686,6 +6686,45 @@ fun floor_price_mist_equals_next_floor_price_mist_in_occupied() {
     sc.end();
 }
 
+/// In Demand, floor_price_mist is driven by the PENDING tenant's stake (T2),
+/// not the active tenant's (T1). The identity holds with pending_stake and
+/// pending_committed_tenures, not active ones.
+#[test]
+fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
+    let mut sc = setup();
+    // c=1 → handover Fixed (enables Demand state); d=0 → FixedDelta.
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let t1_cap = escrow::rent(&mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    sc.next_tx(@0xA2);
+    clock::set_for_testing(&mut clk, 1_000);
+    let floor2  = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
+    let t2_cap  = escrow::rent(&mut escrow, mk_payment(floor2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    assert!(escrow::is_demand(&escrow), 0);
+
+    let pending_stake  = escrow::pending_stake(&escrow).destroy_some();
+    let pending_tenures = escrow::pending_committed_tenures(&escrow).destroy_some();
+    let active_stake   = escrow::active_stake(&escrow).destroy_some();
+
+    let via_floor      = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
+    let via_pending    = escrow::next_floor_price_mist(&escrow, pending_stake, pending_tenures);
+    let via_active     = escrow::next_floor_price_mist(&escrow, active_stake, 1);
+
+    assert_eq!(via_floor, via_pending);
+    assert!(via_floor != via_active, 1);
+
+    transfer::public_transfer(t1_cap, OWNER);
+    transfer::public_transfer(t2_cap, @0xA2);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // Test BD-6: commitment floor observable at integrate and after extend ─────────
 /// commitment_floor_ms reflects the CommitmentPolicy set at integration
 /// and updated by extend_commitment. update_config does not affect it.

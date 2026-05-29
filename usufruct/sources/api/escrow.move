@@ -625,10 +625,12 @@ public fun floor_price_mist<Asset: key + store, CoinType>(
 }
 
 public fun next_floor_price_mist<Asset: key + store, CoinType>(
-    escrow:     &Escrow<Asset, CoinType>,
-    bid_amount: u64,
+    escrow:          &Escrow<Asset, CoinType>,
+    total_bid_mist:  u64,
+    tenures:         u64,
 ): u64 {
-    monetary::price_mist(price_escalation_policy::compute_next_price(policy_ensemble::proj_price_escalation(read_ensemble(escrow)), monetary::price(bid_amount)))
+    let per_tenure_mist = total_bid_mist / tenures;
+    monetary::price_mist(price_escalation_policy::compute_next_price(policy_ensemble::proj_price_escalation(read_ensemble(escrow)), monetary::price(per_tenure_mist)))
 }
 
 public fun last_rent_price_mist<Asset: key + store, CoinType>(

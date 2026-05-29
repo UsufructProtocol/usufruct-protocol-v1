@@ -6619,14 +6619,14 @@ fun update_config_behavior_price_function_floor_escalation() {
     let bid_amount = escrow_corpus::min_rent_price_const(); // 10 SUI
 
     // Before reset: FixedDelta — 10 SUI + 10 SUI = 20 SUI
-    let floor_before = escrow::next_floor_price_mist(&escrow, bid_amount);
+    let floor_before = escrow::next_floor_price_mist(&escrow, bid_amount, 1);
     assert!(floor_before == bid_amount + escrow_corpus::fixed_delta_value_const(), 0);
 
     // Reset to CompoundDelta immediately (Idle state).
     escrow::update_config(&mut escrow, &owner_cap, cfg_compound_delta, &clk, sc.ctx());
 
     // After reset: CompoundDelta — 10 SUI × 1.1 + 1 = 11_000_000_001
-    let floor_after = escrow::next_floor_price_mist(&escrow, bid_amount);
+    let floor_after = escrow::next_floor_price_mist(&escrow, bid_amount, 1);
     assert!(floor_after != floor_before, 1);
     assert!(floor_after == 11_000_000_001, 2);
 

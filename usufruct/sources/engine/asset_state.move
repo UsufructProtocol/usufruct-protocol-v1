@@ -763,10 +763,9 @@ public(package) fun cap_is_stale<Asset: key + store, CoinType>(
 }
 
 public(package) fun compute_next_pending<Asset: key + store, CoinType>(
-    s:     &AssetState<Asset, CoinType>,
-    clock: &Clock,
+    s:   &AssetState<Asset, CoinType>,
+    now: Timestamp,
 ): Option<Timestamp> {
-    let now = phases::now(clock);
     match (s) {
         AssetState::Waiting(WaitingState::Idle { .. } | WaitingState::Retired { .. }) => option::none(),
         AssetState::Waiting(WaitingState::Descent { auction, cycle, .. }) => {

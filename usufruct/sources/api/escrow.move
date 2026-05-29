@@ -603,45 +603,31 @@ public fun tenant_cap_is_stale<Asset: key + store, CoinType>(
 
 public fun has_pending_transition_states<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): bool {
-    asset_state::compute_next_pending(read_state(escrow), clock).is_some()
+    asset_state::compute_next_pending(read_state(escrow), phases::timestamp(now_ms)).is_some()
 }
 
 public fun next_transition_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): Option<u64> {
-    asset_state::compute_next_pending(read_state(escrow), clock)
+    asset_state::compute_next_pending(read_state(escrow), phases::timestamp(now_ms))
         .map!(|t| phases::timestamp_ms(t))
 }
 
 public fun compute_used_credit<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): u64 {
-    monetary::stake_mist(asset_state::compute_used_credit_at(read_state(escrow), read_core(escrow), phases::now(clock)))
-}
-
-public fun compute_used_credit_at_ms<Asset: key + store, CoinType>(
-    escrow:       &Escrow<Asset, CoinType>,
-    timestamp_ms: u64,
-): u64 {
-    monetary::stake_mist(asset_state::compute_used_credit_at(read_state(escrow), read_core(escrow), phases::timestamp(timestamp_ms)))
+    monetary::stake_mist(asset_state::compute_used_credit_at(read_state(escrow), read_core(escrow), phases::timestamp(now_ms)))
 }
 
 public fun compute_floor_price<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-    clock:  &Clock,
+    now_ms: u64,
 ): u64 {
-    monetary::price_mist(asset_state::compute_floor_price_at(read_state(escrow), read_core(escrow), phases::now(clock)))
-}
-
-public fun compute_floor_price_at_ms<Asset: key + store, CoinType>(
-    escrow:       &Escrow<Asset, CoinType>,
-    timestamp_ms: u64,
-): u64 {
-    monetary::price_mist(asset_state::compute_floor_price_at(read_state(escrow), read_core(escrow), phases::timestamp(timestamp_ms)))
+    monetary::price_mist(asset_state::compute_floor_price_at(read_state(escrow), read_core(escrow), phases::timestamp(now_ms)))
 }
 
 public fun compute_next_ascending_floor<Asset: key + store, CoinType>(

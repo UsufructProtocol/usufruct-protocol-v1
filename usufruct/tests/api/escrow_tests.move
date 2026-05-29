@@ -10324,10 +10324,10 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     let clk = clock::create_for_testing(sc.ctx());
 
     assert!(escrow::pending_ensemble(&escrow).is_none(), 0);
-    assert!(escrow::pending_cycle_floor_mist(&escrow).is_none(), 1);
-    assert!(escrow::pending_cycle_ceiling_ms(&escrow).is_none(), 2);
-    assert!(escrow::pending_cycle_handover_ms(&escrow).is_none(), 3);
-    assert!(escrow::pending_cycle_descent_ms(&escrow).is_none(), 4);
+    assert!(escrow::pending_ensemble_floor_price_mist(&escrow).is_none(), 1);
+    assert!(escrow::pending_ensemble_ceiling_ms(&escrow).is_none(), 2);
+    assert!(escrow::pending_ensemble_handover_ms(&escrow).is_none(), 3);
+    assert!(escrow::pending_ensemble_descent_ms(&escrow).is_none(), 4);
 
     escrow::drive_to_rented_for_testing(
         &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
@@ -10346,10 +10346,10 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     assert!(escrow::active_ensemble(&escrow) != new_ensemble, 4); // active still old
 
     // pending_cycle_* resolve the queued ensemble on demand (tag 1,0,0,1,0).
-    assert_eq!(*escrow::pending_cycle_floor_mist(&escrow).borrow(),  escrow_corpus::min_rent_price_const());
-    assert_eq!(*escrow::pending_cycle_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
-    assert_eq!(*escrow::pending_cycle_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
-    assert_eq!(*escrow::pending_cycle_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
+    assert_eq!(*escrow::pending_ensemble_floor_price_mist(&escrow).borrow(),  escrow_corpus::min_rent_price_const());
+    assert_eq!(*escrow::pending_ensemble_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(*escrow::pending_ensemble_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(*escrow::pending_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -10367,18 +10367,18 @@ fun active_cycle_views_resolve_active_ensemble() {
     let floor = escrow_corpus::min_rent_price_const();
 
     // Idle: cycle params live in the tenancy envelope → none until rented.
-    assert!(escrow::active_cycle_floor_mist(&escrow).is_none(), 0);
-    assert!(escrow::active_cycle_ceiling_ms(&escrow).is_none(), 1);
-    assert!(escrow::active_cycle_handover_ms(&escrow).is_none(), 2);
-    assert!(escrow::active_cycle_descent_ms(&escrow).is_none(), 3);
+    assert!(escrow::active_ensemble_floor_price_mist(&escrow).is_none(), 0);
+    assert!(escrow::active_ensemble_ceiling_ms(&escrow).is_none(), 1);
+    assert!(escrow::active_ensemble_handover_ms(&escrow).is_none(), 2);
+    assert!(escrow::active_ensemble_descent_ms(&escrow).is_none(), 3);
 
     sc.next_tx(TENANT_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    assert_eq!(*escrow::active_cycle_floor_mist(&escrow).borrow(),  floor);
-    assert_eq!(*escrow::active_cycle_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
-    assert_eq!(*escrow::active_cycle_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
-    assert_eq!(*escrow::active_cycle_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
+    assert_eq!(*escrow::active_ensemble_floor_price_mist(&escrow).borrow(),  floor);
+    assert_eq!(*escrow::active_ensemble_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(*escrow::active_ensemble_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(*escrow::active_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);

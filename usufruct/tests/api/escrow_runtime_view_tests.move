@@ -15,6 +15,7 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
+    ensemble_commitment_policy,
     retire_commitment_policy,
     policy_ensemble::PolicyEnsemble,
     tenures,
@@ -55,7 +56,7 @@ fun build_escrow(ensemble: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset
     let asset   = mk_demo_asset(sc.ctx());
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(),
-        &fee_ref, &clk, sc.ctx(),
+        ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);

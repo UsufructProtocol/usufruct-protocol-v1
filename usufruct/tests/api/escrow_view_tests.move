@@ -11,6 +11,7 @@ use sui::{
     sui::SUI,
 };
 use usufruct::{
+    ensemble_commitment_policy,
     retire_commitment_policy::{Self, RetireCommitmentPolicy},
     policy_ensemble::PolicyEnsemble,
     escrow::{Self, Escrow},
@@ -51,7 +52,7 @@ fun build_escrow_with_retire_commitment(
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment, &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, commitment, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);

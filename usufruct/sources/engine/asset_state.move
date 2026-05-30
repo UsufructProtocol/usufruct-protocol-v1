@@ -29,6 +29,7 @@ use usufruct::{
     owner_identity,
     owner_cap::{Self, OwnerCap},
     retire_commitment_policy::{Self, RetireCommitmentPolicy},
+    ensemble_commitment_policy::{Self, EnsembleCommitmentPolicy},
     handover_policy,
     math,
     phases::{Self, Timestamp, Duration},
@@ -63,6 +64,8 @@ const ERetireCommitmentNotExtended:   u64 = 17;
 const EReturnedDifferentAsset: u64 = 19;
 const EAlreadyRetiring:        u64 = 20;
 const ETenantCapStale:         u64 = 21;
+const EEnsembleCommitmentFloorNotElapsed: u64 = 22;
+const EEnsembleCommitmentNotExtended:     u64 = 23;
 
 // === Constants ===
 
@@ -110,6 +113,11 @@ public struct RetireCommitmentSlot has copy, drop, store {
     anchor: Timestamp,
 }
 
+public struct EnsembleCommitmentSlot has copy, drop, store {
+    policy: EnsembleCommitmentPolicy,
+    anchor: Timestamp,
+}
+
 public struct OccupiedTerms<phantom CoinType> has store {
     schedule: TenancySchedule,
     active:  TenantSeat<CoinType>,
@@ -127,6 +135,7 @@ public struct EscrowCore<phantom CoinType> has store {
     fee_inbox_identity: FeeInboxIdentity,
     integrated_at:      Timestamp,
     retire_commitment:  RetireCommitmentSlot,
+    ensemble_commitment: EnsembleCommitmentSlot,
     escrow_identity:    EscrowIdentity,
 }
 
@@ -209,6 +218,16 @@ public struct RetireCommitmentExtended has copy, drop {
     commitment_policy:   String,
     commitment_floor_ms: Option<u64>,
     new_unlock_at_ms:       u64,
+    asset_type:          String,
+    coin_type:           String,
+    timestamp_ms:        u64,
+}
+
+public struct EnsembleCommitmentExtended has copy, drop {
+    escrow_id:           ID,
+    commitment_policy:   String,
+    commitment_floor_ms: Option<u64>,
+    new_unlock_at_ms:    u64,
     asset_type:          String,
     coin_type:           String,
     timestamp_ms:        u64,
@@ -395,6 +414,14 @@ public(package) fun proj_retire_commitment_policy<CoinType>(
 public(package) fun proj_retire_commitment_anchor<CoinType>(
     core: &EscrowCore<CoinType>,
 ): Timestamp { core.retire_commitment.anchor }
+
+public(package) fun proj_ensemble_commitment_policy<CoinType>(
+    core: &EscrowCore<CoinType>,
+): EnsembleCommitmentPolicy { core.ensemble_commitment.policy }
+
+public(package) fun proj_ensemble_commitment_anchor<CoinType>(
+    core: &EscrowCore<CoinType>,
+): Timestamp { core.ensemble_commitment.anchor }
 
 public(package) fun proj_owner_balance<CoinType>(
     core: &EscrowCore<CoinType>,
@@ -811,13 +838,14 @@ public(package) fun renting_into_state<Asset: key + store, CoinType>(
 }
 
 public(package) fun execute_integrate<Asset: key + store, CoinType>(
-    asset:              Asset,
-    ensemble:           PolicyEnsemble,
-    retire_commitment:  RetireCommitmentPolicy,
-    fee_inbox_identity: FeeInboxIdentity,
-    escrow_identity:    EscrowIdentity,
-    integrated_at:      Timestamp,
-    ctx:                &mut TxContext,
+    asset:               Asset,
+    ensemble:            PolicyEnsemble,
+    retire_commitment:   RetireCommitmentPolicy,
+    ensemble_commitment: EnsembleCommitmentPolicy,
+    fee_inbox_identity:  FeeInboxIdentity,
+    escrow_identity:     EscrowIdentity,
+    integrated_at:       Timestamp,
+    ctx:                 &mut TxContext,
 ): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, OwnerCap) {
     let owner_addr         = ctx.sender();
     let owner_cap          = owner_cap::new(escrow_identity, owner_addr, ctx);
@@ -832,6 +860,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
         fee_inbox_identity,
         integrated_at,
         retire_commitment:  RetireCommitmentSlot { policy: retire_commitment, anchor: integrated_at },
+        ensemble_commitment: EnsembleCommitmentSlot { policy: ensemble_commitment, anchor: integrated_at },
         escrow_identity,
     };
     let state = AssetState::Waiting(WaitingState::Idle {
@@ -954,6 +983,7 @@ public(package) fun execute_update_ensemble<Asset: key + store, CoinType>(
     ctx:          &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
+    assert_ensemble_commitment_elapsed(&core, phases::now(clock));
     let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     let new_s = match (s) {
@@ -1219,6 +1249,38 @@ public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinTyp
     core
 }
 
+public(package) fun execute_extend_ensemble_commitment<Asset: key + store, CoinType>(
+    mut core:   EscrowCore<CoinType>,
+    owner_cap:  &OwnerCap,
+    new_policy: EnsembleCommitmentPolicy,
+    clock:      &Clock,
+): EscrowCore<CoinType> {
+    assert_owner_cap_binds(owner_cap, &core);
+    let now            = phases::now(clock);
+    let new_duration   = ensemble_commitment_policy::compute_duration(&new_policy);
+    assert!(phases::duration_ms(new_duration) > 0, EEnsembleCommitmentNotExtended);
+    let old_expiry = ensemble_commitment_policy::compute_unlock_at(
+        ensemble_commitment_policy::compute_duration(&core.ensemble_commitment.policy),
+        core.ensemble_commitment.anchor,
+    );
+    let new_expiry = ensemble_commitment_policy::compute_unlock_at(
+        new_duration,
+        old_expiry,
+    );
+    event::emit(EnsembleCommitmentExtended {
+        escrow_id:           escrow_identity::escrow_id(core.escrow_identity),
+        commitment_policy:   ensemble_commitment_policy::proj_ensemble_commitment_policy(&new_policy),
+        commitment_floor_ms: ensemble_commitment_policy::proj_ensemble_commitment_floor_ms(&new_policy),
+        new_unlock_at_ms:    phases::timestamp_ms(new_expiry),
+        asset_type:          string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:           string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
+        timestamp_ms:        phases::timestamp_ms(now),
+    });
+    core.ensemble_commitment.policy = new_policy;
+    core.ensemble_commitment.anchor = old_expiry;
+    core
+}
+
 public(package) fun execute_claim<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
@@ -1293,6 +1355,17 @@ fun assert_retire_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now:
             now,
         ).proj_is_crossed(),
         ERetireCommitmentFloorNotElapsed,
+    )
+}
+
+fun assert_ensemble_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {
+    assert!(
+        ensemble_commitment_policy::compute_unlock_boundary(
+            ensemble_commitment_policy::compute_duration(&core.ensemble_commitment.policy),
+            core.ensemble_commitment.anchor,
+            now,
+        ).proj_is_crossed(),
+        EEnsembleCommitmentFloorNotElapsed,
     )
 }
 
@@ -2301,6 +2374,21 @@ public(package) fun retire_commitment_extended_asset_type(e: &RetireCommitmentEx
 public(package) fun retire_commitment_extended_coin_type(e: &RetireCommitmentExtended): String   { e.coin_type }
 #[test_only]
 public(package) fun retire_commitment_extended_timestamp_ms(e: &RetireCommitmentExtended): u64   { e.timestamp_ms }
+
+#[test_only]
+public(package) fun ensemble_commitment_extended_escrow_id(e: &EnsembleCommitmentExtended): ID       { e.escrow_id }
+#[test_only]
+public(package) fun ensemble_commitment_extended_policy(e: &EnsembleCommitmentExtended): String { e.commitment_policy }
+#[test_only]
+public(package) fun ensemble_commitment_extended_floor_ms(e: &EnsembleCommitmentExtended): Option<u64> { e.commitment_floor_ms }
+#[test_only]
+public(package) fun ensemble_commitment_extended_new_unlock_at_ms(e: &EnsembleCommitmentExtended): u64  { e.new_unlock_at_ms }
+#[test_only]
+public(package) fun ensemble_commitment_extended_asset_type(e: &EnsembleCommitmentExtended): String  { e.asset_type }
+#[test_only]
+public(package) fun ensemble_commitment_extended_coin_type(e: &EnsembleCommitmentExtended): String   { e.coin_type }
+#[test_only]
+public(package) fun ensemble_commitment_extended_timestamp_ms(e: &EnsembleCommitmentExtended): u64   { e.timestamp_ms }
 
 #[test_only]
 public(package) fun asset_integrated_escrow_id(e: &AssetIntegrated): ID          { e.escrow_id }

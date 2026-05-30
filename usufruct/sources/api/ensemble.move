@@ -12,6 +12,7 @@ use usufruct::{
     tenures::{Self, Tenures},
     auction_window_policy::{Self, AuctionWindowPolicy},
     retire_commitment_policy::{Self, RetireCommitmentPolicy},
+    ensemble_commitment_policy::{Self, EnsembleCommitmentPolicy},
     curve_shape_policy::{Self, CurveShapePolicy},
     handover_policy::{Self, HandoverPolicy},
     policy_ensemble::{Self, PolicyEnsemble},
@@ -57,6 +58,14 @@ public fun new_retire_commitment_immediate(): RetireCommitmentPolicy { retire_co
 
 public fun new_retire_commitment_deferred(floor: Duration): RetireCommitmentPolicy {
     retire_commitment_policy::new_deferred(floor)
+}
+
+// --- EnsembleCommitmentPolicy ---
+
+public fun new_ensemble_commitment_immediate(): EnsembleCommitmentPolicy { ensemble_commitment_policy::new_immediate() }
+
+public fun new_ensemble_commitment_deferred(floor: Duration): EnsembleCommitmentPolicy {
+    ensemble_commitment_policy::new_deferred(floor)
 }
 
 // --- CurveShapePolicy ---

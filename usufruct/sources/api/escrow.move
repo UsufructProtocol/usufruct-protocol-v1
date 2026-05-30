@@ -29,6 +29,7 @@ use usufruct::{
     escrow_identity,
     protocol_fee_ref::{Self, ProtocolFeeRef},
     retire_commitment_policy::{Self, RetireCommitmentPolicy},
+    ensemble_commitment_policy::{Self, EnsembleCommitmentPolicy},
     refund_address::RefundAddress,
     tenant_cap::{Self, TenantCap},
 };
@@ -56,16 +57,17 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 // === Public Functions ===
 
 public fun integrate<Asset: key + store, CoinType>(
-    asset:             Asset,
-    ensemble:          PolicyEnsemble,
-    retire_commitment: RetireCommitmentPolicy,
-    fee_ref:           &ProtocolFeeRef,
+    asset:               Asset,
+    ensemble:            PolicyEnsemble,
+    retire_commitment:   RetireCommitmentPolicy,
+    ensemble_commitment: EnsembleCommitmentPolicy,
+    fee_ref:             &ProtocolFeeRef,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): OwnerCap {
     let uid             = object::new(ctx);
     let (core, state, owner_cap) = asset_state::execute_integrate<Asset, CoinType>(
-        asset, ensemble, retire_commitment,
+        asset, ensemble, retire_commitment, ensemble_commitment,
         protocol_fee_ref::proj_inbox_identity(fee_ref),
         escrow_identity::new(object::uid_to_inner(&uid)),
         phases::now(clock),
@@ -128,6 +130,17 @@ public fun extend_retire_commitment<Asset: key + store, CoinType>(
 ) {
     let core     = take_core(escrow);
     let new_core = asset_state::execute_extend_retire_commitment<Asset, CoinType>(core, owner_cap, new_policy, clock);
+    put_core(escrow, new_core);
+}
+
+public fun extend_ensemble_commitment<Asset: key + store, CoinType>(
+    escrow:     &mut Escrow<Asset, CoinType>,
+    owner_cap:  &OwnerCap,
+    new_policy: EnsembleCommitmentPolicy,
+    clock:      &Clock,
+) {
+    let core     = take_core(escrow);
+    let new_core = asset_state::execute_extend_ensemble_commitment<Asset, CoinType>(core, owner_cap, new_policy, clock);
     put_core(escrow, new_core);
 }
 
@@ -885,6 +898,50 @@ public fun price_fn_delta_mist<Asset: key + store, CoinType>(escrow: &Escrow<Ass
 }
 public fun retire_commitment_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
     retire_commitment_policy::proj_retire_commitment_policy(&asset_state::proj_retire_commitment_policy(read_core(escrow)))
+}
+
+public fun ensemble_commitment_is_immediate<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): bool {
+    ensemble_commitment_policy::proj_is_immediate(&asset_state::proj_ensemble_commitment_policy(read_core(escrow)))
+}
+
+public fun ensemble_commitment_is_deferred<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): bool {
+    ensemble_commitment_policy::proj_is_deferred(&asset_state::proj_ensemble_commitment_policy(read_core(escrow)))
+}
+
+public fun ensemble_commitment_unlocks_at_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): u64 {
+    let c        = read_core(escrow);
+    let resolved = ensemble_commitment_policy::compute_duration(&asset_state::proj_ensemble_commitment_policy(c));
+    phases::timestamp_ms(ensemble_commitment_policy::compute_unlock_at(resolved, asset_state::proj_ensemble_commitment_anchor(c)))
+}
+
+public fun ensemble_commitment_anchor_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): u64 {
+    phases::timestamp_ms(asset_state::proj_ensemble_commitment_anchor(read_core(escrow)))
+}
+
+public fun ensemble_commitment_remaining_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+    now_ms: u64,
+): u64 {
+    let unlocks = ensemble_commitment_unlocks_at_ms(escrow);
+    if (now_ms >= unlocks) 0 else unlocks - now_ms
+}
+
+public fun ensemble_commitment_floor_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    ensemble_commitment_policy::proj_floor_ms(&asset_state::proj_ensemble_commitment_policy(read_core(escrow))).map!(|v| phases::duration_ms(v))
+}
+
+public fun ensemble_commitment_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    ensemble_commitment_policy::proj_ensemble_commitment_policy(&asset_state::proj_ensemble_commitment_policy(read_core(escrow)))
 }
 
 // === Admin Functions ===

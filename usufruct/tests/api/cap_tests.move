@@ -14,6 +14,7 @@ use sui::{
 };
 use usufruct::{
     cap,
+    ensemble_commitment_policy,
     retire_commitment_policy,
     escrow::{Self, Escrow},
     escrow_corpus,
@@ -60,7 +61,7 @@ fun ca1_owner_cap_escrow_id_matches_internal_projector() {
     let asset     = mk_demo_asset(sc.ctx());
 
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
 
     assert_eq!(cap::owner_cap_escrow_id(&cap), owner_cap::proj_escrow_id(&cap));
@@ -83,7 +84,7 @@ fun ca2_owner_cap_escrow_id_matches_escrow_object() {
     let asset     = mk_demo_asset(sc.ctx());
 
     let cap       = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = cap::owner_cap_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
@@ -112,7 +113,7 @@ fun ct1_tenant_cap_escrow_id_matches_escrow() {
     let asset     = mk_demo_asset(sc.ctx());
 
     let owner_cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
     test_scenario::return_immutable(fee_ref);
@@ -150,7 +151,7 @@ fun ct2_owner_and_tenant_caps_share_escrow_id() {
     let asset     = mk_demo_asset(sc.ctx());
 
     let owner_cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = cap::owner_cap_escrow_id(&owner_cap);
     test_scenario::return_immutable(fee_ref);
@@ -191,14 +192,14 @@ fun ct3_two_escrows_produce_distinct_cap_ids() {
     let clk1  = clock::create_for_testing(sc.ctx());
     let asset1 = mk_demo_asset(sc.ctx());
     let cap1   = escrow::integrate<DemoAsset, SUI>(
-        asset1, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk1, sc.ctx(),
+        asset1, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk1, sc.ctx(),
     );
     clock::destroy_for_testing(clk1);
 
     let clk2  = clock::create_for_testing(sc.ctx());
     let asset2 = mk_demo_asset(sc.ctx());
     let cap2   = escrow::integrate<DemoAsset, SUI>(
-        asset2, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk2, sc.ctx(),
+        asset2, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk2, sc.ctx(),
     );
     clock::destroy_for_testing(clk2);
 

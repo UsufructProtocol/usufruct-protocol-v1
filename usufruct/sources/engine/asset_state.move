@@ -360,7 +360,7 @@ public struct PendingTenantRefundAddressUpdated has copy, drop {
 
 // === View Functions ===
 
-public(package) fun proj_config<CoinType>(
+public(package) fun proj_ensemble<CoinType>(
     core: &EscrowCore<CoinType>,
 ): &PolicyEnsemble { &core.ensemble.active }
 
@@ -373,7 +373,7 @@ public(package) fun proj_integrated_at<CoinType>(
     core: &EscrowCore<CoinType>,
 ): Timestamp { core.integrated_at }
 
-public(package) fun proj_pending_config<CoinType>(
+public(package) fun proj_pending_ensemble<CoinType>(
     core: &EscrowCore<CoinType>,
 ): Option<PolicyEnsemble> { core.ensemble.pending }
 
@@ -945,7 +945,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     (new_s, core)
 }
 
-public(package) fun execute_update_config<Asset: key + store, CoinType>(
+public(package) fun execute_update_ensemble<Asset: key + store, CoinType>(
     s:            AssetState<Asset, CoinType>,
     core:         EscrowCore<CoinType>,
     owner_cap:    &OwnerCap,

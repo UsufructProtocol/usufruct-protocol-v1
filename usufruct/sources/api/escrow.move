@@ -131,7 +131,7 @@ public fun extend_retire_commitment<Asset: key + store, CoinType>(
     put_core(escrow, new_core);
 }
 
-public fun update_config<Asset: key + store, CoinType>(
+public fun update_ensemble<Asset: key + store, CoinType>(
     escrow:       &mut Escrow<Asset, CoinType>,
     owner_cap:    &OwnerCap,
     new_ensemble: PolicyEnsemble,
@@ -140,7 +140,7 @@ public fun update_config<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_update_config(state, core, owner_cap, new_ensemble, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_update_ensemble(state, core, owner_cap, new_ensemble, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
@@ -695,16 +695,16 @@ public fun fee_inbox_id<Asset: key + store, CoinType>(
     asset_state::proj_fee_inbox_id(read_core(escrow))
 }
 
-public fun has_pending_config_update<Asset: key + store, CoinType>(
+public fun has_pending_ensemble_update<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    asset_state::proj_pending_config(read_core(escrow)).is_some()
+    asset_state::proj_pending_ensemble(read_core(escrow)).is_some()
 }
 
 public fun pending_ensemble<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<PolicyEnsemble> {
-    asset_state::proj_pending_config(read_core(escrow))
+    asset_state::proj_pending_ensemble(read_core(escrow))
 }
 
 public fun protocol_fee_bps(): u64 { asset_state::protocol_fee_bps() }
@@ -936,7 +936,7 @@ fun read_core<Asset: key + store, CoinType>(
 fun read_ensemble<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): &PolicyEnsemble {
-    asset_state::proj_config(read_core(escrow))
+    asset_state::proj_ensemble(read_core(escrow))
 }
 
 // === Test Functions ===

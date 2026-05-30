@@ -217,7 +217,7 @@ fun idle_views_post_integrate() {
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!(escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_none());
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
-    assert!(!escrow::has_pending_config_update(&escrow));
+    assert!(!escrow::has_pending_ensemble_update(&escrow));
     clock::destroy_for_testing(clk);
 
     // — Cap status with an unknown ID — Stale in non-Renting state —

@@ -1218,12 +1218,14 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
 }
 
 public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinType>(
+    s:          &AssetState<Asset, CoinType>,
     mut core:   EscrowCore<CoinType>,
     owner_cap:  &OwnerCap,
     new_policy: RetireCommitmentPolicy,
     clock:      &Clock,
 ): EscrowCore<CoinType> {
     assert_owner_cap_binds(owner_cap, &core);
+    assert_not_retired(s);
     let now            = phases::now(clock);
     let new_duration   = retire_commitment_policy::compute_duration(&new_policy);
     assert!(phases::duration_ms(new_duration) > 0, ERetireCommitmentNotExtended);
@@ -1250,12 +1252,14 @@ public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinTyp
 }
 
 public(package) fun execute_extend_ensemble_commitment<Asset: key + store, CoinType>(
+    s:          &AssetState<Asset, CoinType>,
     mut core:   EscrowCore<CoinType>,
     owner_cap:  &OwnerCap,
     new_policy: EnsembleCommitmentPolicy,
     clock:      &Clock,
 ): EscrowCore<CoinType> {
     assert_owner_cap_binds(owner_cap, &core);
+    assert_not_retired(s);
     let now            = phases::now(clock);
     let new_duration   = ensemble_commitment_policy::compute_duration(&new_policy);
     assert!(phases::duration_ms(new_duration) > 0, EEnsembleCommitmentNotExtended);
@@ -1345,6 +1349,16 @@ fun assert_tenant_cap_binds<CoinType>(cap: &TenantCap, core: &EscrowCore<CoinTyp
 
 fun tenant_addr<C>(seat: &TenantSeat<C>): address {
     refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(seat)))
+}
+
+fun assert_not_retired<Asset: key + store, CoinType>(s: &AssetState<Asset, CoinType>) {
+    match (s) {
+        AssetState::Waiting(WaitingState::Retired { .. })  => abort EAlreadyRetired,
+        AssetState::Waiting(WaitingState::Idle { .. })     => {},
+        AssetState::Waiting(WaitingState::Descent { .. })  => {},
+        AssetState::Renting(RentingState::Occupied { .. }) => {},
+        AssetState::Renting(RentingState::Demand { .. })   => {},
+    }
 }
 
 fun assert_retire_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {

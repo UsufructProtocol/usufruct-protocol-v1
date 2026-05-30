@@ -129,7 +129,7 @@ public fun extend_retire_commitment<Asset: key + store, CoinType>(
     clock:      &Clock,
 ) {
     let core     = take_core(escrow);
-    let new_core = asset_state::execute_extend_retire_commitment<Asset, CoinType>(core, owner_cap, new_policy, clock);
+    let new_core = asset_state::execute_extend_retire_commitment<Asset, CoinType>(read_state(escrow), core, owner_cap, new_policy, clock);
     put_core(escrow, new_core);
 }
 
@@ -140,7 +140,7 @@ public fun extend_ensemble_commitment<Asset: key + store, CoinType>(
     clock:      &Clock,
 ) {
     let core     = take_core(escrow);
-    let new_core = asset_state::execute_extend_ensemble_commitment<Asset, CoinType>(core, owner_cap, new_policy, clock);
+    let new_core = asset_state::execute_extend_ensemble_commitment<Asset, CoinType>(read_state(escrow), core, owner_cap, new_policy, clock);
     put_core(escrow, new_core);
 }
 

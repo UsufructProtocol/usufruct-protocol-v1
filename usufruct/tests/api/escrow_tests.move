@@ -6412,6 +6412,45 @@ fun update_ensemble_on_retired_aborts() {
     sc.end();
 }
 
+// Test 9b: extend_retire_commitment on Retired aborts (terminal is absorbing) ─────
+#[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
+fun extend_retire_commitment_on_retired_aborts() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_retired_for_testing(&mut escrow);
+    assert!(escrow::is_retired(&escrow), 0);
+
+    // A valid (non-zero) policy: the abort is the Retired guard, not the duration check.
+    escrow::extend_retire_commitment(
+        &mut escrow, &owner_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// Test 9c: extend_ensemble_commitment on Retired aborts (terminal is absorbing) ───
+#[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
+fun extend_ensemble_commitment_on_retired_aborts() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_retired_for_testing(&mut escrow);
+    assert!(escrow::is_retired(&escrow), 0);
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(1_000)), &clk);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // Test 10: update_ensemble on retiring (flag set) aborts ────────────────────────
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
 fun update_ensemble_on_retiring_aborts() {

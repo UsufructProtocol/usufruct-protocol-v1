@@ -2231,50 +2231,6 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
 }
 
 #[test_only]
-public(package) fun proj_resolved_descent_for_testing<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Duration {
-    match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.descent,
-        AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) => cycle.descent,
-        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0xDEADC0DE,
-    }
-}
-
-#[test_only]
-public(package) fun proj_resolved_floor_for_testing<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Price {
-    match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.floor,
-        AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) => cycle.floor,
-        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0xDEADC0DE,
-    }
-}
-
-#[test_only]
-public(package) fun proj_resolved_ceiling_for_testing<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Duration {
-    match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.ceiling,
-        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) => terms.schedule.ceiling_total,
-        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0xDEADC0DE,
-    }
-}
-
-#[test_only]
-public(package) fun proj_resolved_handover_for_testing<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Duration {
-    match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.handover,
-        AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) => terms.schedule.handover_total,
-        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0xDEADC0DE,
-    }
-}
-
-#[test_only]
 public(package) fun rent_started_escrow_id(e: &RentStarted): ID                 { e.escrow_id }
 #[test_only]
 public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID              { e.tenant_cap_id }

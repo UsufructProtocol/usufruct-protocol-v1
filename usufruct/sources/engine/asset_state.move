@@ -852,7 +852,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     let owner_cap_identity = owner_cap::identity(&owner_cap);
     let asset_id           = object::id(&asset);
     let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
-    policy_ensemble::emit_registration(&ensemble, escrow_identity);
+    policy_ensemble::emit_registration(&ensemble, escrow_identity, integrated_at);
     let cycle = resolve_and_emit_cycle_params(&ensemble, raw_escrow_id, phases::timestamp_ms(integrated_at));
     let core = EscrowCore {
         owner:              owner_seat::new<CoinType>(owner_cap_identity),
@@ -989,26 +989,26 @@ public(package) fun execute_update_ensemble<Asset: key + store, CoinType>(
     let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, cycle: _ }) => {
-            policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
+            policy_ensemble::emit_ensemble_updated(&new_ensemble, core.escrow_identity, phases::now(clock));
             core.ensemble.active  = new_ensemble;
             core.ensemble.pending = option::none();
             let cycle = resolve_and_emit_cycle_params(&core.ensemble.active, raw_escrow_id, phases::timestamp_ms(phases::now(clock)));
             AssetState::Waiting(WaitingState::Idle { asset, cycle })
         },
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
-            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, raw_escrow_id);
+            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, core.escrow_identity, phases::now(clock));
             core.ensemble.pending = option::some(new_ensemble);
             AssetState::Waiting(WaitingState::Descent { asset, auction, cycle })
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
-            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, raw_escrow_id);
+            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, core.escrow_identity, phases::now(clock));
             core.ensemble.pending = option::some(new_ensemble);
             AssetState::Renting(RentingState::Occupied { asset, terms, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             assert!(!retire_condition_is_retiring(&terms.retire), ERetireAlreadyScheduled);
-            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, raw_escrow_id);
+            policy_ensemble::emit_ensemble_update_scheduled(&new_ensemble, core.escrow_identity, phases::now(clock));
             core.ensemble.pending = option::some(new_ensemble);
             AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle })
         },
@@ -1790,7 +1790,7 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
     event::emit(AuctionExpired { escrow_id: raw_escrow_id, phase_start_ms: phases::timestamp_ms(auction.phase_start), last_acq_price: monetary::price_mist(auction.last_acq_price), asset_type, coin_type, timestamp_ms: phases::timestamp_ms(boundary) });
     let cycle = if (ensemble.pending.is_some()) {
         let new_ensemble = ensemble.pending.extract();
-        policy_ensemble::emit_ensemble_updated(&new_ensemble, raw_escrow_id);
+        policy_ensemble::emit_ensemble_updated(&new_ensemble, escrow_identity, boundary);
         ensemble.active = new_ensemble;
         resolve_and_emit_cycle_params(&ensemble.active, raw_escrow_id, phases::timestamp_ms(boundary))
     } else {

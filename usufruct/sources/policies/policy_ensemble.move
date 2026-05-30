@@ -12,6 +12,7 @@ use usufruct::{
     curve_shape_policy::{Self, CurveShapePolicy},
     escrow_identity::{Self, EscrowIdentity},
     handover_policy::{Self, HandoverPolicy},
+    phases::{Self, Timestamp},
     price_escalation_policy::{Self, PriceEscalationPolicy},
     rest_price_policy::{Self, RestPricePolicy},
     tenure_duration_policy::{Self, TenureDurationPolicy},
@@ -41,6 +42,7 @@ public struct PolicyEnsemble has copy, drop, store {
 
 public struct PolicyEnsembleRegistered has copy, drop {
     escrow_id:                 ID,
+    timestamp_ms:              u64,
     rest_price_policy:         String,
     rest_price:                u64,
     tenure_duration_policy:    String,
@@ -67,6 +69,7 @@ public struct PolicyEnsembleRegistered has copy, drop {
 
 public struct EnsembleUpdated has copy, drop {
     escrow_id:                 ID,
+    timestamp_ms:              u64,
     rest_price_policy:         String,
     rest_price:                u64,
     tenure_duration_policy:    String,
@@ -93,6 +96,7 @@ public struct EnsembleUpdated has copy, drop {
 
 public struct EnsembleUpdateScheduled has copy, drop {
     escrow_id:                 ID,
+    timestamp_ms:              u64,
     rest_price_policy:         String,
     rest_price:                u64,
     tenure_duration_policy:    String,
@@ -162,7 +166,7 @@ public(package) fun new_ensemble(
     }
 }
 
-public(package) fun emit_registration(ensemble: &PolicyEnsemble, escrow_identity: EscrowIdentity) {
+public(package) fun emit_registration(ensemble: &PolicyEnsemble, escrow_identity: EscrowIdentity, timestamp: Timestamp) {
     let rp  = proj_rest_price(ensemble);
     let td  = proj_tenure_duration(ensemble);
     let te  = proj_tenure_extend(ensemble);
@@ -173,6 +177,7 @@ public(package) fun emit_registration(ensemble: &PolicyEnsemble, escrow_identity
     let pe  = proj_price_escalation(ensemble);
     event::emit(PolicyEnsembleRegistered {
         escrow_id:                 escrow_identity::escrow_id(escrow_identity),
+        timestamp_ms:              phases::timestamp_ms(timestamp),
         rest_price_policy:         rest_price_policy::proj_rest_price_policy(rp),
         rest_price:                rest_price_policy::proj_rest_price_mist(rp),
         tenure_duration_policy:    tenure_duration_policy::proj_tenure_duration_policy(td),
@@ -198,7 +203,7 @@ public(package) fun emit_registration(ensemble: &PolicyEnsemble, escrow_identity
     });
 }
 
-public(package) fun emit_ensemble_updated(ensemble: &PolicyEnsemble, escrow_id: ID) {
+public(package) fun emit_ensemble_updated(ensemble: &PolicyEnsemble, escrow_identity: EscrowIdentity, timestamp: Timestamp) {
     let rp  = proj_rest_price(ensemble);
     let td  = proj_tenure_duration(ensemble);
     let te  = proj_tenure_extend(ensemble);
@@ -208,7 +213,8 @@ public(package) fun emit_ensemble_updated(ensemble: &PolicyEnsemble, escrow_id: 
     let as_ = proj_auction_shape(ensemble);
     let pe  = proj_price_escalation(ensemble);
     event::emit(EnsembleUpdated {
-        escrow_id,
+        escrow_id:                 escrow_identity::escrow_id(escrow_identity),
+        timestamp_ms:              phases::timestamp_ms(timestamp),
         rest_price_policy:         rest_price_policy::proj_rest_price_policy(rp),
         rest_price:                rest_price_policy::proj_rest_price_mist(rp),
         tenure_duration_policy:    tenure_duration_policy::proj_tenure_duration_policy(td),
@@ -234,7 +240,7 @@ public(package) fun emit_ensemble_updated(ensemble: &PolicyEnsemble, escrow_id: 
     });
 }
 
-public(package) fun emit_ensemble_update_scheduled(ensemble: &PolicyEnsemble, escrow_id: ID) {
+public(package) fun emit_ensemble_update_scheduled(ensemble: &PolicyEnsemble, escrow_identity: EscrowIdentity, timestamp: Timestamp) {
     let rp  = proj_rest_price(ensemble);
     let td  = proj_tenure_duration(ensemble);
     let te  = proj_tenure_extend(ensemble);
@@ -244,7 +250,8 @@ public(package) fun emit_ensemble_update_scheduled(ensemble: &PolicyEnsemble, es
     let as_ = proj_auction_shape(ensemble);
     let pe  = proj_price_escalation(ensemble);
     event::emit(EnsembleUpdateScheduled {
-        escrow_id,
+        escrow_id:                 escrow_identity::escrow_id(escrow_identity),
+        timestamp_ms:              phases::timestamp_ms(timestamp),
         rest_price_policy:         rest_price_policy::proj_rest_price_policy(rp),
         rest_price:                rest_price_policy::proj_rest_price_mist(rp),
         tenure_duration_policy:    tenure_duration_policy::proj_tenure_duration_policy(td),
@@ -420,3 +427,10 @@ public fun ensemble_update_scheduled_price_escalation_policy(e: &EnsembleUpdateS
 public fun ensemble_update_scheduled_price_escalation_delta(e: &EnsembleUpdateScheduled): u64        { e.price_escalation_delta }
 #[test_only]
 public fun ensemble_update_scheduled_price_escalation_bps(e: &EnsembleUpdateScheduled): Option<u64> { e.price_escalation_bps }
+
+#[test_only]
+public fun registered_timestamp_ms(e: &PolicyEnsembleRegistered): u64 { e.timestamp_ms }
+#[test_only]
+public fun ensemble_updated_timestamp_ms(e: &EnsembleUpdated): u64 { e.timestamp_ms }
+#[test_only]
+public fun ensemble_update_scheduled_timestamp_ms(e: &EnsembleUpdateScheduled): u64 { e.timestamp_ms }

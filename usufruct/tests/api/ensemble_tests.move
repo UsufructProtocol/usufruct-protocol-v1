@@ -12,7 +12,8 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    commitment_policy,
+    ensemble_commitment_policy,
+    retire_commitment_policy,
     ensemble,
     math,
     escrow::{Self, Escrow},
@@ -47,7 +48,7 @@ fun v1_duration_feeds_policy_constructors() {
     let _ = ensemble::new_descent_fixed(ensemble::duration(60_000));
     let _ = ensemble::new_handover_fixed(ensemble::duration(30_000));
     let _ = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
-    let _ = ensemble::new_commitment_deferred(ensemble::duration(10_000_000));
+    let _ = ensemble::new_retire_commitment_deferred(ensemble::duration(10_000_000));
 }
 
 // V2: tenures is accepted by rent.
@@ -60,7 +61,7 @@ fun v2_tenures_feeds_rent() {
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
     let owner_cap = escrow::integrate<DemoAsset, SUI>(
-        asset, escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
     test_scenario::return_immutable(fee_ref);
@@ -99,13 +100,13 @@ fun e1_full_ptb_chain_from_api_produces_idle_escrow() {
         ensemble::new_linear(),
         ensemble::new_price_fixed_delta(ensemble::price(10_000_000_000)),
     );
-    let commitment = ensemble::new_commitment_immediate();
+    let commitment = ensemble::new_retire_commitment_immediate();
 
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
 
-    let cap       = escrow::integrate<DemoAsset, SUI>(asset, ensemble, commitment, &fee_ref, &clk, sc.ctx());
+    let cap       = escrow::integrate<DemoAsset, SUI>(asset, ensemble, commitment, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
@@ -130,7 +131,7 @@ fun e2_all_curve_shapes_accepted_by_integrate() {
     let hnd = ensemble::new_handover_off();
     let aw  = ensemble::new_descent_off();
     let pf  = ensemble::new_price_fixed_delta(ensemble::price(10_000_000_000));
-    let com = ensemble::new_commitment_immediate();
+    let com = ensemble::new_retire_commitment_immediate();
 
     let curves = vector[
         ensemble::new_linear(),
@@ -149,7 +150,7 @@ fun e2_all_curve_shapes_accepted_by_integrate() {
         let ens   = ensemble::new_ensemble(rp, td, ensemble::new_tenure_single(), hnd, aw, curve, curve, pf);
         let clk   = clock::create_for_testing(sc.ctx());
         let asset = mk_demo_asset(sc.ctx());
-        let cap   = escrow::integrate<DemoAsset, SUI>(asset, ens, com, &fee_ref, &clk, sc.ctx());
+        let cap   = escrow::integrate<DemoAsset, SUI>(asset, ens, com, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
         clock::destroy_for_testing(clk);
         owner_cap::burn(cap, OWNER);
         sc.next_tx(OWNER);
@@ -159,9 +160,9 @@ fun e2_all_curve_shapes_accepted_by_integrate() {
     sc.end();
 }
 
-// E3: CommitmentPolicy immediate and deferred both accepted by integrate.
+// E3: RetireCommitmentPolicy immediate and deferred both accepted by integrate.
 #[test]
-fun e3_commitment_immediate_and_deferred_accepted() {
+fun e3_retire_commitment_immediate_and_deferred_accepted() {
     let mut sc = setup();
     sc.next_tx(OWNER);
 
@@ -171,7 +172,7 @@ fun e3_commitment_immediate_and_deferred_accepted() {
     let clk   = clock::create_for_testing(sc.ctx());
     let asset = mk_demo_asset(sc.ctx());
     let cap   = escrow::integrate<DemoAsset, SUI>(
-        asset, ens, ensemble::new_commitment_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ens, ensemble::new_retire_commitment_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     clock::destroy_for_testing(clk);
     owner_cap::burn(cap, OWNER);
@@ -180,7 +181,7 @@ fun e3_commitment_immediate_and_deferred_accepted() {
     let clk   = clock::create_for_testing(sc.ctx());
     let asset = mk_demo_asset(sc.ctx());
     let cap   = escrow::integrate<DemoAsset, SUI>(
-        asset, ens, ensemble::new_commitment_deferred(ensemble::duration(10_000_000)), &fee_ref, &clk, sc.ctx(),
+        asset, ens, ensemble::new_retire_commitment_deferred(ensemble::duration(10_000_000)), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     clock::destroy_for_testing(clk);
     owner_cap::burn(cap, OWNER);
@@ -209,7 +210,7 @@ fun e4_compound_delta_price_escalation_accepted() {
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let cap     = escrow::integrate<DemoAsset, SUI>(
-        asset, ens, ensemble::new_commitment_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ens, ensemble::new_retire_commitment_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     clock::destroy_for_testing(clk);
     owner_cap::burn(cap, OWNER);
@@ -237,7 +238,7 @@ fun e5_multi_tenure_extend_accepted() {
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let cap     = escrow::integrate<DemoAsset, SUI>(
-        asset, ens, ensemble::new_commitment_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ens, ensemble::new_retire_commitment_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     clock::destroy_for_testing(clk);
     owner_cap::burn(cap, OWNER);
@@ -257,7 +258,7 @@ fun e6_all_handover_policies_accepted() {
     let aw   = ensemble::new_descent_off();
     let cs   = ensemble::new_linear();
     let pf   = ensemble::new_price_fixed_delta(ensemble::price(10_000_000_000));
-    let com  = ensemble::new_commitment_immediate();
+    let com  = ensemble::new_retire_commitment_immediate();
 
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
 
@@ -272,7 +273,7 @@ fun e6_all_handover_policies_accepted() {
         let ens  = ensemble::new_ensemble(rp, td, te, policies[i], aw, cs, cs, pf);
         let clk  = clock::create_for_testing(sc.ctx());
         let asset = mk_demo_asset(sc.ctx());
-        let cap  = escrow::integrate<DemoAsset, SUI>(asset, ens, com, &fee_ref, &clk, sc.ctx());
+        let cap  = escrow::integrate<DemoAsset, SUI>(asset, ens, com, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
         clock::destroy_for_testing(clk);
         owner_cap::burn(cap, OWNER);
         sc.next_tx(OWNER);
@@ -294,7 +295,7 @@ fun e7_auction_window_policies_accepted() {
     let hnd = ensemble::new_handover_off();
     let cs  = ensemble::new_linear();
     let pf  = ensemble::new_price_fixed_delta(ensemble::price(10_000_000_000));
-    let com = ensemble::new_commitment_immediate();
+    let com = ensemble::new_retire_commitment_immediate();
 
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
 
@@ -308,7 +309,7 @@ fun e7_auction_window_policies_accepted() {
         let ens  = ensemble::new_ensemble(rp, td, te, hnd, windows[i], cs, cs, pf);
         let clk  = clock::create_for_testing(sc.ctx());
         let asset = mk_demo_asset(sc.ctx());
-        let cap  = escrow::integrate<DemoAsset, SUI>(asset, ens, com, &fee_ref, &clk, sc.ctx());
+        let cap  = escrow::integrate<DemoAsset, SUI>(asset, ens, com, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
         clock::destroy_for_testing(clk);
         owner_cap::burn(cap, OWNER);
         sc.next_tx(OWNER);

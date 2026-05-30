@@ -14,7 +14,8 @@ use sui::{
 };
 use usufruct::{
     asset_state::{Self},
-    commitment_policy,
+    ensemble_commitment_policy,
+    retire_commitment_policy,
     tenures,
     escrow::{Self, Escrow},
     escrow_corpus,
@@ -68,8 +69,8 @@ fun integrate_and_take_with_cfg(
     let cap = escrow::integrate<DemoAsset, SUI>(
         asset,
         ensemble,
-        commitment_policy::new_immediate(),
-        &fee_ref, &clk, sc.ctx(),
+        retire_commitment_policy::new_immediate(),
+        ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);

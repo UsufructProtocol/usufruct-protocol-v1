@@ -18,7 +18,8 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    commitment_policy,
+    ensemble_commitment_policy,
+    retire_commitment_policy,
     escrow::{Self, Escrow},
     escrow_corpus,
     fee_inbox,
@@ -111,7 +112,7 @@ fun fc2_collect_protocol_fees_from_real_tenure_expiry() {
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
     let owner_cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
     test_scenario::return_immutable(fee_ref);
@@ -162,7 +163,7 @@ fun fc3_collected_coin_value_matches_sent_amount() {
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
     let owner_cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
     test_scenario::return_immutable(fee_ref);

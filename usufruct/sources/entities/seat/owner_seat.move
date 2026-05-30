@@ -15,7 +15,7 @@ use usufruct::{
 
 // === Errors ===
 
-const EWrongCap: u64 = 1;
+const EWrongCap: u64 = 0;
 
 // === Constants ===
 

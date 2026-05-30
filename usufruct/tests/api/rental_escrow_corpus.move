@@ -47,7 +47,7 @@ public struct CorpusEntry has copy, drop, store {
     d:   u8,   // 0..1  PriceEscalationPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
     h:   u8,   // 0..1  AuctionWindowPolicy
-    f:   u8,   // 0..1  CommitmentPolicy
+    f:   u8,   // 0..1  RetireCommitmentPolicy
     tag: u64,  // c·10_000 + d·1_000 + e·100 + h·10 + f
 }
 

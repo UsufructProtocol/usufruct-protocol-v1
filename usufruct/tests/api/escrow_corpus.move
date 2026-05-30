@@ -18,7 +18,7 @@ use usufruct::{
     monetary,
     phases,
     price_escalation_policy::{Self, PriceEscalationPolicy},
-    commitment_policy::{Self, CommitmentPolicy},
+    retire_commitment_policy::{Self, RetireCommitmentPolicy},
 };
 
 // === Errors ===
@@ -49,7 +49,7 @@ public struct CorpusEntry has copy, drop, store {
     d:   u8,   // 0..1  PriceEscalationPolicy
     e:   u8,   // 0..6  CurveShapePolicy pair
     h:   u8,   // 0..1  AuctionWindowPolicy
-    f:   u8,   // 0..1  CommitmentPolicy
+    f:   u8,   // 0..1  RetireCommitmentPolicy
     m:   u8,   // 0..1  TenureExtendPolicy
     tag: u64,  // m·100_000 + c·10_000 + d·1_000 + e·100 + h·10 + f
 }
@@ -73,7 +73,7 @@ public use fun entry_m   as CorpusEntry.m;
 ///   d: 0..1  PriceEscalationPolicy      (FixedDelta, CompoundDelta)
 ///   e: 0..6  CurveShapePolicy pair    (Linear..Exponential)
 ///   h: 0..1  AuctionWindowPolicy      (Skipped, Window)
-///   f: 0..1  CommitmentPolicy       (Immediate, Deferred)
+///   f: 0..1  RetireCommitmentPolicy       (Immediate, Deferred)
 ///
 /// Requires --gas-limit ≥ 100_000_000.
 /// Call once per test and bind to a local; never inside the iteration loop.
@@ -306,9 +306,9 @@ fun make_entry(c: u8, d: u8, e: u8, h: u8, f: u8, m: u8): CorpusEntry {
     }
 }
 
-/// CommitmentPolicy for the given tag (f axis: 0=Immediate, 1=Deferred).
-public(package) fun commitment_by_tag(tag: u64): CommitmentPolicy {
-    make_commitment((tag % 10) as u8)
+/// RetireCommitmentPolicy for the given tag (f axis: 0=Immediate, 1=Deferred).
+public(package) fun retire_commitment_by_tag(tag: u64): RetireCommitmentPolicy {
+    make_retire_commitment((tag % 10) as u8)
 }
 
 fun build_config(c: u8, d: u8, e: u8, h: u8, _f: u8, m: u8): PolicyEnsemble {
@@ -365,9 +365,9 @@ fun make_tenure_cycles(m: u8): TenureExtendPolicy {
     else        { tenure_extend_policy::new_multi() }
 }
 
-fun make_commitment(f: u8): CommitmentPolicy {
-    if (f == 0) { commitment_policy::new_immediate() }
-    else        { commitment_policy::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
+fun make_retire_commitment(f: u8): RetireCommitmentPolicy {
+    if (f == 0) { retire_commitment_policy::new_immediate() }
+    else        { retire_commitment_policy::new_deferred(phases::duration(RETIRE_DEFERRED_F1)) }
 }
 
 // --- Filter helpers (called after axis validation in filter_*) ---

@@ -15,7 +15,8 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    commitment_policy,
+    ensemble_commitment_policy,
+    retire_commitment_policy,
     policy_ensemble::PolicyEnsemble,
     tenures,
     escrow::{Self, Escrow},
@@ -54,8 +55,8 @@ fun build_escrow(ensemble: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(),
-        &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(),
+        ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
@@ -174,9 +175,9 @@ fun idle_views_post_integrate() {
     assert_eq!(escrow::rest_price_floor_mist(&escrow),    escrow_corpus::min_rent_price_const());
     assert_eq!(escrow::owner_balance(&escrow),     0);
     let _iat = escrow::integrated_at_ms(&escrow);     // monotonic w.r.t. clock; nonzero-ness not asserted
-    let _can = escrow::commitment_anchor_ms(&escrow);
-    let _unl = escrow::commitment_unlocks_at_ms(&escrow);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, escrow::commitment_unlocks_at_ms(&escrow)), 0);
+    let _can = escrow::retire_commitment_anchor_ms(&escrow);
+    let _unl = escrow::retire_commitment_unlocks_at_ms(&escrow);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, escrow::retire_commitment_unlocks_at_ms(&escrow)), 0);
 
     // — owner_cap_is_valid: round-trips its own cap —
     assert!(escrow::owner_cap_is_valid(&escrow, object::id(&cap)));
@@ -217,7 +218,7 @@ fun idle_views_post_integrate() {
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!(escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_none());
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
-    assert!(!escrow::has_pending_config_update(&escrow));
+    assert!(!escrow::has_pending_ensemble_update(&escrow));
     clock::destroy_for_testing(clk);
 
     // — Cap status with an unknown ID — Stale in non-Renting state —

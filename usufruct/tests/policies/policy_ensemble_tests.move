@@ -350,7 +350,7 @@ fun new_config_rejects_min_rent_price_zero() {
     );
 }
 
-#[test, expected_failure(abort_code = 0, location = usufruct::tenure_duration_policy)]
+#[test, expected_failure(abort_code = tenure_duration_policy::EDurationZero, location = usufruct::tenure_duration_policy)]
 fun new_config_rejects_tenure_ceiling_zero() {
     policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),
@@ -430,7 +430,7 @@ fun emit_registration_e1_full_snapshot() {
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&ensemble, ei);
+        policy_ensemble::emit_registration(&ensemble, ei, phases::timestamp(0));
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 1);
         let e = &events[0];
@@ -462,7 +462,7 @@ fun emit_registration_e2_power_law_gcd_normalized_in_payload() {
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&ensemble, ei);
+        policy_ensemble::emit_registration(&ensemble, ei, phases::timestamp(0));
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         let e = &events[0];
         assert_eq!(policy_ensemble::registered_credit_alpha_num(e), option::some(1u8));
@@ -484,8 +484,8 @@ fun emit_registration_e3_not_idempotent_caller_contract() {
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&ensemble, ei);
-        policy_ensemble::emit_registration(&ensemble, ei);
+        policy_ensemble::emit_registration(&ensemble, ei, phases::timestamp(0));
+        policy_ensemble::emit_registration(&ensemble, ei, phases::timestamp(0));
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 2);
         assert_eq!(policy_ensemble::registered_rest_price_mist(&events[0]),    policy_ensemble::registered_rest_price_mist(&events[1]));
@@ -530,11 +530,12 @@ fun emit_registration_e4_full_payload_mixed_variants() {
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_registration(&ensemble, ei);
+        policy_ensemble::emit_registration(&ensemble, ei, phases::timestamp(12_345));
         let events = event::events_by_type<PolicyEnsembleRegistered>();
         assert_eq!(events.length(), 1);
         let e = &events[0];
         assert_eq!(policy_ensemble::registered_escrow_identity(e),             escrow_identity::escrow_id(ei));
+        assert_eq!(policy_ensemble::registered_timestamp_ms(e),               12_345);
         assert_eq!(policy_ensemble::registered_rest_price_policy(e),           b"Fixed".to_string());
         assert_eq!(policy_ensemble::registered_rest_price_mist(e),             MX_REST_PRICE);
         assert_eq!(policy_ensemble::registered_tenure_duration_policy(e),      b"Fixed".to_string());
@@ -565,15 +566,16 @@ fun emit_registration_e4_full_payload_mixed_variants() {
 #[test]
 fun emit_ensemble_updated_eu1_full_payload_mixed_variants() {
     let ensemble  = mixed_config();
-    let escrow_id = object::id_from_address(@0xEC02);
+    let ei        = escrow_identity::new(object::id_from_address(@0xEC02));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_ensemble_updated(&ensemble, escrow_id);
+        policy_ensemble::emit_ensemble_updated(&ensemble, ei, phases::timestamp(23_456));
         let events = event::events_by_type<EnsembleUpdated>();
         assert_eq!(events.length(), 1);
         let e = &events[0];
-        assert_eq!(policy_ensemble::ensemble_updated_escrow_id(e),                  escrow_id);
+        assert_eq!(policy_ensemble::ensemble_updated_escrow_id(e),                  escrow_identity::escrow_id(ei));
+        assert_eq!(policy_ensemble::ensemble_updated_timestamp_ms(e),               23_456);
         assert_eq!(policy_ensemble::ensemble_updated_rest_price_policy(e),           b"Fixed".to_string());
         assert_eq!(policy_ensemble::ensemble_updated_rest_price_mist(e),             MX_REST_PRICE);
         assert_eq!(policy_ensemble::ensemble_updated_tenure_duration_policy(e),      b"Fixed".to_string());
@@ -604,15 +606,16 @@ fun emit_ensemble_updated_eu1_full_payload_mixed_variants() {
 #[test]
 fun emit_ensemble_update_scheduled_eus1_full_payload_mixed_variants() {
     let ensemble  = mixed_config();
-    let escrow_id = object::id_from_address(@0xEC03);
+    let ei        = escrow_identity::new(object::id_from_address(@0xEC03));
     let mut scenario = test_scenario::begin(@0xA);
     scenario.next_tx(@0xA);
     {
-        policy_ensemble::emit_ensemble_update_scheduled(&ensemble, escrow_id);
+        policy_ensemble::emit_ensemble_update_scheduled(&ensemble, ei, phases::timestamp(34_567));
         let events = event::events_by_type<EnsembleUpdateScheduled>();
         assert_eq!(events.length(), 1);
         let e = &events[0];
-        assert_eq!(policy_ensemble::ensemble_update_scheduled_escrow_id(e),                  escrow_id);
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_escrow_id(e),                  escrow_identity::escrow_id(ei));
+        assert_eq!(policy_ensemble::ensemble_update_scheduled_timestamp_ms(e),               34_567);
         assert_eq!(policy_ensemble::ensemble_update_scheduled_rest_price_policy(e),           b"Fixed".to_string());
         assert_eq!(policy_ensemble::ensemble_update_scheduled_rest_price_mist(e),             MX_REST_PRICE);
         assert_eq!(policy_ensemble::ensemble_update_scheduled_tenure_duration_policy(e),      b"Fixed".to_string());

@@ -68,7 +68,7 @@ fun price_add_at_u64_max_succeeds() {
     assert!(sum <= max, 0);
 }
 
-#[test, expected_failure(abort_code = 0, location = usufruct::monetary)]
+#[test, expected_failure(abort_code = monetary::EPriceAddOverflow, location = usufruct::monetary)]
 fun price_add_overflow_aborts() {
     let max = 18_446_744_073_709_551_615u64;
     monetary::compute_price_add(monetary::price(max), monetary::price(1));

@@ -26,7 +26,8 @@ use usufruct::{
         EarningsWithdrawn,
         BidPlaced,
         BidSuperseded,
-        CommitmentExtended,
+        RetireCommitmentExtended,
+        EnsembleCommitmentExtended,
         HandoverCompleted,
         TenureExpired,
         RetireFlagSet,
@@ -45,7 +46,8 @@ use usufruct::{
     handover_policy,
     monetary,
     price_escalation_policy,
-    commitment_policy::{Self, CommitmentPolicy},
+    ensemble_commitment_policy,
+    retire_commitment_policy::{Self, RetireCommitmentPolicy},
     tenure_extend_policy,
     tenure_duration_policy,
     escrow::{Self, Escrow},
@@ -167,13 +169,13 @@ fun integrate_and_take(
     ensemble: usufruct::policy_ensemble::PolicyEnsemble,
     sc:  &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), sc)
+    integrate_and_take_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), sc)
 }
 
-/// escrow + cap with an explicit CommitmentPolicy.
-fun integrate_and_take_with_commitment(
+/// escrow + cap with an explicit RetireCommitmentPolicy.
+fun integrate_and_take_with_retire_commitment(
     ensemble:        usufruct::policy_ensemble::PolicyEnsemble,
-    commitment: CommitmentPolicy,
+    commitment: RetireCommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
@@ -181,7 +183,28 @@ fun integrate_and_take_with_commitment(
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment, &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, commitment, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+    );
+    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    (escrow, cap)
+}
+
+/// escrow + cap with an explicit EnsembleCommitmentPolicy (retire = Immediate).
+fun integrate_and_take_with_ensemble_commitment(
+    ensemble:            usufruct::policy_ensemble::PolicyEnsemble,
+    ensemble_commitment: usufruct::ensemble_commitment_policy::EnsembleCommitmentPolicy,
+    sc:                  &mut Scenario,
+): (Escrow<DemoAsset, SUI>, OwnerCap) {
+    sc.next_tx(OWNER);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+    let asset   = mk_demo_asset(sc.ctx());
+    let cap = escrow::integrate<DemoAsset, SUI>(
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment, &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
@@ -204,7 +227,7 @@ fun integrate_creates_idle_escrow_smoke() {
     let asset   = mk_demo_asset(sc.ctx());
 
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
@@ -250,7 +273,7 @@ fun integrate_idle_across_handover_modes() {
             let asset   = mk_demo_asset(sc.ctx());
 
                     let cap = escrow::integrate<DemoAsset, SUI>(
-                asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+                asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
             );
                     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
@@ -288,7 +311,7 @@ fun integrate_accepts_balance_vault() {
 
     let vault = mk_balance_vault(1_000_000, sc.ctx());
     let cap = escrow::integrate<BalanceVault, SUI>(
-        vault, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        vault, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
@@ -319,7 +342,7 @@ fun integrate_leaves_escrow_idle() {
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
 
-    let cap       = escrow::integrate<DemoAsset, SUI>(asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
+    let cap       = escrow::integrate<DemoAsset, SUI>(asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
     sc.next_tx(OWNER);
@@ -1554,12 +1577,12 @@ fun retire_with_real_foreign_escrow_cap_aborts() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
 fun retire_before_floor_aborts_under_deferred_policy() {
     let mut sc = setup();
     let tag = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 deferred
     let ensemble = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     // clock at 0 is far below the deferred floor (10_000_000).
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
@@ -2155,6 +2178,9 @@ fun update_tenant_refund_address_in_occupied_changes_active_address() {
     assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&active_evts[0]), object::id(&cap_t1));
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), old_addr);
     assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
+    assert_eq!(asset_state::active_refund_updated_asset_type(&active_evts[0]),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::active_refund_updated_coin_type(&active_evts[0]),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
+    assert_eq!(asset_state::active_refund_updated_timestamp_ms(&active_evts[0]), 0);
     assert_eq!(event::events_by_type<PendingTenantRefundAddressUpdated>().length(), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -2231,6 +2257,9 @@ fun update_tenant_refund_address_in_demand_with_pending_cap_changes_pending_only
     assert_eq!(asset_state::pending_refund_updated_tenant_cap_id(&pending_evts[0]), object::id(&cap_t2));
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[0]), pending_old);
     assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), new_addr);
+    assert_eq!(asset_state::pending_refund_updated_asset_type(&pending_evts[0]),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::pending_refund_updated_coin_type(&pending_evts[0]),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
+    assert_eq!(asset_state::pending_refund_updated_timestamp_ms(&pending_evts[0]), 0);
     assert_eq!(event::events_by_type<ActiveTenantRefundAddressUpdated>().length(), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -3565,20 +3594,20 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 
 // ─── §3. Deferred retire floor gate ───────────────────────────────────────────
 
-/// With CommitmentPolicy::Deferred, retire() aborts if the clock has not
+/// With RetireCommitmentPolicy::Deferred, retire() aborts if the clock has not
 /// reached integrated_at_ms + retire_floor. integrated_at_ms = 0
 /// (clock at integration time), retire_floor = 10_000_000.
 ///
 /// Config: c=0, d=0, e=0, h=0, f=1 (Deferred).
 #[test, expected_failure(
-    abort_code = asset_state::ECommitmentFloorNotElapsed,
+    abort_code = asset_state::ERetireCommitmentFloorNotElapsed,
     location   = usufruct::asset_state,
 )]
 fun e2e_deferred_retire_aborts_before_floor() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     // Clock at 0; retire_floor = 10_000_000 — gate is closed.
     let clk = clock::create_for_testing(sc.ctx());
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
@@ -3595,7 +3624,7 @@ fun e2e_deferred_retire_succeeds_after_floor() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Advance past retire_floor (integrated_at_ms=0, floor=10_000_000).
@@ -5293,7 +5322,7 @@ fun e2e_apt_idempotency_all_ch_m() {
 // For every reachable lifecycle state, the owner can retire the escrow when
 // commitment_policy_state = Immediate (f=0, retire_floor = 0, always unlocked) and
 // subsequently recover the asset via claim_asset. The Deferred-policy gate
-// (f=1, ECommitmentFloorNotElapsed) is covered separately in §3.
+// (f=1, ERetireCommitmentFloorNotElapsed) is covered separately in §3.
 //
 // Each test drives to a specific entry state, calls retire(), completes the
 // protocol cascade to Retired, and verifies claim_asset returns the asset.
@@ -5846,7 +5875,7 @@ fun e2e_corpus_gap_full_tenure_handover_full_credit_across_curves() {
 fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     let mut sc    = setup();
     let tag       = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let mut clk   = clock::create_for_testing(sc.ctx());
     let retire_floor     = escrow_corpus::retire_deferred_f1_const();  // 10_000_000
     let tenure_ceiling   = escrow_corpus::tenure_ceiling_const();      // 100_000
@@ -6005,9 +6034,9 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
     sc.end();
 }
 
-// ─── §update_config ────────────────────────────────────────────────────────────
+// ─── §update_ensemble ────────────────────────────────────────────────────────────
 //
-// update_config allows the owner to swap the PolicyEnsemble of an escrow at
+// update_ensemble allows the owner to swap the PolicyEnsemble of an escrow at
 // runtime. When the escrow is Idle the change takes effect immediately. When
 // the escrow is occupied (Renting or DescentAuction) the new config is
 // buffered as a pending reset and applied at the next natural boundary
@@ -6015,21 +6044,21 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 // without applying it.
 
 // Test 1: Idle → immediate apply ─────────────────────────────────────────────
-/// update_config from Idle: config changes immediately, EnsembleUpdated emitted,
+/// update_ensemble from Idle: config changes immediately, EnsembleUpdated emitted,
 /// EnsembleUpdateScheduled NOT emitted, pending flag stays false.
 #[test]
-fun update_config_idle_applies_immediately() {
+fun update_ensemble_idle_applies_immediately() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0); // c=0,d=0,e=0,h=0,f=0
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1); // f=1 — differs from tag-0
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 0);
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 1);
-    assert!(!escrow::has_pending_config_update(&escrow), 2);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 2);
 
     let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
@@ -6043,10 +6072,10 @@ fun update_config_idle_applies_immediately() {
 }
 
 // Test 2: Descent → schedule without cancelling ───────────────────────────────
-/// update_config from DescentAuction: new config is buffered, state stays
+/// update_ensemble from DescentAuction: new config is buffered, state stays
 /// Descent, EnsembleUpdateScheduled emitted, EnsembleUpdated NOT emitted.
 #[test]
-fun update_config_descent_schedules_without_cancelling() {
+fun update_ensemble_descent_schedules_without_cancelling() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6066,10 +6095,10 @@ fun update_config_descent_schedules_without_cancelling() {
     );
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     assert!(escrow::is_descending(&escrow), 0);
-    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
     assert!(escrow::active_ensemble(&escrow) != new_ensemble, 2);
 
     let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
@@ -6084,10 +6113,10 @@ fun update_config_descent_schedules_without_cancelling() {
 }
 
 // Test 3: Renting → schedule without interrupting ─────────────────────────────
-/// update_config from Occupied (Renting): new config buffered, state
+/// update_ensemble from Occupied (Renting): new config buffered, state
 /// stays Renting, EnsembleUpdateScheduled emitted, EnsembleUpdated NOT emitted.
 #[test]
-fun update_config_renting_schedules_without_interrupting() {
+fun update_ensemble_renting_schedules_without_interrupting() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
@@ -6098,10 +6127,10 @@ fun update_config_renting_schedules_without_interrupting() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     assert!(escrow::is_rented(&escrow), 0);
-    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
     assert!(escrow::active_ensemble(&escrow) == original_cfg, 2);
 
     let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
@@ -6121,7 +6150,7 @@ fun update_config_renting_schedules_without_interrupting() {
 /// Descent normally — the reset is NOT applied at tenure expiry. The config
 /// is applied only when Descent expires → Idle. AuctionExpired IS emitted.
 #[test]
-fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
+fun update_ensemble_applies_at_auction_expiry_not_at_tenure_expiry() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6131,14 +6160,14 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     // Tenure expiry → Descent. pending_config survives; old config still active.
     escrow::fire_do_tenure_expiry_for_testing(
         &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
     );
     assert!(escrow::is_descending(&escrow), 0);
-    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
     assert!(escrow::active_ensemble(&escrow) == ensemble, 2);
 
     let resets_mid = event::events_by_type<EnsembleUpdated>();
@@ -6149,7 +6178,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 3);
-    assert!(!escrow::has_pending_config_update(&escrow), 4);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 4);
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 5);
 
     let resets = event::events_by_type<EnsembleUpdated>();
@@ -6168,7 +6197,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
 /// A handover (Demand → new tenant) does not apply a pending config reset.
 /// The pending flag survives the handover and the old config remains active.
 #[test]
-fun update_config_handover_preserves_pending_does_not_apply() {
+fun update_ensemble_handover_preserves_pending_does_not_apply() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
@@ -6181,7 +6210,7 @@ fun update_config_handover_preserves_pending_does_not_apply() {
 
     // Schedule config reset.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     // T2 bids → Demand, then drive to Demand.
     escrow::drive_to_demand_for_testing(
@@ -6198,7 +6227,7 @@ fun update_config_handover_preserves_pending_does_not_apply() {
     );
 
     assert!(escrow::is_rented(&escrow), 0);
-    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
     assert!(escrow::active_ensemble(&escrow) == original_cfg, 2);
 
     let resets = event::events_by_type<EnsembleUpdated>();
@@ -6212,11 +6241,11 @@ fun update_config_handover_preserves_pending_does_not_apply() {
 }
 
 // Test 6: handover then tenure expiry then auction expiry applies pending reset ─
-/// Chain: rent T1 → update_config(new_ensemble) → drive to Demand → handover →
+/// Chain: rent T1 → update_ensemble(new_ensemble) → drive to Demand → handover →
 /// T2 tenure expiry → Descent → auction expiry → Idle with new config.
 /// The reset is applied only at auction expiry, not at tenure expiry.
 #[test]
-fun update_config_chain_handover_then_auction_expiry_applies() {
+fun update_ensemble_chain_handover_then_auction_expiry_applies() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6226,7 +6255,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     escrow::drive_to_demand_for_testing(
         &mut escrow,
@@ -6243,7 +6272,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
     clock::set_for_testing(&mut clk, 2 * escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_descending(&escrow), 0);
-    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
 
     let resets_mid = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets_mid.length(), 0);
@@ -6266,12 +6295,12 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
     sc.end();
 }
 
-// Test 7: last write wins — second update_config overrides first ───────────────
-/// Two successive update_config calls while Renting: last write wins.
+// Test 7: last write wins — second update_ensemble overrides first ───────────────
+/// Two successive update_ensemble calls while Renting: last write wins.
 /// At auction expiry only cfg_b (the second config) is applied.
 /// Exactly 1 EnsembleUpdated emitted (not two), 2 EnsembleUpdateScheduled emitted.
 #[test]
-fun update_config_override_last_write_wins() {
+fun update_ensemble_override_last_write_wins() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6283,13 +6312,13 @@ fun update_config_override_last_write_wins() {
     // Three distinct configs: original=tag(0,0,0,1,0), cfg_a=tag(1,0,0,0,0) c=1 countdown,
     // cfg_b=tag(1) f=1 deferred. All three are structurally different.
     let cfg_a = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)); // c=1 countdown
-    escrow::update_config(&mut escrow, &owner_cap, cfg_a, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_a, &clk, sc.ctx());
 
     // Second reset: cfg_b = tag 1 — overrides cfg_a.
     let cfg_b = escrow_corpus::by_tag(1); // f=1 deferred
-    escrow::update_config(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
 
-    assert!(escrow::has_pending_config_update(&escrow), 0);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 0);
 
     // Tenure expiry → Descent. pending_config (cfg_b) survives.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
@@ -6325,7 +6354,7 @@ fun update_config_override_last_write_wins() {
 /// The retiring flag takes precedence: tenure expiry → Retired, not Idle.
 /// EnsembleUpdated is NOT emitted; the config never changes.
 #[test]
-fun update_config_retire_wins_discards_pending_silently() {
+fun update_ensemble_retire_wins_discards_pending_silently() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
@@ -6336,13 +6365,13 @@ fun update_config_retire_wins_discards_pending_silently() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(10); // h=1 differs from original h=0
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     // retire() sets the retiring flag and discards the pending reset.
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     assert!(escrow::is_retiring(&escrow), 0);
-    assert!(!escrow::has_pending_config_update(&escrow), 1);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 1);
 
     escrow::fire_do_tenure_expiry_for_testing(
         &mut escrow,
@@ -6364,9 +6393,9 @@ fun update_config_retire_wins_discards_pending_silently() {
     sc.end();
 }
 
-// Test 9: update_config on Retired aborts ──────────────────────────────────────
+// Test 9: update_ensemble on Retired aborts ──────────────────────────────────────
 #[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
-fun update_config_on_retired_aborts() {
+fun update_ensemble_on_retired_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6375,7 +6404,7 @@ fun update_config_on_retired_aborts() {
     escrow::drive_to_retired_for_testing(&mut escrow);
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -6383,9 +6412,9 @@ fun update_config_on_retired_aborts() {
     sc.end();
 }
 
-// Test 10: update_config on retiring (flag set) aborts ────────────────────────
+// Test 10: update_ensemble on retiring (flag set) aborts ────────────────────────
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
-fun update_config_on_retiring_aborts() {
+fun update_ensemble_on_retiring_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6397,9 +6426,9 @@ fun update_config_on_retiring_aborts() {
     // Set the retiring flag.
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
-    // update_config must abort — retiring flag blocks the schedule path.
+    // update_ensemble must abort — retiring flag blocks the schedule path.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
@@ -6409,11 +6438,11 @@ fun update_config_on_retiring_aborts() {
 }
 
 // Test 11: Descent natural expiry applies pending reset ───────────────────────
-/// update_config scheduled while Descent; auction expires naturally via the
+/// update_ensemble scheduled while Descent; auction expires naturally via the
 /// production APT path. On natural expiry the pending reset is applied,
 /// EnsembleUpdated emitted, AND AuctionExpired also emitted.
 #[test]
-fun update_config_descent_natural_expiry_applies_pending() {
+fun update_ensemble_descent_natural_expiry_applies_pending() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6433,9 +6462,9 @@ fun update_config_descent_natural_expiry_applies_pending() {
     );
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
-    assert!(escrow::has_pending_config_update(&escrow), 0);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 0);
 
     // Use the production APT path so pending_config is applied at auction expiry.
     let boundary_ms =
@@ -6445,7 +6474,7 @@ fun update_config_descent_natural_expiry_applies_pending() {
 
     assert!(escrow::is_idle(&escrow), 1);
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 2);
-    assert!(!escrow::has_pending_config_update(&escrow), 3);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 3);
 
     let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
@@ -6458,7 +6487,7 @@ fun update_config_descent_natural_expiry_applies_pending() {
     sc.end();
 }
 
-// ─── §update_config — pending_config invariant ────────────────────────────────
+// ─── §update_ensemble — pending_config invariant ────────────────────────────────
 //
 // The invariant under test: pending_config is applied ONLY when the escrow
 // reaches Idle via auction expiry. No other transition — handover, tenure
@@ -6469,7 +6498,7 @@ fun update_config_descent_natural_expiry_applies_pending() {
 /// escrow is still Renting, the old config is still active, and no EnsembleUpdated
 /// has been emitted. The pending survives intact through both transitions.
 #[test]
-fun update_config_pending_survives_multiple_handovers() {
+fun update_ensemble_pending_survives_multiple_handovers() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
@@ -6481,14 +6510,14 @@ fun update_config_pending_survives_multiple_handovers() {
 
     // T1 is current tenant; reset scheduled.
     escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     // First handover: T1 → T2.
     escrow::drive_to_demand_for_testing(&mut escrow, mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()), tenure / 4);
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(tenure / 4), sc.ctx());
 
     assert!(escrow::is_rented(&escrow), 0);
-    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
     assert!(escrow::active_ensemble(&escrow) == original_cfg, 2);
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
 
@@ -6497,7 +6526,7 @@ fun update_config_pending_survives_multiple_handovers() {
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(tenure / 2), sc.ctx());
 
     assert!(escrow::is_rented(&escrow), 3);
-    assert!(escrow::has_pending_config_update(&escrow), 4);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 4);
     assert!(escrow::active_ensemble(&escrow) == original_cfg, 5);
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
@@ -6509,11 +6538,11 @@ fun update_config_pending_survives_multiple_handovers() {
 }
 
 // Invariant 2: during Descent with pending, old config remains active ──────────
-/// update_config called while at Descent: the escrow stays at Descent, the old
+/// update_ensemble called while at Descent: the escrow stays at Descent, the old
 /// config remains active (not the new one), and only at auction expiry does the
 /// new config take effect.
 #[test]
-fun update_config_descent_old_config_active_until_auction_expiry() {
+fun update_ensemble_descent_old_config_active_until_auction_expiry() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
@@ -6528,14 +6557,14 @@ fun update_config_descent_old_config_active_until_auction_expiry() {
 
     // Old config is active; no pending.
     assert!(escrow::active_ensemble(&escrow) == original_cfg, 0);
-    assert!(!escrow::has_pending_config_update(&escrow), 1);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 1);
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     // Still at Descent; old config still active.
     assert!(escrow::is_descending(&escrow), 2);
-    assert!(escrow::has_pending_config_update(&escrow), 3);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 3);
     assert!(escrow::active_ensemble(&escrow) == original_cfg, 4);
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
 
@@ -6545,7 +6574,7 @@ fun update_config_descent_old_config_active_until_auction_expiry() {
 
     assert!(escrow::is_idle(&escrow), 5);
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 6);
-    assert!(!escrow::has_pending_config_update(&escrow), 7);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 7);
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 1);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
@@ -6556,11 +6585,11 @@ fun update_config_descent_old_config_active_until_auction_expiry() {
 }
 
 // Invariant 3: cross-phase last write wins (Renting → Descent) ───────────────
-/// update_config in Renting sets cfg_a; tenure expires → Descent (cfg_a still
-/// pending); update_config in Descent overrides to cfg_b. At auction expiry only
+/// update_ensemble in Renting sets cfg_a; tenure expires → Descent (cfg_a still
+/// pending); update_ensemble in Descent overrides to cfg_b. At auction expiry only
 /// cfg_b is applied. Exactly 1 EnsembleUpdated (cfg_b), 2 EnsembleUpdateScheduled.
 #[test]
-fun update_config_descent_overrides_renting_pending() {
+fun update_ensemble_descent_overrides_renting_pending() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6571,16 +6600,16 @@ fun update_config_descent_overrides_renting_pending() {
     let tenure = escrow_corpus::tenure_ceiling_const();
 
     escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
-    escrow::update_config(&mut escrow, &owner_cap, cfg_a, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_a, &clk, sc.ctx());
 
     // Tenure expiry → Descent with cfg_a pending.
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure), sc.ctx());
     assert!(escrow::is_descending(&escrow), 0);
-    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
 
     // Override pending from Descent: cfg_b wins.
-    escrow::update_config(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
-    assert!(escrow::has_pending_config_update(&escrow), 2);
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
+    assert!(escrow::has_pending_ensemble_update(&escrow), 2);
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 2);
 
@@ -6590,7 +6619,7 @@ fun update_config_descent_overrides_renting_pending() {
 
     assert!(escrow::is_idle(&escrow), 3);
     assert!(escrow::active_ensemble(&escrow) == cfg_b, 4);
-    assert!(!escrow::has_pending_config_update(&escrow), 5);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 5);
 
     let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 1);
@@ -6609,9 +6638,9 @@ fun update_config_descent_overrides_renting_pending() {
 // Invariant 4: state is clean after application; Idle reset is immediate ──────
 /// After pending_config is consumed at auction expiry → Idle, the pending flag
 /// is false and no residual state leaks into the next cycle. A subsequent
-/// update_config from that Idle applies immediately (no schedule).
+/// update_ensemble from that Idle applies immediately (no schedule).
 #[test]
-fun update_config_state_clean_after_application() {
+fun update_ensemble_state_clean_after_application() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6623,7 +6652,7 @@ fun update_config_state_clean_after_application() {
 
     // Full cycle: Renting → reset → Descent → auction expiry → Idle with cfg_cycle1.
     escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
-    escrow::update_config(&mut escrow, &owner_cap, cfg_cycle1, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_cycle1, &clk, sc.ctx());
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure), sc.ctx());
     clock::set_for_testing(&mut clk, tenure + escrow_corpus::descent_window_h1_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
@@ -6631,15 +6660,15 @@ fun update_config_state_clean_after_application() {
     // State after first cycle.
     assert!(escrow::is_idle(&escrow), 0);
     assert!(escrow::active_ensemble(&escrow) == cfg_cycle1, 1);
-    assert!(!escrow::has_pending_config_update(&escrow), 2);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 2);
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 1);
 
-    // update_config from Idle → immediate, no schedule.
-    escrow::update_config(&mut escrow, &owner_cap, cfg_cycle2, &clk, sc.ctx());
+    // update_ensemble from Idle → immediate, no schedule.
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_cycle2, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 3);
     assert!(escrow::active_ensemble(&escrow) == cfg_cycle2, 4);
-    assert!(!escrow::has_pending_config_update(&escrow), 5);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 5);
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 2);
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
 
@@ -6649,13 +6678,13 @@ fun update_config_state_clean_after_application() {
     sc.end();
 }
 
-// ─── §update_config — behavioral dimensions ────────────────────────────────────
+// ─── §update_ensemble — behavioral dimensions ────────────────────────────────────
 
 // Test BD-1: min_rent_price floor changes after reset ─────────────────────────
-/// update_config immediately updates compute_floor_price when applied from Idle.
+/// update_ensemble immediately updates compute_floor_price when applied from Idle.
 /// Proves the new min_rent_price is active, not just stored.
 #[test]
-fun update_config_behavior_min_rent_price_floor_changes() {
+fun update_ensemble_behavior_min_rent_price_floor_changes() {
     let mut sc = setup();
     let cfg_low  = escrow_corpus::by_tag(0); // 10 SUI floor
     let cfg_high = escrow_corpus::with_min_rent_price(
@@ -6667,7 +6696,7 @@ fun update_config_behavior_min_rent_price_floor_changes() {
     // Before reset: floor = 10 SUI
     assert!(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk)) == escrow_corpus::min_rent_price_const(), 0);
 
-    escrow::update_config(&mut escrow, &owner_cap, cfg_high, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_high, &clk, sc.ctx());
 
     // After reset: floor = 20 SUI
     assert!(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk)) == 20_000_000_000, 1);
@@ -6682,7 +6711,7 @@ fun update_config_behavior_min_rent_price_floor_changes() {
 // Test BD-1b: bid rejected after min_rent_price raised ────────────────────────
 /// After reset raises min_rent_price to 20 SUI, a bid of 15 SUI is rejected.
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
-fun update_config_behavior_min_rent_price_bid_rejected_after_reset() {
+fun update_ensemble_behavior_min_rent_price_bid_rejected_after_reset() {
     let mut sc = setup();
     let cfg_low  = escrow_corpus::by_tag(0);
     let cfg_high = escrow_corpus::with_min_rent_price(
@@ -6691,7 +6720,7 @@ fun update_config_behavior_min_rent_price_bid_rejected_after_reset() {
     let (mut escrow, owner_cap) = integrate_and_take(cfg_low, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::update_config(&mut escrow, &owner_cap, cfg_high, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_high, &clk, sc.ctx());
 
     // 15 SUI is above the old 10 SUI floor but below the new 20 SUI floor.
     let cap = escrow::rent(&mut escrow, mk_payment(15_000_000_000, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
@@ -6708,7 +6737,7 @@ fun update_config_behavior_min_rent_price_bid_rejected_after_reset() {
 /// At t=160_000, T2 (ceiling=50_000, phase_start=100_000) has expired but
 /// under the old ceiling=100_000 it would not have.
 #[test]
-fun update_config_behavior_tenure_ceiling_apt_detection() {
+fun update_ensemble_behavior_tenure_ceiling_apt_detection() {
     let mut sc = setup();
     let cfg_long  = escrow_corpus::by_tag(0);
     let cfg_short = escrow_corpus::with_tenure_ceiling(escrow_corpus::by_tag(0), 50_000);
@@ -6725,7 +6754,7 @@ fun update_config_behavior_tenure_ceiling_apt_detection() {
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)), 0);
 
     // Schedule cfg_short (ceiling=50_000) — takes effect after T1's tenure.
-    escrow::update_config(&mut escrow, &owner_cap, cfg_short, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_short, &clk, sc.ctx());
 
     // T1's tenure expires at 100_000 (old ceiling still governs T1).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
@@ -6752,10 +6781,10 @@ fun update_config_behavior_tenure_ceiling_apt_detection() {
 }
 
 // Test BD-3: descent policy determines Descent vs Idle for the next cycle ──────
-/// After update_config from Skip→Fixed, the NEXT tenure expiry (T2) routes
+/// After update_ensemble from Skip→Fixed, the NEXT tenure expiry (T2) routes
 /// through Descent. Under the old Skip policy it would have been Idle.
 #[test]
-fun update_config_behavior_auction_window_policy_atdutch_presence() {
+fun update_ensemble_behavior_auction_window_policy_atdutch_presence() {
     let mut sc = setup();
     // cfg_skip: h=0 Skip — tenure expiry → Idle
     let cfg_skip   = escrow_corpus::by_tag(0);
@@ -6770,7 +6799,7 @@ fun update_config_behavior_auction_window_policy_atdutch_presence() {
     );
 
     // Schedule cfg_fixed; will be applied at T1's tenure expiry.
-    escrow::update_config(&mut escrow, &owner_cap, cfg_fixed, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_fixed, &clk, sc.ctx());
 
     // T1's tenure expires → Idle with cfg_fixed (pending_config skips Descent
     // during fire(), so T1's own expiry still goes to Idle directly).
@@ -6802,7 +6831,7 @@ fun update_config_behavior_auction_window_policy_atdutch_presence() {
 /// Linear and Smoothstep curves yield different used-credit at 25% of tenure.
 /// Proves the active credit curve is used in credit accounting.
 #[test]
-fun update_config_behavior_credit_shape_used_credit_changes() {
+fun update_ensemble_behavior_credit_shape_used_credit_changes() {
     let mut sc = setup();
     let cfg_linear     = escrow_corpus::by_tag(0);
     // e=1 → Smoothstep curve
@@ -6820,7 +6849,7 @@ fun update_config_behavior_credit_shape_used_credit_changes() {
     let credit_linear = escrow::accrued_credit_mist(&escrow, quarter_ms);
 
     // Schedule cfg_smoothstep; apply at T1's tenure expiry.
-    escrow::update_config(&mut escrow, &owner_cap, cfg_smoothstep, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_smoothstep, &clk, sc.ctx());
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
@@ -6850,7 +6879,7 @@ fun update_config_behavior_credit_shape_used_credit_changes() {
 /// FixedDelta and CompoundDelta produce different next-floor values for the
 /// same bid. Proves the active price function is consulted on every call.
 #[test]
-fun update_config_behavior_price_function_floor_escalation() {
+fun update_ensemble_behavior_price_function_floor_escalation() {
     let mut sc = setup();
     // d=0: FixedDelta — next_floor = bid + FIXED_DELTA (10 SUI)
     let cfg_fixed_delta    = escrow_corpus::by_tag(0);
@@ -6866,7 +6895,7 @@ fun update_config_behavior_price_function_floor_escalation() {
     assert!(floor_before == bid_amount + escrow_corpus::fixed_delta_value_const(), 0);
 
     // Reset to CompoundDelta immediately (Idle state).
-    escrow::update_config(&mut escrow, &owner_cap, cfg_compound_delta, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_compound_delta, &clk, sc.ctx());
 
     // After reset: CompoundDelta — 10 SUI × 1.1 + 1 = 11_000_000_001
     let floor_after = escrow::next_floor_price_mist(&escrow, bid_amount, 1);
@@ -6969,30 +6998,30 @@ fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
 }
 
 // Test BD-6: commitment floor observable at integrate and after extend ─────────
-/// commitment_floor_ms reflects the CommitmentPolicy set at integration
-/// and updated by extend_commitment. update_config does not affect it.
+/// retire_commitment_floor_ms reflects the RetireCommitmentPolicy set at integration
+/// and updated by extend_retire_commitment. update_ensemble does not affect it.
 #[test]
-fun commitment_floor_observable_at_integrate_and_after_extend() {
+fun retire_commitment_floor_observable_at_integrate_and_after_extend() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        ensemble, commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        ensemble, retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
     // Immediate policy at integration: no floor.
-    assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
+    assert!(escrow::retire_commitment_floor_ms(&escrow) == option::none(), 0);
 
     // Extend to Deferred.
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
+        retire_commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
         &clk,
     );
 
     // Deferred policy: floor = RETIRE_DEFERRED_F1.
     assert!(
-        escrow::commitment_floor_ms(&escrow) == option::some(escrow_corpus::retire_deferred_f1_const()),
+        escrow::retire_commitment_floor_ms(&escrow) == option::some(escrow_corpus::retire_deferred_f1_const()),
         1,
     );
 
@@ -7002,18 +7031,18 @@ fun commitment_floor_observable_at_integrate_and_after_extend() {
     sc.end();
 }
 
-// Test BD-6b: retire blocked after extend_commitment raises the floor ──────────
+// Test BD-6b: retire blocked after extend_retire_commitment raises the floor ──────────
 /// After extending from Immediate to Deferred, retire() at t=0 aborts.
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
-fun extend_commitment_retire_aborts_before_floor() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun extend_retire_commitment_retire_aborts_before_floor() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
+        retire_commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
         &clk,
     );
 
@@ -7030,7 +7059,7 @@ fun extend_commitment_retire_aborts_before_floor() {
 /// With Instant policy T2's cap becomes Current via APT inside borrow_asset,
 /// allowing borrow_asset to succeed in the same PTB as rent — no prior explicit APT needed.
 #[test]
-fun update_config_behavior_handover_instant_borrow_succeeds() {
+fun update_ensemble_behavior_handover_instant_borrow_succeeds() {
     let mut sc = setup();
     let cfg_instant = escrow_corpus::by_tag(0); // c=0 Instant
     let (mut escrow, owner_cap) = integrate_and_take(cfg_instant, &mut sc);
@@ -7063,7 +7092,7 @@ fun update_config_behavior_handover_instant_borrow_succeeds() {
 /// After reset from Instant to FullTenure, the pending bidder (T4) cannot
 /// borrow until the handover boundary has passed.
 #[test, expected_failure(abort_code = asset_state::EPendingTenantCap, location = usufruct::asset_state)]
-fun update_config_behavior_handover_fixed_borrow_blocked() {
+fun update_ensemble_behavior_handover_fixed_borrow_blocked() {
     let mut sc = setup();
     let cfg_instant = escrow_corpus::by_tag(0);                               // c=0 Instant
     let cfg_fixed   = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FullTenure
@@ -7076,7 +7105,7 @@ fun update_config_behavior_handover_fixed_borrow_blocked() {
     );
 
     // Schedule cfg_fixed (FullTenure); applied when T1's tenure expires.
-    escrow::update_config(&mut escrow, &owner_cap, cfg_fixed, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_fixed, &clk, sc.ctx());
 
     // T1's tenure expires → Idle with cfg_fixed.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
@@ -8852,7 +8881,7 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// §COMMITMENT — CommitmentPolicy invariants
+// §COMMITMENT — RetireCommitmentPolicy invariants
 //
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -8862,89 +8891,89 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
 /// I-1 + I-2: commitment_anchor is set to integrated_at at integrate time.
 /// With Immediate (floor=0), compute_unlock_at = anchor + 0 = anchor = integrated_at.
 #[test]
-fun commitment_init_anchor_equals_integrated_at() {
+fun retire_commitment_init_anchor_equals_integrated_at() {
     let mut sc  = setup();
     let ensemble     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), &mut sc);
 
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// I-3a: commitment_floor_ms is None for Immediate.
+/// I-3a: retire_commitment_floor_ms is None for Immediate.
 #[test]
-fun commitment_init_immediate_floor_ms_is_none() {
+fun retire_commitment_init_immediate_floor_ms_is_none() {
     let mut sc  = setup();
     let ensemble     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), &mut sc);
 
-    assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
-    assert!(escrow::commitment_is_immediate(&escrow), 1);
+    assert!(escrow::retire_commitment_floor_ms(&escrow) == option::none(), 0);
+    assert!(escrow::retire_commitment_is_immediate(&escrow), 1);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// I-3b: commitment_floor_ms is Some(N) for Deferred(N).
+/// I-3b: retire_commitment_floor_ms is Some(N) for Deferred(N).
 #[test]
-fun commitment_init_deferred_floor_ms_is_some_n() {
+fun retire_commitment_init_deferred_floor_ms_is_some_n() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (escrow, cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
 
-    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
-    assert!(escrow::commitment_is_deferred(&escrow), 0);
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
+    assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// I-3c: commitment_unlocks_at_ms == integrated_at_ms + floor for Deferred.
+/// I-3c: retire_commitment_unlocks_at_ms == integrated_at_ms + floor for Deferred.
 #[test]
-fun commitment_init_deferred_unlocks_at_integrated_plus_floor() {
+fun retire_commitment_init_deferred_unlocks_at_integrated_plus_floor() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (escrow, cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
 
     let integrated = escrow::integrated_at_ms(&escrow);
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), integrated + floor);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), integrated + floor);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-// ─── Group II: update_config does not touch commitment ─────────────────────────
+// ─── Group II: update_ensemble does not touch commitment ─────────────────────────
 
-/// II-4: commitment_policy unchanged after update_config.
+/// II-4: retire_commitment_policy unchanged after update_ensemble.
 #[test]
-fun commitment_update_config_does_not_change_policy() {
+fun retire_commitment_update_ensemble_does_not_change_policy() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let clk    = clock::create_for_testing(sc.ctx());
 
-    // update_config with a different PolicyEnsemble (h=1 descent axis differs).
+    // update_ensemble with a different PolicyEnsemble (h=1 descent axis differs).
     let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
-    // Commitment is still Deferred(floor) — update_config cannot change it.
-    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
-    assert!(escrow::commitment_is_deferred(&escrow), 0);
+    // Commitment is still Deferred(floor) — update_ensemble cannot change it.
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
+    assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -8952,25 +8981,25 @@ fun commitment_update_config_does_not_change_policy() {
     sc.end();
 }
 
-/// II-5 + II-6: commitment_anchor and commitment_unlocks_at_ms unchanged after update_config.
+/// II-5 + II-6: commitment_anchor and retire_commitment_unlocks_at_ms unchanged after update_ensemble.
 #[test]
-fun commitment_update_config_does_not_change_anchor() {
+fun retire_commitment_update_ensemble_does_not_change_anchor() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    let unlocks_before = escrow::commitment_unlocks_at_ms(&escrow);
+    let unlocks_before = escrow::retire_commitment_unlocks_at_ms(&escrow);
 
     // Advance clock and reset config — anchor must not move.
     clock::set_for_testing(&mut clk, 500);
     let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), unlocks_before);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), unlocks_before);
     // integrated_at == 0 (clock was 0 at integrate), floor unchanged.
     assert_eq!(unlocks_before, 0 + floor);
 
@@ -8980,25 +9009,25 @@ fun commitment_update_config_does_not_change_anchor() {
     sc.end();
 }
 
-// ─── Group III: extend_commitment monotonicity ────────────────────────────────
+// ─── Group III: extend_retire_commitment monotonicity ────────────────────────────────
 
 /// III-7: A valid extension (new_expiry >= old_expiry) succeeds and is observable.
 #[test]
-fun commitment_extend_valid_increases_unlocks_at() {
+fun retire_commitment_extend_valid_increases_unlocks_at() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
-    let before = escrow::commitment_unlocks_at_ms(&escrow);
-    escrow::extend_commitment(
+    let before = escrow::retire_commitment_unlocks_at_ms(&escrow);
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
-    let after = escrow::commitment_unlocks_at_ms(&escrow);
+    let after = escrow::retire_commitment_unlocks_at_ms(&escrow);
 
     assert!(after >= before, 0);
     assert!(after > before, 1); // Deferred(floor) > Immediate(0)
@@ -9009,18 +9038,18 @@ fun commitment_extend_valid_increases_unlocks_at() {
     sc.end();
 }
 
-/// III-10a: extend_commitment(Immediate) always aborts — Immediate has duration=0,
+/// III-10a: extend_retire_commitment(Immediate) always aborts — Immediate has duration=0,
 /// which is not an extension. Locked state: Deferred(floor), clock at t=0.
-#[test, expected_failure(abort_code = asset_state::ECommitmentNotExtended, location = usufruct::asset_state)]
-fun commitment_extend_with_immediate_when_locked_aborts() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentNotExtended, location = usufruct::asset_state)]
+fun retire_commitment_extend_with_immediate_when_locked_aborts() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0, before expiry
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9028,20 +9057,20 @@ fun commitment_extend_with_immediate_when_locked_aborts() {
     sc.end();
 }
 
-/// III-10b: extend_commitment(Immediate) aborts even after commitment has expired.
+/// III-10b: extend_retire_commitment(Immediate) aborts even after commitment has expired.
 /// Once unlocked, retire is already available — there is nothing to extend.
-#[test, expected_failure(abort_code = asset_state::ECommitmentNotExtended, location = usufruct::asset_state)]
-fun commitment_extend_with_immediate_when_unlocked_aborts() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentNotExtended, location = usufruct::asset_state)]
+fun retire_commitment_extend_with_immediate_when_unlocked_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor + 1); // past expiry
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9049,17 +9078,17 @@ fun commitment_extend_with_immediate_when_unlocked_aborts() {
     sc.end();
 }
 
-/// III-10c: extend_commitment(Immediate) on a currently Immediate escrow aborts.
+/// III-10c: extend_retire_commitment(Immediate) on a currently Immediate escrow aborts.
 /// No duration → not an extension.
-#[test, expected_failure(abort_code = asset_state::ECommitmentNotExtended, location = usufruct::asset_state)]
-fun commitment_extend_immediate_to_immediate_aborts() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentNotExtended, location = usufruct::asset_state)]
+fun retire_commitment_extend_immediate_to_immediate_aborts() {
     let mut sc  = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9072,22 +9101,22 @@ fun commitment_extend_immediate_to_immediate_aborts() {
 /// a deferred trust signal added after the fact.
 /// Accumulate: old_expiry = 0 + 0 = 0. new_expiry = 0 + floor = floor.
 #[test]
-fun commitment_extend_immediate_to_deferred() {
+fun retire_commitment_extend_immediate_to_deferred() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
-    assert!(escrow::commitment_is_deferred(&escrow), 0);
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor);
+    assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9097,18 +9126,18 @@ fun commitment_extend_immediate_to_deferred() {
 
 /// III-11b: After Immediate → Deferred, retire is blocked before expiry.
 /// The gate that was open is now locked until the new commitment expires.
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
-fun commitment_extend_immediate_to_deferred_blocks_retire() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun retire_commitment_extend_immediate_to_deferred_blocks_retire() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9122,32 +9151,32 @@ fun commitment_extend_immediate_to_deferred_blocks_retire() {
     sc.end();
 }
 
-// ─── Group IV: anchor moves to old_expiry on extend_commitment ────────────────
+// ─── Group IV: anchor moves to old_expiry on extend_retire_commitment ────────────────
 
-/// IV-12 + IV-13: After extend_commitment, commitment_unlocks_at_ms reflects
+/// IV-12 + IV-13: After extend_retire_commitment, retire_commitment_unlocks_at_ms reflects
 /// accumulate semantics: new_expiry = old_expiry + new_floor.
 /// Starts Immediate (old_expiry=0), clock at t=1_000, extends to Deferred(floor).
 /// new_expiry = 0 + floor = floor. Clock value is irrelevant to accumulate.
 #[test]
-fun commitment_extend_anchor_moves_to_old_expiry() {
+fun retire_commitment_extend_anchor_moves_to_old_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Advance clock to t=1_000 before extending.
     clock::set_for_testing(&mut clk, 1_000);
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
     // Accumulate: new_expiry = old_expiry + floor = 0 + floor = floor.
     // anchor = old_expiry = 0. unlocks_at = 0 + floor = floor.
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9155,30 +9184,30 @@ fun commitment_extend_anchor_moves_to_old_expiry() {
     sc.end();
 }
 
-/// IV-13b: commitment_floor_ms reflects new policy floor; unlocks_at uses accumulate semantics.
+/// IV-13b: retire_commitment_floor_ms reflects new policy floor; unlocks_at uses accumulate semantics.
 /// Starts Immediate (old_expiry=0), clock at floor+1. Extends to Deferred(half_floor).
 /// Accumulate: new_expiry = old_expiry + half_floor = 0 + half_floor = half_floor.
 #[test]
-fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
+fun retire_commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
     let mut sc    = setup();
     let floor     = escrow_corpus::retire_deferred_f1_const();
     let half_floor = floor / 2;
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor + 1); // clock value does not affect accumulate
 
     // Extend to Deferred(half_floor) — floor_ms reflects the policy floor, not the anchor.
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(half_floor)),
+        retire_commitment_policy::new_deferred(phases::duration(half_floor)),
         &clk,
     );
 
-    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(half_floor));
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(half_floor));
     // Accumulate: new_expiry = 0 + half_floor = half_floor.
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), half_floor);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), half_floor);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9190,10 +9219,10 @@ fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
 
 /// V-14: Immediate commitment — retire available at t=0.
 #[test]
-fun commitment_gate_immediate_retire_at_zero() {
+fun retire_commitment_gate_immediate_retire_at_zero() {
     let mut sc  = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk    = clock::create_for_testing(sc.ctx());
 
@@ -9207,13 +9236,13 @@ fun commitment_gate_immediate_retire_at_zero() {
 }
 
 /// V-15: Deferred(N) — retire at t < anchor+N aborts.
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
-fun commitment_gate_deferred_retire_before_floor_aborts() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun retire_commitment_gate_deferred_retire_before_floor_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor - 1); // one ms before unlock
@@ -9228,12 +9257,12 @@ fun commitment_gate_deferred_retire_before_floor_aborts() {
 
 /// V-16: Deferred(N) — retire at t >= anchor+N passes.
 #[test]
-fun commitment_gate_deferred_retire_at_floor_passes() {
+fun retire_commitment_gate_deferred_retire_at_floor_passes() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor); // exactly at unlock
@@ -9247,23 +9276,23 @@ fun commitment_gate_deferred_retire_at_floor_passes() {
     sc.end();
 }
 
-/// V-17: After extend_commitment(Deferred(N)), gate reopens from new anchor.
+/// V-17: After extend_retire_commitment(Deferred(N)), gate reopens from new anchor.
 /// Before extend: Immediate → retire at t=0 works.
 /// After extend at t=T: retire at t=T aborts (t < T+N); at t=T+N passes.
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
-fun commitment_gate_extend_reopens_gate_aborts_immediately_after() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun retire_commitment_gate_extend_reopens_gate_aborts_immediately_after() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Extend at t=100 — gate reopens to t=100+floor.
     clock::set_for_testing(&mut clk, 100);
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9277,19 +9306,19 @@ fun commitment_gate_extend_reopens_gate_aborts_immediately_after() {
 }
 
 #[test]
-fun commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
+fun retire_commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Extend at t=100 to Deferred(floor).
     clock::set_for_testing(&mut clk, 100);
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9304,34 +9333,34 @@ fun commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     sc.end();
 }
 
-// ─── Group VI: chaining extend_commitment ────────────────────────────────────
+// ─── Group VI: chaining extend_retire_commitment ────────────────────────────────────
 
 /// VI-18: Two sequential extensions are valid if each new_expiry >= previous.
 #[test]
-fun commitment_chain_two_extensions_both_valid() {
+fun retire_commitment_chain_two_extensions_both_valid() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
     // First extend: Immediate → Deferred(floor). new_expiry = old_expiry + floor = 0 + floor = floor.
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
-    let after_first = escrow::commitment_unlocks_at_ms(&escrow);
+    let after_first = escrow::retire_commitment_unlocks_at_ms(&escrow);
     assert_eq!(after_first, floor);
 
     // Second extend: Deferred(floor) → Deferred(floor*2). new_expiry = floor + floor*2 = floor*3.
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor * 2)),
+        retire_commitment_policy::new_deferred(phases::duration(floor * 2)),
         &clk,
     );
-    let after_second = escrow::commitment_unlocks_at_ms(&escrow);
+    let after_second = escrow::retire_commitment_unlocks_at_ms(&escrow);
     assert_eq!(after_second, floor * 3);
     assert!(after_second > after_first, 0);
 
@@ -9345,12 +9374,12 @@ fun commitment_chain_two_extensions_both_valid() {
 /// old_expiry=floor (Deferred(floor), anchor=0). Clock at 500 (irrelevant to accumulate).
 /// Accumulate: new_expiry = floor + floor = 2*floor.
 #[test]
-fun commitment_chain_same_floor_from_later_time_passes() {
+fun retire_commitment_chain_same_floor_from_later_time_passes() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     // old_anchor=0, old_expiry=floor.
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -9358,14 +9387,14 @@ fun commitment_chain_same_floor_from_later_time_passes() {
     // Advance to t=500 (still before expiry) and extend with same floor.
     // new_expiry = floor + floor = 2*floor (accumulate semantics).
     clock::set_for_testing(&mut clk, 500);
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor * 2);
-    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor * 2);
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9380,7 +9409,7 @@ fun commitment_chain_same_floor_from_later_time_passes() {
 //   1. `execute_integrate`                — Bootstrap → Idle.
 //   2. `do_auction_expiry`                — Descent  → Idle (after
 //      applying any `pending_config`).
-//   3. `execute_update_config` arm Idle   — owner reset → Idle (after
+//   3. `execute_update_ensemble` arm Idle   — owner reset → Idle (after
 //      applying the new config directly).
 // Once drawn, the four `resolved_*` (floor/ceiling/handover/descent)
 // flow through every variant of the cycle without re-draw. The tests
@@ -9390,14 +9419,14 @@ fun commitment_chain_same_floor_from_later_time_passes() {
 // (RandomInRange: descent ∈ [10_000, 90_000]) to make the values
 // observable without random-seed control.
 
-/// update_config called while the escrow is in Demand schedules a pending
+/// update_ensemble called while the escrow is in Demand schedules a pending
 /// config update without disturbing the active tenancy or bid.
-/// Covers the Demand happy-path arm of `execute_update_config` (B14).
+/// Covers the Demand happy-path arm of `execute_update_ensemble` (B14).
 #[test]
-fun update_config_demand_schedules_pending() {
+fun update_ensemble_demand_schedules_pending() {
     let mut sc = setup();
     // c=1 Fixed — prevents APT from immediately firing the handover
-    // inside update_config, keeping the escrow in Demand after the call.
+    // inside update_ensemble, keeping the escrow in Demand after the call.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
@@ -9414,11 +9443,11 @@ fun update_config_demand_schedules_pending() {
 
     // Schedule a config update while in Demand.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     // State remains Demand; pending config is now set.
     assert!(escrow::is_demand(&escrow), 1);
-    assert!(escrow::has_pending_config_update(&escrow), 2);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 2);
     assert!(escrow::active_ensemble(&escrow) == ensemble, 3);
 
     let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
@@ -9432,11 +9461,11 @@ fun update_config_demand_schedules_pending() {
     sc.end();
 }
 
-/// update_config aborts with `ERetireAlreadyScheduled` when called in Demand
+/// update_ensemble aborts with `ERetireAlreadyScheduled` when called in Demand
 /// state while the retire flag is set on the tenancy.
-/// Covers the Demand retire-guard branch of `execute_update_config` (B13).
+/// Covers the Demand retire-guard branch of `execute_update_ensemble` (B13).
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
-fun update_config_demand_retiring_aborts() {
+fun update_ensemble_demand_retiring_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -9456,9 +9485,9 @@ fun update_config_demand_retiring_aborts() {
     // OccupiedTerms.retire field.
     escrow::drive_to_retiring_flag_for_testing(&mut escrow);
 
-    // update_config must abort — retire flag blocks config changes in Demand.
+    // update_ensemble must abort — retire flag blocks config changes in Demand.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     // Unreachable — expected_failure captures the abort above.
     transfer::public_transfer(cap_t1, OWNER);
@@ -9587,10 +9616,10 @@ fun rent_with_insufficient_payment_in_demand_aborts() {
     sc.end();
 }
 
-// ── execute_update_config: wrong cap ──────────────────────────────────────────
+// ── execute_update_ensemble: wrong cap ──────────────────────────────────────────
 
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun update_config_with_wrong_cap_aborts() {
+fun update_ensemble_with_wrong_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, _owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -9600,7 +9629,7 @@ fun update_config_with_wrong_cap_aborts() {
     let foreign_cap = owner_cap::new(
         escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx(),
     );
-    escrow::update_config(&mut escrow, &foreign_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &foreign_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(foreign_cap, OWNER);
@@ -9609,16 +9638,16 @@ fun update_config_with_wrong_cap_aborts() {
     sc.end();
 }
 
-/// A genuine OwnerCap from a different real escrow is rejected on update_config.
+/// A genuine OwnerCap from a different real escrow is rejected on update_ensemble.
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun update_config_with_real_foreign_escrow_cap_aborts() {
+fun update_ensemble_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
-    escrow::update_config(&mut escrow_b, &cap_a, ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow_b, &cap_a, ensemble, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
@@ -9631,7 +9660,7 @@ fun update_config_with_real_foreign_escrow_cap_aborts() {
 // ── execute_extend_commitment: wrong cap + non-monotonic policy ───────────────
 
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun extend_commitment_with_wrong_cap_aborts() {
+fun extend_retire_commitment_with_wrong_cap_aborts() {
     let mut sc = setup();
     let (mut escrow, _owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
@@ -9639,7 +9668,7 @@ fun extend_commitment_with_wrong_cap_aborts() {
     let foreign_cap = owner_cap::new(
         escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx(),
     );
-    escrow::extend_commitment(&mut escrow, &foreign_cap, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow, &foreign_cap, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(foreign_cap, OWNER);
@@ -9648,16 +9677,16 @@ fun extend_commitment_with_wrong_cap_aborts() {
     sc.end();
 }
 
-/// A genuine OwnerCap from a different real escrow is rejected on extend_commitment.
+/// A genuine OwnerCap from a different real escrow is rejected on extend_retire_commitment.
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun extend_commitment_with_real_foreign_escrow_cap_aborts() {
+fun extend_retire_commitment_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(&mut escrow_b, &cap_a, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow_b, &cap_a, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
@@ -9853,44 +9882,44 @@ fun policy_kind_views_tag0() {
     assert_eq!(escrow::auction_shape_kind(&escrow),            b"Linear".to_string());
     assert_eq!(escrow::price_fn_kind(&escrow),                 b"FixedDelta".to_string());
     assert_eq!(escrow::price_fn_delta_mist(&escrow),           escrow_corpus::fixed_delta_value_const());
-    assert_eq!(escrow::commitment_kind(&escrow),        b"Immediate".to_string());
+    assert_eq!(escrow::retire_commitment_kind(&escrow),        b"Immediate".to_string());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// commitment_anchor_ms equals integrated_at_ms for a fresh escrow.
-/// commitment_remaining_ms is 0 for Immediate at any time.
+/// retire_commitment_anchor_ms equals integrated_at_ms for a fresh escrow.
+/// retire_commitment_remaining_ms is 0 for Immediate at any time.
 #[test]
-fun commitment_anchor_and_remaining_immediate() {
+fun retire_commitment_anchor_and_remaining_immediate() {
     let mut sc = setup();
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
 
-    assert_eq!(escrow::commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, 0),   0);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, 999), 0);
+    assert_eq!(escrow::retire_commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 0),   0);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 999), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// commitment_remaining_ms reflects the floor for a Deferred policy.
+/// retire_commitment_remaining_ms reflects the floor for a Deferred policy.
 #[test]
-fun commitment_anchor_and_remaining_deferred() {
+fun retire_commitment_anchor_and_remaining_deferred() {
     let mut sc = setup();
     let floor = escrow_corpus::retire_deferred_f1_const();
-    let (escrow, cap) = integrate_and_take_with_commitment(
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0),
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &mut sc,
     );
 
-    assert_eq!(escrow::commitment_anchor_ms(&escrow), 0);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, 0),        floor);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, floor / 2), floor - floor / 2);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, floor),    0);
+    assert_eq!(escrow::retire_commitment_anchor_ms(&escrow), 0);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 0),        floor);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, floor / 2), floor - floor / 2);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, floor),    0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
@@ -9917,7 +9946,7 @@ fun event_pin_asset_integrated_all_fields() {
     let asset_id = object::id(&asset);
 
     let cap      = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id     = owner_cap::proj_escrow_id(&cap);
     let owner_cap_id  = object::id(&cap);
@@ -10034,7 +10063,7 @@ fun event_pin_cycle_params_resolved_all_fields() {
     let asset    = mk_demo_asset(sc.ctx());
 
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
@@ -10102,9 +10131,9 @@ fun cycle_params_resolved_not_emitted_while_pending() {
 
     // Queue ensemble B (handover Fixed) while in Descent — buffered, not adopted.
     let pending = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    escrow::update_config(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
 
-    assert!(escrow::has_pending_config_update(&escrow), 0);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 0);
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
     // Pending is not active → no resolved-params event in this tx.
     assert_eq!(event::events_by_type<CycleParamsResolved>().length(), 0);
@@ -10135,7 +10164,7 @@ fun cycle_params_resolved_on_adoption_reflects_new_ensemble() {
     );
 
     let pending = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // B: handover Fixed
-    escrow::update_config(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
 
     // Adopt the pending at auction expiry via the production path.
     let boundary_ms =
@@ -10171,6 +10200,8 @@ fun event_pin_asset_retired_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::asset_retired_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::asset_retired_asset_type(e),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::asset_retired_coin_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::asset_retired_timestamp_ms(e), 99_000);
 
     test_scenario::return_shared(escrow);
@@ -10370,10 +10401,10 @@ fun event_pin_earnings_withdrawn_all_fields() {
     sc.end();
 }
 
-// ─── CommitmentExtended payload pin ─────────────────────────────────────────
+// ─── RetireCommitmentExtended payload pin ─────────────────────────────────────────
 
 #[test]
-fun event_pin_commitment_extended_all_fields() {
+fun event_pin_retire_commitment_extended_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -10382,28 +10413,28 @@ fun event_pin_commitment_extended_all_fields() {
 
     let escrow_id   = owner_cap::proj_escrow_id(&owner_cap);
     let deferred_ms = escrow_corpus::retire_deferred_f1_const();
-    let new_policy  = commitment_policy::new_deferred(phases::duration(deferred_ms));
+    let new_policy  = retire_commitment_policy::new_deferred(phases::duration(deferred_ms));
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, new_policy, &clk);
+    escrow::extend_retire_commitment(&mut escrow, &owner_cap, new_policy, &clk);
 
     // Immediate has duration=0 so old_expiry = anchor + 0 = 0.
     // new_expiry = old_expiry + deferred_ms = 0 + 10_000_000.
     let expected_new_expiry = deferred_ms;
 
-    let evts = event::events_by_type<CommitmentExtended>();
+    let evts = event::events_by_type<RetireCommitmentExtended>();
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
-    assert_eq!(asset_state::commitment_extended_escrow_id(e),      escrow_id);
-    assert_eq!(asset_state::commitment_extended_new_unlock_at_ms(e),  expected_new_expiry);
-    assert_eq!(asset_state::commitment_extended_timestamp_ms(e),   3_000);
+    assert_eq!(asset_state::retire_commitment_extended_escrow_id(e),      escrow_id);
+    assert_eq!(asset_state::retire_commitment_extended_new_unlock_at_ms(e),  expected_new_expiry);
+    assert_eq!(asset_state::retire_commitment_extended_timestamp_ms(e),   3_000);
     // floor_ms is Some(deferred_ms) for a Deferred policy.
-    assert_eq!(asset_state::commitment_extended_floor_ms(e),       option::some(deferred_ms));
-    // policy string is the canonical label emitted by commitment_policy.
-    assert_eq!(asset_state::commitment_extended_policy(e),
-               commitment_policy::proj_commitment_policy(&new_policy));
-    assert_eq!(asset_state::commitment_extended_coin_type(e),
+    assert_eq!(asset_state::retire_commitment_extended_floor_ms(e),       option::some(deferred_ms));
+    // policy string is the canonical label emitted by retire_commitment_policy.
+    assert_eq!(asset_state::retire_commitment_extended_policy(e),
+               retire_commitment_policy::proj_retire_commitment_policy(&new_policy));
+    assert_eq!(asset_state::retire_commitment_extended_coin_type(e),
                string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
-    assert_eq!(asset_state::commitment_extended_asset_type(e),
+    assert_eq!(asset_state::retire_commitment_extended_asset_type(e),
                string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
 
     test_scenario::return_shared(escrow);
@@ -10698,9 +10729,9 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     );
 
     let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
-    assert!(escrow::has_pending_config_update(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
     assert!(escrow::pending_ensemble(&escrow).is_some(), 2);
     assert!(*escrow::pending_ensemble(&escrow).borrow() == new_ensemble, 3);
     assert!(escrow::active_ensemble(&escrow) != new_ensemble, 4); // active still old
@@ -10774,6 +10805,709 @@ fun active_cycle_views_resolve_active_ensemble() {
     assert_eq!(*escrow::active_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §ENSEMBLE-COMMITMENT — EnsembleCommitmentPolicy invariants
+//
+// Mirror of §COMMITMENT (RetireCommitmentPolicy), but the gated action is
+// update_ensemble, not retire. The freeze is BLANKET: while the floor is
+// pending, update_ensemble aborts in every state (Idle/Occupied/Descent/
+// Demand), never scheduling a pending reset. After the floor elapses the
+// pre-existing update_ensemble behaviour resumes unchanged.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Group I: Initialization ──────────────────────────────────────────────────
+
+/// EC-I-1: ensemble_commitment anchor is set to integrated_at; Immediate (floor=0)
+/// → unlocks_at = anchor = integrated_at.
+#[test]
+fun ensemble_commitment_init_anchor_equals_integrated_at() {
+    let mut sc  = setup();
+    let (escrow, cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+
+    assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
+    assert_eq!(escrow::ensemble_commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// EC-I-2: ensemble_commitment_floor_ms is None for Immediate.
+#[test]
+fun ensemble_commitment_init_immediate_floor_ms_is_none() {
+    let mut sc  = setup();
+    let (escrow, cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+
+    assert!(escrow::ensemble_commitment_floor_ms(&escrow) == option::none(), 0);
+    assert!(escrow::ensemble_commitment_is_immediate(&escrow), 1);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// EC-I-3: ensemble_commitment_floor_ms is Some(N) for Deferred(N); unlocks_at = integrated + N.
+#[test]
+fun ensemble_commitment_init_deferred_floor_and_unlocks() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (escrow, cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+
+    assert_eq!(escrow::ensemble_commitment_floor_ms(&escrow), option::some(floor));
+    assert!(escrow::ensemble_commitment_is_deferred(&escrow), 0);
+    let integrated = escrow::integrated_at_ms(&escrow);
+    assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), integrated + floor);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+// ─── Group II: update_ensemble gate — blanket across states ───────────────────
+
+/// EC-II-1: Immediate ensemble_commitment — update_ensemble works at t=0 (Idle).
+#[test]
+fun ensemble_commitment_gate_immediate_update_at_zero() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-2: Deferred(N) — update_ensemble before the floor aborts (Idle).
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun ensemble_commitment_gate_deferred_update_before_floor_aborts() {
+    let mut sc = setup();
+    let floor  = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, floor - 1); // one ms before unlock
+
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-3: Deferred(N) — update_ensemble at the floor passes (Idle → immediate apply).
+#[test]
+fun ensemble_commitment_gate_deferred_update_at_floor_passes() {
+    let mut sc = setup();
+    let floor  = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, floor); // exactly at unlock
+
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-4 (blanket): update_ensemble before the floor aborts while Occupied.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun ensemble_commitment_gate_blanket_blocks_in_occupied() {
+    let mut sc = setup();
+    let floor  = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+    assert!(escrow::is_rented(&escrow), 0);
+
+    clock::set_for_testing(&mut clk, floor - 1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-5 (blanket): update_ensemble before the floor aborts while in Descent.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun ensemble_commitment_gate_blanket_blocks_in_descent() {
+    let mut sc = setup();
+    let floor  = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), // h=1 Fixed descent
+        ensemble_commitment_policy::new_deferred(phases::duration(floor)),
+        &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
+    escrow::drive_to_descent_for_testing(
+        &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10, escrow_corpus::min_rent_price_const() * 2, 0);
+    assert!(escrow::is_descending(&escrow), 0);
+
+    clock::set_for_testing(&mut clk, floor - 1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-6 (blanket): update_ensemble before the floor aborts while in Demand.
+/// The ensemble_commitment guard runs before the retire-flag/Demand arms, so the
+/// abort is EEnsembleCommitmentFloorNotElapsed regardless of the Demand bid.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun ensemble_commitment_gate_blanket_blocks_in_demand() {
+    let mut sc = setup();
+    let floor  = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)), // c=1 keeps handover pending
+        ensemble_commitment_policy::new_deferred(phases::duration(floor)),
+        &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
+    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
+    let floor2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
+    let p2     = mk_payment(floor2, sc.ctx());
+    let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 0);
+
+    clock::set_for_testing(&mut clk, floor - 1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-7 (blanket release): after the floor, update_ensemble resumes normal
+/// scheduling while Occupied (pending reset, not an abort).
+/// The freeze floor is set below the tenure ceiling (100_000) so the tenancy is
+/// still Occupied once the floor elapses — isolating gate-release from tenure
+/// expiry.
+#[test]
+fun ensemble_commitment_gate_after_floor_schedules_in_occupied() {
+    let mut sc = setup();
+    let floor  = 1_000; // < tenure ceiling: tenant still Occupied at t=floor
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    clock::set_for_testing(&mut clk, floor); // floor elapsed, tenure still active
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+
+    assert!(escrow::is_rented(&escrow), 0);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-8 (compound: schedule-then-freeze): a pending reset announced BEFORE a
+/// freeze survives a subsequent extend_ensemble_commitment and is still applied
+/// at the natural boundary. The extend halts NEW announcements (verified in
+/// EC-II-9), but does not retract one already made — a tenant who observed the
+/// EnsembleUpdateScheduled can rely on it landing.
+#[test]
+fun ensemble_commitment_extend_preserves_pending_then_applies_at_boundary() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        ensemble, ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // Rent T1 → Occupied.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    // While the gate is open (Immediate), announce a reset → pending buffered.
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    assert!(escrow::has_pending_ensemble_update(&escrow), 0);
+
+    // Now re-freeze with a long floor. The announced pending must survive.
+    let floor = escrow_corpus::retire_deferred_f1_const(); // 10_000_000 ≫ boundary times
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+    assert!(escrow::ensemble_commitment_is_deferred(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 2);
+    assert!(escrow::active_ensemble(&escrow) == ensemble, 3); // still old until boundary
+
+    // Tenure expiry → Descent. The boundary engine is independent of the freeze;
+    // the pending survives, old config still active.
+    escrow::fire_do_tenure_expiry_for_testing(
+        &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
+    );
+    assert!(escrow::is_descending(&escrow), 4);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 5);
+
+    // Auction expiry → Idle: the pending announced before the freeze is applied,
+    // even though the ensemble_commitment floor is still pending.
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 6);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 7);
+    assert!(escrow::active_ensemble(&escrow) == new_ensemble, 8);
+    // The freeze is still in force (now ≪ floor) — the gate did not open.
+    assert!(escrow::ensemble_commitment_remaining_ms(&escrow, clock::timestamp_ms(&clk)) > 0, 9);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-9 (compound: freeze halts new announcements): after announcing a pending
+/// reset and then extending the ensemble_commitment, a SECOND update_ensemble
+/// aborts — the freeze blocks further changes even though a pending already exists.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_after_pending_blocks_further_update() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        ensemble, ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    // First update while open → pending buffered.
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    assert!(escrow::has_pending_ensemble_update(&escrow), 0);
+
+    // Freeze.
+    let floor = escrow_corpus::retire_deferred_f1_const();
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+
+    // Second update must abort — the freeze halts new announcements.
+    // The ensemble value is irrelevant: the guard aborts before it is read.
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(0), &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── Group III: extend_ensemble_commitment monotonicity ───────────────────────
+
+/// EC-III-1: A valid extension (Immediate → Deferred) increases unlocks_at.
+#[test]
+fun ensemble_commitment_extend_valid_increases_unlocks_at() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let before = escrow::ensemble_commitment_unlocks_at_ms(&escrow);
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+    let after = escrow::ensemble_commitment_unlocks_at_ms(&escrow);
+
+    assert!(after > before, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-III-2: extend(Immediate) aborts while locked (Deferred floor, t=0).
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentNotExtended, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_with_immediate_when_locked_aborts() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-III-3: extend(Immediate) aborts even after the floor has elapsed.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentNotExtended, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_with_immediate_when_unlocked_aborts() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, floor + 1);
+
+    escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-III-4: extend(Immediate) on a currently Immediate escrow aborts.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentNotExtended, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_immediate_to_immediate_aborts() {
+    let mut sc  = setup();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-III-5: Immediate → Deferred(N) installs a terms-freeze after the fact.
+/// Accumulate: old_expiry = 0, new_expiry = 0 + floor = floor.
+#[test]
+fun ensemble_commitment_extend_immediate_to_deferred() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx()); // t=0
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+
+    assert!(escrow::ensemble_commitment_is_deferred(&escrow), 0);
+    assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), floor);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-III-6: After Immediate → Deferred, update_ensemble is blocked before expiry.
+/// The gate that was open is now frozen until the new commitment expires.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_immediate_to_deferred_blocks_update() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+
+    // Gate is now frozen. update_ensemble before expiry (t=0 < floor) must abort.
+    clock::set_for_testing(&mut clk, floor - 1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── Group IV: anchor moves to old_expiry on extend ───────────────────────────
+
+/// EC-IV-1: extend uses accumulate semantics — new_expiry = old_expiry + new_floor,
+/// independent of the clock value at extend time.
+#[test]
+fun ensemble_commitment_extend_anchor_moves_to_old_expiry() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, 1_000); // clock value is irrelevant to accumulate
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+
+    assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), floor);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-IV-2: floor_ms reflects the new policy floor; unlocks_at uses accumulate.
+#[test]
+fun ensemble_commitment_extend_floor_ms_reflects_new_policy() {
+    let mut sc     = setup();
+    let floor      = escrow_corpus::retire_deferred_f1_const();
+    let half_floor = floor / 2;
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, floor + 1);
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(half_floor)), &clk);
+
+    assert_eq!(escrow::ensemble_commitment_floor_ms(&escrow), option::some(half_floor));
+    assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), half_floor);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── Group V: extend reopens the gate ─────────────────────────────────────────
+
+/// EC-V-1: extend at t=T reopens the freeze to T+N; update at t=T (< T+N) aborts.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_reopens_gate_aborts_immediately_after() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    clock::set_for_testing(&mut clk, 100);
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+
+    // accumulate: new_expiry = old_expiry(0) + floor = floor; update at t=100 < floor → abort.
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-V-2: after extend, update passes once the new expiry is reached.
+#[test]
+fun ensemble_commitment_extend_reopens_gate_passes_at_new_expiry() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+
+    // new_expiry = 0 + floor = floor. Update at t = floor passes (Idle → apply).
+    clock::set_for_testing(&mut clk, floor);
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── Group VI: chaining extend ────────────────────────────────────────────────
+
+/// EC-VI-1: two sequential extensions accumulate.
+#[test]
+fun ensemble_commitment_chain_two_extensions_both_valid() {
+    let mut sc  = setup();
+    let floor   = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+    let after_first = escrow::ensemble_commitment_unlocks_at_ms(&escrow);
+    assert_eq!(after_first, floor);
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor * 2)), &clk);
+    let after_second = escrow::ensemble_commitment_unlocks_at_ms(&escrow);
+    assert_eq!(after_second, floor * 3);
+    assert!(after_second > after_first, 0);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── Group VII: anchor / remaining views ──────────────────────────────────────
+
+/// EC-VII-1: anchor = integrated_at; remaining = 0 for Immediate at any time.
+#[test]
+fun ensemble_commitment_anchor_and_remaining_immediate() {
+    let mut sc = setup();
+    let (escrow, cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+
+    assert_eq!(escrow::ensemble_commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
+    assert_eq!(escrow::ensemble_commitment_remaining_ms(&escrow, 0),   0);
+    assert_eq!(escrow::ensemble_commitment_remaining_ms(&escrow, 999), 0);
+    assert_eq!(escrow::ensemble_commitment_kind(&escrow), b"Immediate".to_string());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+/// EC-VII-2: remaining reflects the floor for a Deferred policy.
+#[test]
+fun ensemble_commitment_anchor_and_remaining_deferred() {
+    let mut sc = setup();
+    let floor = escrow_corpus::retire_deferred_f1_const();
+    let (escrow, cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+
+    assert_eq!(escrow::ensemble_commitment_anchor_ms(&escrow), 0);
+    assert_eq!(escrow::ensemble_commitment_remaining_ms(&escrow, 0),        floor);
+    assert_eq!(escrow::ensemble_commitment_remaining_ms(&escrow, floor / 2), floor - floor / 2);
+    assert_eq!(escrow::ensemble_commitment_remaining_ms(&escrow, floor),    0);
+    assert_eq!(escrow::ensemble_commitment_kind(&escrow), b"Deferred".to_string());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(cap, OWNER);
+    sc.end();
+}
+
+// ─── Group VIII: cap binding on extend ────────────────────────────────────────
+
+/// EC-VIII-1: extend_ensemble_commitment with a fabricated foreign cap aborts.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_with_wrong_cap_aborts() {
+    let mut sc = setup();
+    let (mut escrow, _owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let foreign_cap = owner_cap::new(
+        escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &foreign_cap, ensemble_commitment_policy::new_deferred(phases::duration(1)), &clk);
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(foreign_cap, OWNER);
+    owner_cap::burn(_owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-VIII-2: a genuine OwnerCap from a different escrow is rejected on extend.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_with_real_foreign_escrow_cap_aborts() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    escrow::extend_ensemble_commitment(
+        &mut escrow_b, &cap_a, ensemble_commitment_policy::new_deferred(phases::duration(1)), &clk);
+
+    test_scenario::return_shared(escrow_a);
+    test_scenario::return_shared(escrow_b);
+    owner_cap::burn(cap_a, OWNER);
+    owner_cap::burn(cap_b, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+// ─── Group IX: EnsembleCommitmentExtended event payload pin ────────────────────
+
+#[test]
+fun event_pin_ensemble_commitment_extended_all_fields() {
+    let mut sc   = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+    clock::set_for_testing(&mut clk, 3_000);
+
+    let escrow_id   = owner_cap::proj_escrow_id(&owner_cap);
+    let deferred_ms = escrow_corpus::retire_deferred_f1_const();
+    let new_policy  = ensemble_commitment_policy::new_deferred(phases::duration(deferred_ms));
+
+    escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, new_policy, &clk);
+
+    // Immediate has duration=0 → old_expiry = 0. new_expiry = 0 + deferred_ms.
+    let expected_new_expiry = deferred_ms;
+
+    let evts = event::events_by_type<EnsembleCommitmentExtended>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::ensemble_commitment_extended_escrow_id(e),       escrow_id);
+    assert_eq!(asset_state::ensemble_commitment_extended_new_unlock_at_ms(e), expected_new_expiry);
+    assert_eq!(asset_state::ensemble_commitment_extended_timestamp_ms(e),    3_000);
+    assert_eq!(asset_state::ensemble_commitment_extended_floor_ms(e),        option::some(deferred_ms));
+    assert_eq!(asset_state::ensemble_commitment_extended_policy(e),
+               ensemble_commitment_policy::proj_ensemble_commitment_policy(&new_policy));
+    assert_eq!(asset_state::ensemble_commitment_extended_coin_type(e),
+               string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
+    assert_eq!(asset_state::ensemble_commitment_extended_asset_type(e),
+               string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
     clock::destroy_for_testing(clk);

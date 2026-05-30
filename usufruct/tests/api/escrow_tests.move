@@ -6041,7 +6041,7 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 /// update_ensemble from Idle: config changes immediately, EnsembleUpdated emitted,
 /// EnsembleUpdateScheduled NOT emitted, pending flag stays false.
 #[test]
-fun update_config_idle_applies_immediately() {
+fun update_ensemble_idle_applies_immediately() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0); // c=0,d=0,e=0,h=0,f=0
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6069,7 +6069,7 @@ fun update_config_idle_applies_immediately() {
 /// update_ensemble from DescentAuction: new config is buffered, state stays
 /// Descent, EnsembleUpdateScheduled emitted, EnsembleUpdated NOT emitted.
 #[test]
-fun update_config_descent_schedules_without_cancelling() {
+fun update_ensemble_descent_schedules_without_cancelling() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6110,7 +6110,7 @@ fun update_config_descent_schedules_without_cancelling() {
 /// update_ensemble from Occupied (Renting): new config buffered, state
 /// stays Renting, EnsembleUpdateScheduled emitted, EnsembleUpdated NOT emitted.
 #[test]
-fun update_config_renting_schedules_without_interrupting() {
+fun update_ensemble_renting_schedules_without_interrupting() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
@@ -6144,7 +6144,7 @@ fun update_config_renting_schedules_without_interrupting() {
 /// Descent normally — the reset is NOT applied at tenure expiry. The config
 /// is applied only when Descent expires → Idle. AuctionExpired IS emitted.
 #[test]
-fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
+fun update_ensemble_applies_at_auction_expiry_not_at_tenure_expiry() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6191,7 +6191,7 @@ fun update_config_applies_at_auction_expiry_not_at_tenure_expiry() {
 /// A handover (Demand → new tenant) does not apply a pending config reset.
 /// The pending flag survives the handover and the old config remains active.
 #[test]
-fun update_config_handover_preserves_pending_does_not_apply() {
+fun update_ensemble_handover_preserves_pending_does_not_apply() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
@@ -6239,7 +6239,7 @@ fun update_config_handover_preserves_pending_does_not_apply() {
 /// T2 tenure expiry → Descent → auction expiry → Idle with new config.
 /// The reset is applied only at auction expiry, not at tenure expiry.
 #[test]
-fun update_config_chain_handover_then_auction_expiry_applies() {
+fun update_ensemble_chain_handover_then_auction_expiry_applies() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6294,7 +6294,7 @@ fun update_config_chain_handover_then_auction_expiry_applies() {
 /// At auction expiry only cfg_b (the second config) is applied.
 /// Exactly 1 EnsembleUpdated emitted (not two), 2 EnsembleUpdateScheduled emitted.
 #[test]
-fun update_config_override_last_write_wins() {
+fun update_ensemble_override_last_write_wins() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6348,7 +6348,7 @@ fun update_config_override_last_write_wins() {
 /// The retiring flag takes precedence: tenure expiry → Retired, not Idle.
 /// EnsembleUpdated is NOT emitted; the config never changes.
 #[test]
-fun update_config_retire_wins_discards_pending_silently() {
+fun update_ensemble_retire_wins_discards_pending_silently() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
@@ -6389,7 +6389,7 @@ fun update_config_retire_wins_discards_pending_silently() {
 
 // Test 9: update_ensemble on Retired aborts ──────────────────────────────────────
 #[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
-fun update_config_on_retired_aborts() {
+fun update_ensemble_on_retired_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6408,7 +6408,7 @@ fun update_config_on_retired_aborts() {
 
 // Test 10: update_ensemble on retiring (flag set) aborts ────────────────────────
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
-fun update_config_on_retiring_aborts() {
+fun update_ensemble_on_retiring_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6436,7 +6436,7 @@ fun update_config_on_retiring_aborts() {
 /// production APT path. On natural expiry the pending reset is applied,
 /// EnsembleUpdated emitted, AND AuctionExpired also emitted.
 #[test]
-fun update_config_descent_natural_expiry_applies_pending() {
+fun update_ensemble_descent_natural_expiry_applies_pending() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6492,7 +6492,7 @@ fun update_config_descent_natural_expiry_applies_pending() {
 /// escrow is still Renting, the old config is still active, and no EnsembleUpdated
 /// has been emitted. The pending survives intact through both transitions.
 #[test]
-fun update_config_pending_survives_multiple_handovers() {
+fun update_ensemble_pending_survives_multiple_handovers() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
@@ -6536,7 +6536,7 @@ fun update_config_pending_survives_multiple_handovers() {
 /// config remains active (not the new one), and only at auction expiry does the
 /// new config take effect.
 #[test]
-fun update_config_descent_old_config_active_until_auction_expiry() {
+fun update_ensemble_descent_old_config_active_until_auction_expiry() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
@@ -6583,7 +6583,7 @@ fun update_config_descent_old_config_active_until_auction_expiry() {
 /// pending); update_ensemble in Descent overrides to cfg_b. At auction expiry only
 /// cfg_b is applied. Exactly 1 EnsembleUpdated (cfg_b), 2 EnsembleUpdateScheduled.
 #[test]
-fun update_config_descent_overrides_renting_pending() {
+fun update_ensemble_descent_overrides_renting_pending() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6634,7 +6634,7 @@ fun update_config_descent_overrides_renting_pending() {
 /// is false and no residual state leaks into the next cycle. A subsequent
 /// update_ensemble from that Idle applies immediately (no schedule).
 #[test]
-fun update_config_state_clean_after_application() {
+fun update_ensemble_state_clean_after_application() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -6678,7 +6678,7 @@ fun update_config_state_clean_after_application() {
 /// update_ensemble immediately updates compute_floor_price when applied from Idle.
 /// Proves the new min_rent_price is active, not just stored.
 #[test]
-fun update_config_behavior_min_rent_price_floor_changes() {
+fun update_ensemble_behavior_min_rent_price_floor_changes() {
     let mut sc = setup();
     let cfg_low  = escrow_corpus::by_tag(0); // 10 SUI floor
     let cfg_high = escrow_corpus::with_min_rent_price(
@@ -6705,7 +6705,7 @@ fun update_config_behavior_min_rent_price_floor_changes() {
 // Test BD-1b: bid rejected after min_rent_price raised ────────────────────────
 /// After reset raises min_rent_price to 20 SUI, a bid of 15 SUI is rejected.
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
-fun update_config_behavior_min_rent_price_bid_rejected_after_reset() {
+fun update_ensemble_behavior_min_rent_price_bid_rejected_after_reset() {
     let mut sc = setup();
     let cfg_low  = escrow_corpus::by_tag(0);
     let cfg_high = escrow_corpus::with_min_rent_price(
@@ -6731,7 +6731,7 @@ fun update_config_behavior_min_rent_price_bid_rejected_after_reset() {
 /// At t=160_000, T2 (ceiling=50_000, phase_start=100_000) has expired but
 /// under the old ceiling=100_000 it would not have.
 #[test]
-fun update_config_behavior_tenure_ceiling_apt_detection() {
+fun update_ensemble_behavior_tenure_ceiling_apt_detection() {
     let mut sc = setup();
     let cfg_long  = escrow_corpus::by_tag(0);
     let cfg_short = escrow_corpus::with_tenure_ceiling(escrow_corpus::by_tag(0), 50_000);
@@ -6778,7 +6778,7 @@ fun update_config_behavior_tenure_ceiling_apt_detection() {
 /// After update_ensemble from Skip→Fixed, the NEXT tenure expiry (T2) routes
 /// through Descent. Under the old Skip policy it would have been Idle.
 #[test]
-fun update_config_behavior_auction_window_policy_atdutch_presence() {
+fun update_ensemble_behavior_auction_window_policy_atdutch_presence() {
     let mut sc = setup();
     // cfg_skip: h=0 Skip — tenure expiry → Idle
     let cfg_skip   = escrow_corpus::by_tag(0);
@@ -6825,7 +6825,7 @@ fun update_config_behavior_auction_window_policy_atdutch_presence() {
 /// Linear and Smoothstep curves yield different used-credit at 25% of tenure.
 /// Proves the active credit curve is used in credit accounting.
 #[test]
-fun update_config_behavior_credit_shape_used_credit_changes() {
+fun update_ensemble_behavior_credit_shape_used_credit_changes() {
     let mut sc = setup();
     let cfg_linear     = escrow_corpus::by_tag(0);
     // e=1 → Smoothstep curve
@@ -6873,7 +6873,7 @@ fun update_config_behavior_credit_shape_used_credit_changes() {
 /// FixedDelta and CompoundDelta produce different next-floor values for the
 /// same bid. Proves the active price function is consulted on every call.
 #[test]
-fun update_config_behavior_price_function_floor_escalation() {
+fun update_ensemble_behavior_price_function_floor_escalation() {
     let mut sc = setup();
     // d=0: FixedDelta — next_floor = bid + FIXED_DELTA (10 SUI)
     let cfg_fixed_delta    = escrow_corpus::by_tag(0);
@@ -7053,7 +7053,7 @@ fun extend_retire_commitment_retire_aborts_before_floor() {
 /// With Instant policy T2's cap becomes Current via APT inside borrow_asset,
 /// allowing borrow_asset to succeed in the same PTB as rent — no prior explicit APT needed.
 #[test]
-fun update_config_behavior_handover_instant_borrow_succeeds() {
+fun update_ensemble_behavior_handover_instant_borrow_succeeds() {
     let mut sc = setup();
     let cfg_instant = escrow_corpus::by_tag(0); // c=0 Instant
     let (mut escrow, owner_cap) = integrate_and_take(cfg_instant, &mut sc);
@@ -7086,7 +7086,7 @@ fun update_config_behavior_handover_instant_borrow_succeeds() {
 /// After reset from Instant to FullTenure, the pending bidder (T4) cannot
 /// borrow until the handover boundary has passed.
 #[test, expected_failure(abort_code = asset_state::EPendingTenantCap, location = usufruct::asset_state)]
-fun update_config_behavior_handover_fixed_borrow_blocked() {
+fun update_ensemble_behavior_handover_fixed_borrow_blocked() {
     let mut sc = setup();
     let cfg_instant = escrow_corpus::by_tag(0);                               // c=0 Instant
     let cfg_fixed   = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FullTenure
@@ -8952,7 +8952,7 @@ fun retire_commitment_init_deferred_unlocks_at_integrated_plus_floor() {
 
 /// II-4: retire_commitment_policy unchanged after update_ensemble.
 #[test]
-fun retire_commitment_update_config_does_not_change_policy() {
+fun retire_commitment_update_ensemble_does_not_change_policy() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
@@ -8977,7 +8977,7 @@ fun retire_commitment_update_config_does_not_change_policy() {
 
 /// II-5 + II-6: commitment_anchor and retire_commitment_unlocks_at_ms unchanged after update_ensemble.
 #[test]
-fun retire_commitment_update_config_does_not_change_anchor() {
+fun retire_commitment_update_ensemble_does_not_change_anchor() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
@@ -9403,7 +9403,7 @@ fun retire_commitment_chain_same_floor_from_later_time_passes() {
 //   1. `execute_integrate`                — Bootstrap → Idle.
 //   2. `do_auction_expiry`                — Descent  → Idle (after
 //      applying any `pending_config`).
-//   3. `execute_update_config` arm Idle   — owner reset → Idle (after
+//   3. `execute_update_ensemble` arm Idle   — owner reset → Idle (after
 //      applying the new config directly).
 // Once drawn, the four `resolved_*` (floor/ceiling/handover/descent)
 // flow through every variant of the cycle without re-draw. The tests
@@ -9415,9 +9415,9 @@ fun retire_commitment_chain_same_floor_from_later_time_passes() {
 
 /// update_ensemble called while the escrow is in Demand schedules a pending
 /// config update without disturbing the active tenancy or bid.
-/// Covers the Demand happy-path arm of `execute_update_config` (B14).
+/// Covers the Demand happy-path arm of `execute_update_ensemble` (B14).
 #[test]
-fun update_config_demand_schedules_pending() {
+fun update_ensemble_demand_schedules_pending() {
     let mut sc = setup();
     // c=1 Fixed — prevents APT from immediately firing the handover
     // inside update_ensemble, keeping the escrow in Demand after the call.
@@ -9457,9 +9457,9 @@ fun update_config_demand_schedules_pending() {
 
 /// update_ensemble aborts with `ERetireAlreadyScheduled` when called in Demand
 /// state while the retire flag is set on the tenancy.
-/// Covers the Demand retire-guard branch of `execute_update_config` (B13).
+/// Covers the Demand retire-guard branch of `execute_update_ensemble` (B13).
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
-fun update_config_demand_retiring_aborts() {
+fun update_ensemble_demand_retiring_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -9610,10 +9610,10 @@ fun rent_with_insufficient_payment_in_demand_aborts() {
     sc.end();
 }
 
-// ── execute_update_config: wrong cap ──────────────────────────────────────────
+// ── execute_update_ensemble: wrong cap ──────────────────────────────────────────
 
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun update_config_with_wrong_cap_aborts() {
+fun update_ensemble_with_wrong_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, _owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -9634,7 +9634,7 @@ fun update_config_with_wrong_cap_aborts() {
 
 /// A genuine OwnerCap from a different real escrow is rejected on update_ensemble.
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun update_config_with_real_foreign_escrow_cap_aborts() {
+fun update_ensemble_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);

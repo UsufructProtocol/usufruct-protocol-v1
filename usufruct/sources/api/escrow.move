@@ -28,7 +28,7 @@ use usufruct::{
     price_escalation_policy::{Self, PriceEscalationPolicy},
     escrow_identity,
     protocol_fee_ref::{Self, ProtocolFeeRef},
-    commitment_policy::{Self, CommitmentPolicy},
+    retire_commitment_policy::{Self, RetireCommitmentPolicy},
     refund_address::RefundAddress,
     tenant_cap::{Self, TenantCap},
 };
@@ -56,16 +56,16 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 // === Public Functions ===
 
 public fun integrate<Asset: key + store, CoinType>(
-    asset:      Asset,
-    ensemble:   PolicyEnsemble,
-    commitment: CommitmentPolicy,
-    fee_ref:    &ProtocolFeeRef,
+    asset:             Asset,
+    ensemble:          PolicyEnsemble,
+    retire_commitment: RetireCommitmentPolicy,
+    fee_ref:           &ProtocolFeeRef,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): OwnerCap {
     let uid             = object::new(ctx);
     let (core, state, owner_cap) = asset_state::execute_integrate<Asset, CoinType>(
-        asset, ensemble, commitment,
+        asset, ensemble, retire_commitment,
         protocol_fee_ref::proj_inbox_identity(fee_ref),
         escrow_identity::new(object::uid_to_inner(&uid)),
         phases::now(clock),
@@ -120,14 +120,14 @@ public fun retire<Asset: key + store, CoinType>(
     put_state(escrow, new_state);
 }
 
-public fun extend_commitment<Asset: key + store, CoinType>(
+public fun extend_retire_commitment<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
     owner_cap:  &OwnerCap,
-    new_policy: CommitmentPolicy,
+    new_policy: RetireCommitmentPolicy,
     clock:      &Clock,
 ) {
     let core     = take_core(escrow);
-    let new_core = asset_state::execute_extend_commitment<Asset, CoinType>(core, owner_cap, new_policy, clock);
+    let new_core = asset_state::execute_extend_retire_commitment<Asset, CoinType>(core, owner_cap, new_policy, clock);
     put_core(escrow, new_core);
 }
 
@@ -282,16 +282,16 @@ public fun auction_window_is_fixed<Asset: key + store, CoinType>(
     auction_window_policy::proj_is_fixed(policy_ensemble::proj_auction_window(read_ensemble(escrow)))
 }
 
-public fun commitment_is_immediate<Asset: key + store, CoinType>(
+public fun retire_commitment_is_immediate<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    commitment_policy::proj_is_immediate(&asset_state::proj_commitment_policy(read_core(escrow)))
+    retire_commitment_policy::proj_is_immediate(&asset_state::proj_retire_commitment_policy(read_core(escrow)))
 }
 
-public fun commitment_is_deferred<Asset: key + store, CoinType>(
+public fun retire_commitment_is_deferred<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): bool {
-    commitment_policy::proj_is_deferred(&asset_state::proj_commitment_policy(read_core(escrow)))
+    retire_commitment_policy::proj_is_deferred(&asset_state::proj_retire_commitment_policy(read_core(escrow)))
 }
 
 public fun handover_is_off<Asset: key + store, CoinType>(
@@ -547,25 +547,25 @@ public fun integrated_at_ms<Asset: key + store, CoinType>(
     phases::timestamp_ms(asset_state::proj_integrated_at(read_core(escrow)))
 }
 
-public fun commitment_unlocks_at_ms<Asset: key + store, CoinType>(
+public fun retire_commitment_unlocks_at_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
     let c        = read_core(escrow);
-    let resolved = commitment_policy::compute_duration(&asset_state::proj_commitment_policy(c));
-    phases::timestamp_ms(commitment_policy::compute_unlock_at(resolved, asset_state::proj_commitment_anchor(c)))
+    let resolved = retire_commitment_policy::compute_duration(&asset_state::proj_retire_commitment_policy(c));
+    phases::timestamp_ms(retire_commitment_policy::compute_unlock_at(resolved, asset_state::proj_retire_commitment_anchor(c)))
 }
 
-public fun commitment_anchor_ms<Asset: key + store, CoinType>(
+public fun retire_commitment_anchor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): u64 {
-    phases::timestamp_ms(asset_state::proj_commitment_anchor(read_core(escrow)))
+    phases::timestamp_ms(asset_state::proj_retire_commitment_anchor(read_core(escrow)))
 }
 
-public fun commitment_remaining_ms<Asset: key + store, CoinType>(
+public fun retire_commitment_remaining_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     now_ms: u64,
 ): u64 {
-    let unlocks = commitment_unlocks_at_ms(escrow);
+    let unlocks = retire_commitment_unlocks_at_ms(escrow);
     if (now_ms >= unlocks) 0 else unlocks - now_ms
 }
 
@@ -728,10 +728,10 @@ public fun handover_floor_ms<Asset: key + store, CoinType>(
     handover_policy::proj_fixed_floor_ms(policy_ensemble::proj_handover(read_ensemble(escrow))).map!(|v| phases::duration_ms(v))
 }
 
-public fun commitment_floor_ms<Asset: key + store, CoinType>(
+public fun retire_commitment_floor_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    commitment_policy::proj_floor_ms(&asset_state::proj_commitment_policy(read_core(escrow))).map!(|v| phases::duration_ms(v))
+    retire_commitment_policy::proj_floor_ms(&asset_state::proj_retire_commitment_policy(read_core(escrow))).map!(|v| phases::duration_ms(v))
 }
 
 public fun credit_shape<Asset: key + store, CoinType>(
@@ -883,8 +883,8 @@ public fun price_fn_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, Co
 public fun price_fn_delta_mist<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): u64 {
     price_escalation_policy::proj_price_escalation_delta_mist(policy_ensemble::proj_price_escalation(read_ensemble(escrow)))
 }
-public fun commitment_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
-    commitment_policy::proj_commitment_policy(&asset_state::proj_commitment_policy(read_core(escrow)))
+public fun retire_commitment_kind<Asset: key + store, CoinType>(escrow: &Escrow<Asset, CoinType>): String {
+    retire_commitment_policy::proj_retire_commitment_policy(&asset_state::proj_retire_commitment_policy(read_core(escrow)))
 }
 
 // === Admin Functions ===

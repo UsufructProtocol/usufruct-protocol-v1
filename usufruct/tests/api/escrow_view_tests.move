@@ -11,7 +11,7 @@ use sui::{
     sui::SUI,
 };
 use usufruct::{
-    commitment_policy::{Self, CommitmentPolicy},
+    retire_commitment_policy::{Self, RetireCommitmentPolicy},
     policy_ensemble::PolicyEnsemble,
     escrow::{Self, Escrow},
     escrow_corpus,
@@ -38,12 +38,12 @@ fun setup(): Scenario {
 }
 
 fun build_escrow(ensemble: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    build_escrow_with_commitment(ensemble, commitment_policy::new_immediate(), sc)
+    build_escrow_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), sc)
 }
 
-fun build_escrow_with_commitment(
+fun build_escrow_with_retire_commitment(
     ensemble:        PolicyEnsemble,
-    commitment: CommitmentPolicy,
+    commitment: RetireCommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
@@ -245,36 +245,36 @@ fun price_function_views_match_variants() {
     sc.end();
 }
 
-// ─── commitment_policy views ──────────────────────────────────────────────────
+// ─── retire_commitment_policy views ──────────────────────────────────────────────────
 
 #[test]
-fun commitment_policy_views_match_variants() {
+fun retire_commitment_policy_views_match_variants() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
 
     // Immediate
-    let (escrow, cap) = build_escrow_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
-    assert!(escrow::commitment_is_immediate(&escrow));
-    assert!(!escrow::commitment_is_deferred(&escrow));
-    assert!(escrow::commitment_floor_ms(&escrow).is_none());
+    let (escrow, cap) = build_escrow_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), &mut sc);
+    assert!(escrow::retire_commitment_is_immediate(&escrow));
+    assert!(!escrow::retire_commitment_is_deferred(&escrow));
+    assert!(escrow::retire_commitment_floor_ms(&escrow).is_none());
     dispose(escrow, cap);
 
     // Deferred — use the corpus default deferred floor
     let deferred_floor = escrow_corpus::retire_deferred_f1_const();
-    let commitment = commitment_policy::new_deferred(usufruct::phases::duration(deferred_floor));
-    let (escrow, cap) = build_escrow_with_commitment(ensemble, commitment, &mut sc);
-    assert!(!escrow::commitment_is_immediate(&escrow));
-    assert!(escrow::commitment_is_deferred(&escrow));
-    assert_eq!(escrow::commitment_floor_ms(&escrow).destroy_some(), deferred_floor);
+    let commitment = retire_commitment_policy::new_deferred(usufruct::phases::duration(deferred_floor));
+    let (escrow, cap) = build_escrow_with_retire_commitment(ensemble, commitment, &mut sc);
+    assert!(!escrow::retire_commitment_is_immediate(&escrow));
+    assert!(escrow::retire_commitment_is_deferred(&escrow));
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow).destroy_some(), deferred_floor);
 
-    // commitment_remaining_ms — exercise both branches of the now<unlocks
+    // retire_commitment_remaining_ms — exercise both branches of the now<unlocks
     // vs now>=unlocks guard. Deferred puts unlocks strictly in the future,
     // so both branches are reachable from the same escrow.
-    let unlocks = escrow::commitment_unlocks_at_ms(&escrow);
+    let unlocks = escrow::retire_commitment_unlocks_at_ms(&escrow);
     assert!(unlocks > 0);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, 0),           unlocks);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, unlocks),     0);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, unlocks + 1), 0);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 0),           unlocks);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, unlocks),     0);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, unlocks + 1), 0);
     dispose(escrow, cap);
 
     sc.end();

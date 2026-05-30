@@ -26,7 +26,7 @@ use usufruct::{
         EarningsWithdrawn,
         BidPlaced,
         BidSuperseded,
-        CommitmentExtended,
+        RetireCommitmentExtended,
         HandoverCompleted,
         TenureExpired,
         RetireFlagSet,
@@ -45,7 +45,7 @@ use usufruct::{
     handover_policy,
     monetary,
     price_escalation_policy,
-    commitment_policy::{Self, CommitmentPolicy},
+    retire_commitment_policy::{Self, RetireCommitmentPolicy},
     tenure_extend_policy,
     tenure_duration_policy,
     escrow::{Self, Escrow},
@@ -167,13 +167,13 @@ fun integrate_and_take(
     ensemble: usufruct::policy_ensemble::PolicyEnsemble,
     sc:  &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), sc)
+    integrate_and_take_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), sc)
 }
 
-/// escrow + cap with an explicit CommitmentPolicy.
-fun integrate_and_take_with_commitment(
+/// escrow + cap with an explicit RetireCommitmentPolicy.
+fun integrate_and_take_with_retire_commitment(
     ensemble:        usufruct::policy_ensemble::PolicyEnsemble,
-    commitment: CommitmentPolicy,
+    commitment: RetireCommitmentPolicy,
     sc:         &mut Scenario,
 ): (Escrow<DemoAsset, SUI>, OwnerCap) {
     sc.next_tx(OWNER);
@@ -204,7 +204,7 @@ fun integrate_creates_idle_escrow_smoke() {
     let asset   = mk_demo_asset(sc.ctx());
 
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
@@ -250,7 +250,7 @@ fun integrate_idle_across_handover_modes() {
             let asset   = mk_demo_asset(sc.ctx());
 
                     let cap = escrow::integrate<DemoAsset, SUI>(
-                asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+                asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
             );
                     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
@@ -288,7 +288,7 @@ fun integrate_accepts_balance_vault() {
 
     let vault = mk_balance_vault(1_000_000, sc.ctx());
     let cap = escrow::integrate<BalanceVault, SUI>(
-        vault, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        vault, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
     test_scenario::return_immutable(fee_ref);
@@ -319,7 +319,7 @@ fun integrate_leaves_escrow_idle() {
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
 
-    let cap       = escrow::integrate<DemoAsset, SUI>(asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
+    let cap       = escrow::integrate<DemoAsset, SUI>(asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
     sc.next_tx(OWNER);
@@ -1554,12 +1554,12 @@ fun retire_with_real_foreign_escrow_cap_aborts() {
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
 fun retire_before_floor_aborts_under_deferred_policy() {
     let mut sc = setup();
     let tag = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 deferred
     let ensemble = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     // clock at 0 is far below the deferred floor (10_000_000).
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
@@ -3565,20 +3565,20 @@ fun e2e_auction_winner_rents_at_mid_descent() {
 
 // ─── §3. Deferred retire floor gate ───────────────────────────────────────────
 
-/// With CommitmentPolicy::Deferred, retire() aborts if the clock has not
+/// With RetireCommitmentPolicy::Deferred, retire() aborts if the clock has not
 /// reached integrated_at_ms + retire_floor. integrated_at_ms = 0
 /// (clock at integration time), retire_floor = 10_000_000.
 ///
 /// Config: c=0, d=0, e=0, h=0, f=1 (Deferred).
 #[test, expected_failure(
-    abort_code = asset_state::ECommitmentFloorNotElapsed,
+    abort_code = asset_state::ERetireCommitmentFloorNotElapsed,
     location   = usufruct::asset_state,
 )]
 fun e2e_deferred_retire_aborts_before_floor() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     // Clock at 0; retire_floor = 10_000_000 — gate is closed.
     let clk = clock::create_for_testing(sc.ctx());
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
@@ -3595,7 +3595,7 @@ fun e2e_deferred_retire_succeeds_after_floor() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(ensemble, escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Advance past retire_floor (integrated_at_ms=0, floor=10_000_000).
@@ -5293,7 +5293,7 @@ fun e2e_apt_idempotency_all_ch_m() {
 // For every reachable lifecycle state, the owner can retire the escrow when
 // commitment_policy_state = Immediate (f=0, retire_floor = 0, always unlocked) and
 // subsequently recover the asset via claim_asset. The Deferred-policy gate
-// (f=1, ECommitmentFloorNotElapsed) is covered separately in §3.
+// (f=1, ERetireCommitmentFloorNotElapsed) is covered separately in §3.
 //
 // Each test drives to a specific entry state, calls retire(), completes the
 // protocol cascade to Retired, and verifies claim_asset returns the asset.
@@ -5846,7 +5846,7 @@ fun e2e_corpus_gap_full_tenure_handover_full_credit_across_curves() {
 fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     let mut sc    = setup();
     let tag       = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc);
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let mut clk   = clock::create_for_testing(sc.ctx());
     let retire_floor     = escrow_corpus::retire_deferred_f1_const();  // 10_000_000
     let tenure_ceiling   = escrow_corpus::tenure_ceiling_const();      // 100_000
@@ -6969,30 +6969,30 @@ fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
 }
 
 // Test BD-6: commitment floor observable at integrate and after extend ─────────
-/// commitment_floor_ms reflects the CommitmentPolicy set at integration
-/// and updated by extend_commitment. update_config does not affect it.
+/// retire_commitment_floor_ms reflects the RetireCommitmentPolicy set at integration
+/// and updated by extend_retire_commitment. update_config does not affect it.
 #[test]
-fun commitment_floor_observable_at_integrate_and_after_extend() {
+fun retire_commitment_floor_observable_at_integrate_and_after_extend() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        ensemble, commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        ensemble, retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
     // Immediate policy at integration: no floor.
-    assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
+    assert!(escrow::retire_commitment_floor_ms(&escrow) == option::none(), 0);
 
     // Extend to Deferred.
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
+        retire_commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
         &clk,
     );
 
     // Deferred policy: floor = RETIRE_DEFERRED_F1.
     assert!(
-        escrow::commitment_floor_ms(&escrow) == option::some(escrow_corpus::retire_deferred_f1_const()),
+        escrow::retire_commitment_floor_ms(&escrow) == option::some(escrow_corpus::retire_deferred_f1_const()),
         1,
     );
 
@@ -7002,18 +7002,18 @@ fun commitment_floor_observable_at_integrate_and_after_extend() {
     sc.end();
 }
 
-// Test BD-6b: retire blocked after extend_commitment raises the floor ──────────
+// Test BD-6b: retire blocked after extend_retire_commitment raises the floor ──────────
 /// After extending from Immediate to Deferred, retire() at t=0 aborts.
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
-fun extend_commitment_retire_aborts_before_floor() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun extend_retire_commitment_retire_aborts_before_floor() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
+        retire_commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
         &clk,
     );
 
@@ -8852,7 +8852,7 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// §COMMITMENT — CommitmentPolicy invariants
+// §COMMITMENT — RetireCommitmentPolicy invariants
 //
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -8862,63 +8862,63 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
 /// I-1 + I-2: commitment_anchor is set to integrated_at at integrate time.
 /// With Immediate (floor=0), compute_unlock_at = anchor + 0 = anchor = integrated_at.
 #[test]
-fun commitment_init_anchor_equals_integrated_at() {
+fun retire_commitment_init_anchor_equals_integrated_at() {
     let mut sc  = setup();
     let ensemble     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), &mut sc);
 
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// I-3a: commitment_floor_ms is None for Immediate.
+/// I-3a: retire_commitment_floor_ms is None for Immediate.
 #[test]
-fun commitment_init_immediate_floor_ms_is_none() {
+fun retire_commitment_init_immediate_floor_ms_is_none() {
     let mut sc  = setup();
     let ensemble     = escrow_corpus::by_tag(0);
-    let (escrow, cap) = integrate_and_take_with_commitment(ensemble, commitment_policy::new_immediate(), &mut sc);
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), &mut sc);
 
-    assert!(escrow::commitment_floor_ms(&escrow) == option::none(), 0);
-    assert!(escrow::commitment_is_immediate(&escrow), 1);
+    assert!(escrow::retire_commitment_floor_ms(&escrow) == option::none(), 0);
+    assert!(escrow::retire_commitment_is_immediate(&escrow), 1);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// I-3b: commitment_floor_ms is Some(N) for Deferred(N).
+/// I-3b: retire_commitment_floor_ms is Some(N) for Deferred(N).
 #[test]
-fun commitment_init_deferred_floor_ms_is_some_n() {
+fun retire_commitment_init_deferred_floor_ms_is_some_n() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (escrow, cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
 
-    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
-    assert!(escrow::commitment_is_deferred(&escrow), 0);
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
+    assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// I-3c: commitment_unlocks_at_ms == integrated_at_ms + floor for Deferred.
+/// I-3c: retire_commitment_unlocks_at_ms == integrated_at_ms + floor for Deferred.
 #[test]
-fun commitment_init_deferred_unlocks_at_integrated_plus_floor() {
+fun retire_commitment_init_deferred_unlocks_at_integrated_plus_floor() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (escrow, cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
 
     let integrated = escrow::integrated_at_ms(&escrow);
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), integrated + floor);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), integrated + floor);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
@@ -8927,14 +8927,14 @@ fun commitment_init_deferred_unlocks_at_integrated_plus_floor() {
 
 // ─── Group II: update_config does not touch commitment ─────────────────────────
 
-/// II-4: commitment_policy unchanged after update_config.
+/// II-4: retire_commitment_policy unchanged after update_config.
 #[test]
-fun commitment_update_config_does_not_change_policy() {
+fun retire_commitment_update_config_does_not_change_policy() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let clk    = clock::create_for_testing(sc.ctx());
 
@@ -8943,8 +8943,8 @@ fun commitment_update_config_does_not_change_policy() {
     escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     // Commitment is still Deferred(floor) — update_config cannot change it.
-    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
-    assert!(escrow::commitment_is_deferred(&escrow), 0);
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
+    assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -8952,25 +8952,25 @@ fun commitment_update_config_does_not_change_policy() {
     sc.end();
 }
 
-/// II-5 + II-6: commitment_anchor and commitment_unlocks_at_ms unchanged after update_config.
+/// II-5 + II-6: commitment_anchor and retire_commitment_unlocks_at_ms unchanged after update_config.
 #[test]
-fun commitment_update_config_does_not_change_anchor() {
+fun retire_commitment_update_config_does_not_change_anchor() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    let unlocks_before = escrow::commitment_unlocks_at_ms(&escrow);
+    let unlocks_before = escrow::retire_commitment_unlocks_at_ms(&escrow);
 
     // Advance clock and reset config — anchor must not move.
     clock::set_for_testing(&mut clk, 500);
     let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     escrow::update_config(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), unlocks_before);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), unlocks_before);
     // integrated_at == 0 (clock was 0 at integrate), floor unchanged.
     assert_eq!(unlocks_before, 0 + floor);
 
@@ -8980,25 +8980,25 @@ fun commitment_update_config_does_not_change_anchor() {
     sc.end();
 }
 
-// ─── Group III: extend_commitment monotonicity ────────────────────────────────
+// ─── Group III: extend_retire_commitment monotonicity ────────────────────────────────
 
 /// III-7: A valid extension (new_expiry >= old_expiry) succeeds and is observable.
 #[test]
-fun commitment_extend_valid_increases_unlocks_at() {
+fun retire_commitment_extend_valid_increases_unlocks_at() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
-    let before = escrow::commitment_unlocks_at_ms(&escrow);
-    escrow::extend_commitment(
+    let before = escrow::retire_commitment_unlocks_at_ms(&escrow);
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
-    let after = escrow::commitment_unlocks_at_ms(&escrow);
+    let after = escrow::retire_commitment_unlocks_at_ms(&escrow);
 
     assert!(after >= before, 0);
     assert!(after > before, 1); // Deferred(floor) > Immediate(0)
@@ -9009,18 +9009,18 @@ fun commitment_extend_valid_increases_unlocks_at() {
     sc.end();
 }
 
-/// III-10a: extend_commitment(Immediate) always aborts — Immediate has duration=0,
+/// III-10a: extend_retire_commitment(Immediate) always aborts — Immediate has duration=0,
 /// which is not an extension. Locked state: Deferred(floor), clock at t=0.
-#[test, expected_failure(abort_code = asset_state::ECommitmentNotExtended, location = usufruct::asset_state)]
-fun commitment_extend_with_immediate_when_locked_aborts() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentNotExtended, location = usufruct::asset_state)]
+fun retire_commitment_extend_with_immediate_when_locked_aborts() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0, before expiry
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9028,20 +9028,20 @@ fun commitment_extend_with_immediate_when_locked_aborts() {
     sc.end();
 }
 
-/// III-10b: extend_commitment(Immediate) aborts even after commitment has expired.
+/// III-10b: extend_retire_commitment(Immediate) aborts even after commitment has expired.
 /// Once unlocked, retire is already available — there is nothing to extend.
-#[test, expected_failure(abort_code = asset_state::ECommitmentNotExtended, location = usufruct::asset_state)]
-fun commitment_extend_with_immediate_when_unlocked_aborts() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentNotExtended, location = usufruct::asset_state)]
+fun retire_commitment_extend_with_immediate_when_unlocked_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor + 1); // past expiry
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9049,17 +9049,17 @@ fun commitment_extend_with_immediate_when_unlocked_aborts() {
     sc.end();
 }
 
-/// III-10c: extend_commitment(Immediate) on a currently Immediate escrow aborts.
+/// III-10c: extend_retire_commitment(Immediate) on a currently Immediate escrow aborts.
 /// No duration → not an extension.
-#[test, expected_failure(abort_code = asset_state::ECommitmentNotExtended, location = usufruct::asset_state)]
-fun commitment_extend_immediate_to_immediate_aborts() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentNotExtended, location = usufruct::asset_state)]
+fun retire_commitment_extend_immediate_to_immediate_aborts() {
     let mut sc  = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9072,22 +9072,22 @@ fun commitment_extend_immediate_to_immediate_aborts() {
 /// a deferred trust signal added after the fact.
 /// Accumulate: old_expiry = 0 + 0 = 0. new_expiry = 0 + floor = floor.
 #[test]
-fun commitment_extend_immediate_to_deferred() {
+fun retire_commitment_extend_immediate_to_deferred() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
-    assert!(escrow::commitment_is_deferred(&escrow), 0);
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor);
+    assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9097,18 +9097,18 @@ fun commitment_extend_immediate_to_deferred() {
 
 /// III-11b: After Immediate → Deferred, retire is blocked before expiry.
 /// The gate that was open is now locked until the new commitment expires.
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
-fun commitment_extend_immediate_to_deferred_blocks_retire() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun retire_commitment_extend_immediate_to_deferred_blocks_retire() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9122,32 +9122,32 @@ fun commitment_extend_immediate_to_deferred_blocks_retire() {
     sc.end();
 }
 
-// ─── Group IV: anchor moves to old_expiry on extend_commitment ────────────────
+// ─── Group IV: anchor moves to old_expiry on extend_retire_commitment ────────────────
 
-/// IV-12 + IV-13: After extend_commitment, commitment_unlocks_at_ms reflects
+/// IV-12 + IV-13: After extend_retire_commitment, retire_commitment_unlocks_at_ms reflects
 /// accumulate semantics: new_expiry = old_expiry + new_floor.
 /// Starts Immediate (old_expiry=0), clock at t=1_000, extends to Deferred(floor).
 /// new_expiry = 0 + floor = floor. Clock value is irrelevant to accumulate.
 #[test]
-fun commitment_extend_anchor_moves_to_old_expiry() {
+fun retire_commitment_extend_anchor_moves_to_old_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Advance clock to t=1_000 before extending.
     clock::set_for_testing(&mut clk, 1_000);
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
     // Accumulate: new_expiry = old_expiry + floor = 0 + floor = floor.
     // anchor = old_expiry = 0. unlocks_at = 0 + floor = floor.
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9155,30 +9155,30 @@ fun commitment_extend_anchor_moves_to_old_expiry() {
     sc.end();
 }
 
-/// IV-13b: commitment_floor_ms reflects new policy floor; unlocks_at uses accumulate semantics.
+/// IV-13b: retire_commitment_floor_ms reflects new policy floor; unlocks_at uses accumulate semantics.
 /// Starts Immediate (old_expiry=0), clock at floor+1. Extends to Deferred(half_floor).
 /// Accumulate: new_expiry = old_expiry + half_floor = 0 + half_floor = half_floor.
 #[test]
-fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
+fun retire_commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
     let mut sc    = setup();
     let floor     = escrow_corpus::retire_deferred_f1_const();
     let half_floor = floor / 2;
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor + 1); // clock value does not affect accumulate
 
     // Extend to Deferred(half_floor) — floor_ms reflects the policy floor, not the anchor.
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(half_floor)),
+        retire_commitment_policy::new_deferred(phases::duration(half_floor)),
         &clk,
     );
 
-    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(half_floor));
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(half_floor));
     // Accumulate: new_expiry = 0 + half_floor = half_floor.
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), half_floor);
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), half_floor);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9190,10 +9190,10 @@ fun commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
 
 /// V-14: Immediate commitment — retire available at t=0.
 #[test]
-fun commitment_gate_immediate_retire_at_zero() {
+fun retire_commitment_gate_immediate_retire_at_zero() {
     let mut sc  = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk    = clock::create_for_testing(sc.ctx());
 
@@ -9207,13 +9207,13 @@ fun commitment_gate_immediate_retire_at_zero() {
 }
 
 /// V-15: Deferred(N) — retire at t < anchor+N aborts.
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
-fun commitment_gate_deferred_retire_before_floor_aborts() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun retire_commitment_gate_deferred_retire_before_floor_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor - 1); // one ms before unlock
@@ -9228,12 +9228,12 @@ fun commitment_gate_deferred_retire_before_floor_aborts() {
 
 /// V-16: Deferred(N) — retire at t >= anchor+N passes.
 #[test]
-fun commitment_gate_deferred_retire_at_floor_passes() {
+fun retire_commitment_gate_deferred_retire_at_floor_passes() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor); // exactly at unlock
@@ -9247,23 +9247,23 @@ fun commitment_gate_deferred_retire_at_floor_passes() {
     sc.end();
 }
 
-/// V-17: After extend_commitment(Deferred(N)), gate reopens from new anchor.
+/// V-17: After extend_retire_commitment(Deferred(N)), gate reopens from new anchor.
 /// Before extend: Immediate → retire at t=0 works.
 /// After extend at t=T: retire at t=T aborts (t < T+N); at t=T+N passes.
-#[test, expected_failure(abort_code = asset_state::ECommitmentFloorNotElapsed, location = usufruct::asset_state)]
-fun commitment_gate_extend_reopens_gate_aborts_immediately_after() {
+#[test, expected_failure(abort_code = asset_state::ERetireCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun retire_commitment_gate_extend_reopens_gate_aborts_immediately_after() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Extend at t=100 — gate reopens to t=100+floor.
     clock::set_for_testing(&mut clk, 100);
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9277,19 +9277,19 @@ fun commitment_gate_extend_reopens_gate_aborts_immediately_after() {
 }
 
 #[test]
-fun commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
+fun retire_commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Extend at t=100 to Deferred(floor).
     clock::set_for_testing(&mut clk, 100);
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
@@ -9304,34 +9304,34 @@ fun commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     sc.end();
 }
 
-// ─── Group VI: chaining extend_commitment ────────────────────────────────────
+// ─── Group VI: chaining extend_retire_commitment ────────────────────────────────────
 
 /// VI-18: Two sequential extensions are valid if each new_expiry >= previous.
 #[test]
-fun commitment_chain_two_extensions_both_valid() {
+fun retire_commitment_chain_two_extensions_both_valid() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
     // First extend: Immediate → Deferred(floor). new_expiry = old_expiry + floor = 0 + floor = floor.
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
-    let after_first = escrow::commitment_unlocks_at_ms(&escrow);
+    let after_first = escrow::retire_commitment_unlocks_at_ms(&escrow);
     assert_eq!(after_first, floor);
 
     // Second extend: Deferred(floor) → Deferred(floor*2). new_expiry = floor + floor*2 = floor*3.
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor * 2)),
+        retire_commitment_policy::new_deferred(phases::duration(floor * 2)),
         &clk,
     );
-    let after_second = escrow::commitment_unlocks_at_ms(&escrow);
+    let after_second = escrow::retire_commitment_unlocks_at_ms(&escrow);
     assert_eq!(after_second, floor * 3);
     assert!(after_second > after_first, 0);
 
@@ -9345,12 +9345,12 @@ fun commitment_chain_two_extensions_both_valid() {
 /// old_expiry=floor (Deferred(floor), anchor=0). Clock at 500 (irrelevant to accumulate).
 /// Accumulate: new_expiry = floor + floor = 2*floor.
 #[test]
-fun commitment_chain_same_floor_from_later_time_passes() {
+fun retire_commitment_chain_same_floor_from_later_time_passes() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_commitment(
-        escrow_corpus::by_tag(tag), escrow_corpus::commitment_by_tag(tag), &mut sc,
+    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+        escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     // old_anchor=0, old_expiry=floor.
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -9358,14 +9358,14 @@ fun commitment_chain_same_floor_from_later_time_passes() {
     // Advance to t=500 (still before expiry) and extend with same floor.
     // new_expiry = floor + floor = 2*floor (accumulate semantics).
     clock::set_for_testing(&mut clk, 500);
-    escrow::extend_commitment(
+    escrow::extend_retire_commitment(
         &mut escrow, &owner_cap,
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk,
     );
 
-    assert_eq!(escrow::commitment_unlocks_at_ms(&escrow), floor * 2);
-    assert_eq!(escrow::commitment_floor_ms(&escrow), option::some(floor));
+    assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor * 2);
+    assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(owner_cap, OWNER);
@@ -9631,7 +9631,7 @@ fun update_config_with_real_foreign_escrow_cap_aborts() {
 // ── execute_extend_commitment: wrong cap + non-monotonic policy ───────────────
 
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun extend_commitment_with_wrong_cap_aborts() {
+fun extend_retire_commitment_with_wrong_cap_aborts() {
     let mut sc = setup();
     let (mut escrow, _owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
@@ -9639,7 +9639,7 @@ fun extend_commitment_with_wrong_cap_aborts() {
     let foreign_cap = owner_cap::new(
         escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx(),
     );
-    escrow::extend_commitment(&mut escrow, &foreign_cap, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow, &foreign_cap, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(foreign_cap, OWNER);
@@ -9648,16 +9648,16 @@ fun extend_commitment_with_wrong_cap_aborts() {
     sc.end();
 }
 
-/// A genuine OwnerCap from a different real escrow is rejected on extend_commitment.
+/// A genuine OwnerCap from a different real escrow is rejected on extend_retire_commitment.
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun extend_commitment_with_real_foreign_escrow_cap_aborts() {
+fun extend_retire_commitment_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
     let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_commitment(&mut escrow_b, &cap_a, commitment_policy::new_immediate(), &clk);
+    escrow::extend_retire_commitment(&mut escrow_b, &cap_a, retire_commitment_policy::new_immediate(), &clk);
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
@@ -9853,44 +9853,44 @@ fun policy_kind_views_tag0() {
     assert_eq!(escrow::auction_shape_kind(&escrow),            b"Linear".to_string());
     assert_eq!(escrow::price_fn_kind(&escrow),                 b"FixedDelta".to_string());
     assert_eq!(escrow::price_fn_delta_mist(&escrow),           escrow_corpus::fixed_delta_value_const());
-    assert_eq!(escrow::commitment_kind(&escrow),        b"Immediate".to_string());
+    assert_eq!(escrow::retire_commitment_kind(&escrow),        b"Immediate".to_string());
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// commitment_anchor_ms equals integrated_at_ms for a fresh escrow.
-/// commitment_remaining_ms is 0 for Immediate at any time.
+/// retire_commitment_anchor_ms equals integrated_at_ms for a fresh escrow.
+/// retire_commitment_remaining_ms is 0 for Immediate at any time.
 #[test]
-fun commitment_anchor_and_remaining_immediate() {
+fun retire_commitment_anchor_and_remaining_immediate() {
     let mut sc = setup();
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
 
-    assert_eq!(escrow::commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, 0),   0);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, 999), 0);
+    assert_eq!(escrow::retire_commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 0),   0);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 999), 0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
-/// commitment_remaining_ms reflects the floor for a Deferred policy.
+/// retire_commitment_remaining_ms reflects the floor for a Deferred policy.
 #[test]
-fun commitment_anchor_and_remaining_deferred() {
+fun retire_commitment_anchor_and_remaining_deferred() {
     let mut sc = setup();
     let floor = escrow_corpus::retire_deferred_f1_const();
-    let (escrow, cap) = integrate_and_take_with_commitment(
+    let (escrow, cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0),
-        commitment_policy::new_deferred(phases::duration(floor)),
+        retire_commitment_policy::new_deferred(phases::duration(floor)),
         &mut sc,
     );
 
-    assert_eq!(escrow::commitment_anchor_ms(&escrow), 0);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, 0),        floor);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, floor / 2), floor - floor / 2);
-    assert_eq!(escrow::commitment_remaining_ms(&escrow, floor),    0);
+    assert_eq!(escrow::retire_commitment_anchor_ms(&escrow), 0);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 0),        floor);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, floor / 2), floor - floor / 2);
+    assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, floor),    0);
 
     test_scenario::return_shared(escrow);
     owner_cap::burn(cap, OWNER);
@@ -9917,7 +9917,7 @@ fun event_pin_asset_integrated_all_fields() {
     let asset_id = object::id(&asset);
 
     let cap      = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id     = owner_cap::proj_escrow_id(&cap);
     let owner_cap_id  = object::id(&cap);
@@ -10034,7 +10034,7 @@ fun event_pin_cycle_params_resolved_all_fields() {
     let asset    = mk_demo_asset(sc.ctx());
 
     let cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&cap);
 
@@ -10370,10 +10370,10 @@ fun event_pin_earnings_withdrawn_all_fields() {
     sc.end();
 }
 
-// ─── CommitmentExtended payload pin ─────────────────────────────────────────
+// ─── RetireCommitmentExtended payload pin ─────────────────────────────────────────
 
 #[test]
-fun event_pin_commitment_extended_all_fields() {
+fun event_pin_retire_commitment_extended_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -10382,28 +10382,28 @@ fun event_pin_commitment_extended_all_fields() {
 
     let escrow_id   = owner_cap::proj_escrow_id(&owner_cap);
     let deferred_ms = escrow_corpus::retire_deferred_f1_const();
-    let new_policy  = commitment_policy::new_deferred(phases::duration(deferred_ms));
+    let new_policy  = retire_commitment_policy::new_deferred(phases::duration(deferred_ms));
 
-    escrow::extend_commitment(&mut escrow, &owner_cap, new_policy, &clk);
+    escrow::extend_retire_commitment(&mut escrow, &owner_cap, new_policy, &clk);
 
     // Immediate has duration=0 so old_expiry = anchor + 0 = 0.
     // new_expiry = old_expiry + deferred_ms = 0 + 10_000_000.
     let expected_new_expiry = deferred_ms;
 
-    let evts = event::events_by_type<CommitmentExtended>();
+    let evts = event::events_by_type<RetireCommitmentExtended>();
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
-    assert_eq!(asset_state::commitment_extended_escrow_id(e),      escrow_id);
-    assert_eq!(asset_state::commitment_extended_new_unlock_at_ms(e),  expected_new_expiry);
-    assert_eq!(asset_state::commitment_extended_timestamp_ms(e),   3_000);
+    assert_eq!(asset_state::retire_commitment_extended_escrow_id(e),      escrow_id);
+    assert_eq!(asset_state::retire_commitment_extended_new_unlock_at_ms(e),  expected_new_expiry);
+    assert_eq!(asset_state::retire_commitment_extended_timestamp_ms(e),   3_000);
     // floor_ms is Some(deferred_ms) for a Deferred policy.
-    assert_eq!(asset_state::commitment_extended_floor_ms(e),       option::some(deferred_ms));
-    // policy string is the canonical label emitted by commitment_policy.
-    assert_eq!(asset_state::commitment_extended_policy(e),
-               commitment_policy::proj_commitment_policy(&new_policy));
-    assert_eq!(asset_state::commitment_extended_coin_type(e),
+    assert_eq!(asset_state::retire_commitment_extended_floor_ms(e),       option::some(deferred_ms));
+    // policy string is the canonical label emitted by retire_commitment_policy.
+    assert_eq!(asset_state::retire_commitment_extended_policy(e),
+               retire_commitment_policy::proj_retire_commitment_policy(&new_policy));
+    assert_eq!(asset_state::retire_commitment_extended_coin_type(e),
                string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
-    assert_eq!(asset_state::commitment_extended_asset_type(e),
+    assert_eq!(asset_state::retire_commitment_extended_asset_type(e),
                string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
 
     test_scenario::return_shared(escrow);

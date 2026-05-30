@@ -28,7 +28,7 @@ use usufruct::{
     owner_seat::{Self, OwnerSeat},
     owner_identity,
     owner_cap::{Self, OwnerCap},
-    commitment_policy::{Self, CommitmentPolicy},
+    retire_commitment_policy::{Self, RetireCommitmentPolicy},
     handover_policy,
     math,
     phases::{Self, Timestamp, Duration},
@@ -48,7 +48,7 @@ const ENotRented:             u64 = 0;
 const EInsufficientPayment:   u64 = 1;
 const ERetireFlagBlocksBid:   u64 = 2;
 const ERetiredNoBid:          u64 = 3;
-const ECommitmentFloorNotElapsed: u64 = 4;
+const ERetireCommitmentFloorNotElapsed: u64 = 4;
 const EAlreadyRetired:        u64 = 5;
 const EWrongEscrowOwnerCap:   u64 = 11;
 const EWrongEscrowTenantCap:  u64 = 6;
@@ -59,7 +59,7 @@ const EReceiptEscrowMismatch:  u64 = 10;
 const ENotRetired:               u64 = 12;
 const ENoEarnings:              u64 = 13;
 const ERetireAlreadyScheduled:  u64 = 16;
-const ECommitmentNotExtended:   u64 = 17;
+const ERetireCommitmentNotExtended:   u64 = 17;
 const EReturnedDifferentAsset: u64 = 19;
 const EAlreadyRetiring:        u64 = 20;
 const ETenantCapStale:         u64 = 21;
@@ -105,8 +105,8 @@ public struct EnsembleSlot has drop, store {
     pending: Option<PolicyEnsemble>,
 }
 
-public struct CommitmentSlot has copy, drop, store {
-    policy: CommitmentPolicy,
+public struct RetireCommitmentSlot has copy, drop, store {
+    policy: RetireCommitmentPolicy,
     anchor: Timestamp,
 }
 
@@ -126,7 +126,7 @@ public struct EscrowCore<phantom CoinType> has store {
     ensemble:           EnsembleSlot,
     fee_inbox_identity: FeeInboxIdentity,
     integrated_at:      Timestamp,
-    commitment:         CommitmentSlot,
+    retire_commitment:  RetireCommitmentSlot,
     escrow_identity:    EscrowIdentity,
 }
 
@@ -204,7 +204,7 @@ public struct EarningsWithdrawn has copy, drop {
     timestamp_ms:  u64,
 }
 
-public struct CommitmentExtended has copy, drop {
+public struct RetireCommitmentExtended has copy, drop {
     escrow_id:           ID,
     commitment_policy:   String,
     commitment_floor_ms: Option<u64>,
@@ -388,13 +388,13 @@ public(package) fun cycle_params_ceiling_ms(c: &CycleParams): u64    { phases::d
 public(package) fun cycle_params_handover_ms(c: &CycleParams): u64   { phases::duration_ms(c.handover) }
 public(package) fun cycle_params_descent_ms(c: &CycleParams): u64    { phases::duration_ms(c.descent) }
 
-public(package) fun proj_commitment_policy<CoinType>(
+public(package) fun proj_retire_commitment_policy<CoinType>(
     core: &EscrowCore<CoinType>,
-): CommitmentPolicy { core.commitment.policy }
+): RetireCommitmentPolicy { core.retire_commitment.policy }
 
-public(package) fun proj_commitment_anchor<CoinType>(
+public(package) fun proj_retire_commitment_anchor<CoinType>(
     core: &EscrowCore<CoinType>,
-): Timestamp { core.commitment.anchor }
+): Timestamp { core.retire_commitment.anchor }
 
 public(package) fun proj_owner_balance<CoinType>(
     core: &EscrowCore<CoinType>,
@@ -813,7 +813,7 @@ public(package) fun renting_into_state<Asset: key + store, CoinType>(
 public(package) fun execute_integrate<Asset: key + store, CoinType>(
     asset:              Asset,
     ensemble:           PolicyEnsemble,
-    commitment_policy:  CommitmentPolicy,
+    retire_commitment:  RetireCommitmentPolicy,
     fee_inbox_identity: FeeInboxIdentity,
     escrow_identity:    EscrowIdentity,
     integrated_at:      Timestamp,
@@ -831,7 +831,7 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
         ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
         fee_inbox_identity,
         integrated_at,
-        commitment:         CommitmentSlot { policy: commitment_policy, anchor: integrated_at },
+        retire_commitment:  RetireCommitmentSlot { policy: retire_commitment, anchor: integrated_at },
         escrow_identity,
     };
     let state = AssetState::Waiting(WaitingState::Idle {
@@ -918,7 +918,7 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
     let now = phases::now(clock);
-    assert_commitment_elapsed(&core, now);
+    assert_retire_commitment_elapsed(&core, now);
     let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     core.ensemble.pending = option::none();
     let escrow_identity = core.escrow_identity;
@@ -1187,35 +1187,35 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
     (s, core, coin)
 }
 
-public(package) fun execute_extend_commitment<Asset: key + store, CoinType>(
+public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinType>(
     mut core:   EscrowCore<CoinType>,
     owner_cap:  &OwnerCap,
-    new_policy: CommitmentPolicy,
+    new_policy: RetireCommitmentPolicy,
     clock:      &Clock,
 ): EscrowCore<CoinType> {
     assert_owner_cap_binds(owner_cap, &core);
     let now            = phases::now(clock);
-    let new_duration   = commitment_policy::compute_duration(&new_policy);
-    assert!(phases::duration_ms(new_duration) > 0, ECommitmentNotExtended);
-    let old_expiry = commitment_policy::compute_unlock_at(
-        commitment_policy::compute_duration(&core.commitment.policy),
-        core.commitment.anchor,
+    let new_duration   = retire_commitment_policy::compute_duration(&new_policy);
+    assert!(phases::duration_ms(new_duration) > 0, ERetireCommitmentNotExtended);
+    let old_expiry = retire_commitment_policy::compute_unlock_at(
+        retire_commitment_policy::compute_duration(&core.retire_commitment.policy),
+        core.retire_commitment.anchor,
     );
-    let new_expiry = commitment_policy::compute_unlock_at(
+    let new_expiry = retire_commitment_policy::compute_unlock_at(
         new_duration,
         old_expiry,
     );
-    event::emit(CommitmentExtended {
+    event::emit(RetireCommitmentExtended {
         escrow_id:           escrow_identity::escrow_id(core.escrow_identity),
-        commitment_policy:   commitment_policy::proj_commitment_policy(&new_policy),
-        commitment_floor_ms: commitment_policy::proj_commitment_floor_ms(&new_policy),
+        commitment_policy:   retire_commitment_policy::proj_retire_commitment_policy(&new_policy),
+        commitment_floor_ms: retire_commitment_policy::proj_retire_commitment_floor_ms(&new_policy),
         new_unlock_at_ms:       phases::timestamp_ms(new_expiry),
         asset_type:          string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
         coin_type:           string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
         timestamp_ms:        phases::timestamp_ms(now),
     });
-    core.commitment.policy = new_policy;
-    core.commitment.anchor = old_expiry;
+    core.retire_commitment.policy = new_policy;
+    core.retire_commitment.anchor = old_expiry;
     core
 }
 
@@ -1285,14 +1285,14 @@ fun tenant_addr<C>(seat: &TenantSeat<C>): address {
     refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(seat)))
 }
 
-fun assert_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {
+fun assert_retire_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, now: Timestamp) {
     assert!(
-        commitment_policy::compute_unlock_boundary(
-            commitment_policy::compute_duration(&core.commitment.policy),
-            core.commitment.anchor,
+        retire_commitment_policy::compute_unlock_boundary(
+            retire_commitment_policy::compute_duration(&core.retire_commitment.policy),
+            core.retire_commitment.anchor,
             now,
         ).proj_is_crossed(),
-        ECommitmentFloorNotElapsed,
+        ERetireCommitmentFloorNotElapsed,
     )
 }
 
@@ -2288,19 +2288,19 @@ public(package) fun earnings_withdrawn_coin_type(e: &EarningsWithdrawn): String 
 public(package) fun earnings_withdrawn_timestamp_ms(e: &EarningsWithdrawn): u64 { e.timestamp_ms }
 
 #[test_only]
-public(package) fun commitment_extended_escrow_id(e: &CommitmentExtended): ID       { e.escrow_id }
+public(package) fun retire_commitment_extended_escrow_id(e: &RetireCommitmentExtended): ID       { e.escrow_id }
 #[test_only]
-public(package) fun commitment_extended_policy(e: &CommitmentExtended): String { e.commitment_policy }
+public(package) fun retire_commitment_extended_policy(e: &RetireCommitmentExtended): String { e.commitment_policy }
 #[test_only]
-public(package) fun commitment_extended_floor_ms(e: &CommitmentExtended): Option<u64> { e.commitment_floor_ms }
+public(package) fun retire_commitment_extended_floor_ms(e: &RetireCommitmentExtended): Option<u64> { e.commitment_floor_ms }
 #[test_only]
-public(package) fun commitment_extended_new_unlock_at_ms(e: &CommitmentExtended): u64  { e.new_unlock_at_ms }
+public(package) fun retire_commitment_extended_new_unlock_at_ms(e: &RetireCommitmentExtended): u64  { e.new_unlock_at_ms }
 #[test_only]
-public(package) fun commitment_extended_asset_type(e: &CommitmentExtended): String  { e.asset_type }
+public(package) fun retire_commitment_extended_asset_type(e: &RetireCommitmentExtended): String  { e.asset_type }
 #[test_only]
-public(package) fun commitment_extended_coin_type(e: &CommitmentExtended): String   { e.coin_type }
+public(package) fun retire_commitment_extended_coin_type(e: &RetireCommitmentExtended): String   { e.coin_type }
 #[test_only]
-public(package) fun commitment_extended_timestamp_ms(e: &CommitmentExtended): u64   { e.timestamp_ms }
+public(package) fun retire_commitment_extended_timestamp_ms(e: &RetireCommitmentExtended): u64   { e.timestamp_ms }
 
 #[test_only]
 public(package) fun asset_integrated_escrow_id(e: &AssetIntegrated): ID          { e.escrow_id }

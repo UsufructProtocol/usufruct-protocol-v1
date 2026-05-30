@@ -11,7 +11,7 @@ use usufruct::{
     phases::{Self, Duration},
     tenures::{Self, Tenures},
     auction_window_policy::{Self, AuctionWindowPolicy},
-    commitment_policy::{Self, CommitmentPolicy},
+    retire_commitment_policy::{Self, RetireCommitmentPolicy},
     curve_shape_policy::{Self, CurveShapePolicy},
     handover_policy::{Self, HandoverPolicy},
     policy_ensemble::{Self, PolicyEnsemble},
@@ -51,12 +51,12 @@ public fun new_descent_fixed(ceiling: Duration): AuctionWindowPolicy {
     auction_window_policy::new_descent_fixed(ceiling)
 }
 
-// --- CommitmentPolicy ---
+// --- RetireCommitmentPolicy ---
 
-public fun new_commitment_immediate(): CommitmentPolicy { commitment_policy::new_immediate() }
+public fun new_retire_commitment_immediate(): RetireCommitmentPolicy { retire_commitment_policy::new_immediate() }
 
-public fun new_commitment_deferred(floor: Duration): CommitmentPolicy {
-    commitment_policy::new_deferred(floor)
+public fun new_retire_commitment_deferred(floor: Duration): RetireCommitmentPolicy {
+    retire_commitment_policy::new_deferred(floor)
 }
 
 // --- CurveShapePolicy ---

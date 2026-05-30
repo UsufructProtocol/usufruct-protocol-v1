@@ -13,7 +13,7 @@ use sui::{
     test_scenario::{Self, Scenario},
 };
 use usufruct::{
-    commitment_policy,
+    retire_commitment_policy,
     escrow::{Self, Escrow},
     escrow_corpus,
     owner_cap,
@@ -70,7 +70,7 @@ fun r2_refund_address_feeds_update_tenant_refund_address() {
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
     let owner_cap = escrow::integrate<DemoAsset, SUI>(
-        asset, escrow_corpus::by_tag(0), commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
     test_scenario::return_immutable(fee_ref);
@@ -113,7 +113,7 @@ fun r3_refund_address_feeds_update_on_pending_seat() {
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
     let owner_cap = escrow::integrate<DemoAsset, SUI>(
-        asset, ensemble, commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
+        asset, ensemble, retire_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
     let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
     test_scenario::return_immutable(fee_ref);

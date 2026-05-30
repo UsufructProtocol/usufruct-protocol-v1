@@ -11045,6 +11045,32 @@ fun ensemble_commitment_gate_blanket_blocks_in_retired() {
     sc.end();
 }
 
+/// EC-II-6c (blanket release in Retired): once the ensemble_commitment floor has
+/// elapsed its guard stops firing, so update_ensemble in Retired now reaches the
+/// Retired arm and aborts EAlreadyRetired. This closes the matrix: the released
+/// counterpart to ..._blocks_in_retired (active floor -> floor error), and the
+/// Deferred-elapsed counterpart to update_ensemble_on_retired_aborts (Immediate).
+#[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
+fun ensemble_commitment_after_floor_in_retired_aborts_already_retired() {
+    let mut sc = setup();
+    let floor  = escrow_corpus::retire_deferred_f1_const();
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    escrow::drive_to_retired_for_testing(&mut escrow);
+    assert!(escrow::is_retired(&escrow), 0);
+
+    clock::set_for_testing(&mut clk, floor); // floor elapsed -> guard releases
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 /// EC-II-7 (blanket release): after the floor, update_ensemble resumes normal
 /// scheduling while Occupied (pending reset, not an abort).
 /// The freeze floor is set below the tenure ceiling (100_000) so the tenancy is

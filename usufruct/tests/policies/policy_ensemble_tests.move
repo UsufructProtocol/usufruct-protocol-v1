@@ -350,7 +350,7 @@ fun new_config_rejects_min_rent_price_zero() {
     );
 }
 
-#[test, expected_failure(abort_code = 0, location = usufruct::tenure_duration_policy)]
+#[test, expected_failure(abort_code = tenure_duration_policy::EDurationZero, location = usufruct::tenure_duration_policy)]
 fun new_config_rejects_tenure_ceiling_zero() {
     policy_ensemble::new_ensemble(
         rest_price_policy::new_fixed(monetary::price(V2_MIN_RENT_PRICE)),

@@ -45,27 +45,27 @@ use usufruct::{
 
 // === Errors ===
 
-const ENotRented:             u64 = 0;
-const EInsufficientPayment:   u64 = 1;
-const ERetireFlagBlocksBid:   u64 = 2;
-const ERetiredNoBid:          u64 = 3;
-const ERetireCommitmentFloorNotElapsed: u64 = 4;
-const EAlreadyRetired:        u64 = 5;
-const EWrongEscrowOwnerCap:   u64 = 11;
-const EWrongEscrowTenantCap:  u64 = 6;
-const EPendingTenantCap:      u64 = 7;
-const EStaleTenantCap:        u64 = 8;
-const ETenantCapNotStale:     u64 = 9;
-const EReceiptEscrowMismatch:  u64 = 10;
-const ENotRetired:               u64 = 12;
-const ENoEarnings:              u64 = 13;
-const ERetireAlreadyScheduled:  u64 = 16;
-const ERetireCommitmentNotExtended:   u64 = 17;
-const EReturnedDifferentAsset: u64 = 19;
-const EAlreadyRetiring:        u64 = 20;
-const ETenantCapStale:         u64 = 21;
-const EEnsembleCommitmentFloorNotElapsed: u64 = 22;
-const EEnsembleCommitmentNotExtended:     u64 = 23;
+const ENotRented:                        u64 = 0;
+const EInsufficientPayment:              u64 = 1;
+const ERetireFlagBlocksBid:              u64 = 2;
+const ERetiredNoBid:                     u64 = 3;
+const ERetireCommitmentFloorNotElapsed:  u64 = 4;
+const EAlreadyRetired:                   u64 = 5;
+const EWrongEscrowTenantCap:             u64 = 6;
+const EPendingTenantCap:                 u64 = 7;
+const EStaleTenantCap:                   u64 = 8;
+const ETenantCapNotStale:                u64 = 9;
+const EReceiptEscrowMismatch:            u64 = 10;
+const EWrongEscrowOwnerCap:              u64 = 11;
+const ENotRetired:                       u64 = 12;
+const ENoEarnings:                       u64 = 13;
+const ERetireAlreadyScheduled:           u64 = 14;
+const ERetireCommitmentNotExtended:      u64 = 15;
+const EReturnedDifferentAsset:           u64 = 16;
+const EAlreadyRetiring:                  u64 = 17;
+const ETenantCapStale:                   u64 = 18;
+const EEnsembleCommitmentFloorNotElapsed: u64 = 19;
+const EEnsembleCommitmentNotExtended:     u64 = 20;
 
 // === Constants ===
 
@@ -2237,7 +2237,7 @@ public(package) fun proj_resolved_descent_for_testing<Asset: key + store, CoinTy
     match (s) {
         AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.descent,
         AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) => cycle.descent,
-        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0,
+        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0xDEADC0DE,
     }
 }
 
@@ -2248,7 +2248,7 @@ public(package) fun proj_resolved_floor_for_testing<Asset: key + store, CoinType
     match (s) {
         AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.floor,
         AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) => cycle.floor,
-        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0,
+        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0xDEADC0DE,
     }
 }
 
@@ -2259,7 +2259,7 @@ public(package) fun proj_resolved_ceiling_for_testing<Asset: key + store, CoinTy
     match (s) {
         AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.ceiling,
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) => terms.schedule.ceiling_total,
-        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0,
+        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0xDEADC0DE,
     }
 }
 
@@ -2270,7 +2270,7 @@ public(package) fun proj_resolved_handover_for_testing<Asset: key + store, CoinT
     match (s) {
         AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) => cycle.handover,
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) => terms.schedule.handover_total,
-        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0,
+        AssetState::Waiting(WaitingState::Retired { .. }) => abort 0xDEADC0DE,
     }
 }
 

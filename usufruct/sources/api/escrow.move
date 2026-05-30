@@ -36,7 +36,7 @@ use usufruct::{
 
 // === Errors ===
 
-const EAssetBorrowed: u64 = 20;
+const EAssetBorrowed: u64 = 0;
 
 // === Constants ===
 

@@ -21,7 +21,7 @@ use usufruct::{
 
 // === Errors ===
 
-const EHandoverFloorExceedsTenure: u64 = 2;
+const EHandoverFloorExceedsTenure: u64 = 0;
 
 // === Constants ===
 

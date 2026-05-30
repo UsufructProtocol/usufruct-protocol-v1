@@ -2178,6 +2178,9 @@ fun update_tenant_refund_address_in_occupied_changes_active_address() {
     assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&active_evts[0]), object::id(&cap_t1));
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), old_addr);
     assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
+    assert_eq!(asset_state::active_refund_updated_asset_type(&active_evts[0]),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::active_refund_updated_coin_type(&active_evts[0]),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
+    assert_eq!(asset_state::active_refund_updated_timestamp_ms(&active_evts[0]), 0);
     assert_eq!(event::events_by_type<PendingTenantRefundAddressUpdated>().length(), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -2254,6 +2257,9 @@ fun update_tenant_refund_address_in_demand_with_pending_cap_changes_pending_only
     assert_eq!(asset_state::pending_refund_updated_tenant_cap_id(&pending_evts[0]), object::id(&cap_t2));
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[0]), pending_old);
     assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), new_addr);
+    assert_eq!(asset_state::pending_refund_updated_asset_type(&pending_evts[0]),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::pending_refund_updated_coin_type(&pending_evts[0]),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
+    assert_eq!(asset_state::pending_refund_updated_timestamp_ms(&pending_evts[0]), 0);
     assert_eq!(event::events_by_type<ActiveTenantRefundAddressUpdated>().length(), 0);
 
     transfer::public_transfer(cap_t1, OWNER);
@@ -10194,6 +10200,8 @@ fun event_pin_asset_retired_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::asset_retired_escrow_id(e),    escrow_id);
+    assert_eq!(asset_state::asset_retired_asset_type(e),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
+    assert_eq!(asset_state::asset_retired_coin_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::asset_retired_timestamp_ms(e), 99_000);
 
     test_scenario::return_shared(escrow);

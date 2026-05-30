@@ -11040,6 +11040,98 @@ fun ensemble_commitment_gate_after_floor_schedules_in_occupied() {
     sc.end();
 }
 
+/// EC-II-8 (compound: schedule-then-freeze): a pending reset announced BEFORE a
+/// freeze survives a subsequent extend_ensemble_commitment and is still applied
+/// at the natural boundary. The extend halts NEW announcements (verified in
+/// EC-II-9), but does not retract one already made — a tenant who observed the
+/// EnsembleUpdateScheduled can rely on it landing.
+#[test]
+fun ensemble_commitment_extend_preserves_pending_then_applies_at_boundary() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        ensemble, ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // Rent T1 → Occupied.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    // While the gate is open (Immediate), announce a reset → pending buffered.
+    let new_ensemble = escrow_corpus::by_tag(1);
+    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    assert!(escrow::has_pending_ensemble_update(&escrow), 0);
+
+    // Now re-freeze with a long floor. The announced pending must survive.
+    let floor = escrow_corpus::retire_deferred_f1_const(); // 10_000_000 ≫ boundary times
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+    assert!(escrow::ensemble_commitment_is_deferred(&escrow), 1);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 2);
+    assert!(escrow::active_ensemble(&escrow) == ensemble, 3); // still old until boundary
+
+    // Tenure expiry → Descent. The boundary engine is independent of the freeze;
+    // the pending survives, old config still active.
+    escrow::fire_do_tenure_expiry_for_testing(
+        &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
+    );
+    assert!(escrow::is_descending(&escrow), 4);
+    assert!(escrow::has_pending_ensemble_update(&escrow), 5);
+
+    // Auction expiry → Idle: the pending announced before the freeze is applied,
+    // even though the ensemble_commitment floor is still pending.
+    clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const() + 1);
+    escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
+
+    assert!(escrow::is_idle(&escrow), 6);
+    assert!(!escrow::has_pending_ensemble_update(&escrow), 7);
+    assert!(escrow::active_ensemble(&escrow) == new_ensemble, 8);
+    // The freeze is still in force (now ≪ floor) — the gate did not open.
+    assert!(escrow::ensemble_commitment_remaining_ms(&escrow, clock::timestamp_ms(&clk)) > 0, 9);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// EC-II-9 (compound: freeze halts new announcements): after announcing a pending
+/// reset and then extending the ensemble_commitment, a SECOND update_ensemble
+/// aborts — the freeze blocks further changes even though a pending already exists.
+#[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentFloorNotElapsed, location = usufruct::asset_state)]
+fun ensemble_commitment_extend_after_pending_blocks_further_update() {
+    let mut sc = setup();
+    let ensemble = escrow_corpus::by_tag(0);
+    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+        ensemble, ensemble_commitment_policy::new_immediate(), &mut sc,
+    );
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    // First update while open → pending buffered.
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    assert!(escrow::has_pending_ensemble_update(&escrow), 0);
+
+    // Freeze.
+    let floor = escrow_corpus::retire_deferred_f1_const();
+    escrow::extend_ensemble_commitment(
+        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk);
+
+    // Second update must abort — the freeze halts new announcements.
+    // The ensemble value is irrelevant: the guard aborts before it is read.
+    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(0), &clk, sc.ctx());
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── Group III: extend_ensemble_commitment monotonicity ───────────────────────
 
 /// EC-III-1: A valid extension (Immediate → Deferred) increases unlocks_at.

@@ -118,8 +118,12 @@ export function buildFlowHandoverEnsemble(tx: Transaction, pkg: string): Transac
   });
 }
 
-export function buildImmediateCommitment(tx: Transaction, pkg: string): TransactionArgument {
-  return tx.moveCall({ target: `${pkg}::ensemble::new_commitment_immediate` });
+export function buildImmediateRetireCommitment(tx: Transaction, pkg: string): TransactionArgument {
+  return tx.moveCall({ target: `${pkg}::ensemble::new_retire_commitment_immediate` });
+}
+
+export function buildImmediateEnsembleCommitment(tx: Transaction, pkg: string): TransactionArgument {
+  return tx.moveCall({ target: `${pkg}::ensemble::new_ensemble_commitment_immediate` });
 }
 
 // Integrates a DummyAsset into a new escrow. Returns the OwnerCap result.
@@ -130,10 +134,11 @@ export function buildIntegrate(
   feeRefId:       string,
   ensembleBuilder: (tx: Transaction, pkg: string) => TransactionArgument = buildMinimalEnsemble,
 ): TransactionArgument {
-  const asset      = tx.moveCall({ target: `${dummyAssetPkg}::dummy_asset::mint` });
-  const ensemble   = ensembleBuilder(tx, usufructPkg);
-  const commitment = buildImmediateCommitment(tx, usufructPkg);
-  const feeRef     = tx.object(feeRefId);
+  const asset              = tx.moveCall({ target: `${dummyAssetPkg}::dummy_asset::mint` });
+  const ensemble           = ensembleBuilder(tx, usufructPkg);
+  const retireCommitment   = buildImmediateRetireCommitment(tx, usufructPkg);
+  const ensembleCommitment = buildImmediateEnsembleCommitment(tx, usufructPkg);
+  const feeRef             = tx.object(feeRefId);
 
   return tx.moveCall({
     target: `${usufructPkg}::escrow::integrate`,
@@ -141,7 +146,7 @@ export function buildIntegrate(
       `${dummyAssetPkg}::dummy_asset::DummyAsset`,
       '0x2::sui::SUI',
     ],
-    arguments: [asset, ensemble, commitment, feeRef, clock(tx)],
+    arguments: [asset, ensemble, retireCommitment, ensembleCommitment, feeRef, clock(tx)],
   });
 }
 

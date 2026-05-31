@@ -78,9 +78,10 @@ async function setupOneEscrow(
     tx1.moveCall({ target: `${pkg}::ensemble::new_price_fixed_delta`, arguments: [p(1n)] }),
   ]});
   const asset = tx1.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
-  const comm  = tx1.moveCall({ target: `${pkg}::ensemble::new_commitment_immediate` });
+  const rc    = tx1.moveCall({ target: `${pkg}::ensemble::new_retire_commitment_immediate` });
+  const ec    = tx1.moveCall({ target: `${pkg}::ensemble::new_ensemble_commitment_immediate` });
   const oc    = tx1.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
-    arguments: [asset, ens, comm, tx1.object(d.protocolFeeRefId), clock(tx1)] });
+    arguments: [asset, ens, rc, ec, tx1.object(d.protocolFeeRefId), clock(tx1)] });
   tx1.transferObjects([oc], d.owner.address);
 
   const r1 = await client.signAndExecuteTransaction({
@@ -159,9 +160,10 @@ async function generateFeeMessages(
       tx.moveCall({ target: `${pkg}::ensemble::new_price_fixed_delta`, arguments: [p(1n)] }),
     ]});
     const asset = tx.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
-    const comm  = tx.moveCall({ target: `${pkg}::ensemble::new_commitment_immediate` });
+    const rc    = tx.moveCall({ target: `${pkg}::ensemble::new_retire_commitment_immediate` });
+    const ec    = tx.moveCall({ target: `${pkg}::ensemble::new_ensemble_commitment_immediate` });
     const oc    = tx.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
-      arguments: [asset, ens, comm, tx.object(d.protocolFeeRefId), clock(tx)] });
+      arguments: [asset, ens, rc, ec, tx.object(d.protocolFeeRefId), clock(tx)] });
     tx.transferObjects([oc], d.owner.address);
 
     const r = await client.signAndExecuteTransaction({

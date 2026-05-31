@@ -1,10 +1,30 @@
 # Usufruct — Gas Profiling Findings
 
 Network: localnet (Sui 1.67.1)  
-Date: 2026-05-25
+Date: 2026-05-25  
+Code state: `9b2d000` — *chore(profiling): update scripts and findings for ensemble API layer*
 
 > **Testnet validation added 2026-05-27.** See [Testnet section](#testnet-validation-2026-05-27)
 > below for full measurements and cross-network comparison.
+
+---
+
+## Version provenance — number ↔ code state
+
+Every measurement section is anchored to the exact commit whose source tree was
+built and deployed to produce its numbers. A gas figure is only meaningful against
+the code that generated it; this table is the bridge.
+
+| Version | Date | Code-state commit | What it added |
+|---|---|---|---|
+| v1.0.0 | 2026-05-25 | `9b2d000` | initial Phase A/B on the ensemble API layer |
+| v1.1.0 | 2026-05-27 | `be7f8a1` (testnet pkg `0xe466…`) | testnet validation; localnet = testnet to the bit |
+| v1.2.0 | 2026-05-28 | `2f604b5` | `update_tenant_refund_address` + `active_*` view rename |
+| v1.3.0 | 2026-05-31 | `51f9d31` | `ensemble_commitment` twin + blanket terms-freeze |
+
+The code-state commit is the **parent of the commit that wrote each section** (the doc
+commit adds only prose on top of the already-deployed source) — except v1.3.0, whose
+numbers were measured directly against `HEAD` (`51f9d31`) with a clean `usufruct/` tree.
 
 ---
 
@@ -187,6 +207,7 @@ correctness invariant: no state transition is ever silently dropped.
 
 Network: Sui testnet  
 Package: `0xe4662b44e47ce58beabdd6d45a541346636fbbffec0c7d4feb18d3f30bd95aaf`  
+Code state: `be7f8a1` — 2026-05-27 source tree (**v1.1.0**)  
 Same scripts, same parameters — independent run on public testnet.
 
 ### Phase A — Atomic operations
@@ -366,6 +387,7 @@ state transition is ever silently dropped.
 
 Network: localnet  
 Branch: `profiling-update-refund-address`  
+Code state: `2f604b5` — *profiling: add update_tenant_refund_address scripts* (**v1.2.0**)  
 Changes vs prior run: new `update_tenant_refund_address` public function + view API
 rename (`current_*` → `active_*`, `policy_ensemble` → `active_ensemble`,
 `pending_config` → `pending_ensemble`) + new `committed_tenures` views.
@@ -406,10 +428,10 @@ overhead to the surrounding cycle; it is purely additive.
 
 ### Cross-version comparison — Phase A
 
-v1.1.0 reference: testnet measurement (2026-05-27), which matched localnet exactly.  
-v1.2.0: localnet measurement (2026-05-28).
+v1.1.0 reference: testnet measurement (2026-05-27), code state `be7f8a1`, which matched localnet exactly.  
+v1.2.0: localnet measurement (2026-05-28), code state `2f604b5`.
 
-| Operation | v1.1.0 (MIST) | v1.2.0 (MIST) | Δ (MIST) |
+| Operation | v1.1.0 `be7f8a1` (MIST) | v1.2.0 `2f604b5` (MIST) | Δ (MIST) |
 |---|---|---|---|
 | `integrate` | 6,419,480 | 6,489,480 | +70,000 |
 | `rent(tenures(1))` | 4,039,920 | 4,099,920 | +60,000 |
@@ -435,7 +457,7 @@ with operation complexity, tenure count, or system volume.
 
 ### Cross-version comparison — Phase B
 
-| Flow | v1.1.0 (MIST) | v1.2.0 (MIST) | Δ (MIST) | Steps |
+| Flow | v1.1.0 `be7f8a1` (MIST) | v1.2.0 `2f604b5` (MIST) | Δ (MIST) | Steps |
 |---|---|---|---|---|
 | Minimal (integrate→rent→retire→apply→claim) | 11,760,680 | 12,080,680 | +320,000 | 5 |
 | Lifecycle + borrow_return | 11,998,408 | 12,368,408 | +370,000 | 6 |
@@ -449,9 +471,112 @@ with operation complexity, tenure count, or system volume.
 Phase B deltas are proportional to step count: each step adds ~60,000 MIST, so a flow
 with N steps accumulates N × 60,000 MIST. The per-cycle cost remains constant:
 
-| Metric | v1.1.0 | v1.2.0 |
+| Metric | v1.1.0 `be7f8a1` | v1.2.0 `2f604b5` |
 |---|---|---|
 | Per sequential rent cycle (rent + apply) | 5,913,960 MIST | 6,033,960 MIST |
 
 The +120,000 MIST per cycle (+60k rent, +60k apply) is the v1.2.0 API overhead
 amortised across the two mandatory PTBs in a cycle.
+
+---
+
+## Localnet — ensemble_commitment (2026-05-31)
+
+Network: localnet (Sui 1.67.1)  
+Branch: `ensemble-commitment-policy` (merged to `main`)  
+Code state: `51f9d31` — *fix(asset_state): gate extend_\*\_commitment on POST-apply_pending state* (**v1.3.0**, `HEAD`, clean `usufruct/` tree)  
+Changes vs prior run: `integrate` gains an `ensemble_commitment` parameter — the exact
+mirror of `retire_commitment`. The `commitment` family is renamed to `retire_commitment`
+and `update_config` → `update_ensemble`. A new `extend_ensemble_commitment` entrypoint is
+added, and a **blanket terms-freeze** now gates `update_ensemble`: during an active
+`ensemble_commitment` floor the call aborts in every state (never schedules `pending`),
+exactly as `retire_commitment` gates `retire`.
+
+### New atomic operation
+
+| Operation | Net MIST | Net SUI | +Obj | −Obj |
+|---|---|---|---|---|
+| `extend_ensemble_commitment` | 1,374,260 | +0.001374 | 0 | 0 |
+
+It costs **bit-for-bit the same as its twin** `extend_retire_commitment` (1,374,260 MIST):
+identical compute (1,250,000), identical storage (6,406,800), identical rebate (6,282,540).
+See finding #8.
+
+### Phase A — full atomic table (v1.3.0 localnet)
+
+| Operation | Net MIST | Net SUI |
+|---|---|---|
+| `integrate` | 6,617,880 | +0.006618 |
+| `rent(tenures(1))` | 4,170,604 | +0.004171 |
+| `rent(tenures(10))` | 4,170,604 | +0.004171 |
+| `rent(tenures(100))` | 4,170,604 | +0.004171 |
+| `borrow_return` | 1,336,532 | +0.001337 |
+| `apply_transitions` (no-op) | 1,300,724 | +0.001301 |
+| `retire` | 1,070,260 | +0.001070 |
+| `soft_burn_tenant_cap` | −277,188 | −0.000277 |
+| `hard_burn_tenant_cap` | −335,112 | −0.000335 |
+| `claim_asset` | −1,462,972 | −0.001463 |
+| `withdraw_earnings` | 2,301,460 | +0.002301 |
+| `extend_retire_commitment` | 1,374,260 | +0.001374 |
+| `extend_ensemble_commitment` | 1,374,260 | +0.001374 |
+| `update_ensemble` | 1,313,460 | +0.001313 |
+| `update_tenant_refund_address` | 1,326,532 | +0.001327 |
+
+`rent(tenures(N))` remains O(1) in N (identical for N=1/10/100). Curve-shape variants
+remain gas-neutral within 152 MIST (finding #7 holds — re-measured, unchanged).
+
+### Cross-version comparison — Phase A
+
+v1.2.0 reference: localnet measurement (2026-05-28), code state `2f604b5`.  
+v1.3.0: localnet measurement (2026-05-31), code state `51f9d31`.
+
+| Operation | v1.2.0 `2f604b5` (MIST) | v1.3.0 `51f9d31` (MIST) | Δ (MIST) |
+|---|---|---|---|
+| `integrate` | 6,489,480 | 6,617,880 | +128,400 |
+| `rent(tenures(1))` | 4,099,920 | 4,170,604 | +70,684 |
+| `borrow_return` | 1,265,848 | 1,336,532 | +70,684 |
+| `apply_transitions` (no-op) | 1,240,040 | 1,300,724 | +60,684 |
+| `retire` | 999,576 | 1,070,260 | +70,684 |
+| `soft_burn_tenant_cap` | −337,872 | −277,188 | +60,684 |
+| `hard_burn_tenant_cap` | −395,112 | −335,112 | +60,000 |
+| `withdraw_earnings` | 2,230,776 | 2,301,460 | +70,684 |
+| `extend_commitment` → `extend_retire_commitment` | 1,303,576 | 1,374,260 | +70,684 |
+| `update_config` → `update_ensemble` | 1,252,776 | 1,313,460 | +60,684 |
+| `update_tenant_refund_address` | 1,265,848 | 1,326,532 | +60,684 |
+| `claim_asset` | −1,465,256 | −1,462,972 | +2,284 |
+| `extend_ensemble_commitment` | — | 1,374,260 | new |
+
+A near-uniform **+60,684–70,684 MIST** increase across every operation. `integrate` is
+~2× that (+128,400) because it both creates the `ensemble_commitment` slot **and** anchors
+it. `claim_asset` is the sole exception (+2,284 ≈ 0): it deletes the `Escrow`, so the extra
+slot's storage is rebated on destruction — the persistent cost is reclaimed, not paid.
+This is the same absolute, volume-independent storage delta documented in finding #6.
+
+### Phase B — flows (v1.3.0 localnet)
+
+| Flow | v1.2.0 `2f604b5` (MIST) | v1.3.0 `51f9d31` (MIST) | Δ (MIST) | Steps |
+|---|---|---|---|---|
+| Minimal (integrate→rent→retire→apply→claim) | 12,080,680 | 12,413,416 | +332,736 | 5 |
+| Lifecycle + borrow_return | 12,368,408 | 12,771,828 | +403,420 | 6 |
+| Handover (2 tenants) | 16,825,824 | 17,360,612 | +534,788 | 8 |
+| Sequential rents N=3 | 23,147,560 | 23,773,032 | +625,472 | 9 |
+| Sequential rents N=5 | 35,215,480 | 36,123,688 | +908,208 | 13 |
+| Sequential rents N=10 | 65,385,280 | 67,000,328 | +1,615,048 | 23 |
+| N=3 with earnings withdrawals | 26,915,528 | 27,743,052 | +827,524 | 12 |
+| Refund redirect → handover | 18,068,752 | 18,674,224 | +605,472 | 9 |
+
+Deltas track step count — each core-touching PTB pays the ~60–70k slot-serialization cost.
+The per-cycle figure stays constant:
+
+| Metric | v1.2.0 `2f604b5` | v1.3.0 `51f9d31` |
+|---|---|---|
+| Per sequential rent cycle (rent + apply) | 6,033,960 MIST | 6,175,328 MIST |
+
+### #8 — The retire/ensemble commitment twin is gas-symmetric
+
+`extend_ensemble_commitment` and `extend_retire_commitment` cost **1,374,260 MIST each —
+identical to the MIST** in compute, storage, and rebate. The two policies are byte-faithful
+mirrors in source (`EnsembleCommitmentPolicy` is a structural twin of `RetireCommitmentPolicy`,
+both `Immediate | Deferred { floor }`), and that structural symmetry surfaces verbatim in the
+gas meter. The blanket terms-freeze adds no measurable cost over the permanence commitment it
+mirrors: a tenant gets stability-of-terms for the same price as stability-of-availability.

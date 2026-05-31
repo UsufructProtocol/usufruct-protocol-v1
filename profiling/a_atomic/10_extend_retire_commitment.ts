@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
- * Phase A / 11 — update_config
- * Measures: owner updates PolicyEnsemble on an idle escrow.
+ * Phase A / 10 — extend_retire_commitment
+ * Measures: owner extends the retire-commitment period on an idle escrow.
  */
 
 import { resolve, dirname } from 'path';
@@ -13,7 +13,8 @@ import {
   loadDeployment, loadKeypairs, makeClient, RUNS,
 } from '../env.ts';
 import { measure, saveRecords, median, execSetup } from '../measure.ts';
-import { buildIntegrate, buildMinimalEnsemble, clock } from '../builders.ts';
+import { buildIntegrate, clock } from '../builders.ts';
+import { TENURE_DURATION_MS } from '../env.ts';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -57,21 +58,28 @@ async function main() {
     const tx = new Transaction();
     tx.setSender(d.owner.address);
 
-    const newEnsemble = buildMinimalEnsemble(tx, d.usufructPackageId);
+    const dur = tx.moveCall({
+      target: `${d.usufructPackageId}::ensemble::duration`,
+      arguments: [tx.pure.u64(TENURE_DURATION_MS)],
+    });
+    const newCommitment = tx.moveCall({
+      target: `${d.usufructPackageId}::ensemble::new_retire_commitment_deferred`,
+      arguments: [dur],
+    });
     tx.moveCall({
-      target: `${d.usufructPackageId}::escrow::update_config`,
+      target: `${d.usufructPackageId}::escrow::extend_retire_commitment`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), tx.object(ownerCapId), newEnsemble, clock(tx)],
+      arguments: [tx.object(escrowId), tx.object(ownerCapId), newCommitment, clock(tx)],
     });
 
-    const rec = await measure(client, kp.owner, 'update_config', run, tx);
+    const rec = await measure(client, kp.owner, 'extend_retire_commitment', run, tx);
     records.push(rec);
     console.log(` net=${rec.net} MIST`);
   }
 
   const med = median(records);
   console.log(`\nMedian net: ${med.net} MIST`);
-  saveRecords(resolve(DIR, '../results/a_11_update_config.json'), records);
+  saveRecords(resolve(DIR, '../results/a_10_extend_retire_commitment.json'), records);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

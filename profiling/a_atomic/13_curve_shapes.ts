@@ -164,13 +164,14 @@ async function setupOccupiedEscrow(
   // Step 1: integrate with the target curve shape
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const asset      = tx1.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
-  const ensemble   = buildCurveEnsemble(tx1, d.usufructPackageId, buildCurve);
-  const commitment = tx1.moveCall({ target: `${d.usufructPackageId}::ensemble::new_commitment_immediate` });
+  const asset              = tx1.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
+  const ensemble           = buildCurveEnsemble(tx1, d.usufructPackageId, buildCurve);
+  const retireCommitment   = tx1.moveCall({ target: `${d.usufructPackageId}::ensemble::new_retire_commitment_immediate` });
+  const ensembleCommitment = tx1.moveCall({ target: `${d.usufructPackageId}::ensemble::new_ensemble_commitment_immediate` });
   const ownerCap   = tx1.moveCall({
     target:        `${d.usufructPackageId}::escrow::integrate`,
     typeArguments: ta,
-    arguments:     [asset, ensemble, commitment, tx1.object(d.protocolFeeRefId), clock(tx1)],
+    arguments:     [asset, ensemble, retireCommitment, ensembleCommitment, tx1.object(d.protocolFeeRefId), clock(tx1)],
   });
   tx1.transferObjects([ownerCap], d.owner.address);
   const r1 = await execSetup(client, owner, tx1);

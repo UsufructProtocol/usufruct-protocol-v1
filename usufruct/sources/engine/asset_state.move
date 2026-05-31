@@ -1218,14 +1218,16 @@ public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
 }
 
 public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinType>(
-    s:          &AssetState<Asset, CoinType>,
-    mut core:   EscrowCore<CoinType>,
+    s:          AssetState<Asset, CoinType>,
+    core:       EscrowCore<CoinType>,
     owner_cap:  &OwnerCap,
     new_policy: RetireCommitmentPolicy,
     clock:      &Clock,
-): EscrowCore<CoinType> {
+    ctx:        &mut TxContext,
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
-    assert_not_retired(s);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
+    assert_not_retired(&s);
     let now            = phases::now(clock);
     let new_duration   = retire_commitment_policy::compute_duration(&new_policy);
     assert!(phases::duration_ms(new_duration) > 0, ERetireCommitmentNotExtended);
@@ -1248,18 +1250,20 @@ public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinTyp
     });
     core.retire_commitment.policy = new_policy;
     core.retire_commitment.anchor = old_expiry;
-    core
+    (s, core)
 }
 
 public(package) fun execute_extend_ensemble_commitment<Asset: key + store, CoinType>(
-    s:          &AssetState<Asset, CoinType>,
-    mut core:   EscrowCore<CoinType>,
+    s:          AssetState<Asset, CoinType>,
+    core:       EscrowCore<CoinType>,
     owner_cap:  &OwnerCap,
     new_policy: EnsembleCommitmentPolicy,
     clock:      &Clock,
-): EscrowCore<CoinType> {
+    ctx:        &mut TxContext,
+): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     assert_owner_cap_binds(owner_cap, &core);
-    assert_not_retired(s);
+    let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
+    assert_not_retired(&s);
     let now            = phases::now(clock);
     let new_duration   = ensemble_commitment_policy::compute_duration(&new_policy);
     assert!(phases::duration_ms(new_duration) > 0, EEnsembleCommitmentNotExtended);
@@ -1282,7 +1286,7 @@ public(package) fun execute_extend_ensemble_commitment<Asset: key + store, CoinT
     });
     core.ensemble_commitment.policy = new_policy;
     core.ensemble_commitment.anchor = old_expiry;
-    core
+    (s, core)
 }
 
 public(package) fun execute_claim<Asset: key + store, CoinType>(

@@ -85,7 +85,25 @@ fun drain_all_on_zero_returns_zero_balance() {
     owner_earning::destroy_zero(e);
 }
 
-// ─── §4. destroy_zero ─────────────────────────────────────────────────────────
+// ─── §4. into_balance ───────────────────────────────────────────────────────────
+
+#[test]
+fun into_balance_consumes_and_returns_full_balance() {
+    let e   = mk(640);
+    let bal = owner_earning::into_balance(e);
+    assert_eq!(balance::value(&bal), 640);
+    balance::destroy_for_testing(bal);
+}
+
+#[test]
+fun into_balance_on_zero_returns_zero_balance() {
+    let e: OwnerEarnings<TEST_COIN> = owner_earning::zero();
+    let bal = owner_earning::into_balance(e);
+    assert_eq!(balance::value(&bal), 0);
+    balance::destroy_zero(bal);
+}
+
+// ─── §5. destroy_zero ─────────────────────────────────────────────────────────
 
 #[test]
 fun destroy_zero_ok_on_zero_value() {

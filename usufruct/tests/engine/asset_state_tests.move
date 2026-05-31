@@ -20,7 +20,7 @@ use usufruct::{
     escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
-    owner_cap::{Self, OwnerCap},
+    owner_cap::OwnerCap,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
     refund_address,
@@ -66,18 +66,18 @@ fun integrate_and_take_with_cfg(
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
-    let cap = escrow::integrate<DemoAsset, SUI>(
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset,
         ensemble,
         retire_commitment_policy::new_immediate(),
         ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
     sc.next_tx(OWNER);
-    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
 
@@ -126,12 +126,12 @@ fun claim_asset_aborts_in_descent_state() {
 
     let escrow = retake_escrow_by_value(escrow, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let (asset, earnings) = escrow::claim_asset(escrow, cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &cap, &clk, sc.ctx());
 
     // Unreachable — claim_asset aborts above. Bindings only satisfy the
     // type checker; expected_failure makes the abort the success path.
-    coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -149,10 +149,10 @@ fun claim_asset_aborts_in_occupied_state() {
 
     let escrow = retake_escrow_by_value(escrow, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let (asset, earnings) = escrow::claim_asset(escrow, cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &cap, &clk, sc.ctx());
 
-    coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -175,10 +175,10 @@ fun claim_asset_aborts_in_demand_state() {
 
     let escrow = retake_escrow_by_value(escrow, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let (asset, earnings) = escrow::claim_asset(escrow, cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &cap, &clk, sc.ctx());
 
-    coin::destroy_zero(earnings);
     transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }

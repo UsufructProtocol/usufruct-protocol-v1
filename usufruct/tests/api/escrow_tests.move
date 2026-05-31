@@ -23,7 +23,6 @@ use usufruct::{
         AuctionExpired,
         AssetRetired,
         AssetClaimed,
-        EarningsWithdrawn,
         BidPlaced,
         BidSuperseded,
         RetireCommitmentExtended,
@@ -54,6 +53,7 @@ use usufruct::{
     escrow_corpus,
     escrow_identity,
     fee_message::FeeMessageSent,
+    earnings_message::{Self, EarningsPosted},
     owner_cap::{Self, OwnerCap},
     phases,
     protocol_fee_inbox,
@@ -182,14 +182,14 @@ fun integrate_and_take_with_retire_commitment(
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
-    let cap = escrow::integrate<DemoAsset, SUI>(
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, commitment, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.next_tx(OWNER);
-    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
 
@@ -203,14 +203,14 @@ fun integrate_and_take_with_ensemble_commitment(
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
-    let cap = escrow::integrate<DemoAsset, SUI>(
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment, &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.next_tx(OWNER);
-    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
 
@@ -226,17 +226,17 @@ fun integrate_creates_idle_escrow_smoke() {
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
 
-    let cap = escrow::integrate<DemoAsset, SUI>(
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    transfer::public_transfer(inbox, OWNER);
 
     sc.next_tx(OWNER);
-    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     assert_tag_idle(&escrow, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -272,17 +272,17 @@ fun integrate_idle_across_handover_modes() {
             let clk     = clock::create_for_testing(sc.ctx());
             let asset   = mk_demo_asset(sc.ctx());
 
-                    let cap = escrow::integrate<DemoAsset, SUI>(
+                    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
                 asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
             );
-                    let escrow_id = owner_cap::proj_escrow_id(&cap);
+                    transfer::public_transfer(inbox, OWNER);
 
             clock::destroy_for_testing(clk);
             test_scenario::return_immutable(fee_ref);
-            owner_cap::burn(cap, OWNER);
+            transfer::public_transfer(cap, OWNER);
 
             sc.next_tx(OWNER);
-            let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+            let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
             assert_tag_idle(&escrow, tag);
             test_scenario::return_shared(escrow);
 
@@ -310,19 +310,19 @@ fun integrate_accepts_balance_vault() {
     let clk      = clock::create_for_testing(sc.ctx());
 
     let vault = mk_balance_vault(1_000_000, sc.ctx());
-    let cap = escrow::integrate<BalanceVault, SUI>(
+    let (cap, inbox) = escrow::integrate<BalanceVault, SUI>(
         vault, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
     sc.next_tx(OWNER);
-    let escrow = sc.take_shared_by_id<Escrow<BalanceVault, SUI>>(escrow_id);
+    let escrow = sc.take_shared<Escrow<BalanceVault, SUI>>();
     assert_tag_idle(&escrow, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -342,16 +342,16 @@ fun integrate_leaves_escrow_idle() {
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
 
-    let cap       = escrow::integrate<DemoAsset, SUI>(asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
+    transfer::public_transfer(inbox, OWNER);
 
     sc.next_tx(OWNER);
-    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
     assert_tag_idle(&escrow, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -405,7 +405,7 @@ fun floor_price_idle_returns_min_rent_price() {
     assert_eq!(price, escrow_corpus::min_rent_price_const());
     assert_eq!(price, escrow::rest_price_floor_fixed_mist(&escrow));
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -461,7 +461,7 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle() {
     transfer::public_transfer(cap_t3, OWNER);
     transfer::public_transfer(cap_t4, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -516,7 +516,7 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle_multitenure() {
     transfer::public_transfer(cap_t3, OWNER);
     transfer::public_transfer(cap_t4, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -540,7 +540,7 @@ fun floor_price_mist_minus_one_aborts_in_idle() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -561,7 +561,7 @@ fun floor_price_mist_minus_one_aborts_in_occupied() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -585,7 +585,7 @@ fun floor_price_mist_minus_one_aborts_in_demand() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -609,7 +609,7 @@ fun floor_price_mist_minus_one_aborts_in_descent() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -643,7 +643,7 @@ fun floor_price_occupied_escalates_active_stake() {
             assert!(price > STAKE_T1, tag);
 
             test_scenario::return_shared(escrow);
-            owner_cap::burn(cap, OWNER);
+            transfer::public_transfer(cap, OWNER);
             d = d + 1;
         };
         m = m + 1;
@@ -681,7 +681,7 @@ fun floor_price_demand_escalates_pending_stake() {
             assert!(price > STAKE_T2, tag);
 
             test_scenario::return_shared(escrow);
-            owner_cap::burn(cap, OWNER);
+            transfer::public_transfer(cap, OWNER);
             d = d + 1;
         };
         m = m + 1;
@@ -726,7 +726,7 @@ fun floor_price_descent_at_t0_equals_last_acq_price() {
             assert!(price == last_acq, tag);
 
             test_scenario::return_shared(escrow);
-            owner_cap::burn(cap, OWNER);
+            transfer::public_transfer(cap, OWNER);
             e = e + 1;
         };
         m = m + 1;
@@ -767,7 +767,7 @@ fun floor_price_descent_at_full_descent_equals_min_rent_price() {
             assert!(price == escrow_corpus::min_rent_price_const(), tag);
 
             test_scenario::return_shared(escrow);
-            owner_cap::burn(cap, OWNER);
+            transfer::public_transfer(cap, OWNER);
             e = e + 1;
         };
         m = m + 1;
@@ -785,7 +785,7 @@ fun floor_price_aborts_on_retired() {
     let _ = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -819,7 +819,7 @@ fun used_credit_at_phase_start_is_zero_for_all_curves() {
             assert!(used == 0, tag);
 
             test_scenario::return_shared(escrow);
-            owner_cap::burn(cap, OWNER);
+            transfer::public_transfer(cap, OWNER);
             e = e + 1;
         };
         m = m + 1;
@@ -855,7 +855,7 @@ fun used_credit_at_tenure_ceiling_equals_principal_for_all_curves() {
             assert!(used == STAKE_T1, tag);
 
             test_scenario::return_shared(escrow);
-            owner_cap::burn(cap, OWNER);
+            transfer::public_transfer(cap, OWNER);
             e = e + 1;
         };
         m = m + 1;
@@ -895,7 +895,7 @@ fun used_credit_demand_clamps_at_expiry() {
     assert_eq!(at_expiry, far_future);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -908,7 +908,7 @@ fun used_credit_aborts_on_idle() {
     let _ = escrow::accrued_credit_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -929,7 +929,7 @@ fun used_credit_aborts_on_descent() {
     let _ = escrow::accrued_credit_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -943,7 +943,7 @@ fun used_credit_aborts_on_retired() {
     let _ = escrow::accrued_credit_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -973,7 +973,7 @@ fun rent_from_idle_installs_new_tenant() {
 
     transfer::public_transfer(t_cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1013,7 +1013,7 @@ fun rent_from_descent_installs_new_tenant() {
 
     transfer::public_transfer(t_cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1060,7 +1060,7 @@ fun rent_from_occupied_places_bid() {
             transfer::public_transfer(cap_t1, OWNER);
             transfer::public_transfer(cap_t2, OWNER);
             test_scenario::return_shared(escrow);
-            owner_cap::burn(owner_cap, OWNER);
+            transfer::public_transfer(owner_cap, OWNER);
                     clock::destroy_for_testing(clk);
             c = c + 1;
         };
@@ -1092,7 +1092,7 @@ fun rent_from_occupied_aborts_when_retiring_flag_set() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1138,7 +1138,7 @@ fun rent_from_demand_supersedes_bid() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1184,7 +1184,7 @@ fun off_handover_never_supersedes_pending_bid() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1203,7 +1203,7 @@ fun rent_below_floor_aborts() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1221,7 +1221,7 @@ fun rent_from_retired_aborts() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1253,7 +1253,6 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
 
     let principal_t1 = escrow_corpus::min_rent_price_const();
-    let owner_before = escrow::owner_value_for_testing(&escrow);
 
     // Fire do_handover at the handover-countdown expiry.
     let boundary_ms = phase_start + escrow_corpus::handover_countdown_c1_const() + now2;
@@ -1265,10 +1264,12 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     // Post-condition: Occupied, current is t2.
     assert!(escrow::is_occupied(&escrow), 0);
 
-    // Owner balance increased by the owner share (90% of used_credit).
-    let owner_after = escrow::owner_value_for_testing(&escrow);
+    // Owner share (90% of used_credit) was mailed to the inbox at handover.
     let owner_share_expected = used_credit_expected - used_credit_expected / 10;  // 90%
-    assert!(owner_after - owner_before == owner_share_expected, 1);
+    assert_eq!(
+        earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
+        owner_share_expected,
+    );
 
     // HandoverCompleted event emitted with consistent figures.
     let completed = event::events_by_type<HandoverCompleted>();
@@ -1288,7 +1289,7 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1328,7 +1329,7 @@ fun do_tenure_expiry_tenant_receives_no_refund() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1347,17 +1348,18 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     let principal = escrow_corpus::min_rent_price_const();
 
-    let owner_before = escrow::owner_value_for_testing(&escrow);
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
     // Post-condition: NotRented + Descent.
     assert!(escrow::is_descending(&escrow), 0);
 
-    // Owner balance += owner_share (90% of full principal).
+    // Owner share (90% of full principal) was mailed to the inbox at expiry.
     let owner_share_expected = principal - principal / 10;
-    let owner_after = escrow::owner_value_for_testing(&escrow);
-    assert!(owner_after - owner_before == owner_share_expected, 1);
+    assert_eq!(
+        earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
+        owner_share_expected,
+    );
 
     // TenureExpired carries the canonical anchor price = principal.
     let expired = event::events_by_type<TenureExpired>();
@@ -1376,7 +1378,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1412,7 +1414,7 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1440,7 +1442,7 @@ fun retire_from_idle_collapses_to_retired() {
     assert_eq!(retired.length(), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1470,7 +1472,7 @@ fun retire_from_descent_collapses_to_retired() {
     assert_eq!(retired.length(), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1499,7 +1501,7 @@ fun retire_from_occupied_only_lifts_flag() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1513,7 +1515,7 @@ fun retire_when_already_retired_aborts() {
     escrow::drive_to_retired_for_testing(&mut escrow);
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1533,7 +1535,7 @@ fun retire_when_already_retiring_aborts() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1550,8 +1552,8 @@ fun retire_with_wrong_cap_aborts() {
     escrow::retire(&mut escrow, &foreign_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
-    owner_cap::burn(foreign_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1571,8 +1573,8 @@ fun retire_with_real_foreign_escrow_cap_aborts() {
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    owner_cap::burn(cap_a, OWNER);
-    owner_cap::burn(cap_b, OWNER);
+    transfer::public_transfer(cap_a, OWNER);
+    transfer::public_transfer(cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1588,7 +1590,7 @@ fun retire_before_floor_aborts_under_deferred_policy() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1623,7 +1625,7 @@ fun do_auction_expiry_returns_to_idle() {
     assert_eq!(asset_state::auction_expired_timestamp_ms(&expired[0]), boundary_ms);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }
 
@@ -1671,7 +1673,7 @@ fun retire_from_demand_allows_supersede_for_last_tenure() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1691,7 +1693,7 @@ fun next_pending_returns_none_in_steady_state() {
     clock::destroy_for_testing(clk);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }
 
@@ -1721,7 +1723,7 @@ fun next_pending_descent_not_firable_returns_none() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1757,7 +1759,7 @@ fun next_pending_demand_firable_returns_some() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1786,7 +1788,7 @@ fun next_pending_demand_not_firable_returns_none() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1810,7 +1812,7 @@ fun next_pending_detects_tenure_with_correct_boundary() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1830,7 +1832,7 @@ fun apt_noop_when_nothing_due() {
     assert!(escrow::is_idle(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1869,7 +1871,7 @@ fun apt_fires_handover_when_countdown_expires() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1896,7 +1898,7 @@ fun apt_fires_tenure_expiry_when_elapsed() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1929,7 +1931,7 @@ fun apt_cascade_tenure_then_auction_skipped() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1959,7 +1961,7 @@ fun borrow_asset_then_return_completes_cycle() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1981,7 +1983,7 @@ fun borrow_asset_with_foreign_escrow_cap_aborts() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(foreign_cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2002,7 +2004,7 @@ fun borrow_asset_from_idle_aborts() {
     asset_state::destroy_receipt_for_testing(r);
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2030,7 +2032,7 @@ fun borrow_asset_with_pending_cap_aborts() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2063,7 +2065,7 @@ fun soft_burn_tenant_cap_burns_displaced_bidder_cap() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2081,7 +2083,7 @@ fun soft_burn_tenant_cap_on_live_active_cap_aborts() {
     escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2097,7 +2099,7 @@ fun soft_burn_tenant_cap_with_foreign_escrow_cap_aborts() {
     escrow::soft_burn_tenant_cap(&mut escrow, foreign, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2129,7 +2131,7 @@ fun hard_burn_tenant_cap_destroys_orphaned_cap_post_claim() {
     test_scenario::return_shared(escrow_handle);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
 
     // The escrow is gone — hard_burn_tenant_cap needs no escrow reference.
     escrow::hard_burn_tenant_cap(orphaned_cap, sc.ctx());
@@ -2137,7 +2139,7 @@ fun hard_burn_tenant_cap_destroys_orphaned_cap_post_claim() {
     let burned = event::events_by_type<tenant_cap::TenantCapBurned>();
     assert_eq!(burned.length(), 1);
 
-    coin::destroy_zero(earnings);
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -2185,7 +2187,7 @@ fun update_tenant_refund_address_in_occupied_changes_active_address() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2223,7 +2225,7 @@ fun update_tenant_refund_address_in_demand_with_active_cap_changes_active_only()
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2265,7 +2267,7 @@ fun update_tenant_refund_address_in_demand_with_pending_cap_changes_pending_only
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2282,7 +2284,7 @@ fun update_tenant_refund_address_with_foreign_escrow_cap_aborts() {
 
     transfer::public_transfer(foreign, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2310,7 +2312,7 @@ fun update_tenant_refund_address_in_demand_with_stale_cap_aborts() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2333,7 +2335,7 @@ fun update_tenant_refund_address_in_occupied_with_stale_cap_aborts() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(wrong_cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2351,7 +2353,7 @@ fun update_tenant_refund_address_in_idle_aborts() {
 
     transfer::public_transfer(bound_cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2377,7 +2379,7 @@ fun update_tenant_refund_address_in_descent_aborts() {
 
     transfer::public_transfer(bound_cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2396,7 +2398,7 @@ fun update_tenant_refund_address_in_retired_aborts() {
 
     transfer::public_transfer(bound_cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2425,7 +2427,7 @@ fun update_tenant_refund_address_with_same_address_emits_event_no_abort() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2478,7 +2480,7 @@ fun update_tenant_refund_address_e2e_active_then_handover_routes_to_new() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
 
     // The refund Coin physically arrived at NEW_T1.
@@ -2525,7 +2527,7 @@ fun update_tenant_refund_address_e2e_pending_then_supersede_routes_to_new() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
 
     // Refund Coin lands at NEW_T2.
@@ -2585,7 +2587,7 @@ fun update_tenant_refund_address_e2e_pending_update_survives_promotion_through_h
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
 
     // Coin at NEW_T2 with the expected amount.
@@ -2645,7 +2647,7 @@ fun update_tenant_refund_address_e2e_active_update_overrides_pending_update_thro
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
 
     // Coin at active_addr — pending_addr gets nothing (would-be take_from_sender
@@ -2707,7 +2709,7 @@ fun update_tenant_refund_address_e2e_repeated_active_updates_last_wins_through_h
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
 
     // Coin at addr_c.
@@ -2772,7 +2774,7 @@ fun update_tenant_refund_address_e2e_repeated_pending_updates_last_wins_through_
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
 
     // Coin arrives at addr_c with the full bid amount.
@@ -2827,7 +2829,7 @@ fun update_tenant_refund_address_e2e_transferred_cap_grants_authority_to_new_hol
 
     transfer::public_transfer(cap_t1, buyer);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2860,7 +2862,7 @@ fun apply_pending_transitions_aborts_while_asset_borrowed() {
 
     escrow::return_asset(&mut escrow, asset, receipt);
     transfer::public_transfer(cap_t1, OWNER);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -2882,7 +2884,7 @@ fun rent_aborts_while_asset_borrowed() {
     escrow::return_asset(&mut escrow, asset, receipt);
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -2902,7 +2904,7 @@ fun retire_aborts_while_asset_borrowed() {
 
     escrow::return_asset(&mut escrow, asset, receipt);
     transfer::public_transfer(cap_t1, OWNER);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -2922,107 +2924,18 @@ fun is_occupied_view_aborts_while_asset_borrowed() {
 
     escrow::return_asset(&mut escrow, asset, receipt);
     transfer::public_transfer(cap_t1, OWNER);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     test_scenario::return_shared(escrow);
-    clock::destroy_for_testing(clk);
-    sc.end();
-}
-
-// ─── §16. withdraw_earnings ──────────────────────────────────────────────────
-
-/// Happy path: drive a tenure expiry → owner accumulates 90% → withdraw
-/// returns a Coin with that exact value. EarningsWithdrawn fires.
-#[test]
-fun withdraw_earnings_drains_owner_balance() {
-    let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
-    let clk = clock::create_for_testing(sc.ctx());
-
-    let principal = escrow_corpus::min_rent_price_const();
-    let p1 = mk_payment(principal, sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
-
-    // Tenure expiry routes 90% to owner.
-    escrow::fire_do_tenure_expiry_for_testing(
-        &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
-    );
-    let owner_share_expected = principal - principal / 10;
-    assert_eq!(escrow::owner_value_for_testing(&escrow), owner_share_expected);
-
-    let coin = escrow::withdraw_earnings(&mut escrow, &owner_cap, &clk, sc.ctx());
-    assert_eq!(coin::value(&coin), owner_share_expected);
-    assert_eq!(escrow::owner_value_for_testing(&escrow), 0);
-
-    let withdrawn = event::events_by_type<EarningsWithdrawn>();
-    assert_eq!(withdrawn.length(), 1);
-    assert_eq!(asset_state::earnings_withdrawn_amount(&withdrawn[0]), owner_share_expected);
-
-    coin::burn_for_testing(coin);
-    transfer::public_transfer(cap_t1, OWNER);
-    test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
-    clock::destroy_for_testing(clk);
-    sc.end();
-}
-
-#[test, expected_failure(abort_code = asset_state::ENoEarnings, location = usufruct::asset_state)]
-fun withdraw_earnings_with_zero_balance_aborts() {
-    let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
-    let clk = clock::create_for_testing(sc.ctx());
-    let coin = escrow::withdraw_earnings(&mut escrow, &owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(coin);
-    test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
-    clock::destroy_for_testing(clk);
-    sc.end();
-}
-
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun withdraw_earnings_with_wrong_cap_aborts() {
-    let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
-    let clk = clock::create_for_testing(sc.ctx());
-    let foreign = owner_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
-    let coin = escrow::withdraw_earnings(&mut escrow, &foreign, &clk, sc.ctx());
-    coin::burn_for_testing(coin);
-    test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
-    owner_cap::burn(foreign, OWNER);
-    clock::destroy_for_testing(clk);
-    sc.end();
-}
-
-/// A genuine OwnerCap from a different real escrow is rejected on withdraw_earnings.
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
-fun withdraw_earnings_with_real_foreign_escrow_cap_aborts() {
-    let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(0);
-    let (escrow_a, cap_a) = integrate_and_take(ensemble, &mut sc);
-    let (mut escrow_b, cap_b) = integrate_and_take(ensemble, &mut sc);
-    let clk    = clock::create_for_testing(sc.ctx());
-
-    let coin = escrow::withdraw_earnings(&mut escrow_b, &cap_a, &clk, sc.ctx());
-
-    coin::burn_for_testing(coin);
-    test_scenario::return_shared(escrow_a);
-    test_scenario::return_shared(escrow_b);
-    owner_cap::burn(cap_a, OWNER);
-    owner_cap::burn(cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §17. claim_asset ────────────────────────────────────────────────────────
 
-/// Happy path: drive escrow to Retired, then claim. Returns
-/// (asset, earnings_coin); the escrow object is deleted.
-/// AssetClaimed event fires with the swept earnings.
+/// Happy path: drive escrow to Retired, then claim. Returns the asset;
+/// the escrow object is deleted. AssetClaimed event fires.
 #[test]
-fun claim_asset_returns_asset_and_earnings_and_deletes_escrow() {
+fun claim_asset_returns_asset_and_deletes_escrow() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
@@ -3036,52 +2949,13 @@ fun claim_asset_returns_asset_and_earnings_and_deletes_escrow() {
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    assert_eq!(coin::value(&earnings), 0);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
 
     let claimed = event::events_by_type<AssetClaimed>();
     assert_eq!(claimed.length(), 1);
-    assert_eq!(asset_state::asset_claimed_swept_earnings(&claimed[0]), 0);
 
-    coin::destroy_zero(earnings);
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
-    clock::destroy_for_testing(clk);
-    sc.end();
-}
-
-/// Earnings sweep: drive a tenure expiry to accumulate balance, then
-/// retire and claim. Earnings coin carries the owner's share.
-#[test]
-fun claim_asset_sweeps_owner_earnings() {
-    let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
-    let clk = clock::create_for_testing(sc.ctx());
-
-    let principal = escrow_corpus::min_rent_price_const();
-    let p1 = mk_payment(principal, sc.ctx());
-    let cap_t1 = escrow::rent(&mut escrow_handle, p1, tenures::tenures(1), &clk, sc.ctx());
-
-    escrow::fire_do_tenure_expiry_for_testing(
-        &mut escrow_handle, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
-    );
-    // Drive auction → idle → retired so claim can run.
-    escrow::fire_do_auction_expiry_for_testing(
-        &mut escrow_handle, phases::timestamp(escrow_corpus::tenure_ceiling_const() + escrow_corpus::descent_window_h1_const()),
-    );
-    escrow::drive_to_retired_for_testing(&mut escrow_handle);
-
-    test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
-    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    let owner_share_expected = principal - principal / 10;
-    assert_eq!(coin::value(&earnings), owner_share_expected);
-
-    coin::burn_for_testing(earnings);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3093,8 +2967,8 @@ fun claim_asset_when_not_retired_aborts() {
     let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     // Idle, not Retired.
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::destroy_zero(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -3112,10 +2986,10 @@ fun claim_asset_with_wrong_cap_aborts() {
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
     let foreign = owner_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
-    let (asset, earnings) = escrow::claim_asset(escrow, foreign, &clk, sc.ctx());
-    coin::destroy_zero(earnings);
+    let asset = escrow::claim_asset(escrow, &foreign, &clk, sc.ctx());
+    transfer::public_transfer(foreign, OWNER);
     transfer::public_transfer(asset, OWNER);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3137,10 +3011,10 @@ fun claim_asset_with_real_foreign_escrow_cap_aborts() {
     sc.next_tx(OWNER);
     let escrow_b = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_b_id);
 
-    let (asset, earnings) = escrow::claim_asset(escrow_b, cap_a, &clk, sc.ctx());
-    coin::destroy_zero(earnings);
+    let asset = escrow::claim_asset(escrow_b, &cap_a, &clk, sc.ctx());
+    transfer::public_transfer(cap_a, OWNER);
     transfer::public_transfer(asset, OWNER);
-    owner_cap::burn(cap_b, OWNER);
+    transfer::public_transfer(cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3186,7 +3060,7 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3210,7 +3084,7 @@ fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenari
         let tag        = entry.tag();
         let t1_cycles  = (entry.m() as u64) + 1;
         let (mut escrow, owner_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
-        let escrow_id  = owner_cap::proj_escrow_id(&owner_cap);
+        let escrow_id  = object::id(&escrow);
         let mut clk    = clock::create_for_testing(sc.ctx());
     
         // T1: Idle → Occupied.
@@ -3255,6 +3129,10 @@ fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenari
         };
         assert!(escrow::is_idle(&escrow), tag);
 
+        // Owner income was mailed to the inbox at the boundary settlements
+        // in this same tx (no withdraw / no swept coin at claim).
+        assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, tag);
+
         // Retire and return to pool; claim in fresh tx.
         escrow::drive_to_retired_for_testing(&mut escrow);
         test_scenario::return_shared(escrow);
@@ -3265,10 +3143,9 @@ fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenari
 
         let retired = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
             let clk2    = clock::create_for_testing(sc.ctx());
-        let (asset, earnings) = escrow::claim_asset(retired, owner_cap, &clk2, sc.ctx());
-        assert!(coin::value(&earnings) > 0, tag);
+        let asset = escrow::claim_asset(retired, &owner_cap, &clk2, sc.ctx());
         assert_eq!(event::events_by_type<AssetClaimed>().length(), 1);
-        coin::burn_for_testing(earnings);
+        transfer::public_transfer(owner_cap, OWNER);
         transfer::public_transfer(asset, OWNER);
             clock::destroy_for_testing(clk2);
 
@@ -3337,19 +3214,20 @@ fun e2e_full_rental_cycle_with_bid_and_handover() {
     assert!(event::events_by_type<TenureExpired>().length() == 1, 4);
     assert!(event::events_by_type<AuctionExpired>().length() == 1, 5);
 
+    // Both t1 and t2 contributed used_credit at boundaries; owner income
+    // was mailed to the inbox in this tx (> 0 posted).
+    assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, 6);
+
     // Retire and claim — escrow is consumed.
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
     test_scenario::return_shared(escrow_handle);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    // Both t1 and t2 contributed used_credit at boundaries; owner has
-    // > 0 earnings.
-    assert!(coin::value(&earnings) > 0, 6);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
     assert!(event::events_by_type<AssetClaimed>().length() == 1, 7);
 
-    coin::burn_for_testing(earnings);
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -3393,13 +3271,17 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
             assert!(escrow::is_idle(&escrow_handle), cfg_tag);
 
             // Owner accumulated 90 % of the principal (g(t_max)=SCALE
-            // saturates the credit curve regardless of shape).
+            // saturates the credit curve regardless of shape). The share
+            // was mailed to the inbox at the tenure-expiry settlement.
             let owner_share_expected = principal - principal / 10;
-            assert_eq!(escrow::owner_value_for_testing(&escrow_handle), owner_share_expected);
+            assert_eq!(
+                earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
+                owner_share_expected,
+            );
 
             transfer::public_transfer(cap_t1, OWNER);
             test_scenario::return_shared(escrow_handle);
-            owner_cap::burn(owner_cap, OWNER);
+            transfer::public_transfer(owner_cap, OWNER);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -3438,9 +3320,9 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
     test_scenario::return_shared(escrow_handle);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
 
-    coin::burn_for_testing(earnings);
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
@@ -3508,20 +3390,23 @@ fun e2e_two_tenant_successions_price_escalates() {
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
+    // Owner income must be positive — both T1 and T2 accumulated
+    // used_credit; the shares were mailed to the inbox in this tx.
+    assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, tag);
+
     // Retire from Idle → Retired.
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
-    // Claim: earnings must be positive — both T1 and T2 accumulated used_credit.
+    // Claim.
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    assert!(coin::value(&earnings) > 0, tag);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
     assert_eq!(event::events_by_type<AssetClaimed>().length(), 1);
 
     transfer::public_transfer(asset, OWNER);
-    coin::burn_for_testing(earnings);
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
@@ -3587,7 +3472,7 @@ fun e2e_auction_winner_rents_at_mid_descent() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3612,7 +3497,7 @@ fun e2e_deferred_retire_aborts_before_floor() {
     let clk = clock::create_for_testing(sc.ctx());
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3637,8 +3522,8 @@ fun e2e_deferred_retire_succeeds_after_floor() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::destroy_zero(earnings); // no tenants → no earnings
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx()); // no tenants → no earnings
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -3707,7 +3592,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3780,7 +3665,7 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
             transfer::public_transfer(cap_t1, OWNER);
             transfer::public_transfer(cap_t2, OWNER);
             test_scenario::return_shared(escrow);
-            owner_cap::burn(owner_cap, OWNER);
+            transfer::public_transfer(owner_cap, OWNER);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -3840,7 +3725,7 @@ fun e2e_b1_five_ptbs_borrow_chain() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }
 
@@ -3880,7 +3765,7 @@ fun e2e_b1_instant_borrow_across_curve_shape_states() {
             clock::destroy_for_testing(clk);
         transfer::public_transfer(cap_t1, OWNER);
         test_scenario::return_shared(escrow);
-        owner_cap::burn(owner_cap, OWNER);
+        transfer::public_transfer(owner_cap, OWNER);
         i = i + 1;
     };
     sc.end();
@@ -3912,7 +3797,7 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3959,7 +3844,7 @@ fun e2e_b3b_superseded_tenant_cap_borrow_aborts() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4008,7 +3893,7 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     transfer::public_transfer(cap_t2_temp, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4043,7 +3928,7 @@ fun e2e_b6_same_ptb_repeated_borrow_return_cycles() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4085,7 +3970,7 @@ fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4123,21 +4008,21 @@ fun e2e_p2_fixed_delta_gap_is_constant_across_re_prices() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-// ─── §E1. Two earnings withdrawals across separate lifecycle events ───────────
+// ─── §E1. Two earnings postings across separate lifecycle events ──────────────
 
-/// Owner withdraws earnings twice: once after a handover (T1's used_credit
-/// transferred) and once after tenure expiry (T2's full credit transferred).
-/// Verifies: each withdrawal yields > 0 coins; the second withdrawal is fresh
-/// (balance drained to zero by the first call).
+/// Owner earnings are posted to the inbox twice: once at a handover (T1's
+/// used_credit settled) and once at tenure expiry (T2's full credit settled).
+/// Verifies: each settlement emits an EarningsPosted<SUI> with a positive
+/// posted_amount.
 ///
 /// Config: c=0 (Instant), h=0 (Skipped — tenure → Idle in one APT), f=0.
 #[test]
-fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
+fun e2e_e1_owner_earnings_posted_twice_across_lifecycle() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // c=0 h=0
     let ensemble     = escrow_corpus::by_tag(tag);
@@ -4149,7 +4034,7 @@ fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
         &mut escrow_handle, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // T2 bids at t=tenure_ceiling/2 → APT Instant fires handover.
-    // T1 held for half the tenure: used_credit > 0 → owner accumulates earnings.
+    // T1 held for half the tenure: used_credit > 0 → owner share posted.
     let t_mid    = escrow_corpus::tenure_ceiling_const() / 2;
     clock::set_for_testing(&mut clk, t_mid);
     let floor_e1 = escrow::floor_price_mist(&escrow_handle, clock::timestamp_ms(&clk));
@@ -4157,32 +4042,30 @@ fun e2e_e1_owner_withdraws_earnings_twice_across_lifecycle() {
     escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow_handle), tag);
 
-    // First withdrawal — T1's used_credit share.
+    // First posting — T1's used_credit share mailed at the handover (this tx).
+    let posted_1 = event::events_by_type<EarningsPosted<SUI>>();
+    assert_eq!(posted_1.length(), 1);
+    assert!(earnings_message::posted_amount(&posted_1[0]) > 0, tag);
+
     test_scenario::return_shared(escrow_handle);
     sc.next_tx(OWNER);
     let mut escrow_handle = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let earnings_1 = escrow::withdraw_earnings(&mut escrow_handle, &owner_cap, &clk, sc.ctx());
-    assert!(coin::value(&earnings_1) > 0, tag);
-    coin::burn_for_testing(earnings_1);
 
-    // T2's tenure expires → Idle (Skipped). T2's full credit → owner earnings.
+    // T2's tenure expires → Idle (Skipped). T2's full credit → owner share posted.
     let tenure_boundary = t_mid + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
     escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
     assert!(escrow::is_idle(&escrow_handle), tag);
 
-    // Second withdrawal — T2's earnings (fresh, first was drained to zero).
-    test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
-    let mut escrow_handle = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let earnings_2 = escrow::withdraw_earnings(&mut escrow_handle, &owner_cap, &clk, sc.ctx());
-    assert!(coin::value(&earnings_2) > 0, tag);
-    coin::burn_for_testing(earnings_2);
+    // Second posting — T2's earnings mailed at tenure expiry (fresh tx → index 0).
+    let posted_2 = event::events_by_type<EarningsPosted<SUI>>();
+    assert_eq!(posted_2.length(), 1);
+    assert!(earnings_message::posted_amount(&posted_2[0]) > 0, tag);
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow_handle);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4237,10 +4120,10 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
 
     transfer::public_transfer(asset, OWNER);
-    coin::burn_for_testing(earnings);
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     clock::destroy_for_testing(clk);
@@ -4271,7 +4154,7 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4298,7 +4181,7 @@ fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4350,7 +4233,7 @@ fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4420,7 +4303,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }
 
@@ -4491,7 +4374,7 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     transfer::public_transfer(cap_t1_bid1, OWNER);
     transfer::public_transfer(cap_t1_bid2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4555,7 +4438,7 @@ fun e2e_active_tenant_defends_against_challenger() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t1_new, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4645,7 +4528,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     transfer::public_transfer(cap_t3, OWNER);
     transfer::public_transfer(cap_t4, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4701,7 +4584,7 @@ fun e2e_hc_floor_uses_pending_stake_not_active_stake() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4800,7 +4683,7 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
         transfer::public_transfer(cap_t1, OWNER);
         transfer::public_transfer(cap_t2, OWNER);
         test_scenario::return_shared(escrow);
-        owner_cap::burn(owner_cap, OWNER);
+        transfer::public_transfer(owner_cap, OWNER);
             clock::destroy_for_testing(clk);
         i = i + 1;
     };
@@ -4861,7 +4744,7 @@ fun e2e_fin2_tenure_expiry_financial_conservation() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4915,7 +4798,7 @@ fun e2e_fin3_90_10_split_exact() {
     };
     transfer::public_transfer(cap_a1, OWNER);
     test_scenario::return_shared(escrow_a);
-    owner_cap::burn(owner_cap_a, OWNER);
+    transfer::public_transfer(owner_cap_a, OWNER);
     clock::destroy_for_testing(clk_a);
 
     // ── Part B: handover — split_fee consistency ──
@@ -4946,7 +4829,7 @@ fun e2e_fin3_90_10_split_exact() {
     transfer::public_transfer(cap_b1, OWNER);
     transfer::public_transfer(cap_b2, OWNER);
     test_scenario::return_shared(escrow_b);
-    owner_cap::burn(owner_cap_b, OWNER);
+    transfer::public_transfer(owner_cap_b, OWNER);
     clock::destroy_for_testing(clk_b);
 
     sc.end();
@@ -5006,7 +4889,7 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
 
             transfer::public_transfer(cap_t1, OWNER);
             test_scenario::return_shared(escrow);
-            owner_cap::burn(owner_cap, OWNER);
+            transfer::public_transfer(owner_cap, OWNER);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -5061,7 +4944,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 
             transfer::public_transfer(cap_t1, OWNER);
             test_scenario::return_shared(escrow);
-            owner_cap::burn(owner_cap, OWNER);
+            transfer::public_transfer(owner_cap, OWNER);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -5117,7 +5000,7 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5206,7 +5089,7 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5297,7 +5180,7 @@ fun apt_idempotency_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Sc
         transfer::public_transfer(cap_t1, OWNER);
         transfer::public_transfer(cap_t2, OWNER);
         test_scenario::return_shared(escrow);
-        owner_cap::burn(owner_cap, OWNER);
+        transfer::public_transfer(owner_cap, OWNER);
             clock::destroy_for_testing(clk);
         i = i + 1;
     };
@@ -5356,8 +5239,8 @@ fun e2e_retire0_retired_claim_asset_succeeds() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::destroy_zero(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -5377,8 +5260,8 @@ fun e2e_retire1_from_idle() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::destroy_zero(earnings); // no tenants → no earnings
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx()); // no tenants → no earnings
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -5406,8 +5289,8 @@ fun e2e_retire2_from_descent() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
@@ -5438,8 +5321,8 @@ fun e2e_retire3_from_occupied() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
@@ -5480,8 +5363,8 @@ fun e2e_retire4_from_demand() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -5517,8 +5400,8 @@ fun e2e_retire5_from_occupied_while_borrowed() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
@@ -5564,8 +5447,8 @@ fun e2e_retire6_from_demand_while_borrowed() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
@@ -5592,7 +5475,7 @@ fun e2e_retire7_already_retired_aborts() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5684,7 +5567,7 @@ fun e2e_cred1_used_credit_clamped_at_demand_expiry_across_curves() {
             transfer::public_transfer(cap_t1, OWNER);
             transfer::public_transfer(cap_t2, OWNER);
             test_scenario::return_shared(escrow);
-            owner_cap::burn(owner_cap, OWNER);
+            transfer::public_transfer(owner_cap, OWNER);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -5693,25 +5576,22 @@ fun e2e_cred1_used_credit_clamped_at_demand_expiry_across_curves() {
     sc.end();
 }
 
-// ─── §CLAIM-1. AssetClaimed.swept_earnings accumulates across all tenants ────
+// ─── §CLAIM-1. Owner earnings post per boundary across all tenants ───────────
 
-/// claim_asset drains the owner's full accumulated balance and reports it
-/// as swept_earnings in AssetClaimed. With multiple tenants, each boundary
-/// event deposits into the owner balance; swept_earnings must equal the sum.
+/// Each boundary event mails the owner's share to the inbox as a separate
+/// EarningsPosted<SUI>. With multiple tenants, the per-boundary postings must
+/// match the per-event owner shares:
 ///
-///   swept_earnings == HandoverCompleted.owner_share   (T1's earned share)
-///                  +  TenureExpired.owner_share       (T2's full share)
+///   EarningsPosted[0].amount == HandoverCompleted.owner_share  (T1's share)
+///   EarningsPosted[1].amount == TenureExpired.owner_share       (T2's share)
 ///
 /// Both shares are read from the events themselves — no curve-specific
-/// constants needed. The accumulation identity holds for all 7 curve shapes
-/// because the individual owner_share values are already correct per FIN-1/2.
-///
-/// Verifies that swept_earnings > each individual share (both tenants
-/// contributed), and that AssetClaimed.swept_earnings matches coin::value.
+/// constants needed. The identity holds for all 7 curve shapes because the
+/// individual owner_share values are already correct per FIN-1/2.
 ///
 /// Config: c=0 (Instant), h=0 (Skipped → Idle), d=0, f=0; vary e=0..6.
 #[test]
-fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
+fun e2e_claim1_owner_earnings_posted_per_boundary_across_tenants_all_curves() {
     let mut sc    = setup();
     let min_price = escrow_corpus::min_rent_price_const();
     let t_mid     = escrow_corpus::tenure_ceiling_const() / 2; // 50_000
@@ -5755,28 +5635,28 @@ fun e2e_claim1_swept_earnings_accumulates_across_tenants_all_curves() {
             asset_state::tenure_expired_owner_share(evs.borrow(0))
         };
 
-        // Expected swept = sum of all per-boundary owner shares.
-        let expected_swept = ho_share + te_share;
-        assert!(expected_swept > ho_share, tag); // T2 contributed
-        assert!(expected_swept > te_share, tag); // T1 contributed
+        // Both boundary settlements ran in this same tx, so two EarningsPosted
+        // events accumulated: index 0 = handover (T1), index 1 = tenure (T2).
+        let posted = event::events_by_type<EarningsPosted<SUI>>();
+        assert_eq!(posted.length(), 2);
+        assert_eq!(earnings_message::posted_amount(&posted[0]), ho_share);
+        assert_eq!(earnings_message::posted_amount(&posted[1]), te_share);
+        assert!(ho_share > 0, tag); // T1 contributed
+        assert!(te_share > 0, tag); // T2 contributed
 
         // Retire from Idle → Retired.
         escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
-        // claim_asset in a new PTB: swept_earnings must equal the accumulated sum.
+        // claim_asset in a new PTB returns just the asset; no swept coin.
         test_scenario::return_shared(escrow);
         sc.next_tx(OWNER);
         let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-        let (asset, earnings) = escrow::claim_asset(
-            escrow, owner_cap, &clk, sc.ctx());
-        assert_eq!(coin::value(&earnings), expected_swept);
+        let asset = escrow::claim_asset(
+            escrow, &owner_cap, &clk, sc.ctx());
         let ac = event::events_by_type<AssetClaimed>();
-        assert_eq!(
-            asset_state::asset_claimed_swept_earnings(ac.borrow(0)),
-            expected_swept,
-        );
+        assert_eq!(ac.length(), 1);
 
-        coin::burn_for_testing(earnings);
+        transfer::public_transfer(owner_cap, OWNER);
         transfer::public_transfer(asset, OWNER);
         transfer::public_transfer(cap_t1, OWNER);
         transfer::public_transfer(cap_t2, OWNER);
@@ -5848,7 +5728,7 @@ fun e2e_corpus_gap_full_tenure_handover_full_credit_across_curves() {
             transfer::public_transfer(cap_t1, OWNER);
             transfer::public_transfer(cap_t2, OWNER);
             test_scenario::return_shared(escrow);
-            owner_cap::burn(owner_cap, OWNER);
+            transfer::public_transfer(owner_cap, OWNER);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -5902,8 +5782,8 @@ fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
@@ -5941,8 +5821,8 @@ fun e2e_corpus_gap_retiring_flag_bypasses_descent_with_window_policy() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(earnings);
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
@@ -6029,7 +5909,7 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6066,7 +5946,7 @@ fun update_ensemble_idle_applies_immediately() {
     assert_eq!(scheduled.length(), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6107,7 +5987,7 @@ fun update_ensemble_descent_schedules_without_cancelling() {
     assert_eq!(resets.length(), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6140,7 +6020,7 @@ fun update_ensemble_renting_schedules_without_interrupting() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6188,7 +6068,7 @@ fun update_ensemble_applies_at_auction_expiry_not_at_tenure_expiry() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6235,7 +6115,7 @@ fun update_ensemble_handover_preserves_pending_does_not_apply() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6290,7 +6170,7 @@ fun update_ensemble_chain_handover_then_auction_expiry_applies() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6344,7 +6224,7 @@ fun update_ensemble_override_last_write_wins() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6388,7 +6268,7 @@ fun update_ensemble_retire_wins_discards_pending_silently() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6407,7 +6287,7 @@ fun update_ensemble_on_retired_aborts() {
     escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6427,7 +6307,7 @@ fun extend_retire_commitment_on_retired_aborts() {
         &mut escrow, &owner_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6446,7 +6326,7 @@ fun extend_ensemble_commitment_on_retired_aborts() {
         &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6476,7 +6356,7 @@ fun extend_retire_commitment_on_lazily_retired_aborts() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6532,7 +6412,7 @@ fun update_ensemble_on_retiring_aborts() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6582,7 +6462,7 @@ fun update_ensemble_descent_natural_expiry_applies_pending() {
     assert_eq!(auction_expired.length(), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6632,7 +6512,7 @@ fun update_ensemble_pending_survives_multiple_handovers() {
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6679,7 +6559,7 @@ fun update_ensemble_descent_old_config_active_until_auction_expiry() {
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6730,7 +6610,7 @@ fun update_ensemble_descent_overrides_renting_pending() {
     assert_eq!(policy_ensemble::ensemble_updated_handover_policy(evt), b"Off".to_string());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6773,7 +6653,7 @@ fun update_ensemble_state_clean_after_application() {
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6803,7 +6683,7 @@ fun update_ensemble_behavior_min_rent_price_floor_changes() {
     assert!(escrow::active_ensemble(&escrow) == cfg_high, 2);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6827,7 +6707,7 @@ fun update_ensemble_behavior_min_rent_price_bid_rejected_after_reset() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6875,7 +6755,7 @@ fun update_ensemble_behavior_tenure_ceiling_apt_detection() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6922,7 +6802,7 @@ fun update_ensemble_behavior_auction_window_policy_atdutch_presence() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6970,7 +6850,7 @@ fun update_ensemble_behavior_credit_shape_used_credit_changes() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7003,7 +6883,7 @@ fun update_ensemble_behavior_price_function_floor_escalation() {
     assert!(floor_after == 11_000_000_001, 2);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7024,7 +6904,7 @@ fun next_floor_price_mist_scales_per_tenure() {
     assert_eq!(single, multi);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7053,7 +6933,7 @@ fun floor_price_mist_equals_next_floor_price_mist_in_occupied() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7092,7 +6972,7 @@ fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
     transfer::public_transfer(t1_cap, OWNER);
     transfer::public_transfer(t2_cap, @0xA2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7125,7 +7005,7 @@ fun retire_commitment_floor_observable_at_integrate_and_after_extend() {
     );
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7148,7 +7028,7 @@ fun extend_retire_commitment_retire_aborts_before_floor() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7181,7 +7061,7 @@ fun update_ensemble_behavior_handover_instant_borrow_succeeds() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7231,7 +7111,7 @@ fun update_ensemble_behavior_handover_fixed_borrow_blocked() {
     transfer::public_transfer(cap_t3, OWNER);
     transfer::public_transfer(cap_t4, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7288,7 +7168,7 @@ fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7328,7 +7208,7 @@ fun e2e_ev3_borrow_return_cap_id_consistency() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7385,7 +7265,7 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
             transfer::public_transfer(cap_t1, OWNER);
             transfer::public_transfer(cap_t2, OWNER);
             test_scenario::return_shared(escrow);
-            owner_cap::burn(owner_cap, OWNER);
+            transfer::public_transfer(owner_cap, OWNER);
                     clock::destroy_for_testing(clk);
             c = c + 1;
         };
@@ -7448,7 +7328,7 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7504,7 +7384,7 @@ fun multi_cycle_single_policy_rejects_cycles_two() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7528,7 +7408,7 @@ fun multi_cycle_install_extends_ceiling_three_x() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7550,7 +7430,7 @@ fun multi_cycle_single_cycle_degenerates() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7569,7 +7449,7 @@ fun multi_cycle_insufficient_payment_aborts() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7608,7 +7488,7 @@ fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7659,7 +7539,7 @@ fun multi_cycle_floor_price_is_per_cycle_rate() {
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7710,7 +7590,7 @@ fun multi_cycle_countdown_displaces_via_rate() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7756,7 +7636,7 @@ fun multi_cycle_full_tenure_tenant_consumes_full_ceiling() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7795,8 +7675,8 @@ fun multi_cycle_rate_symmetry_same_floor() {
     transfer::public_transfer(cap_b, TENANT_ADDR_1);
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    owner_cap::burn(owner_cap_a, OWNER);
-    owner_cap::burn(owner_cap_b, OWNER);
+    transfer::public_transfer(owner_cap_a, OWNER);
+    transfer::public_transfer(owner_cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7836,7 +7716,7 @@ fun multi_cycle_supersede_floor_based_on_pending_rate() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7887,7 +7767,7 @@ fun multi_cycle_full_tenure_handover_tracks_new_ceiling() {
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7948,7 +7828,7 @@ fun multi_cycle_countdown_scales_with_committed_tenures() {
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7979,7 +7859,7 @@ fun degeneration_floor_cycles_one_equals_baseline() {
 
     transfer::public_transfer(cap, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8004,7 +7884,7 @@ fun degeneration_ceiling_cycles_one_equals_base_tenure() {
 
     transfer::public_transfer(cap, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8040,7 +7920,7 @@ fun degeneration_supersede_floor_chain_cycles_one() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8072,7 +7952,7 @@ fun degeneration_full_tenure_expiry_cycles_one() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8110,7 +7990,7 @@ fun degeneration_countdown_expiry_cycles_one() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8146,9 +8026,7 @@ fun multi_cycle_handover_earnings_proportional_to_extended_ceiling() {
     // used_credit = credit_shape(25k/300k) × principal.
     let boundary = countdown;
     let used_credit = escrow::accrued_credit_mist(&escrow, boundary);
-    let owner_before = escrow::owner_value_for_testing(&escrow);
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
-    let owner_after = escrow::owner_value_for_testing(&escrow);
 
     // Conservation: used_credit + remain_credit = principal.
     let completed = event::events_by_type<HandoverCompleted>();
@@ -8163,14 +8041,17 @@ fun multi_cycle_handover_earnings_proportional_to_extended_ceiling() {
     // If resolved_ceiling were 100k (wrong), used_credit ≈ principal/4 * 3 = too large.
     assert!(used_credit < principal / 4, 0);
 
-    // Owner received 90% of used_credit.
+    // Owner received 90% of used_credit — mailed to the inbox at handover.
     let owner_share = asset_state::handover_completed_owner_share(&completed[0]);
-    assert_eq!(owner_after - owner_before, owner_share);
+    assert_eq!(
+        earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
+        owner_share,
+    );
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8211,7 +8092,7 @@ fun multi_cycle_tenure_expiry_fires_at_extended_ceiling() {
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8257,7 +8138,7 @@ fun multi_cycle_rent_from_descent_extends_ceiling() {
 
     transfer::public_transfer(cap, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8309,8 +8190,8 @@ fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow2 = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset(escrow2, owner_cap, &clk, sc.ctx());
-    coin::burn_for_testing(earnings);
+    let asset = escrow::claim_asset(escrow2, &owner_cap, &clk, sc.ctx());
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
@@ -8375,7 +8256,7 @@ fun multi_cycle_handover_remain_credit_returned_to_tenant() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8425,7 +8306,7 @@ fun handover_scaling_countdown_expiry_exact_at_bid_zero() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8487,7 +8368,7 @@ fun handover_scaling_no_double_scaling_across_handover_chain() {
     transfer::public_transfer(cap3, @0xC1);
     transfer::public_transfer(cap4, @0xD1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8519,7 +8400,7 @@ fun handover_scaling_instant_stays_zero_for_any_cycles() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8566,7 +8447,7 @@ fun handover_scaling_full_tenure_expiry_equals_tenure_expiry() {
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8614,8 +8495,8 @@ fun handover_scaling_rate_symmetry_per_committed_cycle() {
     transfer::public_transfer(cap_b2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    owner_cap::burn(owner_cap_a, OWNER);
-    owner_cap::burn(owner_cap_b, OWNER);
+    transfer::public_transfer(owner_cap_a, OWNER);
+    transfer::public_transfer(owner_cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8669,7 +8550,7 @@ fun normalization_rescale_is_exact_across_handover_chain() {
     transfer::public_transfer(cap3, @0xC1);
     transfer::public_transfer(cap4, @0xD1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8713,7 +8594,7 @@ fun normalization_descent_ceiling_not_compounded_after_multi_cycle_expiry() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8762,7 +8643,7 @@ fun normalization_descent_handover_also_normalized_after_multi_cycle_expiry() {
     transfer::public_transfer(cap2_a, TENANT_ADDR_2);
     transfer::public_transfer(cap2_b, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8810,7 +8691,7 @@ fun normalization_descent_ceiling_after_handover_then_expiry() {
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8855,7 +8736,7 @@ fun normalization_same_cycle_count_is_identity() {
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8909,7 +8790,7 @@ fun do_handover_winner_receives_base_times_bidding_cycles_no_compound() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8973,7 +8854,7 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8997,7 +8878,7 @@ fun retire_commitment_init_anchor_equals_integrated_at() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -9012,7 +8893,7 @@ fun retire_commitment_init_immediate_floor_ms_is_none() {
     assert!(escrow::retire_commitment_is_immediate(&escrow), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -9030,7 +8911,7 @@ fun retire_commitment_init_deferred_floor_ms_is_some_n() {
     assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -9048,7 +8929,7 @@ fun retire_commitment_init_deferred_unlocks_at_integrated_plus_floor() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), integrated + floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -9074,7 +8955,7 @@ fun retire_commitment_update_ensemble_does_not_change_policy() {
     assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9102,7 +8983,7 @@ fun retire_commitment_update_ensemble_does_not_change_anchor() {
     assert_eq!(unlocks_before, 0 + floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9130,7 +9011,7 @@ fun retire_commitment_extend_valid_increases_unlocks_at() {
     assert!(after > before, 1); // Deferred(floor) > Immediate(0)
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9149,7 +9030,7 @@ fun retire_commitment_extend_with_immediate_when_locked_aborts() {
     escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9170,7 +9051,7 @@ fun retire_commitment_extend_with_immediate_when_unlocked_aborts() {
     escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9188,7 +9069,7 @@ fun retire_commitment_extend_immediate_to_immediate_aborts() {
     escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9215,7 +9096,7 @@ fun retire_commitment_extend_immediate_to_deferred() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9241,7 +9122,7 @@ fun retire_commitment_extend_immediate_to_deferred_blocks_retire() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9273,7 +9154,7 @@ fun retire_commitment_extend_anchor_moves_to_old_expiry() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9303,7 +9184,7 @@ fun retire_commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), half_floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9323,7 +9204,7 @@ fun retire_commitment_gate_immediate_retire_at_zero() {
     assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9343,7 +9224,7 @@ fun retire_commitment_gate_deferred_retire_before_floor_aborts() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9364,7 +9245,7 @@ fun retire_commitment_gate_deferred_retire_at_floor_passes() {
     assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9392,7 +9273,7 @@ fun retire_commitment_gate_extend_reopens_gate_aborts_immediately_after() {
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9419,7 +9300,7 @@ fun retire_commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9454,7 +9335,7 @@ fun retire_commitment_chain_two_extensions_both_valid() {
     assert!(after_second > after_first, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9485,7 +9366,7 @@ fun retire_commitment_chain_same_floor_from_later_time_passes() {
     assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9544,7 +9425,7 @@ fun update_ensemble_demand_schedules_pending() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9581,7 +9462,7 @@ fun update_ensemble_demand_retiring_aborts() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9619,7 +9500,7 @@ fun burn_stale_cap_in_idle_succeeds() {
     escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9648,7 +9529,7 @@ fun rent_with_insufficient_payment_in_descent_aborts() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9671,7 +9552,7 @@ fun rent_with_insufficient_payment_in_occupied_aborts() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9699,7 +9580,7 @@ fun rent_with_insufficient_payment_in_demand_aborts() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9720,8 +9601,8 @@ fun update_ensemble_with_wrong_cap_aborts() {
     escrow::update_ensemble(&mut escrow, &foreign_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(foreign_cap, OWNER);
-    owner_cap::burn(_owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(_owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9739,8 +9620,8 @@ fun update_ensemble_with_real_foreign_escrow_cap_aborts() {
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    owner_cap::burn(cap_a, OWNER);
-    owner_cap::burn(cap_b, OWNER);
+    transfer::public_transfer(cap_a, OWNER);
+    transfer::public_transfer(cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9759,8 +9640,8 @@ fun extend_retire_commitment_with_wrong_cap_aborts() {
     escrow::extend_retire_commitment(&mut escrow, &foreign_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(foreign_cap, OWNER);
-    owner_cap::burn(_owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(_owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9778,8 +9659,8 @@ fun extend_retire_commitment_with_real_foreign_escrow_cap_aborts() {
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    owner_cap::burn(cap_a, OWNER);
-    owner_cap::burn(cap_b, OWNER);
+    transfer::public_transfer(cap_a, OWNER);
+    transfer::public_transfer(cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9808,9 +9689,9 @@ fun claim_asset_aborts_in_descent_with_window_descent() {
     test_scenario::return_shared(escrow);
     sc.next_tx(OWNER);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let (asset, earnings) = escrow::claim_asset<DemoAsset, SUI>(escrow, cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset<DemoAsset, SUI>(escrow, &cap, &clk, sc.ctx());
 
-    coin::destroy_zero(earnings);
+    transfer::public_transfer(cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
@@ -9825,7 +9706,7 @@ fun tenure_settlement_aborts_on_idle() {
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let (_, _) = escrow::tenure_settlement(&escrow);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -9837,7 +9718,7 @@ fun handover_settlement_aborts_on_idle() {
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let (_, _, _) = escrow::handover_settlement(&escrow, 0);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -9870,7 +9751,7 @@ fun borrow_asset_aborts_in_descent_with_window_descent() {
     transfer::public_transfer(foreign_cap, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9892,7 +9773,7 @@ fun burn_stale_cap_in_descent_succeeds() {
     escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9914,7 +9795,7 @@ fun burn_stale_cap_in_retired_succeeds() {
     escrow::soft_burn_tenant_cap(&mut escrow, stale_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9927,7 +9808,7 @@ fun handover_settlement_aborts_on_retired() {
     escrow::drive_to_retired_for_testing(&mut escrow);
     let (_, _, _) = escrow::handover_settlement(&escrow, 0);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -9946,7 +9827,7 @@ fun handover_settlement_aborts_on_descent() {
     let (_, _, _) = escrow::handover_settlement(&escrow, 0);
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9973,7 +9854,7 @@ fun policy_kind_views_tag0() {
     assert_eq!(escrow::retire_commitment_kind(&escrow),        b"Immediate".to_string());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -9989,7 +9870,7 @@ fun retire_commitment_anchor_and_remaining_immediate() {
     assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 999), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -10010,7 +9891,7 @@ fun retire_commitment_anchor_and_remaining_deferred() {
     assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, floor),    0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -10033,30 +9914,36 @@ fun event_pin_asset_integrated_all_fields() {
     let asset    = mk_demo_asset(sc.ctx());
     let asset_id = object::id(&asset);
 
-    let cap      = escrow::integrate<DemoAsset, SUI>(
+    let (cap, inbox)  = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id     = owner_cap::proj_escrow_id(&cap);
     let owner_cap_id  = object::id(&cap);
+    let inbox_id      = object::id(&inbox);
+    transfer::public_transfer(inbox, OWNER);
 
+    // AssetIntegrated is emitted in this tx — assert every field here (events
+    // are scoped per-tx). Cross-check escrow_id against the shared object below.
     let evts = event::events_by_type<AssetIntegrated>();
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
-    assert_eq!(asset_state::asset_integrated_escrow_id(e),         escrow_id);
+    let event_escrow_id = asset_state::asset_integrated_escrow_id(e);
     assert_eq!(asset_state::asset_integrated_owner_cap_id(e),      owner_cap_id);
     assert_eq!(asset_state::asset_integrated_owner_address(e),     OWNER);
     assert_eq!(asset_state::asset_integrated_asset_id(e),          asset_id);
     assert_eq!(asset_state::asset_integrated_fee_inbox_id(e),      protocol_fee_ref::proj_inbox_id(&fee_ref));
+    assert_eq!(asset_state::asset_integrated_earnings_inbox_id(e), inbox_id);
     assert_eq!(asset_state::asset_integrated_integrated_at_ms(e),  42_000);
     assert_eq!(asset_state::asset_integrated_asset_type(e),        string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::asset_integrated_coin_type(e),         string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
+    transfer::public_transfer(cap, OWNER);
+
     sc.next_tx(OWNER);
-    let escrow_obj = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let escrow_obj = sc.take_shared<Escrow<DemoAsset, SUI>>();
+    assert_eq!(event_escrow_id, object::id(&escrow_obj));
     test_scenario::return_shared(escrow_obj);
-    owner_cap::burn(cap, OWNER);
     sc.end();
 }
 
@@ -10070,7 +9957,7 @@ fun event_pin_rent_started_all_fields() {
     let mut clk  = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 7_000);
 
-    let escrow_id    = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id    = object::id(&escrow);
     let floor        = escrow_corpus::min_rent_price_const();
     let payment      = mk_payment(floor, sc.ctx());
     let cap_t1       = escrow::rent(&mut escrow, payment, tenures::tenures(1), &clk, sc.ctx());
@@ -10092,7 +9979,7 @@ fun event_pin_rent_started_all_fields() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10105,7 +9992,7 @@ fun event_pin_auction_expired_all_fields() {
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
 
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id = object::id(&escrow);
     let last_acq  = escrow_corpus::min_rent_price_const() * 2;
     let phase_start_ms = escrow_corpus::tenure_ceiling_const();
 
@@ -10132,7 +10019,7 @@ fun event_pin_auction_expired_all_fields() {
     assert_eq!(asset_state::auction_expired_timestamp_ms(e),    boundary_ms);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }
 
@@ -10150,15 +10037,17 @@ fun event_pin_cycle_params_resolved_all_fields() {
     clock::set_for_testing(&mut clk, 42_000);
     let asset    = mk_demo_asset(sc.ctx());
 
-    let cap = escrow::integrate<DemoAsset, SUI>(
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    transfer::public_transfer(inbox, OWNER);
 
+    // CycleParamsResolved is emitted in this tx — assert every field here (events
+    // are scoped per-tx). Cross-check escrow_id against the shared object below.
     let evts = event::events_by_type<CycleParamsResolved>();
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
-    assert_eq!(asset_state::cycle_params_resolved_escrow_id(e),    escrow_id);
+    let event_escrow_id = asset_state::cycle_params_resolved_escrow_id(e);
     assert_eq!(asset_state::cycle_params_resolved_floor_mist(e),   escrow_corpus::min_rent_price_const());
     assert_eq!(asset_state::cycle_params_resolved_ceiling_ms(e),   escrow_corpus::tenure_ceiling_const());
     assert_eq!(asset_state::cycle_params_resolved_handover_ms(e),  escrow_corpus::handover_countdown_c1_const());
@@ -10168,6 +10057,11 @@ fun event_pin_cycle_params_resolved_all_fields() {
     test_scenario::return_immutable(fee_ref);
     transfer::public_transfer(cap, OWNER);
     clock::destroy_for_testing(clk);
+
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
+    assert_eq!(event_escrow_id, object::id(&escrow));
+    test_scenario::return_shared(escrow);
     sc.end();
 }
 
@@ -10195,7 +10089,7 @@ fun cycle_params_resolved_not_emitted_on_unchanged_auction_expiry() {
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }
 
@@ -10227,7 +10121,7 @@ fun cycle_params_resolved_not_emitted_while_pending() {
     assert_eq!(event::events_by_type<CycleParamsResolved>().length(), 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10266,7 +10160,7 @@ fun cycle_params_resolved_on_adoption_reflects_new_ensemble() {
     assert_eq!(asset_state::cycle_params_resolved_handover_ms(&evts[0]), escrow_corpus::handover_countdown_c1_const());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10281,7 +10175,7 @@ fun event_pin_asset_retired_all_fields() {
     let mut clk  = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 99_000);
 
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id = object::id(&escrow);
     escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
 
     let evts = event::events_by_type<AssetRetired>();
@@ -10293,7 +10187,7 @@ fun event_pin_asset_retired_all_fields() {
     assert_eq!(asset_state::asset_retired_timestamp_ms(e), 99_000);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10307,7 +10201,7 @@ fun event_pin_retire_flag_set_all_fields() {
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk      = clock::create_for_testing(sc.ctx());
 
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id = object::id(&escrow);
 
     let p1    = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
@@ -10325,7 +10219,7 @@ fun event_pin_retire_flag_set_all_fields() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10340,7 +10234,7 @@ fun event_pin_bid_placed_all_fields() {
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
-    let escrow_id    = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id    = object::id(&escrow);
     let floor        = escrow_corpus::min_rent_price_const();
 
     // T1 rents: Idle → Occupied at t=0.
@@ -10379,7 +10273,7 @@ fun event_pin_bid_placed_all_fields() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10394,7 +10288,7 @@ fun event_pin_bid_superseded_all_fields() {
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id = object::id(&escrow);
     let floor     = escrow_corpus::min_rent_price_const();
 
     // T1 rents at t=0: Idle → Occupied.
@@ -10442,49 +10336,7 @@ fun event_pin_bid_superseded_all_fields() {
     transfer::public_transfer(cap_t2, OWNER);
     transfer::public_transfer(cap_t3, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
-    clock::destroy_for_testing(clk);
-    sc.end();
-}
-
-// ─── EarningsWithdrawn payload pin ───────────────────────────────────────────
-
-#[test]
-fun event_pin_earnings_withdrawn_all_fields() {
-    let mut sc   = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
-    let mut clk  = clock::create_for_testing(sc.ctx());
-
-    let escrow_id    = owner_cap::proj_escrow_id(&owner_cap);
-    let owner_cap_id = object::id(&owner_cap);
-    let principal    = escrow_corpus::min_rent_price_const();
-    let p1           = mk_payment(principal, sc.ctx());
-    let cap_t1       = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
-
-    escrow::fire_do_tenure_expiry_for_testing(
-        &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
-    );
-
-    clock::set_for_testing(&mut clk, 500_000);
-    let coin = escrow::withdraw_earnings(&mut escrow, &owner_cap, &clk, sc.ctx());
-    let owner_share = principal - principal / 10;
-
-    let evts = event::events_by_type<EarningsWithdrawn>();
-    assert_eq!(evts.length(), 1);
-    let e = &evts[0];
-    assert_eq!(asset_state::earnings_withdrawn_escrow_id(e),    escrow_id);
-    assert_eq!(asset_state::earnings_withdrawn_owner_cap_id(e), owner_cap_id);
-    assert_eq!(asset_state::earnings_withdrawn_owner_address(e),        OWNER);
-    assert_eq!(asset_state::earnings_withdrawn_amount(e),       owner_share);
-    assert_eq!(asset_state::earnings_withdrawn_asset_type(e),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
-    assert_eq!(asset_state::earnings_withdrawn_coin_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
-    assert_eq!(asset_state::earnings_withdrawn_timestamp_ms(e), 500_000);
-
-    coin::burn_for_testing(coin);
-    transfer::public_transfer(cap_t1, OWNER);
-    test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10499,7 +10351,7 @@ fun event_pin_retire_commitment_extended_all_fields() {
     let mut clk  = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 3_000);
 
-    let escrow_id   = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id   = object::id(&escrow);
     let deferred_ms = escrow_corpus::retire_deferred_f1_const();
     let new_policy  = retire_commitment_policy::new_deferred(phases::duration(deferred_ms));
 
@@ -10526,7 +10378,7 @@ fun event_pin_retire_commitment_extended_all_fields() {
                string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10540,7 +10392,7 @@ fun event_pin_asset_claimed_all_fields() {
     let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
-    let escrow_id    = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id    = object::id(&escrow_handle);
     let owner_cap_id = object::id(&owner_cap);
     let principal    = escrow_corpus::min_rent_price_const();
     let p1           = mk_payment(principal, sc.ctx());
@@ -10560,8 +10412,7 @@ fun event_pin_asset_claimed_all_fields() {
     let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
 
     clock::set_for_testing(&mut clk, 777_000);
-    let (asset, earnings) = escrow::claim_asset(escrow, owner_cap, &clk, sc.ctx());
-    let owner_share = principal - principal / 10;
+    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
 
     let evts = event::events_by_type<AssetClaimed>();
     assert_eq!(evts.length(), 1);
@@ -10569,12 +10420,11 @@ fun event_pin_asset_claimed_all_fields() {
     assert_eq!(asset_state::asset_claimed_escrow_id(e),       escrow_id);
     assert_eq!(asset_state::asset_claimed_owner_cap_id(e),    owner_cap_id);
     assert_eq!(asset_state::asset_claimed_owner_address(e),           OWNER);
-    assert_eq!(asset_state::asset_claimed_swept_earnings(e),  owner_share);
     assert_eq!(asset_state::asset_claimed_asset_type(e),      string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::asset_claimed_coin_type(e),       string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::asset_claimed_timestamp_ms(e),    777_000);
 
-    coin::burn_for_testing(earnings);
+    transfer::public_transfer(owner_cap, OWNER);
     transfer::public_transfer(asset, OWNER);
     transfer::public_transfer(cap_t1, OWNER);
     clock::destroy_for_testing(clk);
@@ -10590,7 +10440,7 @@ fun event_pin_tenure_expired_all_fields() {
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk      = clock::create_for_testing(sc.ctx());
 
-    let escrow_id  = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id  = object::id(&escrow);
     let principal  = escrow_corpus::min_rent_price_const();
     let p1         = mk_payment(principal, sc.ctx());
     let cap_t1     = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
@@ -10619,7 +10469,7 @@ fun event_pin_tenure_expired_all_fields() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10634,7 +10484,7 @@ fun event_pin_handover_completed_all_fields() {
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id = object::id(&escrow);
     let floor     = escrow_corpus::min_rent_price_const();
 
     // T1 rents at t=0: Idle → Occupied.
@@ -10687,7 +10537,7 @@ fun event_pin_handover_completed_all_fields() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10701,7 +10551,7 @@ fun event_pin_asset_borrowed_all_fields() {
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk      = clock::create_for_testing(sc.ctx());
 
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id = object::id(&escrow);
     let p1        = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1    = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
 
@@ -10720,7 +10570,7 @@ fun event_pin_asset_borrowed_all_fields() {
     escrow::return_asset(&mut escrow, asset_out, receipt);
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10734,7 +10584,7 @@ fun event_pin_asset_returned_all_fields() {
     let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
     let clk      = clock::create_for_testing(sc.ctx());
 
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id = object::id(&escrow);
     let p1        = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1    = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
 
@@ -10752,7 +10602,7 @@ fun event_pin_asset_returned_all_fields() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10789,7 +10639,7 @@ fun committed_tenures_views_reflect_active_and_pending() {
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     transfer::public_transfer(cap2, TENANT_ADDR_2);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10831,7 +10681,7 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     assert_eq!(*escrow::pending_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10864,7 +10714,7 @@ fun next_cycle_views_resolve_waiting_ensemble() {
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10894,7 +10744,7 @@ fun active_cycle_views_resolve_active_ensemble() {
 
     transfer::public_transfer(cap1, TENANT_ADDR_1);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10924,7 +10774,7 @@ fun ensemble_commitment_init_anchor_equals_integrated_at() {
     assert_eq!(escrow::ensemble_commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -10940,7 +10790,7 @@ fun ensemble_commitment_init_immediate_floor_ms_is_none() {
     assert!(escrow::ensemble_commitment_is_immediate(&escrow), 1);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -10959,7 +10809,7 @@ fun ensemble_commitment_init_deferred_floor_and_unlocks() {
     assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), integrated + floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -10979,7 +10829,7 @@ fun ensemble_commitment_gate_immediate_update_at_zero() {
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10998,7 +10848,7 @@ fun ensemble_commitment_gate_deferred_update_before_floor_aborts() {
     escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11019,7 +10869,7 @@ fun ensemble_commitment_gate_deferred_update_at_floor_passes() {
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11043,7 +10893,7 @@ fun ensemble_commitment_gate_blanket_blocks_in_occupied() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11069,7 +10919,7 @@ fun ensemble_commitment_gate_blanket_blocks_in_descent() {
     escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11101,7 +10951,7 @@ fun ensemble_commitment_gate_blanket_blocks_in_demand() {
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11128,7 +10978,7 @@ fun ensemble_commitment_gate_blanket_blocks_in_retired() {
     escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11154,7 +11004,7 @@ fun ensemble_commitment_after_floor_in_retired_aborts_already_retired() {
     escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11184,7 +11034,7 @@ fun ensemble_commitment_gate_after_floor_schedules_in_occupied() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11241,7 +11091,7 @@ fun ensemble_commitment_extend_preserves_pending_then_applies_at_boundary() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11276,7 +11126,7 @@ fun ensemble_commitment_extend_after_pending_blocks_further_update() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11301,7 +11151,7 @@ fun ensemble_commitment_extend_valid_increases_unlocks_at() {
     assert!(after > before, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11319,7 +11169,7 @@ fun ensemble_commitment_extend_with_immediate_when_locked_aborts() {
     escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11338,7 +11188,7 @@ fun ensemble_commitment_extend_with_immediate_when_unlocked_aborts() {
     escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11355,7 +11205,7 @@ fun ensemble_commitment_extend_immediate_to_immediate_aborts() {
     escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11378,7 +11228,7 @@ fun ensemble_commitment_extend_immediate_to_deferred() {
     assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11402,7 +11252,7 @@ fun ensemble_commitment_extend_immediate_to_deferred_blocks_update() {
     escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11427,7 +11277,7 @@ fun ensemble_commitment_extend_anchor_moves_to_old_expiry() {
     assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11451,7 +11301,7 @@ fun ensemble_commitment_extend_floor_ms_reflects_new_policy() {
     assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), half_floor);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11476,7 +11326,7 @@ fun ensemble_commitment_extend_reopens_gate_aborts_immediately_after() {
     escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11501,7 +11351,7 @@ fun ensemble_commitment_extend_reopens_gate_passes_at_new_expiry() {
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11530,7 +11380,7 @@ fun ensemble_commitment_chain_two_extensions_both_valid() {
     assert!(after_second > after_first, 0);
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11551,7 +11401,7 @@ fun ensemble_commitment_anchor_and_remaining_immediate() {
     assert_eq!(escrow::ensemble_commitment_kind(&escrow), b"Immediate".to_string());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -11571,7 +11421,7 @@ fun ensemble_commitment_anchor_and_remaining_deferred() {
     assert_eq!(escrow::ensemble_commitment_kind(&escrow), b"Deferred".to_string());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(cap, OWNER);
+    transfer::public_transfer(cap, OWNER);
     sc.end();
 }
 
@@ -11590,8 +11440,8 @@ fun ensemble_commitment_extend_with_wrong_cap_aborts() {
         &mut escrow, &foreign_cap, ensemble_commitment_policy::new_deferred(phases::duration(1)), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(foreign_cap, OWNER);
-    owner_cap::burn(_owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(_owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11610,8 +11460,8 @@ fun ensemble_commitment_extend_with_real_foreign_escrow_cap_aborts() {
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    owner_cap::burn(cap_a, OWNER);
-    owner_cap::burn(cap_b, OWNER);
+    transfer::public_transfer(cap_a, OWNER);
+    transfer::public_transfer(cap_b, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11626,7 +11476,7 @@ fun event_pin_ensemble_commitment_extended_all_fields() {
     let mut clk  = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 3_000);
 
-    let escrow_id   = owner_cap::proj_escrow_id(&owner_cap);
+    let escrow_id   = object::id(&escrow);
     let deferred_ms = escrow_corpus::retire_deferred_f1_const();
     let new_policy  = ensemble_commitment_policy::new_deferred(phases::duration(deferred_ms));
 
@@ -11650,7 +11500,7 @@ fun event_pin_ensemble_commitment_extended_all_fields() {
                string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
 
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }

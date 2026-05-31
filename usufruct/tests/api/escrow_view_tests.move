@@ -16,7 +16,7 @@ use usufruct::{
     policy_ensemble::PolicyEnsemble,
     escrow::{Self, Escrow},
     escrow_corpus,
-    owner_cap::{Self, OwnerCap},
+    owner_cap::OwnerCap,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
 };
@@ -51,14 +51,14 @@ fun build_escrow_with_retire_commitment(
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
-    let cap = escrow::integrate<DemoAsset, SUI>(
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, commitment, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.next_tx(OWNER);
-    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
 

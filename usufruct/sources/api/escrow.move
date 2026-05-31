@@ -23,10 +23,11 @@ use usufruct::{
     math,
     tenure_duration_policy,
     monetary,
-    owner_cap::{Self, OwnerCap},
+    owner_cap::OwnerCap,
     phases,
     price_escalation_policy::{Self, PriceEscalationPolicy},
     escrow_identity,
+    earnings_inbox::{Self, EarningsInbox},
     protocol_fee_ref::{Self, ProtocolFeeRef},
     retire_commitment_policy::{Self, RetireCommitmentPolicy},
     ensemble_commitment_policy::{Self, EnsembleCommitmentPolicy},
@@ -56,6 +57,10 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 
 // === Public Functions ===
 
+/// Open a new portfolio: mint a fresh `OwnerCap` + `EarningsInbox` pair (born
+/// together in the engine) and share the escrow. The caller receives both
+/// instruments, thereafter independent — keep the cap, sell/rent the inbox, or
+/// either, in any combination (§11).
 public fun integrate<Asset: key + store, CoinType>(
     asset:               Asset,
     ensemble:            PolicyEnsemble,
@@ -64,9 +69,9 @@ public fun integrate<Asset: key + store, CoinType>(
     fee_ref:             &ProtocolFeeRef,
     clock:      &Clock,
     ctx:        &mut TxContext,
-): OwnerCap {
-    let uid             = object::new(ctx);
-    let (core, state, owner_cap) = asset_state::execute_integrate<Asset, CoinType>(
+): (OwnerCap, EarningsInbox) {
+    let uid = object::new(ctx);
+    let (core, state, owner_cap, inbox) = asset_state::execute_integrate<Asset, CoinType>(
         asset, ensemble, retire_commitment, ensemble_commitment,
         protocol_fee_ref::proj_inbox_identity(fee_ref),
         escrow_identity::new(object::uid_to_inner(&uid)),
@@ -78,35 +83,53 @@ public fun integrate<Asset: key + store, CoinType>(
         core:  option::some(core),
         state: option::some(state),
     });
-    owner_cap
+    (owner_cap, inbox)
 }
 
-public fun withdraw_earnings<Asset: key + store, CoinType>(
-    escrow:    &mut Escrow<Asset, CoinType>,
+/// Join an existing portfolio: bind the new escrow to a caller-held `OwnerCap`
+/// and `EarningsInbox`. Governance routes to the existing cap; income to the
+/// existing inbox. Holding both objects by reference is the authorization;
+/// neither is minted.
+public fun integrate_into_portfolio<Asset: key + store, CoinType>(
+    asset:               Asset,
+    ensemble:            PolicyEnsemble,
+    retire_commitment:   RetireCommitmentPolicy,
+    ensemble_commitment: EnsembleCommitmentPolicy,
+    fee_ref:             &ProtocolFeeRef,
+    owner_cap:           &OwnerCap,
+    inbox:               &EarningsInbox,
+    clock:      &Clock,
+    ctx:        &mut TxContext,
+) {
+    let uid = object::new(ctx);
+    let (core, state) = asset_state::execute_integrate_into_portfolio<Asset, CoinType>(
+        asset, ensemble, retire_commitment, ensemble_commitment,
+        protocol_fee_ref::proj_inbox_identity(fee_ref),
+        owner_cap, inbox,
+        escrow_identity::new(object::uid_to_inner(&uid)),
+        phases::now(clock),
+        ctx,
+    );
+    transfer::share_object(Escrow<Asset, CoinType> {
+        id:    uid,
+        core:  option::some(core),
+        state: option::some(state),
+    });
+}
+
+/// Claim the asset from a retired escrow. Returns only the asset — owner income
+/// was settled to the inbox throughout, never accumulated here. Takes
+/// `&OwnerCap`: the cap may govern other escrows, so it is not consumed.
+public fun claim_asset<Asset: key + store, CoinType>(
+    escrow:    Escrow<Asset, CoinType>,
     owner_cap: &OwnerCap,
     clock:     &Clock,
     ctx:       &mut TxContext,
-): Coin<CoinType> {
-    let state = take_state(escrow);
-    let core  = take_core(escrow);
-    let (new_state, new_core, coin) = asset_state::execute_withdraw_earnings(state, core, owner_cap, clock, ctx);
-    put_core(escrow, new_core);
-    put_state(escrow, new_state);
-    coin
-}
-
-public fun claim_asset<Asset: key + store, CoinType>(
-    escrow:    Escrow<Asset, CoinType>,
-    owner_cap: OwnerCap,
-    clock:     &Clock,
-    ctx:       &mut TxContext,
-): (Asset, Coin<CoinType>) {
+): Asset {
     let Escrow { id, core, state } = escrow;
-    let core_val          = core.destroy_some();
-    let (asset, earnings) = asset_state::execute_claim(state.destroy_some(), core_val, &owner_cap, clock, ctx);
-    owner_cap::burn(owner_cap, ctx.sender());
+    let asset = asset_state::execute_claim(state.destroy_some(), core.destroy_some(), owner_cap, clock, ctx);
     id.delete();
-    (asset, earnings)
+    asset
 }
 
 public fun retire<Asset: key + store, CoinType>(
@@ -696,10 +719,10 @@ public fun tenure_settlement<Asset: key + store, CoinType>(
     (monetary::stake_mist(owner), monetary::stake_mist(fee))
 }
 
-public fun owner_balance<Asset: key + store, CoinType>(
+public fun earnings_inbox_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
-): u64 {
-    monetary::stake_mist(asset_state::proj_owner_balance(read_core(escrow)))
+): ID {
+    earnings_inbox::proj_id(asset_state::proj_earnings_inbox(read_core(escrow)))
 }
 
 public fun active_ensemble<Asset: key + store, CoinType>(
@@ -1005,13 +1028,6 @@ fun read_ensemble<Asset: key + store, CoinType>(
 // === Test Functions ===
 
 #[test_only]
-public(package) fun owner_value_for_testing<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): u64 {
-    monetary::stake_mist(asset_state::proj_owner_balance(read_core(escrow)))
-}
-
-#[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
     asset_state::split_fee_for_testing(amount)
 }
@@ -1082,7 +1098,7 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     ctx:      &mut TxContext,
 ) {
     let state = take_state(escrow);
-    let new_state = asset_state::fire_do_handover_for_testing(state, escrow.core.borrow_mut(), boundary, ctx);
+    let new_state = asset_state::fire_do_handover_for_testing(state, escrow.core.borrow(), boundary, ctx);
     put_state(escrow, new_state);
 }
 

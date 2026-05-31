@@ -5,10 +5,7 @@ module usufruct::cap;
 
 // === Imports ===
 
-use usufruct::{
-    owner_cap::{Self, OwnerCap},
-    tenant_cap::{Self, TenantCap},
-};
+use usufruct::tenant_cap::{Self, TenantCap};
 
 // === Errors ===
 
@@ -23,10 +20,6 @@ use usufruct::{
 // === Method Aliases ===
 
 // === Public Functions ===
-
-public fun owner_cap_escrow_id(cap: &OwnerCap): ID {
-    owner_cap::proj_escrow_id(cap)
-}
 
 public fun tenant_cap_escrow_id(cap: &TenantCap): ID {
     tenant_cap::proj_escrow_id(cap)

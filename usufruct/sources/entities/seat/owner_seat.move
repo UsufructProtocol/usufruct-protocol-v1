@@ -5,25 +5,26 @@ module usufruct::owner_seat;
 
 // === Imports ===
 
-use sui::coin::Coin;
 use usufruct::{
-    monetary::Stake,
-    owner_cap::{Self, OwnerCap, OwnerCapIdentity},
-    owner_earning::{Self, OwnerEarnings},
+    earnings_inbox::EarningsInboxIdentity,
+    owner_cap::OwnerCapIdentity,
     owner_identity::{Self, OwnerIdentity},
 };
 
 // === Errors ===
 
-const EWrongCap: u64 = 0;
-
 // === Constants ===
 
 // === Structs ===
 
-public struct OwnerSeat<phantom CoinType> has store {
+/// The owner's record inside an escrow. Holds no balance: owner earnings are
+/// settled directly to the `EarningsInbox` as `EarningsMessage` objects, never
+/// accumulated here. Two immutable identities, both set once at integrate:
+/// `identity` records the governing `OwnerCap`; `inbox` records the permanent
+/// earnings destination. Coin-agnostic — no phantom CoinType.
+public struct OwnerSeat has store {
     identity: OwnerIdentity,
-    earnings: OwnerEarnings<CoinType>,
+    inbox:    EarningsInboxIdentity,
 }
 
 // === Enums ===
@@ -36,36 +37,22 @@ public struct OwnerSeat<phantom CoinType> has store {
 
 // === View Functions ===
 
-public(package) fun proj_identity<C>(o: &OwnerSeat<C>):  &OwnerIdentity { &o.identity }
-public(package) fun proj_value<C>(o: &OwnerSeat<C>):     Stake          { owner_earning::proj_value(&o.earnings) }
+public(package) fun proj_identity(o: &OwnerSeat): &OwnerIdentity      { &o.identity }
+public(package) fun proj_inbox(o: &OwnerSeat):    EarningsInboxIdentity { o.inbox }
 
 // === Admin Functions ===
 
 // === Package Functions ===
 
-public(package) fun new<C>(cap_identity: OwnerCapIdentity): OwnerSeat<C> {
+public(package) fun new(cap_identity: OwnerCapIdentity, inbox: EarningsInboxIdentity): OwnerSeat {
     OwnerSeat {
         identity: owner_identity::new(cap_identity),
-        earnings: owner_earning::zero<C>(),
+        inbox,
     }
 }
 
-public(package) fun deposit<C>(self: &mut OwnerSeat<C>, incoming: OwnerEarnings<C>) {
-    owner_earning::join(&mut self.earnings, incoming);
-}
-
-public(package) fun withdraw<C>(
-    self: &mut OwnerSeat<C>,
-    cap:  &OwnerCap,
-    ctx:  &mut TxContext,
-): Coin<C> {
-    assert!(owner_cap::identity(cap) == owner_identity::proj_cap_identity(&self.identity), EWrongCap);
-    owner_earning::drain_all(&mut self.earnings).into_coin(ctx)
-}
-
-public(package) fun destroy_empty<C>(o: OwnerSeat<C>) {
-    let OwnerSeat { earnings, .. } = o;
-    owner_earning::destroy_zero(earnings);
+public(package) fun destroy(o: OwnerSeat) {
+    let OwnerSeat { .. } = o;
 }
 
 // === Private Functions ===
@@ -73,7 +60,6 @@ public(package) fun destroy_empty<C>(o: OwnerSeat<C>) {
 // === Test Functions ===
 
 #[test_only]
-public fun destroy_for_testing<C>(o: OwnerSeat<C>) {
-    let OwnerSeat { earnings, .. } = o;
-    owner_earning::destroy_for_testing(earnings);
+public fun destroy_for_testing(o: OwnerSeat) {
+    destroy(o)
 }

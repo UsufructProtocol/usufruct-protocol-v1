@@ -357,6 +357,108 @@ fun integrate_leaves_escrow_idle() {
     sc.end();
 }
 
+// ─── §3b. integrate pair + portfolio binding + earnings_inbox_id view ─────────
+
+// integrate mints the (cap, inbox) pair; the escrow's earnings_inbox_id view
+// reports the minted inbox, and owner_cap_id reports the minted cap.
+#[test]
+fun integrate_pair_views_match_minted_objects() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(0),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &clk, sc.ctx(),
+    );
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+
+    sc.next_tx(OWNER);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
+    assert_eq!(escrow::earnings_inbox_id(&escrow), object::id(&inbox));
+    assert_eq!(escrow::owner_cap_id(&escrow),      object::id(&cap));
+
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(inbox, OWNER);
+    sc.end();
+}
+
+// integrate_into_portfolio binds a second escrow to an existing cap + inbox:
+// both escrows report the same earnings_inbox_id and the same owner_cap_id.
+#[test]
+fun integrate_into_portfolio_binds_existing_cap_and_inbox() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(0),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &clk, sc.ctx(),
+    );
+    escrow::integrate_into_portfolio<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(0),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &cap, &inbox, &clk, sc.ctx(),
+    );
+    let integ = event::events_by_type<AssetIntegrated>();
+    assert_eq!(integ.length(), 2);
+    let id1 = asset_state::asset_integrated_escrow_id(&integ[0]);
+    let id2 = asset_state::asset_integrated_escrow_id(&integ[1]);
+    assert!(id1 != id2);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+
+    sc.next_tx(OWNER);
+    let e1 = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id1);
+    let e2 = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id2);
+    // Same income destination, same governance — one portfolio, two escrows.
+    assert_eq!(escrow::earnings_inbox_id(&e1), object::id(&inbox));
+    assert_eq!(escrow::earnings_inbox_id(&e2), object::id(&inbox));
+    assert_eq!(escrow::owner_cap_id(&e1),      object::id(&cap));
+    assert_eq!(escrow::owner_cap_id(&e2),      object::id(&cap));
+
+    test_scenario::return_shared(e1);
+    test_scenario::return_shared(e2);
+    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(inbox, OWNER);
+    sc.end();
+}
+
+// A second OwnerCap that never governed this escrow cannot claim/govern it —
+// the seat-side binding (cap_identity) rejects a foreign cap.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+fun foreign_cap_cannot_claim_portfolio_escrow() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+
+    // Mint an unrelated cap+inbox pair (a different portfolio).
+    sc.next_tx(OWNER);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+    let (foreign_cap, foreign_inbox) = escrow::integrate<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(0),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &clk, sc.ctx(),
+    );
+    escrow::drive_to_retired_for_testing(&mut escrow);
+    test_scenario::return_immutable(fee_ref);
+
+    let asset = escrow::claim_asset(escrow, &foreign_cap, &clk, sc.ctx());
+
+    // Unreachable — claim aborts above.
+    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(foreign_inbox, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §4. split_fee — pure 90/10 split ─────────────────────────────────────────
 
 #[test]

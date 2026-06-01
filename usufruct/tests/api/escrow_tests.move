@@ -1603,7 +1603,7 @@ fun rent_from_demand_supersedes_bid() {
     let superseded = event::events_by_type<BidSuperseded>();
     assert_eq!(superseded.length(), 1);
     assert_eq!(asset_state::bid_superseded_displaced_cap_id(&superseded[0]), object::id(&cap_t2));
-    assert_eq!(asset_state::bid_superseded_new_cap_id(&superseded[0]), object::id(&cap_t3));
+    assert_eq!(asset_state::bid_superseded_pending_cap_id(&superseded[0]), object::id(&cap_t3));
     assert_eq!(asset_state::bid_superseded_refunded_amount(&superseded[0]), p2_amt);
 
     transfer::public_transfer(cap_t1, GOVERNOR);
@@ -2194,7 +2194,7 @@ fun retire_from_demand_allows_supersede_for_last_tenure() {
     assert!(escrow::is_demand(&escrow), 2);
     assert_eq!(event::events_by_type<BidSuperseded>().length(), 1);
     assert_eq!(asset_state::bid_superseded_displaced_cap_id(&event::events_by_type<BidSuperseded>()[0]), object::id(&cap_t2));
-    assert_eq!(asset_state::bid_superseded_new_cap_id     (&event::events_by_type<BidSuperseded>()[0]), object::id(&cap_t3));
+    assert_eq!(asset_state::bid_superseded_pending_cap_id     (&event::events_by_type<BidSuperseded>()[0]), object::id(&cap_t3));
 
     transfer::public_transfer(cap_t1, GOVERNOR);
     transfer::public_transfer(cap_t2, GOVERNOR);
@@ -2694,19 +2694,19 @@ fun update_usufructuary_refund_address_in_occupied_changes_active_address() {
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     let old_addr = *escrow::active_usufructuary_addr(&escrow).borrow();
 
-    let new_addr = @0xCAFE;
+    let active_addr = @0xCAFE;
     escrow::update_usufructuary_refund_address(
-        &mut escrow, &cap_t1, refund_address::new(new_addr), &clk, sc.ctx(),
+        &mut escrow, &cap_t1, refund_address::new(active_addr), &clk, sc.ctx(),
     );
 
-    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(), new_addr);
+    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(), active_addr);
 
     let active_evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(active_evts.length(), 1);
     assert_eq!(asset_state::active_refund_updated_escrow_id(&active_evts[0]), object::id(&escrow));
     assert_eq!(asset_state::active_refund_updated_usufruct_cap_id(&active_evts[0]), object::id(&cap_t1));
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), old_addr);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[0]), active_addr);
     assert_eq!(asset_state::active_refund_updated_asset_type(&active_evts[0]),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::active_refund_updated_coin_type(&active_evts[0]),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::active_refund_updated_timestamp_ms(&active_evts[0]), 0);
@@ -2734,19 +2734,19 @@ fun update_usufructuary_refund_address_in_demand_with_active_cap_changes_active_
     let active_old  = *escrow::active_usufructuary_addr(&escrow).borrow();
     let pending_old = *escrow::pending_usufructuary_addr(&escrow).borrow();
 
-    let new_addr = @0xC0FF;
+    let active_addr = @0xC0FF;
     escrow::update_usufructuary_refund_address(
-        &mut escrow, &cap_t1, refund_address::new(new_addr), &clk, sc.ctx(),
+        &mut escrow, &cap_t1, refund_address::new(active_addr), &clk, sc.ctx(),
     );
 
-    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(),  new_addr);
+    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(),  active_addr);
     assert_eq!(*escrow::pending_usufructuary_addr(&escrow).borrow(), pending_old);
 
     let active_evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(active_evts.length(), 1);
     assert_eq!(asset_state::active_refund_updated_usufruct_cap_id(&active_evts[0]), object::id(&cap_t1));
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), active_old);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[0]), active_addr);
     assert_eq!(event::events_by_type<PendingUsufructuaryRefundAddressUpdated>().length(), 0);
 
     transfer::public_transfer(cap_t1, GOVERNOR);
@@ -2772,20 +2772,20 @@ fun update_usufructuary_refund_address_in_demand_with_pending_cap_changes_pendin
     let active_old  = *escrow::active_usufructuary_addr(&escrow).borrow();
     let pending_old = *escrow::pending_usufructuary_addr(&escrow).borrow();
 
-    let new_addr = @0xC0FF;
+    let active_addr = @0xC0FF;
     escrow::update_usufructuary_refund_address(
-        &mut escrow, &cap_t2, refund_address::new(new_addr), &clk, sc.ctx(),
+        &mut escrow, &cap_t2, refund_address::new(active_addr), &clk, sc.ctx(),
     );
 
     assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(),  active_old);
-    assert_eq!(*escrow::pending_usufructuary_addr(&escrow).borrow(), new_addr);
+    assert_eq!(*escrow::pending_usufructuary_addr(&escrow).borrow(), active_addr);
 
     let pending_evts = event::events_by_type<PendingUsufructuaryRefundAddressUpdated>();
     assert_eq!(pending_evts.length(), 1);
     assert_eq!(asset_state::pending_refund_updated_escrow_id(&pending_evts[0]), object::id(&escrow));
     assert_eq!(asset_state::pending_refund_updated_usufruct_cap_id(&pending_evts[0]), object::id(&cap_t2));
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[0]), pending_old);
-    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), new_addr);
+    assert_eq!(asset_state::pending_refund_updated_active_address(&pending_evts[0]), active_addr);
     assert_eq!(asset_state::pending_refund_updated_asset_type(&pending_evts[0]),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::pending_refund_updated_coin_type(&pending_evts[0]),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::pending_refund_updated_timestamp_ms(&pending_evts[0]), 0);
@@ -2950,7 +2950,7 @@ fun update_usufructuary_refund_address_with_same_address_emits_event_no_abort() 
     let evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(evts.length(), 1);
     assert_eq!(asset_state::active_refund_updated_old_address(&evts[0]), current);
-    assert_eq!(asset_state::active_refund_updated_new_address(&evts[0]), current);
+    assert_eq!(asset_state::active_refund_updated_active_address(&evts[0]), current);
 
     transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
@@ -3000,7 +3000,7 @@ fun update_usufructuary_refund_address_e2e_active_then_handover_routes_to_new() 
     // Event field reflects the updated address.
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 1);
-    assert_eq!(asset_state::handover_completed_displaced_usufructuary_address(&completed[0]), new_t1);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(&completed[0]), new_t1);
     let remain_credit = asset_state::handover_completed_remain_credit(&completed[0]);
     assert!(remain_credit > 0, 0);
 
@@ -3106,7 +3106,7 @@ fun update_usufructuary_refund_address_e2e_pending_update_survives_promotion_thr
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 2);
     // [0] = handover #1 (T1 displaced to GOVERNOR), [1] = handover #2 (T2 displaced to NEW_T2).
-    assert_eq!(asset_state::handover_completed_displaced_usufructuary_address(&completed[1]), new_t2);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(&completed[1]), new_t2);
     let t2_remain = asset_state::handover_completed_remain_credit(&completed[1]);
     assert!(t2_remain > 0, 1);
 
@@ -3166,7 +3166,7 @@ fun update_usufructuary_refund_address_e2e_active_update_overrides_pending_updat
 
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 2);
-    assert_eq!(asset_state::handover_completed_displaced_usufructuary_address(&completed[1]), active_addr);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(&completed[1]), active_addr);
     let t2_remain = asset_state::handover_completed_remain_credit(&completed[1]);
     assert!(t2_remain > 0, 0);
 
@@ -3219,16 +3219,16 @@ fun update_usufructuary_refund_address_e2e_repeated_active_updates_last_wins_thr
 
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 1);
-    assert_eq!(asset_state::handover_completed_displaced_usufructuary_address(&completed[0]), addr_c);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(&completed[0]), addr_c);
     let remain = asset_state::handover_completed_remain_credit(&completed[0]);
     assert!(remain > 0, 0);
 
     // Three Active events were emitted (A, B, C); each carries its own old/new pair.
     let active_evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(active_evts.length(), 3);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), addr_a);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[1]), addr_b);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[2]), addr_c);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[0]), addr_a);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[1]), addr_b);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[2]), addr_c);
     // Chained old→new: addr_b's old = addr_a, addr_c's old = addr_b.
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[1]), addr_a);
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[2]), addr_b);
@@ -3289,9 +3289,9 @@ fun update_usufructuary_refund_address_e2e_repeated_pending_updates_last_wins_th
     // Three Pending events emitted with chained old→new (initial = GOVERNOR from T2's rent).
     let pending_evts = event::events_by_type<PendingUsufructuaryRefundAddressUpdated>();
     assert_eq!(pending_evts.length(), 3);
-    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), addr_a);
-    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[1]), addr_b);
-    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[2]), addr_c);
+    assert_eq!(asset_state::pending_refund_updated_active_address(&pending_evts[0]), addr_a);
+    assert_eq!(asset_state::pending_refund_updated_active_address(&pending_evts[1]), addr_b);
+    assert_eq!(asset_state::pending_refund_updated_active_address(&pending_evts[2]), addr_c);
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[1]), addr_a);
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[2]), addr_b);
     // Active branch never touched in this scenario.
@@ -3351,7 +3351,7 @@ fun update_usufructuary_refund_address_e2e_transferred_cap_grants_authority_to_n
     let evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(evts.length(), 1);
     assert_eq!(asset_state::active_refund_updated_old_address(&evts[0]), GOVERNOR);
-    assert_eq!(asset_state::active_refund_updated_new_address(&evts[0]), buyer_refund);
+    assert_eq!(asset_state::active_refund_updated_active_address(&evts[0]), buyer_refund);
     assert_eq!(asset_state::active_refund_updated_usufruct_cap_id(&evts[0]), object::id(&cap_t1));
 
     transfer::public_transfer(cap_t1, buyer);
@@ -4840,7 +4840,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
 /// usufructuaries. GOVERNOR rents from Idle, bids on own tenure, supersedes own
 /// pending bid, then APT promotes the final bid to current.
 ///
-/// BidSuperseded.displaced_bidder == BidSuperseded.new_bidder == GOVERNOR:
+/// BidSuperseded.displaced_bidder == BidSuperseded.pending_bidder == GOVERNOR:
 /// the same address acts as both displaced party and new bidder.
 /// refunded_amount == price_2: full pending stake returned (no fee on pending).
 /// HandoverCompleted.displaced_usufructuary == GOVERNOR: outgoing current == incoming.
@@ -4880,9 +4880,9 @@ fun e2e_same_usufructuary_successive_bids_identity_agnostic() {
     let se = sup.borrow(0);
     // Core: same address displaced and re-entered.
     assert_eq!(asset_state::bid_superseded_displaced_bidder_address(se),
-               asset_state::bid_superseded_new_bidder_address(se));
+               asset_state::bid_superseded_pending_bidder_address(se));
     assert_eq!(asset_state::bid_superseded_refunded_amount(se), price_2);
-    assert_eq!(asset_state::bid_superseded_new_bid_amount(se), price_3);
+    assert_eq!(asset_state::bid_superseded_pending_bid_amount(se), price_3);
 
     // APT past countdown (1_000+25_000=26_000) → cap_t1_bid2 current.
     // cap_t1_current (original stake, held ~26s) is displaced: remain_credit > 0.
@@ -4891,7 +4891,7 @@ fun e2e_same_usufructuary_successive_bids_identity_agnostic() {
     let hc = event::events_by_type<HandoverCompleted>();
     assert_eq!(hc.length(), 1);
     let he = hc.borrow(0);
-    assert_eq!(asset_state::handover_completed_displaced_usufructuary_address(he), GOVERNOR);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(he), GOVERNOR);
     // new_rent_price is the next floor (price_3 + delta), not the stake itself.
     assert_eq!(asset_state::handover_completed_new_rent_price(he),
                price_3 + escrow_corpus::fixed_delta_value_const());
@@ -4912,7 +4912,7 @@ fun e2e_same_usufructuary_successive_bids_identity_agnostic() {
 /// T1 calls rent() to supersede T2, defending tenure at a higher price.
 /// T2 receives a full refund of their bid stake.
 ///
-/// BidSuperseded.displaced_bidder = CHALLENGER, new_bidder = GOVERNOR.
+/// BidSuperseded.displaced_bidder = CHALLENGER, pending_bidder = GOVERNOR.
 /// The current usufructuary uses the same rent() entry point as any bidder;
 /// the protocol does not privilege or restrict based on role.
 #[test]
@@ -4948,7 +4948,7 @@ fun e2e_active_usufructuary_defends_against_challenger() {
     assert_eq!(sup.length(), 1);
     let se = sup.borrow(0);
     assert_eq!(asset_state::bid_superseded_displaced_bidder_address(se), CHALLENGER);
-    assert_eq!(asset_state::bid_superseded_new_bidder_address(se), GOVERNOR);
+    assert_eq!(asset_state::bid_superseded_pending_bidder_address(se), GOVERNOR);
     assert_eq!(asset_state::bid_superseded_refunded_amount(se), floor_2);
 
     // APT past T1_new's countdown → T1 defends tenure at floor_3.
@@ -5019,7 +5019,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     let price_t3 = 2 * floor_hc;
     let cap_t3   = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let bs       = event::events_by_type<BidSuperseded>();
-    assert_eq!(asset_state::bid_superseded_new_bid_amount(bs.borrow(0)), price_t3);
+    assert_eq!(asset_state::bid_superseded_pending_bid_amount(bs.borrow(0)), price_t3);
     assert!(price_t3 > floor_hc, tag);
 
     // APT past T3's countdown (1_000+25_000=26_000) → T3 current.
@@ -6428,7 +6428,7 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
     // T3's cap is the one promoted by the handover.
     let new_cap_id = {
         let hc = event::events_by_type<HandoverCompleted>();
-        asset_state::handover_completed_new_cap_id(hc.borrow(0))
+        asset_state::handover_completed_active_cap_id(hc.borrow(0))
     };
     assert_eq!(new_cap_id, object::id(&cap_t3));
 
@@ -7688,7 +7688,7 @@ fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
     let hc = event::events_by_type<HandoverCompleted>();
     assert_eq!(hc.length(), 1);
     assert_eq!(
-        asset_state::handover_completed_new_cap_id(hc.borrow(0)),
+        asset_state::handover_completed_active_cap_id(hc.borrow(0)),
         object::id(&cap_t2),
     );
 
@@ -10842,16 +10842,16 @@ fun event_pin_bid_superseded_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::bid_superseded_escrow_id(e),                  escrow_id);
-    assert_eq!(asset_state::bid_superseded_protected_cap_id(e),           object::id(&cap_t1));
-    assert_eq!(asset_state::bid_superseded_protected_address(e),             GOVERNOR);
-    assert_eq!(asset_state::bid_superseded_protected_stake(e),            floor);
-    assert_eq!(asset_state::bid_superseded_protected_phase_start_ms(e),   0);
+    assert_eq!(asset_state::bid_superseded_active_cap_id(e),           object::id(&cap_t1));
+    assert_eq!(asset_state::bid_superseded_active_address(e),             GOVERNOR);
+    assert_eq!(asset_state::bid_superseded_active_stake(e),            floor);
+    assert_eq!(asset_state::bid_superseded_active_phase_start_ms(e),   0);
     assert_eq!(asset_state::bid_superseded_displaced_cap_id(e),           object::id(&cap_t2));
-    assert_eq!(asset_state::bid_superseded_new_cap_id(e),                 object::id(&cap_t3));
+    assert_eq!(asset_state::bid_superseded_pending_cap_id(e),                 object::id(&cap_t3));
     assert_eq!(asset_state::bid_superseded_displaced_bidder_address(e),           GOVERNOR);
     assert_eq!(asset_state::bid_superseded_refunded_amount(e),            p2_amt);
-    assert_eq!(asset_state::bid_superseded_new_bidder_address(e),                 GOVERNOR);
-    assert_eq!(asset_state::bid_superseded_new_bid_amount(e),             floor3);
+    assert_eq!(asset_state::bid_superseded_pending_bidder_address(e),                 GOVERNOR);
+    assert_eq!(asset_state::bid_superseded_pending_bid_amount(e),             floor3);
     assert_eq!(asset_state::bid_superseded_floor_price(e),                floor3);
     assert_eq!(asset_state::bid_superseded_handover_countdown_expiry(e),  expected_expiry);
     assert_eq!(asset_state::bid_superseded_committed_tenures(e),          1);
@@ -11039,14 +11039,14 @@ fun event_pin_handover_completed_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::handover_completed_escrow_id(e),               escrow_id);
-    assert_eq!(asset_state::handover_completed_displaced_cap_id(e),        object::id(&cap_t1));
-    assert_eq!(asset_state::handover_completed_displaced_usufructuary_address(e),        GOVERNOR);
-    assert_eq!(asset_state::handover_completed_displaced_phase_start_ms(e),    0);
-    assert_eq!(asset_state::handover_completed_displaced_ceiling_total_ms(e),  escrow_corpus::tenure_ceiling_const());
-    assert_eq!(asset_state::handover_completed_displaced_handover_total_ms(e), escrow_corpus::handover_countdown_c1_const());
-    assert_eq!(asset_state::handover_completed_new_cap_id(e),                  object::id(&cap_t2));
-    assert_eq!(asset_state::handover_completed_new_usufructuary_address(e),         GOVERNOR);
-    assert_eq!(asset_state::handover_completed_new_stake_balance(e),        floor2);
+    assert_eq!(asset_state::handover_completed_departing_cap_id(e),        object::id(&cap_t1));
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(e),        GOVERNOR);
+    assert_eq!(asset_state::handover_completed_departing_phase_start_ms(e),    0);
+    assert_eq!(asset_state::handover_completed_departing_ceiling_total_ms(e),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::handover_completed_departing_handover_total_ms(e), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(asset_state::handover_completed_active_cap_id(e),                  object::id(&cap_t2));
+    assert_eq!(asset_state::handover_completed_active_usufructuary_address(e),         GOVERNOR);
+    assert_eq!(asset_state::handover_completed_active_stake_balance(e),        floor2);
     assert_eq!(asset_state::handover_completed_used_credit(e),             used_credit);
     assert_eq!(asset_state::handover_completed_governor_share(e),             governor_share_val);
     assert_eq!(asset_state::handover_completed_protocol_fee(e),            protocol_fee_val);

@@ -263,16 +263,16 @@ public struct BidPlaced has copy, drop {
 
 public struct BidSuperseded has copy, drop {
     escrow_id:                 ID,
-    protected_usufruct_cap_id:   ID,
-    protected_usufructuary_address:  address,
-    protected_stake_balance:    u64,
-    protected_phase_start_ms:  u64,
+    active_usufruct_cap_id:   ID,
+    active_usufructuary_address:  address,
+    active_stake_balance:    u64,
+    active_phase_start_ms:  u64,
     displaced_usufruct_cap_id:   ID,
     displaced_bidder_address:  address,
     refunded_amount:           u64,
-    new_usufruct_cap_id:         ID,
-    new_bidder_address:        address,
-    new_bid_amount:            u64,
+    pending_usufruct_cap_id:         ID,
+    pending_bidder_address:        address,
+    pending_bid_amount:            u64,
     floor_price:               u64,
     handover_countdown_expiry: u64,
     committed_tenures:         u64,
@@ -283,14 +283,14 @@ public struct BidSuperseded has copy, drop {
 
 public struct HandoverCompleted has copy, drop {
     escrow_id:                    ID,
-    displaced_usufruct_cap_id:      ID,
-    displaced_usufructuary_address:     address,
-    displaced_phase_start_ms:     u64,
-    displaced_ceiling_total_ms:   u64,
-    displaced_handover_total_ms:  u64,
-    new_usufruct_cap_id:            ID,
-    new_usufructuary_address:           address,
-    new_stake_balance:             u64,
+    departing_usufruct_cap_id:      ID,
+    departing_usufructuary_address:     address,
+    departing_phase_start_ms:     u64,
+    departing_ceiling_total_ms:   u64,
+    departing_handover_total_ms:  u64,
+    active_usufruct_cap_id:            ID,
+    active_usufructuary_address:           address,
+    active_stake_balance:             u64,
     used_credit:                  u64,
     remain_credit:                u64,
     governor_share:                  u64,
@@ -347,7 +347,7 @@ public struct ActiveUsufructuaryRefundAddressUpdated has copy, drop {
     escrow_id:     ID,
     usufruct_cap_id: ID,
     old_address:   address,
-    new_address:   address,
+    active_address:   address,
     asset_type:    String,
     coin_type:     String,
     timestamp_ms:  u64,
@@ -357,7 +357,7 @@ public struct PendingUsufructuaryRefundAddressUpdated has copy, drop {
     escrow_id:     ID,
     usufruct_cap_id: ID,
     old_address:   address,
-    new_address:   address,
+    active_address:   address,
     asset_type:    String,
     coin_type:     String,
     timestamp_ms:  u64,
@@ -1123,7 +1123,7 @@ public(package) fun execute_update_usufructuary_refund_address<Asset: key + stor
     s:           AssetState<Asset, CoinType>,
     core:        EscrowCore<CoinType>,
     cap:         &UsufructCap,
-    new_address: RefundAddress,
+    active_address: RefundAddress,
     clock:       &Clock,
     ctx:         &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
@@ -1132,7 +1132,7 @@ public(package) fun execute_update_usufructuary_refund_address<Asset: key + stor
     let cap_identity = usufruct_cap::identity(cap);
     let escrow_id    = escrow_identity::escrow_id(core.escrow_identity);
     let timestamp_ms = clock::timestamp_ms(clock);
-    let new_addr_raw = refund_address::addr(new_address);
+    let active_addr_raw = refund_address::addr(active_address);
     let asset_type   = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
     let coin_type    = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
     match (&mut s) {
@@ -1140,12 +1140,12 @@ public(package) fun execute_update_usufructuary_refund_address<Asset: key + stor
             let active_id = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
             if (cap_identity == active_id) {
                 let old_address = usufructuary_addr(&terms.active);
-                usufructuary_seat::set_refund_address(&mut terms.active, new_address);
+                usufructuary_seat::set_refund_address(&mut terms.active, active_address);
                 event::emit(ActiveUsufructuaryRefundAddressUpdated {
                     escrow_id,
                     usufruct_cap_id: usufruct_cap::proj_id(cap_identity),
                     old_address,
-                    new_address:   new_addr_raw,
+                    active_address:   active_addr_raw,
                     asset_type,
                     coin_type,
                     timestamp_ms,
@@ -1159,24 +1159,24 @@ public(package) fun execute_update_usufructuary_refund_address<Asset: key + stor
             let pending_id = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&bid.pending));
             if (cap_identity == active_id) {
                 let old_address = usufructuary_addr(&terms.active);
-                usufructuary_seat::set_refund_address(&mut terms.active, new_address);
+                usufructuary_seat::set_refund_address(&mut terms.active, active_address);
                 event::emit(ActiveUsufructuaryRefundAddressUpdated {
                     escrow_id,
                     usufruct_cap_id: usufruct_cap::proj_id(cap_identity),
                     old_address,
-                    new_address:   new_addr_raw,
+                    active_address:   active_addr_raw,
                     asset_type,
                     coin_type,
                     timestamp_ms,
                 });
             } else if (cap_identity == pending_id) {
                 let old_address = usufructuary_addr(&bid.pending);
-                usufructuary_seat::set_refund_address(&mut bid.pending, new_address);
+                usufructuary_seat::set_refund_address(&mut bid.pending, active_address);
                 event::emit(PendingUsufructuaryRefundAddressUpdated {
                     escrow_id,
                     usufruct_cap_id: usufruct_cap::proj_id(cap_identity),
                     old_address,
-                    new_address:   new_addr_raw,
+                    active_address:   active_addr_raw,
                     asset_type,
                     coin_type,
                     timestamp_ms,
@@ -1457,8 +1457,8 @@ fun do_handover<Asset: key + store, CoinType>(
     let fee_mist      = math::compute_apply_bps(used_mist, math::bps(PROTOCOL_FEE_BPS));
     let remain_credit = monetary::compute_stake_sub(principal, used_credit);
 
-    let displaced_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&active));
-    let displaced_addr   = usufructuary_addr(&active);
+    let departing_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&active));
+    let departing_addr   = usufructuary_addr(&active);
 
     let mut departing  = active;
     let earnings = usufructuary_seat::take_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
@@ -1472,24 +1472,24 @@ fun do_handover<Asset: key + store, CoinType>(
     };
     refund_state::distribute(refund, governor_seat, fee_inbox_identity, escrow_identity, ctx);
 
-    let new_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&pending));
-    let new_addr         = usufructuary_addr(&pending);
-    let new_stake        = usufructuary_seat::proj_stake_value(&pending);
-    let new_rent_price = monetary::price_mist(ascending_floor_price(new_stake, config));
+    let active_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&pending));
+    let active_addr         = usufructuary_addr(&pending);
+    let active_stake        = usufructuary_seat::proj_stake_value(&pending);
+    let new_rent_price = monetary::price_mist(ascending_floor_price(active_stake, config));
     let boundary_ms = phases::timestamp_ms(boundary);
     let new_ceiling_total  = tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures);
     let new_handover_total = tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures);
 
     event::emit(HandoverCompleted {
         escrow_id:                   escrow_identity::escrow_id(escrow_identity),
-        displaced_usufruct_cap_id:     usufruct_cap::proj_id(displaced_cap_identity),
-        displaced_usufructuary_address:    displaced_addr,
-        displaced_phase_start_ms:    phases::timestamp_ms(schedule.phase_start),
-        displaced_ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
-        displaced_handover_total_ms: phases::duration_ms(schedule.handover_total),
-        new_usufruct_cap_id:           usufruct_cap::proj_id(new_cap_identity),
-        new_usufructuary_address:          new_addr,
-        new_stake_balance:            monetary::stake_mist(new_stake),
+        departing_usufruct_cap_id:     usufruct_cap::proj_id(departing_cap_identity),
+        departing_usufructuary_address:    departing_addr,
+        departing_phase_start_ms:    phases::timestamp_ms(schedule.phase_start),
+        departing_ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
+        departing_handover_total_ms: phases::duration_ms(schedule.handover_total),
+        active_usufruct_cap_id:           usufruct_cap::proj_id(active_cap_identity),
+        active_usufructuary_address:          active_addr,
+        active_stake_balance:            monetary::stake_mist(active_stake),
         used_credit:                 used_mist,
         remain_credit:               monetary::stake_mist(remain_credit),
         governor_share:                 used_mist - fee_mist,
@@ -1641,29 +1641,29 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let displaced_addr   = usufructuary_addr(&pending);
     let refunded_amount  = usufructuary_seat::proj_stake_value(&pending);
 
-    let new_bidder     = ctx.sender();
-    let new_bid_amount = coin::value(&payment);
-    let cap            = usufruct_cap::new(escrow_identity, new_bidder, ctx);
+    let pending_bidder     = ctx.sender();
+    let pending_bid_amount = coin::value(&payment);
+    let cap            = usufruct_cap::new(escrow_identity, pending_bidder, ctx);
     let cap_identity   = usufruct_cap::identity(&cap);
-    let t = usufructuary_seat::new<CoinType>(cap_identity, refund_address::new(new_bidder), coin::into_balance(payment));
+    let t = usufructuary_seat::new<CoinType>(cap_identity, refund_address::new(pending_bidder), coin::into_balance(payment));
     let refund = refund_state::total(pending);
     refund_state::distribute(refund, governor_seat, fee_inbox_identity, escrow_identity, ctx);
 
-    let protected_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
-    let protected_addr  = usufructuary_addr(&terms.active);
-    let protected_stake = usufructuary_seat::proj_stake_value(&terms.active);
+    let active_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+    let active_addr  = usufructuary_addr(&terms.active);
+    let active_stake = usufructuary_seat::proj_stake_value(&terms.active);
     event::emit(BidSuperseded {
         escrow_id:                 escrow_identity::escrow_id(escrow_identity),
-        protected_usufruct_cap_id:   usufruct_cap::proj_id(protected_cap_identity),
-        protected_usufructuary_address:  protected_addr,
-        protected_stake_balance:    monetary::stake_mist(protected_stake),
-        protected_phase_start_ms:  phases::timestamp_ms(terms.schedule.phase_start),
+        active_usufruct_cap_id:   usufruct_cap::proj_id(active_cap_identity),
+        active_usufructuary_address:  active_addr,
+        active_stake_balance:    monetary::stake_mist(active_stake),
+        active_phase_start_ms:  phases::timestamp_ms(terms.schedule.phase_start),
         displaced_usufruct_cap_id:   usufruct_cap::proj_id(displaced_cap_identity),
         displaced_bidder_address:  displaced_addr,
         refunded_amount:           monetary::stake_mist(refunded_amount),
-        new_usufruct_cap_id:         usufruct_cap::proj_id(cap_identity),
-        new_bidder_address:        new_bidder,
-        new_bid_amount,
+        pending_usufruct_cap_id:         usufruct_cap::proj_id(cap_identity),
+        pending_bidder_address:        pending_bidder,
+        pending_bid_amount,
         floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
         committed_tenures:         tenures::tenures_count(incoming_tenures),
@@ -1965,13 +1965,13 @@ public(package) fun bid_placed_coin_type(e: &BidPlaced): String                 
 #[test_only]
 public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID                      { e.escrow_id }
 #[test_only]
-public(package) fun bid_superseded_protected_cap_id(e: &BidSuperseded): ID               { e.protected_usufruct_cap_id }
+public(package) fun bid_superseded_active_cap_id(e: &BidSuperseded): ID               { e.active_usufruct_cap_id }
 #[test_only]
-public(package) fun bid_superseded_protected_address(e: &BidSuperseded): address          { e.protected_usufructuary_address }
+public(package) fun bid_superseded_active_address(e: &BidSuperseded): address          { e.active_usufructuary_address }
 #[test_only]
-public(package) fun bid_superseded_protected_stake(e: &BidSuperseded): u64               { e.protected_stake_balance }
+public(package) fun bid_superseded_active_stake(e: &BidSuperseded): u64               { e.active_stake_balance }
 #[test_only]
-public(package) fun bid_superseded_protected_phase_start_ms(e: &BidSuperseded): u64      { e.protected_phase_start_ms }
+public(package) fun bid_superseded_active_phase_start_ms(e: &BidSuperseded): u64      { e.active_phase_start_ms }
 #[test_only]
 public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID           { e.displaced_usufruct_cap_id }
 #[test_only]
@@ -1979,11 +1979,11 @@ public(package) fun bid_superseded_displaced_bidder_address(e: &BidSuperseded): 
 #[test_only]
 public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64           { e.refunded_amount }
 #[test_only]
-public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID                 { e.new_usufruct_cap_id }
+public(package) fun bid_superseded_pending_cap_id(e: &BidSuperseded): ID                 { e.pending_usufruct_cap_id }
 #[test_only]
-public(package) fun bid_superseded_new_bidder_address(e: &BidSuperseded): address    { e.new_bidder_address }
+public(package) fun bid_superseded_pending_bidder_address(e: &BidSuperseded): address    { e.pending_bidder_address }
 #[test_only]
-public(package) fun bid_superseded_new_bid_amount(e: &BidSuperseded): u64            { e.new_bid_amount }
+public(package) fun bid_superseded_pending_bid_amount(e: &BidSuperseded): u64            { e.pending_bid_amount }
 #[test_only]
 public(package) fun bid_superseded_floor_price(e: &BidSuperseded): u64               { e.floor_price }
 #[test_only]
@@ -2000,21 +2000,21 @@ public(package) fun bid_superseded_coin_type(e: &BidSuperseded): String         
 #[test_only]
 public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
 #[test_only]
-public(package) fun handover_completed_displaced_cap_id(e: &HandoverCompleted): ID           { e.displaced_usufruct_cap_id }
+public(package) fun handover_completed_departing_cap_id(e: &HandoverCompleted): ID           { e.departing_usufruct_cap_id }
 #[test_only]
-public(package) fun handover_completed_displaced_usufructuary_address(e: &HandoverCompleted): address { e.displaced_usufructuary_address }
+public(package) fun handover_completed_departing_usufructuary_address(e: &HandoverCompleted): address { e.departing_usufructuary_address }
 #[test_only]
-public(package) fun handover_completed_displaced_phase_start_ms(e: &HandoverCompleted): u64  { e.displaced_phase_start_ms }
+public(package) fun handover_completed_departing_phase_start_ms(e: &HandoverCompleted): u64  { e.departing_phase_start_ms }
 #[test_only]
-public(package) fun handover_completed_displaced_ceiling_total_ms(e: &HandoverCompleted): u64  { e.displaced_ceiling_total_ms }
+public(package) fun handover_completed_departing_ceiling_total_ms(e: &HandoverCompleted): u64  { e.departing_ceiling_total_ms }
 #[test_only]
-public(package) fun handover_completed_displaced_handover_total_ms(e: &HandoverCompleted): u64 { e.displaced_handover_total_ms }
+public(package) fun handover_completed_departing_handover_total_ms(e: &HandoverCompleted): u64 { e.departing_handover_total_ms }
 #[test_only]
-public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                 { e.new_usufruct_cap_id }
+public(package) fun handover_completed_active_cap_id(e: &HandoverCompleted): ID                 { e.active_usufruct_cap_id }
 #[test_only]
-public(package) fun handover_completed_new_usufructuary_address(e: &HandoverCompleted): address    { e.new_usufructuary_address }
+public(package) fun handover_completed_active_usufructuary_address(e: &HandoverCompleted): address    { e.active_usufructuary_address }
 #[test_only]
-public(package) fun handover_completed_new_stake_balance(e: &HandoverCompleted): u64          { e.new_stake_balance }
+public(package) fun handover_completed_active_stake_balance(e: &HandoverCompleted): u64          { e.active_stake_balance }
 #[test_only]
 public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64               { e.used_credit }
 #[test_only]
@@ -2439,7 +2439,7 @@ public(package) fun active_refund_updated_usufruct_cap_id(e: &ActiveUsufructuary
 #[test_only]
 public(package) fun active_refund_updated_old_address(e: &ActiveUsufructuaryRefundAddressUpdated): address  { e.old_address }
 #[test_only]
-public(package) fun active_refund_updated_new_address(e: &ActiveUsufructuaryRefundAddressUpdated): address  { e.new_address }
+public(package) fun active_refund_updated_active_address(e: &ActiveUsufructuaryRefundAddressUpdated): address  { e.active_address }
 #[test_only]
 public(package) fun active_refund_updated_asset_type(e: &ActiveUsufructuaryRefundAddressUpdated): String    { e.asset_type }
 #[test_only]
@@ -2454,7 +2454,7 @@ public(package) fun pending_refund_updated_usufruct_cap_id(e: &PendingUsufructua
 #[test_only]
 public(package) fun pending_refund_updated_old_address(e: &PendingUsufructuaryRefundAddressUpdated): address { e.old_address }
 #[test_only]
-public(package) fun pending_refund_updated_new_address(e: &PendingUsufructuaryRefundAddressUpdated): address { e.new_address }
+public(package) fun pending_refund_updated_active_address(e: &PendingUsufructuaryRefundAddressUpdated): address { e.active_address }
 #[test_only]
 public(package) fun pending_refund_updated_asset_type(e: &PendingUsufructuaryRefundAddressUpdated): String   { e.asset_type }
 #[test_only]

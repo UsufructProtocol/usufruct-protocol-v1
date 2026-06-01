@@ -52,11 +52,14 @@ use usufruct::{
     escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
-    fee_message::FeeMessageSent,
-    earnings_message::{Self, EarningsPosted},
+    fee_inbox,
+    fee_message::{Self, FeeMessage, FeeMessageSent},
+    earnings,
+    earnings_inbox::EarningsInbox,
+    earnings_message::{Self, EarningsMessage, EarningsPosted},
     owner_cap::{Self, OwnerCap},
     phases,
-    protocol_fee_inbox,
+    protocol_fee_inbox::{Self, ProtocolFeeInbox},
     protocol_fee_ref::{Self, ProtocolFeeRef},
     refund_address,
     tenant_seat::{Self, TenantSeat},
@@ -1366,12 +1369,13 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     // Post-condition: Occupied, current is t2.
     assert!(escrow::is_occupied(&escrow), 0);
 
-    // Owner share (90% of used_credit) was mailed to the inbox at handover.
+    // Owner share (90% of used_credit) was mailed to the inbox at handover —
+    // assert the event now (per-tx scope) and capture the message id.
     let owner_share_expected = used_credit_expected - used_credit_expected / 10;  // 90%
-    assert_eq!(
-        earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
-        owner_share_expected,
-    );
+    let posted = event::events_by_type<EarningsPosted<SUI>>();
+    assert_eq!(posted.length(), 1);
+    assert_eq!(earnings_message::posted_amount(&posted[0]), owner_share_expected);
+    let earnings_msg_id = earnings_message::posted_earnings_message_id(&posted[0]);
 
     // HandoverCompleted event emitted with consistent figures.
     let completed = event::events_by_type<HandoverCompleted>();
@@ -1384,15 +1388,42 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     assert_eq!(owner_share + protocol_fee, used_credit);
     assert_eq!(used_credit + remain_credit, principal_t1);
 
-    // FeeMessage was posted (one for the protocol_fee).
+    // FeeMessage was posted carrying exactly the protocol fee; capture its id.
     let sent = event::events_by_type<FeeMessageSent<SUI>>();
     assert_eq!(sent.length(), 1);
+    assert_eq!(fee_message::sent_amount(&sent[0]), protocol_fee);
+    let fee_msg_id = fee_message::sent_fee_message_id(&sent[0]);
 
     transfer::public_transfer(cap_t1, OWNER);
     transfer::public_transfer(cap_t2, OWNER);
     test_scenario::return_shared(escrow);
     transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
+
+    // Structural truth, not just the report: the real EarningsMessage and
+    // FeeMessage landed at their inboxes carrying the exact values the events
+    // claimed. Collect each and assert the coin.
+    sc.next_tx(OWNER);
+    let mut earn_inbox = sc.take_from_sender<EarningsInbox>();
+    let e_coin = earnings::collect_earnings_messages<SUI>(
+        &mut earn_inbox,
+        vector[test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(earnings_msg_id)],
+        sc.ctx(),
+    );
+    assert_eq!(coin::value(&e_coin), owner_share_expected);
+    assert_eq!(coin::value(&e_coin), owner_share);  // event's reported share == real coin
+    transfer::public_transfer(e_coin, OWNER);
+    sc.return_to_sender(earn_inbox);
+
+    let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
+    let f_coin = fee_inbox::collect_fee_messages<SUI>(
+        &mut fee_box,
+        vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_msg_id)],
+        sc.ctx(),
+    );
+    assert_eq!(coin::value(&f_coin), protocol_fee);
+    transfer::public_transfer(f_coin, OWNER);
+    sc.return_to_sender(fee_box);
     sc.end();
 }
 
@@ -1456,32 +1487,59 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     // Post-condition: NotRented + Descent.
     assert!(escrow::is_descending(&escrow), 0);
 
-    // Owner share (90% of full principal) was mailed to the inbox at expiry.
+    // Owner share (90% of full principal) was mailed to the inbox at expiry —
+    // assert the event now (per-tx scope) and capture the message id.
     let owner_share_expected = principal - principal / 10;
-    assert_eq!(
-        earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
-        owner_share_expected,
-    );
+    let posted = event::events_by_type<EarningsPosted<SUI>>();
+    assert_eq!(posted.length(), 1);
+    assert_eq!(earnings_message::posted_amount(&posted[0]), owner_share_expected);
+    let earnings_msg_id = earnings_message::posted_earnings_message_id(&posted[0]);
 
     // TenureExpired carries the canonical anchor price = principal.
     let expired = event::events_by_type<TenureExpired>();
     assert_eq!(expired.length(), 1);
     assert_eq!(asset_state::tenure_expired_last_acq_price(&expired[0]), principal);
-    assert_eq!(asset_state::tenure_expired_owner_share(&expired[0]) +
-               asset_state::tenure_expired_protocol_fee(&expired[0]), principal);
+    let protocol_fee = asset_state::tenure_expired_protocol_fee(&expired[0]);
+    assert_eq!(asset_state::tenure_expired_owner_share(&expired[0]) + protocol_fee, principal);
 
     // No AssetRetired (retiring flag was not set).
-    let retired = event::events_by_type<AssetRetired>();
-    assert_eq!(retired.length(), 0);
+    assert_eq!(event::events_by_type<AssetRetired>().length(), 0);
 
-    // FeeMessage was posted.
+    // FeeMessage was posted carrying exactly the protocol fee; capture its id.
     let sent = event::events_by_type<FeeMessageSent<SUI>>();
     assert_eq!(sent.length(), 1);
+    assert_eq!(fee_message::sent_amount(&sent[0]), protocol_fee);
+    let fee_msg_id = fee_message::sent_fee_message_id(&sent[0]);
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
     transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
+
+    // Structural truth, not just the report: the real EarningsMessage and
+    // FeeMessage landed at their inboxes carrying the exact values the events
+    // claimed. Collect each and assert the coin — events can drift from the
+    // object independently, so verify the object.
+    sc.next_tx(OWNER);
+    let mut earn_inbox = sc.take_from_sender<EarningsInbox>();
+    let e_coin = earnings::collect_earnings_messages<SUI>(
+        &mut earn_inbox,
+        vector[test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(earnings_msg_id)],
+        sc.ctx(),
+    );
+    assert_eq!(coin::value(&e_coin), owner_share_expected);
+    transfer::public_transfer(e_coin, OWNER);
+    sc.return_to_sender(earn_inbox);
+
+    let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
+    let f_coin = fee_inbox::collect_fee_messages<SUI>(
+        &mut fee_box,
+        vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_msg_id)],
+        sc.ctx(),
+    );
+    assert_eq!(coin::value(&f_coin), protocol_fee);
+    transfer::public_transfer(f_coin, OWNER);
+    sc.return_to_sender(fee_box);
     sc.end();
 }
 

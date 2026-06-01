@@ -2,7 +2,7 @@
 
 ## § OVERVIEW
 
-Defines `Tenures` — the count of consecutive rental cycles a tenant commits to in a single `rent` call. A tenant renting multiple tenures pays total stake upfront and receives proportionally longer occupancy. All scaled arithmetic delegates to `math::compute_mul_div` to avoid intermediate overflow. `Tenures` is always ≥ 1; the zero case is invalid by construction.
+Defines `Tenures` — the count of consecutive rental cycles a usufructuary commits to in a single `rent` call. A usufructuary renting multiple tenures pays total stake upfront and receives proportionally longer occupancy. All scaled arithmetic delegates to `math::compute_mul_div` to avoid intermediate overflow. `Tenures` is always ≥ 1; the zero case is invalid by construction.
 
 ## § TYPES
 

@@ -2,7 +2,7 @@
 
 ## § OVERVIEW
 
-Package marker module. Declares the one-time witness `USUFRUCT` that bootstraps the package at deployment: `init` claims a `Publisher` object via `sui::package::claim` and transfers it to the deployer. The `Publisher` is the on-chain proof of authorship for the `usufruct` package — it enables display registration, type introspection, and any future upgrade-authority operations that require package ownership. The module has no runtime logic beyond this single initialisation step.
+Package marker module. Declares the one-time witness `USUFRUCT` that bootstraps the package at deployment: `init` claims a `Publisher` object via `sui::package::claim` and transfers it to the deployer. The `Publisher` is the on-chain proof of authorship for the `usufruct` package — it enables display registration, type introspection, and any future upgrade-authority operations that require package governorship. The module has no runtime logic beyond this single initialisation step.
 
 ## § TYPES
 

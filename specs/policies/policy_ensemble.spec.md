@@ -2,7 +2,7 @@
 
 ## § OVERVIEW
 
-The complete, validated configuration bundle for a single escrow. An ensemble packages all eight policy dimensions into one value that is created by the owner at integration time and can be updated — with safe staging — while the escrow is live. Every execution path in the engine reads exclusively from the active ensemble; there is no ad-hoc policy configuration scattered across the state machine. This makes the configuration surface explicit, auditable, and consistent: an ensemble that passes construction is guaranteed internally coherent.
+The complete, validated configuration bundle for a single escrow. An ensemble packages all eight policy dimensions into one value that is created by the governor at integration time and can be updated — with safe staging — while the escrow is live. Every execution path in the engine reads exclusively from the active ensemble; there is no ad-hoc policy configuration scattered across the state machine. This makes the configuration surface explicit, auditable, and consistent: an ensemble that passes construction is guaranteed internally coherent.
 
 The eight dimensions and what they govern:
 
@@ -11,7 +11,7 @@ The eight dimensions and what they govern:
 | `rest_price`        | `RestPricePolicy`         | Price when idle; bottom of the auction descent      |
 | `tenure_duration`   | `TenureDurationPolicy`    | How long each tenure lasts                          |
 | `tenure_extend`     | `TenureExtendPolicy`      | Whether multi-tenure rentals are allowed            |
-| `handover`          | `HandoverPolicy`          | Grace window for current tenant when demand arrives |
+| `handover`          | `HandoverPolicy`          | Grace window for current usufructuary when demand arrives |
 | `auction_window`    | `AuctionWindowPolicy`     | Length and shape of the dutch auction phase         |
 | `credit_shape`      | `CurveShapePolicy`        | Accrual curve for credit during a tenure            |
 | `auction_shape`     | `CurveShapePolicy`        | Descent curve for price during a dutch auction      |

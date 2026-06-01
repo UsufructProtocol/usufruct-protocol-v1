@@ -2,7 +2,7 @@
 
 ## § OVERVIEW
 
-Defines the two monetary units the protocol operates with: `Price` — the per-tenure floor amount quoted by policy — and `Stake` — the collateral a tenant commits at rent time. The distinction is semantic, not structural; separate types prevent accidental substitution (e.g., passing a stake where a price is expected). All values are denominated in MIST (1 SUI = 10⁹ MIST).
+Defines the two monetary units the protocol operates with: `Price` — the per-tenure floor amount quoted by policy — and `Stake` — the collateral a usufructuary commits at rent time. The distinction is semantic, not structural; separate types prevent accidental substitution (e.g., passing a stake where a price is expected). All values are denominated in MIST (1 SUI = 10⁹ MIST).
 
 ## § TYPES
 
@@ -14,7 +14,7 @@ A quoted amount per tenure. Produced by policy functions; consumed by settlement
 ```
 Stake { mist: u64 }   has copy, drop, store
 ```
-Tenant collateral locked at rent time. Converted to a reference price via `as_reference_price` when used as the base for next-tenure escalation.
+Usufructuary collateral locked at rent time. Converted to a reference price via `as_reference_price` when used as the base for next-tenure escalation.
 
 ## § API
 
@@ -27,7 +27,7 @@ Tenant collateral locked at rent time. Converted to a reference price via `as_re
 - `monetary::stake_mist(Stake): u64`
 
 **Conversions**
-- `monetary::as_reference_price(Stake): Price` — reinterprets the mist value of a Stake as a Price; the bridge between what a tenant paid and what the next tenant must pay.
+- `monetary::as_reference_price(Stake): Price` — reinterprets the mist value of a Stake as a Price; the bridge between what a usufructuary paid and what the next usufructuary must pay.
 
 **Arithmetic**
 - `monetary::compute_price_add(Price, Price): Price` — checked addition; aborts on overflow

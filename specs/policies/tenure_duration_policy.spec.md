@@ -2,7 +2,7 @@
 
 ## § OVERVIEW
 
-Sets the maximum length of a single tenure. The tenure ceiling is the clock boundary after which the current tenant's borrow right expires and the state machine must advance (either to a new auction or directly to idle). A fixed ceiling gives both owner and tenant a predictable schedule; a random range introduces variability that can prevent tenants from timing the market or gaming handover windows. The tenure duration is also the upper bound against which `HandoverPolicy` is validated — the handover window must fit within a tenure.
+Sets the maximum length of a single tenure. The tenure ceiling is the clock boundary after which the current usufructuary's borrow right expires and the state machine must advance (either to a new auction or directly to idle). A fixed ceiling gives both governor and usufructuary a predictable schedule; a random range introduces variability that can prevent usufructuaries from timing the market or gaming handover windows. The tenure duration is also the upper bound against which `HandoverPolicy` is validated — the handover window must fit within a tenure.
 
 ## § TYPES
 

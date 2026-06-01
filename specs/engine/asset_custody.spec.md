@@ -21,7 +21,7 @@ Asset in the renting phase. `identity` carries the paired asset+escrow IDs for r
 ```
 AssetCustodyLocked<U: key+store> { asset: U }   has store
 ```
-Asset in the waiting phase (Idle, AtDutch, or Retired). No identity field — there is no active usufructuary to validate against.
+Asset in the waiting phase (Idle, Descent, or Retired). No identity field — there is no active usufructuary to validate against.
 
 ## § API
 

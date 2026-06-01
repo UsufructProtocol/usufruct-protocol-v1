@@ -16,7 +16,7 @@ The codebase applies four functional concepts concretely:
 
 - **Sum types (enums)** for state — `WaitingState | RentingState` instead of boolean flags and nullable fields. Invalid combinations have no representation.
 - **Linear types (hot-potato)** for resource discipline — a value that must be consumed exactly once. The compiler rejects any transaction that does not satisfy the constraint. This is the same guarantee Rust achieves with ownership and Haskell with linear types.
-- **Value transformations** for state transitions — `execute_rent(AssetState, ...) → (RentingState, TenantCap)`. The old state is consumed; the new one is produced. There is no partial update, no field left in an inconsistent intermediate state.
+- **Value transformations** for state transitions — `execute_rent(AssetState, ...) → (RentingState, UsufructCap)`. The old state is consumed; the new one is produced. There is no partial update, no field left in an inconsistent intermediate state.
 - **Resolved configuration as pure values** — `CycleParams` carries resolved policy outputs as domain primitives passed to the engine. The engine is a pure function over its inputs; it never reads configuration directly.
 
 The practical consequence is not academic elegance — it is an auditable security property. Imperative smart contracts depend on the programmer updating all related state consistently and remembering every invariant. Functional-style contracts depend on the compiler: the output type of a transition function cannot be satisfied without consuming the right inputs in the right order. The compiler is the auditor.
@@ -29,13 +29,13 @@ The practical consequence is not academic elegance — it is an auditable securi
 
 A type that can represent an invalid state will eventually hold one. Encode validity into the type itself so the invalid state has no representation.
 
-The clearest instance in this codebase is the `AssetState` hierarchy. Financial state (`CoinType`) only exists when the asset is rented — it is structurally absent from all waiting states. It is not possible to construct a `WaitingState` that holds tenant stake or a rent price, because the type does not have the field.
+The clearest instance in this codebase is the `AssetState` hierarchy. Financial state (`CoinType`) only exists when the asset is rented — it is structurally absent from all waiting states. It is not possible to construct a `WaitingState` that holds usufructuary stake or a rent price, because the type does not have the field.
 
 ```move
 // WaitingState: no CoinType — financial state structurally absent
 public enum WaitingState<Asset: key + store> has store {
     Idle    { asset: AssetCustodyLocked<Asset>, cycle: CycleParams },
-    AtDutch { asset: AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams },
+    Descent { asset: AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams },
     Retired { asset: AssetCustodyLocked<Asset> },
 }
 
@@ -109,21 +109,21 @@ The side effect of carrying state in the receipt is that `escrow.state = None` w
 
 ### 1.3 Entity shape: Identity + Material
 
-Every protocol entity that carries both an identity and a balance follows the same structural split. The two halves travel separately at settlement boundaries: identity routes the destination; material carries the funds.
+A protocol entity that carries both an identity and material follows the same structural split: the two halves travel separately at settlement boundaries — identity routes the destination, material carries the funds. The `UsufructuarySeat` is the canonical case.
 
 ```move
-public struct TenantSeat<phantom CoinType> has store {
-    identity: TenantIdentity,
-    stake:    TenantStake<CoinType>,
+public struct UsufructuarySeat<phantom CoinType> has store {
+    identity: UsufructuaryIdentity,
+    stake:    StakeBalance<CoinType>,
 }
 
-public struct OwnerSeat<phantom CoinType> has store {
-    identity: OwnerIdentity,
-    earnings: OwnerEarnings<CoinType>,
+public struct GovernorSeat has store {
+    identity: GovernorIdentity,
+    inbox:    EarningsInboxIdentity,
 }
 ```
 
-Asymmetries between entities are preserved, not normalized. `OwnerIdentity` authorizes by cap_id only; `TenantIdentity` authorizes by cap_id and carries a `RefundAddress`. The difference is domain information, not an inconsistency.
+Asymmetries between entities are preserved, not normalized. `GovernorIdentity` authorizes by cap_id only; `UsufructuaryIdentity` authorizes by cap_id and carries a `RefundAddress`. And the material itself sits differently: the usufructuary's stake is held *in* the seat, while the governor's seat carries **no balance** — its material was externalized to the `EarningsInbox`, so the seat holds only the identity plus the inbox destination (no `CoinType`). Each settlement mails the governor's share to that inbox as an `EarningsMessage` rather than accumulating it in the seat. The difference is domain information, not an inconsistency.
 
 ---
 
@@ -187,19 +187,19 @@ The abort was not removed by adding a test. It was removed by making its branch 
 The two-level state split (`WaitingState` / `RentingState`) propagates from the enum hierarchy into the return types of every transition function. The return type of a `do_*` function is not documentation — it is a compile-time proof of which states that transition can reach.
 
 ```move
-// Transitions that always produce renting state — CoinType is present, a tenant exists
-fun do_install<Asset, C>(...):        (RentingState<Asset, C>, TenantCap)
-fun do_place_bid<Asset, C>(...):      (RentingState<Asset, C>, TenantCap)
-fun do_supersede_bid<Asset, C>(...):  (RentingState<Asset, C>, TenantCap)
+// Transitions that always produce renting state — CoinType is present, a usufructuary exists
+fun do_install<Asset, C>(...):        (RentingState<Asset, C>, UsufructCap)
+fun do_place_bid<Asset, C>(...):      (RentingState<Asset, C>, UsufructCap)
+fun do_supersede_bid<Asset, C>(...):  (RentingState<Asset, C>, UsufructCap)
 fun do_handover<Asset, C>(...):        RentingState<Asset, C>
 
-// Transitions that always produce waiting state — no CoinType, no tenant
+// Transitions that always produce waiting state — no CoinType, no usufructuary
 fun do_tenure_expiry<Asset, C>(...):   WaitingState<Asset>
 fun do_auction_expiry<Asset>(...):     WaitingState<Asset>
 fun do_retire_immediately<Asset>(...): WaitingState<Asset>
 ```
 
-`do_tenure_expiry` returning `WaitingState<Asset>` makes it a compile error for that function to produce a `RentingState`. The code cannot construct the wrong type — the body must assemble a `WaitingState` variant or it does not compile. A change that accidentally tried to leave a tenant in place after tenure expiry would be rejected before it could run.
+`do_tenure_expiry` returning `WaitingState<Asset>` makes it a compile error for that function to produce a `RentingState`. The code cannot construct the wrong type — the body must assemble a `WaitingState` variant or it does not compile. A change that accidentally tried to leave a usufructuary in place after tenure expiry would be rejected before it could run.
 
 `step_*` functions sit one level above. They check whether a transition is fireable and delegate to `do_*` if so. Because a step may or may not fire, both outcomes are possible — the return type is `AssetState`:
 
@@ -229,7 +229,7 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 
 During `borrow_asset`, `state` is extracted into the `AssetReceipt` hot-potato and the field becomes `None`. Any operation that calls `escrow.state.extract()` or reads from `state` while the receipt is live aborts with `EAssetBorrowed`. There is no way to hold both `AssetState` and a valid `AssetReceipt` at the same time — the type system prevents it by construction. The escrow is effectively frozen at the type level for the duration of the borrow.
 
-This is distinct from `Option` used as a nullable field for convenience. Here the `None` state has a precise domain meaning: the asset is currently in the tenant's possession. The `Some`/`None` transition mirrors the `borrow`/`return` lifecycle exactly.
+This is distinct from `Option` used as a nullable field for convenience. Here the `None` state has a precise domain meaning: the asset is currently in the usufructuary's possession. The `Some`/`None` transition mirrors the `borrow`/`return` lifecycle exactly.
 
 **Test:** every read of `escrow.state` inside the package goes through `take_state` or `read_state`, both of which abort on `None` with `EAssetBorrowed` — the invariant is centralized, never scattered across call sites.
 
@@ -264,7 +264,7 @@ fun ascending_floor_price(stake: Stake, ensemble: &PolicyEnsemble): Price {
 
 ### 2.1 Layer ownership — a domain owns its primitive
 
-Each domain layer owns exactly one module that wraps its primitive. No module except the owner operates on the naked value.
+Each domain layer owns exactly one module that wraps its primitive. No module except the owning module operates on the naked value.
 
 ```move
 // monetary.move — owns the money domain
@@ -288,7 +288,7 @@ public struct BasisPoints has copy, drop, store { bps: u64 }
 public struct CurveHeight has copy, drop  { h:   u64 }
 ```
 
-| Domain | Owner | Types |
+| Domain | Governor | Types |
 |--------|-------|-------|
 | Money  | `monetary.move` | `Price`, `Stake` |
 | Time   | `phases.move`   | `Timestamp`, `Duration`, `Boundary` |
@@ -337,7 +337,7 @@ If the engine had to branch on policy variants, every new variant added to the e
 Every `Balance<C>` produced inside the package wraps immediately into a typed share destined for a single consumer. The naked `Balance` is internal plumbing only.
 
 ```move
-public struct TenantStake<phantom CoinType> has store {
+public struct StakeBalance<phantom CoinType> has store {
     balance: Balance<CoinType>,          // internal — never returned directly
 }
 
@@ -349,35 +349,35 @@ public struct FeeShare<phantom CoinType> has store {
 
 The routing chain is:
 ```
-tenant_seat::take_fee_share      → FeeShare<C>       → fee_message::post → fee inbox
-tenant_seat::take_owner_earnings → OwnerEarnings<C>  → owner_seat::deposit → owner balance
-tenant_stake::liquidate          → transfer to refund address
+usufructuary_seat::take_fee_share → FeeShare<C>        → fee_message::post      → protocol fee inbox
+usufructuary_seat::take_earnings  → EarningsBalance<C> → earnings_message::post → governor earnings inbox
+stake_balance::liquidate          → transfer to refund address
 ```
 
 No function signature outside its defining module accepts or returns `Balance<C>`.
 
-**The compiler enforces what naming convention alone cannot.** Before this principle was applied fully, the fee split was computed into `FeeAllocation { owner_share: Stake, protocol_fee: Stake }` — both fields the same type. The field names communicated intent, but a developer could write `let FeeAllocation { owner_share: fee, protocol_fee: owner } = alloc` and the compiler would not protest: same type, valid destructure, silent swap. The fix was to eliminate `FeeAllocation` entirely and produce `OwnerEarnings<C>` and `FeeShare<C>` directly at the split site:
+**The compiler enforces what naming convention alone cannot.** Before this principle was applied fully, the fee split was computed into `FeeAllocation { governor_share: Stake, protocol_fee: Stake }` — both fields the same type. The field names communicated intent, but a developer could write `let FeeAllocation { governor_share: fee, protocol_fee: governor } = alloc` and the compiler would not protest: same type, valid destructure, silent swap. The fix was to eliminate `FeeAllocation` entirely and produce `EarningsBalance<C>` and `FeeShare<C>` directly at the split site:
 
 ```move
-// do_handover / do_tenure_expiry — owner_earnings and fee_share cannot be swapped.
-// owner_seat::deposit accepts OwnerEarnings<C>; fee_message::post accepts FeeShare<C>.
+// do_handover / do_tenure_expiry — earnings and fee_share cannot be swapped.
+// earnings_message::post accepts EarningsBalance<C>; fee_message::post accepts FeeShare<C>.
 // Passing one where the other is expected is a compile error.
-let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
-let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
+let earnings = usufructuary_seat::take_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
+let fee_share      = usufructuary_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
 ```
 
 The downstream consumers have incompatible types. Routing is not a convention the programmer must remember — it is a constraint the compiler checks at every call site:
 
 ```move
-// owner_seat.move
-public(package) fun deposit<C>(self: &mut OwnerSeat<C>, incoming: OwnerEarnings<C>) { ... }
+// earnings_message.move
+public(package) fun post<C>(earnings: EarningsBalance<C>, inbox_identity: EarningsInboxIdentity, escrow_identity: EscrowIdentity, ctx: &mut TxContext) { ... }
 
 // fee_message.move
 public(package) fun post<C>(share: FeeShare<C>, fee_inbox_identity: FeeInboxIdentity, ctx: &mut TxContext) { ... }
 
 // With the typed shares in hand, the swap is a compile error:
-owner_seat::deposit(owner, fee_share);      // ERROR — expected OwnerEarnings<C>, got FeeShare<C>
-fee_message::post(owner_earnings, ...);     // ERROR — expected FeeShare<C>, got OwnerEarnings<C>
+earnings_message::post(fee_share, ...);   // ERROR — expected EarningsBalance<C>, got FeeShare<C>
+fee_message::post(earnings, ...);         // ERROR — expected FeeShare<C>, got EarningsBalance<C>
 ```
 
 The strongest expression of this principle is `RefundState<CoinType>` — a hot-potato enum with no abilities that carries all three typed shares simultaneously and forces their complete distribution before the transaction ends:
@@ -385,13 +385,13 @@ The strongest expression of this principle is `RefundState<CoinType>` — a hot-
 ```move
 // refund_state.move
 public enum RefundState<phantom CoinType> {            // no abilities — hot potato
-    Nothing { fee_share: FeeShare<C>, owner_earnings: OwnerEarnings<C> },
-    Parcial { seat: TenantSeat<C>, fee_share: FeeShare<C>, owner_earnings: OwnerEarnings<C> },
-    Total   { seat: TenantSeat<C> },
+    Nothing { fee_share: FeeShare<C>, earnings: EarningsBalance<C> },
+    Parcial { seat: UsufructuarySeat<C>, fee_share: FeeShare<C>, earnings: EarningsBalance<C> },
+    Total   { seat: UsufructuarySeat<C> },
 }
 ```
 
-Each variant encodes exactly which consumers receive funds for a given settlement context — tenure expiry, handover, or superseded bid. The hot-potato constraint means `distribute` must be called in the same transaction that creates the `RefundState`. Partial settlement — routing fee and owner earnings but forgetting the tenant refund — is structurally impossible: the compiler rejects any transaction that does not consume every field. Raw `Balance` never appears; every balance travels wrapped in a typed share destined for exactly one consumer.
+Each variant encodes exactly which consumers receive funds for a given settlement context — tenure expiry, handover, or superseded bid. The hot-potato constraint means `distribute` must be called in the same transaction that creates the `RefundState`. Partial settlement — routing fee and governor earnings but forgetting the usufructuary refund — is structurally impossible: the compiler rejects any transaction that does not consume every field. Raw `Balance` never appears; every balance travels wrapped in a typed share destined for exactly one consumer.
 
 ---
 
@@ -422,7 +422,7 @@ public(package) fun proj_asset_id<Asset: key + store, CoinType>(
 ): ID {
     match (s) {
         AssetState::Waiting(WaitingState::Idle    { asset, .. } |
-                            WaitingState::AtDutch { asset, .. } |
+                            WaitingState::Descent { asset, .. } |
                             WaitingState::Retired { asset })     =>
             asset_custody::proj_locked_id(asset),
         AssetState::Renting(RentingState::Occupied { asset, .. } |
@@ -447,19 +447,29 @@ public struct RefundAddress    has copy, drop, store { addr: address }
 // escrow_identity.move
 public struct EscrowIdentity   has copy, drop, store { id: ID }
 
-// owner_cap.move / tenant_cap.move
-public struct OwnerCapIdentity has copy, drop, store { id: ID }
-public struct TenantCapIdentity has copy, drop, store { id: ID }
+// governance_cap.move / usufruct_cap.move
+public struct GovernanceCapIdentity has copy, drop, store { id: ID }
+public struct UsufructCapIdentity has copy, drop, store { id: ID }
 
 // protocol_fee_ref.move
 public struct FeeInboxIdentity has copy, drop, store { id: ID }
 ```
 
-Each type seals its value against accidental use in the wrong context. A `RefundAddress` can only reach `tenant_stake::liquidate`; a `FeeInboxIdentity` can only reach `fee_message::post`. The compiler rejects any attempt to pass one where the other is expected — even though both wrap the same `address` primitive.
+Each type seals its value against accidental use in the wrong context. A `RefundAddress` can only reach `stake_balance::liquidate`; a `FeeInboxIdentity` can only reach `fee_message::post`. The compiler rejects any attempt to pass one where the other is expected — even though both wrap the same `address` primitive.
 
 The extraction to raw `address` or `ID` is deliberate and visible (`refund_address::addr(r)`, `escrow_identity::escrow_id(e)`), consistent with §2.4. The typed wrapper is the domain type; the extractor is the explicit crossing.
 
 **Test:** `grep -r ": address\b" sources/` in internal function signatures returns zero results outside constructors and event fields.
+
+---
+
+### 2.7 Rationale lives in the specs, not in production comments
+
+Production source (`sources/`) carries **no explanatory comments** — only `// ===` (and `// ---`) section markers as reading anchors, plus the license header. Every doc-comment, design note, and inline rationale lives in the module's spec under `specs/` (one spec per module, same path). The type signatures are the proof; the prose that explains *why* belongs in one searchable place, not scattered across call sites where it drifts out of sync with the code. Test code (`tests/`) keeps its comments — tests document intent case-by-case and are not the protocol surface.
+
+This is the same instinct as the rest of this document: the code states what is *true* (and the compiler checks it); the spec states what it *means*. Splitting them keeps each honest — a comment can lie, a type cannot, and a spec is reviewed as documentation rather than skimmed as noise.
+
+**Test:** `grep -rnE '^\s*//' sources/ | grep -vE '// ===|// ---|// Copyright|// SPDX'` returns zero results outside `#[test_only]` sections.
 
 ---
 
@@ -475,7 +485,7 @@ When writing or reviewing code in this codebase:
 
 **From Principle 2:**
 - [ ] Do any internal function signatures contain raw `u64`, `bool`, or anonymous tuples where a domain type exists?
-- [ ] Does any module operate on a naked `u64` primitive that belongs to another domain's owner module?
+- [ ] Does any module operate on a naked `u64` primitive that belongs to another domain's governor module?
 - [ ] Does any computation function accept a `&*Policy` parameter? If so, `resolve()` is missing.
 - [ ] Does any function return or accept a raw `Balance<C>` outside its defining module?
 - [ ] Is any domain crossing implicit — a `u64` value used directly in arithmetic without a named extractor call?

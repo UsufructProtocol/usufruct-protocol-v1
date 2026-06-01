@@ -10,25 +10,25 @@ This document is not a tutorial. It is the *generative principle* behind every p
 
 ## 0. What is usufruct
 
-**usufruct** is an on-chain finite-state machine that governs time-bounded access to any Sui object with `key + store` abilities, with rent paid in any coin type the owner chooses at `integrate()`.
+**usufruct** is an on-chain finite-state machine that governs time-bounded access to any Sui object with `key + store` abilities, with rent paid in any coin type the governor chooses at `integrate()`.
 
-An owner integrates their object into an `Escrow<Asset: key + store, CoinType>`. The FSM takes over from there, managing the full lifecycle across five states:
+An governor integrates their object into an `Escrow<Asset: key + store, CoinType>`. The FSM takes over from there, managing the full lifecycle across five states:
 
-- `Waiting::Idle` — price rests at its floor; no active tenant.
-- `Waiting::AtDutch` — price self-regulates downward until a tenant bids.
-- `Waiting::Retired` — owner has exercised the right to reclaim the asset.
+- `Waiting::Idle` — price rests at its floor; no active usufructuary.
+- `Waiting::Descent` — price self-regulates downward until a usufructuary bids.
+- `Waiting::Retired` — governor has exercised the right to reclaim the asset.
 - `Renting::Occupied` — asset is in use; `borrow_asset` is callable.
 - `Renting::Demand` — asset is in use and price is escalating; a challenger has bid.
 
-Transitions are governed by a `PolicyEnsemble` the owner configures at integration time — eight policies that set the terms under which tenants acquire, hold, and release the right of access: `rest_price`, `tenure_duration`, `tenure_extend`, `handover`, `auction_window`, `auction_shape`, `credit_shape`, and `price_escalation`.
+Transitions are governed by a `PolicyEnsemble` the governor configures at integration time — eight policies that set the terms under which usufructuaries acquire, hold, and release the right of access: `rest_price`, `tenure_duration`, `tenure_extend`, `handover`, `auction_window`, `auction_shape`, `credit_shape`, and `price_escalation`.
 
-The protocol enforces custody, economics, and lifecycle. What the tenant *does* with the asset during the rental window is outside the protocol's concern — it is defined entirely by the asset's own interface. That is the subject of this document.
+The protocol enforces custody, economics, and lifecycle. What the usufructuary *does* with the asset during the rental window is outside the protocol's concern — it is defined entirely by the asset's own interface. That is the subject of this document.
 
 ---
 
 ## The Asset
 
-The sections below describe the design space that opens at the asset level: what an owner integrates, how a tenant uses it, and how integrations compose with one another. The central axis is the pair `borrow_asset` / `return_asset` — two functions that open and close a runtime window inside which the tenant exercises the right they paid for.
+The sections below describe the design space that opens at the asset level: what an governor integrates, how a usufructuary uses it, and how integrations compose with one another. The central axis is the pair `borrow_asset` / `return_asset` — two functions that open and close a runtime window inside which the usufructuary exercises the right they paid for.
 
 ---
 
@@ -37,7 +37,7 @@ The sections below describe the design space that opens at the asset level: what
 The usufruct protocol is a finite-state machine over time-bounded custody of opaque `key + store` objects, with built-in fee accrual, Dutch auctions, handovers, and tenure extension. That is the protocol's *surface*. The point of this document is what is deliberately *absent* from that surface:
 
 - The protocol does not know what an "asset" is. Its generic bound `<Asset: key + store, CoinType>` accepts *any* wrapper an integrator chooses to define. It verifies only UID-identity at borrow and return.
-- The protocol does not know what "use the asset" means. Between `borrow_asset` and `return_asset`, the asset is in the tenant's transactional possession — a Move value within the PTB body, not a persisted Sui object at any address; what the tenant does with it is opaque to the protocol.
+- The protocol does not know what "use the asset" means. Between `borrow_asset` and `return_asset`, the asset is in the usufructuary's transactional possession — a Move value within the PTB body, not a persisted Sui object at any address; what the usufructuary does with it is opaque to the protocol.
 - The protocol does not know about composition. Between borrow and return, arbitrary code can run — including borrows from other contracts, calls into other DeFi primitives, and other layers of the same protocol pattern.
 
 These three not-knows are not omissions. They are *the abstraction*. Every pattern in this document blooms from the deliberate emptiness of those three slots. The protocol is the substrate; the patterns are what grows on top.
@@ -51,7 +51,7 @@ The substrate property is not an emergent claim. It is created, concretely, by *
 ```move
 public fun borrow_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
-    tenant_cap: &TenantCap,
+    usufruct_cap: &UsufructCap,
     random:     &Random,
     clock:      &Clock,
     ctx:        &mut TxContext,
@@ -75,7 +75,7 @@ usufruct enforces only two things across it — via the Move type system:
 1. The same `Asset` (verified by UID, not by internal state) must reach `return_asset` before the TX ends.
 2. The `AssetReceipt<Asset, CoinType>` — a hot-potato with no `drop`, no `store`, no `copy` — must be consumed by `return_asset` in the same TX.
 
-Everything else is *open*. Inside the window, the tenant's PTB body may:
+Everything else is *open*. Inside the window, the usufructuary's PTB body may:
 
 - Call any contract on Sui.
 - Pass the borrowed asset to any function that accepts its type.
@@ -95,7 +95,7 @@ usufruct accepts an `Asset: key + store` at `integrate()` and manages its custod
 
 That knowledge lives in the protocol that *issued* the asset. When a protocol issues a `key + store` object to represent a position, a right, or an authority in its own ecosystem, that object carries the protocol's interface: any function in that protocol that accepts `&Asset` or `&mut Asset` works exactly the same whether the caller holds the asset legitimately or obtained it via usufruct for a tenure.
 
-This means: **any protocol that already issues `key + store` objects to govern use in its ecosystem is automatically compatible with usufruct**. No adapter code. No permission from the issuing protocol. The object is the interface; usufruct holds it; the tenant pays for use it.
+This means: **any protocol that already issues `key + store` objects to govern use in its ecosystem is automatically compatible with usufruct**. No adapter code. No permission from the issuing protocol. The object is the interface; usufruct holds it; the usufructuary pays for use it.
 
 ```move
 // Protocol X issues this object to its users.
@@ -110,11 +110,11 @@ public fun cast_vote(pos: &Position, proposal: ID, support: bool) { ... }
 public fun execute_privileged(pos: &mut Position, params: Params) { ... }
 ```
 
-The owner integrates the `Position` into usufruct. A tenant rents it. During the borrow window the tenant calls protocol X's functions exactly as any legitimate holder would — protocol X sees no difference.
+The governor integrates the `Position` into usufruct. A usufructuary rents it. During the borrow window the usufructuary calls protocol X's functions exactly as any legitimate holder would — protocol X sees no difference.
 
 ```move
 let (position, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &random, &clock, ctx);
 // ── runtime window ─────────────────────────────────────────────────────────
     let rewards = protocol_x::claim_rewards(&position, ctx);
     protocol_x::cast_vote(&position, proposal_id, true);
@@ -139,11 +139,11 @@ Two cases, one principle: *the asset is the interface*. When the interface alrea
 
 ### 4. The taxonomy of "use"
 
-Four structural categories describe what the tenant does during the borrow window. In most cases, the issuing protocol already defined this pattern through the functions it exposes on its `key + store` object — the tenant calls them directly, no wrapper needed.
+Four structural categories describe what the usufructuary does during the borrow window. In most cases, the issuing protocol already defined this pattern through the functions it exposes on its `key + store` object — the usufructuary calls them directly, no wrapper needed.
 
 #### A) Extract-return loops, intra-TX
 
-The tenant extracts material from the asset, uses it, and returns it — all within a single TX. **This is the case where a wrapper is typically needed**: when the underlying material (e.g., `Balance<C>`) has no `key` and cannot be integrated into usufruct directly. The wrapper creates the identity and the extract-return interface.
+The usufructuary extracts material from the asset, uses it, and returns it — all within a single TX. **This is the case where a wrapper is typically needed**: when the underlying material (e.g., `Balance<C>`) has no `key` and cannot be integrated into usufruct directly. The wrapper creates the identity and the extract-return interface.
 
 ```move
 // Balance<C> has no `key` — it cannot be integrated directly.
@@ -157,7 +157,7 @@ public fun put(v: &mut Vault<C>, repayment: Coin<C>, receipt: VaultBorrow)
 
 ```move
 let (vault, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &random, &clock, ctx);
 // ── runtime window ─────────────────────────────────────────────────────────
     let (coin, borrow_receipt) = vault::take(&mut vault, 1_000_000, ctx);
     let coin = some_dex::swap(coin, ...);   // arbitrage, MEV, anything
@@ -169,46 +169,46 @@ usufruct::return_asset(&mut escrow, vault, asset_receipt);
 The vault comes back with the same balance or more. Everything between the two usufruct calls is the runtime.
 
 Other examples:
-- Lending backstop vault — wraps a `Balance<USDC>` insurance reserve; tenant flash-borrows it to execute liquidations and returns it whole.
-- Paired AMM reserve vault — wraps two correlated `Balance` types (`Balance<A>` + `Balance<B>`); tenant flash-borrows both for atomic cross-pool arbitrage.
-- Quota vault — wraps a numeric spending limit or rate-limit counter; tenant consumes the allowance across operations in the TX and must return the remainder.
+- Lending backstop vault — wraps a `Balance<USDC>` insurance reserve; usufructuary flash-borrows it to execute liquidations and returns it whole.
+- Paired AMM reserve vault — wraps two correlated `Balance` types (`Balance<A>` + `Balance<B>`); usufructuary flash-borrows both for atomic cross-pool arbitrage.
+- Quota vault — wraps a numeric spending limit or rate-limit counter; usufructuary consumes the allowance across operations in the TX and must return the remainder.
 
 #### B) Held with passive accrual
 
-Something accrues into the asset on its own while held. The tenant decides when to collect. No wrapper needed — the issuing protocol already emitted the position as a `key + store` object with its own collection functions.
+Something accrues into the asset on its own while held. The usufructuary decides when to collect. No wrapper needed — the issuing protocol already emitted the position as a `key + store` object with its own collection functions.
 
 ```move
 // some_dex already issued Position<A, B> has key, store.
-// The owner integrates it into usufruct directly — no wrapper needed.
+// The governor integrates it into usufruct directly — no wrapper needed.
 
 let (position, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &random, &clock, ctx);
 // ── runtime window ─────────────────────────────────────────────────────────
     some_dex::collect_fees(&mut position, ctx); // fees come out
 // ── end of runtime ──────────────────────────────────────────────────────────
 usufruct::return_asset(&mut escrow, position, asset_receipt);
 ```
 
-The DEX does not know or care that usufruct is holding the position. The position returns to escrow and keeps accumulating until the tenant opens the next runtime window.
+The DEX does not know or care that usufruct is holding the position. The position returns to escrow and keeps accumulating until the usufructuary opens the next runtime window.
 
 - LP position — trading fees stream while held.
 - Staking position — staking rewards accrue.
 - Bonding curve seat — fees from buys and sells.
-- Vesting position — time accrues toward unlock; tenant uses pre-unlock rights.
+- Vesting position — time accrues toward unlock; usufructuary uses pre-unlock rights.
 - RWA yield-bearing object — interest or coupon accrues.
 
-Variants: *yield-to-tenant* (the rent price prices in the expected yield) vs *yield-to-owner* (fees stay in the position for the owner to collect on reclaim).
+Variants: *yield-to-usufructuary* (the rent price prices in the expected yield) vs *yield-to-governor* (fees stay in the position for the governor to collect on reclaim).
 
 #### C) Held with active rights — actions persist post-return
 
-The tenant invokes rights that have permanent on-chain effects. No wrapper needed — the issuing protocol already exposed the functions the tenant needs on its `key + store` object.
+The usufructuary invokes rights that have permanent on-chain effects. No wrapper needed — the issuing protocol already exposed the functions the usufructuary needs on its `key + store` object.
 
 ```move
 // some_gov already issued VotingPower has key, store.
 // No wrapper needed.
 
 let (voting_power, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &random, &clock, ctx);
 // ── runtime window ─────────────────────────────────────────────────────────
     some_gov::cast_vote(&voting_power, proposal_id, /* support */ true, ctx);
     some_gov::claim_distribution(&mut voting_power, ctx);
@@ -225,14 +225,14 @@ The asset returns intact. The *effect* — the vote recorded in `some_gov`'s sta
 
 #### D) Single-shot consumption
 
-The asset is spent by use. The issuing protocol defines the consumption logic; the tenant calls the redemption function; usufruct verifies only the UID on return, not the internal state.
+The asset is spent by use. The issuing protocol defines the consumption logic; the usufructuary calls the redemption function; usufruct verifies only the UID on return, not the internal state.
 
 ```move
 // some_mint already issued MintTicket has key, store.
 // MintTicket carries its own one-time-use logic internally. No wrapper needed.
 
 let (ticket, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &random, &clock, ctx);
 // ── runtime window ─────────────────────────────────────────────────────────
     let nft = some_mint::redeem(&mut ticket, ctx); // ticket is now spent
 // ── end of runtime ──────────────────────────────────────────────────────────
@@ -240,20 +240,20 @@ usufruct::return_asset(&mut escrow, ticket, asset_receipt);
 // usufruct verifies only the UID on return — not the internal state.
 ```
 
-The owner reclaims a spent ticket — that is the intended design. If the tenant returns without redeeming, the ticket comes back unused and the next tenant can try.
+The governor reclaims a spent ticket — that is the intended design. If the usufructuary returns without redeeming, the ticket comes back unused and the next usufructuary can try.
 
 - Allowlist / IDO slot — one mint per slot, slot is then dead.
 - Lottery ticket / mystery box — opened once.
 - Event ticket — admit once.
 - Voucher / discount code — one redemption.
 
-The four categories are not features of the *protocol*. They describe what the issuing protocol's interface allows the tenant to do. usufruct sees all four identically — a `key + store` object that enters escrow and returns with the same UID.
+The four categories are not features of the *protocol*. They describe what the issuing protocol's interface allows the usufructuary to do. usufruct sees all four identically — a `key + store` object that enters escrow and returns with the same UID.
 
 ---
 
 ### 5. The direct case — when the asset IS the access
 
-When the underlying material already exists as a `key + store` object — a capability issued by another protocol to govern access in its own ecosystem — no wrapper is needed. The object is the interface; usufruct holds it; the tenant uses it.
+When the underlying material already exists as a `key + store` object — a capability issued by another protocol to govern access in its own ecosystem — no wrapper is needed. The object is the interface; usufruct holds it; the usufructuary uses it.
 
 Many protocols on Sui mint `key + store` capability objects:
 
@@ -267,13 +267,13 @@ Many protocols on Sui mint `key + store` capability objects:
 - An **AI inference cap** grants the right to query a model object — pay per query, the model remains untouched.
 - A **priority route cap** grants preferential routing or fee discounts on a specific AMM pool during the tenure.
 
-Each is already `key + store`. The owner integrates it into an escrow as-is.
+Each is already `key + store`. The governor integrates it into an escrow as-is.
 
 #### The flow
 
 ```move
 let (cap, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &random, &clock, ctx);
 // ── runtime window ─────────────────────────────────────────────────────────
     issuer::cast_vote(&cap, proposal_id, /* support */ true);
     issuer::claim_rewards(&mut cap, ctx);
@@ -299,7 +299,7 @@ That is the entire integration. The cap-issuing protocol does not need to know t
 
 This is a degenerate case of **category C** (§4) — held with active rights. What's different is that the *integration cost is zero*.
 
-When the cap also accrues something passively while held (vote rewards, fee shares, time-weighted boosts), the pattern blends into **category B**. At that point, the integrator may want a wrapper to split the accrual between owner and tenant — which puts them back in the §6 wrapper pattern.
+When the cap also accrues something passively while held (vote rewards, fee shares, time-weighted boosts), the pattern blends into **category B**. At that point, the integrator may want a wrapper to split the accrual between governor and usufructuary — which puts them back in the §6 wrapper pattern.
 
 #### What this says about the protocol
 
@@ -396,7 +396,7 @@ usufruct::borrow_asset
 
 This is not a property usufruct designs into the integration. It is a property of the **asset's own API**: any function on the asset that emits a hot potato creates a nested runtime window within the outer borrow / return bracket. The protocol provides the outer container; the asset determines how many sub-windows are available inside it.
 
-The practical consequence: `borrow_asset` does not give the tenant a single runtime slot. It gives them access to a **FIFO of runtimes** — as many sequential windows as the asset's API can generate. Each `take` / `put` cycle is one entry in that FIFO: independent, atomic, and fully closed before the next opens. The length of the queue is bounded only by PTB gas limits.
+The practical consequence: `borrow_asset` does not give the usufructuary a single runtime slot. It gives them access to a **FIFO of runtimes** — as many sequential windows as the asset's API can generate. Each `take` / `put` cycle is one entry in that FIFO: independent, atomic, and fully closed before the next opens. The length of the queue is bounded only by PTB gas limits.
 
 ```
 borrow_asset()
@@ -435,7 +435,7 @@ Each layer charges its own fee, independently:
 | 2 — leveraged vault   | per leverage step       | per take      |
 | ...                   | ...                     | ...           |
 
-The tenant pays a *stack of fees* that settles atomically. No integrator coordinates with another. The protocol does not aggregate or route fees — each layer collects its own. The composition is associative; the fee structure is the natural monoid.
+The usufructuary pays a *stack of fees* that settles atomically. No integrator coordinates with another. The protocol does not aggregate or route fees — each layer collects its own. The composition is associative; the fee structure is the natural monoid.
 
 #### Composition turns integrations into a DAG, not a list
 
@@ -451,20 +451,20 @@ The construction that justifies calling the protocol a *substrate* is also the s
 
 - **Protocol team** ships `usufruct`. Untouched.
 - **Integrator** ships a `flash_loan` module — concretely, the `balance_vault` of §6 deployed to mainnet. Imports the `usufruct` package as a Move dependency.
-- **Asset owner** wraps N units of USDC in a `Vault<USDC>` and integrates it into a usufruct `Escrow`, setting tenure price and lifecycle policy.
-- **Tenant** rents the vault from usufruct, paying the tenure fee. Now holds the *option* to flash-loan the vault for the next T seconds, across as many TXs as desired.
+- **Asset governor** wraps N units of USDC in a `Vault<USDC>` and integrates it into a usufruct `Escrow`, setting tenure price and lifecycle policy.
+- **Usufructuary** rents the vault from usufruct, paying the tenure fee. Now holds the *option* to flash-loan the vault for the next T seconds, across as many TXs as desired.
 
 No actor needs to know any other's internals. The interfaces:
 
 - usufruct ↔ integrator: the `<Asset: key + store>` bound.
-- integrator ↔ tenant: the `take` / `put` API and the `VaultBorrow` receipt.
-- owner ↔ tenant: indirect, mediated by usufruct's lifecycle FSM.
+- integrator ↔ usufructuary: the `take` / `put` API and the `VaultBorrow` receipt.
+- governor ↔ usufructuary: indirect, mediated by usufruct's lifecycle FSM.
 
 #### 7.2 A single TX inside the tenure window
 
 ```move
 let (vault, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &random, &clock, ctx);
 // ── runtime window ─────────────────────────────────────────────────────────
     let (coin, vault_borrow) = flash_loan::take(&mut vault, 1_000_000, ctx);
 
@@ -484,11 +484,11 @@ What the bytecode verifier checks at TX end, all at once:
 - Funds returned to the vault are ≥ `amount_owed`. ✓
 - All side effects on DeepBook and Cetus commit *only* if every check above passes.
 
-If any check fails, the entire TX reverts. The owner's vault is untouched; the tenant's tenure is preserved; no partial state is possible.
+If any check fails, the entire TX reverts. The governor's vault is untouched; the usufructuary's tenure is preserved; no partial state is possible.
 
 #### 7.3 The horizon
 
-In the next TX, the tenant repeats — new atomic stack, new opportunity, fresh PTB body. They may do this until the tenure expires. Each TX is independent and atomic; together, they constitute a **multi-TX flash-loan facility** over a window of time.
+In the next TX, the usufructuary repeats — new atomic stack, new opportunity, fresh PTB body. They may do this until the tenure expires. Each TX is independent and atomic; together, they constitute a **multi-TX flash-loan facility** over a window of time.
 
 The protocol enforces the *window*. The integrator's module enforces *conservation per TX*. The composition delivers the new primitive, with neither layer knowing the other exists.
 
@@ -498,7 +498,7 @@ A second integrator may write a `leveraged_loan` module that uses `flash_loan::t
 
 ```move
 let (vault, asset_receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &random, &clock, ctx);
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &random, &clock, ctx);
 // ── runtime window ─────────────────────────────────────────────────────────
     let (coin, vault_borrow) = flash_loan::take(&mut vault, 1_000_000, ctx);
 
@@ -527,32 +527,32 @@ usufruct is two things working in concert.
 
 #### A. A finite-state machine over the asset's lifecycle
 
-The escrow holds the asset across a sequence of states. At every moment, the asset is either *Waiting* (custody locked in escrow) or *Renting* (custody surrendered to a tenant for a borrow window):
+The escrow holds the asset across a sequence of states. At every moment, the asset is either *Waiting* (custody locked in escrow) or *Renting* (custody surrendered to a usufructuary for a borrow window):
 
-- `Waiting::Idle` — no tenant, no auction.
-- `Waiting::AtDutch` — a Dutch auction is open to find the next tenant.
-- `Waiting::Retired` — the owner has terminated the rental; only `claim_asset` remains.
-- `Renting::Occupied` — a tenant holds the right; `borrow_asset` is callable.
-- `Renting::Demand` — a challenger has placed a bid against the current tenant.
+- `Waiting::Idle` — no usufructuary, no auction.
+- `Waiting::Descent` — a Dutch auction is open to find the next usufructuary.
+- `Waiting::Retired` — the governor has terminated the rental; only `claim_asset` remains.
+- `Renting::Occupied` — a usufructuary holds the right; `borrow_asset` is callable.
+- `Renting::Demand` — a challenger has placed a bid against the current usufructuary.
 
 Transitions between states are driven by events (time elapsed, bids placed, tenures expired) and gated by the policies below. The FSM determines **which operations the protocol exposes at each moment**. In particular, `borrow_asset` and `return_asset` are callable only from `Renting::Occupied` or `Renting::Demand` — every other state aborts the borrow path.
 
 #### B. A policy ensemble that orbits the conditions of every transition
 
-The protocol does not hardcode *when* a tenant may rent, *at what price*, *for how long*, *under what extension rules*, or *how the asset transfers between tenants*. It externalizes these into a `PolicyEnsemble` — eight policies the owner configures at integration time:
+The protocol does not hardcode *when* a usufructuary may rent, *at what price*, *for how long*, *under what extension rules*, or *how the asset transfers between usufructuaries*. It externalizes these into a `PolicyEnsemble` — eight policies the governor configures at integration time:
 
 | Policy             | Conditions...                                                            |
 |--------------------|--------------------------------------------------------------------------|
 | `rest_price`       | minimum rent price; fixed or randomly drawn per idle cycle               |
-| `tenure_duration`  | how long the tenant's right persists after winning                       |
-| `tenure_extend`    | whether and how the tenant may extend; multi-tenure commitments          |
-| `handover`         | how the asset transfers from old tenant to new (instant, fixed, countdown) |
+| `tenure_duration`  | how long the usufructuary's right persists after winning                       |
+| `tenure_extend`    | whether and how the usufructuary may extend; multi-tenure commitments          |
+| `handover`         | how the asset transfers from old usufructuary to new (instant, fixed, countdown) |
 | `auction_window`   | duration of the Dutch auction itself                                     |
 | `auction_shape`    | how the price descends across the Dutch auction window                   |
-| `credit_shape`     | how the tenant's stake is consumed into owner earnings over the tenure   |
+| `credit_shape`     | how the usufructuary's stake is consumed into governor earnings over the tenure   |
 | `price_escalation` | how the price escalates after a bid                                      |
 
-Each policy is *external configuration* the owner chooses. The same FSM operates uniformly regardless of which variants are picked. The policies do not change what the protocol *does* — they change **the conditions under which each transition is permitted, and the terms it carries**.
+Each policy is *external configuration* the governor chooses. The same FSM operates uniformly regardless of which variants are picked. The policies do not change what the protocol *does* — they change **the conditions under which each transition is permitted, and the terms it carries**.
 
 #### The picture
 
@@ -569,7 +569,7 @@ Each policy is *external configuration* the owner chooses. The same FSM operates
                        │      AssetState      │
                        │  Waiting │ Renting   │  ← FSM
                        │  Idle    │ Occupied  │
-                       │  AtDutch │ Demand    │
+                       │  Descent │ Demand    │
                        │  Retired │           │
                        └──────────┬───────────┘
                                   │ gates
@@ -588,25 +588,25 @@ The same wrapper under different ensembles produces different markets. A `balanc
 
 #### The temporal axis as one consequence among many
 
-What was framed earlier as the *temporal axis* — multi-TX option on atomic stacks — is one consequence of this machinery, not the whole of it. The tenure is created by `tenure_duration`; the auction by `auction_window` and `auction_shape`; the price floor by `rest_price`; the multi-tenant rotation by `handover`. Together they yield a tenant-held option at owner-chosen terms.
+What was framed earlier as the *temporal axis* — multi-TX option on atomic stacks — is one consequence of this machinery, not the whole of it. The tenure is created by `tenure_duration`; the auction by `auction_window` and `auction_shape`; the price floor by `rest_price`; the multi-usufructuary rotation by `handover`. Together they yield a usufructuary-held option at governor-chosen terms.
 
-| Capability                           | Atomic stack? | Multi-TX horizon? | Owner-configurable terms? |
+| Capability                           | Atomic stack? | Multi-TX horizon? | Governor-configurable terms? |
 |--------------------------------------|---------------|-------------------|---------------------------|
 | Move type system (per-TX hot-potato) | yes           | no                | no                        |
 | Aave-style flash loan                | yes           | no                | no                        |
 | **usufruct + integrations**          | yes           | **yes**           | **yes**                   |
 
-Hot-potato discipline existed before usufruct. Tenure-bounded rights at owner-configured terms did not.
+Hot-potato discipline existed before usufruct. Tenure-bounded rights at governor-configured terms did not.
 
 #### Configuration archetypes
 
 The same FSM produces radically different financial instruments depending on how the `PolicyEnsemble` is configured. Three canonical archetypes emerge. This is a direct consequence of the engine's polymorphic property: the state machine is fully decoupled from the ensemble. The engine does not branch on policy variants — it calls a uniform interface and receives resolved values (price, duration, shape). The ensemble is external configuration; the engine is invariant. The same transitions, the same credit logic, the same settlement arithmetic execute regardless of which variant is active.
 
-**Machine-oriented — pay-per-API.** Tenure ceiling in milliseconds to seconds, `handover = Instant`, `auction_window = Skipped`. No queuing, no handover protection. A new bidder displaces the current tenant immediately; price resets to floor on each idle cycle. Designed for machine clients accessing a rate-limited resource at high frequency — the "tenant" is a bot, not a person.
+**Machine-oriented — pay-per-API.** Tenure ceiling in milliseconds to seconds, `handover = Instant`, `auction_window = Skipped`. No queuing, no handover protection. A new bidder displaces the current usufructuary immediately; price resets to floor on each idle cycle. Designed for machine clients accessing a rate-limited resource at high frequency — the "usufructuary" is a bot, not a person.
 
-**User-oriented — protected renting.** Tenure ceiling in minutes to days, `handover = Countdown`, meaningful `auction_window`. A bidder must wait out the handover countdown before displacing the current tenant. The tenant has a guaranteed window to use the rental before being displaced. Designed for human users renting time-bounded access to something they interact with over a session.
+**User-oriented — protected renting.** Tenure ceiling in minutes to days, `handover = Countdown`, meaningful `auction_window`. A bidder must wait out the handover countdown before displacing the current usufructuary. The usufructuary has a guaranteed window to use the rental before being displaced. Designed for human users renting time-bounded access to something they interact with over a session.
 
-**Full-tenure reservation.** `handover = FullTenure`, which ties the handover expiry to the tenure ceiling, making displacement impossible before the tenure ends. The tenant's occupancy is fully guaranteed for its stated duration. Designed for time-slot reservations — conference rooms, event slots, scheduled access windows — where partial occupancy has no value.
+**Full-tenure reservation.** `handover = FullTenure`, which ties the handover expiry to the tenure ceiling, making displacement impossible before the tenure ends. The usufructuary's occupancy is fully guaranteed for its stated duration. Designed for time-slot reservations — conference rooms, event slots, scheduled access windows — where partial occupancy has no value.
 
 Same protocol code. Entirely different economic products.
 
@@ -618,20 +618,20 @@ The consequence for integrators: no off-chain bot to run, no keeper to fund, no 
 
 #### The incumbent advantage
 
-The current tenant holds a structural advantage at renewal time. A new challenger entering from outside must pay the full escalated floor price for a fresh tenure. The current tenant bidding to extend from `Occupied` pays the same escalated floor — but their already-consumed credit is sunk into the owner's balance. The challenger's cost is the full floor; the incumbent's effective cost is the floor minus what they have already paid for. The further into a tenure the current tenant is, the greater this asymmetry.
+The current usufructuary holds a structural advantage at renewal time. A new challenger entering from outside must pay the full escalated floor price for a fresh tenure. The current usufructuary bidding to extend from `Occupied` pays the same escalated floor — but their already-consumed credit is sunk into the governor's balance. The challenger's cost is the full floor; the incumbent's effective cost is the floor minus what they have already paid for. The further into a tenure the current usufructuary is, the greater this asymmetry.
 
-The result is a natural continuity incentive built into the economics: the protocol structurally favors the existing occupant at renewal time without any explicit loyalty mechanism. Integrators targeting stable long-term tenants over churn can amplify this effect through a front-loaded `credit_shape`, which consumes most of the stake early and leaves the incumbent with maximum sunk credit relative to a new entrant.
+The result is a natural continuity incentive built into the economics: the protocol structurally favors the existing occupant at renewal time without any explicit loyalty mechanism. Integrators targeting stable long-term usufructuaries over churn can amplify this effect through a front-loaded `credit_shape`, which consumes most of the stake early and leaves the incumbent with maximum sunk credit relative to a new entrant.
 
 #### Self-renewal as an emergent property of identity-agnosticism
 
-The protocol evaluates bids against a price, never against an address. `do_place_bid` does not check whether the bidder is the current tenant — it processes the payment and installs the bidder as the pending tenant in `Demand` state. This means the current tenant can call `rent()` on their own escrow while still occupying it.
+The protocol evaluates bids against a price, never against an address. `do_place_bid` does not check whether the bidder is the current usufructuary — it processes the payment and installs the bidder as the pending usufructuary in `Demand` state. This means the current usufructuary can call `rent()` on their own escrow while still occupying it.
 
-If no one outbids them before the handover countdown fires, the handover executes normally: the current tenant is "displaced", receives their own `remain_credit`, and the pending tenant — also themselves — becomes the new current occupant with a fresh tenure. Their net cost is `escalated_floor − remain_credit` — always strictly less than what any external competitor must pay for the same position.
+If no one outbids them before the handover countdown fires, the handover executes normally: the current usufructuary is "displaced", receives their own `remain_credit`, and the pending usufructuary — also themselves — becomes the new current occupant with a fresh tenure. Their net cost is `escalated_floor − remain_credit` — always strictly less than what any external competitor must pay for the same position.
 
 Three market properties emerge from this single design choice, without the protocol encoding any of them:
 
-- **Self-renewal.** The current tenant can extend their position by bidding against themselves.
-- **Right of first refusal.** If a challenger bids, the current tenant can supersede them before the handover fires, reclaiming the pending slot at the same or higher price.
+- **Self-renewal.** The current usufructuary can extend their position by bidding against themselves.
+- **Right of first refusal.** If a challenger bids, the current usufructuary can supersede them before the handover fires, reclaiming the pending slot at the same or higher price.
 - **Structural cost advantage.** The incumbent's renewal cost is always lower than a new entrant's entry cost, by exactly the amount of credit already sunk.
 
 These are not features. They are consequences of the FSM being identity-agnostic — a protocol that sees prices, not participants.
@@ -642,7 +642,7 @@ These are not features. They are consequences of the FSM being identity-agnostic
 
 The patterns below are not all implemented. They are the design space the abstraction opens. Category A entries require a wrapper — the underlying material has no `key`. Categories B–D are typically direct protocol objects: no wrapper needed.
 
-| Cat | Pattern                 | What the tenant gets during the window        | Tenant pays for              |
+| Cat | Pattern                 | What the usufructuary gets during the window        | Usufructuary pays for              |
 |-----|-------------------------|-----------------------------------------------|------------------------------|
 | A   | `balance_vault<C>`      | flash-loanable coin reserve                   | flash-loan window            |
 | A   | `lending_backstop`      | flash reserve for liquidations                | liquidation window           |
@@ -667,46 +667,46 @@ The last two rows demonstrate the DAG structure: `composite_portfolio` and `leve
 
 #### The native token demand circuit
 
-When the owner denominates rental prices in an integrator-issued token (`CoinType = MyToken`), the rental market becomes an organic demand driver for that token. Every tenant must acquire `MyToken` to pay rent. Competitive pressure for a desirable asset drives up the price paid per tenure, which increases operational demand for `MyToken` in circulation.
+When the governor denominates rental prices in an integrator-issued token (`CoinType = MyToken`), the rental market becomes an organic demand driver for that token. Every usufructuary must acquire `MyToken` to pay rent. Competitive pressure for a desirable asset drives up the price paid per tenure, which increases operational demand for `MyToken` in circulation.
 
-This feedback loop is grounded in utility: demand is functional, not speculative — tenants need the token to access the asset. The stronger the underlying asset's utility, the stronger and more stable the demand signal. For integrators with an existing token economy, choosing their own token as `CoinType` converts the rental market into a demand mechanism that requires no separate incentive design — it is a direct consequence of the asset being worth competing for.
+This feedback loop is grounded in utility: demand is functional, not speculative — usufructuaries need the token to access the asset. The stronger the underlying asset's utility, the stronger and more stable the demand signal. For integrators with an existing token economy, choosing their own token as `CoinType` converts the rental market into a demand mechanism that requires no separate incentive design — it is a direct consequence of the asset being worth competing for.
 
 ---
 
-## The TenantCap
+## The UsufructCap
 
-The previous sections describe the design space that opens at the asset level. There is a second surface the protocol exposes without having designed for it explicitly: **the `TenantCap` itself as a transferable object**. Everything above assumed the address that paid `rent()` is the one that exercises the borrow right. That assumption is not enforced by the protocol.
+The previous sections describe the design space that opens at the asset level. There is a second surface the protocol exposes without having designed for it explicitly: **the `UsufructCap` itself as a transferable object**. Everything above assumed the address that paid `rent()` is the one that exercises the borrow right. That assumption is not enforced by the protocol.
 
 ---
 
 ### 10. The rental right is itself transferable
 
-`TenantCap` has `key + store` abilities:
+`UsufructCap` has `key + store` abilities:
 
 ```move
-public struct TenantCap has key, store {
+public struct UsufructCap has key, store {
     id:              UID,
     escrow_identity: EscrowIdentity,
     refund_address:  RefundAddress,
-    cap_identity:    TenantCapIdentity,
+    cap_identity:    UsufructCapIdentity,
 }
 ```
 
-`key` makes it an owned Sui object with a stable on-chain address. `store` makes `transfer::public_transfer` callable on it. A tenant can transfer their `TenantCap` to any address with no protocol interaction — the protocol has no hook on transfers. Whoever holds the cap can call `borrow_asset`. The protocol validates only that the cap is the **current** cap for the escrow, not the identity of the holder.
+`key` makes it an owned Sui object with a stable on-chain address. `store` makes `transfer::public_transfer` callable on it. A usufructuary can transfer their `UsufructCap` to any address with no protocol interaction — the protocol has no hook on transfers. Whoever holds the cap can call `borrow_asset`. The protocol validates only that the cap is the **current** cap for the escrow, not the identity of the holder.
 
-This makes subleasing a structural emergent property. A tenant who holds a current cap with significant tenure remaining — in particular, a long handover window that guarantees their occupancy will not end immediately — can transfer the cap to a sublessee. The sublessee acquires the borrow right directly; no on-protocol step is needed. Anyone can verify on-chain that a cap is current before acquiring it by reading the escrow's `current_tenant_cap_id`.
+This makes subleasing a structural emergent property. A usufructuary who holds a current cap with significant tenure remaining — in particular, a long handover window that guarantees their occupancy will not end immediately — can transfer the cap to a sublessee. The sublessee acquires the borrow right directly; no on-protocol step is needed. Anyone can verify on-chain that a cap is current before acquiring it by reading the escrow's `current_usufruct_cap_id`.
 
 #### The asymmetry to understand before subleasing
 
-The `RefundAddress` embedded in the cap is set at `rent()` time and never changes. It is the address that receives any remaining stake if the current tenant is displaced by a handover before their tenure expires. When the cap is transferred, the **borrow right** moves to the new holder but the **refund destination** does not — it remains pointed at the original payer.
+The `RefundAddress` embedded in the cap is set at `rent()` time and never changes. It is the address that receives any remaining stake if the current usufructuary is displaced by a handover before their tenure expires. When the cap is transferred, the **borrow right** moves to the new holder but the **refund destination** does not — it remains pointed at the original payer.
 
-If the sublessee is displaced while holding the cap, the partial refund goes to the original tenant, not to the sublessee. The sublessee bears the execution-window risk; the original tenant retains the financial exposure to displacement. This is not a flaw — it is the protocol correctly anchoring financial obligations to the address that made them.
+If the sublessee is displaced while holding the cap, the partial refund goes to the original usufructuary, not to the sublessee. The sublessee bears the execution-window risk; the original usufructuary retains the financial exposure to displacement. This is not a flaw — it is the protocol correctly anchoring financial obligations to the address that made them.
 
 #### What the protocol does and does not control
 
 The protocol cannot prevent subleasing and does not try to. It exposes the information needed for any participant to reason about cap validity on-chain:
 
-- `escrow::current_tenant_cap_id()` — whether a given cap is still current.
+- `escrow::current_usufruct_cap_id()` — whether a given cap is still current.
 - `escrow::tenure_expiry_ms()` — how much tenure remains.
 - `escrow::handover_countdown_expiry_ms()` — when a pending bid's handover can fire.
 
@@ -714,93 +714,108 @@ What market structures emerge from this — sublease agreements, secondary cap a
 
 ---
 
-### 11. The TenantCap as a rentable asset — subleasing via escrow
+### 11. The UsufructCap as a rentable asset — subleasing via escrow
 
-> **Note.** This is an emergent property, not a designed protocol feature. It falls out of `TenantCap` satisfying `key + store` — the same bound that makes any object integrable. The protocol did not anticipate or optimize for this; it is documented here because it is real and has economic consequences.
+> **Note.** This is an emergent property, not a designed protocol feature. It falls out of `UsufructCap` satisfying `key + store` — the same bound that makes any object integrable. The protocol did not anticipate or optimize for this; it is documented here because it is real and has economic consequences.
 
-Transferring a `TenantCap` (§10) delegates the borrow right with no protocol involvement. A structurally richer alternative follows from the same `key + store` bound: the tenant can *integrate* their cap into a second escrow and auction the borrow right on the open market. The cap becomes the asset in the new escrow; the sub-lease terms are an independent `PolicyEnsemble`.
+Transferring a `UsufructCap` (§10) delegates the borrow right with no protocol involvement. A structurally richer alternative follows from the same `key + store` bound: the usufructuary can *integrate* their cap into a second escrow and auction the borrow right on the open market. The cap becomes the asset in the new escrow; the sub-lease terms are an independent `PolicyEnsemble`.
 
 **Two-escrow structure**
 
-| Layer | Escrow holds     | Owner           | Tenant          |
+| Layer | Escrow holds     | Governor           | Usufructuary          |
 |-------|------------------|-----------------|-----------------|
-| L1    | underlying asset | original owner  | original tenant |
-| L2    | `TenantCap` L1   | original tenant | sub-tenant      |
+| L1    | underlying asset | original governor  | original usufructuary |
+| L2    | `UsufructCap` L1   | original usufructuary | sub-usufructuary      |
 
-The sub-tenant rents from L2. Their borrow window yields `TenantCap L1` as the extracted asset. Inside that L2 window they open a nested borrow on L1 and receive the underlying asset. Two `AssetReceipt`s are live simultaneously; the drop-checker enforces LIFO closure.
+The sub-usufructuary rents from L2. Their borrow window yields `UsufructCap L1` as the extracted asset. Inside that L2 window they open a nested borrow on L1 and receive the underlying asset. Two `AssetReceipt`s are live simultaneously; the drop-checker enforces LIFO closure.
 
 ```move
-// escrow_l1: holds the underlying asset; original owner integrated it.
-// escrow_l2: holds TenantCap_l1 as its asset; original tenant integrated it.
-// Sub-tenant holds TenantCap_l2.
+// escrow_l1: holds the underlying asset; original governor integrated it.
+// escrow_l2: holds UsufructCap_l1 as its asset; original usufructuary integrated it.
+// Sub-usufructuary holds UsufructCap_l2.
 
-let (tenant_cap_l1, receipt_l2) =
-    usufruct::borrow_asset(&mut escrow_l2, &tenant_cap_l2, &random, &clock, ctx);
+let (usufruct_cap_l1, receipt_l2) =
+    usufruct::borrow_asset(&mut escrow_l2, &usufruct_cap_l2, &random, &clock, ctx);
 // ── runtime window L2 ──────────────────────────────────────────────────────
-//   tenant_cap_l1 is a Move value in the PTB body.
+//   usufruct_cap_l1 is a Move value in the PTB body.
 
     let (asset, receipt_l1) =
-        usufruct::borrow_asset(&mut escrow_l1, &tenant_cap_l1, &random, &clock, ctx);
+        usufruct::borrow_asset(&mut escrow_l1, &usufruct_cap_l1, &random, &clock, ctx);
     // ── runtime window L1 ────────────────────────────────────────────────
     //   asset is a Move value; arbitrary PTB code runs here.
     // ── end of runtime L1 ────────────────────────────────────────────────
     usufruct::return_asset(&mut escrow_l1, asset, receipt_l1);
 
 // ── end of runtime L2 ──────────────────────────────────────────────────────
-usufruct::return_asset(&mut escrow_l2, tenant_cap_l1, receipt_l2);
+usufruct::return_asset(&mut escrow_l2, usufruct_cap_l1, receipt_l2);
 ```
 
-`receipt_l1` must be settled before `tenant_cap_l1` is consumed by `return_asset` for L2. The Move type system enforces this structurally: the inner borrow must close before the outer one can. The L1 escrow sees only a valid cap; it has no visibility into L2.
+`receipt_l1` must be settled before `usufruct_cap_l1` is consumed by `return_asset` for L2. The Move type system enforces this structurally: the inner borrow must close before the outer one can. The L1 escrow sees only a valid cap; it has no visibility into L2.
 
-#### What the original tenant controls at L2
+#### What the original usufructuary controls at L2
 
-Integrating `TenantCap L1` into escrow_l2 makes the original tenant the L2 owner. They configure the L2 `PolicyEnsemble` independently — sub-lease price floor, tenure duration, auction shape, handover policy. One constraint the protocol does not enforce: L2 tenures should not outlast the remaining L1 tenure, or the sub-tenant receives a cap they cannot exercise. Enforcing this is outside the protocol's scope.
+Integrating `UsufructCap L1` into escrow_l2 makes the original usufructuary the L2 governor. They configure the L2 `PolicyEnsemble` independently — sub-lease price floor, tenure duration, auction shape, handover policy. One constraint the protocol does not enforce: L2 tenures should not outlast the remaining L1 tenure, or the sub-usufructuary receives a cap they cannot exercise. Enforcing this is outside the protocol's scope.
 
 #### The RefundAddress asymmetry compounds
 
-At L1, the `refund_address` in `TenantCap L1` is fixed to the original tenant's address at `rent()` time and never changes. If a challenger displaces the original tenant at L1 while `TenantCap L1` sits inside escrow_l2, the L1 stake refund flows to the original tenant — not to escrow_l2, not to the sub-tenant. The L2 pricing must account for this exposure.
+At L1, the `refund_address` in `UsufructCap L1` is fixed to the original usufructuary's address at `rent()` time and never changes. If a challenger displaces the original usufructuary at L1 while `UsufructCap L1` sits inside escrow_l2, the L1 stake refund flows to the original usufructuary — not to escrow_l2, not to the sub-usufructuary. The L2 pricing must account for this exposure.
 
 #### When this market has value
 
-The L2 escrow is worth bidding on only while `TenantCap L1` is still the *current* cap at escrow_l1 — verified on-chain via `escrow::current_tenant_cap_id()` — and the remaining `tenure_duration` is long enough to justify the sub-lease terms the L2 owner has set. A long, uncontested tenure at L1 creates a liquid sub-lease market; a tenure that is nearly expired or already under `Demand` pressure at L1 makes the L2 asset illiquid or worthless.
+The L2 escrow is worth bidding on only while `UsufructCap L1` is still the *current* cap at escrow_l1 — verified on-chain via `escrow::current_usufruct_cap_id()` — and the remaining `tenure_duration` is long enough to justify the sub-lease terms the L2 governor has set. A long, uncontested tenure at L1 creates a liquid sub-lease market; a tenure that is nearly expired or already under `Demand` pressure at L1 makes the L2 asset illiquid or worthless.
 
-> **Note — TenantCaps are ephemeral assets.** A `TenantCap` is displaced the moment a handover fires at its escrow. If `TenantCap L1` is displaced while sitting inside escrow_l2, it becomes stale: borrow_asset on escrow_l1 will abort for any holder, and the L2 asset has no residual value. Any participant evaluating a bid on escrow_l2 must read `escrow_l1::current_tenant_cap_id()` and `escrow_l1::tenure_expiry_ms()` before paying. The protocol surfaces this information; pricing the staleness risk is the market's job.
+> **Note — UsufructCaps are ephemeral assets.** A `UsufructCap` is displaced the moment a handover fires at its escrow. If `UsufructCap L1` is displaced while sitting inside escrow_l2, it becomes stale: borrow_asset on escrow_l1 will abort for any holder, and the L2 asset has no residual value. Any participant evaluating a bid on escrow_l2 must read `escrow_l1::current_usufruct_cap_id()` and `escrow_l1::tenure_expiry_ms()` before paying. The protocol surfaces this information; pricing the staleness risk is the market's job.
 
 ---
 
-## The OwnerCap
+## The GovernanceCap
 
-`OwnerCap` also has `key + store` abilities. Whoever holds it holds **full authority** over the escrow: retire, withdraw earnings, claim the asset, update the policy configuration, and extend the commitment. The protocol validates only that the cap matches the escrow's registered `owner_cap_id` — not the holder's address. Transfer of the `OwnerCap` is transfer of ownership, with no caveats.
+`GovernanceCap` also has `key + store` abilities. Whoever holds it holds **governance authority** over the escrow: retire, claim the asset, update the policy configuration, and extend the commitment. It does **not** carry the income — governor earnings flow to a separate `EarningsInbox` object (see §14 below). The protocol validates the cap by matching its identity against the one its `GovernorSeat` recorded — not the holder's address, and (unlike `UsufructCap`) not against a stored escrow id, since one `GovernanceCap` can govern many escrows. Transfer of the `GovernanceCap` is transfer of governance, with no caveats.
 
 ---
 
 ### 12. Protocol-owned escrows and governance
 
-Because `OwnerCap` is an ordinary owned Sui object, it can be held by any address — including a smart contract module, a DAO treasury, or a multisig. This makes the escrow's lifecycle fully programmable without any modification to the protocol.
+Because `GovernanceCap` is an ordinary owned Sui object, it can be held by any address — including a smart contract module, a DAO treasury, or a multisig. This makes the escrow's lifecycle fully programmable without any modification to the protocol.
 
-**DAO-governed escrow.** Integrate an asset, then transfer the `OwnerCap` to a DAO governance object or shared treasury. From that point, owner operations (retire, update config, withdraw earnings) are gated by the DAO's own proposal and voting mechanism. The protocol does not know or care — it validates the cap, not the caller.
+**DAO-governed escrow.** Integrate an asset, then transfer the `GovernanceCap` to a DAO governance object or shared treasury. From that point, governor operations (retire, update config, extend commitment) are gated by the DAO's own proposal and voting mechanism — while the income keeps flowing to whichever `EarningsInbox` the DAO holds, collected on its own schedule. The protocol does not know or care — it validates the cap, not the caller.
 
-**Protocol-owned escrow.** A smart contract module can hold the `OwnerCap` and govern the escrow programmatically: auto-retire after a fixed number of tenures, route withdrawn earnings to a yield-sharing pool, update policy configuration in response to on-chain signals. The escrow becomes a component in a larger protocol rather than an independently owned object.
+**Protocol-owned escrow.** A smart contract module can hold the `GovernanceCap` and govern the escrow programmatically: auto-retire after a fixed number of tenures, hold the paired `EarningsInbox` and route collected income to a yield-sharing pool, update policy configuration in response to on-chain signals. The escrow becomes a component in a larger protocol rather than an independently owned object.
 
-**Multisig ownership.** Transfer the `OwnerCap` to a multisig cap from another protocol. Owner operations then require the configured threshold of signers. Useful for shared assets or treasury-managed integrations where no single address should have unilateral control.
+**Multisig governance.** Transfer the `GovernanceCap` to a multisig cap from another protocol. Governor operations then require the configured threshold of signers. Useful for shared assets or treasury-managed integrations where no single address should have unilateral control.
 
-**Delegated management.** Transfer the `OwnerCap` temporarily to a manager address — a keeper bot, an operations wallet, or a third-party service — while retaining the intent to reclaim it later. Since `OwnerCap` is transferable, this is a first-class pattern with no protocol friction.
+**Delegated management.** Transfer the `GovernanceCap` temporarily to a manager address — a keeper bot, an operations wallet, or a third-party service — while retaining the intent to reclaim it later. Since `GovernanceCap` is transferable, this is a first-class pattern with no protocol friction.
 
-#### The difference from TenantCap
+#### The difference from UsufructCap
 
-With `TenantCap`, only the borrow right transfers — financial exposure to displacement (the `RefundAddress`) stays anchored to the original payer. With `OwnerCap`, there is no such split: economic rights and operational authority are unified. Whoever holds the cap can withdraw accumulated earnings, claim the underlying asset, and modify the escrow's terms. Transfer of `OwnerCap` is full transfer of ownership with no residual exposure retained by the prior holder.
+With `UsufructCap`, only the borrow right transfers — financial exposure to displacement (the `RefundAddress`) stays anchored to the original payer. With `GovernanceCap`, the split is of a different kind: governance and income are **separate objects**. The cap carries operational authority (retire, claim, reconfigure); the income is the `EarningsInbox`, an independent object that does not move with the cap unless you also transfer it. Transferring the `GovernanceCap` hands over governance — including the right to claim the underlying asset — but the prior holder keeps collecting income from any inbox they retained. The two can be sold, rented, or renounced independently.
 
 ---
 
-### 13. The OwnerCap as a rentable asset — level-2 rental
+### 13. The GovernanceCap as a rentable asset — level-2 rental
 
-`OwnerCap` has `key + store`, which means it can itself be integrated into a usufruct escrow. The result is a two-level rental market: the level-1 escrow holds the underlying asset; a level-2 escrow holds the `OwnerCap` of the level-1 escrow. Whoever rents the `OwnerCap` from the level-2 escrow temporarily holds full owner authority over the level-1 escrow.
+`GovernanceCap` has `key + store`, which means it can itself be integrated into a usufruct escrow. The result is a two-level rental market: the level-1 escrow holds the underlying asset; a level-2 escrow holds the `GovernanceCap` of the level-1 escrow. Whoever rents the `GovernanceCap` from the level-2 escrow temporarily holds full governor authority over the level-1 escrow.
 
-During their level-2 tenure, the meta-tenant can call any owner-gated operation on level-1: `update_config` to change rental policy, `retire` to initiate asset reclaim, `withdraw_earnings` to extract accumulated owner balance, or `extend_commitment`. The level-1 escrow is governed by whoever holds the `OwnerCap` at the time, not by the original integrator.
+During their level-2 tenure, the meta-usufructuary can call any governor-gated operation on level-1: `update_config` to change rental policy, `retire` to initiate asset reclaim, or `extend_commitment`. The level-1 escrow is governed by whoever holds the `GovernanceCap` at the time, not by the original integrator. Note the income does **not** ride along: the `EarningsInbox` is a separate object, so unless it too is integrated at level-2, level-1 income keeps accruing to whoever holds that inbox — governance and income rent independently.
 
-This creates **market-mediated transfer of escrow control** without explicit sale semantics. Set a level-2 tenure long enough to cover a full level-1 retirement cycle, and the highest bidder at level-2 wins temporary ownership of the underlying asset's lifecycle — including the right to reclaim it. The asset goes to whoever holds the `OwnerCap` when `claim_asset` is called, which may be different from whoever called `retire`, depending on when each level-2 tenure ends.
+This creates **market-mediated transfer of escrow control** without explicit sale semantics. Set a level-2 tenure long enough to cover a full level-1 retirement cycle, and the highest bidder at level-2 wins temporary governance of the underlying asset's lifecycle — including the right to reclaim it. The asset goes to whoever holds the `GovernanceCap` when `claim_asset` is called, which may be different from whoever called `retire`, depending on when each level-2 tenure ends.
 
-At the extreme, a level-2 escrow with `FullTenure` handover and a tenure sized to match a level-1 retirement horizon becomes an ownership auction: one bidder wins per cycle, exercises full owner rights, and the level-1 asset exits to them.
+At the extreme, a level-2 escrow with `FullTenure` handover and a tenure sized to match a level-1 retirement horizon becomes a governance auction: one bidder wins per cycle, exercises full governor rights, and the level-1 asset exits to them.
+
+---
+
+### 13b. The EarningsInbox — the governor's income, separable and rentable
+
+Governor income does not live on the `GovernanceCap`. At `integrate`, the protocol mints a **pair**: a `GovernanceCap` (control) and an `EarningsInbox` (income). They are born together and independent thereafter — two owned objects that can be held, sold, rented, or renounced in any combination. This is on-chain coupon-stripping: the income stream is detached from the governance that produces it.
+
+Every settlement mails the governor's share to the inbox as an `EarningsMessage` (transfer-to-object); the inbox bearer drains accumulated messages with `collect_earnings_messages`, which touches only owned objects — no shared escrow — so collection runs at owned-object speed and batches freely. Because the inbox is `key + store`, it is itself integrable into a usufruct escrow: the income can be rented or sold apart from the cap, exactly like the `ProtocolFeeInbox` in §14.
+
+The pair composes two ways:
+
+- **One-to-one** — `integrate` mints a fresh cap + inbox bound to a single escrow. One governor, one income stream, one asset. The default.
+- **One-to-many** — `integrate_into_portfolio` binds a *new* escrow to a caller-held cap + inbox instead of minting. The same `GovernanceCap` then governs the whole portfolio, and the same `EarningsInbox` collects the income of every escrow in it. One pair governs and collects for an entire fleet: governance is `O(escrows)` to exercise (each escrow is a separate call) but `O(1)` in objects to hold, and income collection is `O(1)` — one inbox, one batched `collect`, draining messages posted by any escrow in the fleet.
+
+This separation is what makes `renounce_governance` clean: burning the `GovernanceCap` seals every escrow it governs (no operation can ever be authorized again — the asset is locked in perpetual usufruct at frozen terms) while the `EarningsInbox` keeps receiving and remains collectable. You can give up control forever and still earn.
 
 ---
 
@@ -812,19 +827,19 @@ At the extreme, a level-2 escrow with `FullTenure` handover and a tenure sized t
 public struct ProtocolFeeInbox has key, store { id: UID }
 ```
 
-That bound is the only requirement for `integrate()`. The protocol can integrate its own fee inbox into a usufruct escrow and auction the right to collect its accumulated earnings to the open market.
+That bound is the only requirement for `integrate()`. The protocol can integrate its own fee inbox into a usufruct escrow and auction the right to collect its accumulated fees to the open market.
 
 #### The economic structure
 
 Every `apply_transitions` that settles a fee creates a `FeeMessage<C>` object and transfers it to the inbox's address. These accumulate passively — the inbox does nothing; fee messages arrive at it from any number of concurrent escrows. Collecting them (via `transfer::receive`) returns more in storage rebate than it costs in computation: break-even is N = 2 messages; at N = 50 the net gain converges to ~−0.001911 SUI per message (see FINDINGS.md §4).
 
-A tenant who rents the inbox during a window of sufficient protocol activity pays `rent ≤ expected_fee_stream_value` and collects the surplus as arbitrage. The competitive market for collection rights prices the fee stream automatically — the highest-value bidder in each tenure cycle wins, and their bid reflects the fee volume they expect to harvest.
+A usufructuary who rents the inbox during a window of sufficient protocol activity pays `rent ≤ expected_fee_stream_value` and collects the surplus as arbitrage. The competitive market for collection rights prices the fee stream automatically — the highest-value bidder in each tenure cycle wins, and their bid reflects the fee volume they expect to harvest.
 
 #### The borrow window
 
 ```move
 let (inbox, asset_receipt) =
-    usufruct::borrow_asset(&mut inbox_escrow, &tenant_cap, &clock, ctx);
+    usufruct::borrow_asset(&mut inbox_escrow, &usufruct_cap, &clock, ctx);
 // ── runtime window ───────────────────────────────────────────────────
     // tickets: vector<Receiving<FeeMessage<SUI>>> assembled by the PTB builder
     // from the FeeMessage objects that live at the inbox's address.
@@ -838,33 +853,33 @@ let (inbox, asset_receipt) =
 usufruct::return_asset(&mut inbox_escrow, inbox, asset_receipt);
 ```
 
-The inbox returns to escrow intact. Its UID never changes. New `FeeMessage` objects continue arriving at its address while it sits in escrow between borrow windows. The next tenant inherits a fresh batch.
+The inbox returns to escrow intact. Its UID never changes. New `FeeMessage` objects continue arriving at its address while it sits in escrow between borrow windows. The next usufructuary inherits a fresh batch.
 
 #### What this pattern produces
 
-**Incentivized collection without a keeper.** The protocol owner does not need to run a bot or manually call `collect`. Market participants compete to do it, because collection is profitable at scale. The economic incentive the protocol designed into its fee structure (self-funding collection) is the same force that drives tenants to bid for collection rights.
+**Incentivized collection without a keeper.** The protocol governor does not need to run a bot or manually call `collect`. Market participants compete to do it, because collection is profitable at scale. The economic incentive the protocol designed into its fee structure (self-funding collection) is the same force that drives usufructuaries to bid for collection rights.
 
-**Revenue capitalization.** The expected future fee stream is capitalized into periodic rent. The protocol owner receives a predictable rent income instead of variable, manually-triggered collection proceeds. The tenant bears fee-volume risk in exchange for the upside when volume exceeds expectations.
+**Revenue capitalization.** The expected future fee stream is capitalized into periodic rent. The protocol governor receives a predictable rent income instead of variable, manually-triggered collection proceeds. The usufructuary bears fee-volume risk in exchange for the upside when volume exceeds expectations.
 
 **Market-set collection frequency.** When fee volume is high, the inbox attracts competitive bids and collection rights are exercised frequently. When volume is low, bids fall or the escrow sits idle. The collection cadence is regulated by the same market that generates the fees — without any governance parameter to tune.
 
 #### Where this fits in the taxonomy
 
-This is **category B** (§4) — held with passive accrual. The inbox accrues `FeeMessage` objects on its own while in escrow; the tenant decides when and how many to collect per borrow window. No wrapper is needed: the inbox is already `key + store`, and `fee_message::collect` is the accrual-harvesting function.
+This is **category B** (§4) — held with passive accrual. The inbox accrues `FeeMessage` objects on its own while in escrow; the usufructuary decides when and how many to collect per borrow window. No wrapper is needed: the inbox is already `key + store`, and `fee_message::collect` is the accrual-harvesting function.
 
 #### Homogeneous protocol revenue via CoinType selection
 
 `FeeMessage<C>` carries the `CoinType` of the escrow that produced it. A protocol
 hosting escrows in multiple coin types accumulates a heterogeneous inbox:
-`FeeMessage<SUI>`, `FeeMessage<USDC>`, `FeeMessage<BUCK>`. The tenant who rents the
+`FeeMessage<SUI>`, `FeeMessage<USDC>`, `FeeMessage<BUCK>`. The usufructuary who rents the
 inbox collects all of them — receiving a basket of heterogeneous coins as their
 collection reward.
 
 The protocol's revenue, however, is the *rent* paid for the inbox escrow — and the
-`CoinType` of that escrow is the protocol owner's choice. Integrating
-`ProtocolFeeInbox` into `Escrow<ProtocolFeeInbox, USDsui>` means every tenant bids
+`CoinType` of that escrow is the protocol governor's choice. Integrating
+`ProtocolFeeInbox` into `Escrow<ProtocolFeeInbox, USDsui>` means every usufructuary bids
 and pays in `USDsui`, regardless of which coins are accumulated inside. The protocol
-receives a single, homogeneous revenue stream in the coin it chose; the tenant
+receives a single, homogeneous revenue stream in the coin it chose; the usufructuary
 receives the heterogeneous fee messages and prices their bid to reflect the expected
 value of that basket.
 
@@ -887,7 +902,7 @@ If you are building on usufruct, the question to ask is not "is my asset rentabl
 
 1. **What is the `key + store` object?** Either an existing object your protocol already issues, or a thin carrier you write to give non-`key` material an identity.
 2. **What does "use" mean?** Which of the four categories (A/B/C/D) fits. For most protocols the answer is already expressed by the functions they expose on the object — no extra code needed.
-3. **Is a hot-potato needed?** Only if the tenant extracts material from the object (category A). If the tenant calls existing protocol functions that return data or record effects (B/C/D), there is nothing to enforce beyond usufruct's own `AssetReceipt`.
+3. **Is a hot-potato needed?** Only if the usufructuary extracts material from the object (category A). If the usufructuary calls existing protocol functions that return data or record effects (B/C/D), there is nothing to enforce beyond usufruct's own `AssetReceipt`.
 4. **What does this layer compose with?** Whether it stands alone, sits atop another integration, or is designed to be stacked under future ones.
 
 If those four questions have answers, you have an integration. The protocol takes care of the rest — lifecycle, time, fees, auctions, retirement — uniformly.

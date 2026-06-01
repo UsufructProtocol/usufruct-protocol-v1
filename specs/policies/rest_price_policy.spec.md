@@ -4,7 +4,7 @@
 
 The price of the asset at rest. When the asset is `Idle` — no active usufructuary and no prior acquisition price in memory — this policy defines the exact price a usufructuary must pay. It is the only price that governs entry from `Idle`; nothing else contributes to or overrides it in that state.
 
-Outside of `Idle`, `RestPricePolicy` plays one secondary role: it is the saturation point of the dutch auction. When the `AtDutch` phase runs, the price descends from the last acquisition price toward the rest price; no bid can be placed below it.
+Outside of `Idle`, `RestPricePolicy` plays one secondary role: it is the saturation point of the dutch auction. When the `Descent` phase runs, the price descends from the last acquisition price toward the rest price; no bid can be placed below it.
 
 A fixed rest price gives usufructuaries a predictable minimum cost of entry from idle; a random range introduces variability that can discourage systematic underbidding against a known target.
 

@@ -23,7 +23,7 @@ AssetState<Asset: key+store, CoinType: phantom>   has store
 ```
 WaitingState<Asset: key+store>   has store
   Idle     { asset: AssetCustodyLocked<Asset>, cycle: CycleParams }
-  AtDutch  { asset: AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams }
+  Descent  { asset: AssetCustodyLocked<Asset>, auction: AuctionTerms, cycle: CycleParams }
   Retired  { asset: AssetCustodyLocked<Asset> }
 ```
 
@@ -68,7 +68,7 @@ The starting price and anchor time of the dutch auction phase.
 ```
 EnsembleSlot { active: PolicyEnsemble, pending: Option<PolicyEnsemble> }
 ```
-The active configuration and an optionally staged update. The pending ensemble is applied exclusively at `AtDutch → Idle` (`do_auction_expiry`) — never mid-tenure, never at `Occupied → AtDutch`. On an immediate retire, the pending is discarded (`config.pending = none`).
+The active configuration and an optionally staged update. The pending ensemble is applied exclusively at `Descent → Idle` (`do_auction_expiry`) — never mid-tenure, never at `Occupied → Descent`. On an immediate retire, the pending is discarded (`config.pending = none`).
 
 ```
 RetireCommitmentSlot   { policy: RetireCommitmentPolicy,   anchor: Timestamp }
@@ -94,7 +94,7 @@ RetireCondition   has drop, store
   NotRetiring
   Retiring
 ```
-A flag set by `execute_retire` while the asset is occupied or in demand. Causes the next tenure expiry to transition to `Retired` rather than `AtDutch`.
+A flag set by `execute_retire` while the asset is occupied or in demand. Causes the next tenure expiry to transition to `Retired` rather than `Descent`.
 
 ```
 FeeAllocation { governor_share: Stake, protocol_fee: Stake }   has drop
@@ -117,13 +117,13 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
 **State machine advance**
 - `asset_state::execute_apply_pending_transition_states<Asset, C>(&mut AssetState, &mut EscrowCore<C>, rng, clock, ctx)` — evaluates all pending transitions in fixed order: `step_handover` → `step_tenure_expiry` → `step_auction_expiry`. Each step only fires if its condition is met:
   - `Demand` + handover crossed → `step_handover` → `Renting(Occupied)`.
-  - `Occupied` + tenure crossed → `step_tenure_expiry` → `Waiting(AtDutch | Retired)` (never directly to `Idle`).
-  - `AtDutch` + auction window elapsed → `step_auction_expiry` → `Waiting(Idle)`.
-  - Steps chain: a single call can transition `Demand → Occupied → AtDutch` or `Demand → Occupied → Retired`.
+  - `Occupied` + tenure crossed → `step_tenure_expiry` → `Waiting(Descent | Retired)` (never directly to `Idle`).
+  - `Descent` + auction window elapsed → `step_auction_expiry` → `Waiting(Idle)`.
+  - Steps chain: a single call can transition `Demand → Occupied → Descent` or `Demand → Occupied → Retired`.
 
 **Rental**
 - `asset_state::execute_rent<Asset, C>(AssetState, EscrowCore<C>, payment: Coin<C>, tenures: Tenures, rng, clock, ctx): (RentingState<Asset, C>, EscrowCore<C>, UsufructCap)` — advances state machine first, validates `TenureExtendPolicy`, then:
-  - From `Idle` or `AtDutch` → `do_install` → `Occupied`.
+  - From `Idle` or `Descent` → `do_install` → `Occupied`.
   - From `Occupied` → `do_place_bid` → `Demand`. Aborts with `ERetireFlagBlocksBid` if the retire flag is already set.
   - From `Demand` → `do_supersede_bid` → `Demand` with new pending usufructuary; displaced usufructuary receives `Total` refund. The new bidder **inherits the same `handover_expiry`** from the displaced bid — the countdown is not reset.
   - From `Retired` → aborts.
@@ -135,10 +135,10 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
 - `asset_state::execute_return<Asset, C>(AssetReceipt<Asset, C>, &EscrowCore<C>, asset: Asset): RentingState<Asset, C>` — validates both that the receipt's escrow identity matches and that the returned asset object ID matches the borrowed one; re-inserts asset into custody; returns the reconstituted `RentingState`.
 
 **Governor operations**
-- `asset_state::execute_retire<Asset, C>(&mut AssetState, &mut EscrowCore<C>, governance_cap, rng, clock, ctx)` — validates commitment has elapsed; advances state machine first; then: transitions immediately to `Retired` from `Idle` or `AtDutch`; sets the `RetireCondition` flag from `Occupied` or `Demand` so the next tenure expiry goes to `Retired` instead of `AtDutch`.
+- `asset_state::execute_retire<Asset, C>(&mut AssetState, &mut EscrowCore<C>, governance_cap, rng, clock, ctx)` — validates commitment has elapsed; advances state machine first; then: transitions immediately to `Retired` from `Idle` or `Descent`; sets the `RetireCondition` flag from `Occupied` or `Demand` so the next tenure expiry goes to `Retired` instead of `Descent`.
 - `asset_state::execute_update_config<Asset, C>(AssetState, EscrowCore<C>, governance_cap, new_ensemble, rng, clock, ctx): (AssetState, EscrowCore<C>)` — advances state machine first, then:
   - `Idle` → applies immediately, re-resolves `CycleParams` from new ensemble; emits `ConfigUpdated`.
-  - `AtDutch`, `Occupied`, `Demand` → stages as pending; emits `ConfigUpdateScheduled`. Aborts if retire flag is already set.
+  - `Descent`, `Occupied`, `Demand` → stages as pending; emits `ConfigUpdateScheduled`. Aborts if retire flag is already set.
   - `Retired` → aborts.
 - `asset_state::execute_extend_commitment<C>(EscrowCore<C>, governance_cap, new_policy, clock): EscrowCore<C>` — extends the commitment unlock time; asserts new expiry ≥ current expiry. The anchor is updated to `now`, making the new floor measured from the current time. **Does not advance the state machine** — the only `execute_*` that omits this step.
 - `asset_state::execute_claim<Asset, C>(AssetState, EscrowCore<C>, governance_cap: &GovernanceCap, rng, clock, ctx): Asset` — advances state machine first; then consumes state and core and unlocks the asset, returning **only the asset**. Governor income was settled to the `EarningsInbox` each settlement (never accumulated in the seat), so there is nothing to sweep. Takes `&GovernanceCap` — not consumed, since the cap may govern other escrows. Aborts unless state is `Retired` after the advance.
@@ -150,10 +150,10 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
   No `GovernanceCap` analogue exists, and none is needed. Governor value is **caller-initiated** by someone present at the call: income arrives as `EarningsMessage`s at the `EarningsInbox` and is drained by its bearer (`earnings::collect_earnings_messages`), and `execute_claim` returns the asset to the sender. The asymmetry is structural: usufructuary refunds (`do_handover`, `do_supersede_bid`) are **event-initiated** from a third party's transaction, with the displaced usufructuary absent at payout, so a pre-stored destination on the `UsufructuarySeat` is required. The `GovernorSeat` carries no balance and no payout destination — only the cap identity and the inbox the income is mailed to.
 
 **View functions** (package)
-- State shape: `proj_is_idle`, `proj_is_at_dutch`, `proj_is_occupied`, `proj_is_demand`, `proj_is_active`, `proj_is_retired`, `proj_is_rented`, `proj_is_retiring`
+- State shape: `proj_is_idle`, `proj_is_descent`, `proj_is_occupied`, `proj_is_demand`, `proj_is_active`, `proj_is_retired`, `proj_is_rented`, `proj_is_retiring`
 - Asset & usufructuary: `proj_asset_id`, `proj_active_addr`, `proj_active_cap_id`, `proj_pending_addr`, `proj_pending_cap_id`, `proj_active_stake`, `proj_pending_stake`
 - Timing: `proj_phase_start`, `proj_handover_expiry`, `proj_resolved_ceiling`, `proj_resolved_handover`, `proj_resolved_floor`, `proj_commitment_policy`, `proj_commitment_anchor`, `proj_governor_balance`
-- Pricing: `compute_floor_price_at<C>(state, core, now): Price` — `Idle`: the resolved rest price from `CycleParams`; `AtDutch`: descending from last acquisition price toward floor; `Occupied`: escalated from current usufructuary's per-tenure stake; `Demand`: escalated from the **pending** bid's per-tenure stake (the most recent market signal); `Retired`: aborts.
+- Pricing: `compute_floor_price_at<C>(state, core, now): Price` — `Idle`: the resolved rest price from `CycleParams`; `Descent`: descending from last acquisition price toward floor; `Occupied`: escalated from current usufructuary's per-tenure stake; `Demand`: escalated from the **pending** bid's per-tenure stake (the most recent market signal); `Retired`: aborts.
 - Credit: `compute_used_credit_at<C>(state, core, now): Stake` — amount of the current usufructuary's stake considered consumed at `now`.
 - Settlement preview:
   - `compute_used_credit_at<C>(state, core, now): Stake` — credit consumed by the **current** usufructuary at `now`. In `Occupied`: accrues freely via `credit_shape`. In `Demand`: frozen at `min(now, handover.expiry)` — once the handover deadline passes, the displaced usufructuary's credit is fixed. Aborts if not rented.
@@ -180,7 +180,7 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
 ```
              execute_rent                execute_rent
              (do_install)                (do_install)
-   Idle ──────────────────► Occupied ◄───────────── AtDutch
+   Idle ──────────────────► Occupied ◄───────────── Descent
     ▲                          │  │                    ▲
     │  step_auction_expiry      │  │ execute_rent       │
     │  (do_auction_expiry)      │  │ (do_place_bid)     │ step_tenure_expiry
@@ -194,7 +194,7 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
                                                                                   [see above]
 
    Idle ──► Retired    execute_retire (do_retire_immediately)
-  AtDutch ──► Retired  execute_retire (do_retire_immediately)
+  Descent ──► Retired  execute_retire (do_retire_immediately)
   Occupied ──► Retired  step_tenure_expiry [retire flag set]
   Demand ──► Occupied ──► Retired  step_handover then step_tenure_expiry [retire flag set]
 
@@ -203,19 +203,19 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
 
 `execute_apply_pending_transition_states` chains in fixed order per call:
 `step_handover` → `step_tenure_expiry` → `step_auction_expiry`.
-A single call can therefore chain `Demand → Occupied → AtDutch` or `Demand → Occupied → Retired`.
+A single call can therefore chain `Demand → Occupied → Descent` or `Demand → Occupied → Retired`.
 
 **Transition semantics:**
 
 - **`Idle → Occupied`** (`do_install`): resolves cycle params from the active ensemble, installs usufructuary, mints `UsufructCap`, emits `RentStarted`.
-- **`AtDutch → Occupied`** (`do_install`): same as above; price is the descending auction price at the moment of the bid.
+- **`Descent → Occupied`** (`do_install`): same as above; price is the descending auction price at the moment of the bid.
 - **`Occupied → Demand`** (`do_place_bid`): validates payment against escalated floor; resolves handover countdown; parks new usufructuary as pending; emits `BidPlaced`.
 - **`Demand → Demand`** (`do_supersede_bid`): superseded pending usufructuary receives `Total` refund; new bidder takes the pending slot with the same `handover_expiry` as the displaced bid — the countdown is not reset; emits `BidSuperseded`.
 - **`Demand → Occupied`** (`step_handover` → `do_handover`): handover countdown has crossed; credit is computed up to the handover boundary and settled via `RefundState::from_departing`; the displaced usufructuary receives any remaining stake; the pending usufructuary's `UsufructuarySeat` becomes the new current occupant, inheriting the retire flag; emits `HandoverCompleted`.
-- **`Occupied → AtDutch`** (`step_tenure_expiry` → `do_tenure_expiry`): tenure ceiling crossed; full principal consumed as credit (100% — `RefundState::Nothing`); the existing `CycleParams` are carried into `AtDutch` unchanged — no pending ensemble is applied here; emits `TenureExpired`. The `last_acq_price` recorded in `AuctionTerms` is the full principal. If `auction_window` is `Skipped`, `step_auction_expiry` fires immediately in the same `execute_apply` call, continuing to `Idle`.
-- **`Occupied → Retired`** (`step_tenure_expiry` with retire flag): retire condition is `Retiring`; asset goes directly to `Retired` instead of `AtDutch`; emits `AssetRetired`. The retire flag can be set from both `Occupied` and `Demand` — in the `Demand` case it is carried into the resulting `Occupied` after `step_handover` fires in the same call.
-- **`AtDutch → Idle`** (`step_auction_expiry` → `do_auction_expiry`): auction window elapsed with no bid; applies pending ensemble if present (emits `ConfigUpdated`); re-resolves a fresh `CycleParams` from the now-active ensemble; emits `AuctionExpired`. This is the only transition that applies a staged config update.
-- **`Idle | AtDutch → Retired`** (`execute_retire` immediate): commitment elapsed; no active usufructuary; emits `AssetRetired`.
+- **`Occupied → Descent`** (`step_tenure_expiry` → `do_tenure_expiry`): tenure ceiling crossed; full principal consumed as credit (100% — `RefundState::Nothing`); the existing `CycleParams` are carried into `Descent` unchanged — no pending ensemble is applied here; emits `TenureExpired`. The `last_acq_price` recorded in `AuctionTerms` is the full principal. If `auction_window` is `Skipped`, `step_auction_expiry` fires immediately in the same `execute_apply` call, continuing to `Idle`.
+- **`Occupied → Retired`** (`step_tenure_expiry` with retire flag): retire condition is `Retiring`; asset goes directly to `Retired` instead of `Descent`; emits `AssetRetired`. The retire flag can be set from both `Occupied` and `Demand` — in the `Demand` case it is carried into the resulting `Occupied` after `step_handover` fires in the same call.
+- **`Descent → Idle`** (`step_auction_expiry` → `do_auction_expiry`): auction window elapsed with no bid; applies pending ensemble if present (emits `ConfigUpdated`); re-resolves a fresh `CycleParams` from the now-active ensemble; emits `AuctionExpired`. This is the only transition that applies a staged config update.
+- **`Idle | Descent → Retired`** (`execute_retire` immediate): commitment elapsed; no active usufructuary; emits `AssetRetired`.
 
 ## § EVENTS
 
@@ -235,7 +235,7 @@ RentStarted {
     committed_tenures: u64, ceiling_total_ms: u64, handover_total_ms: u64
 }
 ```
-Emitted when a usufructuary enters `Occupied` from `Idle` or `AtDutch` via `do_install`.
+Emitted when a usufructuary enters `Occupied` from `Idle` or `Descent` via `do_install`.
 
 ```
 BidPlaced {
@@ -344,7 +344,7 @@ Emitted on `execute_extend_commitment`.
 ```
 RetireFlagSet { escrow_id: ID, governance_cap_id: ID, governor: address, timestamp_ms: u64 }
 ```
-Emitted whenever the governor signals retirement intent — both when the flag is set on an occupied/demand escrow (deferred retire) and when `do_retire_immediately` fires from Idle or AtDutch (immediate retire). Always paired with `AssetRetired` in the immediate case.
+Emitted whenever the governor signals retirement intent — both when the flag is set on an occupied/demand escrow (deferred retire) and when `do_retire_immediately` fires from Idle or Descent (immediate retire). Always paired with `AssetRetired` in the immediate case.
 
 ```
 ActiveUsufructuaryRefundAddressUpdated {

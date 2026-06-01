@@ -2,7 +2,7 @@
 
 ## § OVERVIEW
 
-A frozen, immutable pointer to the `ProtocolFeeInbox`. `ProtocolFeeInbox` is an owned object — it cannot be passed by reference in a transaction that also involves shared objects, which is the case for every `integrate` call. `ProtocolFeeRef` solves this: created once at package deployment and frozen, it becomes a publicly readable immutable object that any transaction can pass as `&ProtocolFeeRef` without governorship or mutability constraints. Passing it to `integrate` threads the inbox identity into the escrow permanently, so every subsequent fee posting knows its destination without touching the inbox directly. `FeeInboxIdentity` is the copy-safe handle extracted from the ref and stored wherever the inbox address needs to travel.
+A frozen, immutable pointer to the `ProtocolFeeInbox`. `ProtocolFeeInbox` is an owned object — it cannot be passed by reference in a transaction that also involves shared objects, which is the case for every `integrate` call. `ProtocolFeeRef` solves this: created once at package deployment and frozen, it becomes a publicly readable immutable object that any transaction can pass as `&ProtocolFeeRef` without ownership or mutability constraints. Passing it to `integrate` threads the inbox identity into the escrow permanently, so every subsequent fee posting knows its destination without touching the inbox directly. `FeeInboxIdentity` is the copy-safe handle extracted from the ref and stored wherever the inbox address needs to travel.
 
 ## § TYPES
 

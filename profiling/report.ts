@@ -164,19 +164,38 @@ async function main() {
     }
   }
 
-  // ── Scalability (collect_fee_messages) ────────────────────────────────────
+  // ── Scalability tables ────────────────────────────────────────────────────
+  // Two custom shapes coexist:
+  //   message-collect (a_12 / a_16): { n, totalNet, perMessage, numCalls }
+  //   governance      (a_18):        { n, *Separate, *Batched per-retire }
   if (scalabilityFiles.length > 0) {
     for (const { file, records } of scalabilityFiles) {
+      if (!records[0]) continue;
       console.log(`\n=== ${file.replace('.json', '')} (scalability) ===\n`);
-      console.log('N'.padEnd(8) + 'Total net (MIST)'.padStart(20) + 'Per msg (MIST)'.padStart(18) + 'PTB calls'.padStart(12));
-      console.log('─'.repeat(58));
-      for (const r of records) {
-        console.log(
-          String(r.n).padEnd(8) +
-          BigInt(r.totalNet).toLocaleString('en-US').padStart(20) +
-          BigInt(r.perMessage).toLocaleString('en-US').padStart(18) +
-          String(r.numCalls).padStart(12),
-        );
+
+      if (records[0].perRetireSeparate !== undefined) {
+        // Governance: one cap over N escrows, separate vs batched.
+        console.log('N'.padEnd(8) + 'per-retire separate'.padStart(24) + 'per-retire batched'.padStart(22));
+        console.log('─'.repeat(54));
+        for (const r of records) {
+          console.log(
+            String(r.n).padEnd(8) +
+            `${BigInt(r.perRetireSeparate).toLocaleString('en-US')} MIST`.padStart(24) +
+            `${BigInt(r.perRetireBatched).toLocaleString('en-US')} MIST`.padStart(22),
+          );
+        }
+      } else {
+        // Message-collect: total + per-message + PTB calls.
+        console.log('N'.padEnd(8) + 'Total net (MIST)'.padStart(20) + 'Per msg (MIST)'.padStart(18) + 'PTB calls'.padStart(12));
+        console.log('─'.repeat(58));
+        for (const r of records) {
+          console.log(
+            String(r.n).padEnd(8) +
+            BigInt(r.totalNet).toLocaleString('en-US').padStart(20) +
+            BigInt(r.perMessage).toLocaleString('en-US').padStart(18) +
+            String(r.numCalls).padStart(12),
+          );
+        }
       }
     }
   }

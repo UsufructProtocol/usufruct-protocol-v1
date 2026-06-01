@@ -14,24 +14,33 @@ use usufruct::escrow_identity::{Self, EscrowIdentity};
 
 // === Structs ===
 
+/// Pure governance token (the principal strip). Authorizes `retire`,
+/// `claim_asset`, `update_ensemble` over the escrow(s) whose `OwnerSeat` records
+/// its identity. Carries no escrow binding of its own — a single cap may govern
+/// many escrows (one-pair-to-many via `escrow::integrate_into_portfolio`).
+/// Born paired with an `EarningsInbox` via `escrow::integrate`; after birth the
+/// two are independent objects.
 public struct OwnerCap has key, store {
-    id:              UID,
-    escrow_identity: EscrowIdentity,
+    id: UID,
 }
 
 public struct OwnerCapIdentity has copy, drop, store { id: ID }
 
 // === Events ===
 
+/// The cap does not store its birth escrow, but the mint event records it —
+/// star-schema provenance: "this governance cap was born from escrow X".
 public struct OwnerCapMinted has copy, drop {
     owner_cap_id:  ID,
     escrow_id:     ID,
     owner_address: address,
 }
 
+/// The cap was permanently burned (governance renounced). Carries no escrow id —
+/// the cap governs many escrows; the set it sealed is recovered by joining this
+/// `owner_cap_id` against the `AssetIntegrated` star schema.
 public struct OwnerCapBurned has copy, drop {
     owner_cap_id:  ID,
-    escrow_id:     ID,
     owner_address: address,
 }
 
@@ -40,10 +49,6 @@ public struct OwnerCapBurned has copy, drop {
 // === Public Functions ===
 
 // === View Functions ===
-
-public(package) fun proj_escrow_id(cap: &OwnerCap): ID {
-    escrow_identity::escrow_id(cap.escrow_identity)
-}
 
 // === Admin Functions ===
 
@@ -55,26 +60,26 @@ public(package) fun identity(cap: &OwnerCap): OwnerCapIdentity {
 
 public(package) fun proj_id(o: OwnerCapIdentity): ID { o.id }
 
-public(package) fun proj_escrow_identity(cap: &OwnerCap): EscrowIdentity {
-    cap.escrow_identity
-}
-
 public(package) fun new(
     escrow_identity: EscrowIdentity,
     owner:           address,
     ctx:             &mut TxContext,
 ): OwnerCap {
-    let cap          = OwnerCap { id: object::new(ctx), escrow_identity };
+    let cap          = OwnerCap { id: object::new(ctx) };
     let owner_cap_id = object::uid_to_inner(&cap.id);
     event::emit(OwnerCapMinted { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), owner_address: owner });
     cap
 }
 
-public(package) fun burn(cap: OwnerCap, owner: address) {
-    let OwnerCap { id, escrow_identity } = cap;
+/// Destroy the cap. Irreversible: no cap can ever again satisfy the seat bind of
+/// the escrows it governed, so `retire`/`update_ensemble`/`claim_asset` become
+/// permanently unreachable for all of them. Mechanism only — the semantic
+/// (governance renunciation) lives in `cap::renounce_governance`.
+public(package) fun burn(cap: OwnerCap, ctx: &TxContext) {
+    let OwnerCap { id } = cap;
     let owner_cap_id = object::uid_to_inner(&id);
     id.delete();
-    event::emit(OwnerCapBurned { owner_cap_id, escrow_id: escrow_identity::escrow_id(escrow_identity), owner_address: owner });
+    event::emit(OwnerCapBurned { owner_cap_id, owner_address: ctx.sender() });
 }
 
 // === Private Functions ===
@@ -91,7 +96,4 @@ public fun minted_owner_address(e: &OwnerCapMinted): address { e.owner_address }
 #[test_only]
 public fun burned_owner_cap_id(e: &OwnerCapBurned): ID { e.owner_cap_id }
 #[test_only]
-public fun burned_escrow_id(e: &OwnerCapBurned): ID { e.escrow_id }
-#[test_only]
 public fun burned_owner_address(e: &OwnerCapBurned): address { e.owner_address }
-

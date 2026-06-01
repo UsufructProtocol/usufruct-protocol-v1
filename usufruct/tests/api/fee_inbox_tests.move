@@ -24,7 +24,6 @@ use usufruct::{
     escrow_corpus,
     fee_inbox,
     fee_message::{Self, FeeMessage, FeeMessageSent},
-    owner_cap,
     phases,
     protocol_fee_inbox::{Self, ProtocolFeeInbox},
     protocol_fee_ref::ProtocolFeeRef,
@@ -111,10 +110,10 @@ fun fc2_collect_protocol_fees_from_real_tenure_expiry() {
     let fee_ref   = sc.take_immutable<ProtocolFeeRef>();
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
-    let owner_cap = escrow::integrate<DemoAsset, SUI>(
+    let (owner_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
@@ -122,7 +121,7 @@ fun fc2_collect_protocol_fees_from_real_tenure_expiry() {
     let mut msg_id: ID;
     sc.next_tx(OWNER);
     {
-        let mut escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+        let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
         escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant_seat(STAKE), 0);
         let boundary = phases::timestamp(CEILING);
         escrow::fire_do_tenure_expiry_for_testing(&mut escrow, boundary, sc.ctx());
@@ -148,7 +147,7 @@ fun fc2_collect_protocol_fees_from_real_tenure_expiry() {
         sc.return_to_sender(inbox);
     };
 
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }
 
@@ -162,10 +161,10 @@ fun fc3_collected_coin_value_matches_sent_amount() {
     let fee_ref   = sc.take_immutable<ProtocolFeeRef>();
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
-    let owner_cap = escrow::integrate<DemoAsset, SUI>(
+    let (owner_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
@@ -173,7 +172,7 @@ fun fc3_collected_coin_value_matches_sent_amount() {
     let mut fee_amount: u64;
     sc.next_tx(OWNER);
     {
-        let mut escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+        let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
         escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant_seat(STAKE), 0);
         escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(CEILING), sc.ctx());
 
@@ -196,6 +195,6 @@ fun fc3_collected_coin_value_matches_sent_amount() {
         sc.return_to_sender(inbox);
     };
 
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }

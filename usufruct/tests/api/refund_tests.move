@@ -17,7 +17,6 @@ use usufruct::{
     retire_commitment_policy,
     escrow::{Self, Escrow},
     escrow_corpus,
-    owner_cap,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
     refund,
@@ -70,15 +69,15 @@ fun r2_refund_address_feeds_update_tenant_refund_address() {
     let fee_ref   = sc.take_immutable<ProtocolFeeRef>();
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
-    let owner_cap = escrow::integrate<DemoAsset, SUI>(
+    let (owner_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
     sc.next_tx(TENANT_ADDR);
-    let mut escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     let clk2       = clock::create_for_testing(sc.ctx());
     let payment    = mk_payment(STAKE, sc.ctx());
     let tenant_cap = escrow::rent<DemoAsset, SUI>(
@@ -96,7 +95,7 @@ fun r2_refund_address_feeds_update_tenant_refund_address() {
     transfer::public_transfer(tenant_cap, TENANT_ADDR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk2);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }
 
@@ -113,15 +112,15 @@ fun r3_refund_address_feeds_update_on_pending_seat() {
     let fee_ref   = sc.take_immutable<ProtocolFeeRef>();
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
-    let owner_cap = escrow::integrate<DemoAsset, SUI>(
+    let (owner_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&owner_cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
     sc.next_tx(TENANT_ADDR);
-    let mut escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     let clk2       = clock::create_for_testing(sc.ctx());
 
     let payment1 = mk_payment(STAKE, sc.ctx());
@@ -147,6 +146,6 @@ fun r3_refund_address_feeds_update_on_pending_seat() {
     transfer::public_transfer(cap_t2, TENANT_ADDR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk2);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     sc.end();
 }

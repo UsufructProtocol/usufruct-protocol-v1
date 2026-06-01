@@ -21,7 +21,7 @@ use usufruct::{
     tenures,
     escrow::{Self, Escrow},
     escrow_corpus,
-    owner_cap::{Self, OwnerCap},
+    owner_cap::OwnerCap,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
 };
@@ -54,15 +54,15 @@ fun build_escrow(ensemble: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
-    let cap = escrow::integrate<DemoAsset, SUI>(
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(),
         ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = owner_cap::proj_escrow_id(&cap);
+    transfer::public_transfer(inbox, OWNER);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.next_tx(OWNER);
-    let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
+    let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
 
@@ -173,7 +173,6 @@ fun idle_views_post_integrate() {
     // — Always-present temporal/financial —
     assert_eq!(escrow::tenure_ceiling_ms(&escrow), escrow_corpus::tenure_ceiling_const());
     assert_eq!(escrow::rest_price_floor_mist(&escrow),    escrow_corpus::min_rent_price_const());
-    assert_eq!(escrow::owner_balance(&escrow),     0);
     let _iat = escrow::integrated_at_ms(&escrow);     // monotonic w.r.t. clock; nonzero-ness not asserted
     let _can = escrow::retire_commitment_anchor_ms(&escrow);
     let _unl = escrow::retire_commitment_unlocks_at_ms(&escrow);
@@ -266,9 +265,6 @@ fun rented_views_post_rent() {
 
     // — Cap status on the actual tenant cap —
     assert!(escrow::tenant_cap_is_active(&escrow, object::id(&t_cap)));
-
-    // — Owner balance: rent payment is collected and split; owner_balance ≥ 0 —
-    let _bal = escrow::owner_balance(&escrow);
 
     // Cleanup
     transfer::public_transfer(t_cap, TENANT_ADDR);

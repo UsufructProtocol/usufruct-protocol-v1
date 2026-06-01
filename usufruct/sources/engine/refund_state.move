@@ -7,9 +7,11 @@ module usufruct::refund_state;
 
 use usufruct::{
     fee_message::{Self, FeeShare},
+    earnings_message,
     owner_seat::{Self, OwnerSeat},
     owner_earning::OwnerEarnings,
     protocol_fee_ref::FeeInboxIdentity,
+    escrow_identity::EscrowIdentity,
     refund_address,
     tenant_seat::{Self, TenantSeat},
     tenant_identity,
@@ -82,19 +84,20 @@ public(package) fun total<C>(seat: TenantSeat<C>): RefundState<C> {
 
 public(package) fun distribute<C>(
     rs:                 RefundState<C>,
-    owner:              &mut OwnerSeat<C>,
+    owner:              &OwnerSeat,
     fee_inbox_identity: FeeInboxIdentity,
+    escrow_identity:    EscrowIdentity,
     ctx:                &mut TxContext,
 ) {
     match (rs) {
         RefundState::Nothing { fee_share, owner_earnings } => {
-            owner_seat::deposit(owner, owner_earnings);
+            earnings_message::post(owner_earnings, owner_seat::proj_inbox(owner), escrow_identity, ctx);
             fee_message::post(fee_share, fee_inbox_identity, ctx);
         },
         RefundState::Parcial { seat, fee_share, owner_earnings } => {
             let addr = refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(&seat)));
             let (_, stake) = tenant_seat::unbundle(seat);
-            owner_seat::deposit(owner, owner_earnings);
+            earnings_message::post(owner_earnings, owner_seat::proj_inbox(owner), escrow_identity, ctx);
             fee_message::post(fee_share, fee_inbox_identity, ctx);
             tenant_stake::liquidate(stake, addr, ctx);
         },

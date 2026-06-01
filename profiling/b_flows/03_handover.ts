@@ -34,8 +34,8 @@ async function main() {
   process.stdout.write('Step 1 integrate...');
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowHandoverEnsemble);
-  tx1.transferObjects([ownerCap], d.owner.address);
+  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowHandoverEnsemble);
+  tx1.transferObjects([ownerCap, inbox], d.owner.address);
   const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
   steps.push(r1);
   console.log(` net=${r1.net}`);
@@ -138,12 +138,12 @@ async function main() {
   process.stdout.write('Step 6 claim...');
   const tx6 = new Transaction();
   tx6.setSender(d.owner.address);
-  const [asset, earnings] = tx6.moveCall({
+  const asset = tx6.moveCall({
     target: `${d.usufructPackageId}::escrow::claim_asset`,
     typeArguments: typeArgs,
     arguments: [tx6.object(escrowId), tx6.object(ownerCapId), clock(tx6)],
-  }) as any[];
-  tx6.transferObjects([asset, earnings], d.owner.address);
+  });
+  tx6.transferObjects([asset], d.owner.address);
   const r6 = await measure(client, kp.owner, 'claim_asset', 0, tx6);
   steps.push(r6);
   console.log(` net=${r6.net}`);

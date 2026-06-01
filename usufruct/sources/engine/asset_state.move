@@ -27,7 +27,8 @@ use usufruct::{
     monetary::{Self, Price, Stake},
     owner_seat::{Self, OwnerSeat},
     owner_identity,
-    owner_cap::{Self, OwnerCap},
+    owner_cap::{Self, OwnerCap, OwnerCapIdentity},
+    earnings_inbox::{Self, EarningsInbox, EarningsInboxIdentity},
     retire_commitment_policy::{Self, RetireCommitmentPolicy},
     ensemble_commitment_policy::{Self, EnsembleCommitmentPolicy},
     handover_policy,
@@ -58,14 +59,13 @@ const ETenantCapNotStale:                u64 = 9;
 const EReceiptEscrowMismatch:            u64 = 10;
 const EWrongEscrowOwnerCap:              u64 = 11;
 const ENotRetired:                       u64 = 12;
-const ENoEarnings:                       u64 = 13;
-const ERetireAlreadyScheduled:           u64 = 14;
-const ERetireCommitmentNotExtended:      u64 = 15;
-const EReturnedDifferentAsset:           u64 = 16;
-const EAlreadyRetiring:                  u64 = 17;
-const ETenantCapStale:                   u64 = 18;
-const EEnsembleCommitmentFloorNotElapsed: u64 = 19;
-const EEnsembleCommitmentNotExtended:     u64 = 20;
+const ERetireAlreadyScheduled:           u64 = 13;
+const ERetireCommitmentNotExtended:      u64 = 14;
+const EReturnedDifferentAsset:           u64 = 15;
+const EAlreadyRetiring:                  u64 = 16;
+const ETenantCapStale:                   u64 = 17;
+const EEnsembleCommitmentFloorNotElapsed: u64 = 18;
+const EEnsembleCommitmentNotExtended:     u64 = 19;
 
 // === Constants ===
 
@@ -130,7 +130,7 @@ public struct DemandTerms<phantom CoinType> has store {
 }
 
 public struct EscrowCore<phantom CoinType> has store {
-    owner:              OwnerSeat<CoinType>,
+    owner:              OwnerSeat,
     ensemble:           EnsembleSlot,
     fee_inbox_identity: FeeInboxIdentity,
     integrated_at:      Timestamp,
@@ -203,16 +203,6 @@ public struct AssetRetired has copy, drop {
     timestamp_ms: u64,
 }
 
-public struct EarningsWithdrawn has copy, drop {
-    escrow_id:     ID,
-    owner_cap_id:  ID,
-    owner_address: address,
-    amount:        u64,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
-}
-
 public struct RetireCommitmentExtended has copy, drop {
     escrow_id:           ID,
     commitment_policy:   String,
@@ -234,24 +224,24 @@ public struct EnsembleCommitmentExtended has copy, drop {
 }
 
 public struct AssetIntegrated has copy, drop {
-    escrow_id:        ID,
-    owner_cap_id:     ID,
-    owner_address:    address,
-    asset_id:         ID,
-    fee_inbox_id:     ID,
-    asset_type:       String,
-    coin_type:        String,
-    integrated_at_ms: u64,
+    escrow_id:         ID,
+    owner_cap_id:      ID,
+    owner_address:     address,
+    asset_id:          ID,
+    fee_inbox_id:      ID,
+    earnings_inbox_id: ID,
+    asset_type:        String,
+    coin_type:         String,
+    integrated_at_ms:  u64,
 }
 
 public struct AssetClaimed has copy, drop {
-    escrow_id:      ID,
-    owner_cap_id:   ID,
-    owner_address:  address,
-    swept_earnings: u64,
-    asset_type:     String,
-    coin_type:      String,
-    timestamp_ms:   u64,
+    escrow_id:     ID,
+    owner_cap_id:  ID,
+    owner_address: address,
+    asset_type:    String,
+    coin_type:     String,
+    timestamp_ms:  u64,
 }
 
 public struct BidPlaced has copy, drop {
@@ -423,10 +413,10 @@ public(package) fun proj_ensemble_commitment_anchor<CoinType>(
     core: &EscrowCore<CoinType>,
 ): Timestamp { core.ensemble_commitment.anchor }
 
-public(package) fun proj_owner_balance<CoinType>(
+public(package) fun proj_earnings_inbox<CoinType>(
     core: &EscrowCore<CoinType>,
-): Stake {
-    owner_seat::proj_value(&core.owner)
+): EarningsInboxIdentity {
+    owner_seat::proj_inbox(&core.owner)
 }
 
 public(package) fun proj_owner_cap_id<CoinType>(
@@ -837,6 +827,10 @@ public(package) fun renting_into_state<Asset: key + store, CoinType>(
     AssetState::Renting(rs)
 }
 
+/// Open a new portfolio: mint a fresh `OwnerCap` + `EarningsInbox` pair and bind
+/// the new escrow to both. The root of the one-pair-per-portfolio invariant —
+/// both instruments are born here, exactly once, together. The api layer shares
+/// the escrow and hands the pair back to the caller.
 public(package) fun execute_integrate<Asset: key + store, CoinType>(
     asset:               Asset,
     ensemble:            PolicyEnsemble,
@@ -846,38 +840,39 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     escrow_identity:     EscrowIdentity,
     integrated_at:       Timestamp,
     ctx:                 &mut TxContext,
-): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, OwnerCap) {
-    let owner_addr         = ctx.sender();
-    let owner_cap          = owner_cap::new(escrow_identity, owner_addr, ctx);
-    let owner_cap_identity = owner_cap::identity(&owner_cap);
-    let asset_id           = object::id(&asset);
-    let raw_escrow_id      = escrow_identity::escrow_id(escrow_identity);
-    policy_ensemble::emit_registration(&ensemble, escrow_identity, integrated_at);
-    let cycle = resolve_and_emit_cycle_params(&ensemble, raw_escrow_id, phases::timestamp_ms(integrated_at));
-    let core = EscrowCore {
-        owner:              owner_seat::new<CoinType>(owner_cap_identity),
-        ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
-        fee_inbox_identity,
-        integrated_at,
-        retire_commitment:  RetireCommitmentSlot { policy: retire_commitment, anchor: integrated_at },
-        ensemble_commitment: EnsembleCommitmentSlot { policy: ensemble_commitment, anchor: integrated_at },
-        escrow_identity,
-    };
-    let state = AssetState::Waiting(WaitingState::Idle {
-        asset: asset_custody::lock(asset),
-        cycle,
-    });
-    event::emit(AssetIntegrated {
-        escrow_id:        raw_escrow_id,
-        owner_cap_id:     owner_cap::proj_id(owner_cap_identity),
-        owner_address:    owner_addr,
-        asset_id,
-        fee_inbox_id:     protocol_fee_ref::proj_id(fee_inbox_identity),
-        asset_type:       string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
-        coin_type:        string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
-        integrated_at_ms: phases::timestamp_ms(integrated_at),
-    });
-    (core, state, owner_cap)
+): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, OwnerCap, EarningsInbox) {
+    let owner_addr = ctx.sender();
+    let owner_cap  = owner_cap::new(escrow_identity, owner_addr, ctx);
+    let inbox      = earnings_inbox::new(ctx);
+    let (core, state) = build_idle_core_and_state<Asset, CoinType>(
+        asset, ensemble, retire_commitment, ensemble_commitment, fee_inbox_identity,
+        earnings_inbox::identity(&inbox), owner_cap::identity(&owner_cap),
+        escrow_identity, integrated_at, owner_addr,
+    );
+    (core, state, owner_cap, inbox)
+}
+
+/// Join an existing portfolio: bind the new escrow to a caller-held `OwnerCap`
+/// and `EarningsInbox`. Mints neither — holding both objects by reference is the
+/// authorization. The new escrow's governance routes to the existing cap; its
+/// income to the existing inbox.
+public(package) fun execute_integrate_into_portfolio<Asset: key + store, CoinType>(
+    asset:               Asset,
+    ensemble:            PolicyEnsemble,
+    retire_commitment:   RetireCommitmentPolicy,
+    ensemble_commitment: EnsembleCommitmentPolicy,
+    fee_inbox_identity:  FeeInboxIdentity,
+    owner_cap:           &OwnerCap,
+    inbox:               &EarningsInbox,
+    escrow_identity:     EscrowIdentity,
+    integrated_at:       Timestamp,
+    ctx:                 &TxContext,
+): (EscrowCore<CoinType>, AssetState<Asset, CoinType>) {
+    build_idle_core_and_state<Asset, CoinType>(
+        asset, ensemble, retire_commitment, ensemble_commitment, fee_inbox_identity,
+        earnings_inbox::identity(inbox), owner_cap::identity(owner_cap),
+        escrow_identity, integrated_at, ctx.sender(),
+    )
 }
 
 public(package) fun execute_apply_pending_transition_states<Asset: key + store, CoinType>(
@@ -887,7 +882,7 @@ public(package) fun execute_apply_pending_transition_states<Asset: key + store, 
     ctx:      &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
     let now = phases::now(clock);
-    let s = step_handover(s, &mut core, now, ctx);
+    let s = step_handover(s, &core, now, ctx);
     let s = step_tenure_expiry(s, &mut core, now, ctx);
     let s = step_auction_expiry(s, &mut core, now);
     (s, core)
@@ -901,7 +896,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     clock:    &Clock,
     ctx:      &mut TxContext,
 ): (RentingState<Asset, CoinType>, EscrowCore<CoinType>, TenantCap) {
-    let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
+    let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     tenure_extend_policy::validate(policy_ensemble::proj_tenure_extend(&core.ensemble.active), tenures);
     let now                = phases::now(clock);
     let escrow_identity    = core.escrow_identity;
@@ -931,7 +926,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_supersede_bid(
                 asset, terms, bid, cycle, tenures,
-                &mut core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
+                &core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
             )
         },
     };
@@ -1195,28 +1190,6 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
     (s, core)
 }
 
-public(package) fun execute_withdraw_earnings<Asset: key + store, CoinType>(
-    s:         AssetState<Asset, CoinType>,
-    core:      EscrowCore<CoinType>,
-    owner_cap: &OwnerCap,
-    clock:     &Clock,
-    ctx:       &mut TxContext,
-): (AssetState<Asset, CoinType>, EscrowCore<CoinType>, Coin<CoinType>) {
-    assert_owner_cap_binds(owner_cap, &core);
-    let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
-    let (coin, amount) = do_withdraw(&mut core.owner, owner_cap, ctx);
-    event::emit(EarningsWithdrawn {
-        escrow_id:    escrow_identity::escrow_id(core.escrow_identity),
-        owner_cap_id:  object::id(owner_cap),
-        owner_address: ctx.sender(),
-        amount:        monetary::stake_mist(amount),
-        asset_type:   string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
-        coin_type:    string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
-        timestamp_ms: clock::timestamp_ms(clock),
-    });
-    (s, core, coin)
-}
-
 public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       EscrowCore<CoinType>,
@@ -1289,31 +1262,32 @@ public(package) fun execute_extend_ensemble_commitment<Asset: key + store, CoinT
     (s, core)
 }
 
+/// Claim the asset from a retired escrow. Returns only the asset — owner income
+/// never accumulates in the seat (it was mailed to the inbox each settlement), so
+/// there is nothing to sweep. Takes `&OwnerCap`: the cap may govern other escrows,
+/// so claiming one escrow must not consume it.
 public(package) fun execute_claim<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
     owner_cap: &OwnerCap,
     clock:     &Clock,
     ctx:       &mut TxContext,
-): (Asset, Coin<CoinType>) {
+): Asset {
     assert_owner_cap_binds(owner_cap, &core);
     let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     match (s) {
         AssetState::Waiting(WaitingState::Retired { asset }) => {
-            let EscrowCore { mut owner, escrow_identity, .. } = core;
-            let coin           = owner_seat::withdraw(&mut owner, owner_cap, ctx);
-            let swept_earnings = coin::value(&coin);
-            owner_seat::destroy_empty(owner);
+            let EscrowCore { owner, escrow_identity, .. } = core;
+            owner_seat::destroy(owner);
             event::emit(AssetClaimed {
                 escrow_id:     escrow_identity::escrow_id(escrow_identity),
                 owner_cap_id:  object::id(owner_cap),
                 owner_address: ctx.sender(),
-                swept_earnings,
                 asset_type:    string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
                 coin_type:     string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
                 timestamp_ms:  clock::timestamp_ms(clock),
             });
-            (asset_custody::unlock(asset), coin)
+            asset_custody::unlock(asset)
         },
         AssetState::Waiting(_ws)  => { let EscrowCore { owner: _o, .. } = core; abort ENotRetired },
         AssetState::Renting(_rs)  => { let EscrowCore { owner: _o, .. } = core; abort ENotRetired },
@@ -1321,6 +1295,53 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
 }
 
 // === Private Functions ===
+
+/// Shared body of both integrate paths: assemble the idle core + state from a
+/// resolved (cap_identity, inbox_identity) pair and emit `AssetIntegrated`. The
+/// callers differ only in where the identities come from — minted (integrate) or
+/// caller-held (integrate_into_portfolio).
+fun build_idle_core_and_state<Asset: key + store, CoinType>(
+    asset:               Asset,
+    ensemble:            PolicyEnsemble,
+    retire_commitment:   RetireCommitmentPolicy,
+    ensemble_commitment: EnsembleCommitmentPolicy,
+    fee_inbox_identity:  FeeInboxIdentity,
+    inbox_identity:      EarningsInboxIdentity,
+    cap_identity:        OwnerCapIdentity,
+    escrow_identity:     EscrowIdentity,
+    integrated_at:       Timestamp,
+    owner_addr:          address,
+): (EscrowCore<CoinType>, AssetState<Asset, CoinType>) {
+    let asset_id      = object::id(&asset);
+    let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
+    policy_ensemble::emit_registration(&ensemble, escrow_identity, integrated_at);
+    let cycle = resolve_and_emit_cycle_params(&ensemble, raw_escrow_id, phases::timestamp_ms(integrated_at));
+    let core = EscrowCore {
+        owner:              owner_seat::new(cap_identity, inbox_identity),
+        ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
+        fee_inbox_identity,
+        integrated_at,
+        retire_commitment:  RetireCommitmentSlot { policy: retire_commitment, anchor: integrated_at },
+        ensemble_commitment: EnsembleCommitmentSlot { policy: ensemble_commitment, anchor: integrated_at },
+        escrow_identity,
+    };
+    let state = AssetState::Waiting(WaitingState::Idle {
+        asset: asset_custody::lock(asset),
+        cycle,
+    });
+    event::emit(AssetIntegrated {
+        escrow_id:         raw_escrow_id,
+        owner_cap_id:      owner_cap::proj_id(cap_identity),
+        owner_address:     owner_addr,
+        asset_id,
+        fee_inbox_id:      protocol_fee_ref::proj_id(fee_inbox_identity),
+        earnings_inbox_id: earnings_inbox::proj_id(inbox_identity),
+        asset_type:        string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:         string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
+        integrated_at_ms:  phases::timestamp_ms(integrated_at),
+    });
+    (core, state)
+}
 
 fun resolve_cycle_params(ensemble: &PolicyEnsemble): CycleParams {
     let floor    = rest_price_policy::compute_price(policy_ensemble::proj_rest_price(ensemble));
@@ -1344,7 +1365,10 @@ fun resolve_and_emit_cycle_params(ensemble: &PolicyEnsemble, escrow_id: ID, time
 }
 
 fun assert_owner_cap_binds<CoinType>(cap: &OwnerCap, core: &EscrowCore<CoinType>) {
-    assert!(owner_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowOwnerCap)
+    assert!(
+        owner_cap::identity(cap) == owner_identity::proj_cap_identity(owner_seat::proj_identity(&core.owner)),
+        EWrongEscrowOwnerCap,
+    )
 }
 
 fun assert_tenant_cap_binds<CoinType>(cap: &TenantCap, core: &EscrowCore<CoinType>) {
@@ -1417,7 +1441,7 @@ fun do_handover<Asset: key + store, CoinType>(
     terms:              OccupiedTerms<CoinType>,
     bid:                DemandTerms<CoinType>,
     cycle:              CycleParams,
-    owner:              &mut OwnerSeat<CoinType>,
+    owner:              &OwnerSeat,
     config:             &PolicyEnsemble,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
@@ -1446,7 +1470,7 @@ fun do_handover<Asset: key + store, CoinType>(
         tenant_stake::destroy_zero(stake);
         refund_state::nothing(fee_share, owner_earnings)
     };
-    refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
+    refund_state::distribute(refund, owner, fee_inbox_identity, escrow_identity, ctx);
 
     let new_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&pending));
     let new_addr         = tenant_addr(&pending);
@@ -1496,7 +1520,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     asset:              asset_custody::AssetCustodyOpen<Asset>,
     terms:              OccupiedTerms<CoinType>,
     cycle:              CycleParams,
-    owner:              &mut OwnerSeat<CoinType>,
+    owner:              &OwnerSeat,
     config:             &mut EnsembleSlot,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
@@ -1516,7 +1540,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
     let (_, stake)     = tenant_seat::unbundle(departing);
     tenant_stake::destroy_zero(stake);
-    refund_state::distribute(refund_state::nothing(fee_share, owner_earnings), owner, fee_inbox_identity, ctx);
+    refund_state::distribute(refund_state::nothing(fee_share, owner_earnings), owner, fee_inbox_identity, escrow_identity, ctx);
 
     let asset_type = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
     let coin_type  = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
@@ -1603,7 +1627,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     bid:                DemandTerms<CoinType>,
     cycle:              CycleParams,
     incoming_tenures:  Tenures,
-    owner:              &mut OwnerSeat<CoinType>,
+    owner:              &OwnerSeat,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
     payment:            Coin<CoinType>,
@@ -1623,7 +1647,7 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let cap_identity   = tenant_cap::identity(&cap);
     let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(new_bidder), coin::into_balance(payment));
     let refund = refund_state::total(pending);
-    refund_state::distribute(refund, owner, fee_inbox_identity, ctx);
+    refund_state::distribute(refund, owner, fee_inbox_identity, escrow_identity, ctx);
 
     let protected_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
     let protected_addr  = tenant_addr(&terms.active);
@@ -1675,7 +1699,7 @@ fun proj_auction_is_firable(auction: &AuctionTerms, cycle: &CycleParams, now: Ti
 
 fun step_handover<Asset: key + store, CoinType>(
     s:    AssetState<Asset, CoinType>,
-    core: &mut EscrowCore<CoinType>,
+    core: &EscrowCore<CoinType>,
     now:  Timestamp,
     ctx:  &mut TxContext,
 ): AssetState<Asset, CoinType> {
@@ -1685,7 +1709,7 @@ fun step_handover<Asset: key + store, CoinType>(
                 let boundary = bid.handover.expiry;
                 AssetState::Renting(do_handover(
                     asset, terms, bid, cycle,
-                    &mut core.owner, &core.ensemble.active,
+                    &core.owner, &core.ensemble.active,
                     core.escrow_identity, core.fee_inbox_identity,
                     boundary, ctx,
                 ))
@@ -1709,7 +1733,7 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
                 let boundary = phases::compute_boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total);
                 AssetState::Waiting(do_tenure_expiry(
                     asset, terms, cycle,
-                    &mut core.owner, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
+                    &core.owner, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
                     boundary, ctx,
                 ))
             } else {
@@ -1736,17 +1760,6 @@ fun step_auction_expiry<Asset: key + store, CoinType>(
         },
         s => s,
     }
-}
-
-fun do_withdraw<CoinType>(
-    owner:     &mut OwnerSeat<CoinType>,
-    owner_cap: &OwnerCap,
-    ctx:       &mut TxContext,
-): (Coin<CoinType>, Stake) {
-    let amount = owner_seat::proj_value(owner);
-    assert!(monetary::stake_mist(amount) > 0, ENoEarnings);
-    let coin = owner_seat::withdraw(owner, owner_cap, ctx);
-    (coin, amount)
 }
 
 fun do_install<Asset: key + store, CoinType>(
@@ -2077,8 +2090,6 @@ public(package) fun asset_claimed_owner_cap_id(e: &AssetClaimed): ID            
 #[test_only]
 public(package) fun asset_claimed_owner_address(e: &AssetClaimed): address          { e.owner_address }
 #[test_only]
-public(package) fun asset_claimed_swept_earnings(e: &AssetClaimed): u64              { e.swept_earnings }
-#[test_only]
 public(package) fun asset_claimed_asset_type(e: &AssetClaimed): String              { e.asset_type }
 #[test_only]
 public(package) fun asset_claimed_coin_type(e: &AssetClaimed): String               { e.coin_type }
@@ -2088,7 +2099,7 @@ public(package) fun asset_claimed_timestamp_ms(e: &AssetClaimed): u64           
 #[test_only]
 public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
     state:    AssetState<Asset, CoinType>,
-    core:     &mut EscrowCore<CoinType>,
+    core:     &EscrowCore<CoinType>,
     boundary: Timestamp,
     ctx:      &mut TxContext,
 ): AssetState<Asset, CoinType> {
@@ -2096,7 +2107,7 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) =>
             AssetState::Renting(do_handover(
                 asset, terms, bid, cycle,
-                &mut core.owner, &core.ensemble.active,
+                &core.owner, &core.ensemble.active,
                 core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             )),
@@ -2116,7 +2127,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) =>
             AssetState::Waiting(do_tenure_expiry(
                 asset, terms, cycle,
-                &mut core.owner, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
+                &core.owner, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             )),
         AssetState::Waiting(_ws) => abort ENotRented,
@@ -2320,21 +2331,6 @@ public(package) fun retire_flag_set_coin_type(e: &RetireFlagSet): String        
 public(package) fun retire_flag_set_timestamp_ms(e: &RetireFlagSet): u64        { e.timestamp_ms }
 
 #[test_only]
-public(package) fun earnings_withdrawn_escrow_id(e: &EarningsWithdrawn): ID     { e.escrow_id }
-#[test_only]
-public(package) fun earnings_withdrawn_owner_cap_id(e: &EarningsWithdrawn): ID  { e.owner_cap_id }
-#[test_only]
-public(package) fun earnings_withdrawn_owner_address(e: &EarningsWithdrawn): address { e.owner_address }
-#[test_only]
-public(package) fun earnings_withdrawn_amount(e: &EarningsWithdrawn): u64        { e.amount }
-#[test_only]
-public(package) fun earnings_withdrawn_asset_type(e: &EarningsWithdrawn): String { e.asset_type }
-#[test_only]
-public(package) fun earnings_withdrawn_coin_type(e: &EarningsWithdrawn): String  { e.coin_type }
-#[test_only]
-public(package) fun earnings_withdrawn_timestamp_ms(e: &EarningsWithdrawn): u64 { e.timestamp_ms }
-
-#[test_only]
 public(package) fun retire_commitment_extended_escrow_id(e: &RetireCommitmentExtended): ID       { e.escrow_id }
 #[test_only]
 public(package) fun retire_commitment_extended_policy(e: &RetireCommitmentExtended): String { e.commitment_policy }
@@ -2374,6 +2370,8 @@ public(package) fun asset_integrated_owner_address(e: &AssetIntegrated): address
 public(package) fun asset_integrated_asset_id(e: &AssetIntegrated): ID           { e.asset_id }
 #[test_only]
 public(package) fun asset_integrated_fee_inbox_id(e: &AssetIntegrated): ID       { e.fee_inbox_id }
+#[test_only]
+public(package) fun asset_integrated_earnings_inbox_id(e: &AssetIntegrated): ID  { e.earnings_inbox_id }
 #[test_only]
 public(package) fun asset_integrated_asset_type(e: &AssetIntegrated): String     { e.asset_type }
 #[test_only]

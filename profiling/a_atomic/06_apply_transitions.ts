@@ -26,8 +26,8 @@ async function setupOccupied(
 ): Promise<{ escrowId: string }> {
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-  tx1.transferObjects([ownerCap], d.owner.address);
+  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  tx1.transferObjects([ownerCap, inbox], d.owner.address);
 
   const r1 = await execSetup(client, owner, tx1);
   const escrowObj = (r1.objectChanges ?? []).find(

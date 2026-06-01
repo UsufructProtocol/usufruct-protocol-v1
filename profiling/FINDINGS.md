@@ -21,6 +21,7 @@ the code that generated it; this table is the bridge.
 | v1.1.0 | 2026-05-27 | `be7f8a1` (testnet pkg `0xe466…`) | testnet validation; localnet = testnet to the bit |
 | v1.2.0 | 2026-05-28 | `2f604b5` | `update_tenant_refund_address` + `active_*` view rename |
 | v1.3.0 | 2026-05-31 | `51f9d31` | `ensemble_commitment` twin + blanket terms-freeze |
+| v1.4.0 | 2026-05-31 | `7397e62` (branch `feature/owner-earnings-inbox-first`) | inbox-first owner income: `EarningsInbox`/`EarningsMessage`, `integrate_into_portfolio`, fleet governance |
 
 The code-state commit is the **parent of the commit that wrote each section** (the doc
 commit adds only prose on top of the already-deployed source) — except v1.3.0, whose
@@ -580,3 +581,279 @@ mirrors in source (`EnsembleCommitmentPolicy` is a structural twin of `RetireCom
 both `Immediate | Deferred { floor }`), and that structural symmetry surfaces verbatim in the
 gas meter. The blanket terms-freeze adds no measurable cost over the permanence commitment it
 mirrors: a tenant gets stability-of-terms for the same price as stability-of-availability.
+
+---
+
+# v1.4.0 — Inbox-first owner income (`7397e62`)
+
+> Branch `feature/owner-earnings-inbox-first`. Owner income is unbundled from
+> governance via on-chain coupon-stripping: `OwnerCap` becomes a pure governance
+> token, and earnings settle to a standalone `EarningsInbox` as owned
+> `EarningsMessage` objects (collected like the fee layer), instead of
+> accumulating inside the shared escrow's `OwnerSeat` and being pulled with
+> `withdraw_earnings`. Two integrate functions: `integrate` (mints the cap+inbox
+> pair) and `integrate_into_portfolio` (joins an existing pair → fleets).
+
+## Toolchain
+
+| Component | Version |
+|---|---|
+| sui CLI (deploy / `test-publish`) | **1.67.1-4e8aa9ee8b30** |
+| localnet node protocol version | **114** |
+| `@mysten/sui` SDK (drives the PTBs) | **1.45.2** |
+| node runtime | **v25.8.1** |
+
+The deploy used CLI **1.67.1** (a later 1.73 was installed afterward and is *not*
+the binary that produced these numbers). The node ran **protocol 114**; absolute
+MIST will differ on a protocol-125 node (today's testnet/mainnet), but the
+*functional* path and *structural* deltas (object counts) are protocol-invariant.
+
+## Profiling as real-execution validation (orthogonal to the Move tests)
+
+The `#[test_only]` suite runs in `test_scenario` — an in-process VM with simulated
+objects and gas; it proves *logic* (transitions, conservation, aborts). This run
+proves *execution*: every measurement is a real PTB over JSON-RPC against a
+fullnode — the same path Mainnet takes. It exercises what unit tests cannot:
+PTB composition, type-argument resolution, the `integrate` tuple return
+`(OwnerCap, EarningsInbox)`, transfer-to-object + `Receiving` ticket collection
+actually working at runtime, real object versioning, owned/shared handling, and
+economic viability (ops cost fractions of a cent, none abort on gas). Phase A
+(28 ops + 3 scalability sweeps) and Phase B (9 flows) all succeeded → the
+inbox-first API is **PTB-reachable and economically sane on a real node**.
+
+## Methodology caveat — gas-coin rebate noise (±~0.98M MIST/tx)
+
+A controlled probe (`verify_collect_parity.ts`) found that two byte-identical
+transactions can differ in `net` by exactly **978,120 MIST**, located entirely in
+`storageRebate` (computation and storage identical to the MIST). This is
+**gas-coin smashing / storage-rebate accounting** tied to the sender's coin set at
+tx time — it alternates between consecutive identical calls, independent of the
+operation. Consequence: **single-shot `net` absolutes carry ±~0.98M noise**;
+**object counts are exact**, and **per-message slopes at high N** (where the fixed
+swing amortizes) are the reliable economic signal. Atomic medians (10 runs) damp
+but do not fully erase this.
+
+## Structural deltas vs the deposit model (v1.3.0 `51f9d31`)
+
+| Op | v1.3.0 deposit | v1.4.0 inbox-first | Structural change |
+|---|---|---|---|
+| `integrate` | +2 obj, 6,617,880 | **+3 obj, 7,995,480** | mints the `EarningsInbox` too (+1 obj ≈ 1.38M) |
+| `claim_asset` | −2 obj, −1,462,972 | **−1 obj, −1,038,380** | cap survives by-ref (reusable across a portfolio) → forfeits the burn rebate |
+
+The cap is no longer burned at claim because one `OwnerCap` may govern N escrows.
+The trade is deliberate: one object's storage at birth + the lost burn rebate, in
+exchange for a reusable governance token and income in batchable owned objects.
+
+## #1 — Settlement now costs +1 object, bounded and O(1)
+
+`apply_pending_transition_states` firing `tenure_expiry`/`handover` calls
+`distribute`, which now posts **both** a `FeeMessage` (10%) **and** an
+`EarningsMessage` (90%) — **+2 objects**, vs +1 in the deposit model (FeeMessage
+only; earnings were an in-seat balance mutation).
+
+| `apply` | Objects | Net MIST |
+|---|---|---|
+| no-op (no pending settlement) | +0 | 1,332,548 |
+| fires settlement | **+2** | 4,098,548 |
+
+Δ ≈ **2,766,000 MIST ≈ 2 objects**. Constant across all 5 tenures of the N=5 flow
+(4,098,548 to the MIST each) → **O(1) per settlement, no accumulation**.
+
+The increase is **gated on real settlement** — a no-op APT is unchanged (+0 obj),
+and so are non-settling ops (`rent` 4.20M, `update_ensemble` 1.35M ≈ v1.3.0).
+Under the lazy-eval pattern (every state-dependent mutation APTs first), the cost
+**floats** to whichever call first crosses an expired tenure, and is paid **exactly
+once per settlement** — bounded at +1 `EarningsMessage`, never a diffuse rise.
+
+## #2 — `collect_earnings_messages` reproduces the fee curve (rebate-positive)
+
+`EarningsMessage` is byte-identical to `FeeMessage`; `collect_earnings_messages`
+mirrors `collect_fee_messages`. Same shared inbox fed by a portfolio:
+
+| N | `collect_fee` per-msg | `collect_earnings` per-msg |
+|---|---|---|
+| 1 | +316,156 | +240,384 |
+| 10 | −1,724,000 | −1,798,293 |
+| 50 | −1,904,792 | −1,980,042 |
+
+Both **break even at N≈2** and converge to **≈ −1.9M MIST/msg** (rebate-positive —
+draining owned message objects returns more storage than the one output coin
+costs). The ~75k/msg apparent gap between the two is **within the gas-coin rebate
+noise** (§ methodology caveat), not a protocol difference: `verify_collect_parity`
+showed the per-message **computation is identical (1,260,000 MIST)** for fee and
+earnings, with all variance in rebate. The residual-count hypothesis was tested
+and **refuted** (collecting 1-of-12 vs 1-of-11 differed by the full 978k despite
+near-identical residuals — it alternates with gas-coin state, not sibling count).
+
+## #3 — `integrate_into_portfolio`: fleet onboarding is ~34% cheaper
+
+| Op | Objects | Net MIST |
+|---|---|---|
+| `integrate` (open a portfolio) | +3 | 7,995,480 |
+| `integrate_into_portfolio` (join) | **+1** | **5,301,888** |
+
+Each additional fleet escrow costs **5.30M vs 8.00M** (−2.69M ≈ 2 objects) — it
+mints only the `Escrow`, reusing the existing cap + inbox.
+
+## #4 — Governance over a fleet is exactly O(1) per escrow (zero shared-cap overhead)
+
+One `OwnerCap` retiring N escrows, validated **seat-side**
+(`owner_cap::identity(cap) == seat.cap_identity` — no registry, no cross-escrow
+state):
+
+| N | per-retire (separate PTBs) | per-retire (batched 1 PTB) |
+|---|---|---|
+| 1 | 1,099,652 | 1,099,652 |
+| 10 | **1,099,652** | −54,141 |
+| 50 | **1,099,652** | −155,189 |
+
+Per-retire under one shared cap is **1,099,652 MIST to the bit at every N** — and
+**identical to the one-to-one baseline** (`a_07_retire`). A single cap governing a
+fleet introduces **literally zero overhead** vs N independent caps. Batching N
+retires in one PTB amortizes the per-PTB floor and turns rebate-positive at scale
+(−155,189/retire at N=50).
+
+## #5 — Before/after: owner income collection (Phase B `05_earnings`, N=3)
+
+| | deposit (v1.3.0) | inbox-first (v1.4.0) |
+|---|---|---|
+| collect 3 tenures' income | 3× `withdraw_earnings` @ +2,301,460 = **+6,904,380** | 1× batched `collect` = **−3,812,576** |
+| object mutated | the **shared Escrow** (×3) | inbox + messages (**owned**) |
+| owner's wallet | **pays** 6.90M | **earns** 3.81M rebate |
+
+A **~10.7M MIST swing in the owner's favor** over 3 tenures, flipping income
+collection from a *cost* to a *rebate*. Three wins stack: **batching** (O(N) income
+in O(1) PTBs), **rebate-positive** drain of owned objects, and **zero contention**
+(the old `withdraw` locked the shared escrow, competing with renters; `collect`
+touches only owned objects).
+
+**Economic timing.** The model moves +1 object's storage cost to settlement
+(`apply`, ~1.38M/event, paid by *whoever* calls apply — keeper, next renter,
+anyone) and recovers it as a rebate at `collect` (captured by the **owner**). The
+deposit model was the reverse: cheap apply, but the owner paid `withdraw`. Storage
+is ~a wash system-wide; **who pays and when** shifts toward the owner.
+
+## #6 — Fleet end-to-end: two objects govern N escrows, one PTB collects all (`07`)
+
+`integrate` + 2× `integrate_into_portfolio` → 3 escrows under **one cap + one
+inbox**; each rented & settled; then a **single** `collect_earnings_messages`:
+
+| Step | × | Net total | Objects |
+|---|---|---|---|
+| integrate / join | 1 / 2 | 7,995,480 / 10,603,776 | +3 / +2 |
+| rent / apply | 3 / 3 | 12,607,284 / 12,295,644 | +3 / +6 |
+| **collect_fleet** | **1** | **−3,812,576** | **+1 −3** |
+| retire / apply / claim | 3 each | teardown | −3 |
+
+The fleet collect is **−3,812,576 MIST — identical to the single-escrow N=3 collect
+in `05`**. Collecting 3 messages from **3 different escrows** costs exactly the same
+as 3 from one escrow: **collect cost is a function of message count, independent of
+fleet topology**. The §10/§11 design claim — *govern a fleet with two objects,
+collect its cash flow in one PTB* — measured end-to-end.
+
+---
+
+# Verdict: Deposit vs Inbox scalability (v1.3.0 vs v1.4.0)
+
+Two models for the owner to **claim earnings**, measured head-to-head:
+
+- **Deposit-in-Escrow** (v1.3.0 `51f9d31`): earnings accrue into the shared
+  escrow's `OwnerSeat` balance; the owner pulls them with `withdraw_earnings`.
+- **Earning-Message-in-Inbox** (v1.4.0 `7397e62`): each settlement posts an owned
+  `EarningsMessage` to a standalone `EarningsInbox`; the owner drains them with a
+  batched `collect_earnings_messages`.
+
+Let a portfolio be **M** escrows × **K** tenures each, **T = M·K** income events.
+The claim cycle has two phases; both must be measured.
+
+## Phase 1 — Settlement (income accrues, at each `apply`→`distribute`)
+
+| | Deposit (v1.3.0) | Inbox (v1.4.0) |
+|---|---|---|
+| objects created / tenure | +1 (FeeMessage; earnings → seat balance) | +2 (Fee **+ Earnings**) |
+| Δ vs the other | — | **+1 obj/tenure ≈ +1.38M MIST** |
+| complexity | O(1)/tenure | O(1)/tenure |
+
+Deposit wins this phase by one object per tenure — but it is a **constant factor,
+O(1), that does not compound** with portfolio growth, and it is precisely the cost
+that funds Phase 2's rebate.
+
+## Phase 2 — Collection (the owner claims) — where it is decided
+
+| | Deposit (v1.3.0) | Inbox (v1.4.0) |
+|---|---|---|
+| PTBs to claim M escrows | **O(M)** — 1 `withdraw`/escrow | **O(⌈T/500⌉) ≈ O(1)** — 1 batched collect |
+| object touched | the **shared Escrow** (contends with renters) | inbox + messages (**owned**, fast-path) |
+| cost | **+2,301,460 × M** (positive) | **rebate-positive**, ≈ −1.9M/msg at scale |
+| caps to govern M escrows | **M** (cap was bound to one escrow) | **1** (finding #4: O(1)/escrow, zero overhead) |
+
+The seat accumulates, so K folds into a single withdraw per escrow — but each escrow
+is an independent **shared** object, so collection is **O(M) PTBs / O(M) shared-object
+inputs / O(M) caps**. Even packing M withdraws into one PTB still takes M shared
+inputs and M caps and locks M rental markets at once. The inbox routes the whole
+fleet to **one owned inbox**, drained in **O(1) PTBs with one cap**.
+
+## Crossover (owner-facing claim cost, measured)
+
+Fleet of M escrows, 1 tenure each — claim everything accrued:
+
+| M | Deposit (M withdraws) | Inbox (1 collect of M msgs) | owner is better off by |
+|---|---|---|---|
+| 1 | +2,301,460 | +240,384 | inbox already cheaper |
+| 10 | +23,014,600 | −17,982,930 (rebate) | **~41M MIST** |
+| 50 | +115,073,000 | −99,002,100 (rebate) | **~214M MIST** |
+
+Charging the inbox its **full** settlement surcharge too (worst case — in practice
+the apply-caller pays it): at M=50, inbox = 69M (settlement) − 99M (collection) =
+**−30M net**, vs deposit **+115M**. Inbox wins by **~145M MIST even with the
+handicap**. Crossover is immediate: at T=1 inbox already costs less, and at **T≥2**
+it turns rebate-positive while deposit stays a flat per-escrow cost.
+
+## Verdict — univocal: Inbox is strictly more scalable
+
+The result is a **complexity** difference, not a magnitude one. As the portfolio
+grows in either dimension:
+
+- **Deposit** scales claiming as **O(M) PTBs, O(M) caps, on shared objects, at
+  positive cost** that grows without bound.
+- **Inbox** scales claiming as **O(1) PTBs, O(1) caps (1 cap + 1 inbox), on owned
+  objects, rebate-positive** — improving with volume.
+
+Deposit's *only* edge — settlement one object cheaper per tenure — is **O(1),
+non-compounding, and is the very cost that funds the inbox's O(1) rebate-positive
+claim**. The two tie on settlement (both O(1)/tenure) and the inbox wins
+**asymptotically** on both collection (O(M)→O(1) PTBs) and governance (M→1 caps).
+No growth regime exists where deposit wins; the only scenario it leads is the
+degenerate non-scaling one (a single escrow, few tenures, an owner who never
+claims and values only cheap settlement) — which is, by definition, outside a
+scalability question.
+
+**Earning-Message-in-Inbox is unequivocally the more scalable model for the owner
+to claim earnings.**
+
+## Why it scales *where it matters*: pull-aggregation vs push-distribution
+
+The two owner-facing flows have **opposite reducibility**, and that — not raw
+magnitude — is the heart of the verdict:
+
+- **Earnings (collection) is pull-aggregatable.** Many escrows *push* income to
+  **one** inbox (transfer-to-object at settlement); the owner *pulls* the whole
+  pile in a single `Receiving` batch. An aggregation sink exists → collection is
+  reducible to **O(1) PTBs**. The inbox model exploits exactly this.
+- **Governance (retire/update) is push-distributive and irreducibly O(M).** One
+  cap must reach M escrows, and each escrow is a separate object whose state is
+  mutated individually — there is **no aggregation point, no broadcast**. Fleet
+  governance is **O(M) operations no matter the model**. (Finding #4's "O(1)" is
+  *per-escrow* — zero shared-cap overhead — **not** per-fleet; the fleet total is
+  still M pushes.)
+
+This is the precise sense in which inbox "scales where it matters": it makes the
+**aggregatable, high-frequency** axis (claiming cash flow) **O(1)**, and leaves the
+**irreducible, low-frequency** axis (governance) at its push-based **O(M)** floor —
+while still collapsing that floor's *object* cost from **M caps to one**.
+
+Deposit puts **both** flows on the per-escrow push rail: **O(M) withdraws AND O(M)
+caps**. On the one axis that admits aggregation (collection) it fails to take it;
+on the axis that doesn't (governance) it pays the worse constant (M caps). The
+whole game is *optimize the reducible axis, minimize the irreducible one* — and the
+inbox does both, while deposit does neither.

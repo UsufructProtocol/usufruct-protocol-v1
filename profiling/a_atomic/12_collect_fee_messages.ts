@@ -80,9 +80,9 @@ async function setupOneEscrow(
   const asset = tx1.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
   const rc    = tx1.moveCall({ target: `${pkg}::ensemble::new_retire_commitment_immediate` });
   const ec    = tx1.moveCall({ target: `${pkg}::ensemble::new_ensemble_commitment_immediate` });
-  const oc    = tx1.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
+  const [oc, inbox] = tx1.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
     arguments: [asset, ens, rc, ec, tx1.object(d.protocolFeeRefId), clock(tx1)] });
-  tx1.transferObjects([oc], d.owner.address);
+  tx1.transferObjects([oc, inbox], d.owner.address);
 
   const r1 = await client.signAndExecuteTransaction({
     transaction: tx1, signer: owner, options: { showEffects: true, showObjectChanges: true },
@@ -162,9 +162,9 @@ async function generateFeeMessages(
     const asset = tx.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
     const rc    = tx.moveCall({ target: `${pkg}::ensemble::new_retire_commitment_immediate` });
     const ec    = tx.moveCall({ target: `${pkg}::ensemble::new_ensemble_commitment_immediate` });
-    const oc    = tx.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
+    const [oc, inbox] = tx.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
       arguments: [asset, ens, rc, ec, tx.object(d.protocolFeeRefId), clock(tx)] });
-    tx.transferObjects([oc], d.owner.address);
+    tx.transferObjects([oc, inbox], d.owner.address);
 
     const r = await client.signAndExecuteTransaction({
       transaction: tx, signer: kp.owner, options: { showEffects: true, showObjectChanges: true },

@@ -53,6 +53,11 @@ public(package) fun drain_all<C>(e: &mut OwnerEarnings<C>): Balance<C> {
     balance::withdraw_all(&mut e.balance)
 }
 
+public(package) fun into_balance<C>(e: OwnerEarnings<C>): Balance<C> {
+    let OwnerEarnings { balance } = e;
+    balance
+}
+
 public(package) fun destroy_zero<C>(e: OwnerEarnings<C>) {
     let OwnerEarnings { balance } = e;
     balance::destroy_zero(balance);

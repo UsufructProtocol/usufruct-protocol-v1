@@ -24,8 +24,13 @@ use usufruct::{
 
 // === Public Functions ===
 
-public fun owner_cap_escrow_id(cap: &OwnerCap): ID {
-    owner_cap::proj_escrow_id(cap)
+/// Permanently and irreversibly renounce ALL governance over every escrow this
+/// cap governs: `retire`, `update_ensemble`, and `claim_asset`. The underlying
+/// asset can NEVER be reclaimed — it stays in perpetual usufruct at frozen terms.
+/// Income is unaffected: the `EarningsInbox` keeps receiving and remains
+/// collectable. This is the supremum of the commitment ladder. There is no undo.
+public fun renounce_governance(cap: OwnerCap, ctx: &TxContext) {
+    owner_cap::burn(cap, ctx)
 }
 
 public fun tenant_cap_escrow_id(cap: &TenantCap): ID {

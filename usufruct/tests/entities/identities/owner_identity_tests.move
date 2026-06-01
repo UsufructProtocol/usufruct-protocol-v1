@@ -29,7 +29,7 @@ fun new_proj_cap_identity_round_trip() {
         let cap_id  = owner_cap::identity(&cap);
         let oi      = owner_identity::new(cap_id);
         assert_eq!(owner_identity::proj_cap_identity(&oi), cap_id);
-        owner_cap::burn(cap, OWNER);
+        transfer::public_transfer(cap, OWNER);
     };
     sc.end();
 }
@@ -48,8 +48,8 @@ fun two_caps_produce_distinct_identities() {
             owner_cap::proj_id(owner_identity::proj_cap_identity(&id_b)),
             0,
         );
-        owner_cap::burn(cap_a, OWNER);
-        owner_cap::burn(cap_b, OWNER);
+        transfer::public_transfer(cap_a, OWNER);
+        transfer::public_transfer(cap_b, OWNER);
     };
     sc.end();
 }

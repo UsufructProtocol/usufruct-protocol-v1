@@ -71,21 +71,23 @@ EnsembleSlot { active: PolicyEnsemble, pending: Option<PolicyEnsemble> }
 The active configuration and an optionally staged update. The pending ensemble is applied exclusively at `AtDutch → Idle` (`do_auction_expiry`) — never mid-tenure, never at `Occupied → AtDutch`. On an immediate retire, the pending is discarded (`config.pending = none`).
 
 ```
-CommitmentSlot { policy: CommitmentPolicy, anchor: Timestamp }
+RetireCommitmentSlot   { policy: RetireCommitmentPolicy,   anchor: Timestamp }
+EnsembleCommitmentSlot { policy: EnsembleCommitmentPolicy, anchor: Timestamp }
 ```
-The governor's commitment policy and the timestamp from which the lockup floor is measured.
+Two independent commitment locks, each a policy plus the timestamp from which its floor is measured: `retire_commitment` gates how soon the governor may retire; `ensemble_commitment` gates how soon the active policy ensemble may change.
 
 ```
 EscrowCore<CoinType> {
-    governor:             GovernorSeat<CoinType>,
-    ensemble:          EnsembleSlot,
-    fee_inbox_identity: FeeInboxIdentity,
-    integrated_at:     Timestamp,
-    commitment:        CommitmentSlot,
-    escrow_identity:   EscrowIdentity,
+    governor_seat:       GovernorSeat,
+    ensemble:            EnsembleSlot,
+    fee_inbox_identity:  FeeInboxIdentity,
+    integrated_at:       Timestamp,
+    retire_commitment:   RetireCommitmentSlot,
+    ensemble_commitment: EnsembleCommitmentSlot,
+    escrow_identity:     EscrowIdentity,
 }
 ```
-Financial and configuration context. Travels alongside `AssetState` through every operation.
+Financial and configuration context. Travels alongside `AssetState` through every operation. The `governor_seat` carries no balance and no coin type — it records the governing cap identity and the `EarningsInbox` destination; income is settled to that inbox, never accumulated here.
 
 ```
 RetireCondition   has drop, store
@@ -109,7 +111,8 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
 ## § API
 
 **Integration**
-- `asset_state::execute_integrate<Asset, C>(asset, ensemble, commitment_policy, fee_inbox_identity, escrow_identity, integrated_at, generator, ctx): (EscrowCore<C>, AssetState<Asset, C>, GovernanceCap)` — creates the `EscrowCore`, resolves initial `CycleParams` from the ensemble, produces `Waiting(Idle)`, mints the `GovernanceCap`; emits `AssetIntegrated` and `PolicyEnsembleRegistered`.
+- `asset_state::execute_integrate<Asset, C>(asset, ensemble, retire_commitment, ensemble_commitment, fee_inbox_identity, escrow_identity, integrated_at, generator, ctx): (EscrowCore<C>, AssetState<Asset, C>, GovernanceCap, EarningsInbox)` — creates the `EscrowCore`, resolves initial `CycleParams` from the ensemble, produces `Waiting(Idle)`, and mints a fresh `GovernanceCap` + `EarningsInbox` pair (born together, exactly once); emits `AssetIntegrated` and `PolicyEnsembleRegistered`. The root of the one-pair-per-portfolio invariant.
+- `asset_state::execute_integrate_into_portfolio<Asset, C>(asset, ensemble, retire_commitment, ensemble_commitment, fee_inbox_identity, governance_cap: &GovernanceCap, inbox: &EarningsInbox, escrow_identity, integrated_at, generator, ctx): (EscrowCore<C>, AssetState<Asset, C>)` — same idle core + state, but binds the new escrow to a **caller-held** cap + inbox instead of minting: the `GovernorSeat` records the existing cap identity and inbox destination. Both integrate paths share one private body (`build_idle_core_and_state`) that assembles the idle core + state from a resolved `(cap_identity, inbox_identity)` pair and emits `AssetIntegrated`; they differ only in where the identities come from (minted vs caller-held).
 
 **State machine advance**
 - `asset_state::execute_apply_pending_transition_states<Asset, C>(&mut AssetState, &mut EscrowCore<C>, rng, clock, ctx)` — evaluates all pending transitions in fixed order: `step_handover` → `step_tenure_expiry` → `step_auction_expiry`. Each step only fires if its condition is met:
@@ -137,15 +140,14 @@ Hot potato returned by `execute_borrow`. Carries the escrowed-asset identity (fo
   - `Idle` → applies immediately, re-resolves `CycleParams` from new ensemble; emits `ConfigUpdated`.
   - `AtDutch`, `Occupied`, `Demand` → stages as pending; emits `ConfigUpdateScheduled`. Aborts if retire flag is already set.
   - `Retired` → aborts.
-- `asset_state::execute_withdraw_earnings<Asset, C>(AssetState, EscrowCore<C>, governance_cap, rng, clock, ctx): (AssetState, EscrowCore<C>, Coin<C>)` — advances state machine first, then drains the governor's accumulated balance.
 - `asset_state::execute_extend_commitment<C>(EscrowCore<C>, governance_cap, new_policy, clock): EscrowCore<C>` — extends the commitment unlock time; asserts new expiry ≥ current expiry. The anchor is updated to `now`, making the new floor measured from the current time. **Does not advance the state machine** — the only `execute_*` that omits this step.
-- `asset_state::execute_claim<Asset, C>(AssetState, EscrowCore<C>, governance_cap, rng, clock, ctx): (Asset, Coin<C>)` — advances state machine first; then consumes state and core; unlocks the asset, sweeps remaining earnings. Aborts unless state is `Retired` after the advance.
+- `asset_state::execute_claim<Asset, C>(AssetState, EscrowCore<C>, governance_cap: &GovernanceCap, rng, clock, ctx): Asset` — advances state machine first; then consumes state and core and unlocks the asset, returning **only the asset**. Governor income was settled to the `EarningsInbox` each settlement (never accumulated in the seat), so there is nothing to sweep. Takes `&GovernanceCap` — not consumed, since the cap may govern other escrows. Aborts unless state is `Retired` after the advance.
 
 **Cap management**
 - `asset_state::execute_soft_burn_usufruct_cap<Asset, C>(&AssetState, &EscrowCore<C>, cap: UsufructCap, rng, clock, ctx)` — burns a stale cap; asserts it is neither current nor pending.
 - `asset_state::execute_update_usufructuary_refund_address<Asset, C>(AssetState, EscrowCore<C>, cap: &UsufructCap, new_address: RefundAddress, clock, ctx): (AssetState, EscrowCore<C>)` — advances state machine first; matches the presented cap's identity against the active and pending seats and mutates the refund address of the matching one via `usufructuary_seat::set_refund_address`. The address being overwritten is the one captured by `execute_rent` at construction time from `ctx.sender()` (see Rental above), or any subsequent redirect on the same seat. Authority derives from the cap reference alone — the call's sender is **not** consulted; only `usufruct_cap::identity(&cap)` matters. Emits `ActiveUsufructuaryRefundAddressUpdated` or `PendingUsufructuaryRefundAddressUpdated` depending on which seat matched. Aborts with `EUsufructCapStale` if the cap matches neither (including `Waiting` states where no seat exists). The cap is taken by reference, so its identity (and the historical link to past events) is preserved. Idempotent: emits even if `new_address == old_address`.
 
-  No `GovernanceCap` analogue exists, and none is needed. Governor operations that disburse value (`execute_withdraw_earnings`, `execute_claim`) return `Coin<C>` as part of their tuple return — Sui delivers it to the transaction sender, who by construction is the cap holder. The asymmetry is structural: usufructuary refunds (`do_handover`, `do_supersede_bid`) are **event-initiated** from a third party's transaction, with the displaced usufructuary absent at payout, so a pre-stored destination on the `UsufructuarySeat` is required. Governor payouts are **caller-initiated**; the cap holder is always present, so no stored destination ever exists on the `GovernorSeat`.
+  No `GovernanceCap` analogue exists, and none is needed. Governor value is **caller-initiated** by someone present at the call: income arrives as `EarningsMessage`s at the `EarningsInbox` and is drained by its bearer (`earnings::collect_earnings_messages`), and `execute_claim` returns the asset to the sender. The asymmetry is structural: usufructuary refunds (`do_handover`, `do_supersede_bid`) are **event-initiated** from a third party's transaction, with the displaced usufructuary absent at payout, so a pre-stored destination on the `UsufructuarySeat` is required. The `GovernorSeat` carries no balance and no payout destination — only the cap identity and the inbox the income is mailed to.
 
 **View functions** (package)
 - State shape: `proj_is_idle`, `proj_is_at_dutch`, `proj_is_occupied`, `proj_is_demand`, `proj_is_active`, `proj_is_retired`, `proj_is_rented`, `proj_is_retiring`
@@ -218,13 +220,13 @@ A single call can therefore chain `Demand → Occupied → AtDutch` or `Demand �
 ## § EVENTS
 
 ```
-AssetIntegrated<Asset, CoinType> {
-    escrow_id: ID, governance_cap_id: ID, governor: address,
-    asset_id: ID, fee_inbox_id: ID,
+AssetIntegrated {
+    escrow_id: ID, governance_cap_id: ID, governor_address: address,
+    asset_id: ID, fee_inbox_id: ID, earnings_inbox_id: ID,
     asset_type: String, coin_type: String, integrated_at_ms: u64
 }
 ```
-Emitted once at `execute_integrate`.
+Emitted once at both `execute_integrate` and `execute_integrate_into_portfolio` (the shared body). Records the full birth context — the governing cap, the income inbox, and the escrow — as the root of the event star schema.
 
 ```
 RentStarted {
@@ -305,11 +307,11 @@ Emitted when the escrow enters `Retired` — both on immediate retire and on ten
 
 ```
 AssetClaimed {
-    escrow_id: ID, governance_cap_id: ID, governor: address,
-    swept_earnings: u64, timestamp_ms: u64
+    escrow_id: ID, governance_cap_id: ID, governor_address: address,
+    asset_type: String, coin_type: String, timestamp_ms: u64
 }
 ```
-Emitted on `execute_claim`.
+Emitted on `execute_claim`. Carries no swept-earnings amount — claim returns only the asset; income was settled to the `EarningsInbox` throughout.
 
 ```
 AssetBorrowed { escrow_id: ID, usufruct_cap_id: ID, usufructuary: address, timestamp_ms: u64 }
@@ -320,14 +322,6 @@ Emitted when a usufructuary extracts the asset via `execute_borrow`.
 AssetReturned { escrow_id: ID, usufruct_cap_id: ID, usufructuary: address }
 ```
 Emitted when the asset is re-inserted via `execute_return`. Carries no `timestamp_ms`: `AssetReceipt` is a hot potato (no `drop`/`store`/`key`/`copy`), so it must be consumed by `execute_return` in the same transaction that produced it via `execute_borrow`. A `Clock` is read-only within a transaction — its `timestamp_ms` is fixed by the consensus commit prologue before user code runs and cannot be mutated by it — so a return timestamp would always equal the value already pinned by `AssetBorrowed`. The borrow timestamp dates the whole borrow↔return interval.
-
-```
-EarningsWithdrawn {
-    escrow_id: ID, governance_cap_id: ID, governor: address,
-    amount: u64, timestamp_ms: u64
-}
-```
-Emitted on `execute_withdraw_earnings`.
 
 ```
 ConfigUpdateScheduled { escrow_id: ID, new_config: PolicyEnsemble }

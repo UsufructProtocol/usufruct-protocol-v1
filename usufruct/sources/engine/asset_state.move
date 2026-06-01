@@ -827,10 +827,6 @@ public(package) fun renting_into_state<Asset: key + store, CoinType>(
     AssetState::Renting(rs)
 }
 
-/// Open a new portfolio: mint a fresh `GovernanceCap` + `EarningsInbox` pair and bind
-/// the new escrow to both. The root of the one-pair-per-portfolio invariant —
-/// both instruments are born here, exactly once, together. The api layer shares
-/// the escrow and hands the pair back to the caller.
 public(package) fun execute_integrate<Asset: key + store, CoinType>(
     asset:               Asset,
     ensemble:            PolicyEnsemble,
@@ -852,10 +848,6 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     (core, state, governance_cap, inbox)
 }
 
-/// Join an existing portfolio: bind the new escrow to a caller-held `GovernanceCap`
-/// and `EarningsInbox`. Mints neither — holding both objects by reference is the
-/// authorization. The new escrow's governance routes to the existing cap; its
-/// income to the existing inbox.
 public(package) fun execute_integrate_into_portfolio<Asset: key + store, CoinType>(
     asset:               Asset,
     ensemble:            PolicyEnsemble,
@@ -1262,10 +1254,6 @@ public(package) fun execute_extend_ensemble_commitment<Asset: key + store, CoinT
     (s, core)
 }
 
-/// Claim the asset from a retired escrow. Returns only the asset — governor income
-/// never accumulates in the seat (it was mailed to the inbox each settlement), so
-/// there is nothing to sweep. Takes `&GovernanceCap`: the cap may govern other escrows,
-/// so claiming one escrow must not consume it.
 public(package) fun execute_claim<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
@@ -1296,10 +1284,6 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
 
 // === Private Functions ===
 
-/// Shared body of both integrate paths: assemble the idle core + state from a
-/// resolved (cap_identity, inbox_identity) pair and emit `AssetIntegrated`. The
-/// callers differ only in where the identities come from — minted (integrate) or
-/// caller-held (integrate_into_portfolio).
 fun build_idle_core_and_state<Asset: key + store, CoinType>(
     asset:               Asset,
     ensemble:            PolicyEnsemble,

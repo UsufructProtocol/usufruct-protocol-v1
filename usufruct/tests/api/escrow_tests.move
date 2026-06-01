@@ -6481,6 +6481,37 @@ fun extend_retire_commitment_on_lazily_retired_aborts() {
     sc.end();
 }
 
+// Test 9e: extend the retire commitment while the escrow is in Descent (dutch
+// auction between tenants). This is a valid, reachable state — the owner can
+// strengthen their commitment mid-auction — and is the only path that exercises
+// the `WaitingState::Descent => {}` arm of assert_not_retired (update_ensemble
+// does not call that guard; only the two extend_*_commitment functions do).
+#[test]
+fun extend_retire_commitment_in_descent_succeeds() {
+    let mut sc = setup();
+    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Rent one tenure, then expire it → the escrow enters Descent.
+    let cap_t1 = escrow::rent(
+        &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+    escrow::fire_do_tenure_expiry_for_testing(
+        &mut escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx());
+    assert!(escrow::is_descending(&escrow), 0);
+
+    // Extending the commitment in Descent must succeed (not retired) and leave
+    // the escrow in Descent — the auction is untouched.
+    escrow::extend_retire_commitment(
+        &mut escrow, &owner_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
+    assert!(escrow::is_descending(&escrow), 1);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(escrow);
+    owner_cap::burn(owner_cap, OWNER);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // Test 10: update_ensemble on retiring (flag set) aborts ────────────────────────
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
 fun update_ensemble_on_retiring_aborts() {

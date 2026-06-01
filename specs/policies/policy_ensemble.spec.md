@@ -34,14 +34,16 @@ PolicyEnsemble {
 
 ## § API
 
-**Constructors** (public)
+**Constructors** (package — public entry is `ensemble::new_ensemble`)
 - `policy_ensemble::new_ensemble(rest_price, tenure_duration, tenure_extend, handover, auction_window, credit_shape, auction_shape, price_escalation): PolicyEnsemble` — validates cross-policy consistency before constructing; aborts with `EHandoverFloorExceedsTenure` if the handover floor ≥ tenure minimum ceiling.
 
 **Accessors** (package)
 - `policy_ensemble::proj_rest_price`, `proj_tenure_duration`, `proj_tenure_extend`, `proj_handover`, `proj_auction_window`, `proj_credit_shape`, `proj_auction_shape`, `proj_price_escalation` — each returns an immutable reference to the corresponding policy field.
 
-**Package Mutations**
-- `policy_ensemble::emit_registration(&PolicyEnsemble, escrow_identity: EscrowIdentity)` — emits `PolicyEnsembleRegistered`; called once at integration and again whenever a pending config is applied.
+**Emission** (package)
+- `policy_ensemble::emit_registration(&PolicyEnsemble, escrow_identity: EscrowIdentity, timestamp: Timestamp)` — emits `PolicyEnsembleRegistered`; called at integration and whenever a pending config is applied immediately.
+- `policy_ensemble::emit_ensemble_updated(&PolicyEnsemble, escrow_identity: EscrowIdentity, timestamp: Timestamp)` — emits `EnsembleUpdated` when a staged ensemble becomes the active configuration.
+- `policy_ensemble::emit_ensemble_update_scheduled(&PolicyEnsemble, escrow_identity: EscrowIdentity, timestamp: Timestamp)` — emits `EnsembleUpdateScheduled` when an ensemble is staged as pending (escrow occupied or in demand).
 
 ## § INVARIANTS
 
@@ -50,7 +52,19 @@ PolicyEnsemble {
 
 ## § EVENTS
 
+Three events share one **flattened snapshot** shape: the full ensemble decoded into a self-describing row (policy kind strings + their resolved values), keyed by `escrow_id` and `timestamp_ms`. The ensemble is not emitted as a nested value — it is flattened so an indexer needs no on-chain decode.
+
 ```
-PolicyEnsembleRegistered { escrow_identity: EscrowIdentity, ensemble: PolicyEnsemble }
+PolicyEnsembleRegistered {
+    escrow_id: ID, timestamp_ms: u64,
+    rest_price_policy: String, rest_price: u64,
+    tenure_duration_policy: String, tenure_duration_ms: u64,
+    tenure_extend_policy: String,
+    handover_policy: String, handover_floor_ms: Option<u64>,
+    auction_window_policy: String, auction_window_ceiling_ms: Option<u64>,
+    credit_shape_policy: String, credit_alpha_num/den/abs: Option<u8>, credit_alpha_neg: Option<bool>,
+    auction_shape_policy: String, auction_alpha_num/den/abs: Option<u8>, auction_alpha_neg: Option<bool>,
+    price_escalation_policy: String, price_escalation_delta: u64, price_escalation_bps: Option<u64>,
+}
 ```
-Emitted when an ensemble becomes the active configuration for an escrow — at integration and at every config update application.
+Emitted at integration (first registration). `EnsembleUpdated` (same shape) is emitted when a staged ensemble becomes active; `EnsembleUpdateScheduled` (same shape) when an ensemble is staged as pending. Together they form the policy-audit chain `PolicyEnsembleRegistered → EnsembleUpdateScheduled → EnsembleUpdated`.

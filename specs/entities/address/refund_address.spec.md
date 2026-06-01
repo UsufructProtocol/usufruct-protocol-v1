@@ -15,7 +15,12 @@ The address to which a usufructuary's remaining stake is liquidated at rental en
 
 **Constructors** (package)
 - `refund_address::new(addr: address): RefundAddress`
+
+**Accessors** (package)
 - `refund_address::addr(RefundAddress): address`
+
+**Mutations** (package)
+- `refund_address::set(&mut RefundAddress, new: RefundAddress)` — overwrites the wrapped address in place; backs the seat-level refund redirect.
 
 ## § INVARIANTS
 

@@ -18,14 +18,12 @@ Copy-safe reference to a `UsufructCap`. Stored in `UsufructuaryIdentity` and com
 
 ## § API
 
-**Public**
-- `usufruct_cap::proj_escrow_id(&UsufructCap): ID` — the escrow this cap is bound to; used by off-chain clients to route the cap.
-
 **Constructors** (package)
 - `usufruct_cap::new(escrow_identity: EscrowIdentity, usufructuary: address, ctx: &mut TxContext): UsufructCap` — mints a new cap bound to `escrow_identity`; emits `UsufructCapMinted`.
 
 **Accessors** (package)
 - `usufruct_cap::identity(&UsufructCap): UsufructCapIdentity`
+- `usufruct_cap::proj_escrow_id(&UsufructCap): ID` — the escrow this cap is bound to. Re-exported publicly as `cap::usufruct_cap_escrow_id` for off-chain clients to route the cap.
 - `usufruct_cap::proj_escrow_identity(&UsufructCap): EscrowIdentity`
 - `usufruct_cap::proj_id(UsufructCapIdentity): ID`
 - `usufruct_cap::from_id(id: ID): UsufructCapIdentity` — constructs a `UsufructCapIdentity` from a raw ID; used when checking stale caps by ID only.

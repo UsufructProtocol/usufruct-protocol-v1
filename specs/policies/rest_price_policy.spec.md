@@ -6,37 +6,36 @@ The price of the asset at rest. When the asset is `Idle` — no active usufructu
 
 Outside of `Idle`, `RestPricePolicy` plays one secondary role: it is the saturation point of the dutch auction. When the `Descent` phase runs, the price descends from the last acquisition price toward the rest price; no bid can be placed below it.
 
-A fixed rest price gives usufructuaries a predictable minimum cost of entry from idle; a random range introduces variability that can discourage systematic underbidding against a known target.
+A fixed rest price gives usufructuaries a predictable minimum cost of entry from idle.
 
 ## § TYPES
 
 ```
 RestPricePolicy   has copy, drop, store
-  Fixed         { price: Price }
-  RandomInRange { min: Price, max: Price }
+  Fixed { price: Price }
 ```
 
-- `Fixed` — every tenure starts at the same minimum price.
-- `RandomInRange` — the floor is sampled uniformly from `[min, max)` at resolution time; not revealed in advance.
+- `Fixed` — every tenure starts from the same minimum price.
 
 ## § API
 
-**Constructors** (public)
+**Constructors** (package)
 - `rest_price_policy::new_fixed(price: Price): RestPricePolicy` — asserts `price > 0`.
-- `rest_price_policy::new_random_in_range(min: Price, max: Price): RestPricePolicy` — asserts `min > 0` and `min < max`.
 
 **Projections** (package)
-- `rest_price_policy::proj_is_fixed`, `proj_is_random_in_range`
-- `rest_price_policy::proj_fixed_price`, `proj_range_min`, `proj_range_max` — each returns `Option<Price>`.
+- `rest_price_policy::proj_is_fixed`
+- `rest_price_policy::proj_fixed_price(&RestPricePolicy): Option<Price>`
+- `rest_price_policy::proj_rest_price_policy(&RestPricePolicy): String` — the variant kind string.
+- `rest_price_policy::proj_rest_price_mist(&RestPricePolicy): Option<u64>`
 
 **Computations** (package)
-- `rest_price_policy::compute_floor_price(&RestPricePolicy): Price` — returns the deterministic lower bound: fixed price or range min; used in bounds checks without consuming randomness.
-- `rest_price_policy::compute_price(&RestPricePolicy, rng: &mut RandomGenerator): Price` — resolves the actual floor; samples from range if `RandomInRange`.
+- `rest_price_policy::compute_floor_price(&RestPricePolicy): Price` — the lower bound used in bounds checks.
+- `rest_price_policy::compute_price(&RestPricePolicy): Price` — resolves the floor price (deterministic — equals the fixed price).
 
 ## § INVARIANTS
 
-- `price > 0` and `min > 0` enforced at construction; a zero-price tenure is not representable.
-- `compute_floor_price` never consumes randomness; safe to call in view contexts.
+- `price > 0` enforced at construction; a zero-price tenure is not representable.
+- Resolution is deterministic; `compute_price` is safe to call in view contexts.
 
 ## § EVENTS
 

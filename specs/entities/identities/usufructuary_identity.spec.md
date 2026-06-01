@@ -22,10 +22,13 @@ UsufructuaryIdentity {
 - `usufructuary_identity::proj_cap_identity(&UsufructuaryIdentity): UsufructCapIdentity`
 - `usufructuary_identity::proj_address(&UsufructuaryIdentity): RefundAddress`
 
+**Mutations** (package)
+- `usufructuary_identity::set_address(&mut UsufructuaryIdentity, new: RefundAddress)` — redirects the refund destination.
+
 ## § INVARIANTS
 
 - Created at `execute_rent` from the presented `UsufructCap` and the transaction sender's address.
-- `RefundAddress` is never updated after creation; stake is always returned to the address recorded at rent time.
+- The `cap_identity` is fixed at creation. The `RefundAddress`, however, may be redirected via `set_address` while the seat is live — the cap holder repoints where the stake refund will land (backs `update_refund_address`).
 
 ## § EVENTS
 

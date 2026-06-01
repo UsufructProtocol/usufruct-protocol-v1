@@ -6914,7 +6914,7 @@ fun extend_retire_commitment_in_descent_succeeds() {
 
     transfer::public_transfer(cap_t1, OWNER);
     test_scenario::return_shared(escrow);
-    owner_cap::burn(owner_cap, OWNER);
+    transfer::public_transfer(owner_cap, OWNER);
     clock::destroy_for_testing(clk);
     sc.end();
 }

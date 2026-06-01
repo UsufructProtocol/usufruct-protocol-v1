@@ -30,7 +30,7 @@ use usufruct::{
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
-const OWNER: address = @0x07;
+const GOVERNOR: address = @0x07;
 
 public struct DemoAsset has key, store { id: UID }
 
@@ -42,13 +42,13 @@ fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {
 
 fun setup(): Scenario {
     let mut sc = test_scenario::begin(@0x0);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     { protocol_fee_inbox::init_for_testing(sc.ctx()); };
     sc
 }
 
 /// Rent one tenure at the rest-price floor, then force tenure expiry — the path
-/// that settles the owner's 90% share to the inbox as an EarningsMessage.
+/// that settles the governor's 90% share to the inbox as an EarningsMessage.
 /// Returns the message id posted (read from the EarningsPosted event).
 fun rent_and_expire(escrow: &mut Escrow<DemoAsset, SUI>, sc: &mut Scenario): ID {
     let clk       = clock::create_for_testing(sc.ctx());
@@ -58,25 +58,25 @@ fun rent_and_expire(escrow: &mut Escrow<DemoAsset, SUI>, sc: &mut Scenario): ID 
         escrow, phases::timestamp(escrow_corpus::tenure_ceiling_const()), sc.ctx(),
     );
     clock::destroy_for_testing(clk);
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     let posted = event::events_by_type<EarningsPosted<SUI>>();
     earnings_message::posted_earnings_message_id(&posted[posted.length() - 1])
 }
 
-fun owner_share(): u64 {
+fun governor_share(): u64 {
     let p = escrow_corpus::min_rent_price_const();
     p - p / 10
 }
 
 // ─── E1 — single escrow: settle → collect via the api wrapper ─────────────────
 
-// The owner's tenure share is mailed to the inbox; collect_earnings_messages
+// The governor's tenure share is mailed to the inbox; collect_earnings_messages
 // drains it into a coin of exactly that share, and the EarningsCollected event
 // attributes the income to its source escrow (star schema).
 #[test]
-fun e1_collect_drains_owner_share_after_tenure() {
+fun e1_collect_drains_governor_share_after_tenure() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
@@ -88,26 +88,26 @@ fun e1_collect_drains_owner_share_after_tenure() {
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     let msg_id     = rent_and_expire(&mut escrow, &mut sc);
     test_scenario::return_shared(escrow);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut inbox = inbox;
     let ticket = test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(msg_id);
     let coin   = earnings::collect_earnings_messages<SUI>(&mut inbox, vector[ticket], sc.ctx());
-    assert_eq!(coin::value(&coin), owner_share());
+    assert_eq!(coin::value(&coin), governor_share());
 
     let collected = event::events_by_type<EarningsCollected<SUI>>();
     assert_eq!(collected.length(), 1);
-    assert_eq!(earnings_message::collected_amount(&collected[0]),    owner_share());
+    assert_eq!(earnings_message::collected_amount(&collected[0]),    governor_share());
     assert_eq!(earnings_message::collected_escrow_id(&collected[0]), escrow_id);
-    assert_eq!(earnings_message::collected_collector(&collected[0]), OWNER);
+    assert_eq!(earnings_message::collected_collector(&collected[0]), GOVERNOR);
 
-    transfer::public_transfer(coin, OWNER);
-    transfer::public_transfer(inbox, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(coin, GOVERNOR);
+    transfer::public_transfer(inbox, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -120,7 +120,7 @@ fun e1_collect_drains_owner_share_after_tenure() {
 #[test]
 fun e2_portfolio_two_escrows_one_inbox_collect_both() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
 
@@ -140,54 +140,54 @@ fun e2_portfolio_two_escrows_one_inbox_collect_both() {
     let id2 = asset_state::asset_integrated_escrow_id(&integ[1]);
     // Both escrows route income to the same inbox under the same cap.
     assert_eq!(asset_state::asset_integrated_earnings_inbox_id(&integ[1]), object::id(&inbox));
-    assert_eq!(asset_state::asset_integrated_owner_cap_id(&integ[1]),      object::id(&cap));
+    assert_eq!(asset_state::asset_integrated_governance_cap_id(&integ[1]),      object::id(&cap));
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut e1  = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id1);
     let msg1    = rent_and_expire(&mut e1, &mut sc);
     test_scenario::return_shared(e1);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut e2  = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id2);
     let msg2    = rent_and_expire(&mut e2, &mut sc);
     test_scenario::return_shared(e2);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut inbox = inbox;
     let tickets = vector[
         test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(msg1),
         test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(msg2),
     ];
     let coin = earnings::collect_earnings_messages<SUI>(&mut inbox, tickets, sc.ctx());
-    assert_eq!(coin::value(&coin), owner_share() * 2);
+    assert_eq!(coin::value(&coin), governor_share() * 2);
 
     let collected = event::events_by_type<EarningsCollected<SUI>>();
     assert_eq!(collected.length(), 2);
     assert!(earnings_message::collected_escrow_id(&collected[0])
           != earnings_message::collected_escrow_id(&collected[1]));
 
-    transfer::public_transfer(coin, OWNER);
-    transfer::public_transfer(inbox, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(coin, GOVERNOR);
+    transfer::public_transfer(inbox, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
 // ─── E3 — income ⊥ governance: coupon survives renounce ───────────────────────
 
-// The owner renounces governance up-front (burns the cap → the asset is sealed in
+// The governor renounces governance up-front (burns the cap → the asset is sealed in
 // perpetual usufruct, unclaimable forever). The escrow keeps producing: a tenure
-// still settles, still mails the owner share to the inbox, and the inbox still
+// still settles, still mails the governor share to the inbox, and the inbox still
 // collects it by the exact same value. Renunciation sheds the principal, never the
-// coupon — the EarningsInbox is independent of the OwnerCap by construction.
+// coupon — the EarningsInbox is independent of the GovernanceCap by construction.
 #[test]
 fun e3_income_flows_after_governance_renounced() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
-    let (owner_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+    let (governance_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(0),
         retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
         &fee_ref, &clk, sc.ctx(),
@@ -197,28 +197,28 @@ fun e3_income_flows_after_governance_renounced() {
     clock::destroy_for_testing(clk);
 
     // Renounce governance before any income — the cap is gone, the asset sealed.
-    sc.next_tx(OWNER);
-    cap::renounce_governance(owner_cap, sc.ctx());
+    sc.next_tx(GOVERNOR);
+    cap::renounce_governance(governance_cap, sc.ctx());
 
-    // The escrow still produces: a tenure settles, owner share mailed to the inbox.
-    sc.next_tx(OWNER);
+    // The escrow still produces: a tenure settles, governor share mailed to the inbox.
+    sc.next_tx(GOVERNOR);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     let msg_id     = rent_and_expire(&mut escrow, &mut sc);
     test_scenario::return_shared(escrow);
 
     // The inbox still collects it — same value as if governance were intact.
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut inbox = inbox;
     let ticket = test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(msg_id);
     let coin   = earnings::collect_earnings_messages<SUI>(&mut inbox, vector[ticket], sc.ctx());
-    assert_eq!(coin::value(&coin), owner_share());
+    assert_eq!(coin::value(&coin), governor_share());
 
     let collected = event::events_by_type<EarningsCollected<SUI>>();
     assert_eq!(collected.length(), 1);
-    assert_eq!(earnings_message::collected_amount(&collected[0]),    owner_share());
+    assert_eq!(earnings_message::collected_amount(&collected[0]),    governor_share());
     assert_eq!(earnings_message::collected_escrow_id(&collected[0]), escrow_id);
 
-    transfer::public_transfer(coin, OWNER);
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(coin, GOVERNOR);
+    transfer::public_transfer(inbox, GOVERNOR);
     sc.end();
 }

@@ -1,13 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * Phase A / 04 — soft_burn_tenant_cap
- * Measures: burning a STALE TenantCap (previous tenant's cap after new tenant bid).
+ * Phase A / 04 — soft_burn_usufruct_cap
+ * Measures: burning a STALE UsufructCap (previous usufructuary's cap after new usufructuary bid).
  *
  * Correct precondition:
  *   1. Escrow created with HandoverPolicy::FullTenure (bidding open from start)
- *   2. Tenant1 rents → Occupied, cap_t1 = current
- *   3. Tenant2 bids (rent) → Demand, cap_t1 becomes STALE, cap_t2 = pending
- *   4. soft_burn_tenant_cap(escrow, cap_t1) — burns the stale cap
+ *   2. Usufructuary1 rents → Occupied, cap_t1 = current
+ *   3. Usufructuary2 bids (rent) → Demand, cap_t1 becomes STALE, cap_t2 = pending
+ *   4. soft_burn_usufruct_cap(escrow, cap_t1) — burns the stale cap
  */
 
 import { resolve, dirname } from 'path';
@@ -50,40 +50,40 @@ function buildShortTenureEnsemble(tx: Transaction, pkg: string): TransactionArgu
 
 async function setupDemandState(
   client: SuiClient,
-  owner: Ed25519Keypair,
-  tenant1: Ed25519Keypair,
-  tenant2: Ed25519Keypair,
+  governor: Ed25519Keypair,
+  usufructuary1: Ed25519Keypair,
+  usufructuary2: Ed25519Keypair,
   d: ReturnType<typeof loadDeployment>,
 ): Promise<{ escrowId: string; staleCapId: string }> {
   // 1. integrate
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildShortTenureEnsemble);
-  tx1.transferObjects([ownerCap, inbox], d.owner.address);
+  tx1.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildShortTenureEnsemble);
+  tx1.transferObjects([governanceCap, inbox], d.governor.address);
 
-  const r1 = await execSetup(client, owner, tx1);
+  const r1 = await execSetup(client, governor, tx1);
   const escrowObj = (r1.objectChanges ?? []).find(
     c => c.type === 'created' && (c as any).objectType?.includes('Escrow'),
   ) as any;
   if (!escrowObj) throw new Error('setup: Escrow not found');
 
-  // 2. tenant1 rents → Occupied, cap_t1 = current
+  // 2. usufructuary1 rents → Occupied, cap_t1 = current
   const tx2 = new Transaction();
-  tx2.setSender(d.tenant1.address);
+  tx2.setSender(d.usufructuary1.address);
   const cap1 = buildRent(tx2, d.usufructPackageId, d.dummyAssetPackageId, escrowObj.objectId);
-  tx2.transferObjects([cap1], d.tenant1.address);
+  tx2.transferObjects([cap1], d.usufructuary1.address);
 
-  const r2 = await execSetup(client, tenant1, tx2);
+  const r2 = await execSetup(client, usufructuary1, tx2);
   const cap1Obj = (r2.objectChanges ?? []).find(
-    c => c.type === 'created' && (c as any).objectType?.includes('TenantCap'),
+    c => c.type === 'created' && (c as any).objectType?.includes('UsufructCap'),
   ) as any;
-  if (!cap1Obj) throw new Error('setup: TenantCap t1 not found');
+  if (!cap1Obj) throw new Error('setup: UsufructCap t1 not found');
 
-  // 3. tenant2 bids → Demand, cap_t1 becomes stale
+  // 3. usufructuary2 bids → Demand, cap_t1 becomes stale
   // Payment is 2x floor to cover price escalation (exact floor is computable
   // on-chain via next_floor_price_mist; excess becomes stake, returned on exit)
   const tx3 = new Transaction();
-  tx3.setSender(d.tenant2.address);
+  tx3.setSender(d.usufructuary2.address);
   const [payment2] = tx3.splitCoins(tx3.gas, [tx3.pure.u64(FLOOR_PRICE_MIST * 2n)]);
   const cycles2 = tx3.moveCall({
     target: `${d.usufructPackageId}::ensemble::tenures`,
@@ -94,9 +94,9 @@ async function setupDemandState(
     typeArguments: [`${d.dummyAssetPackageId}::dummy_asset::DummyAsset`, '0x2::sui::SUI'],
     arguments: [tx3.object(escrowObj.objectId), payment2, cycles2, clock(tx3)],
   });
-  tx3.transferObjects([cap2], d.tenant2.address);
+  tx3.transferObjects([cap2], d.usufructuary2.address);
 
-  await execSetup(client, tenant2, tx3);
+  await execSetup(client, usufructuary2, tx3);
 
   // Wait for the 2s handover countdown to expire, then apply pending transitions
   // so t2 becomes current and t1's cap becomes stale.
@@ -107,13 +107,13 @@ async function setupDemandState(
     '0x2::sui::SUI',
   ];
   const txApply = new Transaction();
-  txApply.setSender(d.owner.address);
+  txApply.setSender(d.governor.address);
   txApply.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
     arguments: [txApply.object(escrowObj.objectId), clock(txApply)],
   });
-  await execSetup(client, owner, txApply);
+  await execSetup(client, governor, txApply);
 
   return { escrowId: escrowObj.objectId, staleCapId: cap1Obj.objectId };
 }
@@ -133,21 +133,21 @@ async function main() {
     if (run > 0) await new Promise(r => setTimeout(r, 1000));
     process.stdout.write(`  run ${run + 1}/${RUNS} setup...`);
     const { escrowId, staleCapId } = await setupDemandState(
-      client, kp.owner, kp.tenant1, kp.tenant2, d,
+      client, kp.governor, kp.usufructuary1, kp.usufructuary2, d,
     );
 
     process.stdout.write(' measuring...');
     const tx = new Transaction();
-    tx.setSender(d.tenant1.address);
+    tx.setSender(d.usufructuary1.address);
 
-    // Burns the stale cap_t1 (tenant1's cap, now stale after tenant2 bid)
+    // Burns the stale cap_t1 (usufructuary1's cap, now stale after usufructuary2 bid)
     tx.moveCall({
-      target: `${d.usufructPackageId}::escrow::soft_burn_tenant_cap`,
+      target: `${d.usufructPackageId}::escrow::soft_burn_usufruct_cap`,
       typeArguments: typeArgs,
       arguments: [tx.object(escrowId), tx.object(staleCapId), clock(tx)],
     });
 
-    const rec = await measure(client, kp.tenant1, 'soft_burn', run, tx);
+    const rec = await measure(client, kp.usufructuary1, 'soft_burn', run, tx);
     records.push(rec);
     console.log(` net=${rec.net} MIST  -${rec.objectsDeleted}obj`);
   }

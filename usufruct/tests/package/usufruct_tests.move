@@ -6,10 +6,10 @@ module usufruct::usufruct_tests;
 
 use sui::package::Publisher;
 use sui::test_scenario::{Self, Scenario};
-use usufruct::owner_cap::OwnerCap;
+use usufruct::governance_cap::GovernanceCap;
 use usufruct::protocol_fee_inbox::ProtocolFeeInbox;
 use usufruct::protocol_fee_ref::ProtocolFeeRef;
-use usufruct::tenant_cap::TenantCap;
+use usufruct::usufruct_cap::UsufructCap;
 use usufruct::usufruct;
 
 // ─── Actors ────────────────────────────────────────────────────────────────
@@ -45,8 +45,8 @@ fun i2_publisher_authority_covers_package_types() {
     scenario.next_tx(DEPLOYER);
     {
         let publisher = scenario.take_from_sender<Publisher>();
-        assert!(publisher.from_package<OwnerCap>());
-        assert!(publisher.from_package<TenantCap>());
+        assert!(publisher.from_package<GovernanceCap>());
+        assert!(publisher.from_package<UsufructCap>());
         assert!(publisher.from_package<ProtocolFeeInbox>());
         assert!(publisher.from_package<ProtocolFeeRef>());
         scenario.return_to_sender(publisher);

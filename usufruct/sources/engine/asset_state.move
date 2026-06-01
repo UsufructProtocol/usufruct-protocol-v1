@@ -25,9 +25,9 @@ use usufruct::{
     tenure_duration_policy,
     tenure_extend_policy,
     monetary::{Self, Price, Stake},
-    owner_seat::{Self, OwnerSeat},
-    owner_identity,
-    owner_cap::{Self, OwnerCap, OwnerCapIdentity},
+    governor_seat::{Self, GovernorSeat},
+    governor_identity,
+    governance_cap::{Self, GovernanceCap, GovernanceCapIdentity},
     earnings_inbox::{Self, EarningsInbox, EarningsInboxIdentity},
     retire_commitment_policy::{Self, RetireCommitmentPolicy},
     ensemble_commitment_policy::{Self, EnsembleCommitmentPolicy},
@@ -36,12 +36,12 @@ use usufruct::{
     phases::{Self, Timestamp, Duration},
     escrow_identity::{Self, EscrowIdentity},
     protocol_fee_ref::{Self, FeeInboxIdentity},
-    tenant_cap::{Self, TenantCap, TenantCapIdentity},
+    usufruct_cap::{Self, UsufructCap, UsufructCapIdentity},
     refund_address::{Self, RefundAddress},
     refund_state,
-    tenant_seat::{Self, TenantSeat},
-    tenant_identity,
-    tenant_stake,
+    usufructuary_seat::{Self, UsufructuarySeat},
+    usufructuary_identity,
+    stake_balance,
 };
 
 // === Errors ===
@@ -52,18 +52,18 @@ const ERetireFlagBlocksBid:              u64 = 2;
 const ERetiredNoBid:                     u64 = 3;
 const ERetireCommitmentFloorNotElapsed:  u64 = 4;
 const EAlreadyRetired:                   u64 = 5;
-const EWrongEscrowTenantCap:             u64 = 6;
-const EPendingTenantCap:                 u64 = 7;
-const EStaleTenantCap:                   u64 = 8;
-const ETenantCapNotStale:                u64 = 9;
+const EWrongEscrowUsufructCap:             u64 = 6;
+const EPendingUsufructCap:                 u64 = 7;
+const EStaleUsufructCap:                   u64 = 8;
+const EUsufructCapNotStale:                u64 = 9;
 const EReceiptEscrowMismatch:            u64 = 10;
-const EWrongEscrowOwnerCap:              u64 = 11;
+const EWrongEscrowGovernanceCap:              u64 = 11;
 const ENotRetired:                       u64 = 12;
 const ERetireAlreadyScheduled:           u64 = 13;
 const ERetireCommitmentNotExtended:      u64 = 14;
 const EReturnedDifferentAsset:           u64 = 15;
 const EAlreadyRetiring:                  u64 = 16;
-const ETenantCapStale:                   u64 = 17;
+const EUsufructCapStale:                   u64 = 17;
 const EEnsembleCommitmentFloorNotElapsed: u64 = 18;
 const EEnsembleCommitmentNotExtended:     u64 = 19;
 
@@ -120,17 +120,17 @@ public struct EnsembleCommitmentSlot has copy, drop, store {
 
 public struct OccupiedTerms<phantom CoinType> has store {
     schedule: TenancySchedule,
-    active:  TenantSeat<CoinType>,
+    active:  UsufructuarySeat<CoinType>,
     retire:   RetireCondition,
 }
 
 public struct DemandTerms<phantom CoinType> has store {
-    pending:  TenantSeat<CoinType>,
+    pending:  UsufructuarySeat<CoinType>,
     handover: HandoverTerms,
 }
 
 public struct EscrowCore<phantom CoinType> has store {
-    owner:              OwnerSeat,
+    governor_seat:              GovernorSeat,
     ensemble:           EnsembleSlot,
     fee_inbox_identity: FeeInboxIdentity,
     integrated_at:      Timestamp,
@@ -166,8 +166,8 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 
 public struct RentStarted has copy, drop {
     escrow_id:         ID,
-    tenant_cap_id:     ID,
-    tenant_address:    address,
+    usufruct_cap_id:     ID,
+    usufructuary_address:    address,
     phase_start_ms:    u64,
     price_paid:        u64,
     floor_price:       u64,
@@ -225,8 +225,8 @@ public struct EnsembleCommitmentExtended has copy, drop {
 
 public struct AssetIntegrated has copy, drop {
     escrow_id:         ID,
-    owner_cap_id:      ID,
-    owner_address:     address,
+    governance_cap_id:      ID,
+    governor_address:     address,
     asset_id:          ID,
     fee_inbox_id:      ID,
     earnings_inbox_id: ID,
@@ -237,8 +237,8 @@ public struct AssetIntegrated has copy, drop {
 
 public struct AssetClaimed has copy, drop {
     escrow_id:     ID,
-    owner_cap_id:  ID,
-    owner_address: address,
+    governance_cap_id:  ID,
+    governor_address: address,
     asset_type:    String,
     coin_type:     String,
     timestamp_ms:  u64,
@@ -246,12 +246,12 @@ public struct AssetClaimed has copy, drop {
 
 public struct BidPlaced has copy, drop {
     escrow_id:                 ID,
-    active_tenant_cap_id:     ID,
-    active_tenant_address:    address,
-    active_tenant_stake:      u64,
+    active_usufruct_cap_id:     ID,
+    active_usufructuary_address:    address,
+    active_stake_balance:      u64,
     active_phase_start_ms:    u64,
-    pending_tenant_cap_id:     ID,
-    pending_tenant_address:    address,
+    pending_usufruct_cap_id:     ID,
+    pending_usufructuary_address:    address,
     bid_amount:                u64,
     floor_price:               u64,
     handover_countdown_expiry: u64,
@@ -263,14 +263,14 @@ public struct BidPlaced has copy, drop {
 
 public struct BidSuperseded has copy, drop {
     escrow_id:                 ID,
-    protected_tenant_cap_id:   ID,
-    protected_tenant_address:  address,
-    protected_tenant_stake:    u64,
+    protected_usufruct_cap_id:   ID,
+    protected_usufructuary_address:  address,
+    protected_stake_balance:    u64,
     protected_phase_start_ms:  u64,
-    displaced_tenant_cap_id:   ID,
+    displaced_usufruct_cap_id:   ID,
     displaced_bidder_address:  address,
     refunded_amount:           u64,
-    new_tenant_cap_id:         ID,
+    new_usufruct_cap_id:         ID,
     new_bidder_address:        address,
     new_bid_amount:            u64,
     floor_price:               u64,
@@ -283,17 +283,17 @@ public struct BidSuperseded has copy, drop {
 
 public struct HandoverCompleted has copy, drop {
     escrow_id:                    ID,
-    displaced_tenant_cap_id:      ID,
-    displaced_tenant_address:     address,
+    displaced_usufruct_cap_id:      ID,
+    displaced_usufructuary_address:     address,
     displaced_phase_start_ms:     u64,
     displaced_ceiling_total_ms:   u64,
     displaced_handover_total_ms:  u64,
-    new_tenant_cap_id:            ID,
-    new_tenant_address:           address,
-    new_tenant_stake:             u64,
+    new_usufruct_cap_id:            ID,
+    new_usufructuary_address:           address,
+    new_stake_balance:             u64,
     used_credit:                  u64,
     remain_credit:                u64,
-    owner_share:                  u64,
+    governor_share:                  u64,
     protocol_fee:                 u64,
     new_rent_price:               u64,
     committed_tenures:            u64,
@@ -306,10 +306,10 @@ public struct HandoverCompleted has copy, drop {
 
 public struct TenureExpired has copy, drop {
     escrow_id:              ID,
-    tenant_cap_id:          ID,
-    tenant_address:         address,
+    usufruct_cap_id:          ID,
+    usufructuary_address:         address,
     phase_start_ms:         u64,
-    owner_share:            u64,
+    governor_share:            u64,
     protocol_fee:           u64,
     last_acquisition_price: u64,
     asset_type:             String,
@@ -319,8 +319,8 @@ public struct TenureExpired has copy, drop {
 
 public struct RetireFlagSet has copy, drop {
     escrow_id:     ID,
-    owner_cap_id:  ID,
-    owner_address: address,
+    governance_cap_id:  ID,
+    governor_address: address,
     asset_type:    String,
     coin_type:     String,
     timestamp_ms:  u64,
@@ -328,8 +328,8 @@ public struct RetireFlagSet has copy, drop {
 
 public struct AssetBorrowed has copy, drop {
     escrow_id:      ID,
-    tenant_cap_id:  ID,
-    tenant_address: address,
+    usufruct_cap_id:  ID,
+    usufructuary_address: address,
     asset_type:     String,
     coin_type:      String,
     timestamp_ms:   u64,
@@ -337,15 +337,15 @@ public struct AssetBorrowed has copy, drop {
 
 public struct AssetReturned has copy, drop {
     escrow_id:      ID,
-    tenant_cap_id:  ID,
-    tenant_address: address,
+    usufruct_cap_id:  ID,
+    usufructuary_address: address,
     asset_type:     String,
     coin_type:      String,
 }
 
-public struct ActiveTenantRefundAddressUpdated has copy, drop {
+public struct ActiveUsufructuaryRefundAddressUpdated has copy, drop {
     escrow_id:     ID,
-    tenant_cap_id: ID,
+    usufruct_cap_id: ID,
     old_address:   address,
     new_address:   address,
     asset_type:    String,
@@ -353,9 +353,9 @@ public struct ActiveTenantRefundAddressUpdated has copy, drop {
     timestamp_ms:  u64,
 }
 
-public struct PendingTenantRefundAddressUpdated has copy, drop {
+public struct PendingUsufructuaryRefundAddressUpdated has copy, drop {
     escrow_id:     ID,
-    tenant_cap_id: ID,
+    usufruct_cap_id: ID,
     old_address:   address,
     new_address:   address,
     asset_type:    String,
@@ -416,13 +416,13 @@ public(package) fun proj_ensemble_commitment_anchor<CoinType>(
 public(package) fun proj_earnings_inbox<CoinType>(
     core: &EscrowCore<CoinType>,
 ): EarningsInboxIdentity {
-    owner_seat::proj_inbox(&core.owner)
+    governor_seat::proj_inbox(&core.governor_seat)
 }
 
-public(package) fun proj_owner_cap_id<CoinType>(
+public(package) fun proj_governance_cap_id<CoinType>(
     core: &EscrowCore<CoinType>,
 ): ID {
-    owner_cap::proj_id(owner_identity::proj_cap_identity(owner_seat::proj_identity(&core.owner)))
+    governance_cap::proj_id(governor_identity::proj_cap_identity(governor_seat::proj_identity(&core.governor_seat)))
 }
 
 public(package) fun proj_is_live<Asset: key + store, CoinType>(
@@ -498,7 +498,7 @@ public(package) fun proj_active_addr<Asset: key + store, CoinType>(
 ): Option<address> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_addr(&terms.active)),
+            option::some(usufructuary_addr(&terms.active)),
         _ => option::none(),
     }
 }
@@ -508,7 +508,7 @@ public(package) fun proj_active_cap_id<Asset: key + store, CoinType>(
 ): Option<ID> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_cap::proj_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active)))),
+            option::some(usufruct_cap::proj_id(usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active)))),
         _ => option::none(),
     }
 }
@@ -518,7 +518,7 @@ public(package) fun proj_pending_addr<Asset: key + store, CoinType>(
 ): Option<address> {
     match (s) {
         AssetState::Renting(RentingState::Demand { bid, .. }) =>
-            option::some(tenant_addr(&bid.pending)),
+            option::some(usufructuary_addr(&bid.pending)),
         _ => option::none(),
     }
 }
@@ -528,7 +528,7 @@ public(package) fun proj_pending_cap_id<Asset: key + store, CoinType>(
 ): Option<ID> {
     match (s) {
         AssetState::Renting(RentingState::Demand { bid, .. }) =>
-            option::some(tenant_cap::proj_id(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending)))),
+            option::some(usufruct_cap::proj_id(usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&bid.pending)))),
         _ => option::none(),
     }
 }
@@ -538,7 +538,7 @@ public(package) fun proj_active_stake<Asset: key + store, CoinType>(
 ): Option<Stake> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            option::some(tenant_seat::proj_stake_value(&terms.active)),
+            option::some(usufructuary_seat::proj_stake_value(&terms.active)),
         _ => option::none(),
     }
 }
@@ -548,7 +548,7 @@ public(package) fun proj_active_stake_value<Asset: key + store, CoinType>(
 ): Stake {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            tenant_seat::proj_stake_value(&terms.active),
+            usufructuary_seat::proj_stake_value(&terms.active),
         _ => abort ENotRented,
     }
 }
@@ -558,7 +558,7 @@ public(package) fun proj_pending_stake<Asset: key + store, CoinType>(
 ): Option<Stake> {
     match (s) {
         AssetState::Renting(RentingState::Demand { bid, .. }) =>
-            option::some(tenant_seat::proj_stake_value(&bid.pending)),
+            option::some(usufructuary_seat::proj_stake_value(&bid.pending)),
         _ => option::none(),
     }
 }
@@ -716,10 +716,10 @@ public(package) fun compute_floor_price_at<Asset: key + store, CoinType>(
         },
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            ascending_floor_price(tenures::compute_per_tenure_stake(tenant_seat::proj_stake_value(&terms.active), terms.schedule.committed_tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::compute_per_tenure_stake(usufructuary_seat::proj_stake_value(&terms.active), terms.schedule.committed_tenures), &core.ensemble.active)
         },
         AssetState::Renting(RentingState::Demand { bid, .. }) => {
-            ascending_floor_price(tenures::compute_per_tenure_stake(tenant_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::compute_per_tenure_stake(usufructuary_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
         },
     }
 }
@@ -731,10 +731,10 @@ public(package) fun compute_used_credit_at<Asset: key + store, CoinType>(
 ): Stake {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            accruing_used_credit(tenant_seat::proj_stake_value(&terms.active), terms.schedule.phase_start, &core.ensemble.active, terms.schedule.ceiling_total, now)
+            accruing_used_credit(usufructuary_seat::proj_stake_value(&terms.active), terms.schedule.phase_start, &core.ensemble.active, terms.schedule.ceiling_total, now)
         },
         AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
-            capped_used_credit(tenant_seat::proj_stake_value(&terms.active), terms.schedule.phase_start, bid.handover.expiry, &core.ensemble.active, terms.schedule.ceiling_total, now)
+            capped_used_credit(usufructuary_seat::proj_stake_value(&terms.active), terms.schedule.phase_start, bid.handover.expiry, &core.ensemble.active, terms.schedule.ceiling_total, now)
         },
         _ => abort ENotRented,
     }
@@ -747,10 +747,10 @@ public(package) fun proj_handover_settlement<Asset: key + store, CoinType>(
 ): (Stake, Stake, Stake) {
     let stake = proj_active_stake_value(s);
     let used  = compute_used_credit_at(s, core, now);
-    let (owner_share, protocol_fee) = split_fee_amounts(used);
+    let (governor_share, protocol_fee) = split_fee_amounts(used);
     (
         monetary::stake(monetary::stake_mist(stake) - monetary::stake_mist(used)),
-        owner_share,
+        governor_share,
         protocol_fee,
     )
 }
@@ -764,29 +764,29 @@ public(package) fun proj_tenure_settlement<Asset: key + store, CoinType>(
 
 public(package) fun cap_is_active<Asset: key + store, CoinType>(
     s:   &AssetState<Asset, CoinType>,
-    cap: TenantCapIdentity,
+    cap: UsufructCapIdentity,
 ): bool {
     match (s) {
         AssetState::Renting(RentingState::Occupied { terms, .. } | RentingState::Demand { terms, .. }) =>
-            cap == tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active)),
+            cap == usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active)),
         _ => false,
     }
 }
 
 public(package) fun cap_is_pending<Asset: key + store, CoinType>(
     s:   &AssetState<Asset, CoinType>,
-    cap: TenantCapIdentity,
+    cap: UsufructCapIdentity,
 ): bool {
     match (s) {
         AssetState::Renting(RentingState::Demand { bid, .. }) =>
-            cap == tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending)),
+            cap == usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&bid.pending)),
         _ => false,
     }
 }
 
 public(package) fun cap_is_stale<Asset: key + store, CoinType>(
     s:   &AssetState<Asset, CoinType>,
-    cap: TenantCapIdentity,
+    cap: UsufructCapIdentity,
 ): bool {
     !cap_is_active(s, cap) && !cap_is_pending(s, cap)
 }
@@ -827,7 +827,7 @@ public(package) fun renting_into_state<Asset: key + store, CoinType>(
     AssetState::Renting(rs)
 }
 
-/// Open a new portfolio: mint a fresh `OwnerCap` + `EarningsInbox` pair and bind
+/// Open a new portfolio: mint a fresh `GovernanceCap` + `EarningsInbox` pair and bind
 /// the new escrow to both. The root of the one-pair-per-portfolio invariant —
 /// both instruments are born here, exactly once, together. The api layer shares
 /// the escrow and hands the pair back to the caller.
@@ -840,19 +840,19 @@ public(package) fun execute_integrate<Asset: key + store, CoinType>(
     escrow_identity:     EscrowIdentity,
     integrated_at:       Timestamp,
     ctx:                 &mut TxContext,
-): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, OwnerCap, EarningsInbox) {
-    let owner_addr = ctx.sender();
-    let owner_cap  = owner_cap::new(escrow_identity, owner_addr, ctx);
+): (EscrowCore<CoinType>, AssetState<Asset, CoinType>, GovernanceCap, EarningsInbox) {
+    let governor_addr = ctx.sender();
+    let governance_cap  = governance_cap::new(escrow_identity, governor_addr, ctx);
     let inbox      = earnings_inbox::new(ctx);
     let (core, state) = build_idle_core_and_state<Asset, CoinType>(
         asset, ensemble, retire_commitment, ensemble_commitment, fee_inbox_identity,
-        earnings_inbox::identity(&inbox), owner_cap::identity(&owner_cap),
-        escrow_identity, integrated_at, owner_addr,
+        earnings_inbox::identity(&inbox), governance_cap::identity(&governance_cap),
+        escrow_identity, integrated_at, governor_addr,
     );
-    (core, state, owner_cap, inbox)
+    (core, state, governance_cap, inbox)
 }
 
-/// Join an existing portfolio: bind the new escrow to a caller-held `OwnerCap`
+/// Join an existing portfolio: bind the new escrow to a caller-held `GovernanceCap`
 /// and `EarningsInbox`. Mints neither — holding both objects by reference is the
 /// authorization. The new escrow's governance routes to the existing cap; its
 /// income to the existing inbox.
@@ -862,7 +862,7 @@ public(package) fun execute_integrate_into_portfolio<Asset: key + store, CoinTyp
     retire_commitment:   RetireCommitmentPolicy,
     ensemble_commitment: EnsembleCommitmentPolicy,
     fee_inbox_identity:  FeeInboxIdentity,
-    owner_cap:           &OwnerCap,
+    governance_cap:           &GovernanceCap,
     inbox:               &EarningsInbox,
     escrow_identity:     EscrowIdentity,
     integrated_at:       Timestamp,
@@ -870,7 +870,7 @@ public(package) fun execute_integrate_into_portfolio<Asset: key + store, CoinTyp
 ): (EscrowCore<CoinType>, AssetState<Asset, CoinType>) {
     build_idle_core_and_state<Asset, CoinType>(
         asset, ensemble, retire_commitment, ensemble_commitment, fee_inbox_identity,
-        earnings_inbox::identity(inbox), owner_cap::identity(owner_cap),
+        earnings_inbox::identity(inbox), governance_cap::identity(governance_cap),
         escrow_identity, integrated_at, ctx.sender(),
     )
 }
@@ -895,7 +895,7 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     tenures:  Tenures,
     clock:    &Clock,
     ctx:      &mut TxContext,
-): (RentingState<Asset, CoinType>, EscrowCore<CoinType>, TenantCap) {
+): (RentingState<Asset, CoinType>, EscrowCore<CoinType>, UsufructCap) {
     let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     tenure_extend_policy::validate(policy_ensemble::proj_tenure_extend(&core.ensemble.active), tenures);
     let now                = phases::now(clock);
@@ -915,18 +915,18 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
-            let stake = tenant_seat::proj_stake_value(&terms.active);
+            let stake = usufructuary_seat::proj_stake_value(&terms.active);
             let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
-            let stake = tenant_seat::proj_stake_value(&bid.pending);
+            let stake = usufructuary_seat::proj_stake_value(&bid.pending);
             let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, bid.handover.tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_supersede_bid(
                 asset, terms, bid, cycle, tenures,
-                &core.owner, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
+                &core.governor_seat, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
             )
         },
     };
@@ -936,11 +936,11 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
 public(package) fun execute_retire<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
-    owner_cap: &OwnerCap,
+    governance_cap: &GovernanceCap,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
-    assert_owner_cap_binds(owner_cap, &core);
+    assert_governance_cap_binds(governance_cap, &core);
     let now = phases::now(clock);
     assert_retire_commitment_elapsed(&core, now);
     let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
@@ -948,20 +948,20 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
     let escrow_identity = core.escrow_identity;
     let raw_escrow_id   = escrow_identity::escrow_id(escrow_identity);
     let now_ms          = phases::timestamp_ms(now);
-    let owner_cap_id    = object::id(owner_cap);
+    let governance_cap_id    = object::id(governance_cap);
     let new_s = match (s) {
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort EAlreadyRetired,
         AssetState::Waiting(WaitingState::Idle { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, owner_cap, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, governance_cap, escrow_identity, now, ctx)),
         AssetState::Waiting(WaitingState::Descent { asset, .. }) =>
-            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, owner_cap, escrow_identity, now, ctx)),
+            AssetState::Waiting(do_retire_immediately<Asset, CoinType>(asset, governance_cap, escrow_identity, now, ctx)),
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
-            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
+            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, governance_cap_id, governor_address: ctx.sender(), asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, active, retire } = terms;
             AssetState::Renting(RentingState::Occupied { asset, terms: OccupiedTerms { schedule, active, retire: retire_condition_set(retire) }, cycle })
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
-            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
+            event::emit(RetireFlagSet { escrow_id: raw_escrow_id, governance_cap_id, governor_address: ctx.sender(), asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             let OccupiedTerms { schedule, active, retire } = terms;
             AssetState::Renting(RentingState::Demand { asset, terms: OccupiedTerms { schedule, active, retire: retire_condition_set(retire) }, bid, cycle })
         },
@@ -972,12 +972,12 @@ public(package) fun execute_retire<Asset: key + store, CoinType>(
 public(package) fun execute_update_ensemble<Asset: key + store, CoinType>(
     s:            AssetState<Asset, CoinType>,
     core:         EscrowCore<CoinType>,
-    owner_cap:    &OwnerCap,
+    governance_cap:    &GovernanceCap,
     new_ensemble: PolicyEnsemble,
     clock:        &Clock,
     ctx:          &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
-    assert_owner_cap_binds(owner_cap, &core);
+    assert_governance_cap_binds(governance_cap, &core);
     assert_ensemble_commitment_elapsed(&core, phases::now(clock));
     let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
@@ -1014,45 +1014,45 @@ public(package) fun execute_update_ensemble<Asset: key + store, CoinType>(
 public(package) fun execute_borrow<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       EscrowCore<CoinType>,
-    tenant_cap: &TenantCap,
+    usufruct_cap: &UsufructCap,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt<Asset, CoinType>, EscrowCore<CoinType>) {
-    assert_tenant_cap_binds(tenant_cap, &core);
+    assert_usufruct_cap_binds(usufruct_cap, &core);
     let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
-    let cap_identity  = tenant_cap::identity(tenant_cap);
+    let cap_identity  = usufruct_cap::identity(usufruct_cap);
     let raw_escrow_id = escrow_identity::escrow_id(core.escrow_identity);
     let now_ms        = phases::timestamp_ms(phases::now(clock));
     match (s) {
         AssetState::Renting(RentingState::Occupied { mut asset, terms, cycle }) => {
             assert_borrow_authorized(cap_identity,
-                tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active)),
+                usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active)),
                 option::none());
-            let tenant_addr = tenant_addr(&terms.active);
+            let usufructuary_addr = usufructuary_addr(&terms.active);
             let asset_id    = asset_custody::proj_asset_id(&asset);
             let u           = asset_custody::take(&mut asset);
             let receipt     = AssetReceipt {
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Occupied { asset, terms, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, usufruct_cap_id: usufruct_cap::proj_id(cap_identity), usufructuary_address: usufructuary_addr, asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             (u, receipt, core)
         },
         AssetState::Renting(RentingState::Demand { mut asset, terms, bid, cycle }) => {
             assert_borrow_authorized(cap_identity,
-                tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active)),
-                option::some(tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending))));
-            let tenant_addr = tenant_addr(&terms.active);
+                usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active)),
+                option::some(usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&bid.pending))));
+            let usufructuary_addr = usufructuary_addr(&terms.active);
             let asset_id    = asset_custody::proj_asset_id(&asset);
             let u           = asset_custody::take(&mut asset);
             let receipt     = AssetReceipt {
                 identity: escrowed_asset_identity::new(asset_id, core.escrow_identity),
                 renting:  RentingState::Demand { asset, terms, bid, cycle },
             };
-            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, tenant_cap_id: tenant_cap::proj_id(cap_identity), tenant_address: tenant_addr, asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
+            event::emit(AssetBorrowed { escrow_id: raw_escrow_id, usufruct_cap_id: usufruct_cap::proj_id(cap_identity), usufructuary_address: usufructuary_addr, asset_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())), coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())), timestamp_ms: now_ms });
             (u, receipt, core)
         },
-        _s => abort EStaleTenantCap,
+        _s => abort EStaleUsufructCap,
     }
 }
 
@@ -1065,26 +1065,26 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     assert_return_valid(&identity, &asset_in, core.escrow_identity);
     match (renting) {
         RentingState::Occupied { mut asset, terms, cycle } => {
-            let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
-            let tenant_addr = tenant_addr(&terms.active);
+            let cap_id      = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+            let usufructuary_addr = usufructuary_addr(&terms.active);
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:      escrow_identity::escrow_id(core.escrow_identity),
-                tenant_cap_id:  tenant_cap::proj_id(cap_id),
-                tenant_address: tenant_addr,
+                usufruct_cap_id:  usufruct_cap::proj_id(cap_id),
+                usufructuary_address: usufructuary_addr,
                 asset_type:     string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
                 coin_type:      string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
             });
             RentingState::Occupied { asset, terms, cycle }
         },
         RentingState::Demand { mut asset, terms, bid, cycle } => {
-            let cap_id      = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
-            let tenant_addr = tenant_addr(&terms.active);
+            let cap_id      = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+            let usufructuary_addr = usufructuary_addr(&terms.active);
             asset_custody::put(&mut asset, asset_in);
             event::emit(AssetReturned {
                 escrow_id:      escrow_identity::escrow_id(core.escrow_identity),
-                tenant_cap_id:  tenant_cap::proj_id(cap_id),
-                tenant_address: tenant_addr,
+                usufruct_cap_id:  usufruct_cap::proj_id(cap_id),
+                usufructuary_address: usufructuary_addr,
                 asset_type:     string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
                 coin_type:      string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
             });
@@ -1093,43 +1093,43 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun execute_soft_burn_tenant_cap<Asset: key + store, CoinType>(
+public(package) fun execute_soft_burn_usufruct_cap<Asset: key + store, CoinType>(
     s:    AssetState<Asset, CoinType>,
     core: EscrowCore<CoinType>,
-    cap:  TenantCap,
+    cap:  UsufructCap,
     clock:    &Clock,
     ctx:      &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
-    assert_tenant_cap_binds(&cap, &core);
+    assert_usufruct_cap_binds(&cap, &core);
     let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
-    let cap_identity = tenant_cap::identity(&cap);
+    let cap_identity = usufruct_cap::identity(&cap);
     match (&s) {
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            let active = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
-            if (cap_identity == active) abort ETenantCapNotStale;
+            let active = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+            if (cap_identity == active) abort EUsufructCapNotStale;
         },
         AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
-            let active = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
-            let pending = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending));
-            if (cap_identity == active || cap_identity == pending) abort ETenantCapNotStale;
+            let active = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+            let pending = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&bid.pending));
+            if (cap_identity == active || cap_identity == pending) abort EUsufructCapNotStale;
         },
         _ => {},
     };
-    tenant_cap::burn(cap, ctx);
+    usufruct_cap::burn(cap, ctx);
     (s, core)
 }
 
-public(package) fun execute_update_tenant_refund_address<Asset: key + store, CoinType>(
+public(package) fun execute_update_usufructuary_refund_address<Asset: key + store, CoinType>(
     s:           AssetState<Asset, CoinType>,
     core:        EscrowCore<CoinType>,
-    cap:         &TenantCap,
+    cap:         &UsufructCap,
     new_address: RefundAddress,
     clock:       &Clock,
     ctx:         &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
-    assert_tenant_cap_binds(cap, &core);
+    assert_usufruct_cap_binds(cap, &core);
     let (mut s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
-    let cap_identity = tenant_cap::identity(cap);
+    let cap_identity = usufruct_cap::identity(cap);
     let escrow_id    = escrow_identity::escrow_id(core.escrow_identity);
     let timestamp_ms = clock::timestamp_ms(clock);
     let new_addr_raw = refund_address::addr(new_address);
@@ -1137,13 +1137,13 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
     let coin_type    = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
     match (&mut s) {
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            let active_id = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
+            let active_id = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
             if (cap_identity == active_id) {
-                let old_address = tenant_addr(&terms.active);
-                tenant_seat::set_refund_address(&mut terms.active, new_address);
-                event::emit(ActiveTenantRefundAddressUpdated {
+                let old_address = usufructuary_addr(&terms.active);
+                usufructuary_seat::set_refund_address(&mut terms.active, new_address);
+                event::emit(ActiveUsufructuaryRefundAddressUpdated {
                     escrow_id,
-                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    usufruct_cap_id: usufruct_cap::proj_id(cap_identity),
                     old_address,
                     new_address:   new_addr_raw,
                     asset_type,
@@ -1151,18 +1151,18 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
                     timestamp_ms,
                 });
             } else {
-                abort ETenantCapStale
+                abort EUsufructCapStale
             }
         },
         AssetState::Renting(RentingState::Demand { terms, bid, .. }) => {
-            let active_id  = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
-            let pending_id = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&bid.pending));
+            let active_id  = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+            let pending_id = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&bid.pending));
             if (cap_identity == active_id) {
-                let old_address = tenant_addr(&terms.active);
-                tenant_seat::set_refund_address(&mut terms.active, new_address);
-                event::emit(ActiveTenantRefundAddressUpdated {
+                let old_address = usufructuary_addr(&terms.active);
+                usufructuary_seat::set_refund_address(&mut terms.active, new_address);
+                event::emit(ActiveUsufructuaryRefundAddressUpdated {
                     escrow_id,
-                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    usufruct_cap_id: usufruct_cap::proj_id(cap_identity),
                     old_address,
                     new_address:   new_addr_raw,
                     asset_type,
@@ -1170,11 +1170,11 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
                     timestamp_ms,
                 });
             } else if (cap_identity == pending_id) {
-                let old_address = tenant_addr(&bid.pending);
-                tenant_seat::set_refund_address(&mut bid.pending, new_address);
-                event::emit(PendingTenantRefundAddressUpdated {
+                let old_address = usufructuary_addr(&bid.pending);
+                usufructuary_seat::set_refund_address(&mut bid.pending, new_address);
+                event::emit(PendingUsufructuaryRefundAddressUpdated {
                     escrow_id,
-                    tenant_cap_id: tenant_cap::proj_id(cap_identity),
+                    usufruct_cap_id: usufruct_cap::proj_id(cap_identity),
                     old_address,
                     new_address:   new_addr_raw,
                     asset_type,
@@ -1182,10 +1182,10 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
                     timestamp_ms,
                 });
             } else {
-                abort ETenantCapStale
+                abort EUsufructCapStale
             }
         },
-        _ => abort ETenantCapStale,
+        _ => abort EUsufructCapStale,
     };
     (s, core)
 }
@@ -1193,12 +1193,12 @@ public(package) fun execute_update_tenant_refund_address<Asset: key + store, Coi
 public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       EscrowCore<CoinType>,
-    owner_cap:  &OwnerCap,
+    governance_cap:  &GovernanceCap,
     new_policy: RetireCommitmentPolicy,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
-    assert_owner_cap_binds(owner_cap, &core);
+    assert_governance_cap_binds(governance_cap, &core);
     let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     assert_not_retired(&s);
     let now            = phases::now(clock);
@@ -1229,12 +1229,12 @@ public(package) fun execute_extend_retire_commitment<Asset: key + store, CoinTyp
 public(package) fun execute_extend_ensemble_commitment<Asset: key + store, CoinType>(
     s:          AssetState<Asset, CoinType>,
     core:       EscrowCore<CoinType>,
-    owner_cap:  &OwnerCap,
+    governance_cap:  &GovernanceCap,
     new_policy: EnsembleCommitmentPolicy,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (AssetState<Asset, CoinType>, EscrowCore<CoinType>) {
-    assert_owner_cap_binds(owner_cap, &core);
+    assert_governance_cap_binds(governance_cap, &core);
     let (s, mut core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     assert_not_retired(&s);
     let now            = phases::now(clock);
@@ -1262,35 +1262,35 @@ public(package) fun execute_extend_ensemble_commitment<Asset: key + store, CoinT
     (s, core)
 }
 
-/// Claim the asset from a retired escrow. Returns only the asset — owner income
+/// Claim the asset from a retired escrow. Returns only the asset — governor income
 /// never accumulates in the seat (it was mailed to the inbox each settlement), so
-/// there is nothing to sweep. Takes `&OwnerCap`: the cap may govern other escrows,
+/// there is nothing to sweep. Takes `&GovernanceCap`: the cap may govern other escrows,
 /// so claiming one escrow must not consume it.
 public(package) fun execute_claim<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
-    owner_cap: &OwnerCap,
+    governance_cap: &GovernanceCap,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Asset {
-    assert_owner_cap_binds(owner_cap, &core);
+    assert_governance_cap_binds(governance_cap, &core);
     let (s, core) = execute_apply_pending_transition_states(s, core, clock, ctx);
     match (s) {
         AssetState::Waiting(WaitingState::Retired { asset }) => {
-            let EscrowCore { owner, escrow_identity, .. } = core;
-            owner_seat::destroy(owner);
+            let EscrowCore { governor_seat, escrow_identity, .. } = core;
+            governor_seat::destroy(governor_seat);
             event::emit(AssetClaimed {
                 escrow_id:     escrow_identity::escrow_id(escrow_identity),
-                owner_cap_id:  object::id(owner_cap),
-                owner_address: ctx.sender(),
+                governance_cap_id:  object::id(governance_cap),
+                governor_address: ctx.sender(),
                 asset_type:    string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
                 coin_type:     string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
                 timestamp_ms:  clock::timestamp_ms(clock),
             });
             asset_custody::unlock(asset)
         },
-        AssetState::Waiting(_ws)  => { let EscrowCore { owner: _o, .. } = core; abort ENotRetired },
-        AssetState::Renting(_rs)  => { let EscrowCore { owner: _o, .. } = core; abort ENotRetired },
+        AssetState::Waiting(_ws)  => { let EscrowCore { governor_seat: _o, .. } = core; abort ENotRetired },
+        AssetState::Renting(_rs)  => { let EscrowCore { governor_seat: _o, .. } = core; abort ENotRetired },
     }
 }
 
@@ -1307,17 +1307,17 @@ fun build_idle_core_and_state<Asset: key + store, CoinType>(
     ensemble_commitment: EnsembleCommitmentPolicy,
     fee_inbox_identity:  FeeInboxIdentity,
     inbox_identity:      EarningsInboxIdentity,
-    cap_identity:        OwnerCapIdentity,
+    cap_identity:        GovernanceCapIdentity,
     escrow_identity:     EscrowIdentity,
     integrated_at:       Timestamp,
-    owner_addr:          address,
+    governor_addr:          address,
 ): (EscrowCore<CoinType>, AssetState<Asset, CoinType>) {
     let asset_id      = object::id(&asset);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
     policy_ensemble::emit_registration(&ensemble, escrow_identity, integrated_at);
     let cycle = resolve_and_emit_cycle_params(&ensemble, raw_escrow_id, phases::timestamp_ms(integrated_at));
     let core = EscrowCore {
-        owner:              owner_seat::new(cap_identity, inbox_identity),
+        governor_seat:              governor_seat::new(cap_identity, inbox_identity),
         ensemble:           EnsembleSlot { active: ensemble, pending: option::none() },
         fee_inbox_identity,
         integrated_at,
@@ -1331,8 +1331,8 @@ fun build_idle_core_and_state<Asset: key + store, CoinType>(
     });
     event::emit(AssetIntegrated {
         escrow_id:         raw_escrow_id,
-        owner_cap_id:      owner_cap::proj_id(cap_identity),
-        owner_address:     owner_addr,
+        governance_cap_id:      governance_cap::proj_id(cap_identity),
+        governor_address:     governor_addr,
         asset_id,
         fee_inbox_id:      protocol_fee_ref::proj_id(fee_inbox_identity),
         earnings_inbox_id: earnings_inbox::proj_id(inbox_identity),
@@ -1364,19 +1364,19 @@ fun resolve_and_emit_cycle_params(ensemble: &PolicyEnsemble, escrow_id: ID, time
     cycle
 }
 
-fun assert_owner_cap_binds<CoinType>(cap: &OwnerCap, core: &EscrowCore<CoinType>) {
+fun assert_governance_cap_binds<CoinType>(cap: &GovernanceCap, core: &EscrowCore<CoinType>) {
     assert!(
-        owner_cap::identity(cap) == owner_identity::proj_cap_identity(owner_seat::proj_identity(&core.owner)),
-        EWrongEscrowOwnerCap,
+        governance_cap::identity(cap) == governor_identity::proj_cap_identity(governor_seat::proj_identity(&core.governor_seat)),
+        EWrongEscrowGovernanceCap,
     )
 }
 
-fun assert_tenant_cap_binds<CoinType>(cap: &TenantCap, core: &EscrowCore<CoinType>) {
-    assert!(tenant_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowTenantCap)
+fun assert_usufruct_cap_binds<CoinType>(cap: &UsufructCap, core: &EscrowCore<CoinType>) {
+    assert!(usufruct_cap::proj_escrow_identity(cap) == core.escrow_identity, EWrongEscrowUsufructCap)
 }
 
-fun tenant_addr<C>(seat: &TenantSeat<C>): address {
-    refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(seat)))
+fun usufructuary_addr<C>(usufructuary_seat: &UsufructuarySeat<C>): address {
+    refund_address::addr(usufructuary_identity::proj_address(usufructuary_seat::proj_identity(usufructuary_seat)))
 }
 
 fun assert_not_retired<Asset: key + store, CoinType>(s: &AssetState<Asset, CoinType>) {
@@ -1412,13 +1412,13 @@ fun assert_ensemble_commitment_elapsed<CoinType>(core: &EscrowCore<CoinType>, no
 }
 
 fun assert_borrow_authorized(
-    cap:     TenantCapIdentity,
-    active: TenantCapIdentity,
-    pending: Option<TenantCapIdentity>,
+    cap:     UsufructCapIdentity,
+    active: UsufructCapIdentity,
+    pending: Option<UsufructCapIdentity>,
 ) {
     if (cap == active) return;
-    if (option::contains(&pending, &cap)) abort EPendingTenantCap;
-    abort EStaleTenantCap;
+    if (option::contains(&pending, &cap)) abort EPendingUsufructCap;
+    abort EStaleUsufructCap;
 }
 
 fun assert_return_valid<Asset: key + store>(
@@ -1441,7 +1441,7 @@ fun do_handover<Asset: key + store, CoinType>(
     terms:              OccupiedTerms<CoinType>,
     bid:                DemandTerms<CoinType>,
     cycle:              CycleParams,
-    owner:              &OwnerSeat,
+    governor_seat:              &GovernorSeat,
     config:             &PolicyEnsemble,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
@@ -1451,30 +1451,30 @@ fun do_handover<Asset: key + store, CoinType>(
     let OccupiedTerms { schedule, active, retire } = terms;
     let DemandTerms { pending, handover: HandoverTerms { expiry: _, tenures: incoming_tenures } } = bid;
 
-    let principal   = tenant_seat::proj_stake_value(&active);
+    let principal   = usufructuary_seat::proj_stake_value(&active);
     let used_credit = capped_used_credit(principal, schedule.phase_start, boundary, config, schedule.ceiling_total, boundary);
     let used_mist     = monetary::stake_mist(used_credit);
     let fee_mist      = math::compute_apply_bps(used_mist, math::bps(PROTOCOL_FEE_BPS));
     let remain_credit = monetary::compute_stake_sub(principal, used_credit);
 
-    let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&active));
-    let displaced_addr   = tenant_addr(&active);
+    let displaced_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&active));
+    let displaced_addr   = usufructuary_addr(&active);
 
     let mut departing  = active;
-    let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
-    let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
-    let refund = if (monetary::stake_mist(tenant_seat::proj_stake_value(&departing)) > 0) {
-        refund_state::parcial(departing, fee_share, owner_earnings)
+    let earnings = usufructuary_seat::take_earnings(&mut departing, monetary::stake(used_mist - fee_mist));
+    let fee_share      = usufructuary_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
+    let refund = if (monetary::stake_mist(usufructuary_seat::proj_stake_value(&departing)) > 0) {
+        refund_state::parcial(departing, fee_share, earnings)
     } else {
-        let (_, stake) = tenant_seat::unbundle(departing);
-        tenant_stake::destroy_zero(stake);
-        refund_state::nothing(fee_share, owner_earnings)
+        let (_, stake) = usufructuary_seat::unbundle(departing);
+        stake_balance::destroy_zero(stake);
+        refund_state::nothing(fee_share, earnings)
     };
-    refund_state::distribute(refund, owner, fee_inbox_identity, escrow_identity, ctx);
+    refund_state::distribute(refund, governor_seat, fee_inbox_identity, escrow_identity, ctx);
 
-    let new_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&pending));
-    let new_addr         = tenant_addr(&pending);
-    let new_stake        = tenant_seat::proj_stake_value(&pending);
+    let new_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&pending));
+    let new_addr         = usufructuary_addr(&pending);
+    let new_stake        = usufructuary_seat::proj_stake_value(&pending);
     let new_rent_price = monetary::price_mist(ascending_floor_price(new_stake, config));
     let boundary_ms = phases::timestamp_ms(boundary);
     let new_ceiling_total  = tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures);
@@ -1482,17 +1482,17 @@ fun do_handover<Asset: key + store, CoinType>(
 
     event::emit(HandoverCompleted {
         escrow_id:                   escrow_identity::escrow_id(escrow_identity),
-        displaced_tenant_cap_id:     tenant_cap::proj_id(displaced_cap_identity),
-        displaced_tenant_address:    displaced_addr,
+        displaced_usufruct_cap_id:     usufruct_cap::proj_id(displaced_cap_identity),
+        displaced_usufructuary_address:    displaced_addr,
         displaced_phase_start_ms:    phases::timestamp_ms(schedule.phase_start),
         displaced_ceiling_total_ms:  phases::duration_ms(schedule.ceiling_total),
         displaced_handover_total_ms: phases::duration_ms(schedule.handover_total),
-        new_tenant_cap_id:           tenant_cap::proj_id(new_cap_identity),
-        new_tenant_address:          new_addr,
-        new_tenant_stake:            monetary::stake_mist(new_stake),
+        new_usufruct_cap_id:           usufruct_cap::proj_id(new_cap_identity),
+        new_usufructuary_address:          new_addr,
+        new_stake_balance:            monetary::stake_mist(new_stake),
         used_credit:                 used_mist,
         remain_credit:               monetary::stake_mist(remain_credit),
-        owner_share:                 used_mist - fee_mist,
+        governor_share:                 used_mist - fee_mist,
         protocol_fee:                fee_mist,
         new_rent_price,
         committed_tenures:           tenures::tenures_count(incoming_tenures),
@@ -1520,36 +1520,36 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     asset:              asset_custody::AssetCustodyOpen<Asset>,
     terms:              OccupiedTerms<CoinType>,
     cycle:              CycleParams,
-    owner:              &OwnerSeat,
+    governor_seat:              &GovernorSeat,
     config:             &mut EnsembleSlot,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
     boundary:           Timestamp,
     ctx:                &mut TxContext,
 ): WaitingState<Asset> {
-    let OccupiedTerms { schedule, active: tenant, retire } = terms;
+    let OccupiedTerms { schedule, active: usufructuary, retire } = terms;
 
-    let principal            = tenant_seat::proj_stake_value(&tenant);
-    let tenant_cap_identity  = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&tenant));
-    let tenant_addr          = tenant_addr(&tenant);
+    let principal            = usufructuary_seat::proj_stake_value(&usufructuary);
+    let usufruct_cap_identity  = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&usufructuary));
+    let usufructuary_addr          = usufructuary_addr(&usufructuary);
     let principal_mist = monetary::stake_mist(principal);
     let fee_mist       = math::compute_apply_bps(principal_mist, math::bps(PROTOCOL_FEE_BPS));
 
-    let mut departing  = tenant;
-    let owner_earnings = tenant_seat::take_owner_earnings(&mut departing, monetary::stake(principal_mist - fee_mist));
-    let fee_share      = tenant_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
-    let (_, stake)     = tenant_seat::unbundle(departing);
-    tenant_stake::destroy_zero(stake);
-    refund_state::distribute(refund_state::nothing(fee_share, owner_earnings), owner, fee_inbox_identity, escrow_identity, ctx);
+    let mut departing  = usufructuary;
+    let earnings = usufructuary_seat::take_earnings(&mut departing, monetary::stake(principal_mist - fee_mist));
+    let fee_share      = usufructuary_seat::take_fee_share(&mut departing, monetary::stake(fee_mist), escrow_identity);
+    let (_, stake)     = usufructuary_seat::unbundle(departing);
+    stake_balance::destroy_zero(stake);
+    refund_state::distribute(refund_state::nothing(fee_share, earnings), governor_seat, fee_inbox_identity, escrow_identity, ctx);
 
     let asset_type = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
     let coin_type  = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
     event::emit(TenureExpired {
         escrow_id:              escrow_identity::escrow_id(escrow_identity),
-        tenant_cap_id:          tenant_cap::proj_id(tenant_cap_identity),
-        tenant_address:         tenant_addr,
+        usufruct_cap_id:          usufruct_cap::proj_id(usufruct_cap_identity),
+        usufructuary_address:         usufructuary_addr,
         phase_start_ms:         phases::timestamp_ms(schedule.phase_start),
-        owner_share:            principal_mist - fee_mist,
+        governor_share:            principal_mist - fee_mist,
         protocol_fee:           fee_mist,
         last_acquisition_price: principal_mist,
         asset_type,
@@ -1581,24 +1581,24 @@ fun do_place_bid<Asset: key + store, CoinType>(
     floor:           Price,
     now:             Timestamp,
     ctx:             &mut TxContext,
-): (RentingState<Asset, CoinType>, TenantCap) {
+): (RentingState<Asset, CoinType>, UsufructCap) {
     let expiry       = handover_policy::compute_expiry_at(terms.schedule.handover_total, terms.schedule.ceiling_total, now, terms.schedule.phase_start);
     let pending_addr = ctx.sender();
     let bid_amount   = coin::value(&payment);
-    let cap          = tenant_cap::new(escrow_identity, pending_addr, ctx);
-    let cap_identity = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(pending_addr), coin::into_balance(payment));
-    let active_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
-    let active_addr  = tenant_addr(&terms.active);
-    let active_stake = tenant_seat::proj_stake_value(&terms.active);
+    let cap          = usufruct_cap::new(escrow_identity, pending_addr, ctx);
+    let cap_identity = usufruct_cap::identity(&cap);
+    let t = usufructuary_seat::new<CoinType>(cap_identity, refund_address::new(pending_addr), coin::into_balance(payment));
+    let active_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+    let active_addr  = usufructuary_addr(&terms.active);
+    let active_stake = usufructuary_seat::proj_stake_value(&terms.active);
     event::emit(BidPlaced {
         escrow_id:                 escrow_identity::escrow_id(escrow_identity),
-        active_tenant_cap_id:      tenant_cap::proj_id(active_cap_identity),
-        active_tenant_address:     active_addr,
-        active_tenant_stake:       monetary::stake_mist(active_stake),
+        active_usufruct_cap_id:      usufruct_cap::proj_id(active_cap_identity),
+        active_usufructuary_address:     active_addr,
+        active_stake_balance:       monetary::stake_mist(active_stake),
         active_phase_start_ms:     phases::timestamp_ms(terms.schedule.phase_start),
-        pending_tenant_cap_id:     tenant_cap::proj_id(cap_identity),
-        pending_tenant_address:    pending_addr,
+        pending_usufruct_cap_id:     usufruct_cap::proj_id(cap_identity),
+        pending_usufructuary_address:    pending_addr,
         bid_amount,
         floor_price:               monetary::price_mist(floor),
         handover_countdown_expiry: phases::timestamp_ms(expiry),
@@ -1627,41 +1627,41 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     bid:                DemandTerms<CoinType>,
     cycle:              CycleParams,
     incoming_tenures:  Tenures,
-    owner:              &OwnerSeat,
+    governor_seat:              &GovernorSeat,
     escrow_identity:    EscrowIdentity,
     fee_inbox_identity: FeeInboxIdentity,
     payment:            Coin<CoinType>,
     floor:              Price,
     now:                Timestamp,
     ctx:                &mut TxContext,
-): (RentingState<Asset, CoinType>, TenantCap) {
+): (RentingState<Asset, CoinType>, UsufructCap) {
     let DemandTerms { pending, handover: HandoverTerms { expiry: handover_expiry, tenures: _ } } = bid;
 
-    let displaced_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&pending));
-    let displaced_addr   = tenant_addr(&pending);
-    let refunded_amount  = tenant_seat::proj_stake_value(&pending);
+    let displaced_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&pending));
+    let displaced_addr   = usufructuary_addr(&pending);
+    let refunded_amount  = usufructuary_seat::proj_stake_value(&pending);
 
     let new_bidder     = ctx.sender();
     let new_bid_amount = coin::value(&payment);
-    let cap            = tenant_cap::new(escrow_identity, new_bidder, ctx);
-    let cap_identity   = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(new_bidder), coin::into_balance(payment));
+    let cap            = usufruct_cap::new(escrow_identity, new_bidder, ctx);
+    let cap_identity   = usufruct_cap::identity(&cap);
+    let t = usufructuary_seat::new<CoinType>(cap_identity, refund_address::new(new_bidder), coin::into_balance(payment));
     let refund = refund_state::total(pending);
-    refund_state::distribute(refund, owner, fee_inbox_identity, escrow_identity, ctx);
+    refund_state::distribute(refund, governor_seat, fee_inbox_identity, escrow_identity, ctx);
 
-    let protected_cap_identity = tenant_identity::proj_cap_identity(tenant_seat::proj_identity(&terms.active));
-    let protected_addr  = tenant_addr(&terms.active);
-    let protected_stake = tenant_seat::proj_stake_value(&terms.active);
+    let protected_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+    let protected_addr  = usufructuary_addr(&terms.active);
+    let protected_stake = usufructuary_seat::proj_stake_value(&terms.active);
     event::emit(BidSuperseded {
         escrow_id:                 escrow_identity::escrow_id(escrow_identity),
-        protected_tenant_cap_id:   tenant_cap::proj_id(protected_cap_identity),
-        protected_tenant_address:  protected_addr,
-        protected_tenant_stake:    monetary::stake_mist(protected_stake),
+        protected_usufruct_cap_id:   usufruct_cap::proj_id(protected_cap_identity),
+        protected_usufructuary_address:  protected_addr,
+        protected_stake_balance:    monetary::stake_mist(protected_stake),
         protected_phase_start_ms:  phases::timestamp_ms(terms.schedule.phase_start),
-        displaced_tenant_cap_id:   tenant_cap::proj_id(displaced_cap_identity),
+        displaced_usufruct_cap_id:   usufruct_cap::proj_id(displaced_cap_identity),
         displaced_bidder_address:  displaced_addr,
         refunded_amount:           monetary::stake_mist(refunded_amount),
-        new_tenant_cap_id:         tenant_cap::proj_id(cap_identity),
+        new_usufruct_cap_id:         usufruct_cap::proj_id(cap_identity),
         new_bidder_address:        new_bidder,
         new_bid_amount,
         floor_price:               monetary::price_mist(floor),
@@ -1709,7 +1709,7 @@ fun step_handover<Asset: key + store, CoinType>(
                 let boundary = bid.handover.expiry;
                 AssetState::Renting(do_handover(
                     asset, terms, bid, cycle,
-                    &core.owner, &core.ensemble.active,
+                    &core.governor_seat, &core.ensemble.active,
                     core.escrow_identity, core.fee_inbox_identity,
                     boundary, ctx,
                 ))
@@ -1733,7 +1733,7 @@ fun step_tenure_expiry<Asset: key + store, CoinType>(
                 let boundary = phases::compute_boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total);
                 AssetState::Waiting(do_tenure_expiry(
                     asset, terms, cycle,
-                    &core.owner, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
+                    &core.governor_seat, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
                     boundary, ctx,
                 ))
             } else {
@@ -1771,12 +1771,12 @@ fun do_install<Asset: key + store, CoinType>(
     floor:           Price,
     now:             Timestamp,
     ctx:             &mut TxContext,
-): (RentingState<Asset, CoinType>, TenantCap) {
+): (RentingState<Asset, CoinType>, UsufructCap) {
     let price_paid   = coin::value(&payment);
-    let tenant_addr  = ctx.sender();
-    let cap          = tenant_cap::new(escrow_identity, tenant_addr, ctx);
-    let cap_identity = tenant_cap::identity(&cap);
-    let t = tenant_seat::new<CoinType>(cap_identity, refund_address::new(tenant_addr), coin::into_balance(payment));
+    let usufructuary_addr  = ctx.sender();
+    let cap          = usufruct_cap::new(escrow_identity, usufructuary_addr, ctx);
+    let cap_identity = usufruct_cap::identity(&cap);
+    let t = usufructuary_seat::new<CoinType>(cap_identity, refund_address::new(usufructuary_addr), coin::into_balance(payment));
     let wrapped = asset_custody::open_tenancy(locked, escrow_identity);
     let schedule = TenancySchedule {
         phase_start:      now,
@@ -1786,8 +1786,8 @@ fun do_install<Asset: key + store, CoinType>(
     };
     event::emit(RentStarted {
         escrow_id:         escrow_identity::escrow_id(escrow_identity),
-        tenant_cap_id:     tenant_cap::proj_id(cap_identity),
-        tenant_address:    tenant_addr,
+        usufruct_cap_id:     usufruct_cap::proj_id(cap_identity),
+        usufructuary_address:    usufructuary_addr,
         phase_start_ms:    phases::timestamp_ms(now),
         price_paid,
         floor_price:       monetary::price_mist(floor),
@@ -1832,17 +1832,17 @@ fun do_auction_expiry<Asset: key + store, CoinType>(
 
 fun do_retire_immediately<Asset: key + store, CoinType>(
     asset:           asset_custody::AssetCustodyLocked<Asset>,
-    owner_cap:       &OwnerCap,
+    governance_cap:       &GovernanceCap,
     escrow_identity: EscrowIdentity,
     now:             Timestamp,
     ctx:             &TxContext,
 ): WaitingState<Asset> {
     let timestamp_ms  = phases::timestamp_ms(now);
     let raw_escrow_id = escrow_identity::escrow_id(escrow_identity);
-    let owner_cap_id  = owner_cap::proj_id(owner_cap::identity(owner_cap));
+    let governance_cap_id  = governance_cap::proj_id(governance_cap::identity(governance_cap));
     let asset_type    = string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>()));
     let coin_type     = string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>()));
-    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, owner_cap_id, owner_address: ctx.sender(), asset_type, coin_type, timestamp_ms });
+    event::emit(RetireFlagSet { escrow_id: raw_escrow_id, governance_cap_id, governor_address: ctx.sender(), asset_type, coin_type, timestamp_ms });
     event::emit(AssetRetired { escrow_id: raw_escrow_id, asset_type, coin_type, timestamp_ms });
     WaitingState::Retired { asset }
 }
@@ -1929,24 +1929,24 @@ public(package) fun resolve_cycle_params_for_testing(ensemble: &PolicyEnsemble):
 
 #[test_only]
 public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
-    let (owner, fee) = split_fee_amounts(monetary::stake(amount));
-    (monetary::stake_mist(owner), monetary::stake_mist(fee))
+    let (governor_share, fee) = split_fee_amounts(monetary::stake(amount));
+    (monetary::stake_mist(governor_share), monetary::stake_mist(fee))
 }
 
 #[test_only]
 public(package) fun bid_placed_escrow_id(e: &BidPlaced): ID                          { e.escrow_id }
 #[test_only]
-public(package) fun bid_placed_active_tenant_cap_id(e: &BidPlaced): ID              { e.active_tenant_cap_id }
+public(package) fun bid_placed_active_usufruct_cap_id(e: &BidPlaced): ID              { e.active_usufruct_cap_id }
 #[test_only]
-public(package) fun bid_placed_active_tenant_address(e: &BidPlaced): address        { e.active_tenant_address }
+public(package) fun bid_placed_active_usufructuary_address(e: &BidPlaced): address        { e.active_usufructuary_address }
 #[test_only]
-public(package) fun bid_placed_active_tenant_stake(e: &BidPlaced): u64              { e.active_tenant_stake }
+public(package) fun bid_placed_active_stake_balance(e: &BidPlaced): u64              { e.active_stake_balance }
 #[test_only]
 public(package) fun bid_placed_active_phase_start_ms(e: &BidPlaced): u64            { e.active_phase_start_ms }
 #[test_only]
-public(package) fun bid_placed_pending_tenant_cap_id(e: &BidPlaced): ID          { e.pending_tenant_cap_id }
+public(package) fun bid_placed_pending_usufruct_cap_id(e: &BidPlaced): ID          { e.pending_usufruct_cap_id }
 #[test_only]
-public(package) fun bid_placed_pending_tenant_address(e: &BidPlaced): address        { e.pending_tenant_address }
+public(package) fun bid_placed_pending_usufructuary_address(e: &BidPlaced): address        { e.pending_usufructuary_address }
 #[test_only]
 public(package) fun bid_placed_bid_amount(e: &BidPlaced): u64                    { e.bid_amount }
 #[test_only]
@@ -1965,21 +1965,21 @@ public(package) fun bid_placed_coin_type(e: &BidPlaced): String                 
 #[test_only]
 public(package) fun bid_superseded_escrow_id(e: &BidSuperseded): ID                      { e.escrow_id }
 #[test_only]
-public(package) fun bid_superseded_protected_cap_id(e: &BidSuperseded): ID               { e.protected_tenant_cap_id }
+public(package) fun bid_superseded_protected_cap_id(e: &BidSuperseded): ID               { e.protected_usufruct_cap_id }
 #[test_only]
-public(package) fun bid_superseded_protected_address(e: &BidSuperseded): address          { e.protected_tenant_address }
+public(package) fun bid_superseded_protected_address(e: &BidSuperseded): address          { e.protected_usufructuary_address }
 #[test_only]
-public(package) fun bid_superseded_protected_stake(e: &BidSuperseded): u64               { e.protected_tenant_stake }
+public(package) fun bid_superseded_protected_stake(e: &BidSuperseded): u64               { e.protected_stake_balance }
 #[test_only]
 public(package) fun bid_superseded_protected_phase_start_ms(e: &BidSuperseded): u64      { e.protected_phase_start_ms }
 #[test_only]
-public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID           { e.displaced_tenant_cap_id }
+public(package) fun bid_superseded_displaced_cap_id(e: &BidSuperseded): ID           { e.displaced_usufruct_cap_id }
 #[test_only]
 public(package) fun bid_superseded_displaced_bidder_address(e: &BidSuperseded): address { e.displaced_bidder_address }
 #[test_only]
 public(package) fun bid_superseded_refunded_amount(e: &BidSuperseded): u64           { e.refunded_amount }
 #[test_only]
-public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID                 { e.new_tenant_cap_id }
+public(package) fun bid_superseded_new_cap_id(e: &BidSuperseded): ID                 { e.new_usufruct_cap_id }
 #[test_only]
 public(package) fun bid_superseded_new_bidder_address(e: &BidSuperseded): address    { e.new_bidder_address }
 #[test_only]
@@ -2000,9 +2000,9 @@ public(package) fun bid_superseded_coin_type(e: &BidSuperseded): String         
 #[test_only]
 public(package) fun handover_completed_escrow_id(e: &HandoverCompleted): ID                  { e.escrow_id }
 #[test_only]
-public(package) fun handover_completed_displaced_cap_id(e: &HandoverCompleted): ID           { e.displaced_tenant_cap_id }
+public(package) fun handover_completed_displaced_cap_id(e: &HandoverCompleted): ID           { e.displaced_usufruct_cap_id }
 #[test_only]
-public(package) fun handover_completed_displaced_tenant_address(e: &HandoverCompleted): address { e.displaced_tenant_address }
+public(package) fun handover_completed_displaced_usufructuary_address(e: &HandoverCompleted): address { e.displaced_usufructuary_address }
 #[test_only]
 public(package) fun handover_completed_displaced_phase_start_ms(e: &HandoverCompleted): u64  { e.displaced_phase_start_ms }
 #[test_only]
@@ -2010,17 +2010,17 @@ public(package) fun handover_completed_displaced_ceiling_total_ms(e: &HandoverCo
 #[test_only]
 public(package) fun handover_completed_displaced_handover_total_ms(e: &HandoverCompleted): u64 { e.displaced_handover_total_ms }
 #[test_only]
-public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                 { e.new_tenant_cap_id }
+public(package) fun handover_completed_new_cap_id(e: &HandoverCompleted): ID                 { e.new_usufruct_cap_id }
 #[test_only]
-public(package) fun handover_completed_new_tenant_address(e: &HandoverCompleted): address    { e.new_tenant_address }
+public(package) fun handover_completed_new_usufructuary_address(e: &HandoverCompleted): address    { e.new_usufructuary_address }
 #[test_only]
-public(package) fun handover_completed_new_tenant_stake(e: &HandoverCompleted): u64          { e.new_tenant_stake }
+public(package) fun handover_completed_new_stake_balance(e: &HandoverCompleted): u64          { e.new_stake_balance }
 #[test_only]
 public(package) fun handover_completed_used_credit(e: &HandoverCompleted): u64               { e.used_credit }
 #[test_only]
 public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64             { e.remain_credit }
 #[test_only]
-public(package) fun handover_completed_owner_share(e: &HandoverCompleted): u64               { e.owner_share }
+public(package) fun handover_completed_governor_share(e: &HandoverCompleted): u64               { e.governor_share }
 #[test_only]
 public(package) fun handover_completed_protocol_fee(e: &HandoverCompleted): u64              { e.protocol_fee }
 #[test_only]
@@ -2041,13 +2041,13 @@ public(package) fun handover_completed_timestamp_ms(e: &HandoverCompleted): u64 
 #[test_only]
 public(package) fun tenure_expired_escrow_id(e: &TenureExpired): ID                  { e.escrow_id }
 #[test_only]
-public(package) fun tenure_expired_tenant_cap_id(e: &TenureExpired): ID              { e.tenant_cap_id }
+public(package) fun tenure_expired_usufruct_cap_id(e: &TenureExpired): ID              { e.usufruct_cap_id }
 #[test_only]
-public(package) fun tenure_expired_tenant_address(e: &TenureExpired): address       { e.tenant_address }
+public(package) fun tenure_expired_usufructuary_address(e: &TenureExpired): address       { e.usufructuary_address }
 #[test_only]
 public(package) fun tenure_expired_phase_start_ms(e: &TenureExpired): u64           { e.phase_start_ms }
 #[test_only]
-public(package) fun tenure_expired_owner_share(e: &TenureExpired): u64               { e.owner_share }
+public(package) fun tenure_expired_governor_share(e: &TenureExpired): u64               { e.governor_share }
 #[test_only]
 public(package) fun tenure_expired_protocol_fee(e: &TenureExpired): u64              { e.protocol_fee }
 #[test_only]
@@ -2062,9 +2062,9 @@ public(package) fun tenure_expired_timestamp_ms(e: &TenureExpired): u64         
 #[test_only]
 public(package) fun asset_borrowed_escrow_id(e: &AssetBorrowed): ID                 { e.escrow_id }
 #[test_only]
-public(package) fun asset_borrowed_tenant_cap_id(e: &AssetBorrowed): ID              { e.tenant_cap_id }
+public(package) fun asset_borrowed_usufruct_cap_id(e: &AssetBorrowed): ID              { e.usufruct_cap_id }
 #[test_only]
-public(package) fun asset_borrowed_tenant_address(e: &AssetBorrowed): address       { e.tenant_address }
+public(package) fun asset_borrowed_usufructuary_address(e: &AssetBorrowed): address       { e.usufructuary_address }
 #[test_only]
 public(package) fun asset_borrowed_asset_type(e: &AssetBorrowed): String             { e.asset_type }
 #[test_only]
@@ -2075,9 +2075,9 @@ public(package) fun asset_borrowed_timestamp_ms(e: &AssetBorrowed): u64         
 #[test_only]
 public(package) fun asset_returned_escrow_id(e: &AssetReturned): ID                 { e.escrow_id }
 #[test_only]
-public(package) fun asset_returned_tenant_cap_id(e: &AssetReturned): ID              { e.tenant_cap_id }
+public(package) fun asset_returned_usufruct_cap_id(e: &AssetReturned): ID              { e.usufruct_cap_id }
 #[test_only]
-public(package) fun asset_returned_tenant_address(e: &AssetReturned): address       { e.tenant_address }
+public(package) fun asset_returned_usufructuary_address(e: &AssetReturned): address       { e.usufructuary_address }
 #[test_only]
 public(package) fun asset_returned_asset_type(e: &AssetReturned): String            { e.asset_type }
 #[test_only]
@@ -2086,9 +2086,9 @@ public(package) fun asset_returned_coin_type(e: &AssetReturned): String         
 #[test_only]
 public(package) fun asset_claimed_escrow_id(e: &AssetClaimed): ID                   { e.escrow_id }
 #[test_only]
-public(package) fun asset_claimed_owner_cap_id(e: &AssetClaimed): ID                { e.owner_cap_id }
+public(package) fun asset_claimed_governance_cap_id(e: &AssetClaimed): ID                { e.governance_cap_id }
 #[test_only]
-public(package) fun asset_claimed_owner_address(e: &AssetClaimed): address          { e.owner_address }
+public(package) fun asset_claimed_governor_address(e: &AssetClaimed): address          { e.governor_address }
 #[test_only]
 public(package) fun asset_claimed_asset_type(e: &AssetClaimed): String              { e.asset_type }
 #[test_only]
@@ -2107,7 +2107,7 @@ public(package) fun fire_do_handover_for_testing<Asset: key + store, CoinType>(
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) =>
             AssetState::Renting(do_handover(
                 asset, terms, bid, cycle,
-                &core.owner, &core.ensemble.active,
+                &core.governor_seat, &core.ensemble.active,
                 core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             )),
@@ -2127,7 +2127,7 @@ public(package) fun fire_do_tenure_expiry_for_testing<Asset: key + store, CoinTy
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) =>
             AssetState::Waiting(do_tenure_expiry(
                 asset, terms, cycle,
-                &core.owner, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
+                &core.governor_seat, &mut core.ensemble, core.escrow_identity, core.fee_inbox_identity,
                 boundary, ctx,
             )),
         AssetState::Waiting(_ws) => abort ENotRented,
@@ -2153,7 +2153,7 @@ public(package) fun fire_do_auction_expiry_for_testing<Asset: key + store, CoinT
 public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     state:       AssetState<Asset, CoinType>,
     core:        &EscrowCore<CoinType>,
-    tenant_in:   tenant_seat::TenantSeat<CoinType>,
+    usufructuary_in:   usufructuary_seat::UsufructuarySeat<CoinType>,
     phase_start: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
@@ -2166,7 +2166,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
             };
             AssetState::Renting(RentingState::Occupied {
                 asset: asset_custody::open_tenancy(asset, core.escrow_identity),
-                terms: OccupiedTerms { schedule, active: tenant_in, retire: retire_condition_new() },
+                terms: OccupiedTerms { schedule, active: usufructuary_in, retire: retire_condition_new() },
                 cycle,
             })
         },
@@ -2178,7 +2178,7 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     state:                     AssetState<Asset, CoinType>,
-    tenant_in:                 tenant_seat::TenantSeat<CoinType>,
+    usufructuary_in:                 usufructuary_seat::UsufructuarySeat<CoinType>,
     handover_countdown_expiry: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
@@ -2187,7 +2187,7 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
                 asset,
                 terms,
                 bid: DemandTerms {
-                    pending:  tenant_in,
+                    pending:  usufructuary_in,
                     handover: HandoverTerms { expiry: handover_countdown_expiry, tenures: tenures::tenures(1) },
                 },
                 cycle,
@@ -2201,22 +2201,22 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
 public(package) fun drive_to_descent_for_testing<Asset: key + store, CoinType>(
     state:           AssetState<Asset, CoinType>,
     core:            &EscrowCore<CoinType>,
-    owner_amount:    u64,
+    governor_amount:    u64,
     fee_amount:      u64,
     last_acq_price:  u64,
     new_phase_start: Timestamp,
 ): AssetState<Asset, CoinType> {
     match (state) {
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
-            let OccupiedTerms { schedule: _, active: mut tenant, retire: _ } = terms;
-            let owner_earnings = tenant_seat::take_owner_earnings(&mut tenant, monetary::stake(owner_amount));
-            let fee_share      = tenant_seat::take_fee_share(&mut tenant, monetary::stake(fee_amount), core.escrow_identity);
-            let refund = if (monetary::stake_mist(tenant_seat::proj_stake_value(&tenant)) > 0) {
-                refund_state::parcial(tenant, fee_share, owner_earnings)
+            let OccupiedTerms { schedule: _, active: mut usufructuary, retire: _ } = terms;
+            let earnings = usufructuary_seat::take_earnings(&mut usufructuary, monetary::stake(governor_amount));
+            let fee_share      = usufructuary_seat::take_fee_share(&mut usufructuary, monetary::stake(fee_amount), core.escrow_identity);
+            let refund = if (monetary::stake_mist(usufructuary_seat::proj_stake_value(&usufructuary)) > 0) {
+                refund_state::parcial(usufructuary, fee_share, earnings)
             } else {
-                let (_, stake) = tenant_seat::unbundle(tenant);
-                tenant_stake::destroy_zero(stake);
-                refund_state::nothing(fee_share, owner_earnings)
+                let (_, stake) = usufructuary_seat::unbundle(usufructuary);
+                stake_balance::destroy_zero(stake);
+                refund_state::nothing(fee_share, earnings)
             };
             refund_state::destroy_for_testing(refund);
             AssetState::Waiting(WaitingState::Descent {
@@ -2262,9 +2262,9 @@ public(package) fun drive_to_retiring_flag_for_testing<Asset: key + store, CoinT
 #[test_only]
 public(package) fun rent_started_escrow_id(e: &RentStarted): ID                 { e.escrow_id }
 #[test_only]
-public(package) fun rent_started_tenant_cap_id(e: &RentStarted): ID              { e.tenant_cap_id }
+public(package) fun rent_started_usufruct_cap_id(e: &RentStarted): ID              { e.usufruct_cap_id }
 #[test_only]
-public(package) fun rent_started_tenant_address(e: &RentStarted): address       { e.tenant_address }
+public(package) fun rent_started_usufructuary_address(e: &RentStarted): address       { e.usufructuary_address }
 #[test_only]
 public(package) fun rent_started_phase_start_ms(e: &RentStarted): u64           { e.phase_start_ms }
 #[test_only]
@@ -2320,9 +2320,9 @@ public(package) fun asset_retired_timestamp_ms(e: &AssetRetired): u64           
 #[test_only]
 public(package) fun retire_flag_set_escrow_id(e: &RetireFlagSet): ID            { e.escrow_id }
 #[test_only]
-public(package) fun retire_flag_set_owner_cap_id(e: &RetireFlagSet): ID         { e.owner_cap_id }
+public(package) fun retire_flag_set_governance_cap_id(e: &RetireFlagSet): ID         { e.governance_cap_id }
 #[test_only]
-public(package) fun retire_flag_set_owner_address(e: &RetireFlagSet): address   { e.owner_address }
+public(package) fun retire_flag_set_governor_address(e: &RetireFlagSet): address   { e.governor_address }
 #[test_only]
 public(package) fun retire_flag_set_asset_type(e: &RetireFlagSet): String       { e.asset_type }
 #[test_only]
@@ -2363,9 +2363,9 @@ public(package) fun ensemble_commitment_extended_timestamp_ms(e: &EnsembleCommit
 #[test_only]
 public(package) fun asset_integrated_escrow_id(e: &AssetIntegrated): ID          { e.escrow_id }
 #[test_only]
-public(package) fun asset_integrated_owner_cap_id(e: &AssetIntegrated): ID       { e.owner_cap_id }
+public(package) fun asset_integrated_governance_cap_id(e: &AssetIntegrated): ID       { e.governance_cap_id }
 #[test_only]
-public(package) fun asset_integrated_owner_address(e: &AssetIntegrated): address { e.owner_address }
+public(package) fun asset_integrated_governor_address(e: &AssetIntegrated): address { e.governor_address }
 #[test_only]
 public(package) fun asset_integrated_asset_id(e: &AssetIntegrated): ID           { e.asset_id }
 #[test_only]
@@ -2433,32 +2433,32 @@ public(package) fun retire_condition_set_for_testing(r: RetireCondition): Retire
 }
 
 #[test_only]
-public(package) fun active_refund_updated_escrow_id(e: &ActiveTenantRefundAddressUpdated): ID         { e.escrow_id }
+public(package) fun active_refund_updated_escrow_id(e: &ActiveUsufructuaryRefundAddressUpdated): ID         { e.escrow_id }
 #[test_only]
-public(package) fun active_refund_updated_tenant_cap_id(e: &ActiveTenantRefundAddressUpdated): ID     { e.tenant_cap_id }
+public(package) fun active_refund_updated_usufruct_cap_id(e: &ActiveUsufructuaryRefundAddressUpdated): ID     { e.usufruct_cap_id }
 #[test_only]
-public(package) fun active_refund_updated_old_address(e: &ActiveTenantRefundAddressUpdated): address  { e.old_address }
+public(package) fun active_refund_updated_old_address(e: &ActiveUsufructuaryRefundAddressUpdated): address  { e.old_address }
 #[test_only]
-public(package) fun active_refund_updated_new_address(e: &ActiveTenantRefundAddressUpdated): address  { e.new_address }
+public(package) fun active_refund_updated_new_address(e: &ActiveUsufructuaryRefundAddressUpdated): address  { e.new_address }
 #[test_only]
-public(package) fun active_refund_updated_asset_type(e: &ActiveTenantRefundAddressUpdated): String    { e.asset_type }
+public(package) fun active_refund_updated_asset_type(e: &ActiveUsufructuaryRefundAddressUpdated): String    { e.asset_type }
 #[test_only]
-public(package) fun active_refund_updated_coin_type(e: &ActiveTenantRefundAddressUpdated): String     { e.coin_type }
+public(package) fun active_refund_updated_coin_type(e: &ActiveUsufructuaryRefundAddressUpdated): String     { e.coin_type }
 #[test_only]
-public(package) fun active_refund_updated_timestamp_ms(e: &ActiveTenantRefundAddressUpdated): u64     { e.timestamp_ms }
+public(package) fun active_refund_updated_timestamp_ms(e: &ActiveUsufructuaryRefundAddressUpdated): u64     { e.timestamp_ms }
 
 #[test_only]
-public(package) fun pending_refund_updated_escrow_id(e: &PendingTenantRefundAddressUpdated): ID        { e.escrow_id }
+public(package) fun pending_refund_updated_escrow_id(e: &PendingUsufructuaryRefundAddressUpdated): ID        { e.escrow_id }
 #[test_only]
-public(package) fun pending_refund_updated_tenant_cap_id(e: &PendingTenantRefundAddressUpdated): ID    { e.tenant_cap_id }
+public(package) fun pending_refund_updated_usufruct_cap_id(e: &PendingUsufructuaryRefundAddressUpdated): ID    { e.usufruct_cap_id }
 #[test_only]
-public(package) fun pending_refund_updated_old_address(e: &PendingTenantRefundAddressUpdated): address { e.old_address }
+public(package) fun pending_refund_updated_old_address(e: &PendingUsufructuaryRefundAddressUpdated): address { e.old_address }
 #[test_only]
-public(package) fun pending_refund_updated_new_address(e: &PendingTenantRefundAddressUpdated): address { e.new_address }
+public(package) fun pending_refund_updated_new_address(e: &PendingUsufructuaryRefundAddressUpdated): address { e.new_address }
 #[test_only]
-public(package) fun pending_refund_updated_asset_type(e: &PendingTenantRefundAddressUpdated): String   { e.asset_type }
+public(package) fun pending_refund_updated_asset_type(e: &PendingUsufructuaryRefundAddressUpdated): String   { e.asset_type }
 #[test_only]
-public(package) fun pending_refund_updated_coin_type(e: &PendingTenantRefundAddressUpdated): String    { e.coin_type }
+public(package) fun pending_refund_updated_coin_type(e: &PendingUsufructuaryRefundAddressUpdated): String    { e.coin_type }
 #[test_only]
-public(package) fun pending_refund_updated_timestamp_ms(e: &PendingTenantRefundAddressUpdated): u64    { e.timestamp_ms }
+public(package) fun pending_refund_updated_timestamp_ms(e: &PendingUsufructuaryRefundAddressUpdated): u64    { e.timestamp_ms }
 

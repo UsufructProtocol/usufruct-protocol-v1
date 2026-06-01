@@ -53,22 +53,22 @@ function build1ms(tx: Transaction, pkg: string): TransactionArgument {
 
 async function rentAndApply(client: SuiClient, kp: any, d: D, escrowId: string): Promise<void> {
   const txR = new Transaction();
-  txR.setSender(d.tenant1.address);
+  txR.setSender(d.usufructuary1.address);
   const [pay] = txR.splitCoins(txR.gas, [txR.pure.u64(FLOOR_PRICE_MIST)]);
   const tenures = txR.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [txR.pure.u64(1n)] });
   const cap = txR.moveCall({ target: `${d.usufructPackageId}::escrow::rent`, typeArguments: TA(d),
     arguments: [txR.object(escrowId), pay, tenures, clock(txR)] });
-  txR.transferObjects([cap], d.tenant1.address);
-  const r1 = await client.signAndExecuteTransaction({ transaction: txR, signer: kp.tenant1, options: { showEffects: true } });
+  txR.transferObjects([cap], d.usufructuary1.address);
+  const r1 = await client.signAndExecuteTransaction({ transaction: txR, signer: kp.usufructuary1, options: { showEffects: true } });
   await client.waitForTransaction({ digest: r1.digest });
 
-  const coins = await client.getCoins({ owner: d.owner.address, limit: 3 });
+  const coins = await client.getCoins({ governor: d.governor.address, limit: 3 });
   const txA = new Transaction();
-  txA.setSender(d.owner.address);
+  txA.setSender(d.governor.address);
   if (coins.data.length) txA.setGasPayment(coins.data.map(c => ({ objectId: c.coinObjectId, version: c.version, digest: c.digest })));
   txA.moveCall({ target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`, typeArguments: TA(d),
     arguments: [txA.object(escrowId), clock(txA)] });
-  const r2 = await client.signAndExecuteTransaction({ transaction: txA, signer: kp.owner, options: { showEffects: true } });
+  const r2 = await client.signAndExecuteTransaction({ transaction: txA, signer: kp.governor, options: { showEffects: true } });
   await client.waitForTransaction({ digest: r2.digest });
 }
 
@@ -76,7 +76,7 @@ async function refsAt(client: SuiClient, addr: string, typeFrag: string, limit: 
   const out: Ref[] = [];
   let cursor: string | null | undefined = undefined;
   while (out.length < limit) {
-    const page = await client.getOwnedObjects({ owner: addr, cursor, options: { showType: true }, limit: 50 });
+    const page = await client.getOwnedObjects({ governor: addr, cursor, options: { showType: true }, limit: 50 });
     for (const o of page.data) {
       if ((o.data?.type ?? '').includes(typeFrag)) {
         out.push({ objectId: o.data!.objectId, version: o.data!.version, digest: o.data!.digest });
@@ -92,25 +92,25 @@ async function refsAt(client: SuiClient, addr: string, typeFrag: string, limit: 
 async function collectFee(client: SuiClient, kp: any, d: D, ref: Ref, label: string): Promise<any> {
   const recvType = `0x2::transfer::Receiving<${d.usufructPackageId}::fee_message::FeeMessage<${SUI}>>`;
   const tx = new Transaction();
-  tx.setSender(d.owner.address);
+  tx.setSender(d.governor.address);
   const ticket = tx.receivingRef(ref);
   const vec    = tx.makeMoveVec({ type: recvType, elements: [ticket] });
   const coin   = tx.moveCall({ target: `${d.usufructPackageId}::fee_inbox::collect_fee_messages`, typeArguments: [SUI],
     arguments: [tx.object(d.protocolFeeInboxId), vec] });
-  tx.transferObjects([coin], d.owner.address);
-  return measure(client, kp.owner, label, 0, tx);
+  tx.transferObjects([coin], d.governor.address);
+  return measure(client, kp.governor, label, 0, tx);
 }
 
 async function collectEarn(client: SuiClient, kp: any, d: D, inboxId: string, ref: Ref, label: string): Promise<any> {
   const recvType = `0x2::transfer::Receiving<${d.usufructPackageId}::earnings_message::EarningsMessage<${SUI}>>`;
   const tx = new Transaction();
-  tx.setSender(d.owner.address);
+  tx.setSender(d.governor.address);
   const ticket = tx.receivingRef(ref);
   const vec    = tx.makeMoveVec({ type: recvType, elements: [ticket] });
   const coin   = tx.moveCall({ target: `${d.usufructPackageId}::earnings::collect_earnings_messages`, typeArguments: [SUI],
     arguments: [tx.object(inboxId), vec] });
-  tx.transferObjects([coin], d.owner.address);
-  return measure(client, kp.owner, label, 0, tx);
+  tx.transferObjects([coin], d.governor.address);
+  return measure(client, kp.governor, label, 0, tx);
 }
 
 async function main() {
@@ -122,10 +122,10 @@ async function main() {
   // ── PART 1: integrate one escrow with a fresh earnings inbox ──
   console.log('Part 1: integrate + 1 rent/apply → 1 fee msg + 1 earnings msg (same instant)');
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, build1ms);
-  tx1.transferObjects([ownerCap, inbox], d.owner.address);
-  const ri = await client.signAndExecuteTransaction({ transaction: tx1, signer: kp.owner, options: { showEffects: true, showObjectChanges: true } });
+  tx1.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, build1ms);
+  tx1.transferObjects([governanceCap, inbox], d.governor.address);
+  const ri = await client.signAndExecuteTransaction({ transaction: tx1, signer: kp.governor, options: { showEffects: true, showObjectChanges: true } });
   await client.waitForTransaction({ digest: ri.digest });
   const ch = ri.objectChanges ?? [];
   const escrowId = (ch.find(c => c.type === 'created' && (c as any).objectType?.includes('::escrow::Escrow')) as any).objectId;

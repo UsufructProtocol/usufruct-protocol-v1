@@ -16,14 +16,14 @@ use usufruct::{
     policy_ensemble::PolicyEnsemble,
     escrow::{Self, Escrow},
     escrow_corpus,
-    owner_cap::OwnerCap,
+    governance_cap::GovernanceCap,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
-const OWNER: address = @0x07;
+const GOVERNOR: address = @0x07;
 
 public struct DemoAsset has key, store { id: UID }
 
@@ -33,12 +33,12 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
 
 fun setup(): Scenario {
     let mut sc = test_scenario::begin(@0x0);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     { protocol_fee_inbox::init_for_testing(sc.ctx()); };
     sc
 }
 
-fun build_escrow(ensemble: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
+fun build_escrow(ensemble: PolicyEnsemble, sc: &mut Scenario): (Escrow<DemoAsset, SUI>, GovernanceCap) {
     build_escrow_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), sc)
 }
 
@@ -46,25 +46,25 @@ fun build_escrow_with_retire_commitment(
     ensemble:        PolicyEnsemble,
     commitment: RetireCommitmentPolicy,
     sc:         &mut Scenario,
-): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    sc.next_tx(OWNER);
+): (Escrow<DemoAsset, SUI>, GovernanceCap) {
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, commitment, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
 
-fun dispose(escrow: Escrow<DemoAsset, SUI>, cap: OwnerCap) {
+fun dispose(escrow: Escrow<DemoAsset, SUI>, cap: GovernanceCap) {
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
 }
 
 // ─── tenure_ceiling views ─────────────────────────────────────────────────────

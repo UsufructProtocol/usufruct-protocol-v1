@@ -16,7 +16,7 @@ use sui::{
 use usufruct::{
     earnings_inbox::{Self, EarningsInbox, EarningsInboxIdentity},
     escrow_identity::{Self, EscrowIdentity},
-    owner_earning::{Self, OwnerEarnings},
+    earnings_balance::{Self, EarningsBalance},
 };
 
 // === Errors ===
@@ -25,7 +25,7 @@ use usufruct::{
 
 // === Structs ===
 
-/// Owner earnings settled to an inbox, wrapped as a Sui object and mailed to the
+/// Governor earnings settled to an inbox, wrapped as a Sui object and mailed to the
 /// inbox address via transfer-to-object. Mirrors `FeeMessage`: `key` only (no
 /// `store`) — it lives at the inbox's address until `collect` drains it. The
 /// `escrow_identity` makes it self-describing for the star schema.
@@ -84,12 +84,12 @@ public(package) fun collect_earnings_messages<C>(
 }
 
 public(package) fun post<C>(
-    earnings:           OwnerEarnings<C>,
+    earnings:           EarningsBalance<C>,
     inbox_identity:     EarningsInboxIdentity,
     escrow_identity:    EscrowIdentity,
     ctx:                &mut TxContext,
 ) {
-    let balance           = owner_earning::into_balance(earnings);
+    let balance           = earnings_balance::into_balance(earnings);
     let amount            = balance::value(&balance);
     let earnings_inbox_id = earnings_inbox::proj_id(inbox_identity);
     let escrow_id         = escrow_identity::escrow_id(escrow_identity);

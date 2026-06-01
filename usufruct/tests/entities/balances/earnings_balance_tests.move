@@ -2,21 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::owner_earning_tests;
+module usufruct::earnings_balance_tests;
 
 use std::unit_test::assert_eq;
 use sui::balance;
 use usufruct::{
     monetary,
-    owner_earning::{Self, OwnerEarnings},
+    earnings_balance::{Self, EarningsBalance},
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 public struct TEST_COIN has drop {}
 
-fun mk(amount: u64): OwnerEarnings<TEST_COIN> {
-    owner_earning::new(balance::create_for_testing<TEST_COIN>(amount))
+fun mk(amount: u64): EarningsBalance<TEST_COIN> {
+    earnings_balance::new(balance::create_for_testing<TEST_COIN>(amount))
 }
 
 // ─── §1. Constructors ─────────────────────────────────────────────────────────
@@ -24,15 +24,15 @@ fun mk(amount: u64): OwnerEarnings<TEST_COIN> {
 #[test]
 fun new_proj_value_matches_input() {
     let e = mk(123);
-    assert_eq!(owner_earning::proj_value(&e), monetary::stake(123));
-    owner_earning::destroy_for_testing(e);
+    assert_eq!(earnings_balance::proj_value(&e), monetary::stake(123));
+    earnings_balance::destroy_for_testing(e);
 }
 
 #[test]
 fun zero_has_zero_value() {
-    let e: OwnerEarnings<TEST_COIN> = owner_earning::zero();
-    assert_eq!(owner_earning::proj_value(&e), monetary::stake(0));
-    owner_earning::destroy_zero(e);
+    let e: EarningsBalance<TEST_COIN> = earnings_balance::zero();
+    assert_eq!(earnings_balance::proj_value(&e), monetary::stake(0));
+    earnings_balance::destroy_zero(e);
 }
 
 // ─── §2. join ─────────────────────────────────────────────────────────────────
@@ -41,27 +41,27 @@ fun zero_has_zero_value() {
 fun join_accumulates_both_amounts() {
     let mut a = mk(300);
     let b     = mk(200);
-    owner_earning::join(&mut a, b);
-    assert_eq!(owner_earning::proj_value(&a), monetary::stake(500));
-    owner_earning::destroy_for_testing(a);
+    earnings_balance::join(&mut a, b);
+    assert_eq!(earnings_balance::proj_value(&a), monetary::stake(500));
+    earnings_balance::destroy_for_testing(a);
 }
 
 #[test]
 fun join_zero_leaves_value_unchanged() {
     let mut a = mk(100);
-    let z: OwnerEarnings<TEST_COIN> = owner_earning::zero();
-    owner_earning::join(&mut a, z);
-    assert_eq!(owner_earning::proj_value(&a), monetary::stake(100));
-    owner_earning::destroy_for_testing(a);
+    let z: EarningsBalance<TEST_COIN> = earnings_balance::zero();
+    earnings_balance::join(&mut a, z);
+    assert_eq!(earnings_balance::proj_value(&a), monetary::stake(100));
+    earnings_balance::destroy_for_testing(a);
 }
 
 #[test]
 fun join_into_zero_target_equals_source() {
-    let mut target: OwnerEarnings<TEST_COIN> = owner_earning::zero();
+    let mut target: EarningsBalance<TEST_COIN> = earnings_balance::zero();
     let source = mk(75);
-    owner_earning::join(&mut target, source);
-    assert_eq!(owner_earning::proj_value(&target), monetary::stake(75));
-    owner_earning::destroy_for_testing(target);
+    earnings_balance::join(&mut target, source);
+    assert_eq!(earnings_balance::proj_value(&target), monetary::stake(75));
+    earnings_balance::destroy_for_testing(target);
 }
 
 // ─── §3. drain_all ────────────────────────────────────────────────────────────
@@ -69,20 +69,20 @@ fun join_into_zero_target_equals_source() {
 #[test]
 fun drain_all_returns_full_balance_and_leaves_zero() {
     let mut e     = mk(400);
-    let drained   = owner_earning::drain_all(&mut e);
+    let drained   = earnings_balance::drain_all(&mut e);
     assert_eq!(balance::value(&drained), 400);
-    assert_eq!(owner_earning::proj_value(&e), monetary::stake(0));
+    assert_eq!(earnings_balance::proj_value(&e), monetary::stake(0));
     balance::destroy_for_testing(drained);
-    owner_earning::destroy_zero(e);
+    earnings_balance::destroy_zero(e);
 }
 
 #[test]
 fun drain_all_on_zero_returns_zero_balance() {
-    let mut e: OwnerEarnings<TEST_COIN> = owner_earning::zero();
-    let drained = owner_earning::drain_all(&mut e);
+    let mut e: EarningsBalance<TEST_COIN> = earnings_balance::zero();
+    let drained = earnings_balance::drain_all(&mut e);
     assert_eq!(balance::value(&drained), 0);
     balance::destroy_zero(drained);
-    owner_earning::destroy_zero(e);
+    earnings_balance::destroy_zero(e);
 }
 
 // ─── §4. into_balance ───────────────────────────────────────────────────────────
@@ -90,15 +90,15 @@ fun drain_all_on_zero_returns_zero_balance() {
 #[test]
 fun into_balance_consumes_and_returns_full_balance() {
     let e   = mk(640);
-    let bal = owner_earning::into_balance(e);
+    let bal = earnings_balance::into_balance(e);
     assert_eq!(balance::value(&bal), 640);
     balance::destroy_for_testing(bal);
 }
 
 #[test]
 fun into_balance_on_zero_returns_zero_balance() {
-    let e: OwnerEarnings<TEST_COIN> = owner_earning::zero();
-    let bal = owner_earning::into_balance(e);
+    let e: EarningsBalance<TEST_COIN> = earnings_balance::zero();
+    let bal = earnings_balance::into_balance(e);
     assert_eq!(balance::value(&bal), 0);
     balance::destroy_zero(bal);
 }
@@ -107,19 +107,19 @@ fun into_balance_on_zero_returns_zero_balance() {
 
 #[test]
 fun destroy_zero_ok_on_zero_value() {
-    let e: OwnerEarnings<TEST_COIN> = owner_earning::zero();
-    owner_earning::destroy_zero(e);
+    let e: EarningsBalance<TEST_COIN> = earnings_balance::zero();
+    earnings_balance::destroy_zero(e);
 }
 
 #[test]
 fun destroy_zero_ok_after_full_drain() {
     let mut e   = mk(50);
-    let drained = owner_earning::drain_all(&mut e);
+    let drained = earnings_balance::drain_all(&mut e);
     balance::destroy_for_testing(drained);
-    owner_earning::destroy_zero(e);
+    earnings_balance::destroy_zero(e);
 }
 
 #[test, expected_failure]
 fun destroy_zero_aborts_on_nonzero() {
-    owner_earning::destroy_zero(mk(1));
+    earnings_balance::destroy_zero(mk(1));
 }

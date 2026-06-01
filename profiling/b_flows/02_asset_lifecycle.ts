@@ -31,58 +31,58 @@ async function main() {
   // 1. integrate
   process.stdout.write('Step 1 integrate...');
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
-  tx1.transferObjects([ownerCap, inbox], d.owner.address);
-  const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
+  tx1.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
+  tx1.transferObjects([governanceCap, inbox], d.governor.address);
+  const r1 = await measure(client, kp.governor, 'integrate', 0, tx1);
   steps.push(r1);
   console.log(` net=${r1.net}`);
 
   const c1 = (await client.getTransactionBlock({ digest: r1.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
   const escrowId   = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('Escrow')) as any).objectId;
-  const ownerCapId = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('OwnerCap')) as any).objectId;
+  const governanceCapId = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('GovernanceCap')) as any).objectId;
 
   // 2. rent
   process.stdout.write('Step 2 rent...');
   const tx2 = new Transaction();
-  tx2.setSender(d.tenant1.address);
+  tx2.setSender(d.usufructuary1.address);
   const cap = buildRent(tx2, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
-  tx2.transferObjects([cap], d.tenant1.address);
-  const r2 = await measure(client, kp.tenant1, 'rent', 0, tx2);
+  tx2.transferObjects([cap], d.usufructuary1.address);
+  const r2 = await measure(client, kp.usufructuary1, 'rent', 0, tx2);
   steps.push(r2);
   console.log(` net=${r2.net}`);
 
   const c2 = (await client.getTransactionBlock({ digest: r2.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
-  const tenantCapId = (c2.find(c => c.type === 'created' && (c as any).objectType?.includes('TenantCap')) as any).objectId;
+  const usufructCapId = (c2.find(c => c.type === 'created' && (c as any).objectType?.includes('UsufructCap')) as any).objectId;
 
   // 3. borrow + return (single PTB — now possible without Random)
   process.stdout.write('Step 3 borrow+return...');
   const tx3 = new Transaction();
-  tx3.setSender(d.tenant1.address);
+  tx3.setSender(d.usufructuary1.address);
   const [borrowedAsset, receipt] = tx3.moveCall({
     target: `${d.usufructPackageId}::escrow::borrow_asset`,
     typeArguments: typeArgs,
-    arguments: [tx3.object(escrowId), tx3.object(tenantCapId), clock(tx3)],
+    arguments: [tx3.object(escrowId), tx3.object(usufructCapId), clock(tx3)],
   }) as any[];
   tx3.moveCall({
     target: `${d.usufructPackageId}::escrow::return_asset`,
     typeArguments: typeArgs,
     arguments: [tx3.object(escrowId), borrowedAsset, receipt],
   });
-  const r3 = await measure(client, kp.tenant1, 'borrow_return', 0, tx3);
+  const r3 = await measure(client, kp.usufructuary1, 'borrow_return', 0, tx3);
   steps.push(r3);
   console.log(` net=${r3.net}`);
 
   // 4. retire
   process.stdout.write('Step 4 retire...');
   const tx4 = new Transaction();
-  tx4.setSender(d.owner.address);
+  tx4.setSender(d.governor.address);
   tx4.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [tx4.object(escrowId), tx4.object(ownerCapId), clock(tx4)],
+    arguments: [tx4.object(escrowId), tx4.object(governanceCapId), clock(tx4)],
   });
-  const r4 = await measure(client, kp.owner, 'retire', 0, tx4);
+  const r4 = await measure(client, kp.governor, 'retire', 0, tx4);
   steps.push(r4);
   console.log(` net=${r4.net}`);
 
@@ -93,26 +93,26 @@ async function main() {
 
   // 5. apply
   const tx5 = new Transaction();
-  tx5.setSender(d.owner.address);
+  tx5.setSender(d.governor.address);
   tx5.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
     arguments: [tx5.object(escrowId), clock(tx5)],
   });
-  const r5 = await measure(client, kp.owner, 'apply_transitions', 0, tx5);
+  const r5 = await measure(client, kp.governor, 'apply_transitions', 0, tx5);
   steps.push(r5);
 
   // 6. claim
   process.stdout.write('Step 6 claim...');
   const tx6 = new Transaction();
-  tx6.setSender(d.owner.address);
+  tx6.setSender(d.governor.address);
   const claimedAsset = tx6.moveCall({
     target: `${d.usufructPackageId}::escrow::claim_asset`,
     typeArguments: typeArgs,
-    arguments: [tx6.object(escrowId), tx6.object(ownerCapId), clock(tx6)],
+    arguments: [tx6.object(escrowId), tx6.object(governanceCapId), clock(tx6)],
   });
-  tx6.transferObjects([claimedAsset], d.owner.address);
-  const r6 = await measure(client, kp.owner, 'claim_asset', 0, tx6);
+  tx6.transferObjects([claimedAsset], d.governor.address);
+  const r6 = await measure(client, kp.governor, 'claim_asset', 0, tx6);
   steps.push(r6);
   console.log(` net=${r6.net}`);
 

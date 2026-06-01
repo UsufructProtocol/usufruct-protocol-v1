@@ -5,7 +5,7 @@
  *   Step 1 — generate wallets:
  *     npm run setup:testnet:init
  *     → writes deployment.json with wallet keys + testnet usufruct IDs
- *     → prints owner address; fund it at https://faucet.sui.io (1–2 SUI)
+ *     → prints governor address; fund it at https://faucet.sui.io (1–2 SUI)
  *
  *   Step 2 — deploy dummy_asset:
  *     npm run setup:testnet:deploy
@@ -105,34 +105,34 @@ async function cmdInit() {
     console.log('deployment.json already exists — skipping wallet generation.');
     console.log('Delete it first if you want fresh wallets.');
     const d = JSON.parse(readFileSync(deploymentPath, 'utf8'));
-    console.log(`\nOwner:   ${d.owner.address}`);
-    console.log(`Tenant1: ${d.tenant1.address}`);
-    console.log(`Tenant2: ${d.tenant2.address}`);
+    console.log(`\nGovernor:   ${d.governor.address}`);
+    console.log(`Usufructuary1: ${d.usufructuary1.address}`);
+    console.log(`Usufructuary2: ${d.usufructuary2.address}`);
   } else {
-    const owner   = new Ed25519Keypair();
-    const tenant1 = new Ed25519Keypair();
-    const tenant2 = new Ed25519Keypair();
+    const governor   = new Ed25519Keypair();
+    const usufructuary1 = new Ed25519Keypair();
+    const usufructuary2 = new Ed25519Keypair();
 
     const deployment = {
       usufructPackageId:   TESTNET_USUFRUCT_PACKAGE_ID,
       dummyAssetPackageId: '',   // filled in by setup:testnet:deploy
       protocolFeeInboxId:  TESTNET_FEE_INBOX_ID,
       protocolFeeRefId:    TESTNET_FEE_REF_ID,
-      owner:   { address: owner.getPublicKey().toSuiAddress(),   secretKey: owner.getSecretKey()   },
-      tenant1: { address: tenant1.getPublicKey().toSuiAddress(), secretKey: tenant1.getSecretKey() },
-      tenant2: { address: tenant2.getPublicKey().toSuiAddress(), secretKey: tenant2.getSecretKey() },
+      governor:   { address: governor.getPublicKey().toSuiAddress(),   secretKey: governor.getSecretKey()   },
+      usufructuary1: { address: usufructuary1.getPublicKey().toSuiAddress(), secretKey: usufructuary1.getSecretKey() },
+      usufructuary2: { address: usufructuary2.getPublicKey().toSuiAddress(), secretKey: usufructuary2.getSecretKey() },
     };
 
     writeFileSync(deploymentPath, JSON.stringify(deployment, null, 2));
     console.log('Wallets generated and saved to deployment.json.\n');
-    console.log(`Owner:   ${deployment.owner.address}`);
-    console.log(`Tenant1: ${deployment.tenant1.address}`);
-    console.log(`Tenant2: ${deployment.tenant2.address}`);
+    console.log(`Governor:   ${deployment.governor.address}`);
+    console.log(`Usufructuary1: ${deployment.usufructuary1.address}`);
+    console.log(`Usufructuary2: ${deployment.usufructuary2.address}`);
   }
 
   const d = JSON.parse(readFileSync(deploymentPath, 'utf8'));
-  console.log(`\nFund the owner with 2+ SUI testnet:`);
-  console.log(`  https://faucet.sui.io/?address=${d.owner.address}`);
+  console.log(`\nFund the governor with 2+ SUI testnet:`);
+  console.log(`  https://faucet.sui.io/?address=${d.governor.address}`);
   console.log(`\nOnce funded, run: npm run setup:testnet:deploy`);
 }
 
@@ -144,27 +144,27 @@ async function cmdDeploy() {
   }
 
   const d = JSON.parse(readFileSync(deploymentPath, 'utf8'));
-  const ownerAddr = d.owner.address;
+  const governorAddr = d.governor.address;
 
-  // Check owner balance
-  const coins = await client.getCoins({ owner: ownerAddr, coinType: '0x2::sui::SUI' });
+  // Check governor balance
+  const coins = await client.getCoins({ governor: governorAddr, coinType: '0x2::sui::SUI' });
   const totalMist = coins.data.reduce((s: bigint, c: any) => s + BigInt(c.balance), 0n);
   if (totalMist < 500_000_000n) {
-    console.error(`Owner balance too low: ${totalMist} MIST (need ≥ 500M for gas)`);
-    console.error(`Fund at: https://faucet.sui.io/?address=${ownerAddr}`);
+    console.error(`Governor balance too low: ${totalMist} MIST (need ≥ 500M for gas)`);
+    console.error(`Fund at: https://faucet.sui.io/?address=${governorAddr}`);
     process.exit(1);
   }
-  console.log(`Owner balance: ${totalMist} MIST ✓`);
+  console.log(`Governor balance: ${totalMist} MIST ✓`);
 
   const chainId  = await client.getChainIdentifier();
   const buildEnv = 'testnet';
   console.log(`Chain:    ${chainId}\n`);
 
-  const owner = Ed25519Keypair.fromSecretKey(d.owner.secretKey);
-  run(`sui keytool import "${owner.getSecretKey()}" ed25519`);
+  const governor = Ed25519Keypair.fromSecretKey(d.governor.secretKey);
+  run(`sui keytool import "${governor.getSecretKey()}" ed25519`);
   const prevAddress = run('sui client active-address');
-  run(`sui client switch --address ${ownerAddr}`);
-  console.log(`CLI switched to owner: ${ownerAddr}`);
+  run(`sui client switch --address ${governorAddr}`);
+  console.log(`CLI switched to governor: ${governorAddr}`);
 
   try {
     const dummyPath = resolve(ROOT, 'asset');
@@ -175,7 +175,7 @@ async function cmdDeploy() {
     d.dummyAssetPackageId = dummy.packageId;
     writeFileSync(deploymentPath, JSON.stringify(d, null, 2));
     console.log('\ndeployment.json updated with dummy_asset package ID.');
-    console.log('\nNext: npm run setup:fund:testnet   (top up tenant wallets)');
+    console.log('\nNext: npm run setup:fund:testnet   (top up usufructuary wallets)');
     console.log('Then: npm run run:testnet');
   } finally {
     run(`sui client switch --address ${prevAddress}`);

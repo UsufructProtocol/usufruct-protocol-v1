@@ -2,7 +2,7 @@
 /**
  * Retires + claims all abandoned profiling escrows on testnet.
  *
- * State machine for each OwnerCap:
+ * State machine for each GovernanceCap:
  *
  *   is_retired  → claim_asset
  *   is_retiring → tenure_expiry_ms < now
@@ -50,15 +50,15 @@ async function signAndExecute(tx: Transaction, keypair: Ed25519Keypair) {
   return result;
 }
 
-// Fetch all OwnerCap objects for an address
-async function getOwnerCaps(address: string, pkg: string): Promise<{ id: string; escrowId: string }[]> {
+// Fetch all GovernanceCap objects for an address
+async function getGovernanceCaps(address: string, pkg: string): Promise<{ id: string; escrowId: string }[]> {
   const caps: { id: string; escrowId: string }[] = [];
   let cursor: string | null | undefined = undefined;
 
   while (true) {
     const page = await client.getOwnedObjects({
-      owner:   address,
-      filter:  { StructType: `${pkg}::owner_cap::OwnerCap` },
+      governor:   address,
+      filter:  { StructType: `${pkg}::governance_cap::GovernanceCap` },
       options: { showContent: true },
       cursor,
     });
@@ -119,13 +119,13 @@ async function tryClaimEscrow(
   capId:     string,
   d:         ReturnType<typeof loadDeployment>,
   keypair:   Ed25519Keypair,
-  ownerAddr: string,
+  governorAddr: string,
 ): Promise<'claimed' | 'rented' | 'error'> {
   const pkg      = d.usufructPackageId;
   const dummyPkg = d.dummyAssetPackageId;
   const typeArgs = [`${dummyPkg}::dummy_asset::DummyAsset`, '0x2::sui::SUI'];
 
-  const view = makeViewers(ownerAddr, pkg, typeArgs);
+  const view = makeViewers(governorAddr, pkg, typeArgs);
 
   try {
     if (!await view.isRetired(escrowId)) {
@@ -134,7 +134,7 @@ async function tryClaimEscrow(
         // claim_asset calls apply_pending internally, which fires
         // Occupied{Retiring} → Waiting::Retired when tenure is past.
         // If tenure is still active, skip — nothing to do yet.
-        const expiry = await getTenureExpiryMs(ownerAddr, pkg, typeArgs, escrowId);
+        const expiry = await getTenureExpiryMs(governorAddr, pkg, typeArgs, escrowId);
         if (expiry === null || expiry > Date.now()) return 'rented';
         // Tenure expired — fall through to claim_asset.
       } else {
@@ -142,7 +142,7 @@ async function tryClaimEscrow(
         // has expired the escrow goes directly to Waiting::Retired; otherwise
         // the Retiring flag is set and the escrow auto-retires on expiry.
         const txRet = new Transaction();
-        txRet.setSender(ownerAddr);
+        txRet.setSender(governorAddr);
         txRet.setGasBudget(20_000_000);
         txRet.moveCall({
           target:        `${pkg}::escrow::retire`,
@@ -162,7 +162,7 @@ async function tryClaimEscrow(
 
     // 3. claim_asset — sees committed Waiting::Retired state.
     const txClaim = new Transaction();
-    txClaim.setSender(ownerAddr);
+    txClaim.setSender(governorAddr);
     txClaim.setGasBudget(20_000_000);
     const asset = txClaim.moveCall({
       target:        `${pkg}::escrow::claim_asset`,
@@ -193,16 +193,16 @@ async function main() {
   }
 
   const d         = loadDeployment();
-  const ownerAddr = d.owner.address;
-  const keypair   = Ed25519Keypair.fromSecretKey(d.owner.secretKey);
+  const governorAddr = d.governor.address;
+  const keypair   = Ed25519Keypair.fromSecretKey(d.governor.secretKey);
 
   run(`sui keytool import "${keypair.getSecretKey()}" ed25519`);
 
-  console.log(`Owner: ${ownerAddr}`);
+  console.log(`Governor: ${governorAddr}`);
   console.log(`Package: ${d.usufructPackageId}\n`);
 
-  const caps = await getOwnerCaps(ownerAddr, d.usufructPackageId);
-  console.log(`Found ${caps.length} OwnerCap(s)\n`);
+  const caps = await getGovernanceCaps(governorAddr, d.usufructPackageId);
+  console.log(`Found ${caps.length} GovernanceCap(s)\n`);
 
   if (caps.length === 0) {
     console.log('Nothing to clean up.');
@@ -213,7 +213,7 @@ async function main() {
 
   for (const { id: capId, escrowId } of caps) {
     process.stdout.write(`  escrow ${escrowId.slice(0, 10)}…  cap ${capId.slice(0, 10)}… → `);
-    const result = await tryClaimEscrow(escrowId, capId, d, keypair, ownerAddr);
+    const result = await tryClaimEscrow(escrowId, capId, d, keypair, governorAddr);
     if (result !== 'claimed') process.stdout.write(result === 'rented' ? 'rented\n' : '');
     else console.log('claimed');
     if (result === 'claimed') claimed++;

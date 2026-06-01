@@ -24,7 +24,7 @@ use usufruct::{
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
-const OWNER: address = @0x07;
+const GOVERNOR: address = @0x07;
 
 public struct DemoAsset has key, store { id: UID }
 
@@ -34,7 +34,7 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
 
 fun setup(): Scenario {
     let mut sc = test_scenario::begin(@0x0);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     { protocol_fee_inbox::init_for_testing(sc.ctx()); };
     sc
 }
@@ -54,29 +54,29 @@ fun v1_duration_feeds_policy_constructors() {
 #[test]
 fun v2_tenures_feeds_rent() {
     let mut sc    = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let fee_ref   = sc.take_immutable<ProtocolFeeRef>();
     let clk       = clock::create_for_testing(sc.ctx());
     let asset     = mk_demo_asset(sc.ctx());
-    let (owner_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+    let (governance_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     let clk2       = clock::create_for_testing(sc.ctx());
     let payment    = coin::from_balance(balance::create_for_testing<SUI>(10_000_000_000), sc.ctx());
-    let tenant_cap = escrow::rent<DemoAsset, SUI>(
+    let usufruct_cap = escrow::rent<DemoAsset, SUI>(
         &mut escrow, payment, ensemble::tenures(1), &clk2, sc.ctx(),
     );
     clock::destroy_for_testing(clk2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(tenant_cap, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(usufruct_cap, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     sc.end();
 }
 
@@ -87,7 +87,7 @@ fun v2_tenures_feeds_rent() {
 #[test]
 fun e1_full_ptb_chain_from_api_produces_idle_escrow() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let ensemble = ensemble::new_ensemble(
         ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000)),
@@ -106,16 +106,16 @@ fun e1_full_ptb_chain_from_api_produces_idle_escrow() {
     let asset   = mk_demo_asset(sc.ctx());
 
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(asset, ensemble, commitment, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     assert!(escrow::is_idle(&escrow), 0);
     test_scenario::return_shared(escrow);
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -123,7 +123,7 @@ fun e1_full_ptb_chain_from_api_produces_idle_escrow() {
 #[test]
 fun e2_all_curve_shapes_accepted_by_integrate() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let rp  = ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000));
     let td  = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
@@ -150,10 +150,10 @@ fun e2_all_curve_shapes_accepted_by_integrate() {
         let clk   = clock::create_for_testing(sc.ctx());
         let asset = mk_demo_asset(sc.ctx());
         let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(asset, ens, com, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
-        transfer::public_transfer(inbox, OWNER);
+        transfer::public_transfer(inbox, GOVERNOR);
         clock::destroy_for_testing(clk);
-        transfer::public_transfer(cap, OWNER);
-        sc.next_tx(OWNER);
+        transfer::public_transfer(cap, GOVERNOR);
+        sc.next_tx(GOVERNOR);
         i = i + 1;
     };
     test_scenario::return_immutable(fee_ref);
@@ -164,7 +164,7 @@ fun e2_all_curve_shapes_accepted_by_integrate() {
 #[test]
 fun e3_retire_commitment_immediate_and_deferred_accepted() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let ens     = escrow_corpus::by_tag(0);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
@@ -174,19 +174,19 @@ fun e3_retire_commitment_immediate_and_deferred_accepted() {
     let (cap, inbox1) = escrow::integrate<DemoAsset, SUI>(
         asset, ens, ensemble::new_retire_commitment_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox1, OWNER);
+    transfer::public_transfer(inbox1, GOVERNOR);
     clock::destroy_for_testing(clk);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let clk   = clock::create_for_testing(sc.ctx());
     let asset = mk_demo_asset(sc.ctx());
     let (cap, inbox2) = escrow::integrate<DemoAsset, SUI>(
         asset, ens, ensemble::new_retire_commitment_deferred(ensemble::duration(10_000_000)), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox2, OWNER);
+    transfer::public_transfer(inbox2, GOVERNOR);
     clock::destroy_for_testing(clk);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
 
     test_scenario::return_immutable(fee_ref);
     sc.end();
@@ -196,7 +196,7 @@ fun e3_retire_commitment_immediate_and_deferred_accepted() {
 #[test]
 fun e4_compound_delta_price_escalation_accepted() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let ens = ensemble::new_ensemble(
         ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000)),
@@ -214,9 +214,9 @@ fun e4_compound_delta_price_escalation_accepted() {
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ens, ensemble::new_retire_commitment_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     clock::destroy_for_testing(clk);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     sc.end();
 }
@@ -225,7 +225,7 @@ fun e4_compound_delta_price_escalation_accepted() {
 #[test]
 fun e5_multi_tenure_extend_accepted() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let ens = ensemble::new_ensemble(
         ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000)),
@@ -243,9 +243,9 @@ fun e5_multi_tenure_extend_accepted() {
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ens, ensemble::new_retire_commitment_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     clock::destroy_for_testing(clk);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     sc.end();
 }
@@ -254,7 +254,7 @@ fun e5_multi_tenure_extend_accepted() {
 #[test]
 fun e6_all_handover_policies_accepted() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let rp   = ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000));
     let td   = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
@@ -278,10 +278,10 @@ fun e6_all_handover_policies_accepted() {
         let clk  = clock::create_for_testing(sc.ctx());
         let asset = mk_demo_asset(sc.ctx());
         let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(asset, ens, com, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
-        transfer::public_transfer(inbox, OWNER);
+        transfer::public_transfer(inbox, GOVERNOR);
         clock::destroy_for_testing(clk);
-        transfer::public_transfer(cap, OWNER);
-        sc.next_tx(OWNER);
+        transfer::public_transfer(cap, GOVERNOR);
+        sc.next_tx(GOVERNOR);
         i = i + 1;
     };
     test_scenario::return_immutable(fee_ref);
@@ -292,7 +292,7 @@ fun e6_all_handover_policies_accepted() {
 #[test]
 fun e7_auction_window_policies_accepted() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let rp  = ensemble::new_rest_price_fixed(ensemble::price(10_000_000_000));
     let td  = ensemble::new_tenure_duration_fixed(ensemble::duration(100_000));
@@ -315,10 +315,10 @@ fun e7_auction_window_policies_accepted() {
         let clk  = clock::create_for_testing(sc.ctx());
         let asset = mk_demo_asset(sc.ctx());
         let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(asset, ens, com, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
-        transfer::public_transfer(inbox, OWNER);
+        transfer::public_transfer(inbox, GOVERNOR);
         clock::destroy_for_testing(clk);
-        transfer::public_transfer(cap, OWNER);
-        sc.next_tx(OWNER);
+        transfer::public_transfer(cap, GOVERNOR);
+        sc.next_tx(GOVERNOR);
         i = i + 1;
     };
     test_scenario::return_immutable(fee_ref);

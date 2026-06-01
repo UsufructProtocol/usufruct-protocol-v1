@@ -136,23 +136,23 @@ async function main() {
   const chainId  = await client.getChainIdentifier();
   console.log(`Build env: ${buildEnv}  Chain: ${chainId}\n`);
 
-  const owner   = new Ed25519Keypair();
-  const tenant1 = new Ed25519Keypair();
-  const tenant2 = new Ed25519Keypair();
+  const governor   = new Ed25519Keypair();
+  const usufructuary1 = new Ed25519Keypair();
+  const usufructuary2 = new Ed25519Keypair();
 
-  const ownerAddr = owner.getPublicKey().toSuiAddress();
-  console.log(`Owner:   ${ownerAddr}`);
-  console.log(`Tenant1: ${tenant1.getPublicKey().toSuiAddress()}`);
-  console.log(`Tenant2: ${tenant2.getPublicKey().toSuiAddress()}`);
+  const governorAddr = governor.getPublicKey().toSuiAddress();
+  console.log(`Governor:   ${governorAddr}`);
+  console.log(`Usufructuary1: ${usufructuary1.getPublicKey().toSuiAddress()}`);
+  console.log(`Usufructuary2: ${usufructuary2.getPublicKey().toSuiAddress()}`);
 
-  console.log('\nFunding owner (x2 faucet requests)...');
-  await requestFaucet(ownerAddr);
-  await requestFaucet(ownerAddr);
+  console.log('\nFunding governor (x2 faucet requests)...');
+  await requestFaucet(governorAddr);
+  await requestFaucet(governorAddr);
 
-  run(`sui keytool import "${owner.getSecretKey()}" ed25519`);
+  run(`sui keytool import "${governor.getSecretKey()}" ed25519`);
   const prevAddress = run('sui client active-address');
-  run(`sui client switch --address ${ownerAddr}`);
-  console.log(`\nCLI switched to owner: ${ownerAddr}`);
+  run(`sui client switch --address ${governorAddr}`);
+  console.log(`\nCLI switched to governor: ${governorAddr}`);
 
   try {
     const usufructPath = resolve(ROOT, '..', 'usufruct');
@@ -183,9 +183,9 @@ async function main() {
       dummyAssetPackageId: dummy.packageId,
       protocolFeeInboxId:  feeInboxObj.objectId,
       protocolFeeRefId:    feeRefObj.objectId,
-      owner:   { address: ownerAddr,                              secretKey: owner.getSecretKey()   },
-      tenant1: { address: tenant1.getPublicKey().toSuiAddress(), secretKey: tenant1.getSecretKey() },
-      tenant2: { address: tenant2.getPublicKey().toSuiAddress(), secretKey: tenant2.getSecretKey() },
+      governor:   { address: governorAddr,                              secretKey: governor.getSecretKey()   },
+      usufructuary1: { address: usufructuary1.getPublicKey().toSuiAddress(), secretKey: usufructuary1.getSecretKey() },
+      usufructuary2: { address: usufructuary2.getPublicKey().toSuiAddress(), secretKey: usufructuary2.getSecretKey() },
     };
 
     writeFileSync(resolve(ROOT, 'deployment.json'), JSON.stringify(deployment, null, 2));

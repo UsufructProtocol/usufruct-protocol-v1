@@ -19,9 +19,9 @@ the code that generated it; this table is the bridge.
 |---|---|---|---|
 | v1.0.0 | 2026-05-25 | `9b2d000` | initial Phase A/B on the ensemble API layer |
 | v1.1.0 | 2026-05-27 | `be7f8a1` (testnet pkg `0xe466…`) | testnet validation; localnet = testnet to the bit |
-| v1.2.0 | 2026-05-28 | `2f604b5` | `update_tenant_refund_address` + `active_*` view rename |
+| v1.2.0 | 2026-05-28 | `2f604b5` | `update_usufructuary_refund_address` + `active_*` view rename |
 | v1.3.0 | 2026-05-31 | `51f9d31` | `ensemble_commitment` twin + blanket terms-freeze |
-| v1.4.0 | 2026-05-31 | `7397e62` (branch `feature/owner-earnings-inbox-first`) | inbox-first owner income: `EarningsInbox`/`EarningsMessage`, `integrate_into_portfolio`, fleet governance |
+| v1.4.0 | 2026-05-31 | `7397e62` (branch `feature/governor-earnings-inbox-first`) | inbox-first governor income: `EarningsInbox`/`EarningsMessage`, `integrate_into_portfolio`, fleet governance |
 
 The code-state commit is the **parent of the commit that wrote each section** (the doc
 commit adds only prose on top of the already-deployed source) — except v1.3.0, whose
@@ -43,8 +43,8 @@ Results in SUI (1 SUI = 10⁹ MIST).
 
 | Operation | Net SUI | Notes |
 |---|---|---|
-| `integrate` | +0.006419 | +2 objects (Escrow + OwnerCap) |
-| `rent(tenures(1))` | +0.004040 | +1 object (TenantCap) |
+| `integrate` | +0.006419 | +2 objects (Escrow + GovernanceCap) |
+| `rent(tenures(1))` | +0.004040 | +1 object (UsufructCap) |
 | `rent(tenures(N))` | **+0.004040** | O(1) in N — see finding #1 |
 | `borrow_return` | +0.001206 | borrow + return in single PTB |
 | `apply_transitions` (no-op) | +0.001180 | baseline — no pending transition |
@@ -53,9 +53,9 @@ Results in SUI (1 SUI = 10⁹ MIST).
 | `update_config` | +0.001183 | |
 | `withdraw_earnings` | +0.002171 | |
 | `retire` | +0.000940 | |
-| `soft_burn_tenant_cap` | −0.000398 | −1 object |
-| `hard_burn_tenant_cap` | −0.000455 | −1 object |
-| `claim_asset` | −0.001525 | −2 objects (Escrow + OwnerCap) |
+| `soft_burn_usufruct_cap` | −0.000398 | −1 object |
+| `hard_burn_usufruct_cap` | −0.000455 | −1 object |
+| `claim_asset` | −0.001525 | −2 objects (Escrow + GovernanceCap) |
 
 ### borrow_return — curve shape variants
 
@@ -95,7 +95,7 @@ See finding #7.
 |---|---|---|
 | Minimal (integrate→rent→retire→apply→claim) | **+0.011761** | 5 PTBs |
 | Lifecycle + borrow+return | +0.011998 | 6 PTBs |
-| Handover (2 tenants) | +0.016336 | 7 PTBs |
+| Handover (2 usufructuaries) | +0.016336 | 7 PTBs |
 | Sequential rents N=3 | +0.023762 | 3 cycles |
 | Sequential rents N=5 | +0.035590 | 5 cycles |
 | Sequential rents N=10 | +0.065160 | 10 cycles |
@@ -111,7 +111,7 @@ See finding #7.
 
 `rent(tenures(N))` costs 0.004040 SUI for N=1, N=10, and N=100 — identical.
 `tenures(N)` only multiplies a stored duration in `TenancySchedule`; computation
-and object count are invariant in N. A tenant locking 100 periods pays the same
+and object count are invariant in N. A usufructuary locking 100 periods pays the same
 as one locking 1.
 
 Contrast: N sequential `rent(1)` cycles cost N × 0.005914 SUI — 146× more for N=100.
@@ -184,7 +184,7 @@ math economically viable for complex DeFi protocols.
 
 **Implication:** integrators choose `CurveShapePolicy` based on the economic or
 UX shape they want — concave growth, S-curve, logistic dampening — with zero gas
-cost consequence for the tenant.
+cost consequence for the usufructuary.
 
 ---
 
@@ -225,8 +225,8 @@ Same scripts, same parameters — independent run on public testnet.
 | `update_config` | 1,182,776 | +0.001183 |
 | `withdraw_earnings` | 2,170,776 | +0.002171 |
 | `retire` | 939,576 | +0.000940 |
-| `soft_burn_tenant_cap` | −397,872 | −0.000398 |
-| `hard_burn_tenant_cap` | −455,112 | −0.000455 |
+| `soft_burn_usufruct_cap` | −397,872 | −0.000398 |
+| `hard_burn_usufruct_cap` | −455,112 | −0.000455 |
 | `claim_asset` | −1,525,256 | −0.001525 |
 
 ### borrow_return — curve shape variants (testnet)
@@ -261,7 +261,7 @@ grows linearly; a single PTB handles up to 500 messages.
 |---|---|---|
 | Minimal (integrate→rent→retire→apply→claim) | 11,760,680 | +0.011761 |
 | Lifecycle + borrow+return | 11,998,408 | +0.011998 |
-| Handover (2 tenants) | 16,312,904 | +0.016313 |
+| Handover (2 usufructuaries) | 16,312,904 | +0.016313 |
 | Sequential rents N=3 | 22,607,560 | +0.022608 |
 | Sequential rents N=5 | 34,435,480 | +0.034435 |
 | Sequential rents N=10 | 64,005,280 | +0.064005 |
@@ -311,7 +311,7 @@ iteration over shared lists. Usufruct has none of those patterns.
 ### `rent(tenures(N))` is O(1) in N — and the gap is brutal
 
 `tenures(N)` stores a multiplied duration; it does not create N objects or iterate N
-times. A tenant committing to 100 periods pays exactly the same as one committing to 1:
+times. A usufructuary committing to 100 periods pays exactly the same as one committing to 1:
 
 | Commitment | Gas |
 |---|---|
@@ -359,14 +359,14 @@ to the gas meter.
 
 Integrators choose their `CurveShapePolicy` based on the economic shape they want —
 concave growth, S-curve, logistic dampening — with zero gas consequence for the
-tenant.
+usufructuary.
 
 ### Complete flows in perspective
 
 | Flow | Cost | Context |
 |---|---|---|
 | Full asset lifecycle (integrate→rent→borrow/return→retire→claim) | ~0.012 SUI | |
-| Handover between two tenants | ~0.016 SUI | |
+| Handover between two usufructuaries | ~0.016 SUI | |
 | 10 sequential rent cycles + retire + claim | ~0.064 SUI | |
 | One rent cycle (rent + apply) | 0.005914 SUI | ≈ 6 SUI transfers |
 
@@ -384,12 +384,12 @@ state transition is ever silently dropped.
 
 ---
 
-## Localnet — update_tenant_refund_address (2026-05-28)
+## Localnet — update_usufructuary_refund_address (2026-05-28)
 
 Network: localnet  
 Branch: `profiling-update-refund-address`  
-Code state: `2f604b5` — *profiling: add update_tenant_refund_address scripts* (**v1.2.0**)  
-Changes vs prior run: new `update_tenant_refund_address` public function + view API
+Code state: `2f604b5` — *profiling: add update_usufructuary_refund_address scripts* (**v1.2.0**)  
+Changes vs prior run: new `update_usufructuary_refund_address` public function + view API
 rename (`current_*` → `active_*`, `policy_ensemble` → `active_ensemble`,
 `pending_config` → `pending_ensemble`) + new `committed_tenures` views.
 
@@ -397,7 +397,7 @@ rename (`current_*` → `active_*`, `policy_ensemble` → `active_ensemble`,
 
 | Operation | Net MIST | Net SUI | +Obj | −Obj |
 |---|---|---|---|---|
-| `update_tenant_refund_address` | 1,265,848 | +0.001266 | 0 | 0 |
+| `update_usufructuary_refund_address` | 1,265,848 | +0.001266 | 0 | 0 |
 
 Cost matches `borrow_return` exactly. The call mutates only the active seat's
 `refund_address` field — no object creation or deletion, no FeeMessage, no
@@ -439,15 +439,15 @@ v1.2.0: localnet measurement (2026-05-28), code state `2f604b5`.
 | `rent(tenures(10))` | 4,039,920 | 4,099,920 | +60,000 |
 | `rent(tenures(100))` | 4,039,920 | 4,099,920 | +60,000 |
 | `borrow_return` | 1,205,848 | 1,265,848 | +60,000 |
-| `soft_burn_tenant_cap` | −397,872 | −337,872 | +60,000 |
-| `hard_burn_tenant_cap` | −455,112 | −395,112 | +60,000 |
+| `soft_burn_usufruct_cap` | −397,872 | −337,872 | +60,000 |
+| `hard_burn_usufruct_cap` | −455,112 | −395,112 | +60,000 |
 | `apply_transitions` (no-op) | 1,180,040 | 1,240,040 | +60,000 |
 | `retire` | 939,576 | 999,576 | +60,000 |
 | `claim_asset` | −1,525,256 | −1,465,256 | +60,000 |
 | `withdraw_earnings` | 2,170,776 | 2,230,776 | +60,000 |
 | `extend_commitment` | 1,243,576 | 1,303,576 | +60,000 |
 | `update_config` | 1,182,776 | 1,252,776 | +70,000 |
-| `update_tenant_refund_address` | — | 1,265,848 | new |
+| `update_usufructuary_refund_address` | — | 1,265,848 | new |
 
 All existing operations show a uniform **+60,000–70,000 MIST** increase. This traces to
 two new events introduced in v1.2.0: `CycleParamsResolved` (emitted when the engine
@@ -462,7 +462,7 @@ with operation complexity, tenure count, or system volume.
 |---|---|---|---|---|
 | Minimal (integrate→rent→retire→apply→claim) | 11,760,680 | 12,080,680 | +320,000 | 5 |
 | Lifecycle + borrow_return | 11,998,408 | 12,368,408 | +370,000 | 6 |
-| Handover (2 tenants) | 16,312,904 | 16,825,824 | +512,920 | 8 |
+| Handover (2 usufructuaries) | 16,312,904 | 16,825,824 | +512,920 | 8 |
 | Sequential rents N=3 | 22,607,560 | 23,147,560 | +540,000 | 9 |
 | Sequential rents N=5 | 34,435,480 | 35,215,480 | +780,000 | 13 |
 | Sequential rents N=10 | 64,005,280 | 65,385,280 | +1,380,000 | 23 |
@@ -514,14 +514,14 @@ See finding #8.
 | `borrow_return` | 1,336,532 | +0.001337 |
 | `apply_transitions` (no-op) | 1,300,724 | +0.001301 |
 | `retire` | 1,070,260 | +0.001070 |
-| `soft_burn_tenant_cap` | −277,188 | −0.000277 |
-| `hard_burn_tenant_cap` | −335,112 | −0.000335 |
+| `soft_burn_usufruct_cap` | −277,188 | −0.000277 |
+| `hard_burn_usufruct_cap` | −335,112 | −0.000335 |
 | `claim_asset` | −1,462,972 | −0.001463 |
 | `withdraw_earnings` | 2,301,460 | +0.002301 |
 | `extend_retire_commitment` | 1,374,260 | +0.001374 |
 | `extend_ensemble_commitment` | 1,374,260 | +0.001374 |
 | `update_ensemble` | 1,313,460 | +0.001313 |
-| `update_tenant_refund_address` | 1,326,532 | +0.001327 |
+| `update_usufructuary_refund_address` | 1,326,532 | +0.001327 |
 
 `rent(tenures(N))` remains O(1) in N (identical for N=1/10/100). Curve-shape variants
 remain gas-neutral within 152 MIST (finding #7 holds — re-measured, unchanged).
@@ -538,12 +538,12 @@ v1.3.0: localnet measurement (2026-05-31), code state `51f9d31`.
 | `borrow_return` | 1,265,848 | 1,336,532 | +70,684 |
 | `apply_transitions` (no-op) | 1,240,040 | 1,300,724 | +60,684 |
 | `retire` | 999,576 | 1,070,260 | +70,684 |
-| `soft_burn_tenant_cap` | −337,872 | −277,188 | +60,684 |
-| `hard_burn_tenant_cap` | −395,112 | −335,112 | +60,000 |
+| `soft_burn_usufruct_cap` | −337,872 | −277,188 | +60,684 |
+| `hard_burn_usufruct_cap` | −395,112 | −335,112 | +60,000 |
 | `withdraw_earnings` | 2,230,776 | 2,301,460 | +70,684 |
 | `extend_commitment` → `extend_retire_commitment` | 1,303,576 | 1,374,260 | +70,684 |
 | `update_config` → `update_ensemble` | 1,252,776 | 1,313,460 | +60,684 |
-| `update_tenant_refund_address` | 1,265,848 | 1,326,532 | +60,684 |
+| `update_usufructuary_refund_address` | 1,265,848 | 1,326,532 | +60,684 |
 | `claim_asset` | −1,465,256 | −1,462,972 | +2,284 |
 | `extend_ensemble_commitment` | — | 1,374,260 | new |
 
@@ -559,7 +559,7 @@ This is the same absolute, volume-independent storage delta documented in findin
 |---|---|---|---|---|
 | Minimal (integrate→rent→retire→apply→claim) | 12,080,680 | 12,413,416 | +332,736 | 5 |
 | Lifecycle + borrow_return | 12,368,408 | 12,771,828 | +403,420 | 6 |
-| Handover (2 tenants) | 16,825,824 | 17,360,612 | +534,788 | 8 |
+| Handover (2 usufructuaries) | 16,825,824 | 17,360,612 | +534,788 | 8 |
 | Sequential rents N=3 | 23,147,560 | 23,773,032 | +625,472 | 9 |
 | Sequential rents N=5 | 35,215,480 | 36,123,688 | +908,208 | 13 |
 | Sequential rents N=10 | 65,385,280 | 67,000,328 | +1,615,048 | 23 |
@@ -580,17 +580,17 @@ identical to the MIST** in compute, storage, and rebate. The two policies are by
 mirrors in source (`EnsembleCommitmentPolicy` is a structural twin of `RetireCommitmentPolicy`,
 both `Immediate | Deferred { floor }`), and that structural symmetry surfaces verbatim in the
 gas meter. The blanket terms-freeze adds no measurable cost over the permanence commitment it
-mirrors: a tenant gets stability-of-terms for the same price as stability-of-availability.
+mirrors: a usufructuary gets stability-of-terms for the same price as stability-of-availability.
 
 ---
 
-# v1.4.0 — Inbox-first owner income (`7397e62`)
+# v1.4.0 — Inbox-first governor income (`7397e62`)
 
-> Branch `feature/owner-earnings-inbox-first`. Owner income is unbundled from
-> governance via on-chain coupon-stripping: `OwnerCap` becomes a pure governance
+> Branch `feature/governor-earnings-inbox-first`. Governor income is unbundled from
+> governance via on-chain coupon-stripping: `GovernanceCap` becomes a pure governance
 > token, and earnings settle to a standalone `EarningsInbox` as owned
 > `EarningsMessage` objects (collected like the fee layer), instead of
-> accumulating inside the shared escrow's `OwnerSeat` and being pulled with
+> accumulating inside the shared escrow's `GovernorSeat` and being pulled with
 > `withdraw_earnings`. Two integrate functions: `integrate` (mints the cap+inbox
 > pair) and `integrate_into_portfolio` (joins an existing pair → fleets).
 
@@ -615,7 +615,7 @@ objects and gas; it proves *logic* (transitions, conservation, aborts). This run
 proves *execution*: every measurement is a real PTB over JSON-RPC against a
 fullnode — the same path Mainnet takes. It exercises what unit tests cannot:
 PTB composition, type-argument resolution, the `integrate` tuple return
-`(OwnerCap, EarningsInbox)`, transfer-to-object + `Receiving` ticket collection
+`(GovernanceCap, EarningsInbox)`, transfer-to-object + `Receiving` ticket collection
 actually working at runtime, real object versioning, owned/shared handling, and
 economic viability (ops cost fractions of a cent, none abort on gas). Phase A
 (28 ops + 3 scalability sweeps) and Phase B (9 flows) all succeeded → the
@@ -640,7 +640,7 @@ but do not fully erase this.
 | `integrate` | +2 obj, 6,617,880 | **+3 obj, 7,995,480** | mints the `EarningsInbox` too (+1 obj ≈ 1.38M) |
 | `claim_asset` | −2 obj, −1,462,972 | **−1 obj, −1,038,380** | cap survives by-ref (reusable across a portfolio) → forfeits the burn rebate |
 
-The cap is no longer burned at claim because one `OwnerCap` may govern N escrows.
+The cap is no longer burned at claim because one `GovernanceCap` may govern N escrows.
 The trade is deliberate: one object's storage at birth + the lost burn rebate, in
 exchange for a reusable governance token and income in batchable owned objects.
 
@@ -697,8 +697,8 @@ mints only the `Escrow`, reusing the existing cap + inbox.
 
 ## #4 — Governance over a fleet is exactly O(1) per escrow (zero shared-cap overhead)
 
-One `OwnerCap` retiring N escrows, validated **seat-side**
-(`owner_cap::identity(cap) == seat.cap_identity` — no registry, no cross-escrow
+One `GovernanceCap` retiring N escrows, validated **seat-side**
+(`governance_cap::identity(cap) == seat.cap_identity` — no registry, no cross-escrow
 state):
 
 | N | per-retire (separate PTBs) | per-retire (batched 1 PTB) |
@@ -713,15 +713,15 @@ fleet introduces **literally zero overhead** vs N independent caps. Batching N
 retires in one PTB amortizes the per-PTB floor and turns rebate-positive at scale
 (−155,189/retire at N=50).
 
-## #5 — Before/after: owner income collection (Phase B `05_earnings`, N=3)
+## #5 — Before/after: governor income collection (Phase B `05_earnings`, N=3)
 
 | | deposit (v1.3.0) | inbox-first (v1.4.0) |
 |---|---|---|
 | collect 3 tenures' income | 3× `withdraw_earnings` @ +2,301,460 = **+6,904,380** | 1× batched `collect` = **−3,812,576** |
 | object mutated | the **shared Escrow** (×3) | inbox + messages (**owned**) |
-| owner's wallet | **pays** 6.90M | **earns** 3.81M rebate |
+| governor's wallet | **pays** 6.90M | **earns** 3.81M rebate |
 
-A **~10.7M MIST swing in the owner's favor** over 3 tenures, flipping income
+A **~10.7M MIST swing in the governor's favor** over 3 tenures, flipping income
 collection from a *cost* to a *rebate*. Three wins stack: **batching** (O(N) income
 in O(1) PTBs), **rebate-positive** drain of owned objects, and **zero contention**
 (the old `withdraw` locked the shared escrow, competing with renters; `collect`
@@ -729,9 +729,9 @@ touches only owned objects).
 
 **Economic timing.** The model moves +1 object's storage cost to settlement
 (`apply`, ~1.38M/event, paid by *whoever* calls apply — keeper, next renter,
-anyone) and recovers it as a rebate at `collect` (captured by the **owner**). The
-deposit model was the reverse: cheap apply, but the owner paid `withdraw`. Storage
-is ~a wash system-wide; **who pays and when** shifts toward the owner.
+anyone) and recovers it as a rebate at `collect` (captured by the **governor**). The
+deposit model was the reverse: cheap apply, but the governor paid `withdraw`. Storage
+is ~a wash system-wide; **who pays and when** shifts toward the governor.
 
 ## #6 — Fleet end-to-end: two objects govern N escrows, one PTB collects all (`07`)
 
@@ -755,12 +755,12 @@ collect its cash flow in one PTB* — measured end-to-end.
 
 # Verdict: Deposit vs Inbox scalability (v1.3.0 vs v1.4.0)
 
-Two models for the owner to **claim earnings**, measured head-to-head:
+Two models for the governor to **claim earnings**, measured head-to-head:
 
 - **Deposit-in-Escrow** (v1.3.0 `51f9d31`): earnings accrue into the shared
-  escrow's `OwnerSeat` balance; the owner pulls them with `withdraw_earnings`.
+  escrow's `GovernorSeat` balance; the governor pulls them with `withdraw_earnings`.
 - **Earning-Message-in-Inbox** (v1.4.0 `7397e62`): each settlement posts an owned
-  `EarningsMessage` to a standalone `EarningsInbox`; the owner drains them with a
+  `EarningsMessage` to a standalone `EarningsInbox`; the governor drains them with a
   batched `collect_earnings_messages`.
 
 Let a portfolio be **M** escrows × **K** tenures each, **T = M·K** income events.
@@ -778,7 +778,7 @@ Deposit wins this phase by one object per tenure — but it is a **constant fact
 O(1), that does not compound** with portfolio growth, and it is precisely the cost
 that funds Phase 2's rebate.
 
-## Phase 2 — Collection (the owner claims) — where it is decided
+## Phase 2 — Collection (the governor claims) — where it is decided
 
 | | Deposit (v1.3.0) | Inbox (v1.4.0) |
 |---|---|---|
@@ -793,11 +793,11 @@ inputs / O(M) caps**. Even packing M withdraws into one PTB still takes M shared
 inputs and M caps and locks M rental markets at once. The inbox routes the whole
 fleet to **one owned inbox**, drained in **O(1) PTBs with one cap**.
 
-## Crossover (owner-facing claim cost, measured)
+## Crossover (governor-facing claim cost, measured)
 
 Fleet of M escrows, 1 tenure each — claim everything accrued:
 
-| M | Deposit (M withdraws) | Inbox (1 collect of M msgs) | owner is better off by |
+| M | Deposit (M withdraws) | Inbox (1 collect of M msgs) | governor is better off by |
 |---|---|---|---|
 | 1 | +2,301,460 | +240,384 | inbox already cheaper |
 | 10 | +23,014,600 | −17,982,930 (rebate) | **~41M MIST** |
@@ -824,20 +824,20 @@ non-compounding, and is the very cost that funds the inbox's O(1) rebate-positiv
 claim**. The two tie on settlement (both O(1)/tenure) and the inbox wins
 **asymptotically** on both collection (O(M)→O(1) PTBs) and governance (M→1 caps).
 No growth regime exists where deposit wins; the only scenario it leads is the
-degenerate non-scaling one (a single escrow, few tenures, an owner who never
+degenerate non-scaling one (a single escrow, few tenures, an governor who never
 claims and values only cheap settlement) — which is, by definition, outside a
 scalability question.
 
-**Earning-Message-in-Inbox is unequivocally the more scalable model for the owner
+**Earning-Message-in-Inbox is unequivocally the more scalable model for the governor
 to claim earnings.**
 
 ## Why it scales *where it matters*: pull-aggregation vs push-distribution
 
-The two owner-facing flows have **opposite reducibility**, and that — not raw
+The two governor-facing flows have **opposite reducibility**, and that — not raw
 magnitude — is the heart of the verdict:
 
 - **Earnings (collection) is pull-aggregatable.** Many escrows *push* income to
-  **one** inbox (transfer-to-object at settlement); the owner *pulls* the whole
+  **one** inbox (transfer-to-object at settlement); the governor *pulls* the whole
   pile in a single `Receiving` batch. An aggregation sink exists → collection is
   reducible to **O(1) PTBs**. The inbox model exploits exactly this.
 - **Governance (retire/update) is push-distributive and irreducibly O(M).** One

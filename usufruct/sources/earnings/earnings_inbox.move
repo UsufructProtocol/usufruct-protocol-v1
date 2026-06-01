@@ -11,16 +11,16 @@ module usufruct::earnings_inbox;
 
 // === Structs ===
 
-/// Receives an escrow's owner-earnings as `EarningsMessage` objects. `key +
+/// Receives an escrow's governor-earnings as `EarningsMessage` objects. `key +
 /// store`, so it is itself integrable into a usufruct escrow — the coupon-strip
-/// primitive: rent the income stream apart from the `OwnerCap` that governs the
-/// escrow. Born only via `escrow::integrate`, paired once with an `OwnerCap`;
+/// primitive: rent the income stream apart from the `GovernanceCap` that governs the
+/// escrow. Born only via `escrow::integrate`, paired once with an `GovernanceCap`;
 /// after birth the two are independent objects.
 public struct EarningsInbox has key, store {
     id: UID,
 }
 
-/// Copy/drop projection of an inbox's object ID. Stored inside `OwnerSeat` as the
+/// Copy/drop projection of an inbox's object ID. Stored inside `GovernorSeat` as the
 /// permanent earnings destination and carried by every `EarningsMessage`. Mirrors
 /// `FeeInboxIdentity` — a value, never an object, so it crosses module borders
 /// without touching the object store.

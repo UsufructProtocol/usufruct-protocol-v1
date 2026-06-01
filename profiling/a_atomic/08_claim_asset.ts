@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Phase A / 08 — claim_asset
- * Measures: escrow::claim_asset (destroys escrow, returns the Asset only — owner
+ * Measures: escrow::claim_asset (destroys escrow, returns the Asset only — governor
  *           income was settled to the inbox throughout, never accumulated here).
  *           Cap is passed by reference and SURVIVES (it may govern other escrows),
  *           so claim deletes only the Escrow now (−1 obj, was −2 with cap burn).
@@ -27,9 +27,9 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 
 async function setupRetiredEscrow(
   client: SuiClient,
-  owner: Ed25519Keypair,
+  governor: Ed25519Keypair,
   d: ReturnType<typeof loadDeployment>,
-): Promise<{ escrowId: string; ownerCapId: string }> {
+): Promise<{ escrowId: string; governanceCapId: string }> {
   const typeArgs = [
     `${d.dummyAssetPackageId}::dummy_asset::DummyAsset`,
     '0x2::sui::SUI',
@@ -37,29 +37,29 @@ async function setupRetiredEscrow(
 
   // integrate
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-  tx1.transferObjects([ownerCap, inbox], d.owner.address);
+  tx1.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  tx1.transferObjects([governanceCap, inbox], d.governor.address);
 
-  const r1 = await execSetup(client, owner, tx1);
+  const r1 = await execSetup(client, governor, tx1);
   const escrowObj = (r1.objectChanges ?? []).find(
     c => c.type === 'created' && (c as any).objectType?.includes('Escrow'),
   ) as any;
   const capObj = (r1.objectChanges ?? []).find(
-    c => c.type === 'created' && (c as any).objectType?.includes('OwnerCap'),
+    c => c.type === 'created' && (c as any).objectType?.includes('GovernanceCap'),
   ) as any;
 
   // retire
   const tx2 = new Transaction();
-  tx2.setSender(d.owner.address);
+  tx2.setSender(d.governor.address);
   tx2.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
     arguments: [tx2.object(escrowObj.objectId), tx2.object(capObj.objectId), clock(tx2)],
   });
-  await execSetup(client, owner, tx2);
+  await execSetup(client, governor, tx2);
 
-  return { escrowId: escrowObj.objectId, ownerCapId: capObj.objectId };
+  return { escrowId: escrowObj.objectId, governanceCapId: capObj.objectId };
 }
 
 async function main() {
@@ -76,21 +76,21 @@ async function main() {
   for (let run = 0; run < RUNS; run++) {
     if (run > 0) await new Promise(r => setTimeout(r, 1000));
     process.stdout.write(`  run ${run + 1}/${RUNS} setup...`);
-    const { escrowId, ownerCapId } = await setupRetiredEscrow(client, kp.owner, d);
+    const { escrowId, governanceCapId } = await setupRetiredEscrow(client, kp.governor, d);
 
     process.stdout.write(' measuring...');
     const tx = new Transaction();
-    tx.setSender(d.owner.address);
+    tx.setSender(d.governor.address);
 
     const asset = tx.moveCall({
       target: `${d.usufructPackageId}::escrow::claim_asset`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), tx.object(ownerCapId), clock(tx)],
+      arguments: [tx.object(escrowId), tx.object(governanceCapId), clock(tx)],
     });
 
-    tx.transferObjects([asset], d.owner.address);
+    tx.transferObjects([asset], d.governor.address);
 
-    const rec = await measure(client, kp.owner, 'claim_asset', run, tx);
+    const rec = await measure(client, kp.governor, 'claim_asset', run, tx);
     records.push(rec);
     console.log(` net=${rec.net} MIST  -${rec.objectsDeleted}obj`);
   }

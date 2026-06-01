@@ -33,37 +33,37 @@ async function main() {
   // Step 1: integrate (2s tenure)
   process.stdout.write('Step 1 integrate...');
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
-  tx1.transferObjects([ownerCap, inbox], d.owner.address);
-  const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
+  tx1.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
+  tx1.transferObjects([governanceCap, inbox], d.governor.address);
+  const r1 = await measure(client, kp.governor, 'integrate', 0, tx1);
   steps.push(r1);
   console.log(` net=${r1.net} MIST  +${r1.objectsCreated}obj`);
 
   const changes1 = (await client.getTransactionBlock({ digest: r1.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
   const escrowId   = (changes1.find(c => c.type === 'created' && (c as any).objectType?.includes('Escrow')) as any).objectId;
-  const ownerCapId = (changes1.find(c => c.type === 'created' && (c as any).objectType?.includes('OwnerCap')) as any).objectId;
+  const governanceCapId = (changes1.find(c => c.type === 'created' && (c as any).objectType?.includes('GovernanceCap')) as any).objectId;
 
   // Step 2: rent
   process.stdout.write('Step 2 rent...');
   const tx2 = new Transaction();
-  tx2.setSender(d.tenant1.address);
+  tx2.setSender(d.usufructuary1.address);
   const cap = buildRent(tx2, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
-  tx2.transferObjects([cap], d.tenant1.address);
-  const r2 = await measure(client, kp.tenant1, 'rent', 0, tx2);
+  tx2.transferObjects([cap], d.usufructuary1.address);
+  const r2 = await measure(client, kp.usufructuary1, 'rent', 0, tx2);
   steps.push(r2);
   console.log(` net=${r2.net} MIST`);
 
   // Step 3: retire (while occupied — sets retire flag)
   process.stdout.write('Step 3 retire...');
   const tx3 = new Transaction();
-  tx3.setSender(d.owner.address);
+  tx3.setSender(d.governor.address);
   tx3.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [tx3.object(escrowId), tx3.object(ownerCapId), clock(tx3)],
+    arguments: [tx3.object(escrowId), tx3.object(governanceCapId), clock(tx3)],
   });
-  const r3 = await measure(client, kp.owner, 'retire', 0, tx3);
+  const r3 = await measure(client, kp.governor, 'retire', 0, tx3);
   steps.push(r3);
   console.log(` net=${r3.net} MIST`);
 
@@ -75,27 +75,27 @@ async function main() {
   // Step 3b: apply pending (settles tenure, finalizes retirement)
   process.stdout.write('Step 3b apply_transitions...');
   const tx3b = new Transaction();
-  tx3b.setSender(d.owner.address);
+  tx3b.setSender(d.governor.address);
   tx3b.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
     arguments: [tx3b.object(escrowId), clock(tx3b)],
   });
-  const r3b = await measure(client, kp.owner, 'apply_transitions', 0, tx3b);
+  const r3b = await measure(client, kp.governor, 'apply_transitions', 0, tx3b);
   steps.push(r3b);
   console.log(` net=${r3b.net} MIST`);
 
   // Step 4: claim_asset
   process.stdout.write('Step 4 claim_asset...');
   const tx4 = new Transaction();
-  tx4.setSender(d.owner.address);
+  tx4.setSender(d.governor.address);
   const asset = tx4.moveCall({
     target: `${d.usufructPackageId}::escrow::claim_asset`,
     typeArguments: typeArgs,
-    arguments: [tx4.object(escrowId), tx4.object(ownerCapId), clock(tx4)],
+    arguments: [tx4.object(escrowId), tx4.object(governanceCapId), clock(tx4)],
   });
-  tx4.transferObjects([asset], d.owner.address);
-  const r4 = await measure(client, kp.owner, 'claim_asset', 0, tx4);
+  tx4.transferObjects([asset], d.governor.address);
+  const r4 = await measure(client, kp.governor, 'claim_asset', 0, tx4);
   steps.push(r4);
   console.log(` net=${r4.net} MIST  -${r4.objectsDeleted}obj`);
 

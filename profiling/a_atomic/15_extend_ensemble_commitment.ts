@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Phase A / 15 — extend_ensemble_commitment
- * Measures: owner extends the ensemble-commitment (terms-freeze) period on an idle escrow.
+ * Measures: governor extends the ensemble-commitment (terms-freeze) period on an idle escrow.
  */
 
 import { resolve, dirname } from 'path';
@@ -20,22 +20,22 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 
 async function setupIdleEscrow(
   client: SuiClient,
-  owner: Ed25519Keypair,
+  governor: Ed25519Keypair,
   d: ReturnType<typeof loadDeployment>,
-): Promise<{ escrowId: string; ownerCapId: string }> {
+): Promise<{ escrowId: string; governanceCapId: string }> {
   const tx = new Transaction();
-  tx.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-  tx.transferObjects([ownerCap, inbox], d.owner.address);
+  tx.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  tx.transferObjects([governanceCap, inbox], d.governor.address);
 
-  const r = await execSetup(client, owner, tx);
+  const r = await execSetup(client, governor, tx);
   const escrowObj = (r.objectChanges ?? []).find(
     c => c.type === 'created' && (c as any).objectType?.includes('Escrow'),
   ) as any;
   const capObj = (r.objectChanges ?? []).find(
-    c => c.type === 'created' && (c as any).objectType?.includes('OwnerCap'),
+    c => c.type === 'created' && (c as any).objectType?.includes('GovernanceCap'),
   ) as any;
-  return { escrowId: escrowObj.objectId, ownerCapId: capObj.objectId };
+  return { escrowId: escrowObj.objectId, governanceCapId: capObj.objectId };
 }
 
 async function main() {
@@ -52,11 +52,11 @@ async function main() {
   for (let run = 0; run < RUNS; run++) {
     if (run > 0) await new Promise(r => setTimeout(r, 1000));
     process.stdout.write(`  run ${run + 1}/${RUNS} setup...`);
-    const { escrowId, ownerCapId } = await setupIdleEscrow(client, kp.owner, d);
+    const { escrowId, governanceCapId } = await setupIdleEscrow(client, kp.governor, d);
 
     process.stdout.write(' measuring...');
     const tx = new Transaction();
-    tx.setSender(d.owner.address);
+    tx.setSender(d.governor.address);
 
     const dur = tx.moveCall({
       target: `${d.usufructPackageId}::ensemble::duration`,
@@ -69,10 +69,10 @@ async function main() {
     tx.moveCall({
       target: `${d.usufructPackageId}::escrow::extend_ensemble_commitment`,
       typeArguments: typeArgs,
-      arguments: [tx.object(escrowId), tx.object(ownerCapId), newCommitment, clock(tx)],
+      arguments: [tx.object(escrowId), tx.object(governanceCapId), newCommitment, clock(tx)],
     });
 
-    const rec = await measure(client, kp.owner, 'extend_ensemble_commitment', run, tx);
+    const rec = await measure(client, kp.governor, 'extend_ensemble_commitment', run, tx);
     records.push(rec);
     console.log(` net=${rec.net} MIST`);
   }

@@ -750,3 +750,83 @@ in `05`**. Collecting 3 messages from **3 different escrows** costs exactly the 
 as 3 from one escrow: **collect cost is a function of message count, independent of
 fleet topology**. The §10/§11 design claim — *govern a fleet with two objects,
 collect its cash flow in one PTB* — measured end-to-end.
+
+---
+
+# Verdict: Deposit vs Inbox scalability (v1.3.0 vs v1.4.0)
+
+Two models for the owner to **claim earnings**, measured head-to-head:
+
+- **Deposit-in-Escrow** (v1.3.0 `51f9d31`): earnings accrue into the shared
+  escrow's `OwnerSeat` balance; the owner pulls them with `withdraw_earnings`.
+- **Earning-Message-in-Inbox** (v1.4.0 `7397e62`): each settlement posts an owned
+  `EarningsMessage` to a standalone `EarningsInbox`; the owner drains them with a
+  batched `collect_earnings_messages`.
+
+Let a portfolio be **M** escrows × **K** tenures each, **T = M·K** income events.
+The claim cycle has two phases; both must be measured.
+
+## Phase 1 — Settlement (income accrues, at each `apply`→`distribute`)
+
+| | Deposit (v1.3.0) | Inbox (v1.4.0) |
+|---|---|---|
+| objects created / tenure | +1 (FeeMessage; earnings → seat balance) | +2 (Fee **+ Earnings**) |
+| Δ vs the other | — | **+1 obj/tenure ≈ +1.38M MIST** |
+| complexity | O(1)/tenure | O(1)/tenure |
+
+Deposit wins this phase by one object per tenure — but it is a **constant factor,
+O(1), that does not compound** with portfolio growth, and it is precisely the cost
+that funds Phase 2's rebate.
+
+## Phase 2 — Collection (the owner claims) — where it is decided
+
+| | Deposit (v1.3.0) | Inbox (v1.4.0) |
+|---|---|---|
+| PTBs to claim M escrows | **O(M)** — 1 `withdraw`/escrow | **O(⌈T/500⌉) ≈ O(1)** — 1 batched collect |
+| object touched | the **shared Escrow** (contends with renters) | inbox + messages (**owned**, fast-path) |
+| cost | **+2,301,460 × M** (positive) | **rebate-positive**, ≈ −1.9M/msg at scale |
+| caps to govern M escrows | **M** (cap was bound to one escrow) | **1** (finding #4: O(1)/escrow, zero overhead) |
+
+The seat accumulates, so K folds into a single withdraw per escrow — but each escrow
+is an independent **shared** object, so collection is **O(M) PTBs / O(M) shared-object
+inputs / O(M) caps**. Even packing M withdraws into one PTB still takes M shared
+inputs and M caps and locks M rental markets at once. The inbox routes the whole
+fleet to **one owned inbox**, drained in **O(1) PTBs with one cap**.
+
+## Crossover (owner-facing claim cost, measured)
+
+Fleet of M escrows, 1 tenure each — claim everything accrued:
+
+| M | Deposit (M withdraws) | Inbox (1 collect of M msgs) | owner is better off by |
+|---|---|---|---|
+| 1 | +2,301,460 | +240,384 | inbox already cheaper |
+| 10 | +23,014,600 | −17,982,930 (rebate) | **~41M MIST** |
+| 50 | +115,073,000 | −99,002,100 (rebate) | **~214M MIST** |
+
+Charging the inbox its **full** settlement surcharge too (worst case — in practice
+the apply-caller pays it): at M=50, inbox = 69M (settlement) − 99M (collection) =
+**−30M net**, vs deposit **+115M**. Inbox wins by **~145M MIST even with the
+handicap**. Crossover is immediate: at T=1 inbox already costs less, and at **T≥2**
+it turns rebate-positive while deposit stays a flat per-escrow cost.
+
+## Verdict — univocal: Inbox is strictly more scalable
+
+The result is a **complexity** difference, not a magnitude one. As the portfolio
+grows in either dimension:
+
+- **Deposit** scales claiming as **O(M) PTBs, O(M) caps, on shared objects, at
+  positive cost** that grows without bound.
+- **Inbox** scales claiming as **O(1) PTBs, O(1) caps (1 cap + 1 inbox), on owned
+  objects, rebate-positive** — improving with volume.
+
+Deposit's *only* edge — settlement one object cheaper per tenure — is **O(1),
+non-compounding, and is the very cost that funds the inbox's O(1) rebate-positive
+claim**. The two tie on settlement (both O(1)/tenure) and the inbox wins
+**asymptotically** on both collection (O(M)→O(1) PTBs) and governance (M→1 caps).
+No growth regime exists where deposit wins; the only scenario it leads is the
+degenerate non-scaling one (a single escrow, few tenures, an owner who never
+claims and values only cheap settlement) — which is, by definition, outside a
+scalability question.
+
+**Earning-Message-in-Inbox is unequivocally the more scalable model for the owner
+to claim earnings.**

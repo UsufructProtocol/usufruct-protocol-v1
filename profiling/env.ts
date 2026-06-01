@@ -11,9 +11,9 @@ export interface Deployment {
   dummyAssetPackageId:  string;
   protocolFeeInboxId:   string;
   protocolFeeRefId:     string;
-  owner:   { address: string; secretKey: string };
-  tenant1: { address: string; secretKey: string };
-  tenant2: { address: string; secretKey: string };
+  governor:   { address: string; secretKey: string };
+  usufructuary1: { address: string; secretKey: string };
+  usufructuary2: { address: string; secretKey: string };
 }
 
 // Network config — override via environment variables:
@@ -69,8 +69,8 @@ export function makeKeypair(secretKey: string): Ed25519Keypair {
 
 export function loadKeypairs(d: Deployment) {
   return {
-    owner:   makeKeypair(d.owner.secretKey),
-    tenant1: makeKeypair(d.tenant1.secretKey),
-    tenant2: makeKeypair(d.tenant2.secretKey),
+    governor:   makeKeypair(d.governor.secretKey),
+    usufructuary1: makeKeypair(d.usufructuary1.secretKey),
+    usufructuary2: makeKeypair(d.usufructuary2.secretKey),
   };
 }

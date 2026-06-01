@@ -127,22 +127,22 @@ export function buildImmediateEnsembleCommitment(tx: Transaction, pkg: string): 
 }
 
 // Integrates a DummyAsset into a NEW portfolio. Mints the pair: returns both the
-// OwnerCap (governance) and the EarningsInbox (income sink) results — inbox-first
-// model, escrow::integrate now returns (OwnerCap, EarningsInbox).
+// GovernanceCap (governance) and the EarningsInbox (income sink) results — inbox-first
+// model, escrow::integrate now returns (GovernanceCap, EarningsInbox).
 export function buildIntegrate(
   tx:             Transaction,
   usufructPkg:    string,
   dummyAssetPkg:  string,
   feeRefId:       string,
   ensembleBuilder: (tx: Transaction, pkg: string) => TransactionArgument = buildMinimalEnsemble,
-): { ownerCap: TransactionArgument; inbox: TransactionArgument } {
+): { governanceCap: TransactionArgument; inbox: TransactionArgument } {
   const asset              = tx.moveCall({ target: `${dummyAssetPkg}::dummy_asset::mint` });
   const ensemble           = ensembleBuilder(tx, usufructPkg);
   const retireCommitment   = buildImmediateRetireCommitment(tx, usufructPkg);
   const ensembleCommitment = buildImmediateEnsembleCommitment(tx, usufructPkg);
   const feeRef             = tx.object(feeRefId);
 
-  const [ownerCap, inbox] = tx.moveCall({
+  const [governanceCap, inbox] = tx.moveCall({
     target: `${usufructPkg}::escrow::integrate`,
     typeArguments: [
       `${dummyAssetPkg}::dummy_asset::DummyAsset`,
@@ -150,18 +150,18 @@ export function buildIntegrate(
     ],
     arguments: [asset, ensemble, retireCommitment, ensembleCommitment, feeRef, clock(tx)],
   });
-  return { ownerCap, inbox };
+  return { governanceCap, inbox };
 }
 
 // Integrates a DummyAsset into an EXISTING portfolio: routes its governance to
-// `ownerCapId` and its income to `inboxId`. Mints nothing (the pair already exists);
+// `governanceCapId` and its income to `inboxId`. Mints nothing (the pair already exists);
 // escrow::integrate_into_portfolio takes both by reference and returns ().
 export function buildIntegrateIntoPortfolio(
   tx:             Transaction,
   usufructPkg:    string,
   dummyAssetPkg:  string,
   feeRefId:       string,
-  ownerCapId:     string,
+  governanceCapId:     string,
   inboxId:        string,
   ensembleBuilder: (tx: Transaction, pkg: string) => TransactionArgument = buildMinimalEnsemble,
 ): void {
@@ -177,11 +177,11 @@ export function buildIntegrateIntoPortfolio(
       `${dummyAssetPkg}::dummy_asset::DummyAsset`,
       '0x2::sui::SUI',
     ],
-    arguments: [asset, ensemble, retireCommitment, ensembleCommitment, feeRef, tx.object(ownerCapId), tx.object(inboxId), clock(tx)],
+    arguments: [asset, ensemble, retireCommitment, ensembleCommitment, feeRef, tx.object(governanceCapId), tx.object(inboxId), clock(tx)],
   });
 }
 
-// Rents an escrow for 1 tenure. Returns TenantCap result.
+// Rents an escrow for 1 tenure. Returns UsufructCap result.
 export function buildRent(
   tx:          Transaction,
   usufructPkg: string,

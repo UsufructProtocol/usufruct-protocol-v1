@@ -58,13 +58,13 @@ const TA      = (d: D) => [`${d.dummyAssetPackageId}::dummy_asset::DummyAsset`, 
 // ── Single-escrow setup: integrate → rent(1 tenure, 1ms) ──────────────────
 
 async function setupOneEscrow(
-  client: SuiClient, owner: Ed25519Keypair, tenant: Ed25519Keypair, d: D,
+  client: SuiClient, governor: Ed25519Keypair, usufructuary: Ed25519Keypair, d: D,
 ): Promise<string> {
   const pkg = d.usufructPackageId;
 
   // integrate
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
+  tx1.setSender(d.governor.address);
   const p  = (m: bigint) => tx1.moveCall({ target: `${pkg}::ensemble::price`, arguments: [tx1.pure.u64(m)] });
   const dr = (m: bigint) => tx1.moveCall({ target: `${pkg}::ensemble::duration`, arguments: [tx1.pure.u64(m)] });
   const ens = tx1.moveCall({ target: `${pkg}::ensemble::new_ensemble`, arguments: [
@@ -82,10 +82,10 @@ async function setupOneEscrow(
   const ec    = tx1.moveCall({ target: `${pkg}::ensemble::new_ensemble_commitment_immediate` });
   const [oc, inbox] = tx1.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
     arguments: [asset, ens, rc, ec, tx1.object(d.protocolFeeRefId), clock(tx1)] });
-  tx1.transferObjects([oc, inbox], d.owner.address);
+  tx1.transferObjects([oc, inbox], d.governor.address);
 
   const r1 = await client.signAndExecuteTransaction({
-    transaction: tx1, signer: owner, options: { showEffects: true, showObjectChanges: true },
+    transaction: tx1, signer: governor, options: { showEffects: true, showObjectChanges: true },
   });
   await client.waitForTransaction({ digest: r1.digest });
   if (r1.effects?.status.status !== 'success') throw new Error(`integrate failed`);
@@ -97,15 +97,15 @@ async function setupOneEscrow(
 
   // rent(1 tenure)
   const tx2 = new Transaction();
-  tx2.setSender(d.tenant1.address);
+  tx2.setSender(d.usufructuary1.address);
   const [pay] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(FLOOR_PRICE_MIST)]);
   const tenures   = tx2.moveCall({ target: `${pkg}::ensemble::tenures`, arguments: [tx2.pure.u64(1n)] });
   const cap   = tx2.moveCall({ target: `${pkg}::escrow::rent`, typeArguments: TA(d),
     arguments: [tx2.object(escrowId), pay, tenures, clock(tx2)] });
-  tx2.transferObjects([cap], d.tenant1.address);
+  tx2.transferObjects([cap], d.usufructuary1.address);
 
   const r2 = await client.signAndExecuteTransaction({
-    transaction: tx2, signer: tenant, options: { showEffects: true },
+    transaction: tx2, signer: usufructuary, options: { showEffects: true },
   });
   await client.waitForTransaction({ digest: r2.digest });
   if (r2.effects?.status.status !== 'success') throw new Error(`rent failed`);
@@ -115,11 +115,11 @@ async function setupOneEscrow(
 
 // apply_pending with fresh gas to avoid stale coin version errors
 async function applyPending(
-  client: SuiClient, owner: Ed25519Keypair, d: D, escrowId: string,
+  client: SuiClient, governor: Ed25519Keypair, d: D, escrowId: string,
 ): Promise<boolean> {
-  const coins = await client.getCoins({ owner: d.owner.address, limit: 3 });
+  const coins = await client.getCoins({ governor: d.governor.address, limit: 3 });
   const tx = new Transaction();
-  tx.setSender(d.owner.address);
+  tx.setSender(d.governor.address);
   if (coins.data.length > 0) {
     tx.setGasPayment(coins.data.map(c => ({ objectId: c.coinObjectId, version: c.version, digest: c.digest })));
   }
@@ -127,7 +127,7 @@ async function applyPending(
     typeArguments: TA(d), arguments: [tx.object(escrowId), clock(tx)] });
 
   const r = await client.signAndExecuteTransaction({
-    transaction: tx, signer: owner, options: { showEffects: true },
+    transaction: tx, signer: governor, options: { showEffects: true },
   });
   await client.waitForTransaction({ digest: r.digest });
   return r.effects?.status.status === 'success';
@@ -146,7 +146,7 @@ async function generateFeeMessages(
   for (let i = 0; i < n; i++) {
     const pkg = d.usufructPackageId;
     const tx  = new Transaction();
-    tx.setSender(d.owner.address);
+    tx.setSender(d.governor.address);
     const p  = (m: bigint) => tx.moveCall({ target: `${pkg}::ensemble::price`, arguments: [tx.pure.u64(m)] });
     const dr = (m: bigint) => tx.moveCall({ target: `${pkg}::ensemble::duration`, arguments: [tx.pure.u64(m)] });
     const ens = tx.moveCall({ target: `${pkg}::ensemble::new_ensemble`, arguments: [
@@ -164,10 +164,10 @@ async function generateFeeMessages(
     const ec    = tx.moveCall({ target: `${pkg}::ensemble::new_ensemble_commitment_immediate` });
     const [oc, inbox] = tx.moveCall({ target: `${pkg}::escrow::integrate`, typeArguments: TA(d),
       arguments: [asset, ens, rc, ec, tx.object(d.protocolFeeRefId), clock(tx)] });
-    tx.transferObjects([oc, inbox], d.owner.address);
+    tx.transferObjects([oc, inbox], d.governor.address);
 
     const r = await client.signAndExecuteTransaction({
-      transaction: tx, signer: kp.owner, options: { showEffects: true, showObjectChanges: true },
+      transaction: tx, signer: kp.governor, options: { showEffects: true, showObjectChanges: true },
     });
     await client.waitForTransaction({ digest: r.digest });
     const esc = (r.objectChanges ?? []).find(
@@ -183,14 +183,14 @@ async function generateFeeMessages(
   process.stdout.write(`  [2/3] rent:      `);
   for (let i = 0; i < n; i++) {
     const tx = new Transaction();
-    tx.setSender(d.tenant1.address);
+    tx.setSender(d.usufructuary1.address);
     const [pay] = tx.splitCoins(tx.gas, [tx.pure.u64(FLOOR_PRICE_MIST)]);
     const tenures   = tx.moveCall({ target: `${d.usufructPackageId}::ensemble::tenures`, arguments: [tx.pure.u64(1n)] });
     const cap   = tx.moveCall({ target: `${d.usufructPackageId}::escrow::rent`, typeArguments: TA(d),
       arguments: [tx.object(escrows[i]), pay, tenures, clock(tx)] });
-    tx.transferObjects([cap], d.tenant1.address);
+    tx.transferObjects([cap], d.usufructuary1.address);
     const r = await client.signAndExecuteTransaction({
-      transaction: tx, signer: kp.tenant1, options: { showEffects: true },
+      transaction: tx, signer: kp.usufructuary1, options: { showEffects: true },
     });
     await client.waitForTransaction({ digest: r.digest });
     if ((i + 1) % 10 === 0) process.stdout.write(`${i + 1}`);
@@ -203,7 +203,7 @@ async function generateFeeMessages(
   for (let i = 0; i < n; i++) {
     let ok = false;
     for (let attempt = 0; attempt < 3 && !ok; attempt++) {
-      ok = await applyPending(client, kp.owner, d, escrows[i]);
+      ok = await applyPending(client, kp.governor, d, escrows[i]);
     }
     if (!ok) throw new Error(`apply_pending failed for escrow ${i} after 3 attempts`);
     if ((i + 1) % 10 === 0) process.stdout.write(`${i + 1}`);
@@ -221,7 +221,7 @@ async function getFeeMessageRefs(
   let cursor: string | null | undefined = undefined;
   while (refs.length < limit) {
     const page = await client.getOwnedObjects({
-      owner: inboxId, cursor, options: { showType: true },
+      governor: inboxId, cursor, options: { showType: true },
       limit: Math.min(limit - refs.length, 50),
     });
     for (const obj of page.data) {
@@ -239,14 +239,14 @@ async function getFeeMessageRefs(
 // ── Collect N FeeMessages (batched at MAX_BATCH per PTB) ──────────────────
 //
 // ProtocolFeeInbox is owned by whoever deployed the package. On localnet the
-// deployer is the same as the profiling owner; on testnet they differ.
+// deployer is the same as the profiling governor; on testnet they differ.
 // Pass DEPLOYER_SECRET_KEY + DEPLOYER_ADDRESS env vars for the testnet case.
 
 function loadCollectorKeypair(d: D): { keypair: Ed25519Keypair; address: string } {
   const sk  = process.env.DEPLOYER_SECRET_KEY;
   const addr = process.env.DEPLOYER_ADDRESS;
   if (sk && addr) return { keypair: Ed25519Keypair.fromSecretKey(sk), address: addr };
-  return { keypair: Ed25519Keypair.fromSecretKey(d.owner.secretKey), address: d.owner.address };
+  return { keypair: Ed25519Keypair.fromSecretKey(d.governor.secretKey), address: d.governor.address };
 }
 
 async function measureCollect(

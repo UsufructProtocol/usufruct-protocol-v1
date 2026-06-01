@@ -33,8 +33,8 @@ use usufruct::{
         AssetBorrowed,
         AssetReturned,
         CycleParamsResolved,
-        ActiveTenantRefundAddressUpdated,
-        PendingTenantRefundAddressUpdated,
+        ActiveUsufructuaryRefundAddressUpdated,
+        PendingUsufructuaryRefundAddressUpdated,
     },
 
     policy_ensemble::{Self, EnsembleUpdated, EnsembleUpdateScheduled},
@@ -57,18 +57,18 @@ use usufruct::{
     earnings,
     earnings_inbox::EarningsInbox,
     earnings_message::{Self, EarningsMessage, EarningsPosted},
-    owner_cap::{Self, OwnerCap},
+    governance_cap::{Self, GovernanceCap},
     phases,
     protocol_fee_inbox::{Self, ProtocolFeeInbox},
     protocol_fee_ref::{Self, ProtocolFeeRef},
     refund_address,
-    tenant_seat::{Self, TenantSeat},
-    tenant_cap,
+    usufructuary_seat::{Self, UsufructuarySeat},
+    usufruct_cap,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
-const OWNER: address = @0x07;
+const GOVERNOR: address = @0x07;
 
 /// Test asset — minimal key+store object that satisfies the
 /// `Asset` bound on `Escrow`.
@@ -95,11 +95,11 @@ fun mk_balance_vault(amount: u64, ctx: &mut TxContext): BalanceVault {
 
 /// Initialise the protocol-fee singletons and the shared Random object.
 /// Returns a scenario whose next-tx state has the `ProtocolFeeRef` frozen,
-/// the `ProtocolFeeInbox` owned by `OWNER`, and `Random` shared.
+/// the `ProtocolFeeInbox` owned by `GOVERNOR`, and `Random` shared.
 fun setup(): Scenario {
     // Random requires sender == @0x0 (system address); create it first.
     let mut sc = test_scenario::begin(@0x0);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     { protocol_fee_inbox::init_for_testing(sc.ctx()); };
     sc
 }
@@ -112,17 +112,17 @@ fun assert_tag_idle<Asset: key + store, CoinType>(
     assert!(escrow::is_idle(escrow), breadcrumb);
 }
 
-const TENANT_ADDR_1: address = @0xA1;
-const TENANT_ADDR_2: address = @0xA2;
+const USUFRUCTUARY_ADDR_1: address = @0xA1;
+const USUFRUCTUARY_ADDR_2: address = @0xA2;
 const CHALLENGER:    address = @0xC1;
 const STAKE_T1:      u64     = 1_000_000_000;   // 1 SUI
 const STAKE_T2:      u64     = 2_000_000_000;   // 2 SUI
 
-fun cap_id_1(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA1)) }
-fun cap_id_2(): tenant_cap::TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA2)) }
+fun cap_id_1(): usufruct_cap::UsufructCapIdentity { usufruct_cap::from_id(object::id_from_address(@0xCA1)) }
+fun cap_id_2(): usufruct_cap::UsufructCapIdentity { usufruct_cap::from_id(object::id_from_address(@0xCA2)) }
 
-fun mk_tenant(stake: u64, addr: address, cap: tenant_cap::TenantCapIdentity): TenantSeat<SUI> {
-    tenant_seat::new(cap, refund_address::new(addr), balance::create_for_testing<SUI>(stake))
+fun mk_usufructuary(stake: u64, addr: address, cap: usufruct_cap::UsufructCapIdentity): UsufructuarySeat<SUI> {
+    usufructuary_seat::new(cap, refund_address::new(addr), balance::create_for_testing<SUI>(stake))
 }
 
 fun mk_payment(amount: u64, ctx: &mut TxContext): Coin<SUI> {
@@ -137,7 +137,7 @@ fun rent_with_floor_price(
     escrow: &mut Escrow<DemoAsset, SUI>,
     clk:    &clock::Clock,
     sc:     &mut Scenario,
-): tenant_cap::TenantCap {
+): usufruct_cap::UsufructCap {
     rent_n_with_floor_price(escrow, 1, clk, sc)
 }
 
@@ -149,7 +149,7 @@ fun rent_n_with_floor_price(
     n:      u64,
     clk:    &clock::Clock,
     sc:     &mut Scenario,
-): tenant_cap::TenantCap {
+): usufruct_cap::UsufructCap {
     let floor = escrow::floor_price_mist(escrow, clock::timestamp_ms(clk));
     escrow::rent(escrow, mk_payment(floor * n, sc.ctx()), tenures::tenures(n), clk, sc.ctx())
 }
@@ -161,7 +161,7 @@ fun rent_one_below_floor_price(
     escrow: &mut Escrow<DemoAsset, SUI>,
     clk:    &clock::Clock,
     sc:     &mut Scenario,
-): tenant_cap::TenantCap {
+): usufruct_cap::UsufructCap {
     let floor = escrow::floor_price_mist(escrow, clock::timestamp_ms(clk));
     escrow::rent(escrow, mk_payment(floor - 1, sc.ctx()), tenures::tenures(1), clk, sc.ctx())
 }
@@ -171,7 +171,7 @@ fun rent_one_below_floor_price(
 fun integrate_and_take(
     ensemble: usufruct::policy_ensemble::PolicyEnsemble,
     sc:  &mut Scenario,
-): (Escrow<DemoAsset, SUI>, OwnerCap) {
+): (Escrow<DemoAsset, SUI>, GovernanceCap) {
     integrate_and_take_with_retire_commitment(ensemble, retire_commitment_policy::new_immediate(), sc)
 }
 
@@ -180,18 +180,18 @@ fun integrate_and_take_with_retire_commitment(
     ensemble:        usufruct::policy_ensemble::PolicyEnsemble,
     commitment: RetireCommitmentPolicy,
     sc:         &mut Scenario,
-): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    sc.next_tx(OWNER);
+): (Escrow<DemoAsset, SUI>, GovernanceCap) {
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, commitment, ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
@@ -201,18 +201,18 @@ fun integrate_and_take_with_ensemble_commitment(
     ensemble:            usufruct::policy_ensemble::PolicyEnsemble,
     ensemble_commitment: usufruct::ensemble_commitment_policy::EnsembleCommitmentPolicy,
     sc:                  &mut Scenario,
-): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    sc.next_tx(OWNER);
+): (Escrow<DemoAsset, SUI>, GovernanceCap) {
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment, &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
@@ -222,7 +222,7 @@ fun integrate_and_take_with_ensemble_commitment(
 #[test]
 fun integrate_creates_idle_escrow_smoke() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let ensemble     = escrow_corpus::by_tag(0); // c=0 instant, d=0 fixed, e=0 linear, h=0 skipped, f=0 immediate
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
@@ -232,14 +232,14 @@ fun integrate_creates_idle_escrow_smoke() {
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     assert_tag_idle(&escrow, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -262,7 +262,7 @@ fun integrate_creates_idle_escrow_smoke() {
 #[test]
 fun integrate_idle_across_handover_modes() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let mut m = 0u8;
     while (m <= 1) {
@@ -278,13 +278,13 @@ fun integrate_idle_across_handover_modes() {
                     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
                 asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
             );
-                    transfer::public_transfer(inbox, OWNER);
+                    transfer::public_transfer(inbox, GOVERNOR);
 
             clock::destroy_for_testing(clk);
             test_scenario::return_immutable(fee_ref);
-            transfer::public_transfer(cap, OWNER);
+            transfer::public_transfer(cap, GOVERNOR);
 
-            sc.next_tx(OWNER);
+            sc.next_tx(GOVERNOR);
             let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
             assert_tag_idle(&escrow, tag);
             test_scenario::return_shared(escrow);
@@ -306,7 +306,7 @@ fun integrate_idle_across_handover_modes() {
 #[test]
 fun integrate_accepts_balance_vault() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let ensemble = escrow_corpus::by_tag(0);
     let fee_ref  = sc.take_immutable<ProtocolFeeRef>();
@@ -316,16 +316,16 @@ fun integrate_accepts_balance_vault() {
     let (cap, inbox) = escrow::integrate<BalanceVault, SUI>(
         vault, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<BalanceVault, SUI>>();
     assert_tag_idle(&escrow, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -338,7 +338,7 @@ fun integrate_accepts_balance_vault() {
 #[test]
 fun integrate_leaves_escrow_idle() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let ensemble     = escrow_corpus::by_tag(0);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
@@ -346,15 +346,15 @@ fun integrate_leaves_escrow_idle() {
     let asset   = mk_demo_asset(sc.ctx());
 
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx());
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
     assert_tag_idle(&escrow, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -363,11 +363,11 @@ fun integrate_leaves_escrow_idle() {
 // ─── §3b. integrate pair + portfolio binding + earnings_inbox_id view ─────────
 
 // integrate mints the (cap, inbox) pair; the escrow's earnings_inbox_id view
-// reports the minted inbox, and owner_cap_id reports the minted cap.
+// reports the minted inbox, and governance_cap_id reports the minted cap.
 #[test]
 fun integrate_pair_views_match_minted_objects() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
@@ -378,23 +378,23 @@ fun integrate_pair_views_match_minted_objects() {
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     assert_eq!(escrow::earnings_inbox_id(&escrow), object::id(&inbox));
-    assert_eq!(escrow::owner_cap_id(&escrow),      object::id(&cap));
+    assert_eq!(escrow::governance_cap_id(&escrow),      object::id(&cap));
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
+    transfer::public_transfer(inbox, GOVERNOR);
     sc.end();
 }
 
 // integrate_into_portfolio binds a second escrow to an existing cap + inbox:
-// both escrows report the same earnings_inbox_id and the same owner_cap_id.
+// both escrows report the same earnings_inbox_id and the same governance_cap_id.
 #[test]
 fun integrate_into_portfolio_binds_existing_cap_and_inbox() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
 
@@ -416,31 +416,31 @@ fun integrate_into_portfolio_binds_existing_cap_and_inbox() {
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let e1 = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id1);
     let e2 = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id2);
     // Same income destination, same governance — one portfolio, two escrows.
     assert_eq!(escrow::earnings_inbox_id(&e1), object::id(&inbox));
     assert_eq!(escrow::earnings_inbox_id(&e2), object::id(&inbox));
-    assert_eq!(escrow::owner_cap_id(&e1),      object::id(&cap));
-    assert_eq!(escrow::owner_cap_id(&e2),      object::id(&cap));
+    assert_eq!(escrow::governance_cap_id(&e1),      object::id(&cap));
+    assert_eq!(escrow::governance_cap_id(&e2),      object::id(&cap));
 
     test_scenario::return_shared(e1);
     test_scenario::return_shared(e2);
-    transfer::public_transfer(cap, OWNER);
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
+    transfer::public_transfer(inbox, GOVERNOR);
     sc.end();
 }
 
-// A second OwnerCap that never governed this escrow cannot claim/govern it —
+// A second GovernanceCap that never governed this escrow cannot claim/govern it —
 // the seat-side binding (cap_identity) rejects a foreign cap.
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun foreign_cap_cannot_claim_portfolio_escrow() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
 
     // Mint an unrelated cap+inbox pair (a different portfolio).
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let (foreign_cap, foreign_inbox) = escrow::integrate<DemoAsset, SUI>(
@@ -454,10 +454,10 @@ fun foreign_cap_cannot_claim_portfolio_escrow() {
     let asset = escrow::claim_asset(escrow, &foreign_cap, &clk, sc.ctx());
 
     // Unreachable — claim aborts above.
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(foreign_cap, OWNER);
-    transfer::public_transfer(foreign_inbox, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
+    transfer::public_transfer(foreign_inbox, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -465,34 +465,34 @@ fun foreign_cap_cannot_claim_portfolio_escrow() {
 // ─── §4. split_fee — pure 90/10 split ─────────────────────────────────────────
 
 #[test]
-fun split_fee_partitions_into_owner_share_plus_protocol_fee() {
-    let (owner_amt, fee_amt) = escrow::split_fee_for_testing(10_000_000_000);
-    // 10 SUI * 10% protocol fee = 1 SUI fee, 9 SUI owner.
+fun split_fee_partitions_into_governor_share_plus_protocol_fee() {
+    let (governor_amt, fee_amt) = escrow::split_fee_for_testing(10_000_000_000);
+    // 10 SUI * 10% protocol fee = 1 SUI fee, 9 SUI governor.
     assert_eq!(fee_amt,   1_000_000_000);
-    assert_eq!(owner_amt, 9_000_000_000);
+    assert_eq!(governor_amt, 9_000_000_000);
 }
 
 #[test]
 fun split_fee_floors_to_zero_below_threshold() {
     // Below 10 base units, compute_mul_div(amount, 1000, 10000) = 0.
-    let (owner_amt, fee_amt) = escrow::split_fee_for_testing(9);
+    let (governor_amt, fee_amt) = escrow::split_fee_for_testing(9);
     assert_eq!(fee_amt,   0);
-    assert_eq!(owner_amt, 9);
+    assert_eq!(governor_amt, 9);
 }
 
 #[test]
 fun split_fee_zero_in_zero_out() {
-    let (owner_amt, fee_amt) = escrow::split_fee_for_testing(0);
+    let (governor_amt, fee_amt) = escrow::split_fee_for_testing(0);
     assert_eq!(fee_amt,   0);
-    assert_eq!(owner_amt, 0);
+    assert_eq!(governor_amt, 0);
 }
 
 #[test]
 fun split_fee_exact_threshold_yields_one_fee() {
     // compute_mul_div(10, 1000, 10000) = 1.
-    let (owner_amt, fee_amt) = escrow::split_fee_for_testing(10);
+    let (governor_amt, fee_amt) = escrow::split_fee_for_testing(10);
     assert_eq!(fee_amt,   1);
-    assert_eq!(owner_amt, 9);
+    assert_eq!(governor_amt, 9);
 }
 
 // ─── §5. compute_floor_price ─────────────────────────────────────────────────
@@ -510,12 +510,12 @@ fun floor_price_idle_returns_min_rent_price() {
     assert_eq!(price, escrow_corpus::min_rent_price_const());
     assert_eq!(price, escrow::rest_price_floor_fixed_mist(&escrow));
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
 /// e2e: floor_price_mist drives the escrow through its natural lifecycle.
-/// At every rentable state the next tenant pays exactly floor_price_mist —
+/// At every rentable state the next usufructuary pays exactly floor_price_mist —
 /// the SDK invariant that this query always precedes a non-aborting rent().
 ///
 ///   Idle ─rent→ Occupied ─rent→ Demand ─rent→ Demand
@@ -527,7 +527,7 @@ fun floor_price_idle_returns_min_rent_price() {
 fun e2e_rent_with_floor_price_drives_full_lifecycle() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Idle → Occupied: T1 rents at floor.
@@ -561,12 +561,12 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle() {
     let cap_t4 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
     assert!(escrow::is_occupied(&escrow), 6);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
-    transfer::public_transfer(cap_t4, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
+    transfer::public_transfer(cap_t4, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -584,16 +584,16 @@ fun tickets_for(mut ids: vector<ID>): vector<sui::transfer::Receiving<EarningsMe
 /// Drives a freshly-integrated, Idle escrow through the rental cycle —
 /// Idle → Occupied → Demand → Occupied → Descent — via the real public API
 /// (rent + apply_pending_transition_states across an advancing clock), then
-/// retires it from Descent (a Waiting state with no active tenant → Retired).
-/// Two owner-earnings settlements occur: the displaced tenant's used-credit at
-/// handover, and the active tenant's full stake at tenure expiry — each mailed
+/// retires it from Descent (a Waiting state with no active usufructuary → Retired).
+/// Two governor-earnings settlements occur: the displaced usufructuary's used-credit at
+/// handover, and the active usufructuary's full stake at tenure expiry — each mailed
 /// to the escrow's inbox. Returns (the two EarningsMessage ids, their summed
-/// owner-share). MUST be the only escrow driven in the current tx so the
+/// governor-share). MUST be the only escrow driven in the current tx so the
 /// EarningsPosted events are unambiguous. Ensemble tag(1,0,0,1,0): c=1 Fixed
 /// handover, h=1 Fixed descent.
 fun cycle_to_retired_collecting_ids(
     escrow:    &mut Escrow<DemoAsset, SUI>,
-    owner_cap: &OwnerCap,
+    governance_cap: &GovernanceCap,
     sc:        &mut Scenario,
 ): (vector<ID>, u64) {
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -604,17 +604,17 @@ fun cycle_to_retired_collecting_ids(
     let cap_t2 = rent_with_floor_price(escrow, &clk, sc);
     assert!(escrow::is_demand(escrow), 90);
 
-    // Demand → Occupied: handover fires (T1 displaced → owner-earnings #1).
+    // Demand → Occupied: handover fires (T1 displaced → governor-earnings #1).
     clock::set_for_testing(&mut clk, escrow::handover_expiry_ms(escrow).destroy_some());
     escrow::apply_pending_transition_states(escrow, &clk, sc.ctx());
     assert!(escrow::is_occupied(escrow), 91);
 
-    // Occupied → Descent: tenure expiry (T2 stake settled → owner-earnings #2).
+    // Occupied → Descent: tenure expiry (T2 stake settled → governor-earnings #2).
     clock::set_for_testing(&mut clk, escrow::tenure_expiry_ms(escrow).destroy_some());
     escrow::apply_pending_transition_states(escrow, &clk, sc.ctx());
     assert!(escrow::is_descending(escrow), 92);
 
-    // Capture the two owner-earnings posted to the inbox during this cycle.
+    // Capture the two governor-earnings posted to the inbox during this cycle.
     let posted    = event::events_by_type<EarningsPosted<SUI>>();
     let mut ids   = vector[];
     let mut total = 0;
@@ -626,19 +626,19 @@ fun cycle_to_retired_collecting_ids(
     };
 
     // Descent → Retired (governance via the cap; retire is valid in Descent).
-    escrow::retire(escrow, owner_cap, &clk, sc.ctx());
+    escrow::retire(escrow, governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(escrow), 93);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     clock::destroy_for_testing(clk);
     (ids, total)
 }
 
 /// Mints a fresh standalone escrow (its own cap + inbox) at tag(1,0,0,1,0) and
 /// returns (escrow_id, cap, inbox).
-fun integrate_lifecycle_escrow(sc: &mut Scenario): (ID, OwnerCap, EarningsInbox) {
-    sc.next_tx(OWNER);
+fun integrate_lifecycle_escrow(sc: &mut Scenario): (ID, GovernanceCap, EarningsInbox) {
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
@@ -656,7 +656,7 @@ fun integrate_lifecycle_escrow(sc: &mut Scenario): (ID, OwnerCap, EarningsInbox)
 /// E2E — three INDEPENDENT portfolios. integrate ×3 → three (cap, inbox) pairs.
 /// Each escrow runs the full rental cycle, is governed (retired) by its own cap,
 /// and mails its earnings to its OWN inbox. Verified: each inbox collects EXACTLY
-/// its escrow's two owner shares (income is not commingled), and each asset is
+/// its escrow's two governor shares (income is not commingled), and each asset is
 /// claimed by its own cap.
 #[test]
 fun e2e_three_independent_inboxes_collect_separately_then_claim() {
@@ -667,17 +667,17 @@ fun e2e_three_independent_inboxes_collect_separately_then_claim() {
     let (id_c, cap_c, mut inbox_c) = integrate_lifecycle_escrow(&mut sc);
 
     // Drive each escrow through its own cycle in its own tx (events unambiguous).
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut ea = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_a);
     let (ids_a, total_a) = cycle_to_retired_collecting_ids(&mut ea, &cap_a, &mut sc);
     test_scenario::return_shared(ea);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut eb = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_b);
     let (ids_b, total_b) = cycle_to_retired_collecting_ids(&mut eb, &cap_b, &mut sc);
     test_scenario::return_shared(eb);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut ec = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_c);
     let (ids_c, total_c) = cycle_to_retired_collecting_ids(&mut ec, &cap_c, &mut sc);
     test_scenario::return_shared(ec);
@@ -688,7 +688,7 @@ fun e2e_three_independent_inboxes_collect_separately_then_claim() {
     assert_eq!(ids_c.length(), 2);
 
     // Collect each inbox separately — exact, non-commingled amounts.
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let coin_a = earnings::collect_earnings_messages<SUI>(&mut inbox_a, tickets_for(ids_a), sc.ctx());
     assert_eq!(coin::value(&coin_a), total_a);
     let coin_b = earnings::collect_earnings_messages<SUI>(&mut inbox_b, tickets_for(ids_b), sc.ctx());
@@ -696,27 +696,27 @@ fun e2e_three_independent_inboxes_collect_separately_then_claim() {
     let coin_c = earnings::collect_earnings_messages<SUI>(&mut inbox_c, tickets_for(ids_c), sc.ctx());
     assert_eq!(coin::value(&coin_c), total_c);
 
-    transfer::public_transfer(coin_a, OWNER);
-    transfer::public_transfer(coin_b, OWNER);
-    transfer::public_transfer(coin_c, OWNER);
+    transfer::public_transfer(coin_a, GOVERNOR);
+    transfer::public_transfer(coin_b, GOVERNOR);
+    transfer::public_transfer(coin_c, GOVERNOR);
 
     // Claim each asset with its own governing cap.
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let clk = clock::create_for_testing(sc.ctx());
     let asset_a = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_a), &cap_a, &clk, sc.ctx());
     let asset_b = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_b), &cap_b, &clk, sc.ctx());
     let asset_c = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_c), &cap_c, &clk, sc.ctx());
     clock::destroy_for_testing(clk);
 
-    transfer::public_transfer(asset_a, OWNER);
-    transfer::public_transfer(asset_b, OWNER);
-    transfer::public_transfer(asset_c, OWNER);
-    transfer::public_transfer(cap_a, OWNER);
-    transfer::public_transfer(cap_b, OWNER);
-    transfer::public_transfer(cap_c, OWNER);
-    transfer::public_transfer(inbox_a, OWNER);
-    transfer::public_transfer(inbox_b, OWNER);
-    transfer::public_transfer(inbox_c, OWNER);
+    transfer::public_transfer(asset_a, GOVERNOR);
+    transfer::public_transfer(asset_b, GOVERNOR);
+    transfer::public_transfer(asset_c, GOVERNOR);
+    transfer::public_transfer(cap_a, GOVERNOR);
+    transfer::public_transfer(cap_b, GOVERNOR);
+    transfer::public_transfer(cap_c, GOVERNOR);
+    transfer::public_transfer(inbox_a, GOVERNOR);
+    transfer::public_transfer(inbox_b, GOVERNOR);
+    transfer::public_transfer(inbox_c, GOVERNOR);
     sc.end();
 }
 
@@ -730,7 +730,7 @@ fun e2e_one_portfolio_shared_inbox_collects_all_then_one_cap_claims_all() {
     let mut sc = setup();
 
     // First escrow mints the pair; two more join the SAME portfolio.
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk0    = clock::create_for_testing(sc.ctx());
     let (cap, mut inbox) = escrow::integrate<DemoAsset, SUI>(
@@ -760,51 +760,51 @@ fun e2e_one_portfolio_shared_inbox_collects_all_then_one_cap_claims_all() {
     let mut all_ids = vector[];
     let mut grand   = 0;
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut ea = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_a);
     let (ids_a, total_a) = cycle_to_retired_collecting_ids(&mut ea, &cap, &mut sc);
     test_scenario::return_shared(ea);
     all_ids.append(ids_a); grand = grand + total_a;
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut eb = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_b);
     let (ids_b, total_b) = cycle_to_retired_collecting_ids(&mut eb, &cap, &mut sc);
     test_scenario::return_shared(eb);
     all_ids.append(ids_b); grand = grand + total_b;
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut ec = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_c);
     let (ids_c, total_c) = cycle_to_retired_collecting_ids(&mut ec, &cap, &mut sc);
     test_scenario::return_shared(ec);
     all_ids.append(ids_c); grand = grand + total_c;
 
     // Six messages (3 escrows × 2 settlements) in the ONE inbox; one collect
-    // drains them all into a coin equal to the portfolio's total owner income.
+    // drains them all into a coin equal to the portfolio's total governor income.
     assert_eq!(all_ids.length(), 6);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let coin = earnings::collect_earnings_messages<SUI>(&mut inbox, tickets_for(all_ids), sc.ctx());
     assert_eq!(coin::value(&coin), grand);
-    transfer::public_transfer(coin, OWNER);
+    transfer::public_transfer(coin, GOVERNOR);
 
     // The one cap claims all three assets.
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let clk = clock::create_for_testing(sc.ctx());
     let asset_a = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_a), &cap, &clk, sc.ctx());
     let asset_b = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_b), &cap, &clk, sc.ctx());
     let asset_c = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_c), &cap, &clk, sc.ctx());
     clock::destroy_for_testing(clk);
 
-    transfer::public_transfer(asset_a, OWNER);
-    transfer::public_transfer(asset_b, OWNER);
-    transfer::public_transfer(asset_c, OWNER);
-    transfer::public_transfer(cap, OWNER);
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(asset_a, GOVERNOR);
+    transfer::public_transfer(asset_b, GOVERNOR);
+    transfer::public_transfer(asset_c, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
+    transfer::public_transfer(inbox, GOVERNOR);
     sc.end();
 }
 
-/// E2E financial invariant — Nothing path. A single tenant rents (pays X); at
-/// tenure expiry the full stake is consumed (refund::Nothing — no tenant refund).
-/// The owner's EarningsMessage and the protocol's FeeMessage are collected and
+/// E2E financial invariant — Nothing path. A single usufructuary rents (pays X); at
+/// tenure expiry the full stake is consumed (refund::Nothing — no usufructuary refund).
+/// The governor's EarningsMessage and the protocol's FeeMessage are collected and
 /// must reconstitute X exactly, split 90/10. The oracle is X (the rent the test
 /// paid) — derived from the input, NOT from any event the protocol emitted, so
 /// a wrong split would be caught here, not rubber-stamped.
@@ -813,7 +813,7 @@ fun e2e_invariant_nothing_collected_fee_plus_earnings_equals_rent() {
     let mut sc = setup();
     let (id, cap, mut inbox) = integrate_lifecycle_escrow(&mut sc);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut e   = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id);
     let clk     = clock::create_for_testing(sc.ctx());
     let rent    = escrow::floor_price_mist(&e, clock::timestamp_ms(&clk));
@@ -827,15 +827,15 @@ fun e2e_invariant_nothing_collected_fee_plus_earnings_equals_rent() {
     let earn_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsPosted<SUI>>()[0]);
     let fee_id  = fee_message::sent_fee_message_id(&event::events_by_type<FeeMessageSent<SUI>>()[0]);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(e);
     clock::destroy_for_testing(clk2);
 
-    // No tenant refund was issued (Nothing path).
-    sc.next_tx(TENANT_ADDR_1);
+    // No usufructuary refund was issued (Nothing path).
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     assert!(!sc.has_most_recent_for_sender<Coin<SUI>>(), 0);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let earn_coin = earnings::collect_earnings_messages<SUI>(
         &mut inbox, vector[test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(earn_id)], sc.ctx(),
     );
@@ -849,27 +849,27 @@ fun e2e_invariant_nothing_collected_fee_plus_earnings_equals_rent() {
     assert_eq!(coin::value(&earn_coin), rent - rent / 10);   // 90%
     assert_eq!(coin::value(&earn_coin) + coin::value(&fee_coin), rent);  // conservation
 
-    transfer::public_transfer(earn_coin, OWNER);
-    transfer::public_transfer(fee_coin, OWNER);
+    transfer::public_transfer(earn_coin, GOVERNOR);
+    transfer::public_transfer(fee_coin, GOVERNOR);
     sc.return_to_sender(fee_box);
-    transfer::public_transfer(inbox, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
 /// E2E financial invariant — Parcial + Nothing across a handover. T1 pays rent1,
 /// T2 bids rent2. At handover T1 is displaced (refund::Parcial): its unused
-/// credit is refunded, its used credit splits owner+fee. At T2's tenure expiry
+/// credit is refunded, its used credit splits governor+fee. At T2's tenure expiry
 /// the full stake settles (Nothing). Conservation across the two rentals:
 ///   refund(T1) + Σ collected fees + Σ collected earnings == rent1 + rent2
-/// Every mist paid in comes back out — to the displaced tenant, the protocol,
-/// or the owner — with no mist created or destroyed. Oracle = rent1 + rent2.
+/// Every mist paid in comes back out — to the displaced usufructuary, the protocol,
+/// or the governor — with no mist created or destroyed. Oracle = rent1 + rent2.
 #[test]
 fun e2e_invariant_parcial_then_nothing_conserves_both_rents() {
     let mut sc = setup();
     let (id, cap, mut inbox) = integrate_lifecycle_escrow(&mut sc);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut e    = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
@@ -904,13 +904,13 @@ fun e2e_invariant_parcial_then_nothing_conserves_both_rents() {
         fee_message::sent_fee_message_id(&sent[1]),
     ];
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(e);
     clock::destroy_for_testing(clk);
 
-    // T1's Parcial refund is the only loose Coin at OWNER (rents were consumed).
-    sc.next_tx(OWNER);
+    // T1's Parcial refund is the only loose Coin at GOVERNOR (rents were consumed).
+    sc.next_tx(GOVERNOR);
     let refund   = sc.take_from_sender<Coin<SUI>>();
     let refund_v = coin::value(&refund);
     assert!(refund_v > 0, 3);  // Parcial really refunded unused credit
@@ -929,17 +929,17 @@ fun e2e_invariant_parcial_then_nothing_conserves_both_rents() {
     // Conservation across both rentals — oracle = rent1 + rent2, an independent input.
     assert_eq!(refund_v + coin::value(&earn_coin) + coin::value(&fee_coin), rent1 + rent2);
 
-    transfer::public_transfer(refund, OWNER);
-    transfer::public_transfer(earn_coin, OWNER);
-    transfer::public_transfer(fee_coin, OWNER);
+    transfer::public_transfer(refund, GOVERNOR);
+    transfer::public_transfer(earn_coin, GOVERNOR);
+    transfer::public_transfer(fee_coin, GOVERNOR);
     sc.return_to_sender(fee_box);
-    transfer::public_transfer(inbox, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
 /// Multi-tenure twin of e2e_rent_with_floor_price_drives_full_lifecycle.
-/// Every tenant rents N tenures paying floor_price_mist * N. The state
+/// Every usufructuary rents N tenures paying floor_price_mist * N. The state
 /// machine and the floor invariant are identical; only the tenure count
 /// (and so the tenure ceiling, queried dynamically) changes.
 ///
@@ -949,7 +949,7 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle_multitenure() {
     let mut sc = setup();
     let n = 3;
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag_with_cycles(1, 0, 0, 1, 0, 1));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Idle → Occupied: T1 rents N tenures at floor.
@@ -983,12 +983,12 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle_multitenure() {
     let cap_t4 = rent_n_with_floor_price(&mut escrow, n, &clk, &mut sc);
     assert!(escrow::is_occupied(&escrow), 6);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
-    transfer::public_transfer(cap_t4, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
+    transfer::public_transfer(cap_t4, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1004,15 +1004,15 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle_multitenure() {
 fun floor_price_mist_minus_one_aborts_in_idle() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 0);
     let cap = rent_one_below_floor_price(&mut escrow, &clk, &mut sc);
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1021,7 +1021,7 @@ fun floor_price_mist_minus_one_aborts_in_idle() {
 fun floor_price_mist_minus_one_aborts_in_occupied() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
@@ -1030,10 +1030,10 @@ fun floor_price_mist_minus_one_aborts_in_occupied() {
     clock::set_for_testing(&mut clk, 1_000);
     let cap = rent_one_below_floor_price(&mut escrow, &clk, &mut sc);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1042,7 +1042,7 @@ fun floor_price_mist_minus_one_aborts_in_occupied() {
 fun floor_price_mist_minus_one_aborts_in_demand() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
@@ -1053,11 +1053,11 @@ fun floor_price_mist_minus_one_aborts_in_demand() {
     clock::set_for_testing(&mut clk, 2_000);
     let cap = rent_one_below_floor_price(&mut escrow, &clk, &mut sc);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1066,7 +1066,7 @@ fun floor_price_mist_minus_one_aborts_in_demand() {
 fun floor_price_mist_minus_one_aborts_in_descent() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
@@ -1078,10 +1078,10 @@ fun floor_price_mist_minus_one_aborts_in_descent() {
 
     let cap = rent_one_below_floor_price(&mut escrow, &clk, &mut sc);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1102,7 +1102,7 @@ fun floor_price_occupied_escalates_active_stake() {
 
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
-                mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+                mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
                 0,
             );
 
@@ -1115,7 +1115,7 @@ fun floor_price_occupied_escalates_active_stake() {
             assert!(price > STAKE_T1, tag);
 
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(cap, OWNER);
+            transfer::public_transfer(cap, GOVERNOR);
             d = d + 1;
         };
         m = m + 1;
@@ -1138,12 +1138,12 @@ fun floor_price_demand_escalates_pending_stake() {
 
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
-                mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+                mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
                 0,
             );
             escrow::drive_to_demand_for_testing(
                 &mut escrow,
-                mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()),
+                mk_usufructuary(STAKE_T2, USUFRUCTUARY_ADDR_2, cap_id_2()),
                 10_000,
             );
 
@@ -1153,7 +1153,7 @@ fun floor_price_demand_escalates_pending_stake() {
             assert!(price > STAKE_T2, tag);
 
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(cap, OWNER);
+            transfer::public_transfer(cap, GOVERNOR);
             d = d + 1;
         };
         m = m + 1;
@@ -1178,7 +1178,7 @@ fun floor_price_descent_at_t0_equals_last_acq_price() {
 
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
-                mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+                mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
                 0,
             );
             // Drive Occupied → Descent with last_acq_price > min_rent_price
@@ -1198,7 +1198,7 @@ fun floor_price_descent_at_t0_equals_last_acq_price() {
             assert!(price == last_acq, tag);
 
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(cap, OWNER);
+            transfer::public_transfer(cap, GOVERNOR);
             e = e + 1;
         };
         m = m + 1;
@@ -1221,7 +1221,7 @@ fun floor_price_descent_at_full_descent_equals_min_rent_price() {
 
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
-                mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+                mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
                 0,
             );
             let last_acq    = escrow_corpus::min_rent_price_const() * 2;
@@ -1239,7 +1239,7 @@ fun floor_price_descent_at_full_descent_equals_min_rent_price() {
             assert!(price == escrow_corpus::min_rent_price_const(), tag);
 
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(cap, OWNER);
+            transfer::public_transfer(cap, GOVERNOR);
             e = e + 1;
         };
         m = m + 1;
@@ -1257,7 +1257,7 @@ fun floor_price_aborts_on_retired() {
     let _ = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -1280,7 +1280,7 @@ fun used_credit_at_phase_start_is_zero_for_all_curves() {
             let phase_start = 1_000_000;
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
-                mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+                mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
                 phase_start,
             );
 
@@ -1291,7 +1291,7 @@ fun used_credit_at_phase_start_is_zero_for_all_curves() {
             assert!(used == 0, tag);
 
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(cap, OWNER);
+            transfer::public_transfer(cap, GOVERNOR);
             e = e + 1;
         };
         m = m + 1;
@@ -1315,7 +1315,7 @@ fun used_credit_at_tenure_ceiling_equals_principal_for_all_curves() {
             let phase_start = 1_000_000;
             escrow::drive_to_rented_for_testing(
                 &mut escrow,
-                mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+                mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
                 phase_start,
             );
 
@@ -1327,7 +1327,7 @@ fun used_credit_at_tenure_ceiling_equals_principal_for_all_curves() {
             assert!(used == STAKE_T1, tag);
 
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(cap, OWNER);
+            transfer::public_transfer(cap, GOVERNOR);
             e = e + 1;
         };
         m = m + 1;
@@ -1348,13 +1348,13 @@ fun used_credit_demand_clamps_at_expiry() {
     let phase_start = 1_000_000;
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         phase_start,
     );
     let countdown_expiry = phase_start + escrow_corpus::handover_countdown_c1_const();
     escrow::drive_to_demand_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()),
+        mk_usufructuary(STAKE_T2, USUFRUCTUARY_ADDR_2, cap_id_2()),
         countdown_expiry,
     );
 
@@ -1367,7 +1367,7 @@ fun used_credit_demand_clamps_at_expiry() {
     assert_eq!(at_expiry, far_future);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -1380,7 +1380,7 @@ fun used_credit_aborts_on_idle() {
     let _ = escrow::accrued_credit_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -1391,7 +1391,7 @@ fun used_credit_aborts_on_descent() {
     let (mut escrow, cap) = integrate_and_take(ensemble, &mut sc);
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(
@@ -1401,7 +1401,7 @@ fun used_credit_aborts_on_descent() {
     let _ = escrow::accrued_credit_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -1415,19 +1415,19 @@ fun used_credit_aborts_on_retired() {
     let _ = escrow::accrued_credit_mist(&escrow, clock::timestamp_ms(&clock));
     clock::destroy_for_testing(clock);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
-// ─── §7. rent — dispatch to do_install_new_tenant ────────────────────────────
+// ─── §7. rent — dispatch to do_install_new_usufructuary ────────────────────────────
 
 /// Idle → Occupied via rent. Verifies state_tag transitions and
 /// RentStarted carries from_state=Idle.
 #[test]
-fun rent_from_idle_installs_new_tenant() {
+fun rent_from_idle_installs_new_usufructuary() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let floor = escrow_corpus::min_rent_price_const();
@@ -1437,31 +1437,31 @@ fun rent_from_idle_installs_new_tenant() {
     // Post-condition: state is Occupied.
     assert!(escrow::is_occupied(&escrow), 0);
 
-    // Event check: exactly one RentStarted with tenant_cap_id matching the returned cap.
+    // Event check: exactly one RentStarted with usufruct_cap_id matching the returned cap.
     let started = event::events_by_type<RentStarted>();
     assert_eq!(started.length(), 1);
-    assert_eq!(asset_state::rent_started_tenant_cap_id(&started[0]), object::id(&t_cap));
+    assert_eq!(asset_state::rent_started_usufruct_cap_id(&started[0]), object::id(&t_cap));
     assert_eq!(asset_state::rent_started_price_paid(&started[0]), floor);
 
-    transfer::public_transfer(t_cap, OWNER);
+    transfer::public_transfer(t_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// Descent → Occupied via rent. RentStarted.from_state = DescentAuction.
 #[test]
-fun rent_from_descent_installs_new_tenant() {
+fun rent_from_descent_installs_new_usufructuary() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));  // h=1 for non-zero descent window
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Drive to Descent via test-only helpers.
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     let last_acq = escrow_corpus::min_rent_price_const() * 2;
@@ -1483,9 +1483,9 @@ fun rent_from_descent_installs_new_tenant() {
     let started = event::events_by_type<RentStarted>();
     assert_eq!(started.length(), 1);
 
-    transfer::public_transfer(t_cap, OWNER);
+    transfer::public_transfer(t_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1504,7 +1504,7 @@ fun rent_from_occupied_places_bid() {
         while (c <= 2) {
             let tag_cfg = escrow_corpus::tag_with_cycles(c, 0, 0, 0, 0, m);
             let ensemble     = escrow_corpus::by_tag(tag_cfg);
-            let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+            let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
         
             // First rent: Idle → Occupied.
@@ -1523,16 +1523,16 @@ fun rent_from_occupied_places_bid() {
             // Verify a BidPlaced event was emitted with cap_t2.
             let placed = event::events_by_type<BidPlaced>();
             assert!(placed.length() == 1, tag_cfg);
-            assert_eq!(asset_state::bid_placed_pending_tenant_cap_id(&placed[0]), object::id(&cap_t2));
+            assert_eq!(asset_state::bid_placed_pending_usufruct_cap_id(&placed[0]), object::id(&cap_t2));
             // The expiry was stamped — its specific value depends on c
             // (Instant: now+0 = now2; Fixed: min(now2+25_000, phase_start+ceiling);
             // FullTenure: phase_start+ceiling). Property: expiry > 0.
             assert!(asset_state::bid_placed_handover_countdown_expiry(&placed[0]) > 0, tag_cfg);
 
-            transfer::public_transfer(cap_t1, OWNER);
-            transfer::public_transfer(cap_t2, OWNER);
+            transfer::public_transfer(cap_t1, GOVERNOR);
+            transfer::public_transfer(cap_t2, GOVERNOR);
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(owner_cap, OWNER);
+            transfer::public_transfer(governance_cap, GOVERNOR);
                     clock::destroy_for_testing(clk);
             c = c + 1;
         };
@@ -1545,7 +1545,7 @@ fun rent_from_occupied_places_bid() {
 fun rent_from_occupied_aborts_when_retiring_flag_set() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // First rent: Idle → Occupied.
@@ -1561,10 +1561,10 @@ fun rent_from_occupied_aborts_when_retiring_flag_set() {
     let p2 = mk_payment(escrow_corpus::min_rent_price_const() * 2, sc.ctx());
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1580,7 +1580,7 @@ fun rent_from_demand_supersedes_bid() {
     // c=1 (Fixed) — non-zero handover-countdown so APT does NOT
     // fire handover at the third rent before supersede can run.
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -1603,14 +1603,14 @@ fun rent_from_demand_supersedes_bid() {
     let superseded = event::events_by_type<BidSuperseded>();
     assert_eq!(superseded.length(), 1);
     assert_eq!(asset_state::bid_superseded_displaced_cap_id(&superseded[0]), object::id(&cap_t2));
-    assert_eq!(asset_state::bid_superseded_new_cap_id(&superseded[0]), object::id(&cap_t3));
+    assert_eq!(asset_state::bid_superseded_pending_cap_id(&superseded[0]), object::id(&cap_t3));
     assert_eq!(asset_state::bid_superseded_refunded_amount(&superseded[0]), p2_amt);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1629,7 +1629,7 @@ fun off_handover_never_supersedes_pending_bid() {
     let mut sc = setup();
     // c=0 (Instant) — handover_expiry := now at every bid
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents: Idle → Occupied
@@ -1652,11 +1652,11 @@ fun off_handover_never_supersedes_pending_bid() {
     // Structural invariant: BidSuperseded never fires ⟺ RefundState::Total unreachable.
     assert_eq!(event::events_by_type<BidSuperseded>().length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1667,15 +1667,15 @@ fun off_handover_never_supersedes_pending_bid() {
 fun rent_below_floor_aborts() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let payment = mk_payment(escrow_corpus::min_rent_price_const() - 1, sc.ctx());
     let cap = escrow::rent(&mut escrow, payment, tenures::tenures(1), &clk, sc.ctx());
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1684,16 +1684,16 @@ fun rent_below_floor_aborts() {
 fun rent_from_retired_aborts() {
     let mut sc = setup();
     let ensemble     = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     escrow::drive_to_retired_for_testing(&mut escrow);
 
     let payment = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap = escrow::rent(&mut escrow, payment, tenures::tenures(1), &clk, sc.ctx());
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1701,8 +1701,8 @@ fun rent_from_retired_aborts() {
 // ─── §11. do_handover ────────────────────────────────────────────────────────
 
 /// Demand → Occupied via the boundary handler.
-/// Verifies: state transition, owner balance increases by owner_share,
-/// HandoverCompleted carries used_credit = owner_share + protocol_fee
+/// Verifies: state transition, governor balance increases by governor_share,
+/// HandoverCompleted carries used_credit = governor_share + protocol_fee
 /// and remain_credit = principal − used_credit.
 /// Uses c=1 (Fixed) + e=0 (Linear) so used_credit fires
 /// mid-tenure (Parcial branch — remainder > 0).
@@ -1710,7 +1710,7 @@ fun rent_from_retired_aborts() {
 fun do_handover_routes_funds_and_emits_event_parcial() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Drive to Demand via two rent calls.
@@ -1736,23 +1736,23 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     // Post-condition: Occupied, current is t2.
     assert!(escrow::is_occupied(&escrow), 0);
 
-    // Owner share (90% of used_credit) was mailed to the inbox at handover —
+    // Governor share (90% of used_credit) was mailed to the inbox at handover —
     // assert the event now (per-tx scope) and capture the message id.
-    let owner_share_expected = used_credit_expected - used_credit_expected / 10;  // 90%
+    let governor_share_expected = used_credit_expected - used_credit_expected / 10;  // 90%
     let posted = event::events_by_type<EarningsPosted<SUI>>();
     assert_eq!(posted.length(), 1);
-    assert_eq!(earnings_message::posted_amount(&posted[0]), owner_share_expected);
+    assert_eq!(earnings_message::posted_amount(&posted[0]), governor_share_expected);
     let earnings_msg_id = earnings_message::posted_earnings_message_id(&posted[0]);
 
     // HandoverCompleted event emitted with consistent figures.
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 1);
     let used_credit = asset_state::handover_completed_used_credit(&completed[0]);
-    let owner_share = asset_state::handover_completed_owner_share(&completed[0]);
+    let governor_share = asset_state::handover_completed_governor_share(&completed[0]);
     let protocol_fee = asset_state::handover_completed_protocol_fee(&completed[0]);
     let remain_credit = asset_state::handover_completed_remain_credit(&completed[0]);
     // Conservation: split adds up to used_credit; remain matches.
-    assert_eq!(owner_share + protocol_fee, used_credit);
+    assert_eq!(governor_share + protocol_fee, used_credit);
     assert_eq!(used_credit + remain_credit, principal_t1);
 
     // FeeMessage was posted carrying exactly the protocol fee; capture its id.
@@ -1761,25 +1761,25 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     assert_eq!(fee_message::sent_amount(&sent[0]), protocol_fee);
     let fee_msg_id = fee_message::sent_fee_message_id(&sent[0]);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
     // Structural truth, not just the report: the real EarningsMessage and
     // FeeMessage landed at their inboxes carrying the exact values the events
     // claimed. Collect each and assert the coin.
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut earn_inbox = sc.take_from_sender<EarningsInbox>();
     let e_coin = earnings::collect_earnings_messages<SUI>(
         &mut earn_inbox,
         vector[test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(earnings_msg_id)],
         sc.ctx(),
     );
-    assert_eq!(coin::value(&e_coin), owner_share_expected);
-    assert_eq!(coin::value(&e_coin), owner_share);  // event's reported share == real coin
-    transfer::public_transfer(e_coin, OWNER);
+    assert_eq!(coin::value(&e_coin), governor_share_expected);
+    assert_eq!(coin::value(&e_coin), governor_share);  // event's reported share == real coin
+    transfer::public_transfer(e_coin, GOVERNOR);
     sc.return_to_sender(earn_inbox);
 
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
@@ -1789,21 +1789,21 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
         sc.ctx(),
     );
     assert_eq!(coin::value(&f_coin), protocol_fee);
-    transfer::public_transfer(f_coin, OWNER);
+    transfer::public_transfer(f_coin, GOVERNOR);
     sc.return_to_sender(fee_box);
     sc.end();
 }
 
 // ─── §12. do_tenure_expiry ───────────────────────────────────────────────────
 
-/// At tenure expiry the tenant never receives a refund.
-/// split_fee(principal) = owner_share + protocol_fee exactly — no remainder.
+/// At tenure expiry the usufructuary never receives a refund.
+/// split_fee(principal) = governor_share + protocol_fee exactly — no remainder.
 /// Preserves the invariant: the Nothing path is taken, never Parcial.
 #[test]
-fun do_tenure_expiry_tenant_receives_no_refund() {
+fun do_tenure_expiry_usufructuary_receives_no_refund() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -1813,35 +1813,35 @@ fun do_tenure_expiry_tenant_receives_no_refund() {
     let boundary_ms = escrow_corpus::tenure_ceiling_const();
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
-    // Conservation: owner_share + protocol_fee = principal.
-    // If this fails, some mist escaped to the tenant.
+    // Conservation: governor_share + protocol_fee = principal.
+    // If this fails, some mist escaped to the usufructuary.
     let expired = event::events_by_type<TenureExpired>();
     assert_eq!(expired.length(), 1);
     assert_eq!(
-        asset_state::tenure_expired_owner_share(&expired[0]) +
+        asset_state::tenure_expired_governor_share(&expired[0]) +
         asset_state::tenure_expired_protocol_fee(&expired[0]),
         principal,
     );
 
-    // No coin was transferred to the tenant — Nothing, not Parcial.
-    sc.next_tx(TENANT_ADDR_1);
+    // No coin was transferred to the usufructuary — Nothing, not Parcial.
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     assert!(!sc.has_most_recent_for_sender<coin::Coin<SUI>>(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// Occupied → Descent via tenure boundary. Refund is always
-/// Nothing (full stake consumed: owner+fee). last_acquisition_price
+/// Nothing (full stake consumed: governor+fee). last_acquisition_price
 /// equals the principal at boundary.
 #[test]
 fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -1854,12 +1854,12 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     // Post-condition: NotRented + Descent.
     assert!(escrow::is_descending(&escrow), 0);
 
-    // Owner share (90% of full principal) was mailed to the inbox at expiry —
+    // Governor share (90% of full principal) was mailed to the inbox at expiry —
     // assert the event now (per-tx scope) and capture the message id.
-    let owner_share_expected = principal - principal / 10;
+    let governor_share_expected = principal - principal / 10;
     let posted = event::events_by_type<EarningsPosted<SUI>>();
     assert_eq!(posted.length(), 1);
-    assert_eq!(earnings_message::posted_amount(&posted[0]), owner_share_expected);
+    assert_eq!(earnings_message::posted_amount(&posted[0]), governor_share_expected);
     let earnings_msg_id = earnings_message::posted_earnings_message_id(&posted[0]);
 
     // TenureExpired carries the canonical anchor price = principal.
@@ -1867,7 +1867,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     assert_eq!(expired.length(), 1);
     assert_eq!(asset_state::tenure_expired_last_acq_price(&expired[0]), principal);
     let protocol_fee = asset_state::tenure_expired_protocol_fee(&expired[0]);
-    assert_eq!(asset_state::tenure_expired_owner_share(&expired[0]) + protocol_fee, principal);
+    assert_eq!(asset_state::tenure_expired_governor_share(&expired[0]) + protocol_fee, principal);
 
     // No AssetRetired (retiring flag was not set).
     assert_eq!(event::events_by_type<AssetRetired>().length(), 0);
@@ -1878,24 +1878,24 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     assert_eq!(fee_message::sent_amount(&sent[0]), protocol_fee);
     let fee_msg_id = fee_message::sent_fee_message_id(&sent[0]);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
     // Structural truth, not just the report: the real EarningsMessage and
     // FeeMessage landed at their inboxes carrying the exact values the events
     // claimed. Collect each and assert the coin — events can drift from the
     // object independently, so verify the object.
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut earn_inbox = sc.take_from_sender<EarningsInbox>();
     let e_coin = earnings::collect_earnings_messages<SUI>(
         &mut earn_inbox,
         vector[test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(earnings_msg_id)],
         sc.ctx(),
     );
-    assert_eq!(coin::value(&e_coin), owner_share_expected);
-    transfer::public_transfer(e_coin, OWNER);
+    assert_eq!(coin::value(&e_coin), governor_share_expected);
+    transfer::public_transfer(e_coin, GOVERNOR);
     sc.return_to_sender(earn_inbox);
 
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
@@ -1905,7 +1905,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
         sc.ctx(),
     );
     assert_eq!(coin::value(&f_coin), protocol_fee);
-    transfer::public_transfer(f_coin, OWNER);
+    transfer::public_transfer(f_coin, GOVERNOR);
     sc.return_to_sender(fee_box);
     sc.end();
 }
@@ -1917,7 +1917,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
 fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -1939,9 +1939,9 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
     let retired = event::events_by_type<AssetRetired>();
     assert_eq!(retired.length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1956,10 +1956,10 @@ fun do_tenure_expiry_with_retiring_flag_collapses_to_retired() {
 fun retire_from_idle_collapses_to_retired() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0); // f=0 immediate
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), 0);
 
     let flagged = event::events_by_type<RetireFlagSet>();
@@ -1969,7 +1969,7 @@ fun retire_from_idle_collapses_to_retired() {
     assert_eq!(retired.length(), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -1980,44 +1980,44 @@ fun retire_from_idle_collapses_to_retired() {
 fun retire_from_descent_collapses_to_retired() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 window
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1, 0, escrow_corpus::min_rent_price_const() * 2, 100_000,
     );
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), 0);
 
     let retired = event::events_by_type<AssetRetired>();
     assert_eq!(retired.length(), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// retire from Occupied → flag set; state stays Occupied.
 /// RetireFlagSet emitted with state_at_set=Occupied; no AssetRetired
-/// (the asset stays with the tenant until tenure expiry).
+/// (the asset stays with the usufructuary until tenure expiry).
 #[test]
 fun retire_from_occupied_only_lifts_flag() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), 0);
 
     let flagged = event::events_by_type<RetireFlagSet>();
@@ -2026,9 +2026,9 @@ fun retire_from_occupied_only_lifts_flag() {
     let retired = event::events_by_type<AssetRetired>();
     assert_eq!(retired.length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2037,12 +2037,12 @@ fun retire_from_occupied_only_lifts_flag() {
 fun retire_when_already_retired_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     escrow::drive_to_retired_for_testing(&mut escrow);
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2051,44 +2051,44 @@ fun retire_when_already_retired_aborts() {
 fun retire_when_already_retiring_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     // Second call must fail — flag is already set.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun retire_with_wrong_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Mint a foreign cap bound to a different escrow_id.
-    let foreign_cap = owner_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
+    let foreign_cap = governance_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), GOVERNOR, sc.ctx());
     escrow::retire(&mut escrow, &foreign_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// A genuine OwnerCap from a different real escrow is rejected.
+/// A genuine GovernanceCap from a different real escrow is rejected.
 /// Demonstrates that any cap bound to escrow A cannot retire escrow B,
 /// even though both caps were legitimately issued by the protocol.
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun retire_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
@@ -2100,8 +2100,8 @@ fun retire_with_real_foreign_escrow_cap_aborts() {
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(cap_a, OWNER);
-    transfer::public_transfer(cap_b, OWNER);
+    transfer::public_transfer(cap_a, GOVERNOR);
+    transfer::public_transfer(cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2111,31 +2111,31 @@ fun retire_before_floor_aborts_under_deferred_policy() {
     let mut sc = setup();
     let tag = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 deferred
     let ensemble = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     // clock at 0 is far below the deferred floor (10_000_000).
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §13. do_auction_expiry ──────────────────────────────────────────────────
 
-/// Descent → Idle via auction boundary. No tenant funds; only emits
+/// Descent → Idle via auction boundary. No usufructuary funds; only emits
 /// AuctionExpired.
 #[test]
 fun do_auction_expiry_returns_to_idle() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
 
     // Drive Idle → Occupied → Descent via test helpers.
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(
@@ -2152,13 +2152,13 @@ fun do_auction_expiry_returns_to_idle() {
     assert_eq!(asset_state::auction_expired_timestamp_ms(&expired[0]), boundary_ms);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     sc.end();
 }
 
 /// Retire flag set from Demand state does NOT block supersede bids.
 /// Bidders are still competing for the last tenure before retirement.
-/// The retire flag closes the market at the cycle level (no new tenants
+/// The retire flag closes the market at the cycle level (no new usufructuaries
 /// after the current one), but the pending slot is still open: anyone
 /// willing to pay more can displace the pending challenger and claim
 /// that final tenure. Only an Occupied+retiring escrow rejects new bids.
@@ -2167,7 +2167,7 @@ fun retire_from_demand_allows_supersede_for_last_tenure() {
     let mut sc = setup();
     // c=1 (Fixed) — non-zero handover window keeps Demand alive across calls.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents: Idle → Occupied.
@@ -2180,8 +2180,8 @@ fun retire_from_demand_allows_supersede_for_last_tenure() {
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), 0);
 
-    // Owner retires from Demand: sets retire flag, state stays Demand.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    // Governor retires from Demand: sets retire flag, state stays Demand.
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), 1);
     assert_eq!(event::events_by_type<RetireFlagSet>().length(), 1);
 
@@ -2194,13 +2194,13 @@ fun retire_from_demand_allows_supersede_for_last_tenure() {
     assert!(escrow::is_demand(&escrow), 2);
     assert_eq!(event::events_by_type<BidSuperseded>().length(), 1);
     assert_eq!(asset_state::bid_superseded_displaced_cap_id(&event::events_by_type<BidSuperseded>()[0]), object::id(&cap_t2));
-    assert_eq!(asset_state::bid_superseded_new_cap_id     (&event::events_by_type<BidSuperseded>()[0]), object::id(&cap_t3));
+    assert_eq!(asset_state::bid_superseded_pending_cap_id     (&event::events_by_type<BidSuperseded>()[0]), object::id(&cap_t3));
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2212,7 +2212,7 @@ fun retire_from_demand_allows_supersede_for_last_tenure() {
 fun next_pending_returns_none_in_steady_state() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
 
     // Idle escrow — nothing pending at any clock.
     let clk = clock::create_for_testing(sc.ctx());
@@ -2220,7 +2220,7 @@ fun next_pending_returns_none_in_steady_state() {
     clock::destroy_for_testing(clk);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     sc.end();
 }
 
@@ -2233,7 +2233,7 @@ fun next_pending_descent_not_firable_returns_none() {
     // h=1 Fixed descent — non-zero descent duration ensures the auction is
     // not immediately firable at clock=0.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2248,9 +2248,9 @@ fun next_pending_descent_not_firable_returns_none() {
     // closed, so no pending transition.
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2263,7 +2263,7 @@ fun next_pending_demand_firable_returns_some() {
     let mut sc = setup();
     // c=1 Fixed — non-zero handover countdown so we can control timing.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2283,10 +2283,10 @@ fun next_pending_demand_firable_returns_some() {
     assert!(escrow::is_demand(&escrow), 1);
     assert_eq!(escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some(), countdown_expiry);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2298,7 +2298,7 @@ fun next_pending_demand_firable_returns_some() {
 fun next_pending_demand_not_firable_returns_none() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2312,10 +2312,10 @@ fun next_pending_demand_not_firable_returns_none() {
     // Clock is 0 — the countdown expiry is in the future.
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2325,7 +2325,7 @@ fun next_pending_demand_not_firable_returns_none() {
 fun next_pending_detects_tenure_with_correct_boundary() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2337,9 +2337,9 @@ fun next_pending_detects_tenure_with_correct_boundary() {
     assert!(escrow::is_occupied(&escrow), 0);
     assert_eq!(escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some(), escrow_corpus::tenure_ceiling_const());
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2351,7 +2351,7 @@ fun next_pending_detects_tenure_with_correct_boundary() {
 fun apt_noop_when_nothing_due() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Idle escrow at clock=0; no transitions are due.
@@ -2359,7 +2359,7 @@ fun apt_noop_when_nothing_due() {
     assert!(escrow::is_idle(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2371,7 +2371,7 @@ fun apt_noop_when_nothing_due() {
 fun apt_fires_handover_when_countdown_expires() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2395,10 +2395,10 @@ fun apt_fires_handover_when_countdown_expires() {
     assert_eq!(completed.length(), 1);
     assert_eq!(asset_state::handover_completed_timestamp_ms(&completed[0]), countdown_expiry);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2408,7 +2408,7 @@ fun apt_fires_handover_when_countdown_expires() {
 fun apt_fires_tenure_expiry_when_elapsed() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2423,9 +2423,9 @@ fun apt_fires_tenure_expiry_when_elapsed() {
     let expired = event::events_by_type<TenureExpired>();
     assert_eq!(expired.length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2440,7 +2440,7 @@ fun apt_fires_tenure_expiry_when_elapsed() {
 fun apt_cascade_tenure_then_auction_skipped() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)); // h=0 Skipped
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2456,9 +2456,9 @@ fun apt_cascade_tenure_then_auction_skipped() {
     let auction_e = event::events_by_type<AuctionExpired>();
     assert_eq!(auction_e.length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -2472,7 +2472,7 @@ fun apt_cascade_tenure_then_auction_skipped() {
 fun borrow_asset_then_return_completes_cycle() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2486,63 +2486,63 @@ fun borrow_asset_then_return_completes_cycle() {
     let returned = event::events_by_type<AssetReturned>();
     assert_eq!(returned.length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowUsufructCap, location = usufruct::asset_state)]
 fun borrow_asset_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
-    let foreign_cap = tenant_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), TENANT_ADDR_1, sc.ctx());
+    let foreign_cap = usufruct_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), USUFRUCTUARY_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
-    transfer::public_transfer(a, OWNER);
+    transfer::public_transfer(a, GOVERNOR);
     asset_state::destroy_receipt_for_testing(r);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(foreign_cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EStaleUsufructCap, location = usufruct::asset_state)]
 fun borrow_asset_from_idle_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Mint a cap bound to this escrow but never used (no active rental).
     let escrow_id = object::id(&escrow);
-    let cap = tenant_cap::new(escrow_identity::new(escrow_id), TENANT_ADDR_1, sc.ctx());
+    let cap = usufruct_cap::new(escrow_identity::new(escrow_id), USUFRUCTUARY_ADDR_1, sc.ctx());
 
     let (a, r) = escrow::borrow_asset(&mut escrow, &cap, &clk, sc.ctx());
-    transfer::public_transfer(a, OWNER);
+    transfer::public_transfer(a, GOVERNOR);
     asset_state::destroy_receipt_for_testing(r);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::EPendingTenantCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EPendingUsufructCap, location = usufruct::asset_state)]
 fun borrow_asset_with_pending_cap_aborts() {
     let mut sc = setup();
     // c=1 Fixed so place_bid stamps a future expiry (no APT
     // handover before borrow).
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2554,24 +2554,24 @@ fun borrow_asset_with_pending_cap_aborts() {
 
     // cap_t2 is the pending bidder — cannot borrow.
     let (a, r) = escrow::borrow_asset(&mut escrow, &cap_t2, &clk, sc.ctx());
-    transfer::public_transfer(a, OWNER);
+    transfer::public_transfer(a, GOVERNOR);
     asset_state::destroy_receipt_for_testing(r);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-// ─── §15.2 soft_burn_tenant_cap ───────────────────────────────────────────────────
+// ─── §15.2 soft_burn_usufruct_cap ───────────────────────────────────────────────────
 
 /// Stale cap (from a superseded bid) burns cleanly. Live caps abort.
 #[test]
-fun soft_burn_tenant_cap_burns_displaced_bidder_cap() {
+fun soft_burn_usufruct_cap_burns_displaced_bidder_cap() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2587,143 +2587,143 @@ fun soft_burn_tenant_cap_burns_displaced_bidder_cap() {
     let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
 
     // Burn the stale cap_t2.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
-fun soft_burn_tenant_cap_on_live_active_cap_aborts() {
+#[test, expected_failure(abort_code = asset_state::EUsufructCapNotStale, location = usufruct::asset_state)]
+fun soft_burn_usufruct_cap_on_live_active_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     // cap_t1 is the live current — burn must abort.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
-fun soft_burn_tenant_cap_with_foreign_escrow_cap_aborts() {
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowUsufructCap, location = usufruct::asset_state)]
+fun soft_burn_usufruct_cap_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let foreign = tenant_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), TENANT_ADDR_1, sc.ctx());
+    let foreign = usufruct_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), USUFRUCTUARY_ADDR_1, sc.ctx());
 
-    escrow::soft_burn_tenant_cap(&mut escrow, foreign, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, foreign, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-// ─── §15.2b hard_burn_tenant_cap ─────────────────────────────────────────────
+// ─── §15.2b hard_burn_usufruct_cap ─────────────────────────────────────────────
 
-/// `hard_burn_tenant_cap` destroys a TenantCap unconditionally with no escrow
+/// `hard_burn_usufruct_cap` destroys a UsufructCap unconditionally with no escrow
 /// reference. Canonical use: the escrow has been claimed and deleted, leaving
-/// the former tenant's cap orphaned. `soft_burn_tenant_cap` would be
+/// the former usufructuary's cap orphaned. `soft_burn_usufruct_cap` would be
 /// impossible at that point — the shared object no longer exists.
 ///
 /// A cap bound to the escrow identity is created, then the escrow is driven
-/// to Retired and claimed (object consumed). `hard_burn_tenant_cap` burns the
-/// now-orphaned cap — verified by `TenantCapBurned` event and `sc.end()`.
+/// to Retired and claimed (object consumed). `hard_burn_usufruct_cap` burns the
+/// now-orphaned cap — verified by `UsufructCapBurned` event and `sc.end()`.
 #[test]
-fun hard_burn_tenant_cap_destroys_orphaned_cap_post_claim() {
+fun hard_burn_usufruct_cap_destroys_orphaned_cap_post_claim() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
-    // Create a cap bound to this escrow (simulates a former tenant's cap).
-    let orphaned_cap = tenant_cap::new(
-        escrow_identity::new(object::id(&escrow_handle)), TENANT_ADDR_1, sc.ctx(),
+    // Create a cap bound to this escrow (simulates a former usufructuary's cap).
+    let orphaned_cap = usufruct_cap::new(
+        escrow_identity::new(object::id(&escrow_handle)), USUFRUCTUARY_ADDR_1, sc.ctx(),
     );
 
     // Drive Idle → Retired, then claim — Escrow object is consumed and deleted.
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
     test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
 
-    // The escrow is gone — hard_burn_tenant_cap needs no escrow reference.
-    escrow::hard_burn_tenant_cap(orphaned_cap, sc.ctx());
+    // The escrow is gone — hard_burn_usufruct_cap needs no escrow reference.
+    escrow::hard_burn_usufruct_cap(orphaned_cap, sc.ctx());
 
-    let burned = event::events_by_type<tenant_cap::TenantCapBurned>();
+    let burned = event::events_by_type<usufruct_cap::UsufructCapBurned>();
     assert_eq!(burned.length(), 1);
 
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-// ─── §15.2c update_tenant_refund_address ─────────────────────────────────────
+// ─── §15.2c update_usufructuary_refund_address ─────────────────────────────────────
 //
 // The refund address is captured at rent/bid time from `ctx.sender()` and
-// stored inside the `TenantSeat`. Because `TenantCap` has `key + store` it
+// stored inside the `UsufructuarySeat`. Because `UsufructCap` has `key + store` it
 // can be transferred to a different holder afterwards, who must be able to
 // redirect refunds without re-minting the cap. The new entry mutates the
 // seat whose `cap_identity` matches the presented cap (active or pending,
 // across Occupied and Demand). Mismatch — including stale caps in renting
-// states and any cap presented while waiting — aborts `ETenantCapStale`.
-// Cross-escrow attempts trip the prior gate (`EWrongEscrowTenantCap`).
+// states and any cap presented while waiting — aborts `EUsufructCapStale`.
+// Cross-escrow attempts trip the prior gate (`EWrongEscrowUsufructCap`).
 
 #[test]
-fun update_tenant_refund_address_in_occupied_changes_active_address() {
+fun update_usufructuary_refund_address_in_occupied_changes_active_address() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
-    let old_addr = *escrow::active_tenant_addr(&escrow).borrow();
+    let old_addr = *escrow::active_usufructuary_addr(&escrow).borrow();
 
-    let new_addr = @0xCAFE;
-    escrow::update_tenant_refund_address(
-        &mut escrow, &cap_t1, refund_address::new(new_addr), &clk, sc.ctx(),
+    let active_addr = @0xCAFE;
+    escrow::update_usufructuary_refund_address(
+        &mut escrow, &cap_t1, refund_address::new(active_addr), &clk, sc.ctx(),
     );
 
-    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(), new_addr);
+    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(), active_addr);
 
-    let active_evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    let active_evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(active_evts.length(), 1);
     assert_eq!(asset_state::active_refund_updated_escrow_id(&active_evts[0]), object::id(&escrow));
-    assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&active_evts[0]), object::id(&cap_t1));
+    assert_eq!(asset_state::active_refund_updated_usufruct_cap_id(&active_evts[0]), object::id(&cap_t1));
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), old_addr);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[0]), active_addr);
     assert_eq!(asset_state::active_refund_updated_asset_type(&active_evts[0]),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::active_refund_updated_coin_type(&active_evts[0]),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::active_refund_updated_timestamp_ms(&active_evts[0]), 0);
-    assert_eq!(event::events_by_type<PendingTenantRefundAddressUpdated>().length(), 0);
+    assert_eq!(event::events_by_type<PendingUsufructuaryRefundAddressUpdated>().length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 #[test]
-fun update_tenant_refund_address_in_demand_with_active_cap_changes_active_only() {
+fun update_usufructuary_refund_address_in_demand_with_active_cap_changes_active_only() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2731,37 +2731,37 @@ fun update_tenant_refund_address_in_demand_with_active_cap_changes_active_only()
     let p2 = mk_payment(escrow_corpus::min_rent_price_const() * 2, sc.ctx());
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), 0);
-    let active_old  = *escrow::active_tenant_addr(&escrow).borrow();
-    let pending_old = *escrow::pending_tenant_addr(&escrow).borrow();
+    let active_old  = *escrow::active_usufructuary_addr(&escrow).borrow();
+    let pending_old = *escrow::pending_usufructuary_addr(&escrow).borrow();
 
-    let new_addr = @0xC0FF;
-    escrow::update_tenant_refund_address(
-        &mut escrow, &cap_t1, refund_address::new(new_addr), &clk, sc.ctx(),
+    let active_addr = @0xC0FF;
+    escrow::update_usufructuary_refund_address(
+        &mut escrow, &cap_t1, refund_address::new(active_addr), &clk, sc.ctx(),
     );
 
-    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(),  new_addr);
-    assert_eq!(*escrow::pending_tenant_addr(&escrow).borrow(), pending_old);
+    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(),  active_addr);
+    assert_eq!(*escrow::pending_usufructuary_addr(&escrow).borrow(), pending_old);
 
-    let active_evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    let active_evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(active_evts.length(), 1);
-    assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&active_evts[0]), object::id(&cap_t1));
+    assert_eq!(asset_state::active_refund_updated_usufruct_cap_id(&active_evts[0]), object::id(&cap_t1));
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[0]), active_old);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), new_addr);
-    assert_eq!(event::events_by_type<PendingTenantRefundAddressUpdated>().length(), 0);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[0]), active_addr);
+    assert_eq!(event::events_by_type<PendingUsufructuaryRefundAddressUpdated>().length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 #[test]
-fun update_tenant_refund_address_in_demand_with_pending_cap_changes_pending_only() {
+fun update_usufructuary_refund_address_in_demand_with_pending_cap_changes_pending_only() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2769,58 +2769,58 @@ fun update_tenant_refund_address_in_demand_with_pending_cap_changes_pending_only
     let p2 = mk_payment(escrow_corpus::min_rent_price_const() * 2, sc.ctx());
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), 0);
-    let active_old  = *escrow::active_tenant_addr(&escrow).borrow();
-    let pending_old = *escrow::pending_tenant_addr(&escrow).borrow();
+    let active_old  = *escrow::active_usufructuary_addr(&escrow).borrow();
+    let pending_old = *escrow::pending_usufructuary_addr(&escrow).borrow();
 
-    let new_addr = @0xC0FF;
-    escrow::update_tenant_refund_address(
-        &mut escrow, &cap_t2, refund_address::new(new_addr), &clk, sc.ctx(),
+    let active_addr = @0xC0FF;
+    escrow::update_usufructuary_refund_address(
+        &mut escrow, &cap_t2, refund_address::new(active_addr), &clk, sc.ctx(),
     );
 
-    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(),  active_old);
-    assert_eq!(*escrow::pending_tenant_addr(&escrow).borrow(), new_addr);
+    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(),  active_old);
+    assert_eq!(*escrow::pending_usufructuary_addr(&escrow).borrow(), active_addr);
 
-    let pending_evts = event::events_by_type<PendingTenantRefundAddressUpdated>();
+    let pending_evts = event::events_by_type<PendingUsufructuaryRefundAddressUpdated>();
     assert_eq!(pending_evts.length(), 1);
     assert_eq!(asset_state::pending_refund_updated_escrow_id(&pending_evts[0]), object::id(&escrow));
-    assert_eq!(asset_state::pending_refund_updated_tenant_cap_id(&pending_evts[0]), object::id(&cap_t2));
+    assert_eq!(asset_state::pending_refund_updated_usufruct_cap_id(&pending_evts[0]), object::id(&cap_t2));
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[0]), pending_old);
-    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), new_addr);
+    assert_eq!(asset_state::pending_refund_updated_active_address(&pending_evts[0]), active_addr);
     assert_eq!(asset_state::pending_refund_updated_asset_type(&pending_evts[0]),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::pending_refund_updated_coin_type(&pending_evts[0]),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::pending_refund_updated_timestamp_ms(&pending_evts[0]), 0);
-    assert_eq!(event::events_by_type<ActiveTenantRefundAddressUpdated>().length(), 0);
+    assert_eq!(event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>().length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
-fun update_tenant_refund_address_with_foreign_escrow_cap_aborts() {
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowUsufructCap, location = usufruct::asset_state)]
+fun update_usufructuary_refund_address_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
-    let foreign = tenant_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), TENANT_ADDR_1, sc.ctx());
+    let foreign = usufruct_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), USUFRUCTUARY_ADDR_1, sc.ctx());
 
-    escrow::update_tenant_refund_address(&mut escrow, &foreign, refund_address::new(@0xCAFE), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &foreign, refund_address::new(@0xCAFE), &clk, sc.ctx());
 
-    transfer::public_transfer(foreign, OWNER);
+    transfer::public_transfer(foreign, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
-fun update_tenant_refund_address_in_demand_with_stale_cap_aborts() {
+#[test, expected_failure(abort_code = asset_state::EUsufructCapStale, location = usufruct::asset_state)]
+fun update_usufructuary_refund_address_in_demand_with_stale_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -2833,137 +2833,137 @@ fun update_tenant_refund_address_in_demand_with_stale_cap_aborts() {
     let p3 = mk_payment(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk)), sc.ctx());
     let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
 
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(@0xCAFE), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t2, refund_address::new(@0xCAFE), &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// In Occupied state, a cap that doesn't match the active seat is stale.
-#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
-fun update_tenant_refund_address_in_occupied_with_stale_cap_aborts() {
+#[test, expected_failure(abort_code = asset_state::EUsufructCapStale, location = usufruct::asset_state)]
+fun update_usufructuary_refund_address_in_occupied_with_stale_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     // Escrow is Occupied. A cap bound to this escrow but with a different identity is stale.
-    let wrong_cap = tenant_cap::new(escrow_identity::new(object::id(&escrow)), TENANT_ADDR_2, sc.ctx());
+    let wrong_cap = usufruct_cap::new(escrow_identity::new(object::id(&escrow)), USUFRUCTUARY_ADDR_2, sc.ctx());
 
-    escrow::update_tenant_refund_address(&mut escrow, &wrong_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &wrong_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(wrong_cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(wrong_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
-fun update_tenant_refund_address_in_idle_aborts() {
+#[test, expected_failure(abort_code = asset_state::EUsufructCapStale, location = usufruct::asset_state)]
+fun update_usufructuary_refund_address_in_idle_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Cap bound to this escrow but no seat exists (escrow is Idle).
-    let bound_cap = tenant_cap::new(escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx());
-    escrow::update_tenant_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
+    let bound_cap = usufruct_cap::new(escrow_identity::new(object::id(&escrow)), USUFRUCTUARY_ADDR_1, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
 
-    transfer::public_transfer(bound_cap, OWNER);
+    transfer::public_transfer(bound_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
-fun update_tenant_refund_address_in_descent_aborts() {
+#[test, expected_failure(abort_code = asset_state::EUsufructCapStale, location = usufruct::asset_state)]
+fun update_usufructuary_refund_address_in_descent_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1, 0, escrow_corpus::min_rent_price_const() * 2, 100_000,
     );
-    let bound_cap = tenant_cap::new(escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx());
+    let bound_cap = usufruct_cap::new(escrow_identity::new(object::id(&escrow)), USUFRUCTUARY_ADDR_1, sc.ctx());
 
-    escrow::update_tenant_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
 
-    transfer::public_transfer(bound_cap, OWNER);
+    transfer::public_transfer(bound_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ETenantCapStale, location = usufruct::asset_state)]
-fun update_tenant_refund_address_in_retired_aborts() {
+#[test, expected_failure(abort_code = asset_state::EUsufructCapStale, location = usufruct::asset_state)]
+fun update_usufructuary_refund_address_in_retired_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_retired_for_testing(&mut escrow);
-    let bound_cap = tenant_cap::new(escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx());
+    let bound_cap = usufruct_cap::new(escrow_identity::new(object::id(&escrow)), USUFRUCTUARY_ADDR_1, sc.ctx());
 
-    escrow::update_tenant_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &bound_cap, refund_address::new(@0xCAFE), &clk, sc.ctx());
 
-    transfer::public_transfer(bound_cap, OWNER);
+    transfer::public_transfer(bound_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 #[test]
-fun update_tenant_refund_address_with_same_address_emits_event_no_abort() {
+fun update_usufructuary_refund_address_with_same_address_emits_event_no_abort() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
-    let current = *escrow::active_tenant_addr(&escrow).borrow();
+    let current = *escrow::active_usufructuary_addr(&escrow).borrow();
 
     // Idempotent: same address is allowed; emits event for audit history.
-    escrow::update_tenant_refund_address(
+    escrow::update_usufructuary_refund_address(
         &mut escrow, &cap_t1, refund_address::new(current), &clk, sc.ctx(),
     );
 
-    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(), current);
-    let evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(), current);
+    let evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(evts.length(), 1);
     assert_eq!(asset_state::active_refund_updated_old_address(&evts[0]), current);
-    assert_eq!(asset_state::active_refund_updated_new_address(&evts[0]), current);
+    assert_eq!(asset_state::active_refund_updated_active_address(&evts[0]), current);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-// ─── §15.2d update_tenant_refund_address — e2e refund routing ────────────────
+// ─── §15.2d update_usufructuary_refund_address — e2e refund routing ────────────────
 //
 // The unit tests above pin the setter chain, the dispatch and the event
 // emission. These integration tests close the loop: after a redirect, the
-// actual Coin<SUI> produced by `tenant_stake::liquidate` during a refund-
+// actual Coin<SUI> produced by `stake_balance::liquidate` during a refund-
 // bearing transition (`do_handover` for the displaced active,
 // `do_supersede_bid` for the displaced pending) arrives at the wallet the
 // holder specified, not at the original `ctx.sender()` of `rent`. Each test
@@ -2971,20 +2971,20 @@ fun update_tenant_refund_address_with_same_address_emits_event_no_abort() {
 // Coin destination (the money actually moves).
 
 #[test]
-fun update_tenant_refund_address_e2e_active_then_handover_routes_to_new() {
+fun update_usufructuary_refund_address_e2e_active_then_handover_routes_to_new() {
     let mut sc = setup();
     // c=1 (Fixed handover) → finite countdown, non-trivial remain_credit possible.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    // T1 rents at phase_start=0. Original refund address = ctx.sender() = OWNER.
+    // T1 rents at phase_start=0. Original refund address = ctx.sender() = GOVERNOR.
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
 
     // T1 redirects refund to NEW_T1.
     let new_t1 = @0xCAFE01;
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t1, refund_address::new(new_t1), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t1, refund_address::new(new_t1), &clk, sc.ctx());
 
     // T2 places bid, escrow → Demand.
     let now2 = 5_000;
@@ -3000,14 +3000,14 @@ fun update_tenant_refund_address_e2e_active_then_handover_routes_to_new() {
     // Event field reflects the updated address.
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 1);
-    assert_eq!(asset_state::handover_completed_displaced_tenant_address(&completed[0]), new_t1);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(&completed[0]), new_t1);
     let remain_credit = asset_state::handover_completed_remain_credit(&completed[0]);
     assert!(remain_credit > 0, 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
     // The refund Coin physically arrived at NEW_T1.
@@ -3019,12 +3019,12 @@ fun update_tenant_refund_address_e2e_active_then_handover_routes_to_new() {
 }
 
 #[test]
-fun update_tenant_refund_address_e2e_pending_then_supersede_routes_to_new() {
+fun update_usufructuary_refund_address_e2e_pending_then_supersede_routes_to_new() {
     let mut sc = setup();
     // c=1 (Fixed) — non-zero handover countdown so APT does NOT fire handover
     // before the third rent runs (otherwise we never reach supersede).
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -3036,7 +3036,7 @@ fun update_tenant_refund_address_e2e_pending_then_supersede_routes_to_new() {
 
     // T2 redirects refund while still pending.
     let new_t2 = @0xCAFE02;
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(new_t2), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t2, refund_address::new(new_t2), &clk, sc.ctx());
 
     // T3 supersedes T2.
     let now3 = 1_000;
@@ -3050,11 +3050,11 @@ fun update_tenant_refund_address_e2e_pending_then_supersede_routes_to_new() {
     assert_eq!(asset_state::bid_superseded_displaced_bidder_address(&superseded[0]), new_t2);
     assert_eq!(asset_state::bid_superseded_refunded_amount(&superseded[0]), p2_amt);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
     // Refund Coin lands at NEW_T2.
@@ -3066,10 +3066,10 @@ fun update_tenant_refund_address_e2e_pending_then_supersede_routes_to_new() {
 }
 
 #[test]
-fun update_tenant_refund_address_e2e_pending_update_survives_promotion_through_handover() {
+fun update_usufructuary_refund_address_e2e_pending_update_survives_promotion_through_handover() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents → active at phase_start=0.
@@ -3083,9 +3083,9 @@ fun update_tenant_refund_address_e2e_pending_update_survives_promotion_through_h
 
     // T2 redirects refund while still pending.
     let new_t2 = @0xCAFE03;
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(new_t2), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t2, refund_address::new(new_t2), &clk, sc.ctx());
 
-    // Handover #1 → T1 displaced (refund to OWNER, ignored), T2 promoted to active.
+    // Handover #1 → T1 displaced (refund to GOVERNOR, ignored), T2 promoted to active.
     let boundary1 = now2 + escrow_corpus::handover_countdown_c1_const();
     clock::set_for_testing(&mut clk, boundary1);
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary1), sc.ctx());
@@ -3105,16 +3105,16 @@ fun update_tenant_refund_address_e2e_pending_update_survives_promotion_through_h
 
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 2);
-    // [0] = handover #1 (T1 displaced to OWNER), [1] = handover #2 (T2 displaced to NEW_T2).
-    assert_eq!(asset_state::handover_completed_displaced_tenant_address(&completed[1]), new_t2);
+    // [0] = handover #1 (T1 displaced to GOVERNOR), [1] = handover #2 (T2 displaced to NEW_T2).
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(&completed[1]), new_t2);
     let t2_remain = asset_state::handover_completed_remain_credit(&completed[1]);
     assert!(t2_remain > 0, 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
     // Coin at NEW_T2 with the expected amount.
@@ -3126,10 +3126,10 @@ fun update_tenant_refund_address_e2e_pending_update_survives_promotion_through_h
 }
 
 #[test]
-fun update_tenant_refund_address_e2e_active_update_overrides_pending_update_through_handover() {
+fun update_usufructuary_refund_address_e2e_active_update_overrides_pending_update_through_handover() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -3141,7 +3141,7 @@ fun update_tenant_refund_address_e2e_active_update_overrides_pending_update_thro
 
     // T2 sets a "pending-time" address — should be overridden later.
     let pending_addr = @0xCAFE04;
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(pending_addr), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t2, refund_address::new(pending_addr), &clk, sc.ctx());
 
     // Handover #1: T1 displaced, T2 promoted (carries `pending_addr` for now).
     let boundary1 = now2 + escrow_corpus::handover_countdown_c1_const();
@@ -3150,7 +3150,7 @@ fun update_tenant_refund_address_e2e_active_update_overrides_pending_update_thro
 
     // T2 updates again, this time as active. This is the address that must win.
     let active_addr = @0xCAFE05;
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(active_addr), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t2, refund_address::new(active_addr), &clk, sc.ctx());
 
     // T3 bids → Demand again.
     let now3 = boundary1 + 5_000;
@@ -3166,15 +3166,15 @@ fun update_tenant_refund_address_e2e_active_update_overrides_pending_update_thro
 
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 2);
-    assert_eq!(asset_state::handover_completed_displaced_tenant_address(&completed[1]), active_addr);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(&completed[1]), active_addr);
     let t2_remain = asset_state::handover_completed_remain_credit(&completed[1]);
     assert!(t2_remain > 0, 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
     // Coin at active_addr — pending_addr gets nothing (would-be take_from_sender
@@ -3187,10 +3187,10 @@ fun update_tenant_refund_address_e2e_active_update_overrides_pending_update_thro
 }
 
 #[test]
-fun update_tenant_refund_address_e2e_repeated_active_updates_last_wins_through_handover() {
+fun update_usufructuary_refund_address_e2e_repeated_active_updates_last_wins_through_handover() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -3202,9 +3202,9 @@ fun update_tenant_refund_address_e2e_repeated_active_updates_last_wins_through_h
     let addr_a = @0xCAFE10;
     let addr_b = @0xCAFE20;
     let addr_c = @0xCAFE30;
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_a), &clk, sc.ctx());
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_b), &clk, sc.ctx());
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_c), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_a), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_b), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t1, refund_address::new(addr_c), &clk, sc.ctx());
 
     // T2 bids → Demand.
     let now2 = 5_000;
@@ -3219,24 +3219,24 @@ fun update_tenant_refund_address_e2e_repeated_active_updates_last_wins_through_h
 
     let completed = event::events_by_type<HandoverCompleted>();
     assert_eq!(completed.length(), 1);
-    assert_eq!(asset_state::handover_completed_displaced_tenant_address(&completed[0]), addr_c);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(&completed[0]), addr_c);
     let remain = asset_state::handover_completed_remain_credit(&completed[0]);
     assert!(remain > 0, 0);
 
     // Three Active events were emitted (A, B, C); each carries its own old/new pair.
-    let active_evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    let active_evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(active_evts.length(), 3);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[0]), addr_a);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[1]), addr_b);
-    assert_eq!(asset_state::active_refund_updated_new_address(&active_evts[2]), addr_c);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[0]), addr_a);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[1]), addr_b);
+    assert_eq!(asset_state::active_refund_updated_active_address(&active_evts[2]), addr_c);
     // Chained old→new: addr_b's old = addr_a, addr_c's old = addr_b.
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[1]), addr_a);
     assert_eq!(asset_state::active_refund_updated_old_address(&active_evts[2]), addr_b);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
     // Coin at addr_c.
@@ -3248,12 +3248,12 @@ fun update_tenant_refund_address_e2e_repeated_active_updates_last_wins_through_h
 }
 
 #[test]
-fun update_tenant_refund_address_e2e_repeated_pending_updates_last_wins_through_supersede() {
+fun update_usufructuary_refund_address_e2e_repeated_pending_updates_last_wins_through_supersede() {
     let mut sc = setup();
     // c=1 (Fixed) — non-zero handover countdown so APT doesn't fire handover
     // between T2's bid and T3's supersede; otherwise we'd exit Demand early.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents → Occupied (active = T1).
@@ -3271,9 +3271,9 @@ fun update_tenant_refund_address_e2e_repeated_pending_updates_last_wins_through_
     let addr_a = @0xCAFE40;
     let addr_b = @0xCAFE50;
     let addr_c = @0xCAFE60;
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_a), &clk, sc.ctx());
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_b), &clk, sc.ctx());
-    escrow::update_tenant_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_c), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_a), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_b), &clk, sc.ctx());
+    escrow::update_usufructuary_refund_address(&mut escrow, &cap_t2, refund_address::new(addr_c), &clk, sc.ctx());
 
     // T3 supersedes T2's bid.
     let now3 = 1_000;
@@ -3286,22 +3286,22 @@ fun update_tenant_refund_address_e2e_repeated_pending_updates_last_wins_through_
     assert_eq!(asset_state::bid_superseded_displaced_bidder_address(&superseded[0]), addr_c);
     assert_eq!(asset_state::bid_superseded_refunded_amount(&superseded[0]), p2_amt);
 
-    // Three Pending events emitted with chained old→new (initial = OWNER from T2's rent).
-    let pending_evts = event::events_by_type<PendingTenantRefundAddressUpdated>();
+    // Three Pending events emitted with chained old→new (initial = GOVERNOR from T2's rent).
+    let pending_evts = event::events_by_type<PendingUsufructuaryRefundAddressUpdated>();
     assert_eq!(pending_evts.length(), 3);
-    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[0]), addr_a);
-    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[1]), addr_b);
-    assert_eq!(asset_state::pending_refund_updated_new_address(&pending_evts[2]), addr_c);
+    assert_eq!(asset_state::pending_refund_updated_active_address(&pending_evts[0]), addr_a);
+    assert_eq!(asset_state::pending_refund_updated_active_address(&pending_evts[1]), addr_b);
+    assert_eq!(asset_state::pending_refund_updated_active_address(&pending_evts[2]), addr_c);
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[1]), addr_a);
     assert_eq!(asset_state::pending_refund_updated_old_address(&pending_evts[2]), addr_b);
     // Active branch never touched in this scenario.
-    assert_eq!(event::events_by_type<ActiveTenantRefundAddressUpdated>().length(), 0);
+    assert_eq!(event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>().length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
     // Coin arrives at addr_c with the full bid amount.
@@ -3312,24 +3312,24 @@ fun update_tenant_refund_address_e2e_repeated_pending_updates_last_wins_through_
     sc.end();
 }
 
-/// Commercial invariant: the `TenantCap` is `key + store` and can be sold
+/// Commercial invariant: the `UsufructCap` is `key + store` and can be sold
 /// or otherwise transferred. The buyer (new holder) must be able to redirect
-/// the refund without any coordination with the original tenant, because the
-/// protocol authenticates by `tenant_cap::identity(&cap)` — a function of the
+/// the refund without any coordination with the original usufructuary, because the
+/// protocol authenticates by `usufruct_cap::identity(&cap)` — a function of the
 /// cap object — not by `ctx.sender()`. This pins the property that makes
 /// secondary markets for caps economically coherent.
 #[test]
-fun update_tenant_refund_address_e2e_transferred_cap_grants_authority_to_new_holder() {
+fun update_usufructuary_refund_address_e2e_transferred_cap_grants_authority_to_new_holder() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    // OWNER rents → cap_t1 minted; original refund address = OWNER ("seller").
+    // GOVERNOR rents → cap_t1 minted; original refund address = GOVERNOR ("seller").
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
 
-    // Secondary-market sale: OWNER transfers the cap to a buyer at @0xBEEF.
+    // Secondary-market sale: GOVERNOR transfers the cap to a buyer at @0xBEEF.
     // The coin leg of the trade (buyer → seller) is outside the protocol's
     // observable surface; only the cap transfer matters for the invariant.
     let buyer = @0xBEEF;
@@ -3337,26 +3337,26 @@ fun update_tenant_refund_address_e2e_transferred_cap_grants_authority_to_new_hol
     test_scenario::return_shared(escrow);
 
     // Buyer's transaction. They take possession of the cap and redirect.
-    // The sender is the buyer; OWNER is not involved.
+    // The sender is the buyer; GOVERNOR is not involved.
     sc.next_tx(buyer);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let cap_t1 = sc.take_from_sender<tenant_cap::TenantCap>();
+    let cap_t1 = sc.take_from_sender<usufruct_cap::UsufructCap>();
     let buyer_refund = @0xBE71;
-    escrow::update_tenant_refund_address(
+    escrow::update_usufructuary_refund_address(
         &mut escrow, &cap_t1, refund_address::new(buyer_refund), &clk, sc.ctx(),
     );
 
-    // The seat now refunds to the buyer's chosen address, not to OWNER.
-    assert_eq!(*escrow::active_tenant_addr(&escrow).borrow(), buyer_refund);
-    let evts = event::events_by_type<ActiveTenantRefundAddressUpdated>();
+    // The seat now refunds to the buyer's chosen address, not to GOVERNOR.
+    assert_eq!(*escrow::active_usufructuary_addr(&escrow).borrow(), buyer_refund);
+    let evts = event::events_by_type<ActiveUsufructuaryRefundAddressUpdated>();
     assert_eq!(evts.length(), 1);
-    assert_eq!(asset_state::active_refund_updated_old_address(&evts[0]), OWNER);
-    assert_eq!(asset_state::active_refund_updated_new_address(&evts[0]), buyer_refund);
-    assert_eq!(asset_state::active_refund_updated_tenant_cap_id(&evts[0]), object::id(&cap_t1));
+    assert_eq!(asset_state::active_refund_updated_old_address(&evts[0]), GOVERNOR);
+    assert_eq!(asset_state::active_refund_updated_active_address(&evts[0]), buyer_refund);
+    assert_eq!(asset_state::active_refund_updated_usufruct_cap_id(&evts[0]), object::id(&cap_t1));
 
     transfer::public_transfer(cap_t1, buyer);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3371,14 +3371,14 @@ fun update_tenant_refund_address_e2e_transferred_cap_grants_authority_to_new_hol
 //
 // Representative cases:
 //   · execute_apply_pending_transition_states — permissionless, anyone may chain it
-//   · rent                            — tenant side, mutating
-//   · retire                          — owner side, mutating
+//   · rent                            — usufructuary side, mutating
+//   · retire                          — governor side, mutating
 //   · is_occupied                     — read-only view
 
 #[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
 fun apply_pending_transitions_aborts_while_asset_borrowed() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -3388,8 +3388,8 @@ fun apply_pending_transitions_aborts_while_asset_borrowed() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
     escrow::return_asset(&mut escrow, asset, receipt);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -3398,7 +3398,7 @@ fun apply_pending_transitions_aborts_while_asset_borrowed() {
 #[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
 fun rent_aborts_while_asset_borrowed() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -3409,9 +3409,9 @@ fun rent_aborts_while_asset_borrowed() {
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
 
     escrow::return_asset(&mut escrow, asset, receipt);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -3420,18 +3420,18 @@ fun rent_aborts_while_asset_borrowed() {
 #[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
 fun retire_aborts_while_asset_borrowed() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     escrow::return_asset(&mut escrow, asset, receipt);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -3440,7 +3440,7 @@ fun retire_aborts_while_asset_borrowed() {
 #[test, expected_failure(abort_code = escrow::EAssetBorrowed, location = usufruct::escrow)]
 fun is_occupied_view_aborts_while_asset_borrowed() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let p1     = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -3450,8 +3450,8 @@ fun is_occupied_view_aborts_while_asset_borrowed() {
     escrow::is_occupied(&escrow);
 
     escrow::return_asset(&mut escrow, asset, receipt);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -3465,7 +3465,7 @@ fun is_occupied_view_aborts_while_asset_borrowed() {
 fun claim_asset_returns_asset_and_deletes_escrow() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Force the escrow into Retired (no earnings) via the test helper.
@@ -3473,16 +3473,16 @@ fun claim_asset_returns_asset_and_deletes_escrow() {
 
     // Take the shared escrow by value so claim_asset can consume it.
     test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
 
     let claimed = event::events_by_type<AssetClaimed>();
     assert_eq!(claimed.length(), 1);
 
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3491,39 +3491,39 @@ fun claim_asset_returns_asset_and_deletes_escrow() {
 fun claim_asset_when_not_retired_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     // Idle, not Retired.
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun claim_asset_with_wrong_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
     test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
-    let foreign = owner_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
+    let foreign = governance_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), GOVERNOR, sc.ctx());
     let asset = escrow::claim_asset(escrow, &foreign, &clk, sc.ctx());
-    transfer::public_transfer(foreign, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(foreign, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// A genuine OwnerCap from a different real escrow is rejected on claim_asset.
+/// A genuine GovernanceCap from a different real escrow is rejected on claim_asset.
 /// escrow_b is driven to Retired so the state check does not fire first.
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun claim_asset_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
@@ -3535,13 +3535,13 @@ fun claim_asset_with_real_foreign_escrow_cap_aborts() {
     let escrow_b_id = object::id(&escrow_b);
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow_b = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_b_id);
 
     let asset = escrow::claim_asset(escrow_b, &cap_a, &clk, sc.ctx());
-    transfer::public_transfer(cap_a, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_b, OWNER);
+    transfer::public_transfer(cap_a, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3555,7 +3555,7 @@ fun claim_asset_with_real_foreign_escrow_cap_aborts() {
 fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FullTenure, h=0 Skipped
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -3584,10 +3584,10 @@ fun apt_cascade_handover_tenure_auction_under_c2_h0() {
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3610,7 +3610,7 @@ fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenari
         let entry      = &entries[i];
         let tag        = entry.tag();
         let t1_cycles  = (entry.m() as u64) + 1;
-        let (mut escrow, owner_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
+        let (mut escrow, governance_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
         let escrow_id  = object::id(&escrow);
         let mut clk    = clock::create_for_testing(sc.ctx());
     
@@ -3656,24 +3656,24 @@ fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenari
         };
         assert!(escrow::is_idle(&escrow), tag);
 
-        // Owner income was mailed to the inbox at the boundary settlements
+        // Governor income was mailed to the inbox at the boundary settlements
         // in this same tx (no withdraw / no swept coin at claim).
         assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, tag);
 
         // Retire and return to pool; claim in fresh tx.
         escrow::drive_to_retired_for_testing(&mut escrow);
         test_scenario::return_shared(escrow);
-        transfer::public_transfer(cap_t1, OWNER);
-        transfer::public_transfer(cap_t2, OWNER);
+        transfer::public_transfer(cap_t1, GOVERNOR);
+        transfer::public_transfer(cap_t2, GOVERNOR);
             clock::destroy_for_testing(clk);
-        sc.next_tx(OWNER);
+        sc.next_tx(GOVERNOR);
 
         let retired = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
             let clk2    = clock::create_for_testing(sc.ctx());
-        let asset = escrow::claim_asset(retired, &owner_cap, &clk2, sc.ctx());
+        let asset = escrow::claim_asset(retired, &governance_cap, &clk2, sc.ctx());
         assert_eq!(event::events_by_type<AssetClaimed>().length(), 1);
-        transfer::public_transfer(owner_cap, OWNER);
-        transfer::public_transfer(asset, OWNER);
+        transfer::public_transfer(governance_cap, GOVERNOR);
+        transfer::public_transfer(asset, GOVERNOR);
             clock::destroy_for_testing(clk2);
 
         i = i + 1;
@@ -3702,7 +3702,7 @@ fun e2e_full_cycle_all_ch_m() {
 fun e2e_full_rental_cycle_with_bid_and_handover() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents (Idle → Occupied).
@@ -3741,29 +3741,29 @@ fun e2e_full_rental_cycle_with_bid_and_handover() {
     assert!(event::events_by_type<TenureExpired>().length() == 1, 4);
     assert!(event::events_by_type<AuctionExpired>().length() == 1, 5);
 
-    // Both t1 and t2 contributed used_credit at boundaries; owner income
+    // Both t1 and t2 contributed used_credit at boundaries; governor income
     // was mailed to the inbox in this tx (> 0 posted).
     assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, 6);
 
     // Retire and claim — escrow is consumed.
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
     test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
     assert!(event::events_by_type<AssetClaimed>().length() == 1, 7);
 
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// Tenure expiry without a competing bid: rent → tenure expires →
-/// Descent → no_winner → Idle. Owner accumulates the full stake's
+/// Descent → no_winner → Idle. Governor accumulates the full stake's
 /// 90% via tenure expiry. Sweeps E (curve dimension) at fixed
 /// (c=0, d=0, h=1, f=0) — the universal boundary properties
 /// (g(t_max)=SCALE, full descent collapses to min_rent_price)
@@ -3777,7 +3777,7 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
         while (e <= 6) {
             let cfg_tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m);
             let ensemble     = escrow_corpus::by_tag(cfg_tag);
-            let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+            let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
         
             let principal = escrow_corpus::min_rent_price_const();
@@ -3797,18 +3797,18 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
             escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
             assert!(escrow::is_idle(&escrow_handle), cfg_tag);
 
-            // Owner accumulated 90 % of the principal (g(t_max)=SCALE
+            // Governor accumulated 90 % of the principal (g(t_max)=SCALE
             // saturates the credit curve regardless of shape). The share
             // was mailed to the inbox at the tenure-expiry settlement.
-            let owner_share_expected = principal - principal / 10;
+            let governor_share_expected = principal - principal / 10;
             assert_eq!(
                 earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
-                owner_share_expected,
+                governor_share_expected,
             );
 
-            transfer::public_transfer(cap_t1, OWNER);
+            transfer::public_transfer(cap_t1, GOVERNOR);
             test_scenario::return_shared(escrow_handle);
-            transfer::public_transfer(owner_cap, OWNER);
+            transfer::public_transfer(governance_cap, GOVERNOR);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -3818,20 +3818,20 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
 }
 
 /// Retire-during-rental: rent → retire (flag set, state stays HO) →
-/// APT past tenure → state collapses to Retired (not Descent). Owner
+/// APT past tenure → state collapses to Retired (not Descent). Governor
 /// claims the asset; AssetRetired emitted.
 #[test]
 fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow_handle, p1, tenures::tenures(1), &clk, sc.ctx());
 
     // Retire mid-rental — flag lifts, state stays HO.
-    escrow::retire(&mut escrow_handle, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow_handle, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow_handle), 0);
 
     // APT past tenure: state collapses to Retired (skipping Descent).
@@ -3845,22 +3845,22 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
     assert_eq!(retired.length(), 1);
 
     test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
 
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-// ─── §1. Two-tenant succession — price escalates, earnings accumulate ─────────
+// ─── §1. Two-usufructuary succession — price escalates, earnings accumulate ─────────
 
 /// T1 rents, T2 displaces T1 via bid + APT handover, T3 displaces T2
 /// via bid + APT handover. T3 holds until tenure expiry → Idle (Skipped
-/// descent). Owner claims; earnings > 0.
+/// descent). Governor claims; earnings > 0.
 ///
 /// Config: c=0 (Instant — handover fires at bid_time, no clock advance),
 ///         d=0 (FixedDelta — price escalates additively),
@@ -3871,11 +3871,11 @@ fun e2e_retire_during_rental_collapses_to_retired_at_tenure() {
 /// events fire (once per displacement), TenureExpired + AuctionExpired fire
 /// together under Skipped, earnings are non-zero after two paid tenures.
 #[test]
-fun e2e_two_tenant_successions_price_escalates() {
+fun e2e_two_usufructuary_successions_price_escalates() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // c=0 d=0 e=0 h=0 f=0
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1: rent from Idle at min_rent_price → Occupied.
@@ -3917,26 +3917,26 @@ fun e2e_two_tenant_successions_price_escalates() {
     assert_eq!(event::events_by_type<TenureExpired>().length(), 1);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
-    // Owner income must be positive — both T1 and T2 accumulated
+    // Governor income must be positive — both T1 and T2 accumulated
     // used_credit; the shares were mailed to the inbox in this tx.
     assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, tag);
 
     // Retire from Idle → Retired.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     // Claim.
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
     assert_eq!(event::events_by_type<AssetClaimed>().length(), 1);
 
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -3958,7 +3958,7 @@ fun e2e_auction_winner_rents_at_mid_descent() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // c=0 h=1
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1: rent from Idle → Occupied at min_rent_price.
@@ -3995,11 +3995,11 @@ fun e2e_auction_winner_rents_at_mid_descent() {
     let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4019,12 +4019,12 @@ fun e2e_deferred_retire_aborts_before_floor() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     // Clock at 0; retire_floor = 10_000_000 — gate is closed.
     let clk = clock::create_for_testing(sc.ctx());
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4036,22 +4036,22 @@ fun e2e_deferred_retire_succeeds_after_floor() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(ensemble, escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Advance past retire_floor (integrated_at_ms=0, floor=10_000_000).
     let past_floor = escrow_corpus::retire_deferred_f1_const() + 1;
     clock::set_for_testing(&mut clk, past_floor);
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx()); // no tenants → no earnings
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx()); // no usufructuaries → no earnings
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4060,7 +4060,7 @@ fun e2e_deferred_retire_succeeds_after_floor() {
 
 /// T1 rents (Idle → HO). T2 places a bid (HO → HC). T3 supersedes T2
 /// (HC → HC, T2's cap becomes stale). APT fires handover to T3 — T3
-/// becomes the current tenant, not T2. T2 can burn their stale cap.
+/// becomes the current usufructuary, not T2. T2 can burn their stale cap.
 ///
 /// Verifies: BidSuperseded event fires for T2's displacement, APT
 /// HandoverCompleted fires to T3, T2's cap is burnable.
@@ -4072,7 +4072,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1: rent from Idle → Occupied.
@@ -4114,12 +4114,12 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
     // T2's cap is stale — burn it.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4135,7 +4135,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
 /// Sweeps axis E (all 7 curves) at fixed (c=0, d=0, h=1, f=0). With
 /// zero spread, compute_price_descent must saturate to min_rent_price
 /// from t=0; no curve should produce a value below min_rent_price or
-/// cause an arithmetic error. A new tenant T2 can rent at min_rent_price.
+/// cause an arithmetic error. A new usufructuary T2 can rent at min_rent_price.
 #[test]
 fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
     let mut sc = setup();
@@ -4145,7 +4145,7 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m); // c=0 h=1, vary e
             let ensemble = escrow_corpus::by_tag(tag);
-            let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+            let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
         
             let min_price = escrow_corpus::min_rent_price_const();
@@ -4189,10 +4189,10 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
             );
             assert!(escrow::is_occupied(&escrow), tag);
 
-            transfer::public_transfer(cap_t1, OWNER);
-            transfer::public_transfer(cap_t2, OWNER);
+            transfer::public_transfer(cap_t1, GOVERNOR);
+            transfer::public_transfer(cap_t2, GOVERNOR);
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(owner_cap, OWNER);
+            transfer::public_transfer(governance_cap, GOVERNOR);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -4205,7 +4205,7 @@ fun e2e_zero_spread_descent_floor_stays_at_min_rent_price_across_curves() {
 
 /// Five successive PTBs with a representative c=0 config. Each PTB atomically
 /// chains rent() → borrow_asset(). Demonstrates chain depth: every successive
-/// tenant (5 total) can borrow immediately after being crowned via an Instant
+/// usufructuary (5 total) can borrow immediately after being crowned via an Instant
 /// handover. tag(0,0,0,0,0) is the canonical representative.
 ///
 /// PTB 1: T1 rents from Idle — immediately current, no APT needed.
@@ -4215,7 +4215,7 @@ fun e2e_b1_five_ptbs_borrow_chain() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let min_price = escrow_corpus::min_rent_price_const();
 
     // PTB 1: T1 rents from Idle — immediately current.
@@ -4226,7 +4226,7 @@ fun e2e_b1_five_ptbs_borrow_chain() {
     assert!(escrow::is_occupied(&escrow), tag);
     clock::destroy_for_testing(clk);
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
     // PTBs 2–5: Tn bids → APT Instant → Tn current → borrow+return.
@@ -4241,18 +4241,18 @@ fun e2e_b1_five_ptbs_borrow_chain() {
         escrow::return_asset(&mut escrow, asset, receipt);
         assert!(escrow::is_occupied(&escrow), tag);
         clock::destroy_for_testing(clk);
-        transfer::public_transfer(cap, OWNER);
+        transfer::public_transfer(cap, GOVERNOR);
         if (ptb < 5) {
             test_scenario::return_shared(escrow);
-            sc.next_tx(OWNER);
+            sc.next_tx(GOVERNOR);
             escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
         };
         ptb = ptb + 1;
     };
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     sc.end();
 }
 
@@ -4280,7 +4280,7 @@ fun e2e_b1_instant_borrow_across_curve_shape_states() {
         let entry = entries.borrow(i);
         let ensemble   = *entry.ensemble();
         let tag   = entry.tag();
-        let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+        let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
         let clk = clock::create_for_testing(sc.ctx());
     
         // T1 rents from Idle — immediately current — borrows in same PTB.
@@ -4290,24 +4290,24 @@ fun e2e_b1_instant_borrow_across_curve_shape_states() {
         assert!(escrow::is_occupied(&escrow), tag);
 
             clock::destroy_for_testing(clk);
-        transfer::public_transfer(cap_t1, OWNER);
+        transfer::public_transfer(cap_t1, GOVERNOR);
         test_scenario::return_shared(escrow);
-        transfer::public_transfer(owner_cap, OWNER);
+        transfer::public_transfer(governance_cap, GOVERNOR);
         i = i + 1;
     };
     sc.end();
 }
 
-// ─── §B3. Stale tenant cap cannot borrow ─────────────────────────────────────
+// ─── §B3. Stale usufructuary cap cannot borrow ─────────────────────────────────────
 
 /// After T2 wins an Instant handover, T1's cap is stale.
-/// borrow_asset() with a stale cap aborts EStaleTenantCap.
-#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
-fun e2e_b3_stale_tenant_cap_borrow_aborts() {
+/// borrow_asset() with a stale cap aborts EStaleUsufructCap.
+#[test, expected_failure(abort_code = asset_state::EStaleUsufructCap, location = usufruct::asset_state)]
+fun e2e_b3_stale_usufruct_cap_borrow_aborts() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -4321,10 +4321,10 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
     // T1's cap is now stale (handover fires inside borrow_asset) — borrow must abort.
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4332,16 +4332,16 @@ fun e2e_b3_stale_tenant_cap_borrow_aborts() {
 // ─── §B3b. Superseded bid cap cannot borrow ──────────────────────────────────
 
 /// After T2's bid is superseded by T3, T2's cap is stale.
-/// borrow_asset() with T2's stale cap aborts EStaleTenantCap.
+/// borrow_asset() with T2's stale cap aborts EStaleUsufructCap.
 ///
 /// Config: c=1 (Fixed) so the handover countdown does not fire
 /// before T2 attempts borrow — escrow stays in Demand.
-#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
-fun e2e_b3b_superseded_tenant_cap_borrow_aborts() {
+#[test, expected_failure(abort_code = asset_state::EStaleUsufructCap, location = usufruct::asset_state)]
+fun e2e_b3b_superseded_usufruct_cap_borrow_aborts() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents: Idle → Occupied.
@@ -4367,11 +4367,11 @@ fun e2e_b3b_superseded_tenant_cap_borrow_aborts() {
     // T2's cap is stale: borrow must abort.
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t2, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4379,7 +4379,7 @@ fun e2e_b3b_superseded_tenant_cap_borrow_aborts() {
 // ─── §B4. Auction entry — rent from Descent then borrow in same PTB ──────────
 
 /// T1 rents, tenure expires → DescentAuction. T2 rents at the auction
-/// price — rent() from Descent calls do_install_new_tenant (T2 is
+/// price — rent() from Descent calls do_install_new_usufructuary (T2 is
 /// immediately current, no APT needed). T2 borrows in the same PTB.
 ///
 /// Config: c=0, d=0, h=1 (observable Descent), f=0.
@@ -4388,7 +4388,7 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents, tenure expires → DescentAuction.
@@ -4412,22 +4412,22 @@ fun e2e_b4_auction_entry_rent_and_borrow_same_ptb() {
     let cap_t3   = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
-    // T3 borrows in the same PTB — no APT needed (do_install_new_tenant makes T3 current directly).
+    // T3 borrows in the same PTB — no APT needed (do_install_new_usufructuary makes T3 current directly).
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t3, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2_temp, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2_temp, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §B6. Intra-PTB repeated borrow+return cycles ────────────────────────────
 
-/// The same tenant executes three borrow+return cycles within a single PTB.
+/// The same usufructuary executes three borrow+return cycles within a single PTB.
 /// Verifies that the hot-potato AssetReceipt discipline works repeatedly:
 /// each return restores the asset to the escrow, making the next borrow valid.
 #[test]
@@ -4435,7 +4435,7 @@ fun e2e_b6_same_ptb_repeated_borrow_return_cycles() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -4453,16 +4453,16 @@ fun e2e_b6_same_ptb_repeated_borrow_return_cycles() {
 
     assert!(escrow::is_occupied(&escrow), tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §P1. CompoundDelta — price increment grows multiplicatively ──────────────
 
-/// Three successive tenants with d=1 (CompoundDelta 10% + 1 mist).
+/// Three successive usufructuaries with d=1 (CompoundDelta 10% + 1 mist).
 /// At clock=0 (no time elapsed), floor_price = stake * 1.1 + 1, so
 /// the absolute gap between successive prices grows each round.
 /// Verifies: (floor3 - floor2) > (floor2 - floor1) > 0.
@@ -4471,7 +4471,7 @@ fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 1, 0, 0, 0); // d=1 CompoundDelta
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
 
     let price_t1 = escrow_corpus::min_rent_price_const();
@@ -4493,18 +4493,18 @@ fun e2e_p1_compound_delta_gap_grows_across_re_prices() {
     let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §P2. FixedDelta — price increment is constant ───────────────────────────
 
-/// Three successive tenants with d=0 (FixedDelta 10 SUI).
+/// Three successive usufructuaries with d=0 (FixedDelta 10 SUI).
 /// At clock=0, floor_price = stake + FIXED_DELTA_VALUE, so the
 /// absolute gap is constant across all re-prices.
 /// Verifies: (floor2 - floor1) == (floor3 - floor2) == FIXED_DELTA_VALUE.
@@ -4513,7 +4513,7 @@ fun e2e_p2_fixed_delta_gap_is_constant_across_re_prices() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // d=0 FixedDelta
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
     let delta   = escrow_corpus::fixed_delta_value_const();
 
@@ -4531,29 +4531,29 @@ fun e2e_p2_fixed_delta_gap_is_constant_across_re_prices() {
     let cap_t3 = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §E1. Two earnings postings across separate lifecycle events ──────────────
 
-/// Owner earnings are posted to the inbox twice: once at a handover (T1's
+/// Governor earnings are posted to the inbox twice: once at a handover (T1's
 /// used_credit settled) and once at tenure expiry (T2's full credit settled).
 /// Verifies: each settlement emits an EarningsPosted<SUI> with a positive
 /// posted_amount.
 ///
 /// Config: c=0 (Instant), h=0 (Skipped — tenure → Idle in one APT), f=0.
 #[test]
-fun e2e_e1_owner_earnings_posted_twice_across_lifecycle() {
+fun e2e_e1_earnings_posted_twice_across_lifecycle() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // c=0 h=0
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents at t=0.
@@ -4561,7 +4561,7 @@ fun e2e_e1_owner_earnings_posted_twice_across_lifecycle() {
         &mut escrow_handle, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // T2 bids at t=tenure_ceiling/2 → APT Instant fires handover.
-    // T1 held for half the tenure: used_credit > 0 → owner share posted.
+    // T1 held for half the tenure: used_credit > 0 → governor share posted.
     let t_mid    = escrow_corpus::tenure_ceiling_const() / 2;
     clock::set_for_testing(&mut clk, t_mid);
     let floor_e1 = escrow::floor_price_mist(&escrow_handle, clock::timestamp_ms(&clk));
@@ -4575,10 +4575,10 @@ fun e2e_e1_owner_earnings_posted_twice_across_lifecycle() {
     assert!(earnings_message::posted_amount(&posted_1[0]) > 0, tag);
 
     test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut escrow_handle = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
-    // T2's tenure expires → Idle (Skipped). T2's full credit → owner share posted.
+    // T2's tenure expires → Idle (Skipped). T2's full credit → governor share posted.
     let tenure_boundary = t_mid + escrow_corpus::tenure_ceiling_const();
     clock::set_for_testing(&mut clk, tenure_boundary + 1);
     escrow::apply_pending_transition_states(&mut escrow_handle, &clk, sc.ctx());
@@ -4589,17 +4589,17 @@ fun e2e_e1_owner_earnings_posted_twice_across_lifecycle() {
     assert_eq!(posted_2.length(), 1);
     assert!(earnings_message::posted_amount(&posted_2[0]) > 0, tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow_handle);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §R1. Retire from Demand — pending bid inherits retiring flag ──
 
-/// Owner sets the retiring flag while in Demand (T2 has a pending
+/// Governor sets the retiring flag while in Demand (T2 has a pending
 /// bid). APT still honors the bid and fires the handover — T2 receives
 /// Occupied with the retiring flag inherited. T2's tenure then collapses
 /// to Retired (not Descent) because the flag is active.
@@ -4611,7 +4611,7 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents (Idle → Occupied).
@@ -4624,8 +4624,8 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(floor_r1, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), tag);
 
-    // Owner sets retiring flag while in Demand.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    // Governor sets retiring flag while in Demand.
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     // State stays Demand — retire only lifts the flag here.
     assert!(escrow::is_demand(&escrow), tag);
 
@@ -4645,14 +4645,14 @@ fun e2e_r1_retire_from_hc_pending_bid_gets_hopen_with_retiring_flag() {
 
     // Claim the asset.
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
 
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4666,7 +4666,7 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // h=0 Skipped → Idle
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -4679,9 +4679,9 @@ fun e2e_a1_apt_fires_at_exact_tenure_boundary() {
     // h=0 Skipped: tenure → Descent → Idle in one APT step.
     assert!(escrow::is_idle(&escrow), tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4695,7 +4695,7 @@ fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -4706,9 +4706,9 @@ fun e2e_a2_apt_noop_one_ms_before_tenure_boundary() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4726,7 +4726,7 @@ fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(2, 0, 0, 1, 0); // c=2 FullTenure, h=1
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents (Idle → Occupied, phase_start = 0).
@@ -4755,12 +4755,12 @@ fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
     // T2's cap is stale — T3 won, T2 was superseded.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4768,9 +4768,9 @@ fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
 // ─── §B1-inv. Fixed requires clock advance before borrow ─────────────────
 
 /// Temporal invariant: with c=1 (Fixed, handover_floor=25_000 ms),
-/// a pending tenant cannot borrow until the countdown elapses and APT
+/// a pending usufructuary cannot borrow until the countdown elapses and APT
 /// promotes them to current. Documents the protocol guarantee that
-/// Demand is a locked state — TenantCap alone is insufficient.
+/// Demand is a locked state — UsufructCap alone is insufficient.
 ///
 /// Three PTBs:
 ///   PTB 1: T1 rents from Idle → immediately current → borrows (no wait needed).
@@ -4787,7 +4787,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
 
     // PTB 1: T1 rents from Idle — immediately current — borrows.
     let clk    = clock::create_for_testing(sc.ctx());
@@ -4798,7 +4798,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     assert!(escrow::is_occupied(&escrow), tag);
     clock::destroy_for_testing(clk);
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
     // PTB 2: T2 bids at t=1_000 → Demand (T2 pending).
@@ -4813,7 +4813,7 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     assert!(escrow::is_demand(&escrow), tag);
     clock::destroy_for_testing(clk);
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
 
     // PTB 3: clock advances past countdown expiry → APT fires handover → T2 current.
@@ -4827,25 +4827,25 @@ fun e2e_b1_inv_countdown_borrow_requires_clock_advance() {
     escrow::return_asset(&mut escrow, asset, receipt);
     clock::destroy_for_testing(clk);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     sc.end();
 }
 
-// ─── §Identity-agnostic: same tenant bids on own tenure ──────────────────────
+// ─── §Identity-agnostic: same usufructuary bids on own tenure ──────────────────────
 
 /// The protocol does not check the identity of the bidder against existing
-/// tenants. OWNER rents from Idle, bids on own tenure, supersedes own
+/// usufructuaries. GOVERNOR rents from Idle, bids on own tenure, supersedes own
 /// pending bid, then APT promotes the final bid to current.
 ///
-/// BidSuperseded.displaced_bidder == BidSuperseded.new_bidder == OWNER:
+/// BidSuperseded.displaced_bidder == BidSuperseded.pending_bidder == GOVERNOR:
 /// the same address acts as both displaced party and new bidder.
 /// refunded_amount == price_2: full pending stake returned (no fee on pending).
-/// HandoverCompleted.displaced_tenant == OWNER: outgoing current == incoming.
+/// HandoverCompleted.displaced_usufructuary == GOVERNOR: outgoing current == incoming.
 #[test]
-fun e2e_same_tenant_successive_bids_identity_agnostic() {
+fun e2e_same_usufructuary_successive_bids_identity_agnostic() {
     let mut sc  = setup();
     // c=1 (Fixed, floor=25_000) required: rent() calls APT internally.
     // With c=0 (Instant) the countdown expires at bid_time, so APT within
@@ -4854,22 +4854,22 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     // is reachable.
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let min_price = escrow_corpus::min_rent_price_const();
 
-    // T1 (OWNER) rents from Idle → Occupied (current at min_price).
+    // T1 (GOVERNOR) rents from Idle → Occupied (current at min_price).
     let cap_t1_current = escrow::rent(
         &mut escrow, mk_payment(min_price, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    // OWNER bids on own tenure at t=1_000 → Demand (current + pending).
+    // GOVERNOR bids on own tenure at t=1_000 → Demand (current + pending).
     clock::set_for_testing(&mut clk, 1_000);
     let price_2     = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap_t1_bid1 = escrow::rent(
         &mut escrow, mk_payment(price_2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), tag);
 
-    // OWNER supersedes own pending bid at t=2_000 (before 1_000+25_000 countdown).
+    // GOVERNOR supersedes own pending bid at t=2_000 (before 1_000+25_000 countdown).
     clock::set_for_testing(&mut clk, 2_000);
     let price_3     = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     assert!(price_3 > price_2, tag);
@@ -4880,9 +4880,9 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     let se = sup.borrow(0);
     // Core: same address displaced and re-entered.
     assert_eq!(asset_state::bid_superseded_displaced_bidder_address(se),
-               asset_state::bid_superseded_new_bidder_address(se));
+               asset_state::bid_superseded_pending_bidder_address(se));
     assert_eq!(asset_state::bid_superseded_refunded_amount(se), price_2);
-    assert_eq!(asset_state::bid_superseded_new_bid_amount(se), price_3);
+    assert_eq!(asset_state::bid_superseded_pending_bid_amount(se), price_3);
 
     // APT past countdown (1_000+25_000=26_000) → cap_t1_bid2 current.
     // cap_t1_current (original stake, held ~26s) is displaced: remain_credit > 0.
@@ -4891,40 +4891,40 @@ fun e2e_same_tenant_successive_bids_identity_agnostic() {
     let hc = event::events_by_type<HandoverCompleted>();
     assert_eq!(hc.length(), 1);
     let he = hc.borrow(0);
-    assert_eq!(asset_state::handover_completed_displaced_tenant_address(he), OWNER);
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(he), GOVERNOR);
     // new_rent_price is the next floor (price_3 + delta), not the stake itself.
     assert_eq!(asset_state::handover_completed_new_rent_price(he),
                price_3 + escrow_corpus::fixed_delta_value_const());
     assert!(asset_state::handover_completed_remain_credit(he) > 0, tag);
 
-    transfer::public_transfer(cap_t1_current, OWNER);
-    transfer::public_transfer(cap_t1_bid1, OWNER);
-    transfer::public_transfer(cap_t1_bid2, OWNER);
+    transfer::public_transfer(cap_t1_current, GOVERNOR);
+    transfer::public_transfer(cap_t1_bid1, GOVERNOR);
+    transfer::public_transfer(cap_t1_bid2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-// ─── §Current tenant defends against challenger ───────────────────────────────
+// ─── §Current usufructuary defends against challenger ───────────────────────────────
 
-/// T1 (OWNER) holds the current position. T2 (CHALLENGER) places a bid.
+/// T1 (GOVERNOR) holds the current position. T2 (CHALLENGER) places a bid.
 /// T1 calls rent() to supersede T2, defending tenure at a higher price.
 /// T2 receives a full refund of their bid stake.
 ///
-/// BidSuperseded.displaced_bidder = CHALLENGER, new_bidder = OWNER.
-/// The current tenant uses the same rent() entry point as any bidder;
+/// BidSuperseded.displaced_bidder = CHALLENGER, pending_bidder = GOVERNOR.
+/// The current usufructuary uses the same rent() entry point as any bidder;
 /// the protocol does not privilege or restrict based on role.
 #[test]
-fun e2e_active_tenant_defends_against_challenger() {
+fun e2e_active_usufructuary_defends_against_challenger() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let min_price = escrow_corpus::min_rent_price_const();
 
-    // T1 (OWNER) rents from Idle → Occupied.
+    // T1 (GOVERNOR) rents from Idle → Occupied.
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(min_price, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
@@ -4938,8 +4938,8 @@ fun e2e_active_tenant_defends_against_challenger() {
     assert!(escrow::is_demand(&escrow), tag);
     test_scenario::return_shared(escrow);
 
-    // T1 (OWNER) supersedes CHALLENGER at t=2_000 (before 1_000+25_000 countdown).
-    sc.next_tx(OWNER);
+    // T1 (GOVERNOR) supersedes CHALLENGER at t=2_000 (before 1_000+25_000 countdown).
+    sc.next_tx(GOVERNOR);
     let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     clock::set_for_testing(&mut clk, 2_000);
     let floor_3    = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
@@ -4948,7 +4948,7 @@ fun e2e_active_tenant_defends_against_challenger() {
     assert_eq!(sup.length(), 1);
     let se = sup.borrow(0);
     assert_eq!(asset_state::bid_superseded_displaced_bidder_address(se), CHALLENGER);
-    assert_eq!(asset_state::bid_superseded_new_bidder_address(se), OWNER);
+    assert_eq!(asset_state::bid_superseded_pending_bidder_address(se), GOVERNOR);
     assert_eq!(asset_state::bid_superseded_refunded_amount(se), floor_2);
 
     // APT past T1_new's countdown → T1 defends tenure at floor_3.
@@ -4961,11 +4961,11 @@ fun e2e_active_tenant_defends_against_challenger() {
     assert_eq!(asset_state::handover_completed_new_rent_price(hc.borrow(0)),
                floor_3 + escrow_corpus::fixed_delta_value_const());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t1_new, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t1_new, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -4989,7 +4989,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     // h=1 (Fixed) makes DescentAuction observable.
     let tag       = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Fixed, h=1 Fixed
     let ensemble       = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk   = clock::create_for_testing(sc.ctx());
     let min_price = escrow_corpus::min_rent_price_const();
     let delta     = escrow_corpus::fixed_delta_value_const();
@@ -5019,7 +5019,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     let price_t3 = 2 * floor_hc;
     let cap_t3   = escrow::rent(&mut escrow, mk_payment(price_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let bs       = event::events_by_type<BidSuperseded>();
-    assert_eq!(asset_state::bid_superseded_new_bid_amount(bs.borrow(0)), price_t3);
+    assert_eq!(asset_state::bid_superseded_pending_bid_amount(bs.borrow(0)), price_t3);
     assert!(price_t3 > floor_hc, tag);
 
     // APT past T3's countdown (1_000+25_000=26_000) → T3 current.
@@ -5050,12 +5050,12 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     assert!(price_t4 >= asset_state::rent_started_floor_price(rs_all.borrow(1)), tag);
     assert!(escrow::is_occupied(&escrow), tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
-    transfer::public_transfer(cap_t4, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
+    transfer::public_transfer(cap_t4, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5064,7 +5064,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
 
 /// Explicit test of the floor_price regime change at the HO→HC boundary.
 ///
-/// In Occupied:  floor = current_stake  + δ  (beat the current tenant)
+/// In Occupied:  floor = current_stake  + δ  (beat the current usufructuary)
 /// In Demand: floor = pending_stake + δ  (beat the challenger)
 ///
 /// The two values are DIFFERENT: pending_stake >= current_stake + δ, so
@@ -5083,7 +5083,7 @@ fun e2e_hc_floor_uses_pending_stake_not_active_stake() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
     let min_price = escrow_corpus::min_rent_price_const();
     let delta     = escrow_corpus::fixed_delta_value_const();
@@ -5108,10 +5108,10 @@ fun e2e_hc_floor_uses_pending_stake_not_active_stake() {
     // Confirm the escalation: HC floor strictly exceeds HO floor.
     assert!(floor_hc > floor_ho, tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5121,11 +5121,11 @@ fun e2e_hc_floor_uses_pending_stake_not_active_stake() {
 /// Verifies FIN-1 and FIN-2 for one slice of the corpus (84 entries).
 ///
 /// FIN-1: T1's principal is partitioned exactly into three outputs:
-///   owner_share + protocol_fee + remain_credit == price_t1
-///   owner_share + protocol_fee == used_credit
+///   governor_share + protocol_fee + remain_credit == price_t1
+///   governor_share + protocol_fee == used_credit
 ///
 /// FIN-2: T2's full stake is consumed at tenure expiry, no remainder:
-///   owner_share + protocol_fee == price_t2
+///   governor_share + protocol_fee == price_t2
 ///   last_acquisition_price     == price_t2
 ///
 /// Timing — T1 rents cycles(1) so T1's ceiling = CEILING for all m:
@@ -5150,7 +5150,7 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
     while (i < entries.length()) {
         let entry = &entries[i];
         let tag   = entry.tag();
-        let (mut escrow, owner_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
+        let (mut escrow, governance_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
         let mut clk = clock::create_for_testing(sc.ctx());
     
         let cap_t1 = escrow::rent(
@@ -5174,13 +5174,13 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
             let uc = asset_state::handover_completed_used_credit(he);
             let rc = asset_state::handover_completed_remain_credit(he);
             assert_eq!(
-                asset_state::handover_completed_owner_share(he)
+                asset_state::handover_completed_governor_share(he)
                 + asset_state::handover_completed_protocol_fee(he)
                 + rc,
                 price_t1,
             );
             assert_eq!(
-                asset_state::handover_completed_owner_share(he)
+                asset_state::handover_completed_governor_share(he)
                 + asset_state::handover_completed_protocol_fee(he),
                 uc,
             );
@@ -5200,17 +5200,17 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
             assert_eq!(te_evs.length(), 1);
             let te = te_evs.borrow(0);
             assert_eq!(
-                asset_state::tenure_expired_owner_share(te)
+                asset_state::tenure_expired_governor_share(te)
                 + asset_state::tenure_expired_protocol_fee(te),
                 price_t2,
             );
             assert_eq!(asset_state::tenure_expired_last_acq_price(te), price_t2);
         };
 
-        transfer::public_transfer(cap_t1, OWNER);
-        transfer::public_transfer(cap_t2, OWNER);
+        transfer::public_transfer(cap_t1, GOVERNOR);
+        transfer::public_transfer(cap_t2, GOVERNOR);
         test_scenario::return_shared(escrow);
-        transfer::public_transfer(owner_cap, OWNER);
+        transfer::public_transfer(governance_cap, GOVERNOR);
             clock::destroy_for_testing(clk);
         i = i + 1;
     };
@@ -5227,9 +5227,9 @@ fun fin_conservation_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: S
 
 // ─── §FIN-2-sentinel (kept for readability) ──────────────────────────────────
 
-/// Readable two-tenant lifecycle that anchors the FIN-2 invariant to a
+/// Readable two-usufructuary lifecycle that anchors the FIN-2 invariant to a
 /// concrete config and shows that last_acquisition_price tracks the DEPARTING
-/// tenant's stake — not the founding price.
+/// usufructuary's stake — not the founding price.
 ///
 /// The exhaustive coverage is in the e2e_fin_conservation_* family above;
 /// this test exists as a named, self-contained explanation of the invariant.
@@ -5240,7 +5240,7 @@ fun e2e_fin2_tenure_expiry_financial_conservation() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0);
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let price_t1 = escrow_corpus::min_rent_price_const();
@@ -5264,14 +5264,14 @@ fun e2e_fin2_tenure_expiry_financial_conservation() {
     assert_eq!(te_events.length(), 1);
     let te  = te_events.borrow(0);
     let lap = asset_state::tenure_expired_last_acq_price(te);
-    assert_eq!(asset_state::tenure_expired_owner_share(te) + asset_state::tenure_expired_protocol_fee(te), price_t2);
+    assert_eq!(asset_state::tenure_expired_governor_share(te) + asset_state::tenure_expired_protocol_fee(te), price_t2);
     assert_eq!(lap, price_t2);
     assert!(lap != price_t1, tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5286,7 +5286,7 @@ fun e2e_fin2_tenure_expiry_financial_conservation() {
 /// Part A — Tenure expiry, exact numeric:
 ///   principal = min_rent_price = 10_000_000_000 mist  (exactly divisible by 10)
 ///   expected protocol_fee = 1_000_000_000  (10 %)
-///   expected owner_share  = 9_000_000_000  (90 %)
+///   expected governor_share  = 9_000_000_000  (90 %)
 ///
 /// Part B — Demand, independently computed value:
 ///   Linear curve (e=0) at t_mid = tenure_ceiling/2 gives exactly
@@ -5302,7 +5302,7 @@ fun e2e_fin3_90_10_split_exact() {
 
     // ── Part A: tenure expiry — exact 10 % assertion ──
     let cfg_a = escrow_corpus::by_tag(tag);
-    let (mut escrow_a, owner_cap_a) = integrate_and_take(cfg_a, &mut sc);
+    let (mut escrow_a, governance_cap_a) = integrate_and_take(cfg_a, &mut sc);
     let mut clk_a = clock::create_for_testing(sc.ctx());
     let cap_a1    = escrow::rent(
         &mut escrow_a, mk_payment(min_price, sc.ctx()), tenures::tenures(1), &clk_a, sc.ctx());
@@ -5312,25 +5312,25 @@ fun e2e_fin3_90_10_split_exact() {
         let te_events = event::events_by_type<TenureExpired>();
         let te       = te_events.borrow(0);
         let te_fee   = asset_state::tenure_expired_protocol_fee(te);
-        let te_owner = asset_state::tenure_expired_owner_share(te);
+        let te_governor = asset_state::tenure_expired_governor_share(te);
         let te_lap   = asset_state::tenure_expired_last_acq_price(te);
         // Use min_price (the known T1 stake) as the independent oracle.
-        assert_eq!(te_fee + te_owner, min_price);
+        assert_eq!(te_fee + te_governor, min_price);
         // Exact 10 % fee: min_price divisible by 10 → fee = min_price/10 exactly.
         assert_eq!(te_fee,   min_price / 10);
-        assert_eq!(te_owner, min_price - min_price / 10);
+        assert_eq!(te_governor, min_price - min_price / 10);
         // last_acquisition_price == T1's stake here (no handover → founding ==
-        // departing tenant), and marks the Descent descent starting point.
+        // departing usufructuary), and marks the Descent descent starting point.
         assert_eq!(te_lap, min_price);
     };
-    transfer::public_transfer(cap_a1, OWNER);
+    transfer::public_transfer(cap_a1, GOVERNOR);
     test_scenario::return_shared(escrow_a);
-    transfer::public_transfer(owner_cap_a, OWNER);
+    transfer::public_transfer(governance_cap_a, GOVERNOR);
     clock::destroy_for_testing(clk_a);
 
     // ── Part B: handover — split_fee consistency ──
     let cfg_b = escrow_corpus::by_tag(tag);
-    let (mut escrow_b, owner_cap_b) = integrate_and_take(cfg_b, &mut sc);
+    let (mut escrow_b, governance_cap_b) = integrate_and_take(cfg_b, &mut sc);
     let mut clk_b = clock::create_for_testing(sc.ctx());
     let cap_b1    = escrow::rent(
         &mut escrow_b, mk_payment(min_price, sc.ctx()), tenures::tenures(1), &clk_b, sc.ctx());
@@ -5345,7 +5345,7 @@ fun e2e_fin3_90_10_split_exact() {
         let hc_events = event::events_by_type<HandoverCompleted>();
         let he  = hc_events.borrow(0);
         let uc  = asset_state::handover_completed_used_credit(he);
-        let ho  = asset_state::handover_completed_owner_share(he);
+        let ho  = asset_state::handover_completed_governor_share(he);
         let hf  = asset_state::handover_completed_protocol_fee(he);
         // Linear curve (e=0): used_credit = stake × t_mid / ceiling = min_price / 2.
         let expected_uc = min_price / 2;
@@ -5353,10 +5353,10 @@ fun e2e_fin3_90_10_split_exact() {
         assert_eq!(hf, expected_uc / 10);               // 10 % of used_credit
         assert_eq!(ho, expected_uc - expected_uc / 10); // 90 % of used_credit
     };
-    transfer::public_transfer(cap_b1, OWNER);
-    transfer::public_transfer(cap_b2, OWNER);
+    transfer::public_transfer(cap_b1, GOVERNOR);
+    transfer::public_transfer(cap_b2, GOVERNOR);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(owner_cap_b, OWNER);
+    transfer::public_transfer(governance_cap_b, GOVERNOR);
     clock::destroy_for_testing(clk_b);
 
     sc.end();
@@ -5392,7 +5392,7 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 1, 0, m); // h=1 Fixed, vary e
             let ensemble = escrow_corpus::by_tag(tag);
-            let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+            let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
         
             // T1 rents at 2×min_price (phase_start = 0). No handover needed for spread.
@@ -5414,9 +5414,9 @@ fun e2e_desc12_price_descent_exact_endpoints_across_curves() {
             let floor_end = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
             assert_eq!(floor_end, min_price);
 
-            transfer::public_transfer(cap_t1, OWNER);
+            transfer::public_transfer(cap_t1, GOVERNOR);
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(owner_cap, OWNER);
+            transfer::public_transfer(governance_cap, GOVERNOR);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -5450,7 +5450,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(0, 0, e, 0, 0, m); // vary e: all 7 curve shapes
             let ensemble = escrow_corpus::by_tag(tag);
-            let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+            let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx()); // t = 0
         
             // T1 rents at min_price (stake = min_price, phase_start = 0).
@@ -5469,9 +5469,9 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
             let uc_end = escrow::accrued_credit_mist(&escrow, clock::timestamp_ms(&clk));
             assert_eq!(uc_end, min_price);
 
-            transfer::public_transfer(cap_t1, OWNER);
+            transfer::public_transfer(cap_t1, GOVERNOR);
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(owner_cap, OWNER);
+            transfer::public_transfer(governance_cap, GOVERNOR);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -5485,7 +5485,7 @@ fun e2e_desc34_used_credit_exact_endpoints_across_curves() {
 /// With AuctionWindowPolicy::Off (h=0), tenure expiry triggers the M6b cascade:
 /// Occupied → DescentAuction → Idle fires in a single APT step because
 /// the descent window is zero. The entry price resets to min_rent_price at
-/// the exact tenure boundary, regardless of what the departing tenant paid.
+/// the exact tenure boundary, regardless of what the departing usufructuary paid.
 ///
 /// T1 pays 3×min_price (deliberate overpay to make the contrast explicit).
 /// At clock == tenure_ceiling exactly, APT fires the cascade → Idle.
@@ -5497,7 +5497,7 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // h=0 Skipped
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
     let min_price = escrow_corpus::min_rent_price_const();
 
@@ -5524,10 +5524,10 @@ fun e2e_skipped_descent_resets_price_to_min_at_tenure_boundary() {
     let cap_t2 = escrow::rent(&mut escrow, mk_payment(min_price, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5555,7 +5555,7 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 1, 0); // c=1 Fixed, h=1 Fixed
     let ensemble     = escrow_corpus::by_tag(tag);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents from Idle → Occupied (phase_start = 0).
@@ -5613,10 +5613,10 @@ fun e2e_apt1_idempotent_double_call_at_every_boundary() {
     assert!(escrow::is_idle(&escrow), tag);
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5649,7 +5649,7 @@ fun apt_idempotency_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Sc
         let entry          = &entries[i];
         let tag            = entry.tag();
         let t1_cycle_count = (entry.m() as u64) + 1; // 1 for Single, 2 for Multi
-        let (mut escrow, owner_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
+        let (mut escrow, governance_cap) = integrate_and_take(*entry.ensemble(), &mut sc);
         let mut clk = clock::create_for_testing(sc.ctx());
     
         let cap_t1 = escrow::rent(
@@ -5704,10 +5704,10 @@ fun apt_idempotency_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Sc
             assert!(escrow::is_idle(&escrow), tag);
         };
 
-        transfer::public_transfer(cap_t1, OWNER);
-        transfer::public_transfer(cap_t2, OWNER);
+        transfer::public_transfer(cap_t1, GOVERNOR);
+        transfer::public_transfer(cap_t2, GOVERNOR);
         test_scenario::return_shared(escrow);
-        transfer::public_transfer(owner_cap, OWNER);
+        transfer::public_transfer(governance_cap, GOVERNOR);
             clock::destroy_for_testing(clk);
         i = i + 1;
     };
@@ -5729,7 +5729,7 @@ fun e2e_apt_idempotency_all_ch_m() {
 
 // ─── §RETIRE. All paths to Retired — asset always recoverable (f=0) ──────────
 //
-// For every reachable lifecycle state, the owner can retire the escrow when
+// For every reachable lifecycle state, the governor can retire the escrow when
 // commitment_policy_state = Immediate (f=0, retire_floor = 0, always unlocked) and
 // subsequently recover the asset via claim_asset. The Deferred-policy gate
 // (f=1, ERetireCommitmentFloorNotElapsed) is covered separately in §3.
@@ -5749,7 +5749,7 @@ fun e2e_apt_idempotency_all_ch_m() {
 //                                      → tenure                 → Retired
 
 // RETIRE-0: Retired → claim_asset returns the asset ─────────────────────────
-/// Explicit proof that once the escrow reaches Retired state, the owner can
+/// Explicit proof that once the escrow reaches Retired state, the governor can
 /// always recover the asset via claim_asset. This is the terminal invariant
 /// that all RETIRE-1 through RETIRE-6 also verify — made standalone here
 /// so it is directly findable.
@@ -5757,18 +5757,18 @@ fun e2e_apt_idempotency_all_ch_m() {
 fun e2e_retire0_retired_claim_asset_succeeds() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5778,18 +5778,18 @@ fun e2e_retire0_retired_claim_asset_succeeds() {
 fun e2e_retire1_from_idle() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx()); // no tenants → no earnings
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx()); // no usufructuaries → no earnings
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5799,7 +5799,7 @@ fun e2e_retire1_from_idle() {
 fun e2e_retire2_from_descent() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Fixed → Descent observable
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents; tenure expires → DescentAuction.
@@ -5810,16 +5810,16 @@ fun e2e_retire2_from_descent() {
     assert!(escrow::is_descending(&escrow), tag);
 
     // do_retire_immediately from Descent → Retired.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5829,7 +5829,7 @@ fun e2e_retire2_from_descent() {
 fun e2e_retire3_from_occupied() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // h=0 Skipped — irrelevant with flag
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -5837,7 +5837,7 @@ fun e2e_retire3_from_occupied() {
     assert!(escrow::is_occupied(&escrow), tag);
 
     // Retiring flag set; state stays Occupied.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
     // APT at tenure boundary: tenure fires; flag → Retired (not Descent).
@@ -5846,12 +5846,12 @@ fun e2e_retire3_from_occupied() {
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5861,7 +5861,7 @@ fun e2e_retire3_from_occupied() {
 fun e2e_retire4_from_demand() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -5873,7 +5873,7 @@ fun e2e_retire4_from_demand() {
     assert!(escrow::is_demand(&escrow), tag);
 
     // Retiring flag set in HC; state stays Demand.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), tag);
 
     // APT at countdown expiry: handover fires; T2 current, flag inherited → HO.
@@ -5888,13 +5888,13 @@ fun e2e_retire4_from_demand() {
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5904,16 +5904,16 @@ fun e2e_retire4_from_demand() {
 fun e2e_retire5_from_occupied_while_borrowed() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // retire() before borrow: APT no-op (t=0 < tenure_boundary), sets retiring flag.
-    // In production the owner submits retire() in a separate PTB; the tenant's
+    // In production the governor submits retire() in a separate PTB; the usufructuary's
     // borrow+return PTB is atomic so retire() always sees a complete escrow state.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
@@ -5925,12 +5925,12 @@ fun e2e_retire5_from_occupied_while_borrowed() {
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5940,7 +5940,7 @@ fun e2e_retire5_from_occupied_while_borrowed() {
 fun e2e_retire6_from_demand_while_borrowed() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -5952,9 +5952,9 @@ fun e2e_retire6_from_demand_while_borrowed() {
     assert!(escrow::is_demand(&escrow), tag);
 
     // retire() before borrow: APT no-op (t=1_000 < expiry=26_000), sets retiring flag.
-    // In production the owner submits retire() in a separate PTB; the tenant's
+    // In production the governor submits retire() in a separate PTB; the usufructuary's
     // borrow+return PTB is atomic so retire() always sees a complete escrow state.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), tag);
 
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
@@ -5972,13 +5972,13 @@ fun e2e_retire6_from_demand_while_borrowed() {
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -5991,18 +5991,18 @@ fun e2e_retire6_from_demand_while_borrowed() {
 fun e2e_retire7_already_retired_aborts() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Retire once → Retired.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retired(&escrow), tag);
 
     // Second retire() → EAlreadyRetired.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6014,14 +6014,14 @@ fun e2e_retire7_already_retired_aborts() {
 /// timestamp is saturated at handover_countdown_expiry: for any t ≥ expiry_ms
 /// compute_used_credit returns the same value as at t = expiry_ms.
 ///
-/// The clamped used_credit is earned by the protocol and owner; the remainder
-/// (stake − used_credit) is returned to the departing tenant as remain_credit.
+/// The clamped used_credit is earned by the protocol and governor; the remainder
+/// (stake − used_credit) is returned to the departing usufructuary as remain_credit.
 ///
 /// Sweeps all 7 curve shapes (axis E) — clamping is a property of the Capped
 /// regime, not of any specific curve. Exact numeric split is asserted for e=0
 /// (Linear) since that value is independently derivable:
 ///   expiry=26_000, tenure_ceiling=100_000 → uc = stake × 26/100 = 2_600_000_000
-///   remain_credit=7_400_000_000, owner_share=2_340_000_000, fee=260_000_000
+///   remain_credit=7_400_000_000, governor_share=2_340_000_000, fee=260_000_000
 ///
 /// Config: c=1 Fixed (expiry=26_000), vary e=0..6, h=0, d=0, f=0.
 #[test]
@@ -6035,7 +6035,7 @@ fun e2e_cred1_used_credit_clamped_at_demand_expiry_across_curves() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(1, 0, e, 0, 0, m); // c=1, vary e
-            let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+            let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
         
             // T1 rents at t=0 → Occupied (Accruing regime).
@@ -6083,18 +6083,18 @@ fun e2e_cred1_used_credit_clamped_at_demand_expiry_across_curves() {
             assert_eq!(asset_state::handover_completed_remain_credit(he),
                        stake - uc_at_expiry);
 
-            // Exact split for Linear (e=0): fee and owner derived from uc_at_expiry.
+            // Exact split for Linear (e=0): fee and governor derived from uc_at_expiry.
             if (e == 0) {
                 assert_eq!(asset_state::handover_completed_protocol_fee(he),
                            uc_at_expiry / 10);
-                assert_eq!(asset_state::handover_completed_owner_share(he),
+                assert_eq!(asset_state::handover_completed_governor_share(he),
                            uc_at_expiry - uc_at_expiry / 10);
             };
 
-            transfer::public_transfer(cap_t1, OWNER);
-            transfer::public_transfer(cap_t2, OWNER);
+            transfer::public_transfer(cap_t1, GOVERNOR);
+            transfer::public_transfer(cap_t2, GOVERNOR);
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(owner_cap, OWNER);
+            transfer::public_transfer(governance_cap, GOVERNOR);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -6103,22 +6103,22 @@ fun e2e_cred1_used_credit_clamped_at_demand_expiry_across_curves() {
     sc.end();
 }
 
-// ─── §CLAIM-1. Owner earnings post per boundary across all tenants ───────────
+// ─── §CLAIM-1. Governor earnings post per boundary across all usufructuaries ───────────
 
-/// Each boundary event mails the owner's share to the inbox as a separate
-/// EarningsPosted<SUI>. With multiple tenants, the per-boundary postings must
-/// match the per-event owner shares:
+/// Each boundary event mails the governor's share to the inbox as a separate
+/// EarningsPosted<SUI>. With multiple usufructuaries, the per-boundary postings must
+/// match the per-event governor shares:
 ///
-///   EarningsPosted[0].amount == HandoverCompleted.owner_share  (T1's share)
-///   EarningsPosted[1].amount == TenureExpired.owner_share       (T2's share)
+///   EarningsPosted[0].amount == HandoverCompleted.governor_share  (T1's share)
+///   EarningsPosted[1].amount == TenureExpired.governor_share       (T2's share)
 ///
 /// Both shares are read from the events themselves — no curve-specific
 /// constants needed. The identity holds for all 7 curve shapes because the
-/// individual owner_share values are already correct per FIN-1/2.
+/// individual governor_share values are already correct per FIN-1/2.
 ///
 /// Config: c=0 (Instant), h=0 (Skipped → Idle), d=0, f=0; vary e=0..6.
 #[test]
-fun e2e_claim1_owner_earnings_posted_per_boundary_across_tenants_all_curves() {
+fun e2e_claim1_earnings_posted_per_boundary_across_usufructuaries_all_curves() {
     let mut sc    = setup();
     let min_price = escrow_corpus::min_rent_price_const();
     let t_mid     = escrow_corpus::tenure_ceiling_const() / 2; // 50_000
@@ -6129,7 +6129,7 @@ fun e2e_claim1_owner_earnings_posted_per_boundary_across_tenants_all_curves() {
     while (ci < curves.length()) {
         let e = *curves.borrow(ci);
         let tag = escrow_corpus::tag(0, 0, e, 0, 0); // c=0 Instant, h=0 Skipped, vary e
-        let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+        let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
         let mut clk = clock::create_for_testing(sc.ctx());
     
         // T1 rents at t=0 → Occupied.
@@ -6144,10 +6144,10 @@ fun e2e_claim1_owner_earnings_posted_per_boundary_across_tenants_all_curves() {
         escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         assert!(escrow::is_occupied(&escrow), tag);
 
-        // Read T1's owner share from HandoverCompleted (curve-specific value).
+        // Read T1's governor share from HandoverCompleted (curve-specific value).
         let ho_share = {
             let evs = event::events_by_type<HandoverCompleted>();
-            asset_state::handover_completed_owner_share(evs.borrow(0))
+            asset_state::handover_completed_governor_share(evs.borrow(0))
         };
 
         // T2's tenure expires → Skipped → AuctionExpired → Idle.
@@ -6156,10 +6156,10 @@ fun e2e_claim1_owner_earnings_posted_per_boundary_across_tenants_all_curves() {
         escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
         assert!(escrow::is_idle(&escrow), tag);
 
-        // Read T2's owner share from TenureExpired.
+        // Read T2's governor share from TenureExpired.
         let te_share = {
             let evs = event::events_by_type<TenureExpired>();
-            asset_state::tenure_expired_owner_share(evs.borrow(0))
+            asset_state::tenure_expired_governor_share(evs.borrow(0))
         };
 
         // Both boundary settlements ran in this same tx, so two EarningsPosted
@@ -6172,21 +6172,21 @@ fun e2e_claim1_owner_earnings_posted_per_boundary_across_tenants_all_curves() {
         assert!(te_share > 0, tag); // T2 contributed
 
         // Retire from Idle → Retired.
-        escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+        escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
         // claim_asset in a new PTB returns just the asset; no swept coin.
         test_scenario::return_shared(escrow);
-        sc.next_tx(OWNER);
+        sc.next_tx(GOVERNOR);
         let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
         let asset = escrow::claim_asset(
-            escrow, &owner_cap, &clk, sc.ctx());
+            escrow, &governance_cap, &clk, sc.ctx());
         let ac = event::events_by_type<AssetClaimed>();
         assert_eq!(ac.length(), 1);
 
-        transfer::public_transfer(owner_cap, OWNER);
-        transfer::public_transfer(asset, OWNER);
-        transfer::public_transfer(cap_t1, OWNER);
-        transfer::public_transfer(cap_t2, OWNER);
+        transfer::public_transfer(governance_cap, GOVERNOR);
+        transfer::public_transfer(asset, GOVERNOR);
+        transfer::public_transfer(cap_t1, GOVERNOR);
+        transfer::public_transfer(cap_t2, GOVERNOR);
             clock::destroy_for_testing(clk);
         ci = ci + 1;
     };
@@ -6204,7 +6204,7 @@ fun e2e_claim1_owner_earnings_posted_per_boundary_across_tenants_all_curves() {
 ///
 ///   used_credit == stake  (full credit consumed)
 ///   remain_credit == 0    (nothing refunded to T1)
-///   owner_share + protocol_fee == stake  (all of T1's stake distributed)
+///   governor_share + protocol_fee == stake  (all of T1's stake distributed)
 ///
 /// Sweeps all 7 curve shapes (axis E) — the result must hold for every shape
 /// because it depends on the compute_curve_height saturation invariant (DESC-4),
@@ -6219,7 +6219,7 @@ fun e2e_corpus_gap_full_tenure_handover_full_credit_across_curves() {
         let mut e: u8 = 0;
         while (e <= 6) {
             let tag = escrow_corpus::tag_with_cycles(2, 0, e, 0, 0, m); // c=2 FullTenure, vary e
-            let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+            let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
         
             // T1 rents at t=0 (phase_start=0); T2 bids → HC (expiry=100_000).
@@ -6243,19 +6243,19 @@ fun e2e_corpus_gap_full_tenure_handover_full_credit_across_curves() {
             assert_eq!(used_credit,   stake); // full credit consumed
             assert_eq!(remain_credit, 0);     // nothing refunded to T1
             assert_eq!(
-                asset_state::handover_completed_owner_share(he)
+                asset_state::handover_completed_governor_share(he)
                 + asset_state::handover_completed_protocol_fee(he),
                 stake,                        // all of stake distributed
             );
 
-            // No coin was transferred to the departing tenant — Nothing, not Parcial.
-            sc.next_tx(TENANT_ADDR_1);
+            // No coin was transferred to the departing usufructuary — Nothing, not Parcial.
+            sc.next_tx(USUFRUCTUARY_ADDR_1);
             assert!(!sc.has_most_recent_for_sender<coin::Coin<SUI>>(), tag);
 
-            transfer::public_transfer(cap_t1, OWNER);
-            transfer::public_transfer(cap_t2, OWNER);
+            transfer::public_transfer(cap_t1, GOVERNOR);
+            transfer::public_transfer(cap_t2, GOVERNOR);
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(owner_cap, OWNER);
+            transfer::public_transfer(governance_cap, GOVERNOR);
                     clock::destroy_for_testing(clk);
             e = e + 1;
         };
@@ -6282,7 +6282,7 @@ fun e2e_corpus_gap_full_tenure_handover_full_credit_across_curves() {
 fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     let mut sc    = setup();
     let tag       = escrow_corpus::tag(0, 0, 0, 0, 1); // f=1 Deferred
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc);
     let mut clk   = clock::create_for_testing(sc.ctx());
     let retire_floor     = escrow_corpus::retire_deferred_f1_const();  // 10_000_000
     let tenure_ceiling   = escrow_corpus::tenure_ceiling_const();      // 100_000
@@ -6298,7 +6298,7 @@ fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     // retire() after floor elapses but before tenure expires.
     // retire_at = 10_000_001: floor unlocked (> 10_000_000) AND tenure active (< 10_050_000).
     clock::set_for_testing(&mut clk, retire_floor + 1);
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag); // flag set, still HO
 
     // APT at tenure boundary → retiring flag → Retired (not Descent).
@@ -6307,12 +6307,12 @@ fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
     assert!(escrow::is_retired(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6328,7 +6328,7 @@ fun e2e_corpus_gap_deferred_retire_from_occupied_after_floor() {
 fun e2e_corpus_gap_retiring_flag_bypasses_descent_with_window_policy() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 1, 0); // h=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -6336,7 +6336,7 @@ fun e2e_corpus_gap_retiring_flag_bypasses_descent_with_window_policy() {
     assert!(escrow::is_occupied(&escrow), tag);
 
     // Retire from HO with h=1: retiring flag set. State stays HO.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
     // APT at tenure boundary: retiring flag → Retired (NOT Descent despite h=1).
@@ -6346,12 +6346,12 @@ fun e2e_corpus_gap_retiring_flag_bypasses_descent_with_window_policy() {
     assert!(!escrow::is_descending(&escrow), tag);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6361,7 +6361,7 @@ fun e2e_corpus_gap_retiring_flag_bypasses_descent_with_window_policy() {
 /// When T3 supersedes T2's pending bid, the handover_countdown_expiry must
 /// be PRESERVED from T2's original bid — not reset to T3's bid_time + countdown.
 ///
-/// The countdown protects the current tenant (T1) for a fixed window from when
+/// The countdown protects the current usufructuary (T1) for a fixed window from when
 /// the FIRST bid landed. Resetting on supersede would let a malicious actor
 /// extend that window indefinitely by superseding just before expiry.
 ///
@@ -6379,7 +6379,7 @@ fun e2e_corpus_gap_retiring_flag_bypasses_descent_with_window_policy() {
 fun e2e_sup1_supersede_preserves_countdown_expiry() {
     let mut sc    = setup();
     let tag       = escrow_corpus::tag(1, 0, 0, 0, 0); // c=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk   = clock::create_for_testing(sc.ctx());
     let min_price = escrow_corpus::min_rent_price_const();
 
@@ -6428,22 +6428,22 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
     // T3's cap is the one promoted by the handover.
     let new_cap_id = {
         let hc = event::events_by_type<HandoverCompleted>();
-        asset_state::handover_completed_new_cap_id(hc.borrow(0))
+        asset_state::handover_completed_active_cap_id(hc.borrow(0))
     };
     assert_eq!(new_cap_id, object::id(&cap_t3));
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §update_ensemble ────────────────────────────────────────────────────────────
 //
-// update_ensemble allows the owner to swap the PolicyEnsemble of an escrow at
+// update_ensemble allows the governor to swap the PolicyEnsemble of an escrow at
 // runtime. When the escrow is Idle the change takes effect immediately. When
 // the escrow is occupied (Renting or DescentAuction) the new config is
 // buffered as a pending reset and applied at the next natural boundary
@@ -6457,11 +6457,11 @@ fun e2e_sup1_supersede_preserves_countdown_expiry() {
 fun update_ensemble_idle_applies_immediately() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0); // c=0,d=0,e=0,h=0,f=0
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1); // f=1 — differs from tag-0
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 0);
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 1);
@@ -6473,7 +6473,7 @@ fun update_ensemble_idle_applies_immediately() {
     assert_eq!(scheduled.length(), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6485,12 +6485,12 @@ fun update_ensemble_idle_applies_immediately() {
 fun update_ensemble_descent_schedules_without_cancelling() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(
@@ -6502,7 +6502,7 @@ fun update_ensemble_descent_schedules_without_cancelling() {
     );
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     assert!(escrow::is_descending(&escrow), 0);
     assert!(escrow::has_pending_ensemble_update(&escrow), 1);
@@ -6514,7 +6514,7 @@ fun update_ensemble_descent_schedules_without_cancelling() {
     assert_eq!(resets.length(), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6527,14 +6527,14 @@ fun update_ensemble_renting_schedules_without_interrupting() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     assert!(escrow::is_rented(&escrow), 0);
     assert!(escrow::has_pending_ensemble_update(&escrow), 1);
@@ -6545,9 +6545,9 @@ fun update_ensemble_renting_schedules_without_interrupting() {
     let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6560,14 +6560,14 @@ fun update_ensemble_renting_schedules_without_interrupting() {
 fun update_ensemble_applies_at_auction_expiry_not_at_tenure_expiry() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     // Tenure expiry → Descent. pending_config survives; old config still active.
     escrow::fire_do_tenure_expiry_for_testing(
@@ -6593,22 +6593,22 @@ fun update_ensemble_applies_at_auction_expiry_not_at_tenure_expiry() {
     let auction_expired = event::events_by_type<AuctionExpired>();
     assert_eq!(auction_expired.length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // Test 5: handover preserves pending, does NOT apply ─────────────────────────
-/// A handover (Demand → new tenant) does not apply a pending config reset.
+/// A handover (Demand → new usufructuary) does not apply a pending config reset.
 /// The pending flag survives the handover and the old config remains active.
 #[test]
 fun update_ensemble_handover_preserves_pending_does_not_apply() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents → Occupied.
@@ -6617,16 +6617,16 @@ fun update_ensemble_handover_preserves_pending_does_not_apply() {
 
     // Schedule config reset.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     // T2 bids → Demand, then drive to Demand.
     escrow::drive_to_demand_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()),
+        mk_usufructuary(STAKE_T2, USUFRUCTUARY_ADDR_2, cap_id_2()),
         escrow_corpus::tenure_ceiling_const(),
     );
 
-    // Fire handover — T2 becomes current tenant.
+    // Fire handover — T2 becomes current usufructuary.
     escrow::fire_do_handover_for_testing(
         &mut escrow,
         phases::timestamp(escrow_corpus::tenure_ceiling_const() / 2),
@@ -6640,9 +6640,9 @@ fun update_ensemble_handover_preserves_pending_does_not_apply() {
     let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6655,18 +6655,18 @@ fun update_ensemble_handover_preserves_pending_does_not_apply() {
 fun update_ensemble_chain_handover_then_auction_expiry_applies() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     escrow::drive_to_demand_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()),
+        mk_usufructuary(STAKE_T2, USUFRUCTUARY_ADDR_2, cap_id_2()),
         escrow_corpus::tenure_ceiling_const(),
     );
 
@@ -6695,9 +6695,9 @@ fun update_ensemble_chain_handover_then_auction_expiry_applies() {
     let auction_expired = event::events_by_type<AuctionExpired>();
     assert_eq!(auction_expired.length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6710,7 +6710,7 @@ fun update_ensemble_chain_handover_then_auction_expiry_applies() {
 fun update_ensemble_override_last_write_wins() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
@@ -6719,11 +6719,11 @@ fun update_ensemble_override_last_write_wins() {
     // Three distinct configs: original=tag(0,0,0,1,0), cfg_a=tag(1,0,0,0,0) c=1 countdown,
     // cfg_b=tag(1) f=1 deferred. All three are structurally different.
     let cfg_a = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)); // c=1 countdown
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_a, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_a, &clk, sc.ctx());
 
     // Second reset: cfg_b = tag 1 — overrides cfg_a.
     let cfg_b = escrow_corpus::by_tag(1); // f=1 deferred
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_b, &clk, sc.ctx());
 
     assert!(escrow::has_pending_ensemble_update(&escrow), 0);
 
@@ -6749,9 +6749,9 @@ fun update_ensemble_override_last_write_wins() {
     let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
     assert_eq!(scheduled.length(), 2);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6765,17 +6765,17 @@ fun update_ensemble_retire_wins_discards_pending_silently() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let original_cfg = ensemble;
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(10); // h=1 differs from original h=0
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     // retire() sets the retiring flag and discards the pending reset.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     assert!(escrow::is_retiring(&escrow), 0);
     assert!(!escrow::has_pending_ensemble_update(&escrow), 1);
@@ -6793,9 +6793,9 @@ fun update_ensemble_retire_wins_discards_pending_silently() {
     let resets = event::events_by_type<EnsembleUpdated>();
     assert_eq!(resets.length(), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6805,16 +6805,16 @@ fun update_ensemble_retire_wins_discards_pending_silently() {
 fun update_ensemble_on_retired_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_retired_for_testing(&mut escrow);
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6823,7 +6823,7 @@ fun update_ensemble_on_retired_aborts() {
 #[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
 fun extend_retire_commitment_on_retired_aborts() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_retired_for_testing(&mut escrow);
@@ -6831,10 +6831,10 @@ fun extend_retire_commitment_on_retired_aborts() {
 
     // A valid (non-zero) policy: the abort is the Retired guard, not the duration check.
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6843,17 +6843,17 @@ fun extend_retire_commitment_on_retired_aborts() {
 #[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
 fun extend_ensemble_commitment_on_retired_aborts() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_retired_for_testing(&mut escrow);
     assert!(escrow::is_retired(&escrow), 0);
 
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6865,12 +6865,12 @@ fun extend_ensemble_commitment_on_retired_aborts() {
 #[test, expected_failure(abort_code = asset_state::EAlreadyRetired, location = usufruct::asset_state)]
 fun extend_retire_commitment_on_lazily_retired_aborts() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retiring(&escrow), 0);
 
     // Cross the tenure boundary but do NOT apply the transition.
@@ -6879,24 +6879,24 @@ fun extend_retire_commitment_on_lazily_retired_aborts() {
 
     // extend applies pending transitions first -> Retired -> EAlreadyRetired.
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // Test 9e: extend the retire commitment while the escrow is in Descent (dutch
-// auction between tenants). This is a valid, reachable state — the owner can
+// auction between usufructuaries). This is a valid, reachable state — the governor can
 // strengthen their commitment mid-auction — and is the only path that exercises
 // the `WaitingState::Descent => {}` arm of assert_not_retired (update_ensemble
 // does not call that guard; only the two extend_*_commitment functions do).
 #[test]
 fun extend_retire_commitment_in_descent_succeeds() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Rent one tenure, then expire it → the escrow enters Descent.
@@ -6909,12 +6909,12 @@ fun extend_retire_commitment_in_descent_succeeds() {
     // Extending the commitment in Descent must succeed (not retired) and leave
     // the escrow in Descent — the auction is untouched.
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
     assert!(escrow::is_descending(&escrow), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6924,22 +6924,22 @@ fun extend_retire_commitment_in_descent_succeeds() {
 fun update_ensemble_on_retiring_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // Set the retiring flag.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     // update_ensemble must abort — retiring flag blocks the schedule path.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -6952,12 +6952,12 @@ fun update_ensemble_on_retiring_aborts() {
 fun update_ensemble_descent_natural_expiry_applies_pending() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(
@@ -6969,7 +6969,7 @@ fun update_ensemble_descent_natural_expiry_applies_pending() {
     );
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     assert!(escrow::has_pending_ensemble_update(&escrow), 0);
 
@@ -6989,7 +6989,7 @@ fun update_ensemble_descent_natural_expiry_applies_pending() {
     assert_eq!(auction_expired.length(), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7009,18 +7009,18 @@ fun update_ensemble_pending_survives_multiple_handovers() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1);
     let tenure   = escrow_corpus::tenure_ceiling_const();
 
-    // T1 is current tenant; reset scheduled.
-    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    // T1 is current usufructuary; reset scheduled.
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0);
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     // First handover: T1 → T2.
-    escrow::drive_to_demand_for_testing(&mut escrow, mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()), tenure / 4);
+    escrow::drive_to_demand_for_testing(&mut escrow, mk_usufructuary(STAKE_T2, USUFRUCTUARY_ADDR_2, cap_id_2()), tenure / 4);
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(tenure / 4), sc.ctx());
 
     assert!(escrow::is_rented(&escrow), 0);
@@ -7029,7 +7029,7 @@ fun update_ensemble_pending_survives_multiple_handovers() {
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
 
     // Second handover: T2 → T1.
-    escrow::drive_to_demand_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), tenure / 2);
+    escrow::drive_to_demand_for_testing(&mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), tenure / 2);
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(tenure / 2), sc.ctx());
 
     assert!(escrow::is_rented(&escrow), 3);
@@ -7039,7 +7039,7 @@ fun update_ensemble_pending_survives_multiple_handovers() {
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7053,10 +7053,10 @@ fun update_ensemble_descent_old_config_active_until_auction_expiry() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
     let original_cfg = ensemble;
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0);
     escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
         escrow_corpus::min_rent_price_const() * 2, 0,
@@ -7067,7 +7067,7 @@ fun update_ensemble_descent_old_config_active_until_auction_expiry() {
     assert!(!escrow::has_pending_ensemble_update(&escrow), 1);
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     // Still at Descent; old config still active.
     assert!(escrow::is_descending(&escrow), 2);
@@ -7086,7 +7086,7 @@ fun update_ensemble_descent_old_config_active_until_auction_expiry() {
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7099,15 +7099,15 @@ fun update_ensemble_descent_old_config_active_until_auction_expiry() {
 fun update_ensemble_descent_overrides_renting_pending() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cfg_a = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
     let cfg_b = escrow_corpus::by_tag(1);
     let tenure = escrow_corpus::tenure_ceiling_const();
 
-    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_a, &clk, sc.ctx());
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0);
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_a, &clk, sc.ctx());
 
     // Tenure expiry → Descent with cfg_a pending.
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure), sc.ctx());
@@ -7115,7 +7115,7 @@ fun update_ensemble_descent_overrides_renting_pending() {
     assert!(escrow::has_pending_ensemble_update(&escrow), 1);
 
     // Override pending from Descent: cfg_b wins.
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_b, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_b, &clk, sc.ctx());
     assert!(escrow::has_pending_ensemble_update(&escrow), 2);
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 0);
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 2);
@@ -7137,7 +7137,7 @@ fun update_ensemble_descent_overrides_renting_pending() {
     assert_eq!(policy_ensemble::ensemble_updated_handover_policy(evt), b"Off".to_string());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7150,7 +7150,7 @@ fun update_ensemble_descent_overrides_renting_pending() {
 fun update_ensemble_state_clean_after_application() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 Fixed
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let cfg_cycle1 = escrow_corpus::by_tag(1);
@@ -7158,8 +7158,8 @@ fun update_ensemble_state_clean_after_application() {
     let tenure     = escrow_corpus::tenure_ceiling_const();
 
     // Full cycle: Renting → reset → Descent → auction expiry → Idle with cfg_cycle1.
-    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_cycle1, &clk, sc.ctx());
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0);
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_cycle1, &clk, sc.ctx());
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure), sc.ctx());
     clock::set_for_testing(&mut clk, tenure + escrow_corpus::descent_window_h1_const() + 1);
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
@@ -7171,7 +7171,7 @@ fun update_ensemble_state_clean_after_application() {
     assert_eq!(event::events_by_type<EnsembleUpdated>().length(), 1);
 
     // update_ensemble from Idle → immediate, no schedule.
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_cycle2, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_cycle2, &clk, sc.ctx());
 
     assert!(escrow::is_idle(&escrow), 3);
     assert!(escrow::active_ensemble(&escrow) == cfg_cycle2, 4);
@@ -7180,7 +7180,7 @@ fun update_ensemble_state_clean_after_application() {
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7197,20 +7197,20 @@ fun update_ensemble_behavior_min_rent_price_floor_changes() {
     let cfg_high = escrow_corpus::with_min_rent_price(
         escrow_corpus::by_tag(0), 20_000_000_000,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg_low, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(cfg_low, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Before reset: floor = 10 SUI
     assert!(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk)) == escrow_corpus::min_rent_price_const(), 0);
 
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_high, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_high, &clk, sc.ctx());
 
     // After reset: floor = 20 SUI
     assert!(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk)) == 20_000_000_000, 1);
     assert!(escrow::active_ensemble(&escrow) == cfg_high, 2);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7224,17 +7224,17 @@ fun update_ensemble_behavior_min_rent_price_bid_rejected_after_reset() {
     let cfg_high = escrow_corpus::with_min_rent_price(
         escrow_corpus::by_tag(0), 20_000_000_000,
     );
-    let (mut escrow, owner_cap) = integrate_and_take(cfg_low, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(cfg_low, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_high, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_high, &clk, sc.ctx());
 
     // 15 SUI is above the old 10 SUI floor but below the new 20 SUI floor.
     let cap = escrow::rent(&mut escrow, mk_payment(15_000_000_000, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7248,7 +7248,7 @@ fun update_ensemble_behavior_tenure_ceiling_apt_detection() {
     let mut sc = setup();
     let cfg_long  = escrow_corpus::by_tag(0);
     let cfg_short = escrow_corpus::with_tenure_ceiling(escrow_corpus::by_tag(0), 50_000);
-    let (mut escrow, owner_cap) = integrate_and_take(cfg_long, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(cfg_long, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents under cfg_long (ceiling=100_000). phase_start=0.
@@ -7261,7 +7261,7 @@ fun update_ensemble_behavior_tenure_ceiling_apt_detection() {
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)), 0);
 
     // Schedule cfg_short (ceiling=50_000) — takes effect after T1's tenure.
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_short, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_short, &clk, sc.ctx());
 
     // T1's tenure expires at 100_000 (old ceiling still governs T1).
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
@@ -7279,10 +7279,10 @@ fun update_ensemble_behavior_tenure_ceiling_apt_detection() {
     clock::set_for_testing(&mut clk, 160_000);
     assert!(escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)), 2);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7297,7 +7297,7 @@ fun update_ensemble_behavior_auction_window_policy_atdutch_presence() {
     let cfg_skip   = escrow_corpus::by_tag(0);
     // cfg_fixed: h=1 Fixed — tenure expiry → Descent
     let cfg_fixed = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg_skip, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(cfg_skip, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents under cfg_skip.
@@ -7306,7 +7306,7 @@ fun update_ensemble_behavior_auction_window_policy_atdutch_presence() {
     );
 
     // Schedule cfg_fixed; will be applied at T1's tenure expiry.
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_fixed, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_fixed, &clk, sc.ctx());
 
     // T1's tenure expires → Idle with cfg_fixed (pending_config skips Descent
     // during fire(), so T1's own expiry still goes to Idle directly).
@@ -7326,10 +7326,10 @@ fun update_ensemble_behavior_auction_window_policy_atdutch_presence() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_descending(&escrow), 2);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7343,7 +7343,7 @@ fun update_ensemble_behavior_credit_shape_used_credit_changes() {
     let cfg_linear     = escrow_corpus::by_tag(0);
     // e=1 → Smoothstep curve
     let cfg_smoothstep = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 1, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg_linear, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(cfg_linear, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents under cfg_linear; phase_start = 0.
@@ -7356,7 +7356,7 @@ fun update_ensemble_behavior_credit_shape_used_credit_changes() {
     let credit_linear = escrow::accrued_credit_mist(&escrow, quarter_ms);
 
     // Schedule cfg_smoothstep; apply at T1's tenure expiry.
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_smoothstep, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_smoothstep, &clk, sc.ctx());
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
 
@@ -7374,10 +7374,10 @@ fun update_ensemble_behavior_credit_shape_used_credit_changes() {
     // Smoothstep at 0.25: 3×0.0625 - 2×0.015625 ≈ 0.15625 → 1_562_500_000
     assert!(credit_linear != credit_smoothstep, 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7392,7 +7392,7 @@ fun update_ensemble_behavior_price_function_floor_escalation() {
     let cfg_fixed_delta    = escrow_corpus::by_tag(0);
     // d=1: CompoundDelta — next_floor = bid × 1.1 + 1 mist
     let cfg_compound_delta = escrow_corpus::by_tag(escrow_corpus::tag(0, 1, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(cfg_fixed_delta, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(cfg_fixed_delta, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let bid_amount = escrow_corpus::min_rent_price_const(); // 10 SUI
@@ -7402,7 +7402,7 @@ fun update_ensemble_behavior_price_function_floor_escalation() {
     assert!(floor_before == bid_amount + escrow_corpus::fixed_delta_value_const(), 0);
 
     // Reset to CompoundDelta immediately (Idle state).
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_compound_delta, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_compound_delta, &clk, sc.ctx());
 
     // After reset: CompoundDelta — 10 SUI × 1.1 + 1 = 11_000_000_001
     let floor_after = escrow::next_floor_price_mist(&escrow, bid_amount, 1);
@@ -7410,7 +7410,7 @@ fun update_ensemble_behavior_price_function_floor_escalation() {
     assert!(floor_after == 11_000_000_001, 2);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7421,7 +7421,7 @@ fun update_ensemble_behavior_price_function_floor_escalation() {
 fun next_floor_price_mist_scales_per_tenure() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0); // FixedDelta: next = bid + FIXED_DELTA
-    let (escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let base = escrow_corpus::min_rent_price_const();
@@ -7431,7 +7431,7 @@ fun next_floor_price_mist_scales_per_tenure() {
     assert_eq!(single, multi);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7444,7 +7444,7 @@ fun floor_price_mist_equals_next_floor_price_mist_in_occupied() {
     let mut sc = setup();
     // m=1 → TenureExtendPolicy::Multi; d=0 → FixedDelta escalation.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag_with_cycles(0, 0, 0, 0, 0, 1));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let base = escrow_corpus::min_rent_price_const();
@@ -7452,28 +7452,28 @@ fun floor_price_mist_equals_next_floor_price_mist_in_occupied() {
 
     assert!(escrow::is_occupied(&escrow), 0);
 
-    let stake           = escrow::active_tenant_stake_mist(&escrow).destroy_some();
-    let committed       = escrow::active_tenant_committed_tenures(&escrow).destroy_some();
+    let stake           = escrow::active_stake_balance_mist(&escrow).destroy_some();
+    let committed       = escrow::active_usufructuary_committed_tenures(&escrow).destroy_some();
     let from_floor_view = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let from_next_view  = escrow::next_floor_price_mist(&escrow, stake, committed);
     assert_eq!(from_floor_view, from_next_view);
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// In Demand, floor_price_mist is driven by the PENDING tenant's stake (T2),
-/// not the active tenant's (T1). The identity holds with pending_stake and
+/// In Demand, floor_price_mist is driven by the PENDING usufructuary's stake (T2),
+/// not the active usufructuary's (T1). The identity holds with pending_stake and
 /// pending_committed_tenures, not active ones.
 #[test]
 fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
     let mut sc = setup();
     // c=1 → handover Fixed (enables Demand state); d=0 → FixedDelta.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let t1_cap = escrow::rent(&mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
@@ -7485,9 +7485,9 @@ fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
 
     assert!(escrow::is_demand(&escrow), 0);
 
-    let pending_stake  = escrow::pending_tenant_stake_mist(&escrow).destroy_some();
-    let pending_tenures = escrow::pending_tenant_committed_tenures(&escrow).destroy_some();
-    let active_stake   = escrow::active_tenant_stake_mist(&escrow).destroy_some();
+    let pending_stake  = escrow::pending_stake_balance_mist(&escrow).destroy_some();
+    let pending_tenures = escrow::pending_usufructuary_committed_tenures(&escrow).destroy_some();
+    let active_stake   = escrow::active_stake_balance_mist(&escrow).destroy_some();
 
     let via_floor      = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let via_pending    = escrow::next_floor_price_mist(&escrow, pending_stake, pending_tenures);
@@ -7496,10 +7496,10 @@ fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
     assert_eq!(via_floor, via_pending);
     assert!(via_floor != via_active, 1);
 
-    transfer::public_transfer(t1_cap, OWNER);
+    transfer::public_transfer(t1_cap, GOVERNOR);
     transfer::public_transfer(t2_cap, @0xA2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7511,7 +7511,7 @@ fun floor_price_mist_equals_next_floor_price_mist_in_demand_uses_pending() {
 fun retire_commitment_floor_observable_at_integrate_and_after_extend() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         ensemble, retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
@@ -7521,7 +7521,7 @@ fun retire_commitment_floor_observable_at_integrate_and_after_extend() {
 
     // Extend to Deferred.
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
         &clk, sc.ctx());
 
@@ -7532,7 +7532,7 @@ fun retire_commitment_floor_observable_at_integrate_and_after_extend() {
     );
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7543,19 +7543,19 @@ fun retire_commitment_floor_observable_at_integrate_and_after_extend() {
 fun extend_retire_commitment_retire_aborts_before_floor() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(escrow_corpus::retire_deferred_f1_const())),
         &clk, sc.ctx());
 
     // Deferred floor = 10_000_000 ms; clock at t=0 → abort.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7567,10 +7567,10 @@ fun extend_retire_commitment_retire_aborts_before_floor() {
 fun update_ensemble_behavior_handover_instant_borrow_succeeds() {
     let mut sc = setup();
     let cfg_instant = escrow_corpus::by_tag(0); // c=0 Instant
-    let (mut escrow, owner_cap) = integrate_and_take(cfg_instant, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(cfg_instant, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    // T1 becomes current tenant.
+    // T1 becomes current usufructuary.
     let cap_t1 = escrow::rent(
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx(),
     );
@@ -7585,10 +7585,10 @@ fun update_ensemble_behavior_handover_instant_borrow_succeeds() {
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t2, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7596,12 +7596,12 @@ fun update_ensemble_behavior_handover_instant_borrow_succeeds() {
 // Test BD-7b: FullTenure handover blocks T4 borrow until handover fires ─────────
 /// After reset from Instant to FullTenure, the pending bidder (T4) cannot
 /// borrow until the handover boundary has passed.
-#[test, expected_failure(abort_code = asset_state::EPendingTenantCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EPendingUsufructCap, location = usufruct::asset_state)]
 fun update_ensemble_behavior_handover_fixed_borrow_blocked() {
     let mut sc = setup();
     let cfg_instant = escrow_corpus::by_tag(0);                               // c=0 Instant
     let cfg_fixed   = escrow_corpus::by_tag(escrow_corpus::tag(2, 0, 0, 0, 0)); // c=2 FullTenure
-    let (mut escrow, owner_cap) = integrate_and_take(cfg_instant, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(cfg_instant, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents under cfg_instant.
@@ -7610,7 +7610,7 @@ fun update_ensemble_behavior_handover_fixed_borrow_blocked() {
     );
 
     // Schedule cfg_fixed (FullTenure); applied when T1's tenure expires.
-    escrow::update_ensemble(&mut escrow, &owner_cap, cfg_fixed, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, cfg_fixed, &clk, sc.ctx());
 
     // T1's tenure expires → Idle with cfg_fixed.
     clock::set_for_testing(&mut clk, escrow_corpus::tenure_ceiling_const());
@@ -7634,11 +7634,11 @@ fun update_ensemble_behavior_handover_fixed_borrow_blocked() {
     escrow::return_asset(&mut escrow, asset, receipt);
 
     // Unreachable — abort above.
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
-    transfer::public_transfer(cap_t4, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
+    transfer::public_transfer(cap_t4, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7647,11 +7647,11 @@ fun update_ensemble_behavior_handover_fixed_borrow_blocked() {
 
 // ── EV-1 + EV-2: bid and handover cap_id consistency ─────────────────────────
 
-/// EV-1: BidPlaced.tenant_cap_id == object::id(&cap_t2)
+/// EV-1: BidPlaced.usufruct_cap_id == object::id(&cap_t2)
 ///   The cap returned by rent() in Occupied is the same object whose ID
 ///   is reported in the BidPlaced event.
 ///
-/// EV-2: HandoverCompleted.new_tenant_cap_id == object::id(&cap_t2)
+/// EV-2: HandoverCompleted.new_usufruct_cap_id == object::id(&cap_t2)
 ///   After the handover fires, the new current cap is the same object whose
 ///   ID was reported in BidPlaced. No new cap is minted at handover time —
 ///   the cap from do_place_bid is promoted directly.
@@ -7659,7 +7659,7 @@ fun update_ensemble_behavior_handover_fixed_borrow_blocked() {
 fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0); // c=0 Instant
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // T1 rents (Idle → HO).
@@ -7672,11 +7672,11 @@ fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
     let cap_t2   = escrow::rent(
         &mut escrow, mk_payment(floor_t2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    // EV-1: BidPlaced.tenant_cap_id == the cap returned by rent().
+    // EV-1: BidPlaced.usufruct_cap_id == the cap returned by rent().
     let bp = event::events_by_type<BidPlaced>();
     assert_eq!(bp.length(), 1);
     assert_eq!(
-        asset_state::bid_placed_pending_tenant_cap_id(bp.borrow(0)),
+        asset_state::bid_placed_pending_usufruct_cap_id(bp.borrow(0)),
         object::id(&cap_t2),
     );
 
@@ -7684,25 +7684,25 @@ fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_occupied(&escrow), tag);
 
-    // EV-2: HandoverCompleted.new_tenant_cap_id == the same cap (promoted, not re-minted).
+    // EV-2: HandoverCompleted.new_usufruct_cap_id == the same cap (promoted, not re-minted).
     let hc = event::events_by_type<HandoverCompleted>();
     assert_eq!(hc.length(), 1);
     assert_eq!(
-        asset_state::handover_completed_new_cap_id(hc.borrow(0)),
+        asset_state::handover_completed_active_cap_id(hc.borrow(0)),
         object::id(&cap_t2),
     );
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ── EV-3: AssetBorrowed / AssetReturned cap_id consistency ───────────────────
 
-/// AssetBorrowed.tenant_cap_id and AssetReturned.tenant_cap_id must both
+/// AssetBorrowed.usufruct_cap_id and AssetReturned.usufruct_cap_id must both
 /// equal the ID of the cap used in the borrow/return cycle. The borrow event
 /// is stamped with the cap passed to borrow_asset; the return event reads the
 /// current cap from the lifecycle state (which must be the same cap while
@@ -7711,7 +7711,7 @@ fun e2e_ev1_ev2_bid_and_handover_cap_id_consistency() {
 fun e2e_ev3_borrow_return_cap_id_consistency() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 0);
-    let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
     let clk     = clock::create_for_testing(sc.ctx());
 
     // T1 rents → HO (T1 is current).
@@ -7723,19 +7723,19 @@ fun e2e_ev3_borrow_return_cap_id_consistency() {
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &cap_t1, &clk, sc.ctx());
     escrow::return_asset(&mut escrow, asset, receipt);
 
-    // EV-3a: AssetBorrowed.tenant_cap_id == cap_t1's ID.
+    // EV-3a: AssetBorrowed.usufruct_cap_id == cap_t1's ID.
     let ab = event::events_by_type<AssetBorrowed>();
     assert_eq!(ab.length(), 1);
-    assert_eq!(asset_state::asset_borrowed_tenant_cap_id(ab.borrow(0)), cap_t1_id);
+    assert_eq!(asset_state::asset_borrowed_usufruct_cap_id(ab.borrow(0)), cap_t1_id);
 
-    // EV-3b: AssetReturned.tenant_cap_id == cap_t1's ID (still current at return time).
+    // EV-3b: AssetReturned.usufruct_cap_id == cap_t1's ID (still current at return time).
     let ar = event::events_by_type<AssetReturned>();
     assert_eq!(ar.length(), 1);
-    assert_eq!(asset_state::asset_returned_tenant_cap_id(ar.borrow(0)), cap_t1_id);
+    assert_eq!(asset_state::asset_returned_usufruct_cap_id(ar.borrow(0)), cap_t1_id);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7762,7 +7762,7 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
         let mut c: u8     = 0;
         while (c <= 2) {
             let tag = escrow_corpus::tag_with_cycles(c, 0, 0, 0, 0, m); // vary c=0,1,2
-            let (mut escrow, owner_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
+            let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(tag), &mut sc);
             let mut clk = clock::create_for_testing(sc.ctx());
         
             // T1 rents → HO (phase_start = 0).
@@ -7789,10 +7789,10 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
             };
             assert_eq!(stamped_expiry, expected_expiry);
 
-            transfer::public_transfer(cap_t1, OWNER);
-            transfer::public_transfer(cap_t2, OWNER);
+            transfer::public_transfer(cap_t1, GOVERNOR);
+            transfer::public_transfer(cap_t2, GOVERNOR);
             test_scenario::return_shared(escrow);
-            transfer::public_transfer(owner_cap, OWNER);
+            transfer::public_transfer(governance_cap, GOVERNOR);
                     clock::destroy_for_testing(clk);
             c = c + 1;
         };
@@ -7812,7 +7812,7 @@ fun e2e_ev4_bid_placed_countdown_expiry_accuracy_per_policy() {
 #[test, expected_failure(abort_code = rest_price_policy::EPriceZero, location = usufruct::rest_price_policy)]
 fun new_fixed_zero_price_aborts() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let _p = rest_price_policy::new_fixed(usufruct::monetary::price(0));
     sc.end();
 }
@@ -7829,7 +7829,7 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     // h=1 Fixed, all other axes at default — fixed min_rent_price (corpus default)
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
     let fixed_price = escrow_corpus::min_rent_price_const();
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     // Idle floor == fixed price (resolved_floor drawn from Fixed policy)
@@ -7853,9 +7853,9 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
     let t_full = t_atdutch + escrow_corpus::descent_window_h1_const();
     assert!(escrow::floor_price_mist(&escrow, t_full) == fixed_price, 3);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7873,7 +7873,7 @@ fun e2e_fixed_atdutch_descent_bottom_is_fixed_price() {
 #[test, expected_failure(abort_code = tenure_duration_policy::EDurationZero, location = usufruct::tenure_duration_policy)]
 fun new_fixed_zero_ceiling_aborts() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let _p = tenure_duration_policy::new_fixed(phases::duration(0));
     sc.end();
 }
@@ -7901,7 +7901,7 @@ fun multi_cycle_cfg(): policy_ensemble::PolicyEnsemble {
 fun multi_cycle_single_policy_rejects_cycles_two() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0); // Single (default corpus)
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let floor   = escrow_corpus::min_rent_price_const();
@@ -7909,9 +7909,9 @@ fun multi_cycle_single_policy_rejects_cycles_two() {
     // cycles(2) on a Single-policy escrow must abort
     let cap = escrow::rent(&mut escrow, payment, tenures::tenures(2), &clk, sc.ctx());
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7920,7 +7920,7 @@ fun multi_cycle_single_policy_rejects_cycles_two() {
 #[test]
 fun multi_cycle_install_extends_ceiling_three_x() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let tenure  = escrow_corpus::tenure_ceiling_const();
@@ -7933,9 +7933,9 @@ fun multi_cycle_install_extends_ceiling_three_x() {
     assert!(option::is_some(&expiry), 0);
     assert!(*option::borrow(&expiry) == tenure * 3, 1);
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7944,7 +7944,7 @@ fun multi_cycle_install_extends_ceiling_three_x() {
 #[test]
 fun multi_cycle_single_cycle_degenerates() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let tenure  = escrow_corpus::tenure_ceiling_const();
@@ -7955,9 +7955,9 @@ fun multi_cycle_single_cycle_degenerates() {
     let expiry = escrow::tenure_expiry_ms(&escrow);
     assert!(*option::borrow(&expiry) == tenure, 0); // 1 × tenure
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7966,7 +7966,7 @@ fun multi_cycle_single_cycle_degenerates() {
 #[test, expected_failure(abort_code = asset_state::EInsufficientPayment, location = usufruct::asset_state)]
 fun multi_cycle_insufficient_payment_aborts() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let floor   = escrow_corpus::min_rent_price_const();
@@ -7974,9 +7974,9 @@ fun multi_cycle_insufficient_payment_aborts() {
     let payment = mk_payment(floor * 2, sc.ctx());
     let cap     = escrow::rent(&mut escrow, payment, tenures::tenures(3), &clk, sc.ctx());
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -7985,19 +7985,19 @@ fun multi_cycle_insufficient_payment_aborts() {
 #[test]
 fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
 
     // T1 installs with cycles(1)
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let p1  = mk_payment(floor, sc.ctx());
     let cap1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
 
     // T2 bids with cycles(3): pays compute_total_price(compute_floor_price_at, 3)
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor  = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let p2         = mk_payment(bid_floor * 3, sc.ctx());
     let cap2       = escrow::rent(&mut escrow, p2, tenures::tenures(3), &clk, sc.ctx());
@@ -8012,10 +8012,10 @@ fun multi_cycle_pending_bid_extends_ceiling_on_handover() {
     assert!(option::is_some(&expiry), 0);
     assert!(*option::borrow(&expiry) == boundary + tenure * 3, 1);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8045,14 +8045,14 @@ fun multi_cycle_cfg_countdown(): policy_ensemble::PolicyEnsemble {
 #[test]
 fun multi_cycle_floor_price_is_per_cycle_rate() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let floor  = escrow_corpus::min_rent_price_const();
     let delta  = escrow_corpus::fixed_delta_value_const();
 
     // T1 pays 3 cycles: total stake = floor × 3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // Per-cycle rate = floor × 3 / 3 = floor.
@@ -8064,21 +8064,21 @@ fun multi_cycle_floor_price_is_per_cycle_rate() {
     // Guard: the wrong design would give price_function(3×floor) = 3×floor + delta.
     assert!(actual_floor < floor * 3 + delta, 1);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// T2 — HandoverFixed: competitor displaces multi-cycle tenant by rate.
+/// T2 — HandoverFixed: competitor displaces multi-cycle usufructuary by rate.
 /// T1 pays 3 cycles (ceiling = tenure × 3). T2 bids at t=tenure/2 with 1
 /// cycle, paying only the per-cycle floor. Handover fires at
 /// t + countdown — well before T1's 300k ceiling. T1 is displaced early.
 #[test]
 fun multi_cycle_countdown_displaces_via_rate() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure    = escrow_corpus::tenure_ceiling_const();
@@ -8087,7 +8087,7 @@ fun multi_cycle_countdown_displaces_via_rate() {
     let delta     = escrow_corpus::fixed_delta_value_const();
 
     // T1 rents 3 cycles: ceiling = tenure × 3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
     assert!(*option::borrow(&escrow::tenure_expiry_ms(&escrow)) == tenure * 3, 0);
 
@@ -8095,7 +8095,7 @@ fun multi_cycle_countdown_displaces_via_rate() {
     // Pays per-cycle floor only: price_function(floor) = floor + delta.
     let bid_time = tenure / 2;
     clock::set_for_testing(&mut clk, bid_time);
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     assert!(bid_floor == floor + delta, 1); // per-cycle floor, not total-based
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
@@ -8114,22 +8114,22 @@ fun multi_cycle_countdown_displaces_via_rate() {
     let expiry = escrow::tenure_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), handover_ms + tenure);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// T3 — HandoverFullTenure: multi-cycle tenant consumes all paid cycles.
+/// T3 — HandoverFullTenure: multi-cycle usufructuary consumes all paid cycles.
 /// T1 pays 3 cycles (ceiling = tenure × 3). T2 bids at t=tenure/2 but
 /// handover expiry = phase_start + ceiling = tenure × 3. T1 is only
 /// displaced at t = tenure × 3 — the full tenure is respected.
 #[test]
-fun multi_cycle_full_tenure_tenant_consumes_full_ceiling() {
+fun multi_cycle_full_tenure_usufructuary_consumes_full_ceiling() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure = escrow_corpus::tenure_ceiling_const();
@@ -8137,13 +8137,13 @@ fun multi_cycle_full_tenure_tenant_consumes_full_ceiling() {
     let delta  = escrow_corpus::fixed_delta_value_const();
 
     // T1 rents 3 cycles: ceiling = tenure × 3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2 bids early at t=tenure/2. FullTenure: expiry = phase_start + ceiling = tenure × 3.
     let bid_time = tenure / 2;
     clock::set_for_testing(&mut clk, bid_time);
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     assert!(bid_floor == floor + delta, 0);
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
@@ -8160,10 +8160,10 @@ fun multi_cycle_full_tenure_tenant_consumes_full_ceiling() {
     assert_eq!(completed.length(), 1);
     assert_eq!(asset_state::handover_completed_timestamp_ms(&completed[0]), boundary);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8179,18 +8179,18 @@ fun multi_cycle_rate_symmetry_same_floor() {
     let delta  = escrow_corpus::fixed_delta_value_const();
 
     // Integrate two escrows in the same scenario to share Random/ProtocolFee objects.
-    let (mut escrow_a, owner_cap_a) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
-    let (mut escrow_b, owner_cap_b) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow_a, governance_cap_a) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow_b, governance_cap_b) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
 
     let clk    = clock::create_for_testing(sc.ctx());
 
     // Escrow A: T1a rents 1 cycle at floor.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap_a   = escrow::rent(&mut escrow_a, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let floor_a = escrow::floor_price_mist(&escrow_a, clock::timestamp_ms(&clk));
 
     // Escrow B: T1b rents 3 cycles at floor × 3 (same per-cycle rate).
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap_b   = escrow::rent(&mut escrow_b, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
     let floor_b = escrow::floor_price_mist(&escrow_b, clock::timestamp_ms(&clk));
 
@@ -8198,12 +8198,12 @@ fun multi_cycle_rate_symmetry_same_floor() {
     assert!(floor_a == floor_b, 0);
     assert!(floor_a == floor + delta, 1); // price_function(10 SUI) = 20 SUI
 
-    transfer::public_transfer(cap_a, TENANT_ADDR_1);
-    transfer::public_transfer(cap_b, TENANT_ADDR_1);
+    transfer::public_transfer(cap_a, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap_b, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(owner_cap_a, OWNER);
-    transfer::public_transfer(owner_cap_b, OWNER);
+    transfer::public_transfer(governance_cap_a, GOVERNOR);
+    transfer::public_transfer(governance_cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8215,18 +8215,18 @@ fun multi_cycle_rate_symmetry_same_floor() {
 #[test]
 fun multi_cycle_supersede_floor_based_on_pending_rate() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let floor = escrow_corpus::min_rent_price_const();
     let delta = escrow_corpus::fixed_delta_value_const();
 
     // T1: 3 cycles, 30 SUI.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2: 1 cycle, 20 SUI = price_function(10 SUI).
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     assert!(floor_t2 == floor + delta, 0); // 20 SUI
     let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
@@ -8240,10 +8240,10 @@ fun multi_cycle_supersede_floor_based_on_pending_rate() {
     assert!(floor_t3 == floor_t2 + delta, 1); // 30 SUI
     assert!(floor_t3 > floor_t2, 2);           // strictly escalates
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8255,7 +8255,7 @@ fun multi_cycle_supersede_floor_based_on_pending_rate() {
 #[test]
 fun multi_cycle_full_tenure_handover_tracks_new_ceiling() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure = escrow_corpus::tenure_ceiling_const();
@@ -8263,11 +8263,11 @@ fun multi_cycle_full_tenure_handover_tracks_new_ceiling() {
     let _delta = escrow_corpus::fixed_delta_value_const();
 
     // T1: 3 cycles, ceiling = tenure × 3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2: 2 cycles. FullTenure: handover expiry = phase_start(0) + ceiling(tenure×3).
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
 
@@ -8290,11 +8290,11 @@ fun multi_cycle_full_tenure_handover_tracks_new_ceiling() {
     let handover_expiry_t3 = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry_t3), boundary_t2 + tenure * 2);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8308,7 +8308,7 @@ fun multi_cycle_full_tenure_handover_tracks_new_ceiling() {
 #[test]
 fun multi_cycle_countdown_scales_with_committed_tenures() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure    = escrow_corpus::tenure_ceiling_const();
@@ -8316,11 +8316,11 @@ fun multi_cycle_countdown_scales_with_committed_tenures() {
     let countdown = escrow_corpus::handover_countdown_c1_const(); // 25_000
 
     // T1: 3 cycles → extended_handover = 25k × 3 = 75k, extended_ceiling = 300k.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2: 2 cycles bids at t=0. expiry = min(0 + 75k, 0 + 300k) = 75k.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
 
@@ -8351,11 +8351,11 @@ fun multi_cycle_countdown_scales_with_committed_tenures() {
     let handover_expiry_t3 = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry_t3), expected_expiry);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8372,21 +8372,21 @@ fun multi_cycle_countdown_scales_with_committed_tenures() {
 #[test]
 fun degeneration_floor_cycles_one_equals_baseline() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let floor = escrow_corpus::min_rent_price_const();
     let delta = escrow_corpus::fixed_delta_value_const();
 
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // floor = price_function(stake / 1) = price_function(stake) = floor + delta.
     assert!(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk)) == floor + delta, 0);
 
-    transfer::public_transfer(cap, TENANT_ADDR_1);
+    transfer::public_transfer(cap, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8396,22 +8396,22 @@ fun degeneration_floor_cycles_one_equals_baseline() {
 #[test]
 fun degeneration_ceiling_cycles_one_equals_base_tenure() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
 
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // tenure_expiry = phase_start(0) + tenure × 1 = tenure.
     let expiry = escrow::tenure_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), tenure);
 
-    transfer::public_transfer(cap, TENANT_ADDR_1);
+    transfer::public_transfer(cap, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8423,18 +8423,18 @@ fun degeneration_ceiling_cycles_one_equals_base_tenure() {
 #[test]
 fun degeneration_supersede_floor_chain_cycles_one() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let floor = escrow_corpus::min_rent_price_const();
     let delta = escrow_corpus::fixed_delta_value_const();
 
     // T1: 1 cycle, pays floor.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // T2 bids: floor = price_function(floor) = floor + delta.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     assert!(floor_t2 == floor + delta, 0);
     let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
@@ -8444,10 +8444,10 @@ fun degeneration_supersede_floor_chain_cycles_one() {
     let floor_t3 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     assert!(floor_t3 == floor + delta * 2, 1);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8457,7 +8457,7 @@ fun degeneration_supersede_floor_chain_cycles_one() {
 #[test]
 fun degeneration_full_tenure_expiry_cycles_one() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let tenure = escrow_corpus::tenure_ceiling_const();
@@ -8465,21 +8465,21 @@ fun degeneration_full_tenure_expiry_cycles_one() {
     let _delta = escrow_corpus::fixed_delta_value_const();
 
     // T1: 1 cycle.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // T2 bids: FullTenure expiry = phase_start(0) + ceiling(tenure × 1) = tenure.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), tenure);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8489,7 +8489,7 @@ fun degeneration_full_tenure_expiry_cycles_one() {
 #[test]
 fun degeneration_countdown_expiry_cycles_one() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure    = escrow_corpus::tenure_ceiling_const();
@@ -8498,13 +8498,13 @@ fun degeneration_countdown_expiry_cycles_one() {
     let _delta    = escrow_corpus::fixed_delta_value_const();
 
     // T1: 1 cycle, ceiling = tenure.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // T2 bids at t = tenure/2. expiry = min(tenure/2 + countdown, 0 + tenure).
     let bid_time = tenure / 2;
     clock::set_for_testing(&mut clk, bid_time);
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
@@ -8514,24 +8514,24 @@ fun degeneration_countdown_expiry_cycles_one() {
     let expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), expected);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ─── §Multi-cycle: e2e replica for cycles(n) ─────────────────────────────────
 
-/// Owner earnings use extended ceiling in credit calculation.
+/// Governor earnings use extended ceiling in credit calculation.
 /// T1 (3 cycles, 300k ceiling) displaced at t=75k (25% through tenure).
 /// used_credit must be proportional to 75k/300k, NOT 75k/100k.
-/// If resolved_ceiling is wrong in credit_state, owner gets 3× too much.
+/// If resolved_ceiling is wrong in credit_state, governor gets 3× too much.
 #[test]
 fun multi_cycle_handover_earnings_proportional_to_extended_ceiling() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let _tenure   = escrow_corpus::tenure_ceiling_const();
@@ -8539,12 +8539,12 @@ fun multi_cycle_handover_earnings_proportional_to_extended_ceiling() {
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // T1: 3 cycles, principal = floor × 3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let principal = floor * 3;
     let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2 bids at t=0.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
@@ -8568,35 +8568,35 @@ fun multi_cycle_handover_earnings_proportional_to_extended_ceiling() {
     // If resolved_ceiling were 100k (wrong), used_credit ≈ principal/4 * 3 = too large.
     assert!(used_credit < principal / 4, 0);
 
-    // Owner received 90% of used_credit — mailed to the inbox at handover.
-    let owner_share = asset_state::handover_completed_owner_share(&completed[0]);
+    // Governor received 90% of used_credit — mailed to the inbox at handover.
+    let governor_share = asset_state::handover_completed_governor_share(&completed[0]);
     assert_eq!(
         earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
-        owner_share,
+        governor_share,
     );
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// Natural tenure expiry fires at extended ceiling, not at base tenure.
 /// T1 (3 cycles, 300k ceiling): tenure must expire at t=300k, not t=100k.
-/// Full stake distributed to owner+protocol at the correct boundary.
+/// Full stake distributed to governor+protocol at the correct boundary.
 #[test]
 fun multi_cycle_tenure_expiry_fires_at_extended_ceiling() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
 
     // T1: 3 cycles, principal = floor × 3, ceiling = tenure × 3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let principal = floor * 3;
     let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
@@ -8612,14 +8612,14 @@ fun multi_cycle_tenure_expiry_fires_at_extended_ceiling() {
     assert_eq!(asset_state::tenure_expired_last_acq_price(&expired[0]), principal);
     // Conservation: full principal consumed.
     assert_eq!(
-        asset_state::tenure_expired_owner_share(&expired[0]) +
+        asset_state::tenure_expired_governor_share(&expired[0]) +
         asset_state::tenure_expired_protocol_fee(&expired[0]),
         principal,
     );
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8633,7 +8633,7 @@ fun multi_cycle_rent_from_descent_extends_ceiling() {
     let ensemble     = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent
     // Override tenure_cycles to Multi so we can rent with cycles(3).
     let ensemble = escrow_corpus::with_tenure_cycles(ensemble, tenure_extend_policy::new_multi());
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure   = escrow_corpus::tenure_ceiling_const();
@@ -8642,7 +8642,7 @@ fun multi_cycle_rent_from_descent_extends_ceiling() {
 
     // Drive to Descent via test helpers.
     escrow::drive_to_rented_for_testing(
-        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+        &mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0,
     );
     escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1, 0, last_acq, phase_start_ms,
@@ -8663,21 +8663,21 @@ fun multi_cycle_rent_from_descent_extends_ceiling() {
     // The tenancy phase_start is `now` (when rent() was called).
     assert!(*option::borrow(&expiry) == now + tenure * 3, 1);
 
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// Retire flag on multi-cycle tenancy: handover fires at extended boundary.
-/// T1 (3 cycles) in Demand, owner sets retire flag.
+/// T1 (3 cycles) in Demand, governor sets retire flag.
 /// APT at countdown expiry: handover fires, T2 current with retiring flag.
 /// APT at T2's tenure boundary: collapses to Retired.
 #[test]
 fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure    = escrow_corpus::tenure_ceiling_const();
@@ -8686,18 +8686,18 @@ fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
     let _delta    = escrow_corpus::fixed_delta_value_const();
 
     // T1: 3 cycles.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2 bids at t=0 with 1 cycle.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), 0);
 
-    // Owner sets retire flag — state stays Demand.
-    sc.next_tx(OWNER);
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    // Governor sets retire flag — state stays Demand.
+    sc.next_tx(GOVERNOR);
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_demand(&escrow), 1);
 
     // T1.extended_handover = countdown × 3 = 75k.
@@ -8715,18 +8715,18 @@ fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
     assert!(escrow::is_retired(&escrow), 3);
 
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow2 = sc.take_shared<Escrow<DemoAsset, SUI>>();
-    let asset = escrow::claim_asset(escrow2, &owner_cap, &clk, sc.ctx());
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    let asset = escrow::claim_asset(escrow2, &governance_cap, &clk, sc.ctx());
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// Remain_credit returned to the displaced tenant after handover.
+/// Remain_credit returned to the displaced usufructuary after handover.
 /// T1 (3 cycles, 300 SUI, ceiling=300k) displaced at t=25k (8.3% through tenure).
 /// Explicit assertions:
 ///   - remain_credit = principal - used_credit (conservation)
@@ -8737,21 +8737,21 @@ fun multi_cycle_retire_flag_handover_fires_at_extended_boundary() {
 /// ~75% of principal, and T1 would receive only ~25%. The remain_credit > principal/2
 /// assertion catches this.
 #[test]
-fun multi_cycle_handover_remain_credit_returned_to_tenant() {
+fun multi_cycle_handover_remain_credit_returned_to_usufructuary() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // T1: 3 cycles, principal = floor × 3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let principal = floor * 3;
     let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2 bids at t=0 with 1 cycle.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
@@ -8774,16 +8774,16 @@ fun multi_cycle_handover_remain_credit_returned_to_tenant() {
     assert!(remain_credit > principal * 9 / 10, 0);
 
     // T1 physically receives the remain_credit as a Coin<SUI>.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     assert!(sc.has_most_recent_for_sender<coin::Coin<SUI>>(), 1);
     let refund = sc.take_from_sender<coin::Coin<SUI>>();
     assert_eq!(coin::value(&refund), remain_credit);
     coin::burn_for_testing(refund);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8806,34 +8806,34 @@ fun multi_cycle_cfg_instant(): policy_ensemble::PolicyEnsemble {
     )
 }
 
-/// Fixed scaling: bid at t=0 against n-cycle tenant → expiry = countdown × n exactly.
+/// Fixed scaling: bid at t=0 against n-cycle usufructuary → expiry = countdown × n exactly.
 /// Verifies the numeric value, not just that it is larger than the base countdown.
 /// A truncation error in the scaling multiplication would show here.
 #[test]
 fun handover_scaling_countdown_expiry_exact_at_bid_zero() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let floor     = escrow_corpus::min_rent_price_const();
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // T1: 3 cycles → extended_handover = countdown × 3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2 bids at t=0: expiry = min(0 + countdown×3, 0 + ceiling×3) = countdown×3.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), countdown * 3); // exact — no truncation
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8844,7 +8844,7 @@ fun handover_scaling_countdown_expiry_exact_at_bid_zero() {
 #[test]
 fun handover_scaling_no_double_scaling_across_handover_chain() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let _tenure   = escrow_corpus::tenure_ceiling_const();
@@ -8852,11 +8852,11 @@ fun handover_scaling_no_double_scaling_across_handover_chain() {
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // T1: 3 cycles → extended_handover = countdown×3 = 75k.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2: 2 cycles, bids at t=0 → expiry = countdown×3 = 75k.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
 
@@ -8890,44 +8890,44 @@ fun handover_scaling_no_double_scaling_across_handover_chain() {
     let expiry_t4 = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry_t4), boundary_t3 + countdown); // countdown × 1 — no accumulation
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     transfer::public_transfer(cap4, @0xD1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// Instant is invariant to cycles: extended_handover = 0 × n = 0.
-/// A bid against an n-cycle Instant tenant fires at bid_time regardless of n.
+/// A bid against an n-cycle Instant usufructuary fires at bid_time regardless of n.
 #[test]
 fun handover_scaling_instant_stays_zero_for_any_cycles() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_instant(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_instant(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let floor  = escrow_corpus::min_rent_price_const();
 
     // T1: 5 cycles. extended_handover = 0 × 5 = 0.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 5, sc.ctx()), tenures::tenures(5), &clk, sc.ctx());
 
     // T2 bids at t=1000. Instant: expiry = bid_time = 1000.
     let bid_time: u64 = 1_000;
     clock::set_for_testing(&mut clk, bid_time);
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     let expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), bid_time); // exactly bid_time, not bid_time + 5×anything
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8938,19 +8938,19 @@ fun handover_scaling_instant_stays_zero_for_any_cycles() {
 #[test]
 fun handover_scaling_full_tenure_expiry_equals_tenure_expiry() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
 
     // T1: 3 cycles → extended_ceiling = tenure×3, extended_handover = tenure×3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
     let tenure_expiry = *option::borrow(&escrow::tenure_expiry_ms(&escrow)); // tenure×3
 
     // T2 bids at t=0: FullTenure expiry = phase_start + extended_ceiling = tenure×3.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let expiry_at_zero = *option::borrow(&escrow::handover_expiry_ms(&escrow));
@@ -8970,11 +8970,11 @@ fun handover_scaling_full_tenure_expiry_equals_tenure_expiry() {
     assert_eq!(expiry_at_zero, tenure_expiry);
     assert_eq!(expiry_at_mid, tenure_expiry_t2);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -8990,22 +8990,22 @@ fun handover_scaling_rate_symmetry_per_committed_cycle() {
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // Two escrows — same countdown config.
-    let (mut escrow_a, owner_cap_a) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
-    let (mut escrow_b, owner_cap_b) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow_a, governance_cap_a) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow_b, governance_cap_b) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     // Escrow A: T1a rents 1 cycle.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap_a1 = escrow::rent(&mut escrow_a, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_a2 = escrow::floor_price_mist(&escrow_a, clock::timestamp_ms(&clk));
     let cap_a2 = escrow::rent(&mut escrow_a, mk_payment(floor_a2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let expiry_a = *option::borrow(&escrow::handover_expiry_ms(&escrow_a));
 
     // Escrow B: T1b rents 3 cycles (same per-cycle rate).
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap_b1 = escrow::rent(&mut escrow_b, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_b2 = escrow::floor_price_mist(&escrow_b, clock::timestamp_ms(&clk));
     let cap_b2 = escrow::rent(&mut escrow_b, mk_payment(floor_b2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let expiry_b = *option::borrow(&escrow::handover_expiry_ms(&escrow_b));
@@ -9016,14 +9016,14 @@ fun handover_scaling_rate_symmetry_per_committed_cycle() {
     assert_eq!(expiry_b, countdown * 3);       // 3 cycles: f × 3
     assert_eq!(expiry_a * 3, expiry_b);        // same rate per cycle
 
-    transfer::public_transfer(cap_a1, TENANT_ADDR_1);
-    transfer::public_transfer(cap_a2, TENANT_ADDR_2);
-    transfer::public_transfer(cap_b1, TENANT_ADDR_1);
-    transfer::public_transfer(cap_b2, TENANT_ADDR_2);
+    transfer::public_transfer(cap_a1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap_a2, USUFRUCTUARY_ADDR_2);
+    transfer::public_transfer(cap_b1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap_b2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(owner_cap_a, OWNER);
-    transfer::public_transfer(owner_cap_b, OWNER);
+    transfer::public_transfer(governance_cap_a, GOVERNOR);
+    transfer::public_transfer(governance_cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9036,7 +9036,7 @@ fun handover_scaling_rate_symmetry_per_committed_cycle() {
 #[test]
 fun normalization_rescale_is_exact_across_handover_chain() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let _tenure   = escrow_corpus::tenure_ceiling_const();
@@ -9044,11 +9044,11 @@ fun normalization_rescale_is_exact_across_handover_chain() {
     let countdown = escrow_corpus::handover_countdown_c1_const(); // 25_000
 
     // T1: 3 cycles → extended_handover = 25k × 3 = 75k.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2 bids. expiry = 75k. T2 wins.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
     // rescale: 75k × 2 / 3 = 50k (exact, 75k divisible by 3)
@@ -9072,30 +9072,30 @@ fun normalization_rescale_is_exact_across_handover_chain() {
     // T3.handover must be exactly countdown — no accumulated rounding error.
     assert_eq!(*option::borrow(&expiry), countdown * 3 + countdown * 2 + countdown);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     transfer::public_transfer(cap4, @0xD1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// Descent ceiling compounding bug: T1(n) expires → Descent carries extended
-/// ceiling (base×n). New tenant from Descent with cycles(m) should get
+/// ceiling (base×n). New usufructuary from Descent with cycles(m) should get
 /// ceiling = base×m, NOT base×n×m.
 #[test]
 fun normalization_descent_ceiling_not_compounded_after_multi_cycle_expiry() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure = escrow_corpus::tenure_ceiling_const();
     let floor  = escrow_corpus::min_rent_price_const();
 
     // T1: 3 cycles, ceiling = tenure×3 = 300k.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T1 tenure expires at 300k → Descent. Descent must carry base ceiling=100k.
@@ -9106,9 +9106,9 @@ fun normalization_descent_ceiling_not_compounded_after_multi_cycle_expiry() {
     let entry_time = tenure * 3;
     clock::set_for_testing(&mut clk, entry_time);
 
-    // New tenant from Descent with cycles(2): ceiling must be base×2 = 200k.
+    // New usufructuary from Descent with cycles(2): ceiling must be base×2 = 200k.
     // Buggy: Descent carries resolved_ceiling=300k → do_install produces 300k×2=600k.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
 
@@ -9118,22 +9118,22 @@ fun normalization_descent_ceiling_not_compounded_after_multi_cycle_expiry() {
     let expiry = escrow::tenure_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry), entry_time + tenure * 2);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// Descent carries normalized handover, not extended.
-/// T1(3 cycles) expires → Descent. New tenant with cycles(2) must see:
+/// T1(3 cycles) expires → Descent. New usufructuary with cycles(2) must see:
 ///   ceiling  = base × 2 (not base × 3 × 2)
 ///   handover = countdown × 2 (not countdown × 3 × 2)
 #[test]
 fun normalization_descent_handover_also_normalized_after_multi_cycle_expiry() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure    = escrow_corpus::tenure_ceiling_const();
@@ -9141,7 +9141,7 @@ fun normalization_descent_handover_also_normalized_after_multi_cycle_expiry() {
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // T1: 3 cycles → extended_ceiling=300k, extended_handover=75k.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(tenure * 3), sc.ctx());
@@ -9151,7 +9151,7 @@ fun normalization_descent_handover_also_normalized_after_multi_cycle_expiry() {
     clock::set_for_testing(&mut clk, entry_time);
 
     // T2 from Descent with cycles(2).
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2_a = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
 
@@ -9160,17 +9160,17 @@ fun normalization_descent_handover_also_normalized_after_multi_cycle_expiry() {
     assert_eq!(*option::borrow(&expiry), entry_time + tenure * 2);
 
     // Handover: countdown×2 = 50k. (Not countdown×3×2 = 150k.)
-    sc.next_tx(TENANT_ADDR_1); // bid from a third party
+    sc.next_tx(USUFRUCTUARY_ADDR_1); // bid from a third party
     let floor_t3 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2_b = escrow::rent(&mut escrow, mk_payment(floor_t3, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let handover_expiry = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_expiry), entry_time + countdown * 2);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2_a, TENANT_ADDR_2);
-    transfer::public_transfer(cap2_b, TENANT_ADDR_1);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2_a, USUFRUCTUARY_ADDR_2);
+    transfer::public_transfer(cap2_b, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9180,7 +9180,7 @@ fun normalization_descent_handover_also_normalized_after_multi_cycle_expiry() {
 #[test]
 fun normalization_descent_ceiling_after_handover_then_expiry() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure    = escrow_corpus::tenure_ceiling_const();
@@ -9188,11 +9188,11 @@ fun normalization_descent_ceiling_after_handover_then_expiry() {
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // T1: 3 cycles.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2: 2 cycles bids → expiry = countdown×3 = 75k.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
 
@@ -9214,11 +9214,11 @@ fun normalization_descent_ceiling_after_handover_then_expiry() {
     let expiry_t3 = escrow::tenure_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&expiry_t3), expiry_t2 + tenure); // base × 1 only
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9229,7 +9229,7 @@ fun normalization_descent_ceiling_after_handover_then_expiry() {
 #[test]
 fun normalization_same_cycle_count_is_identity() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let tenure    = escrow_corpus::tenure_ceiling_const();
@@ -9237,11 +9237,11 @@ fun normalization_same_cycle_count_is_identity() {
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // T1: 3 cycles → ceiling=300k, handover=75k.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2: also 3 cycles → rescale(75k, 3, 3) = 75k, rescale(300k, 3, 3) = 300k.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2 * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
@@ -9259,16 +9259,16 @@ fun normalization_same_cycle_count_is_identity() {
     let handover_t3 = escrow::handover_expiry_ms(&escrow);
     assert_eq!(*option::borrow(&handover_t3), countdown * 3 + countdown * 3); // bid + 75k
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     transfer::public_transfer(cap3, @0xC1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// After do_handover, the winning tenant receives exactly base × bidding_cycles
+/// After do_handover, the winning usufructuary receives exactly base × bidding_cycles
 /// for both ceiling and handover — no compounding with committed_tenures.
 /// T1(3) → T2(2) wins. Verified immediately after handover, without a
 /// subsequent bid needed for the handover check.
@@ -9279,7 +9279,7 @@ fun normalization_same_cycle_count_is_identity() {
 #[test]
 fun do_handover_winner_receives_base_times_bidding_cycles_no_compound() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     let tenure    = escrow_corpus::tenure_ceiling_const();
@@ -9287,11 +9287,11 @@ fun do_handover_winner_receives_base_times_bidding_cycles_no_compound() {
     let countdown = escrow_corpus::handover_countdown_c1_const();
 
     // T1: 3 cycles → ceiling=300k, handover=75k.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T2: 2 cycles bids at t=0. T1.handover=75k → expiry=75k.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
 
@@ -9314,10 +9314,10 @@ fun do_handover_winner_receives_base_times_bidding_cycles_no_compound() {
     let handover_if_bid_now = escrow::handover_expiry_if_bid_at(&escrow, boundary);
     assert_eq!(*option::borrow(&handover_if_bid_now), boundary + countdown * 2);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9347,11 +9347,11 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), // h=1 descent window
         tenure_extend_policy::new_multi(),
     );
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     // T1: 3 cycles → extended_ceiling = tenure×3 = 300k. Stake = floor×3.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let principal = floor * 3;
     let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
@@ -9379,9 +9379,9 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     let price_past = escrow::floor_price_mist(&escrow, t_expiry + descent * 2);
     assert_eq!(price_past, floor);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9405,7 +9405,7 @@ fun retire_commitment_init_anchor_equals_integrated_at() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), escrow::integrated_at_ms(&escrow));
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -9420,7 +9420,7 @@ fun retire_commitment_init_immediate_floor_ms_is_none() {
     assert!(escrow::retire_commitment_is_immediate(&escrow), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -9438,7 +9438,7 @@ fun retire_commitment_init_deferred_floor_ms_is_some_n() {
     assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -9456,7 +9456,7 @@ fun retire_commitment_init_deferred_unlocks_at_integrated_plus_floor() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), integrated + floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -9468,21 +9468,21 @@ fun retire_commitment_update_ensemble_does_not_change_policy() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let clk    = clock::create_for_testing(sc.ctx());
 
     // update_ensemble with a different PolicyEnsemble (h=1 descent axis differs).
     let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     // Commitment is still Deferred(floor) — update_ensemble cannot change it.
     assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
     assert!(escrow::retire_commitment_is_deferred(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9493,7 +9493,7 @@ fun retire_commitment_update_ensemble_does_not_change_anchor() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -9503,14 +9503,14 @@ fun retire_commitment_update_ensemble_does_not_change_anchor() {
     // Advance clock and reset config — anchor must not move.
     clock::set_for_testing(&mut clk, 500);
     let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), unlocks_before);
     // integrated_at == 0 (clock was 0 at integrate), floor unchanged.
     assert_eq!(unlocks_before, 0 + floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9522,14 +9522,14 @@ fun retire_commitment_update_ensemble_does_not_change_anchor() {
 fun retire_commitment_extend_valid_increases_unlocks_at() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
     let before = escrow::retire_commitment_unlocks_at_ms(&escrow);
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk, sc.ctx());
     let after = escrow::retire_commitment_unlocks_at_ms(&escrow);
@@ -9538,7 +9538,7 @@ fun retire_commitment_extend_valid_increases_unlocks_at() {
     assert!(after > before, 1); // Deferred(floor) > Immediate(0)
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9549,15 +9549,15 @@ fun retire_commitment_extend_valid_increases_unlocks_at() {
 fun retire_commitment_extend_with_immediate_when_locked_aborts() {
     let mut sc  = setup();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0, before expiry
 
-    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
+    escrow::extend_retire_commitment(&mut escrow, &governance_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9569,16 +9569,16 @@ fun retire_commitment_extend_with_immediate_when_unlocked_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor + 1); // past expiry
 
-    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
+    escrow::extend_retire_commitment(&mut escrow, &governance_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9588,34 +9588,34 @@ fun retire_commitment_extend_with_immediate_when_unlocked_aborts() {
 #[test, expected_failure(abort_code = asset_state::ERetireCommitmentNotExtended, location = usufruct::asset_state)]
 fun retire_commitment_extend_immediate_to_immediate_aborts() {
     let mut sc  = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_retire_commitment(&mut escrow, &owner_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
+    escrow::extend_retire_commitment(&mut escrow, &governance_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 /// III-11: Immediate → Deferred(N).
-/// An owner who integrated with no commitment can install one later —
+/// An governor who integrated with no commitment can install one later —
 /// a deferred trust signal added after the fact.
 /// Accumulate: old_expiry = 0 + 0 = 0. new_expiry = 0 + floor = floor.
 #[test]
 fun retire_commitment_extend_immediate_to_deferred() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk, sc.ctx());
 
@@ -9623,7 +9623,7 @@ fun retire_commitment_extend_immediate_to_deferred() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9634,22 +9634,22 @@ fun retire_commitment_extend_immediate_to_deferred() {
 fun retire_commitment_extend_immediate_to_deferred_blocks_retire() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk, sc.ctx());
 
     // Gate is now locked. Retire before expiry (t=0 < floor) must abort.
     clock::set_for_testing(&mut clk, floor - 1);
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9664,7 +9664,7 @@ fun retire_commitment_extend_immediate_to_deferred_blocks_retire() {
 fun retire_commitment_extend_anchor_moves_to_old_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -9672,7 +9672,7 @@ fun retire_commitment_extend_anchor_moves_to_old_expiry() {
     // Advance clock to t=1_000 before extending.
     clock::set_for_testing(&mut clk, 1_000);
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk, sc.ctx());
 
@@ -9681,7 +9681,7 @@ fun retire_commitment_extend_anchor_moves_to_old_expiry() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9694,7 +9694,7 @@ fun retire_commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
     let mut sc    = setup();
     let floor     = escrow_corpus::retire_deferred_f1_const();
     let half_floor = floor / 2;
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -9702,7 +9702,7 @@ fun retire_commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
 
     // Extend to Deferred(half_floor) — floor_ms reflects the policy floor, not the anchor.
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(half_floor)),
         &clk, sc.ctx());
 
@@ -9711,7 +9711,7 @@ fun retire_commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
     assert_eq!(escrow::retire_commitment_unlocks_at_ms(&escrow), half_floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9722,16 +9722,16 @@ fun retire_commitment_extend_floor_ms_reflects_new_policy_not_anchor() {
 #[test]
 fun retire_commitment_gate_immediate_retire_at_zero() {
     let mut sc  = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk    = clock::create_for_testing(sc.ctx());
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9742,16 +9742,16 @@ fun retire_commitment_gate_deferred_retire_before_floor_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor - 1); // one ms before unlock
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9762,17 +9762,17 @@ fun retire_commitment_gate_deferred_retire_at_floor_passes() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor); // exactly at unlock
 
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9784,7 +9784,7 @@ fun retire_commitment_gate_deferred_retire_at_floor_passes() {
 fun retire_commitment_gate_extend_reopens_gate_aborts_immediately_after() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -9792,15 +9792,15 @@ fun retire_commitment_gate_extend_reopens_gate_aborts_immediately_after() {
     // Extend at t=100 — gate reopens to t=100+floor.
     clock::set_for_testing(&mut clk, 100);
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk, sc.ctx());
 
     // Retire at t=100 (= new anchor, but < 100+floor) → abort.
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9809,7 +9809,7 @@ fun retire_commitment_gate_extend_reopens_gate_aborts_immediately_after() {
 fun retire_commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -9817,17 +9817,17 @@ fun retire_commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
     // Extend at t=100 to Deferred(floor).
     clock::set_for_testing(&mut clk, 100);
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk, sc.ctx());
 
     // Retire at t = 100+floor (exactly at new expiry) → passes.
     clock::set_for_testing(&mut clk, 100 + floor);
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
     assert!(escrow::is_retiring(&escrow) || escrow::is_retired(&escrow), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9839,14 +9839,14 @@ fun retire_commitment_gate_extend_reopens_gate_passes_at_new_expiry() {
 fun retire_commitment_chain_two_extensions_both_valid() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(0), retire_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
     // First extend: Immediate → Deferred(floor). new_expiry = old_expiry + floor = 0 + floor = floor.
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk, sc.ctx());
     let after_first = escrow::retire_commitment_unlocks_at_ms(&escrow);
@@ -9854,7 +9854,7 @@ fun retire_commitment_chain_two_extensions_both_valid() {
 
     // Second extend: Deferred(floor) → Deferred(floor*2). new_expiry = floor + floor*2 = floor*3.
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor * 2)),
         &clk, sc.ctx());
     let after_second = escrow::retire_commitment_unlocks_at_ms(&escrow);
@@ -9862,7 +9862,7 @@ fun retire_commitment_chain_two_extensions_both_valid() {
     assert!(after_second > after_first, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9875,7 +9875,7 @@ fun retire_commitment_chain_same_floor_from_later_time_passes() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
     let tag     = escrow_corpus::tag(0, 0, 0, 0, 1);
-    let (mut escrow, owner_cap) = integrate_and_take_with_retire_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_retire_commitment(
         escrow_corpus::by_tag(tag), escrow_corpus::retire_commitment_by_tag(tag), &mut sc,
     );
     // old_anchor=0, old_expiry=floor.
@@ -9885,7 +9885,7 @@ fun retire_commitment_chain_same_floor_from_later_time_passes() {
     // new_expiry = floor + floor = 2*floor (accumulate semantics).
     clock::set_for_testing(&mut clk, 500);
     escrow::extend_retire_commitment(
-        &mut escrow, &owner_cap,
+        &mut escrow, &governance_cap,
         retire_commitment_policy::new_deferred(phases::duration(floor)),
         &clk, sc.ctx());
 
@@ -9893,7 +9893,7 @@ fun retire_commitment_chain_same_floor_from_later_time_passes() {
     assert_eq!(escrow::retire_commitment_floor_ms(&escrow), option::some(floor));
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9905,7 +9905,7 @@ fun retire_commitment_chain_same_floor_from_later_time_passes() {
 //   1. `execute_integrate`                — Bootstrap → Idle.
 //   2. `do_auction_expiry`                — Descent  → Idle (after
 //      applying any `pending_config`).
-//   3. `execute_update_ensemble` arm Idle   — owner reset → Idle (after
+//   3. `execute_update_ensemble` arm Idle   — governor reset → Idle (after
 //      applying the new config directly).
 // Once drawn, the four `resolved_*` (floor/ceiling/handover/descent)
 // flow through every variant of the cycle without re-draw. The tests
@@ -9924,7 +9924,7 @@ fun update_ensemble_demand_schedules_pending() {
     // c=1 Fixed — prevents APT from immediately firing the handover
     // inside update_ensemble, keeping the escrow in Demand after the call.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     // Rent T1: Idle → Occupied.
@@ -9939,7 +9939,7 @@ fun update_ensemble_demand_schedules_pending() {
 
     // Schedule a config update while in Demand.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     // State remains Demand; pending config is now set.
     assert!(escrow::is_demand(&escrow), 1);
@@ -9949,10 +9949,10 @@ fun update_ensemble_demand_schedules_pending() {
     let scheduled = event::events_by_type<EnsembleUpdateScheduled>();
     assert_eq!(scheduled.length(), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9964,7 +9964,7 @@ fun update_ensemble_demand_schedules_pending() {
 fun update_ensemble_demand_retiring_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
     // Rent T1: Idle → Occupied.
@@ -9983,13 +9983,13 @@ fun update_ensemble_demand_retiring_aborts() {
 
     // update_ensemble must abort — retire flag blocks config changes in Demand.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     // Unreachable — expected_failure captures the abort above.
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -9999,20 +9999,20 @@ fun update_ensemble_demand_retiring_aborts() {
 // Targeted tests for abort paths and state/cap combinations that were not
 // covered by prior sections.
 
-// ── execute_soft_burn_tenant_cap: non-renting happy path ───────────────────────────
+// ── execute_soft_burn_usufruct_cap: non-renting happy path ───────────────────────────
 //
 // In Idle/Descent/Retired, any cap belonging to this escrow is stale by
 // construction (no active tenancy). The match `_ => {}` passes through and
 // the cap is burned unconditionally.
 
-/// Burn a stale TenantCap in Idle state after the tenancy has ended.
-/// Covers the Idle arm (`_ => {}`) of execute_soft_burn_tenant_cap.
+/// Burn a stale UsufructCap in Idle state after the tenancy has ended.
+/// Covers the Idle arm (`_ => {}`) of execute_soft_burn_usufruct_cap.
 #[test]
 fun burn_stale_cap_in_idle_succeeds() {
     let mut sc = setup();
     // h=0 Skipped descent: tenure expires → Descent → immediately Idle via APT.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -10024,10 +10024,10 @@ fun burn_stale_cap_in_idle_succeeds() {
     assert!(escrow::is_idle(&escrow), 0);
 
     // cap_t1 is now stale — burn it from Idle state.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10039,7 +10039,7 @@ fun rent_with_insufficient_payment_in_descent_aborts() {
     let mut sc = setup();
     // h=1 Fixed: tenure expires → Descent (stays there, no immediate collapse).
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -10052,11 +10052,11 @@ fun rent_with_insufficient_payment_in_descent_aborts() {
     // Pay 0 — below any possible Dutch floor.
     let zero = mk_payment(0, sc.ctx());
     let cap_zero = escrow::rent(&mut escrow, zero, tenures::tenures(1), &clk, sc.ctx());
-    transfer::public_transfer(cap_zero, OWNER);
+    transfer::public_transfer(cap_zero, GOVERNOR);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10065,7 +10065,7 @@ fun rent_with_insufficient_payment_in_descent_aborts() {
 fun rent_with_insufficient_payment_in_occupied_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -10075,11 +10075,11 @@ fun rent_with_insufficient_payment_in_occupied_aborts() {
     // Pay 0 — below the ascending floor price for placing a bid.
     let zero = mk_payment(0, sc.ctx());
     let cap_zero = escrow::rent(&mut escrow, zero, tenures::tenures(1), &clk, sc.ctx());
-    transfer::public_transfer(cap_zero, OWNER);
+    transfer::public_transfer(cap_zero, GOVERNOR);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10089,7 +10089,7 @@ fun rent_with_insufficient_payment_in_demand_aborts() {
     let mut sc = setup();
     // c=1 Fixed: prevents handover from firing immediately on second rent.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -10102,40 +10102,40 @@ fun rent_with_insufficient_payment_in_demand_aborts() {
     // Pay 0 — below the escalating floor for superseding the current bid.
     let zero = mk_payment(0, sc.ctx());
     let cap_zero = escrow::rent(&mut escrow, zero, tenures::tenures(1), &clk, sc.ctx());
-    transfer::public_transfer(cap_zero, OWNER);
+    transfer::public_transfer(cap_zero, GOVERNOR);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ── execute_update_ensemble: wrong cap ──────────────────────────────────────────
 
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun update_ensemble_with_wrong_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, _owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, _governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     // Cap issued for a different escrow.
-    let foreign_cap = owner_cap::new(
-        escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx(),
+    let foreign_cap = governance_cap::new(
+        escrow_identity::new(object::id_from_address(@0xDEAD)), GOVERNOR, sc.ctx(),
     );
     escrow::update_ensemble(&mut escrow, &foreign_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(foreign_cap, OWNER);
-    transfer::public_transfer(_owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
+    transfer::public_transfer(_governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// A genuine OwnerCap from a different real escrow is rejected on update_ensemble.
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+/// A genuine GovernanceCap from a different real escrow is rejected on update_ensemble.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun update_ensemble_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
@@ -10147,34 +10147,34 @@ fun update_ensemble_with_real_foreign_escrow_cap_aborts() {
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(cap_a, OWNER);
-    transfer::public_transfer(cap_b, OWNER);
+    transfer::public_transfer(cap_a, GOVERNOR);
+    transfer::public_transfer(cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
 // ── execute_extend_commitment: wrong cap + non-monotonic policy ───────────────
 
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun extend_retire_commitment_with_wrong_cap_aborts() {
     let mut sc = setup();
-    let (mut escrow, _owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, _governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    let foreign_cap = owner_cap::new(
-        escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx(),
+    let foreign_cap = governance_cap::new(
+        escrow_identity::new(object::id_from_address(@0xDEAD)), GOVERNOR, sc.ctx(),
     );
     escrow::extend_retire_commitment(&mut escrow, &foreign_cap, retire_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(foreign_cap, OWNER);
-    transfer::public_transfer(_owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
+    transfer::public_transfer(_governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// A genuine OwnerCap from a different real escrow is rejected on extend_retire_commitment.
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+/// A genuine GovernanceCap from a different real escrow is rejected on extend_retire_commitment.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun extend_retire_commitment_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
@@ -10186,8 +10186,8 @@ fun extend_retire_commitment_with_real_foreign_escrow_cap_aborts() {
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(cap_a, OWNER);
-    transfer::public_transfer(cap_b, OWNER);
+    transfer::public_transfer(cap_a, GOVERNOR);
+    transfer::public_transfer(cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10214,13 +10214,13 @@ fun claim_asset_aborts_in_descent_with_window_descent() {
 
     // Return the &mut escrow, then take it by value for claim_asset.
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     let asset = escrow::claim_asset<DemoAsset, SUI>(escrow, &cap, &clk, sc.ctx());
 
-    transfer::public_transfer(cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10233,7 +10233,7 @@ fun tenure_settlement_aborts_on_idle() {
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let (_, _) = escrow::tenure_settlement(&escrow);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -10245,7 +10245,7 @@ fun handover_settlement_aborts_on_idle() {
     let (escrow, cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let (_, _, _) = escrow::handover_settlement(&escrow, 0);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -10253,11 +10253,11 @@ fun handover_settlement_aborts_on_idle() {
 
 /// execute_borrow in Descent: use h=1 (Fixed) so APT does not collapse
 /// Descent→Idle before execute_borrow runs. The _s => abort arm fires on Descent.
-#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EStaleUsufructCap, location = usufruct::asset_state)]
 fun borrow_asset_aborts_in_descent_with_window_descent() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -10268,27 +10268,27 @@ fun borrow_asset_aborts_in_descent_with_window_descent() {
 
     // Borrow with a cap that has the correct escrow identity — APT will not
     // fire because the descent window is not yet closed.
-    let foreign_cap = tenant_cap::new(
-        escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx(),
+    let foreign_cap = usufruct_cap::new(
+        escrow_identity::new(object::id(&escrow)), USUFRUCTUARY_ADDR_1, sc.ctx(),
     );
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
 
-    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
     asset_state::destroy_receipt_for_testing(receipt);
-    transfer::public_transfer(foreign_cap, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// execute_soft_burn_tenant_cap in Descent: _ => {} passthrough (any cap is stale).
+/// execute_soft_burn_usufruct_cap in Descent: _ => {} passthrough (any cap is stale).
 #[test]
 fun burn_stale_cap_in_descent_succeeds() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     let p = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
@@ -10297,32 +10297,32 @@ fun burn_stale_cap_in_descent_succeeds() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_descending(&escrow), 0);
 
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// execute_soft_burn_tenant_cap in Retired: _ => {} passthrough.
+/// execute_soft_burn_usufruct_cap in Retired: _ => {} passthrough.
 /// Drive Idle → Retired directly; burn a synthetic cap for this escrow —
 /// any cap is stale in Retired (no active tenancy).
 #[test]
 fun burn_stale_cap_in_retired_succeeds() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_retired_for_testing(&mut escrow);
-    let stale_cap = tenant_cap::new(
-        escrow_identity::new(object::id(&escrow)), TENANT_ADDR_1, sc.ctx(),
+    let stale_cap = usufruct_cap::new(
+        escrow_identity::new(object::id(&escrow)), USUFRUCTUARY_ADDR_1, sc.ctx(),
     );
-    escrow::soft_burn_tenant_cap(&mut escrow, stale_cap, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, stale_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10335,7 +10335,7 @@ fun handover_settlement_aborts_on_retired() {
     escrow::drive_to_retired_for_testing(&mut escrow);
     let (_, _, _) = escrow::handover_settlement(&escrow, 0);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -10352,9 +10352,9 @@ fun handover_settlement_aborts_on_descent() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_descending(&escrow), 0);
     let (_, _, _) = escrow::handover_settlement(&escrow, 0);
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10381,7 +10381,7 @@ fun policy_kind_views_tag0() {
     assert_eq!(escrow::retire_commitment_kind(&escrow),        b"Immediate".to_string());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -10397,7 +10397,7 @@ fun retire_commitment_anchor_and_remaining_immediate() {
     assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, 999), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -10418,7 +10418,7 @@ fun retire_commitment_anchor_and_remaining_deferred() {
     assert_eq!(escrow::retire_commitment_remaining_ms(&escrow, floor),    0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -10432,7 +10432,7 @@ fun retire_commitment_anchor_and_remaining_deferred() {
 #[test]
 fun event_pin_asset_integrated_all_fields() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     let ensemble = escrow_corpus::by_tag(0);
     let fee_ref  = sc.take_immutable<ProtocolFeeRef>();
@@ -10444,9 +10444,9 @@ fun event_pin_asset_integrated_all_fields() {
     let (cap, inbox)  = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    let owner_cap_id  = object::id(&cap);
+    let governance_cap_id  = object::id(&cap);
     let inbox_id      = object::id(&inbox);
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
 
     // AssetIntegrated is emitted in this tx — assert every field here (events
     // are scoped per-tx). Cross-check escrow_id against the shared object below.
@@ -10454,8 +10454,8 @@ fun event_pin_asset_integrated_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     let event_escrow_id = asset_state::asset_integrated_escrow_id(e);
-    assert_eq!(asset_state::asset_integrated_owner_cap_id(e),      owner_cap_id);
-    assert_eq!(asset_state::asset_integrated_owner_address(e),     OWNER);
+    assert_eq!(asset_state::asset_integrated_governance_cap_id(e),      governance_cap_id);
+    assert_eq!(asset_state::asset_integrated_governor_address(e),     GOVERNOR);
     assert_eq!(asset_state::asset_integrated_asset_id(e),          asset_id);
     assert_eq!(asset_state::asset_integrated_fee_inbox_id(e),      protocol_fee_ref::proj_inbox_id(&fee_ref));
     assert_eq!(asset_state::asset_integrated_earnings_inbox_id(e), inbox_id);
@@ -10465,9 +10465,9 @@ fun event_pin_asset_integrated_all_fields() {
 
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow_obj = sc.take_shared<Escrow<DemoAsset, SUI>>();
     assert_eq!(event_escrow_id, object::id(&escrow_obj));
     test_scenario::return_shared(escrow_obj);
@@ -10480,7 +10480,7 @@ fun event_pin_asset_integrated_all_fields() {
 fun event_pin_rent_started_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 7_000);
 
@@ -10493,8 +10493,8 @@ fun event_pin_rent_started_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::rent_started_escrow_id(e),        escrow_id);
-    assert_eq!(asset_state::rent_started_tenant_cap_id(e),    object::id(&cap_t1));
-    assert_eq!(asset_state::rent_started_tenant_address(e),           OWNER);
+    assert_eq!(asset_state::rent_started_usufruct_cap_id(e),    object::id(&cap_t1));
+    assert_eq!(asset_state::rent_started_usufructuary_address(e),           GOVERNOR);
     assert_eq!(asset_state::rent_started_phase_start_ms(e),   7_000);
     assert_eq!(asset_state::rent_started_price_paid(e),       floor);
     assert_eq!(asset_state::rent_started_floor_price(e),      floor);
@@ -10504,9 +10504,9 @@ fun event_pin_rent_started_all_fields() {
     assert_eq!(asset_state::rent_started_asset_type(e),        string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::rent_started_coin_type(e),         string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10517,7 +10517,7 @@ fun event_pin_rent_started_all_fields() {
 fun event_pin_auction_expired_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
 
     let escrow_id = object::id(&escrow);
     let last_acq  = escrow_corpus::min_rent_price_const() * 2;
@@ -10525,7 +10525,7 @@ fun event_pin_auction_expired_all_fields() {
 
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(
@@ -10546,7 +10546,7 @@ fun event_pin_auction_expired_all_fields() {
     assert_eq!(asset_state::auction_expired_timestamp_ms(e),    boundary_ms);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     sc.end();
 }
 
@@ -10555,7 +10555,7 @@ fun event_pin_auction_expired_all_fields() {
 #[test]
 fun event_pin_cycle_params_resolved_all_fields() {
     let mut sc = setup();
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
 
     // c=1 Fixed handover, h=1 Fixed descent: every resolved field is a known const.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
@@ -10567,7 +10567,7 @@ fun event_pin_cycle_params_resolved_all_fields() {
     let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
         asset, ensemble, retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
 
     // CycleParamsResolved is emitted in this tx — assert every field here (events
     // are scoped per-tx). Cross-check escrow_id against the shared object below.
@@ -10582,10 +10582,10 @@ fun event_pin_cycle_params_resolved_all_fields() {
     assert_eq!(asset_state::cycle_params_resolved_timestamp_ms(e), 42_000);
 
     test_scenario::return_immutable(fee_ref);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     assert_eq!(event_escrow_id, object::id(&escrow));
     test_scenario::return_shared(escrow);
@@ -10599,12 +10599,12 @@ fun event_pin_cycle_params_resolved_all_fields() {
 fun cycle_params_resolved_not_emitted_on_unchanged_auction_expiry() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // no pending config
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
 
     let last_acq       = escrow_corpus::min_rent_price_const() * 2;
     let phase_start_ms = escrow_corpus::tenure_ceiling_const();
     escrow::drive_to_rented_for_testing(
-        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+        &mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0,
     );
     escrow::drive_to_descent_for_testing(&mut escrow, STAKE_T1, 0, last_acq, phase_start_ms);
 
@@ -10616,7 +10616,7 @@ fun cycle_params_resolved_not_emitted_on_unchanged_auction_expiry() {
     assert_eq!(event::events_by_type<AuctionExpired>().length(), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     sc.end();
 }
 
@@ -10627,11 +10627,11 @@ fun cycle_params_resolved_not_emitted_on_unchanged_auction_expiry() {
 fun cycle_params_resolved_not_emitted_while_pending() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // A: handover Off
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_rented_for_testing(
-        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+        &mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0,
     );
     escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
@@ -10640,7 +10640,7 @@ fun cycle_params_resolved_not_emitted_while_pending() {
 
     // Queue ensemble B (handover Fixed) while in Descent — buffered, not adopted.
     let pending = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    escrow::update_ensemble(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, pending, &clk, sc.ctx());
 
     assert!(escrow::has_pending_ensemble_update(&escrow), 0);
     assert_eq!(event::events_by_type<EnsembleUpdateScheduled>().length(), 1);
@@ -10648,7 +10648,7 @@ fun cycle_params_resolved_not_emitted_while_pending() {
     assert_eq!(event::events_by_type<CycleParamsResolved>().length(), 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10661,11 +10661,11 @@ fun cycle_params_resolved_not_emitted_while_pending() {
 fun cycle_params_resolved_on_adoption_reflects_new_ensemble() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // A: handover Off
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk = clock::create_for_testing(sc.ctx());
 
     escrow::drive_to_rented_for_testing(
-        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+        &mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0,
     );
     escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
@@ -10673,7 +10673,7 @@ fun cycle_params_resolved_on_adoption_reflects_new_ensemble() {
     );
 
     let pending = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // B: handover Fixed
-    escrow::update_ensemble(&mut escrow, &owner_cap, pending, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, pending, &clk, sc.ctx());
 
     // Adopt the pending at auction expiry via the production path.
     let boundary_ms =
@@ -10687,7 +10687,7 @@ fun cycle_params_resolved_on_adoption_reflects_new_ensemble() {
     assert_eq!(asset_state::cycle_params_resolved_handover_ms(&evts[0]), escrow_corpus::handover_countdown_c1_const());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10698,12 +10698,12 @@ fun cycle_params_resolved_on_adoption_reflects_new_ensemble() {
 fun event_pin_asset_retired_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 99_000);
 
     let escrow_id = object::id(&escrow);
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     let evts = event::events_by_type<AssetRetired>();
     assert_eq!(evts.length(), 1);
@@ -10714,7 +10714,7 @@ fun event_pin_asset_retired_all_fields() {
     assert_eq!(asset_state::asset_retired_timestamp_ms(e), 99_000);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10725,28 +10725,28 @@ fun event_pin_asset_retired_all_fields() {
 fun event_pin_retire_flag_set_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk      = clock::create_for_testing(sc.ctx());
 
     let escrow_id = object::id(&escrow);
 
     let p1    = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
-    escrow::retire(&mut escrow, &owner_cap, &clk, sc.ctx());
+    escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
 
     let evts = event::events_by_type<RetireFlagSet>();
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::retire_flag_set_escrow_id(e),    escrow_id);
-    assert_eq!(asset_state::retire_flag_set_owner_cap_id(e), object::id(&owner_cap));
-    assert_eq!(asset_state::retire_flag_set_owner_address(e),        OWNER);
+    assert_eq!(asset_state::retire_flag_set_governance_cap_id(e), object::id(&governance_cap));
+    assert_eq!(asset_state::retire_flag_set_governor_address(e),        GOVERNOR);
     assert_eq!(asset_state::retire_flag_set_asset_type(e),   string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::retire_flag_set_coin_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::retire_flag_set_timestamp_ms(e), 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10758,7 +10758,7 @@ fun event_pin_bid_placed_all_fields() {
     let mut sc   = setup();
     // c=1 Fixed so handover_countdown_expiry is non-zero and deterministic.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
     let escrow_id    = object::id(&escrow);
@@ -10783,12 +10783,12 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::bid_placed_escrow_id(e),                 escrow_id);
-    assert_eq!(asset_state::bid_placed_active_tenant_cap_id(e),     object::id(&cap_t1));
-    assert_eq!(asset_state::bid_placed_active_tenant_address(e),       OWNER);
-    assert_eq!(asset_state::bid_placed_active_tenant_stake(e),      floor);
+    assert_eq!(asset_state::bid_placed_active_usufruct_cap_id(e),     object::id(&cap_t1));
+    assert_eq!(asset_state::bid_placed_active_usufructuary_address(e),       GOVERNOR);
+    assert_eq!(asset_state::bid_placed_active_stake_balance(e),      floor);
     assert_eq!(asset_state::bid_placed_active_phase_start_ms(e),    0);
-    assert_eq!(asset_state::bid_placed_pending_tenant_cap_id(e),             object::id(&cap_t2));
-    assert_eq!(asset_state::bid_placed_pending_tenant_address(e),            OWNER);
+    assert_eq!(asset_state::bid_placed_pending_usufruct_cap_id(e),             object::id(&cap_t2));
+    assert_eq!(asset_state::bid_placed_pending_usufructuary_address(e),            GOVERNOR);
     assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
     assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);
     assert_eq!(asset_state::bid_placed_handover_countdown_expiry(e), expected_expiry);
@@ -10797,10 +10797,10 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(asset_state::bid_placed_coin_type(e),                 string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::bid_placed_timestamp_ms(e),              now2);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10812,7 +10812,7 @@ fun event_pin_bid_superseded_all_fields() {
     let mut sc   = setup();
     // c=1 Fixed — non-zero handover countdown so supersede can run.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
     let escrow_id = object::id(&escrow);
@@ -10842,16 +10842,16 @@ fun event_pin_bid_superseded_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::bid_superseded_escrow_id(e),                  escrow_id);
-    assert_eq!(asset_state::bid_superseded_protected_cap_id(e),           object::id(&cap_t1));
-    assert_eq!(asset_state::bid_superseded_protected_address(e),             OWNER);
-    assert_eq!(asset_state::bid_superseded_protected_stake(e),            floor);
-    assert_eq!(asset_state::bid_superseded_protected_phase_start_ms(e),   0);
+    assert_eq!(asset_state::bid_superseded_active_cap_id(e),           object::id(&cap_t1));
+    assert_eq!(asset_state::bid_superseded_active_address(e),             GOVERNOR);
+    assert_eq!(asset_state::bid_superseded_active_stake(e),            floor);
+    assert_eq!(asset_state::bid_superseded_active_phase_start_ms(e),   0);
     assert_eq!(asset_state::bid_superseded_displaced_cap_id(e),           object::id(&cap_t2));
-    assert_eq!(asset_state::bid_superseded_new_cap_id(e),                 object::id(&cap_t3));
-    assert_eq!(asset_state::bid_superseded_displaced_bidder_address(e),           OWNER);
+    assert_eq!(asset_state::bid_superseded_pending_cap_id(e),                 object::id(&cap_t3));
+    assert_eq!(asset_state::bid_superseded_displaced_bidder_address(e),           GOVERNOR);
     assert_eq!(asset_state::bid_superseded_refunded_amount(e),            p2_amt);
-    assert_eq!(asset_state::bid_superseded_new_bidder_address(e),                 OWNER);
-    assert_eq!(asset_state::bid_superseded_new_bid_amount(e),             floor3);
+    assert_eq!(asset_state::bid_superseded_pending_bidder_address(e),                 GOVERNOR);
+    assert_eq!(asset_state::bid_superseded_pending_bid_amount(e),             floor3);
     assert_eq!(asset_state::bid_superseded_floor_price(e),                floor3);
     assert_eq!(asset_state::bid_superseded_handover_countdown_expiry(e),  expected_expiry);
     assert_eq!(asset_state::bid_superseded_committed_tenures(e),          1);
@@ -10859,11 +10859,11 @@ fun event_pin_bid_superseded_all_fields() {
     assert_eq!(asset_state::bid_superseded_coin_type(e),                  string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::bid_superseded_timestamp_ms(e),               now3);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(cap_t3, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(cap_t3, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10874,7 +10874,7 @@ fun event_pin_bid_superseded_all_fields() {
 fun event_pin_retire_commitment_extended_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 3_000);
 
@@ -10882,7 +10882,7 @@ fun event_pin_retire_commitment_extended_all_fields() {
     let deferred_ms = escrow_corpus::retire_deferred_f1_const();
     let new_policy  = retire_commitment_policy::new_deferred(phases::duration(deferred_ms));
 
-    escrow::extend_retire_commitment(&mut escrow, &owner_cap, new_policy, &clk, sc.ctx());
+    escrow::extend_retire_commitment(&mut escrow, &governance_cap, new_policy, &clk, sc.ctx());
 
     // Immediate has duration=0 so old_expiry = anchor + 0 = 0.
     // new_expiry = old_expiry + deferred_ms = 0 + 10_000_000.
@@ -10905,7 +10905,7 @@ fun event_pin_retire_commitment_extended_all_fields() {
                string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10916,11 +10916,11 @@ fun event_pin_retire_commitment_extended_all_fields() {
 fun event_pin_asset_claimed_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow_handle, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
     let escrow_id    = object::id(&escrow_handle);
-    let owner_cap_id = object::id(&owner_cap);
+    let governance_cap_id = object::id(&governance_cap);
     let principal    = escrow_corpus::min_rent_price_const();
     let p1           = mk_payment(principal, sc.ctx());
     let cap_t1       = escrow::rent(&mut escrow_handle, p1, tenures::tenures(1), &clk, sc.ctx());
@@ -10935,25 +10935,25 @@ fun event_pin_asset_claimed_all_fields() {
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
 
     test_scenario::return_shared(escrow_handle);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(escrow_id);
 
     clock::set_for_testing(&mut clk, 777_000);
-    let asset = escrow::claim_asset(escrow, &owner_cap, &clk, sc.ctx());
+    let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
 
     let evts = event::events_by_type<AssetClaimed>();
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::asset_claimed_escrow_id(e),       escrow_id);
-    assert_eq!(asset_state::asset_claimed_owner_cap_id(e),    owner_cap_id);
-    assert_eq!(asset_state::asset_claimed_owner_address(e),           OWNER);
+    assert_eq!(asset_state::asset_claimed_governance_cap_id(e),    governance_cap_id);
+    assert_eq!(asset_state::asset_claimed_governor_address(e),           GOVERNOR);
     assert_eq!(asset_state::asset_claimed_asset_type(e),      string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::asset_claimed_coin_type(e),       string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::asset_claimed_timestamp_ms(e),    777_000);
 
-    transfer::public_transfer(owner_cap, OWNER);
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -10964,7 +10964,7 @@ fun event_pin_asset_claimed_all_fields() {
 fun event_pin_tenure_expired_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk      = clock::create_for_testing(sc.ctx());
 
     let escrow_id  = object::id(&escrow);
@@ -10977,26 +10977,26 @@ fun event_pin_tenure_expired_all_fields() {
         &mut escrow, phases::timestamp(boundary), sc.ctx(),
     );
 
-    let owner_share = principal - principal / 10;
+    let governor_share = principal - principal / 10;
     let fee         = principal / 10;
 
     let evts = event::events_by_type<TenureExpired>();
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::tenure_expired_escrow_id(e),         escrow_id);
-    assert_eq!(asset_state::tenure_expired_tenant_cap_id(e),     object::id(&cap_t1));
-    assert_eq!(asset_state::tenure_expired_tenant_address(e),            OWNER);
+    assert_eq!(asset_state::tenure_expired_usufruct_cap_id(e),     object::id(&cap_t1));
+    assert_eq!(asset_state::tenure_expired_usufructuary_address(e),            GOVERNOR);
     assert_eq!(asset_state::tenure_expired_phase_start_ms(e),    0);
-    assert_eq!(asset_state::tenure_expired_owner_share(e),       owner_share);
+    assert_eq!(asset_state::tenure_expired_governor_share(e),       governor_share);
     assert_eq!(asset_state::tenure_expired_protocol_fee(e),      fee);
     assert_eq!(asset_state::tenure_expired_last_acq_price(e),    principal);
     assert_eq!(asset_state::tenure_expired_asset_type(e),        string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::tenure_expired_coin_type(e),         string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::tenure_expired_timestamp_ms(e),      boundary);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11008,7 +11008,7 @@ fun event_pin_handover_completed_all_fields() {
     let mut sc   = setup();
     // c=1 Fixed, e=0 Linear: deterministic used_credit mid-tenure.
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
 
     let escrow_id = object::id(&escrow);
@@ -11031,7 +11031,7 @@ fun event_pin_handover_completed_all_fields() {
     let used_credit = escrow::accrued_credit_mist(&escrow, clock::timestamp_ms(&clk));
     escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_ms), sc.ctx());
 
-    let owner_share_val = used_credit - used_credit / 10;
+    let governor_share_val = used_credit - used_credit / 10;
     let protocol_fee_val = used_credit / 10;
     let remain_val       = floor - used_credit;
 
@@ -11039,16 +11039,16 @@ fun event_pin_handover_completed_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::handover_completed_escrow_id(e),               escrow_id);
-    assert_eq!(asset_state::handover_completed_displaced_cap_id(e),        object::id(&cap_t1));
-    assert_eq!(asset_state::handover_completed_displaced_tenant_address(e),        OWNER);
-    assert_eq!(asset_state::handover_completed_displaced_phase_start_ms(e),    0);
-    assert_eq!(asset_state::handover_completed_displaced_ceiling_total_ms(e),  escrow_corpus::tenure_ceiling_const());
-    assert_eq!(asset_state::handover_completed_displaced_handover_total_ms(e), escrow_corpus::handover_countdown_c1_const());
-    assert_eq!(asset_state::handover_completed_new_cap_id(e),                  object::id(&cap_t2));
-    assert_eq!(asset_state::handover_completed_new_tenant_address(e),         OWNER);
-    assert_eq!(asset_state::handover_completed_new_tenant_stake(e),        floor2);
+    assert_eq!(asset_state::handover_completed_departing_cap_id(e),        object::id(&cap_t1));
+    assert_eq!(asset_state::handover_completed_departing_usufructuary_address(e),        GOVERNOR);
+    assert_eq!(asset_state::handover_completed_departing_phase_start_ms(e),    0);
+    assert_eq!(asset_state::handover_completed_departing_ceiling_total_ms(e),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(asset_state::handover_completed_departing_handover_total_ms(e), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(asset_state::handover_completed_active_cap_id(e),                  object::id(&cap_t2));
+    assert_eq!(asset_state::handover_completed_active_usufructuary_address(e),         GOVERNOR);
+    assert_eq!(asset_state::handover_completed_active_stake_balance(e),        floor2);
     assert_eq!(asset_state::handover_completed_used_credit(e),             used_credit);
-    assert_eq!(asset_state::handover_completed_owner_share(e),             owner_share_val);
+    assert_eq!(asset_state::handover_completed_governor_share(e),             governor_share_val);
     assert_eq!(asset_state::handover_completed_protocol_fee(e),            protocol_fee_val);
     assert_eq!(asset_state::handover_completed_remain_credit(e),           remain_val);
     assert_eq!(asset_state::handover_completed_committed_tenures(e),       1);
@@ -11061,10 +11061,10 @@ fun event_pin_handover_completed_all_fields() {
     let new_rent = asset_state::handover_completed_new_rent_price(e);
     assert!(new_rent > 0, 0);
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11075,7 +11075,7 @@ fun event_pin_handover_completed_all_fields() {
 fun event_pin_asset_borrowed_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk      = clock::create_for_testing(sc.ctx());
 
     let escrow_id = object::id(&escrow);
@@ -11088,16 +11088,16 @@ fun event_pin_asset_borrowed_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::asset_borrowed_escrow_id(e),     escrow_id);
-    assert_eq!(asset_state::asset_borrowed_tenant_cap_id(e), object::id(&cap_t1));
-    assert_eq!(asset_state::asset_borrowed_tenant_address(e),        OWNER);
+    assert_eq!(asset_state::asset_borrowed_usufruct_cap_id(e), object::id(&cap_t1));
+    assert_eq!(asset_state::asset_borrowed_usufructuary_address(e),        GOVERNOR);
     assert_eq!(asset_state::asset_borrowed_asset_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::asset_borrowed_coin_type(e),     string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
     assert_eq!(asset_state::asset_borrowed_timestamp_ms(e),  0);
 
     escrow::return_asset(&mut escrow, asset_out, receipt);
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11108,7 +11108,7 @@ fun event_pin_asset_borrowed_all_fields() {
 fun event_pin_asset_returned_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk      = clock::create_for_testing(sc.ctx());
 
     let escrow_id = object::id(&escrow);
@@ -11122,14 +11122,14 @@ fun event_pin_asset_returned_all_fields() {
     assert_eq!(evts.length(), 1);
     let e = &evts[0];
     assert_eq!(asset_state::asset_returned_escrow_id(e),     escrow_id);
-    assert_eq!(asset_state::asset_returned_tenant_cap_id(e), object::id(&cap_t1));
-    assert_eq!(asset_state::asset_returned_tenant_address(e),        OWNER);
+    assert_eq!(asset_state::asset_returned_usufruct_cap_id(e), object::id(&cap_t1));
+    assert_eq!(asset_state::asset_returned_usufructuary_address(e),        GOVERNOR);
     assert_eq!(asset_state::asset_returned_asset_type(e),    string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::asset_returned_coin_type(e),     string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11142,31 +11142,31 @@ fun event_pin_asset_returned_all_fields() {
 #[test]
 fun committed_tenures_views_reflect_active_and_pending() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let floor = escrow_corpus::min_rent_price_const();
 
     // Idle: no occupant, no bidder.
-    assert!(escrow::active_tenant_committed_tenures(&escrow).is_none(), 0);
-    assert!(escrow::pending_tenant_committed_tenures(&escrow).is_none(), 1);
+    assert!(escrow::active_usufructuary_committed_tenures(&escrow).is_none(), 0);
+    assert!(escrow::pending_usufructuary_committed_tenures(&escrow).is_none(), 1);
 
     // T1 rents 3 tenures → Occupied.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
-    assert_eq!(*escrow::active_tenant_committed_tenures(&escrow).borrow(), 3);
-    assert!(escrow::pending_tenant_committed_tenures(&escrow).is_none(), 2);
+    assert_eq!(*escrow::active_usufructuary_committed_tenures(&escrow).borrow(), 3);
+    assert!(escrow::pending_usufructuary_committed_tenures(&escrow).is_none(), 2);
 
     // T2 bids 2 tenures → Demand.
-    sc.next_tx(TENANT_ADDR_2);
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
     let bid_floor = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
     let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
-    assert_eq!(*escrow::active_tenant_committed_tenures(&escrow).borrow(), 3); // occupant unchanged
-    assert_eq!(*escrow::pending_tenant_committed_tenures(&escrow).borrow(), 2); // bidder's commitment
+    assert_eq!(*escrow::active_usufructuary_committed_tenures(&escrow).borrow(), 3); // occupant unchanged
+    assert_eq!(*escrow::pending_usufructuary_committed_tenures(&escrow).borrow(), 2); // bidder's commitment
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
-    transfer::public_transfer(cap2, TENANT_ADDR_2);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11176,7 +11176,7 @@ fun committed_tenures_views_reflect_active_and_pending() {
 fun pending_config_view_exposes_scheduled_ensemble() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0));
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
     assert!(escrow::pending_ensemble(&escrow).is_none(), 0);
@@ -11186,7 +11186,7 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     assert!(escrow::pending_ensemble_descent_ms(&escrow).is_none(), 4);
 
     escrow::drive_to_rented_for_testing(
-        &mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0,
+        &mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0,
     );
     escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10,
@@ -11194,7 +11194,7 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     );
 
     let new_ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0));
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
 
     assert!(escrow::has_pending_ensemble_update(&escrow), 1);
     assert!(escrow::pending_ensemble(&escrow).is_some(), 2);
@@ -11208,7 +11208,7 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     assert_eq!(*escrow::pending_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11220,7 +11220,7 @@ fun pending_config_view_exposes_scheduled_ensemble() {
 fun next_cycle_views_resolve_waiting_ensemble() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // c=1 handover, h=1 descent
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let floor = escrow_corpus::min_rent_price_const();
 
@@ -11231,7 +11231,7 @@ fun next_cycle_views_resolve_waiting_ensemble() {
     assert_eq!(*escrow::next_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
     // Rented: cycle params move into the tenancy envelope → next_* clears.
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     assert!(escrow::next_ensemble_floor_price_mist(&escrow).is_none(), 0);
@@ -11239,9 +11239,9 @@ fun next_cycle_views_resolve_waiting_ensemble() {
     assert!(escrow::next_ensemble_handover_ms(&escrow).is_none(), 2);
     assert!(escrow::next_ensemble_descent_ms(&escrow).is_none(), 3);
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11251,7 +11251,7 @@ fun next_cycle_views_resolve_waiting_ensemble() {
 fun active_cycle_views_resolve_active_ensemble() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // c=1 handover, h=1 descent
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let floor = escrow_corpus::min_rent_price_const();
 
@@ -11261,7 +11261,7 @@ fun active_cycle_views_resolve_active_ensemble() {
     assert!(escrow::active_ensemble_handover_ms(&escrow).is_none(), 2);
     assert!(escrow::active_ensemble_descent_ms(&escrow).is_none(), 3);
 
-    sc.next_tx(TENANT_ADDR_1);
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     assert_eq!(*escrow::active_ensemble_floor_price_mist(&escrow).borrow(),  floor);
@@ -11269,9 +11269,9 @@ fun active_cycle_views_resolve_active_ensemble() {
     assert_eq!(*escrow::active_ensemble_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
     assert_eq!(*escrow::active_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
-    transfer::public_transfer(cap1, TENANT_ADDR_1);
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11301,7 +11301,7 @@ fun ensemble_commitment_init_anchor_equals_integrated_at() {
     assert_eq!(escrow::ensemble_commitment_anchor_ms(&escrow), escrow::integrated_at_ms(&escrow));
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -11317,7 +11317,7 @@ fun ensemble_commitment_init_immediate_floor_ms_is_none() {
     assert!(escrow::ensemble_commitment_is_immediate(&escrow), 1);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -11336,7 +11336,7 @@ fun ensemble_commitment_init_deferred_floor_and_unlocks() {
     assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), integrated + floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -11346,17 +11346,17 @@ fun ensemble_commitment_init_deferred_floor_and_unlocks() {
 #[test]
 fun ensemble_commitment_gate_immediate_update_at_zero() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11366,16 +11366,16 @@ fun ensemble_commitment_gate_immediate_update_at_zero() {
 fun ensemble_commitment_gate_deferred_update_before_floor_aborts() {
     let mut sc = setup();
     let floor  = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor - 1); // one ms before unlock
 
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11385,18 +11385,18 @@ fun ensemble_commitment_gate_deferred_update_before_floor_aborts() {
 fun ensemble_commitment_gate_deferred_update_at_floor_passes() {
     let mut sc = setup();
     let floor  = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor); // exactly at unlock
 
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11406,7 +11406,7 @@ fun ensemble_commitment_gate_deferred_update_at_floor_passes() {
 fun ensemble_commitment_gate_blanket_blocks_in_occupied() {
     let mut sc = setup();
     let floor  = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -11416,11 +11416,11 @@ fun ensemble_commitment_gate_blanket_blocks_in_occupied() {
     assert!(escrow::is_rented(&escrow), 0);
 
     clock::set_for_testing(&mut clk, floor - 1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11430,23 +11430,23 @@ fun ensemble_commitment_gate_blanket_blocks_in_occupied() {
 fun ensemble_commitment_gate_blanket_blocks_in_descent() {
     let mut sc = setup();
     let floor  = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)), // h=1 Fixed descent
         ensemble_commitment_policy::new_deferred(phases::duration(floor)),
         &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
-    escrow::drive_to_rented_for_testing(&mut escrow, mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()), 0);
+    escrow::drive_to_rented_for_testing(&mut escrow, mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()), 0);
     escrow::drive_to_descent_for_testing(
         &mut escrow, STAKE_T1 - STAKE_T1 / 10, STAKE_T1 / 10, escrow_corpus::min_rent_price_const() * 2, 0);
     assert!(escrow::is_descending(&escrow), 0);
 
     clock::set_for_testing(&mut clk, floor - 1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11458,7 +11458,7 @@ fun ensemble_commitment_gate_blanket_blocks_in_descent() {
 fun ensemble_commitment_gate_blanket_blocks_in_demand() {
     let mut sc = setup();
     let floor  = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)), // c=1 keeps handover pending
         ensemble_commitment_policy::new_deferred(phases::duration(floor)),
         &mut sc,
@@ -11473,12 +11473,12 @@ fun ensemble_commitment_gate_blanket_blocks_in_demand() {
     assert!(escrow::is_demand(&escrow), 0);
 
     clock::set_for_testing(&mut clk, floor - 1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(cap_t2, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11493,7 +11493,7 @@ fun ensemble_commitment_gate_blanket_blocks_in_demand() {
 fun ensemble_commitment_gate_blanket_blocks_in_retired() {
     let mut sc = setup();
     let floor  = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -11502,10 +11502,10 @@ fun ensemble_commitment_gate_blanket_blocks_in_retired() {
     assert!(escrow::is_retired(&escrow), 0);
 
     clock::set_for_testing(&mut clk, floor - 1); // floor still active
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11519,7 +11519,7 @@ fun ensemble_commitment_gate_blanket_blocks_in_retired() {
 fun ensemble_commitment_after_floor_in_retired_aborts_already_retired() {
     let mut sc = setup();
     let floor  = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -11528,10 +11528,10 @@ fun ensemble_commitment_after_floor_in_retired_aborts_already_retired() {
     assert!(escrow::is_retired(&escrow), 0);
 
     clock::set_for_testing(&mut clk, floor); // floor elapsed -> guard releases
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11544,8 +11544,8 @@ fun ensemble_commitment_after_floor_in_retired_aborts_already_retired() {
 #[test]
 fun ensemble_commitment_gate_after_floor_schedules_in_occupied() {
     let mut sc = setup();
-    let floor  = 1_000; // < tenure ceiling: tenant still Occupied at t=floor
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let floor  = 1_000; // < tenure ceiling: usufructuary still Occupied at t=floor
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -11554,14 +11554,14 @@ fun ensemble_commitment_gate_after_floor_schedules_in_occupied() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     clock::set_for_testing(&mut clk, floor); // floor elapsed, tenure still active
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     assert!(escrow::is_rented(&escrow), 0);
     assert!(escrow::has_pending_ensemble_update(&escrow), 1);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11569,13 +11569,13 @@ fun ensemble_commitment_gate_after_floor_schedules_in_occupied() {
 /// EC-II-8 (compound: schedule-then-freeze): a pending reset announced BEFORE a
 /// freeze survives a subsequent extend_ensemble_commitment and is still applied
 /// at the natural boundary. The extend halts NEW announcements (verified in
-/// EC-II-9), but does not retract one already made — a tenant who observed the
+/// EC-II-9), but does not retract one already made — a usufructuary who observed the
 /// EnsembleUpdateScheduled can rely on it landing.
 #[test]
 fun ensemble_commitment_extend_preserves_pending_then_applies_at_boundary() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 1, 0)); // h=1 descent window
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         ensemble, ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
@@ -11586,13 +11586,13 @@ fun ensemble_commitment_extend_preserves_pending_then_applies_at_boundary() {
 
     // While the gate is open (Immediate), announce a reset → pending buffered.
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
     assert!(escrow::has_pending_ensemble_update(&escrow), 0);
 
     // Now re-freeze with a long floor. The announced pending must survive.
     let floor = escrow_corpus::retire_deferred_f1_const(); // 10_000_000 ≫ boundary times
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
     assert!(escrow::ensemble_commitment_is_deferred(&escrow), 1);
     assert!(escrow::has_pending_ensemble_update(&escrow), 2);
     assert!(escrow::active_ensemble(&escrow) == ensemble, 3); // still old until boundary
@@ -11616,9 +11616,9 @@ fun ensemble_commitment_extend_preserves_pending_then_applies_at_boundary() {
     // The freeze is still in force (now ≪ floor) — the gate did not open.
     assert!(escrow::ensemble_commitment_remaining_ms(&escrow, clock::timestamp_ms(&clk)) > 0, 9);
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11630,7 +11630,7 @@ fun ensemble_commitment_extend_preserves_pending_then_applies_at_boundary() {
 fun ensemble_commitment_extend_after_pending_blocks_further_update() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         ensemble, ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
@@ -11639,21 +11639,21 @@ fun ensemble_commitment_extend_after_pending_blocks_further_update() {
         &mut escrow, mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
     // First update while open → pending buffered.
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
     assert!(escrow::has_pending_ensemble_update(&escrow), 0);
 
     // Freeze.
     let floor = escrow_corpus::retire_deferred_f1_const();
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
 
     // Second update must abort — the freeze halts new announcements.
     // The ensemble value is irrelevant: the guard aborts before it is read.
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(0), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(0), &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11665,20 +11665,20 @@ fun ensemble_commitment_extend_after_pending_blocks_further_update() {
 fun ensemble_commitment_extend_valid_increases_unlocks_at() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
     let before = escrow::ensemble_commitment_unlocks_at_ms(&escrow);
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
     let after = escrow::ensemble_commitment_unlocks_at_ms(&escrow);
 
     assert!(after > before, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11688,15 +11688,15 @@ fun ensemble_commitment_extend_valid_increases_unlocks_at() {
 fun ensemble_commitment_extend_with_immediate_when_locked_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
+    escrow::extend_ensemble_commitment(&mut escrow, &governance_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11706,16 +11706,16 @@ fun ensemble_commitment_extend_with_immediate_when_locked_aborts() {
 fun ensemble_commitment_extend_with_immediate_when_unlocked_aborts() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_deferred(phases::duration(floor)), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor + 1);
 
-    escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
+    escrow::extend_ensemble_commitment(&mut escrow, &governance_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11724,15 +11724,15 @@ fun ensemble_commitment_extend_with_immediate_when_unlocked_aborts() {
 #[test, expected_failure(abort_code = asset_state::EEnsembleCommitmentNotExtended, location = usufruct::asset_state)]
 fun ensemble_commitment_extend_immediate_to_immediate_aborts() {
     let mut sc  = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
-    escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
+    escrow::extend_ensemble_commitment(&mut escrow, &governance_cap, ensemble_commitment_policy::new_immediate(), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11743,19 +11743,19 @@ fun ensemble_commitment_extend_immediate_to_immediate_aborts() {
 fun ensemble_commitment_extend_immediate_to_deferred() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx()); // t=0
 
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
 
     assert!(escrow::ensemble_commitment_is_deferred(&escrow), 0);
     assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11766,20 +11766,20 @@ fun ensemble_commitment_extend_immediate_to_deferred() {
 fun ensemble_commitment_extend_immediate_to_deferred_blocks_update() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
 
     // Gate is now frozen. update_ensemble before expiry (t=0 < floor) must abort.
     clock::set_for_testing(&mut clk, floor - 1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11792,19 +11792,19 @@ fun ensemble_commitment_extend_immediate_to_deferred_blocks_update() {
 fun ensemble_commitment_extend_anchor_moves_to_old_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 1_000); // clock value is irrelevant to accumulate
 
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
 
     assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11815,20 +11815,20 @@ fun ensemble_commitment_extend_floor_ms_reflects_new_policy() {
     let mut sc     = setup();
     let floor      = escrow_corpus::retire_deferred_f1_const();
     let half_floor = floor / 2;
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, floor + 1);
 
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(half_floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(half_floor)), &clk, sc.ctx());
 
     assert_eq!(escrow::ensemble_commitment_floor_ms(&escrow), option::some(half_floor));
     assert_eq!(escrow::ensemble_commitment_unlocks_at_ms(&escrow), half_floor);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11840,20 +11840,20 @@ fun ensemble_commitment_extend_floor_ms_reflects_new_policy() {
 fun ensemble_commitment_extend_reopens_gate_aborts_immediately_after() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     clock::set_for_testing(&mut clk, 100);
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
 
     // accumulate: new_expiry = old_expiry(0) + floor = floor; update at t=100 < floor → abort.
-    escrow::update_ensemble(&mut escrow, &owner_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, escrow_corpus::by_tag(1), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11863,22 +11863,22 @@ fun ensemble_commitment_extend_reopens_gate_aborts_immediately_after() {
 fun ensemble_commitment_extend_reopens_gate_passes_at_new_expiry() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let mut clk = clock::create_for_testing(sc.ctx());
 
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
 
     // new_expiry = 0 + floor = floor. Update at t = floor passes (Idle → apply).
     clock::set_for_testing(&mut clk, floor);
     let new_ensemble = escrow_corpus::by_tag(1);
-    escrow::update_ensemble(&mut escrow, &owner_cap, new_ensemble, &clk, sc.ctx());
+    escrow::update_ensemble(&mut escrow, &governance_cap, new_ensemble, &clk, sc.ctx());
     assert!(escrow::active_ensemble(&escrow) == new_ensemble, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11890,24 +11890,24 @@ fun ensemble_commitment_extend_reopens_gate_passes_at_new_expiry() {
 fun ensemble_commitment_chain_two_extensions_both_valid() {
     let mut sc  = setup();
     let floor   = escrow_corpus::retire_deferred_f1_const();
-    let (mut escrow, owner_cap) = integrate_and_take_with_ensemble_commitment(
+    let (mut escrow, governance_cap) = integrate_and_take_with_ensemble_commitment(
         escrow_corpus::by_tag(0), ensemble_commitment_policy::new_immediate(), &mut sc,
     );
     let clk = clock::create_for_testing(sc.ctx());
 
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor)), &clk, sc.ctx());
     let after_first = escrow::ensemble_commitment_unlocks_at_ms(&escrow);
     assert_eq!(after_first, floor);
 
     escrow::extend_ensemble_commitment(
-        &mut escrow, &owner_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor * 2)), &clk, sc.ctx());
+        &mut escrow, &governance_cap, ensemble_commitment_policy::new_deferred(phases::duration(floor * 2)), &clk, sc.ctx());
     let after_second = escrow::ensemble_commitment_unlocks_at_ms(&escrow);
     assert_eq!(after_second, floor * 3);
     assert!(after_second > after_first, 0);
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11928,7 +11928,7 @@ fun ensemble_commitment_anchor_and_remaining_immediate() {
     assert_eq!(escrow::ensemble_commitment_kind(&escrow), b"Immediate".to_string());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
@@ -11948,33 +11948,33 @@ fun ensemble_commitment_anchor_and_remaining_deferred() {
     assert_eq!(escrow::ensemble_commitment_kind(&escrow), b"Deferred".to_string());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     sc.end();
 }
 
 // ─── Group VIII: cap binding on extend ────────────────────────────────────────
 
 /// EC-VIII-1: extend_ensemble_commitment with a fabricated foreign cap aborts.
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun ensemble_commitment_extend_with_wrong_cap_aborts() {
     let mut sc = setup();
-    let (mut escrow, _owner_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
+    let (mut escrow, _governance_cap) = integrate_and_take(escrow_corpus::by_tag(0), &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
 
-    let foreign_cap = owner_cap::new(
-        escrow_identity::new(object::id_from_address(@0xDEAD)), OWNER, sc.ctx());
+    let foreign_cap = governance_cap::new(
+        escrow_identity::new(object::id_from_address(@0xDEAD)), GOVERNOR, sc.ctx());
     escrow::extend_ensemble_commitment(
         &mut escrow, &foreign_cap, ensemble_commitment_policy::new_deferred(phases::duration(1)), &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(foreign_cap, OWNER);
-    transfer::public_transfer(_owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
+    transfer::public_transfer(_governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-/// EC-VIII-2: a genuine OwnerCap from a different escrow is rejected on extend.
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowOwnerCap, location = usufruct::asset_state)]
+/// EC-VIII-2: a genuine GovernanceCap from a different escrow is rejected on extend.
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowGovernanceCap, location = usufruct::asset_state)]
 fun ensemble_commitment_extend_with_real_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
@@ -11987,8 +11987,8 @@ fun ensemble_commitment_extend_with_real_foreign_escrow_cap_aborts() {
 
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(cap_a, OWNER);
-    transfer::public_transfer(cap_b, OWNER);
+    transfer::public_transfer(cap_a, GOVERNOR);
+    transfer::public_transfer(cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -11999,7 +11999,7 @@ fun ensemble_commitment_extend_with_real_foreign_escrow_cap_aborts() {
 fun event_pin_ensemble_commitment_extended_all_fields() {
     let mut sc   = setup();
     let ensemble = escrow_corpus::by_tag(0);
-    let (mut escrow, owner_cap) = integrate_and_take(ensemble, &mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let mut clk  = clock::create_for_testing(sc.ctx());
     clock::set_for_testing(&mut clk, 3_000);
 
@@ -12007,7 +12007,7 @@ fun event_pin_ensemble_commitment_extended_all_fields() {
     let deferred_ms = escrow_corpus::retire_deferred_f1_const();
     let new_policy  = ensemble_commitment_policy::new_deferred(phases::duration(deferred_ms));
 
-    escrow::extend_ensemble_commitment(&mut escrow, &owner_cap, new_policy, &clk, sc.ctx());
+    escrow::extend_ensemble_commitment(&mut escrow, &governance_cap, new_policy, &clk, sc.ctx());
 
     // Immediate has duration=0 → old_expiry = 0. new_expiry = 0 + deferred_ms.
     let expected_new_expiry = deferred_ms;
@@ -12027,7 +12027,7 @@ fun event_pin_ensemble_commitment_extended_all_fields() {
                string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
 
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }

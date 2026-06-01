@@ -8,14 +8,14 @@ module usufruct::refund_state;
 use usufruct::{
     fee_message::{Self, FeeShare},
     earnings_message,
-    owner_seat::{Self, OwnerSeat},
-    owner_earning::OwnerEarnings,
+    governor_seat::{Self, GovernorSeat},
+    earnings_balance::EarningsBalance,
     protocol_fee_ref::FeeInboxIdentity,
     escrow_identity::EscrowIdentity,
     refund_address,
-    tenant_seat::{Self, TenantSeat},
-    tenant_identity,
-    tenant_stake,
+    usufructuary_seat::{Self, UsufructuarySeat},
+    usufructuary_identity,
+    stake_balance,
 };
 
 // === Errors ===
@@ -29,15 +29,15 @@ use usufruct::{
 public enum RefundState<phantom CoinType> {
     Nothing {
         fee_share:      FeeShare<CoinType>,
-        owner_earnings: OwnerEarnings<CoinType>,
+        earnings: EarningsBalance<CoinType>,
     },
     Parcial {
-        seat:           TenantSeat<CoinType>,
+        usufructuary_seat:           UsufructuarySeat<CoinType>,
         fee_share:      FeeShare<CoinType>,
-        owner_earnings: OwnerEarnings<CoinType>,
+        earnings: EarningsBalance<CoinType>,
     },
     Total {
-        seat: TenantSeat<CoinType>,
+        usufructuary_seat: UsufructuarySeat<CoinType>,
     },
 }
 
@@ -65,46 +65,46 @@ public(package) fun proj_is_total<C>(rs: &RefundState<C>): bool {
 
 public(package) fun nothing<C>(
     fee_share:      FeeShare<C>,
-    owner_earnings: OwnerEarnings<C>,
+    earnings: EarningsBalance<C>,
 ): RefundState<C> {
-    RefundState::Nothing { fee_share, owner_earnings }
+    RefundState::Nothing { fee_share, earnings }
 }
 
 public(package) fun parcial<C>(
-    seat:           TenantSeat<C>,
+    usufructuary_seat:           UsufructuarySeat<C>,
     fee_share:      FeeShare<C>,
-    owner_earnings: OwnerEarnings<C>,
+    earnings: EarningsBalance<C>,
 ): RefundState<C> {
-    RefundState::Parcial { seat, fee_share, owner_earnings }
+    RefundState::Parcial { usufructuary_seat, fee_share, earnings }
 }
 
-public(package) fun total<C>(seat: TenantSeat<C>): RefundState<C> {
-    RefundState::Total { seat }
+public(package) fun total<C>(usufructuary_seat: UsufructuarySeat<C>): RefundState<C> {
+    RefundState::Total { usufructuary_seat }
 }
 
 public(package) fun distribute<C>(
     rs:                 RefundState<C>,
-    owner:              &OwnerSeat,
+    governor_seat:              &GovernorSeat,
     fee_inbox_identity: FeeInboxIdentity,
     escrow_identity:    EscrowIdentity,
     ctx:                &mut TxContext,
 ) {
     match (rs) {
-        RefundState::Nothing { fee_share, owner_earnings } => {
-            earnings_message::post(owner_earnings, owner_seat::proj_inbox(owner), escrow_identity, ctx);
+        RefundState::Nothing { fee_share, earnings } => {
+            earnings_message::post(earnings, governor_seat::proj_inbox(governor_seat), escrow_identity, ctx);
             fee_message::post(fee_share, fee_inbox_identity, ctx);
         },
-        RefundState::Parcial { seat, fee_share, owner_earnings } => {
-            let addr = refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(&seat)));
-            let (_, stake) = tenant_seat::unbundle(seat);
-            earnings_message::post(owner_earnings, owner_seat::proj_inbox(owner), escrow_identity, ctx);
+        RefundState::Parcial { usufructuary_seat, fee_share, earnings } => {
+            let addr = refund_address::addr(usufructuary_identity::proj_address(usufructuary_seat::proj_identity(&usufructuary_seat)));
+            let (_, stake) = usufructuary_seat::unbundle(usufructuary_seat);
+            earnings_message::post(earnings, governor_seat::proj_inbox(governor_seat), escrow_identity, ctx);
             fee_message::post(fee_share, fee_inbox_identity, ctx);
-            tenant_stake::liquidate(stake, addr, ctx);
+            stake_balance::liquidate(stake, addr, ctx);
         },
-        RefundState::Total { seat } => {
-            let addr = refund_address::addr(tenant_identity::proj_address(tenant_seat::proj_identity(&seat)));
-            let (_, stake) = tenant_seat::unbundle(seat);
-            tenant_stake::liquidate(stake, addr, ctx);
+        RefundState::Total { usufructuary_seat } => {
+            let addr = refund_address::addr(usufructuary_identity::proj_address(usufructuary_seat::proj_identity(&usufructuary_seat)));
+            let (_, stake) = usufructuary_seat::unbundle(usufructuary_seat);
+            stake_balance::liquidate(stake, addr, ctx);
         },
     }
 }
@@ -115,19 +115,19 @@ public(package) fun distribute<C>(
 
 #[test_only]
 public fun destroy_for_testing<C>(rs: RefundState<C>) {
-    use usufruct::owner_earning;
+    use usufruct::earnings_balance;
     match (rs) {
-        RefundState::Nothing { fee_share, owner_earnings } => {
+        RefundState::Nothing { fee_share, earnings } => {
             fee_message::destroy_share_for_testing(fee_share);
-            owner_earning::destroy_for_testing(owner_earnings);
+            earnings_balance::destroy_for_testing(earnings);
         },
-        RefundState::Parcial { seat, fee_share, owner_earnings } => {
-            tenant_seat::destroy_for_testing(seat);
+        RefundState::Parcial { usufructuary_seat, fee_share, earnings } => {
+            usufructuary_seat::destroy_for_testing(usufructuary_seat);
             fee_message::destroy_share_for_testing(fee_share);
-            owner_earning::destroy_for_testing(owner_earnings);
+            earnings_balance::destroy_for_testing(earnings);
         },
-        RefundState::Total { seat } => {
-            tenant_seat::destroy_for_testing(seat);
+        RefundState::Total { usufructuary_seat } => {
+            usufructuary_seat::destroy_for_testing(usufructuary_seat);
         },
     }
 }

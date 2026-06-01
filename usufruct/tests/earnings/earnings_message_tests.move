@@ -17,7 +17,7 @@ use usufruct::{
     earnings_inbox::{Self, EarningsInbox},
     earnings_message::{Self, EarningsMessage, EarningsPosted, EarningsCollected},
     escrow_identity,
-    owner_earning,
+    earnings_balance,
 };
 
 // ─── Actors ──────────────────────────────────────────────────────────────────
@@ -43,8 +43,8 @@ fun setup(): Scenario {
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 fun fake_escrow_identity(): escrow_identity::EscrowIdentity { escrow_identity::new(fake_escrow_id()) }
 
-fun earnings<C>(amount: u64): owner_earning::OwnerEarnings<C> {
-    owner_earning::new(balance::create_for_testing<C>(amount))
+fun earnings<C>(amount: u64): earnings_balance::EarningsBalance<C> {
+    earnings_balance::new(balance::create_for_testing<C>(amount))
 }
 
 // ─── S — post ────────────────────────────────────────────────────────────────

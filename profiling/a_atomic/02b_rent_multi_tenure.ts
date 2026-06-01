@@ -29,14 +29,14 @@ const N    = parseInt(process.argv[2] ?? '10', 10);
 
 async function setupIdleEscrow(
   client: SuiClient,
-  owner:  Ed25519Keypair,
+  governor:  Ed25519Keypair,
   d: ReturnType<typeof loadDeployment>,
 ): Promise<string> {
   const tx = new Transaction();
-  tx.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-  tx.transferObjects([ownerCap, inbox], d.owner.address);
-  const result = await execSetup(client, owner, tx);
+  tx.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  tx.transferObjects([governanceCap, inbox], d.governor.address);
+  const result = await execSetup(client, governor, tx);
   const escrow = result.objectChanges?.find(c => c.type === 'created' && (c as any).objectType?.includes('Escrow'));
   if (!escrow) throw new Error('setup: Escrow not found');
   return (escrow as any).objectId;
@@ -54,25 +54,25 @@ async function main() {
   for (let run = 0; run < RUNS; run++) {
     if (run > 0) await new Promise(r => setTimeout(r, 1000));
     process.stdout.write(`  run ${run + 1}/${RUNS} setup...`);
-    const escrowId = await setupIdleEscrow(client, kp.owner, d);
+    const escrowId = await setupIdleEscrow(client, kp.governor, d);
 
     process.stdout.write(' measuring...');
     const tx = new Transaction();
-    tx.setSender(d.tenant1.address);
+    tx.setSender(d.usufructuary1.address);
 
     const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(FLOOR_PRICE_MIST * BigInt(N))]);
     const tenures = tx.moveCall({
       target: `${d.usufructPackageId}::ensemble::tenures`,
       arguments: [tx.pure.u64(N)],
     });
-    const tenantCap = tx.moveCall({
+    const usufructCap = tx.moveCall({
       target: `${d.usufructPackageId}::escrow::rent`,
       typeArguments: ta,
       arguments: [tx.object(escrowId), payment, tenures, clock(tx)],
     });
-    tx.transferObjects([tenantCap], d.tenant1.address);
+    tx.transferObjects([usufructCap], d.usufructuary1.address);
 
-    const rec = await measure(client, kp.tenant1, `rent_N${N}`, run, tx);
+    const rec = await measure(client, kp.usufructuary1, `rent_N${N}`, run, tx);
     records.push(rec);
     console.log(` net=${rec.net} MIST`);
   }

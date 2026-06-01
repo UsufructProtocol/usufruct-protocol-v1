@@ -20,19 +20,19 @@ use usufruct::{
     escrow::{Self, Escrow},
     escrow_corpus,
     escrow_identity,
-    owner_cap::OwnerCap,
+    governance_cap::GovernanceCap,
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
     refund_address,
-    tenant_seat::{Self, TenantSeat},
-    tenant_cap::{Self, TenantCapIdentity},
+    usufructuary_seat::{Self, UsufructuarySeat},
+    usufruct_cap::{Self, UsufructCapIdentity},
 };
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
-const OWNER:         address = @0x07;
-const TENANT_ADDR_1: address = @0xA1;
-const TENANT_ADDR_2: address = @0xA2;
+const GOVERNOR:         address = @0x07;
+const USUFRUCTUARY_ADDR_1: address = @0xA1;
+const USUFRUCTUARY_ADDR_2: address = @0xA2;
 const STAKE_T1:      u64     = 1_000_000_000;
 const STAKE_T2:      u64     = 2_000_000_000;
 
@@ -40,16 +40,16 @@ public struct DemoAsset has key, store { id: UID }
 
 fun setup(): Scenario {
     let mut sc = test_scenario::begin(@0x0);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     { protocol_fee_inbox::init_for_testing(sc.ctx()); };
     sc
 }
 
-fun cap_id_1(): TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA1)) }
-fun cap_id_2(): TenantCapIdentity { tenant_cap::from_id(object::id_from_address(@0xCA2)) }
+fun cap_id_1(): UsufructCapIdentity { usufruct_cap::from_id(object::id_from_address(@0xCA1)) }
+fun cap_id_2(): UsufructCapIdentity { usufruct_cap::from_id(object::id_from_address(@0xCA2)) }
 
-fun mk_tenant(stake: u64, addr: address, cap: TenantCapIdentity): TenantSeat<SUI> {
-    tenant_seat::new(cap, refund_address::new(addr), balance::create_for_testing<SUI>(stake))
+fun mk_usufructuary(stake: u64, addr: address, cap: UsufructCapIdentity): UsufructuarySeat<SUI> {
+    usufructuary_seat::new(cap, refund_address::new(addr), balance::create_for_testing<SUI>(stake))
 }
 
 fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
@@ -57,12 +57,12 @@ fun mk_demo_asset(ctx: &mut TxContext): DemoAsset {
 }
 
 /// Integrate an escrow with the given config and immediately take it
-/// back as a shared object. Returns (escrow, owner_cap).
+/// back as a shared object. Returns (escrow, governance_cap).
 fun integrate_and_take_with_cfg(
     ensemble: usufruct::policy_ensemble::PolicyEnsemble,
     sc:  &mut Scenario,
-): (Escrow<DemoAsset, SUI>, OwnerCap) {
-    sc.next_tx(OWNER);
+): (Escrow<DemoAsset, SUI>, GovernanceCap) {
+    sc.next_tx(GOVERNOR);
     let fee_ref = sc.take_immutable<ProtocolFeeRef>();
     let clk     = clock::create_for_testing(sc.ctx());
     let asset   = mk_demo_asset(sc.ctx());
@@ -72,18 +72,18 @@ fun integrate_and_take_with_cfg(
         retire_commitment_policy::new_immediate(),
         ensemble_commitment_policy::new_immediate(), &fee_ref, &clk, sc.ctx(),
     );
-    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(inbox, GOVERNOR);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     (escrow, cap)
 }
 
 /// Default integration: tag(0,0,0,0,0). Instant handover — fine for
 /// tests that don't put the escrow into Demand.
-fun integrate_and_take(sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
+fun integrate_and_take(sc: &mut Scenario): (Escrow<DemoAsset, SUI>, GovernanceCap) {
     integrate_and_take_with_cfg(
         escrow_corpus::by_tag(escrow_corpus::tag(0, 0, 0, 0, 0)),
         sc,
@@ -93,7 +93,7 @@ fun integrate_and_take(sc: &mut Scenario): (Escrow<DemoAsset, SUI>, OwnerCap) {
 /// Re-take the shared escrow by value (so it can be consumed by claim_asset).
 fun retake_escrow_by_value(escrow: Escrow<DemoAsset, SUI>, sc: &mut Scenario): Escrow<DemoAsset, SUI> {
     test_scenario::return_shared(escrow);
-    sc.next_tx(OWNER);
+    sc.next_tx(GOVERNOR);
     sc.take_shared<Escrow<DemoAsset, SUI>>()
 }
 
@@ -119,7 +119,7 @@ fun claim_asset_aborts_in_descent_state() {
     // Idle → Occupied → Descent.
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
@@ -130,8 +130,8 @@ fun claim_asset_aborts_in_descent_state() {
 
     // Unreachable — claim_asset aborts above. Bindings only satisfy the
     // type checker; expected_failure makes the abort the success path.
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -143,7 +143,7 @@ fun claim_asset_aborts_in_occupied_state() {
 
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
 
@@ -151,8 +151,8 @@ fun claim_asset_aborts_in_occupied_state() {
     let clk = clock::create_for_testing(sc.ctx());
     let asset = escrow::claim_asset(escrow, &cap, &clk, sc.ctx());
 
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -164,12 +164,12 @@ fun claim_asset_aborts_in_demand_state() {
 
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_demand_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T2, TENANT_ADDR_2, cap_id_2()),
+        mk_usufructuary(STAKE_T2, USUFRUCTUARY_ADDR_2, cap_id_2()),
         10_000,
     );
 
@@ -177,8 +177,8 @@ fun claim_asset_aborts_in_demand_state() {
     let clk = clock::create_for_testing(sc.ctx());
     let asset = escrow::claim_asset(escrow, &cap, &clk, sc.ctx());
 
-    transfer::public_transfer(asset, OWNER);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
+    transfer::public_transfer(cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -187,7 +187,7 @@ fun claim_asset_aborts_in_demand_state() {
 //
 // `execute_borrow` does the happy path on Occupied / Demand match arms.
 // The three Waiting variants (Idle, Descent, Retired) abort
-// `EStaleTenantCap` — reachable from the public API and individually
+// `EStaleUsufructCap` — reachable from the public API and individually
 // tested here.
 //
 // `execute_return` no longer has a wrong-state arm: `RentingState` in
@@ -197,72 +197,72 @@ fun claim_asset_aborts_in_demand_state() {
 // `escrow_tests::borrow_asset_from_idle_aborts`; the two missing
 // Waiting variants (Descent, Retired) get their tests here.
 
-#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EStaleUsufructCap, location = usufruct::asset_state)]
 fun borrow_asset_aborts_in_descent_state() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(&mut sc);
 
     escrow::drive_to_rented_for_testing(
         &mut escrow,
-        mk_tenant(STAKE_T1, TENANT_ADDR_1, cap_id_1()),
+        mk_usufructuary(STAKE_T1, USUFRUCTUARY_ADDR_1, cap_id_1()),
         0,
     );
     escrow::drive_to_descent_for_testing(&mut escrow, 0, 0, STAKE_T1, 0);
 
     let clk = clock::create_for_testing(sc.ctx());
-    let foreign_cap = tenant_cap::new(
+    let foreign_cap = usufruct_cap::new(
         escrow_identity::new(object::id(&escrow)),
-        TENANT_ADDR_1,
+        USUFRUCTUARY_ADDR_1,
         sc.ctx(),
     );
 
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
 
-    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
     asset_state::destroy_receipt_for_testing(receipt);
-    transfer::public_transfer(foreign_cap, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::EStaleTenantCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EStaleUsufructCap, location = usufruct::asset_state)]
 fun borrow_asset_aborts_in_retired_state() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(&mut sc);
 
     escrow::drive_to_retired_for_testing(&mut escrow);
 
     let clk = clock::create_for_testing(sc.ctx());
-    let foreign_cap = tenant_cap::new(
+    let foreign_cap = usufruct_cap::new(
         escrow_identity::new(object::id(&escrow)),
-        TENANT_ADDR_1,
+        USUFRUCTUARY_ADDR_1,
         sc.ctx(),
     );
 
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &foreign_cap, &clk, sc.ctx());
 
-    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
     asset_state::destroy_receipt_for_testing(receipt);
-    transfer::public_transfer(foreign_cap, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(foreign_cap, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-// ─── execute_soft_burn_tenant_cap invariants (C7) ─────────────────────────────────
+// ─── execute_soft_burn_usufruct_cap invariants (C7) ─────────────────────────────────
 //
 // Two invariants travel together; neither alone is sufficient:
 //
 //   1. Only caps issued by THIS escrow can be burned
-//      (EWrongEscrowTenantCap). Otherwise an attacker could route caps
+//      (EWrongEscrowUsufructCap). Otherwise an attacker could route caps
 //      issued elsewhere through any Retired escrow as a burn machine,
 //      potentially destroying caps still current/pending on their
 //      origin escrow.
 //
-//   2. Only stale caps can be burned (ETenantCapNotStale).
+//   2. Only stale caps can be burned (EUsufructCapNotStale).
 //      current/pending caps are still in active use.
 //
 // In Idle/Descent/Retired the second invariant is satisfied
@@ -271,14 +271,14 @@ fun borrow_asset_aborts_in_retired_state() {
 // the bypass for invariant 1. This test fixes the latent bug.
 //
 // Existing coverage for the other cases (see escrow_tests):
-//   · burn_tenant_cap_with_foreign_escrow_cap_aborts  — invariant 1, Idle.
-//   · burn_tenant_cap_on_live_current_cap_aborts      — invariant 2, Occupied.
-//   · burn_tenant_cap_burns_displaced_bidder_cap      — happy path, Demand.
+//   · burn_usufruct_cap_with_foreign_escrow_cap_aborts  — invariant 1, Idle.
+//   · burn_usufruct_cap_on_live_current_cap_aborts      — invariant 2, Occupied.
+//   · burn_usufruct_cap_burns_displaced_bidder_cap      — happy path, Demand.
 
-#[test, expected_failure(abort_code = asset_state::EWrongEscrowTenantCap, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EWrongEscrowUsufructCap, location = usufruct::asset_state)]
 fun burn_foreign_cap_in_retired_aborts() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take(&mut sc);
+    let (mut escrow, governance_cap) = integrate_and_take(&mut sc);
 
     escrow::drive_to_retired_for_testing(&mut escrow);
 
@@ -286,28 +286,28 @@ fun burn_foreign_cap_in_retired_aborts() {
 
     // Cap issued by some other escrow (here a synthetic identity); the
     // Retired state of `escrow` must not be a backdoor for burning it.
-    let foreign = tenant_cap::new(
+    let foreign = usufruct_cap::new(
         escrow_identity::new(object::id_from_address(@0xDEAD)),
-        TENANT_ADDR_1,
+        USUFRUCTUARY_ADDR_1,
         sc.ctx(),
     );
 
-    escrow::soft_burn_tenant_cap(&mut escrow, foreign, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, foreign, &clk, sc.ctx());
 
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EUsufructCapNotStale, location = usufruct::asset_state)]
 fun burn_live_active_cap_in_demand_aborts() {
     let mut sc = setup();
     // Fixed handover (c=1) — without this, the Instant handover (c=0)
-    // would fire on APT at the start of soft_burn_tenant_cap and Demand would
+    // would fire on APT at the start of soft_burn_usufruct_cap and Demand would
     // collapse to Occupied with cap_t2 as the new current, making cap_t1
     // legitimately stale.
-    let (mut escrow, owner_cap) = integrate_and_take_with_cfg(
+    let (mut escrow, governance_cap) = integrate_and_take_with_cfg(
         escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)),
         &mut sc,
     );
@@ -322,19 +322,19 @@ fun burn_live_active_cap_in_demand_aborts() {
     let cap_t2 = escrow::rent(&mut escrow, p2, tenures::tenures(1), &clk, sc.ctx());
 
     // Burn the live current cap — must abort.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t1, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t2, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
 }
 
-#[test, expected_failure(abort_code = asset_state::ETenantCapNotStale, location = usufruct::asset_state)]
+#[test, expected_failure(abort_code = asset_state::EUsufructCapNotStale, location = usufruct::asset_state)]
 fun burn_live_pending_cap_in_demand_aborts() {
     let mut sc = setup();
-    let (mut escrow, owner_cap) = integrate_and_take_with_cfg(
+    let (mut escrow, governance_cap) = integrate_and_take_with_cfg(
         escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)),
         &mut sc,
     );
@@ -350,10 +350,10 @@ fun burn_live_pending_cap_in_demand_aborts() {
     // both checks lived in the `cap_auth_for_tenancy` match; in the
     // typed-states form `pending` is a direct field of the Demand
     // storage variant, so the assert is per-arm and per-field.
-    escrow::soft_burn_tenant_cap(&mut escrow, cap_t2, &clk, sc.ctx());
+    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
 
-    transfer::public_transfer(cap_t1, OWNER);
-    transfer::public_transfer(owner_cap, OWNER);
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(governance_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
     clock::destroy_for_testing(clk);
     sc.end();
@@ -383,9 +383,9 @@ fun double_borrow_aborts() {
     // Unreachable — consumed only to satisfy the type checker.
     escrow::return_asset(&mut escrow, asset, receipt);
     escrow::return_asset(&mut escrow, asset2, receipt2);
-    transfer::public_transfer(t_cap, OWNER);
+    transfer::public_transfer(t_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -420,12 +420,12 @@ fun cross_escrow_return_with_authentic_receipt_aborts() {
     // Attempt to return asset_a to escrow_b using receipt_a — must abort.
     escrow::return_asset(&mut escrow_b, asset_a, receipt_a);
 
-    transfer::public_transfer(t_cap_a, OWNER);
-    transfer::public_transfer(t_cap_b, OWNER);
+    transfer::public_transfer(t_cap_a, GOVERNOR);
+    transfer::public_transfer(t_cap_b, GOVERNOR);
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(cap_a, OWNER);
-    transfer::public_transfer(cap_b, OWNER);
+    transfer::public_transfer(cap_a, GOVERNOR);
+    transfer::public_transfer(cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -457,13 +457,13 @@ fun cross_borrow_asset_swap_aborts() {
     asset_state::destroy_receipt_for_testing(receipt_b);
     escrow::return_asset(&mut escrow_a, asset_b, receipt_a);
 
-    transfer::public_transfer(asset_a, OWNER);
-    transfer::public_transfer(t_cap_a, OWNER);
-    transfer::public_transfer(t_cap_b, OWNER);
+    transfer::public_transfer(asset_a, GOVERNOR);
+    transfer::public_transfer(t_cap_a, GOVERNOR);
+    transfer::public_transfer(t_cap_b, GOVERNOR);
     test_scenario::return_shared(escrow_a);
     test_scenario::return_shared(escrow_b);
-    transfer::public_transfer(cap_a, OWNER);
-    transfer::public_transfer(cap_b, OWNER);
+    transfer::public_transfer(cap_a, GOVERNOR);
+    transfer::public_transfer(cap_b, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }
@@ -481,13 +481,13 @@ fun return_with_swapped_asset_aborts() {
 
     let (asset, receipt) = escrow::borrow_asset(&mut escrow, &t_cap, &clk, sc.ctx());
     // Sink the borrowed asset; present a fresh object with the authentic receipt.
-    transfer::public_transfer(asset, OWNER);
+    transfer::public_transfer(asset, GOVERNOR);
     let swapped = mk_demo_asset(sc.ctx());
     escrow::return_asset(&mut escrow, swapped, receipt);
 
-    transfer::public_transfer(t_cap, OWNER);
+    transfer::public_transfer(t_cap, GOVERNOR);
     test_scenario::return_shared(escrow);
-    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(cap, GOVERNOR);
     clock::destroy_for_testing(clk);
     sc.end();
 }

@@ -1,12 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Phase B / 05 — Owner income, inbox-first (batched collect)
+ * Phase B / 05 — Governor income, inbox-first (batched collect)
  * Flow: integrate → N × (rent → wait → apply [each posts 1 EarningsMessage]) →
  *       ONE collect_earnings_messages(all N) → retire → apply → claim
  *
  * Before/after headline. The old model withdrew per tenure (+2.3M MIST each,
  * mutating the SHARED escrow). The inbox-first model mails each tenure's 90%
- * owner share to the EarningsInbox as an owned EarningsMessage, then drains all
+ * governor share to the EarningsInbox as an owned EarningsMessage, then drains all
  * N in a single rebate-positive PTB against owned objects — the single `collect`
  * step is the payoff line.
  */
@@ -36,7 +36,7 @@ async function getEarningsMessageRefs(
   let cursor: string | null | undefined = undefined;
   do {
     const page = await client.getOwnedObjects({
-      owner: inboxId, cursor, options: { showType: true }, limit: 50,
+      governor: inboxId, cursor, options: { showType: true }, limit: 50,
     });
     for (const obj of page.data) {
       if ((obj.data?.type ?? '').includes('earnings_message::EarningsMessage')) {
@@ -62,22 +62,22 @@ async function main() {
 
   // integrate (mints the cap + inbox pair)
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
-  tx1.transferObjects([ownerCap, inbox], d.owner.address);
-  const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
+  tx1.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
+  tx1.transferObjects([governanceCap, inbox], d.governor.address);
+  const r1 = await measure(client, kp.governor, 'integrate', 0, tx1);
   steps.push(r1);
   console.log(`integrate: net=${r1.net}`);
 
   const c1 = (await client.getTransactionBlock({ digest: r1.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
   const escrowId   = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('::escrow::Escrow')) as any).objectId;
-  const ownerCapId = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('OwnerCap')) as any).objectId;
+  const governanceCapId = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('GovernanceCap')) as any).objectId;
   const inboxId    = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('EarningsInbox')) as any).objectId;
 
   // N tenures — each expiry mails one EarningsMessage to the inbox.
   for (let i = 0; i < N; i++) {
-    const kpT  = i % 2 === 0 ? kp.tenant1 : kp.tenant2;
-    const addr = i % 2 === 0 ? d.tenant1.address : d.tenant2.address;
+    const kpT  = i % 2 === 0 ? kp.usufructuary1 : kp.usufructuary2;
+    const addr = i % 2 === 0 ? d.usufructuary1.address : d.usufructuary2.address;
     const payAmt = FLOOR_PRICE_MIST + BigInt(i);
 
     // rent
@@ -99,13 +99,13 @@ async function main() {
 
     // apply (settles tenure → posts EarningsMessage to the inbox)
     const txApp = new Transaction();
-    txApp.setSender(d.owner.address);
+    txApp.setSender(d.governor.address);
     txApp.moveCall({
       target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
       typeArguments: typeArgs,
       arguments: [txApp.object(escrowId), clock(txApp)],
     });
-    const rApp = await measure(client, kp.owner, `apply_${i}`, 0, txApp);
+    const rApp = await measure(client, kp.governor, `apply_${i}`, 0, txApp);
     steps.push(rApp);
     console.log(`  tenure ${i + 1}: rent=${rRent.net}  apply=${rApp.net}`);
   }
@@ -118,7 +118,7 @@ async function main() {
   const earningsType  = `${d.usufructPackageId}::earnings_message::EarningsMessage<${SUI}>`;
   const receivingType = `0x2::transfer::Receiving<${earningsType}>`;
   const txCollect = new Transaction();
-  txCollect.setSender(d.owner.address);
+  txCollect.setSender(d.governor.address);
   const tickets   = refs.map(r => txCollect.receivingRef({ objectId: r.objectId, version: r.version, digest: r.digest }));
   const ticketVec = txCollect.makeMoveVec({ type: receivingType, elements: tickets });
   const coin = txCollect.moveCall({
@@ -126,39 +126,39 @@ async function main() {
     typeArguments: [SUI],
     arguments: [txCollect.object(inboxId), ticketVec],
   });
-  txCollect.transferObjects([coin], d.owner.address);
-  const rCollect = await measure(client, kp.owner, `collect_earnings_${refs.length}`, 0, txCollect);
+  txCollect.transferObjects([coin], d.governor.address);
+  const rCollect = await measure(client, kp.governor, `collect_earnings_${refs.length}`, 0, txCollect);
   steps.push(rCollect);
   console.log(`  collect(${refs.length}): net=${rCollect.net}`);
 
   // retire + apply + claim
   const txRet = new Transaction();
-  txRet.setSender(d.owner.address);
+  txRet.setSender(d.governor.address);
   txRet.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [txRet.object(escrowId), txRet.object(ownerCapId), clock(txRet)],
+    arguments: [txRet.object(escrowId), txRet.object(governanceCapId), clock(txRet)],
   });
-  steps.push(await measure(client, kp.owner, 'retire', 0, txRet));
+  steps.push(await measure(client, kp.governor, 'retire', 0, txRet));
 
   const txApp2 = new Transaction();
-  txApp2.setSender(d.owner.address);
+  txApp2.setSender(d.governor.address);
   txApp2.moveCall({
     target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
     typeArguments: typeArgs,
     arguments: [txApp2.object(escrowId), clock(txApp2)],
   });
-  steps.push(await measure(client, kp.owner, 'apply_transitions', 0, txApp2));
+  steps.push(await measure(client, kp.governor, 'apply_transitions', 0, txApp2));
 
   const txC = new Transaction();
-  txC.setSender(d.owner.address);
+  txC.setSender(d.governor.address);
   const asset = txC.moveCall({
     target: `${d.usufructPackageId}::escrow::claim_asset`,
     typeArguments: typeArgs,
-    arguments: [txC.object(escrowId), txC.object(ownerCapId), clock(txC)],
+    arguments: [txC.object(escrowId), txC.object(governanceCapId), clock(txC)],
   });
-  txC.transferObjects([asset], d.owner.address);
-  steps.push(await measure(client, kp.owner, 'claim_asset', 0, txC));
+  txC.transferObjects([asset], d.governor.address);
+  steps.push(await measure(client, kp.governor, 'claim_asset', 0, txC));
 
   const totalNet = steps.reduce((acc, s) => acc + s.net, 0n);
   console.log(`\nN=${N} inbox-first earnings. Total net: ${totalNet} MIST`);

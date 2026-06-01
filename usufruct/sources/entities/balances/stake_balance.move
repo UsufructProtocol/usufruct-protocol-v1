@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::tenant_stake;
+module usufruct::stake_balance;
 
 // === Imports ===
 
@@ -14,7 +14,7 @@ use usufruct::monetary::{Self, Stake};
 
 // === Structs ===
 
-public struct TenantStake<phantom CoinType> has store {
+public struct StakeBalance<phantom CoinType> has store {
     balance: Balance<CoinType>,
 }
 
@@ -28,7 +28,7 @@ public struct TenantStake<phantom CoinType> has store {
 
 // === View Functions ===
 
-public(package) fun proj_value<C>(s: &TenantStake<C>): Stake {
+public(package) fun proj_value<C>(s: &StakeBalance<C>): Stake {
     monetary::stake(balance::value(&s.balance))
 }
 
@@ -36,21 +36,21 @@ public(package) fun proj_value<C>(s: &TenantStake<C>): Stake {
 
 // === Package Functions ===
 
-public(package) fun new<C>(b: Balance<C>): TenantStake<C> {
-    TenantStake { balance: b }
+public(package) fun new<C>(b: Balance<C>): StakeBalance<C> {
+    StakeBalance { balance: b }
 }
 
-public(package) fun split<C>(s: &mut TenantStake<C>, amount: Stake): Balance<C> {
+public(package) fun split<C>(s: &mut StakeBalance<C>, amount: Stake): Balance<C> {
     balance::split(&mut s.balance, monetary::stake_mist(amount))
 }
 
-public(package) fun destroy_zero<C>(s: TenantStake<C>) {
-    let TenantStake { balance } = s;
+public(package) fun destroy_zero<C>(s: StakeBalance<C>) {
+    let StakeBalance { balance } = s;
     balance::destroy_zero(balance);
 }
 
-public(package) fun liquidate<C>(s: TenantStake<C>, to: address, ctx: &mut TxContext) {
-    let TenantStake { balance } = s;
+public(package) fun liquidate<C>(s: StakeBalance<C>, to: address, ctx: &mut TxContext) {
+    let StakeBalance { balance } = s;
     transfer::public_transfer(balance.into_coin(ctx), to);
 }
 
@@ -59,7 +59,7 @@ public(package) fun liquidate<C>(s: TenantStake<C>, to: address, ctx: &mut TxCon
 // === Test Functions ===
 
 #[test_only]
-public fun destroy_for_testing<C>(s: TenantStake<C>) {
-    let TenantStake { balance } = s;
+public fun destroy_for_testing<C>(s: StakeBalance<C>) {
+    let StakeBalance { balance } = s;
     balance::destroy_for_testing(balance);
 }

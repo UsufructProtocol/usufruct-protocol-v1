@@ -7,13 +7,13 @@ module usufruct::refund_state_tests;
 use sui::balance;
 use usufruct::{
     fee_message::{Self, FeeShare},
-    owner_earning::{Self, OwnerEarnings},
+    earnings_balance::{Self, EarningsBalance},
     escrow_identity,
     refund_address,
     refund_state,
-    tenant_seat::{Self, TenantSeat},
-    tenant_identity,
-    tenant_cap,
+    usufructuary_seat::{Self, UsufructuarySeat},
+    usufructuary_identity,
+    usufruct_cap,
 };
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -25,23 +25,23 @@ const ADDR_T1: address = @0xA1;
 fun cap_t1(): ID { object::id_from_address(@0xCA1) }
 fun fake_escrow_id(): ID { object::id_from_address(@0xEC) }
 
-fun mk_seat(amount: u64): TenantSeat<TEST_COIN> {
-    tenant_seat::new<TEST_COIN>(tenant_cap::from_id(cap_t1()), refund_address::new(ADDR_T1), balance::create_for_testing(amount))
+fun mk_seat(amount: u64): UsufructuarySeat<TEST_COIN> {
+    usufructuary_seat::new<TEST_COIN>(usufruct_cap::from_id(cap_t1()), refund_address::new(ADDR_T1), balance::create_for_testing(amount))
 }
 
 fun fee_share(amount: u64): FeeShare<TEST_COIN> {
     fee_message::new_share(balance::create_for_testing<TEST_COIN>(amount), escrow_identity::new(fake_escrow_id()))
 }
 
-fun owner_earnings(amount: u64): OwnerEarnings<TEST_COIN> {
-    owner_earning::new(balance::create_for_testing<TEST_COIN>(amount))
+fun earnings(amount: u64): EarningsBalance<TEST_COIN> {
+    earnings_balance::new(balance::create_for_testing<TEST_COIN>(amount))
 }
 
 // ─── §1. Constructors → variant identity ──────────────────────────────────────
 
 #[test]
 fun nothing_constructs_nothing_variant() {
-    let rs = refund_state::nothing<TEST_COIN>(fee_share(50), owner_earnings(450));
+    let rs = refund_state::nothing<TEST_COIN>(fee_share(50), earnings(450));
     assert!(refund_state::proj_is_nothing(&rs));
     assert!(!refund_state::proj_is_parcial(&rs));
     assert!(!refund_state::proj_is_total(&rs));
@@ -50,7 +50,7 @@ fun nothing_constructs_nothing_variant() {
 
 #[test]
 fun parcial_constructs_parcial_variant() {
-    let rs = refund_state::parcial<TEST_COIN>(mk_seat(300), fee_share(50), owner_earnings(450));
+    let rs = refund_state::parcial<TEST_COIN>(mk_seat(300), fee_share(50), earnings(450));
     assert!(refund_state::proj_is_parcial(&rs));
     assert!(!refund_state::proj_is_nothing(&rs));
     assert!(!refund_state::proj_is_total(&rs));
@@ -74,10 +74,10 @@ fun total_constructs_total_variant() {
 // three arms without leaks.
 #[test]
 fun destroy_for_testing_handles_all_three_variants() {
-    let nothing = refund_state::nothing<TEST_COIN>(fee_share(10), owner_earnings(20));
+    let nothing = refund_state::nothing<TEST_COIN>(fee_share(10), earnings(20));
     refund_state::destroy_for_testing(nothing);
 
-    let parcial = refund_state::parcial<TEST_COIN>(mk_seat(100), fee_share(10), owner_earnings(20));
+    let parcial = refund_state::parcial<TEST_COIN>(mk_seat(100), fee_share(10), earnings(20));
     refund_state::destroy_for_testing(parcial);
 
     let total = refund_state::total<TEST_COIN>(mk_seat(1_000));
@@ -86,15 +86,15 @@ fun destroy_for_testing_handles_all_three_variants() {
 
 // ─── §3. Identity preservation ────────────────────────────────────────────────
 
-// The carried TenantIdentity (copy/drop/store) is read-only data flowed
+// The carried UsufructuaryIdentity (copy/drop/store) is read-only data flowed
 // through the variants; using it before passing it in must not affect
 // what the variant carries. This is structural — the test exists as
-// a guard against future regression if TenantIdentity ever loses copy.
+// a guard against future regression if UsufructuaryIdentity ever loses copy.
 #[test]
 fun identity_passed_into_variant_is_independent_of_caller_copy() {
     let seat = mk_seat(100);
-    let id_copy = *tenant_seat::proj_identity(&seat);
-    let _ = tenant_identity::proj_cap_identity(&id_copy);
-    let rs = refund_state::parcial<TEST_COIN>(seat, fee_share(10), owner_earnings(20));
+    let id_copy = *usufructuary_seat::proj_identity(&seat);
+    let _ = usufructuary_identity::proj_cap_identity(&id_copy);
+    let rs = refund_state::parcial<TEST_COIN>(seat, fee_share(10), earnings(20));
     refund_state::destroy_for_testing(rs);
 }

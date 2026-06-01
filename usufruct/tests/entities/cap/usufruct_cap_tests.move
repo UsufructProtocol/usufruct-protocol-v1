@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module usufruct::tenant_cap_tests;
+module usufruct::usufruct_cap_tests;
 
 use std::unit_test::assert_eq;
 use sui::{
@@ -11,7 +11,7 @@ use sui::{
 };
 use usufruct::{
     escrow_identity,
-    tenant_cap::{Self, TenantCap, TenantCapMinted, TenantCapBurned},
+    usufruct_cap::{Self, UsufructCap, UsufructCapMinted, UsufructCapBurned},
 };
 
 // ─── Actors ────────────────────────────────────────────────────────────────
@@ -28,53 +28,53 @@ fun escrow_id_2(): ID { object::id_from_address(@0xE5C2) }
 
 // ─── Predicates ────────────────────────────────────────────────────────────
 
-fun assert_minted(e: &TenantCapMinted, cap_id: ID, escrow_id: ID, tenant: address) {
-    assert_eq!(tenant_cap::minted_tenant_cap_id(e), cap_id);
-    assert_eq!(tenant_cap::minted_escrow_id(e),     escrow_id);
-    assert_eq!(tenant_cap::minted_tenant_address(e),         tenant);
+fun assert_minted(e: &UsufructCapMinted, cap_id: ID, escrow_id: ID, usufructuary: address) {
+    assert_eq!(usufruct_cap::minted_usufruct_cap_id(e), cap_id);
+    assert_eq!(usufruct_cap::minted_escrow_id(e),     escrow_id);
+    assert_eq!(usufruct_cap::minted_usufructuary_address(e),         usufructuary);
 }
 
-fun assert_burned(e: &TenantCapBurned, cap_id: ID, escrow_id: ID, tenant: address) {
-    assert_eq!(tenant_cap::burned_tenant_cap_id(e), cap_id);
-    assert_eq!(tenant_cap::burned_escrow_id(e),     escrow_id);
-    assert_eq!(tenant_cap::burned_tenant_address(e),         tenant);
+fun assert_burned(e: &UsufructCapBurned, cap_id: ID, escrow_id: ID, usufructuary: address) {
+    assert_eq!(usufruct_cap::burned_usufruct_cap_id(e), cap_id);
+    assert_eq!(usufruct_cap::burned_escrow_id(e),     escrow_id);
+    assert_eq!(usufruct_cap::burned_usufructuary_address(e),         usufructuary);
 }
 
 // ─── N — new ───────────────────────────────────────────────────────────────
 
 // N1: new returns (cap, id) by value; cap.escrow_id and object::id match; one
-//     TenantCapMinted event with the correct triple. Cap consumed in-test via burn.
+//     UsufructCapMinted event with the correct triple. Cap consumed in-test via burn.
 #[test]
 fun n1_new_returns_cap_and_id_by_value() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
 
-        assert_eq!(tenant_cap::proj_escrow_id(&cap), escrow_id_1());
+        assert_eq!(usufruct_cap::proj_escrow_id(&cap), escrow_id_1());
         assert_eq!(object::id(&cap), id);
 
-        let events = event::events_by_type<TenantCapMinted>();
+        let events = event::events_by_type<UsufructCapMinted>();
         assert_eq!(events.length(), 1);
         assert_minted(&events[0], id, escrow_id_1(), ALICE);
 
-        tenant_cap::burn(cap, scenario.ctx());
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
 
-// N2: two new calls in one tx with the same (escrow_id, tenant) produce caps
+// N2: two new calls in one tx with the same (escrow_id, usufructuary) produce caps
 //     with distinct UIDs and two Minted events in call order. Asserts P1 is
 //     structural — uniqueness per transition is a rental_escrow guarantee.
 #[test]
 fun n2_two_new_calls_produce_distinct_caps_and_events() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap0 = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap0 = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id0 = object::id(&cap0);
-        let cap1 = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap1 = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id1 = object::id(&cap1);
 
@@ -82,78 +82,78 @@ fun n2_two_new_calls_produce_distinct_caps_and_events() {
         assert_eq!(object::id(&cap0), id0);
         assert_eq!(object::id(&cap1), id1);
 
-        let events = event::events_by_type<TenantCapMinted>();
+        let events = event::events_by_type<UsufructCapMinted>();
         assert_eq!(events.length(), 2);
         assert_minted(&events[0], id0, escrow_id_1(), ALICE);
         assert_minted(&events[1], id1, escrow_id_1(), ALICE);
 
-        tenant_cap::burn(cap0, scenario.ctx());
-        tenant_cap::burn(cap1, scenario.ctx());
+        usufruct_cap::burn(cap0, scenario.ctx());
+        usufruct_cap::burn(cap1, scenario.ctx());
     };
     scenario.end();
 }
 
-// N3: two new calls with distinct (escrow_id, tenant) pairs produce caps with
+// N3: two new calls with distinct (escrow_id, usufructuary) pairs produce caps with
 //     the corresponding field values and events in call order.
 #[test]
 fun n3_two_new_calls_distinct_args() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap0 = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap0 = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id0 = object::id(&cap0);
-        let cap1 = tenant_cap::new(escrow_identity::new(escrow_id_2()), BOB,   scenario.ctx());
+        let cap1 = usufruct_cap::new(escrow_identity::new(escrow_id_2()), BOB,   scenario.ctx());
 
         let id1 = object::id(&cap1);
 
-        assert_eq!(tenant_cap::proj_escrow_id(&cap0), escrow_id_1());
-        assert_eq!(tenant_cap::proj_escrow_id(&cap1), escrow_id_2());
+        assert_eq!(usufruct_cap::proj_escrow_id(&cap0), escrow_id_1());
+        assert_eq!(usufruct_cap::proj_escrow_id(&cap1), escrow_id_2());
 
-        let events = event::events_by_type<TenantCapMinted>();
+        let events = event::events_by_type<UsufructCapMinted>();
         assert_eq!(events.length(), 2);
         assert_minted(&events[0], id0, escrow_id_1(), ALICE);
         assert_minted(&events[1], id1, escrow_id_2(), BOB);
 
-        tenant_cap::burn(cap0, scenario.ctx());
-        tenant_cap::burn(cap1, scenario.ctx());
+        usufruct_cap::burn(cap0, scenario.ctx());
+        usufruct_cap::burn(cap1, scenario.ctx());
     };
     scenario.end();
 }
 
-// N4: tenant argument is independent of tx_context::sender. Sender = ALICE,
-//     tenant arg = BOB; event records BOB. Constructor does not assume the
-//     caller is the tenant — rental_escrow always passes sender, but this
+// N4: usufructuary argument is independent of tx_context::sender. Sender = ALICE,
+//     usufructuary arg = BOB; event records BOB. Constructor does not assume the
+//     caller is the usufructuary — rental_escrow always passes sender, but this
 //     module does not enforce it.
 #[test]
-fun n4_tenant_is_argument_not_sender() {
+fun n4_usufructuary_is_argument_not_sender() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
 
         let id = object::id(&cap);
 
-        let events = event::events_by_type<TenantCapMinted>();
+        let events = event::events_by_type<UsufructCapMinted>();
         assert_minted(&events[0], id, escrow_id_1(), BOB);
 
-        tenant_cap::burn(cap, scenario.ctx());
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
 
-// N5: tenant == @0x0 is accepted; event records @0x0. Policy (if any) lives
+// N5: usufructuary == @0x0 is accepted; event records @0x0. Policy (if any) lives
 //     at rental_escrow::rent, not here.
 #[test]
-fun n5_zero_tenant_address_accepted() {
+fun n5_zero_usufructuary_address_accepted() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ZERO, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ZERO, scenario.ctx());
 
         let id = object::id(&cap);
 
-        let events = event::events_by_type<TenantCapMinted>();
+        let events = event::events_by_type<UsufructCapMinted>();
         assert_minted(&events[0], id, escrow_id_1(), ZERO);
 
-        tenant_cap::burn(cap, scenario.ctx());
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
@@ -165,35 +165,35 @@ fun n6_zero_escrow_id_accepted() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let zero_escrow = object::id_from_address(@0x0);
-        let cap = tenant_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
 
-        assert_eq!(tenant_cap::proj_escrow_id(&cap), zero_escrow);
+        assert_eq!(usufruct_cap::proj_escrow_id(&cap), zero_escrow);
 
-        let events = event::events_by_type<TenantCapMinted>();
+        let events = event::events_by_type<UsufructCapMinted>();
         assert_minted(&events[0], id, zero_escrow, ALICE);
 
-        tenant_cap::burn(cap, scenario.ctx());
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
 
-// N7: emit-last ordering — TenantCapMinted is present in tx effects immediately
+// N7: emit-last ordering — UsufructCapMinted is present in tx effects immediately
 //     after the new call. num_user_events == 1 for the mint-only tx.
 #[test]
 fun n7_emit_last_event_present_in_tx() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
-        assert_eq!(event::events_by_type<TenantCapMinted>().length(), 1);
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        assert_eq!(event::events_by_type<UsufructCapMinted>().length(), 1);
         transfer::public_transfer(cap, ALICE);
     };
     let mint_effects = scenario.next_tx(ALICE);
     assert_eq!(mint_effects.num_user_events(), 1);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = scenario.take_from_sender<UsufructCap>();
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
@@ -204,14 +204,14 @@ fun n7_emit_last_event_present_in_tx() {
 fun n8_cap_is_store_transferable() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         transfer::public_transfer(cap, BOB);
     };
     scenario.next_tx(BOB);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
-        assert_eq!(tenant_cap::proj_escrow_id(&cap), escrow_id_1());
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = scenario.take_from_sender<UsufructCap>();
+        assert_eq!(usufruct_cap::proj_escrow_id(&cap), escrow_id_1());
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
@@ -219,18 +219,18 @@ fun n8_cap_is_store_transferable() {
 // ─── B — burn ──────────────────────────────────────────────────────────────
 
 // B1: mint + burn in same tx (sender = ALICE). One Minted + one Burned event.
-//     Burned.tenant == ALICE (tx_context::sender at burn time).
+//     Burned.usufructuary == ALICE (tx_context::sender at burn time).
 #[test]
 fun b1_burn_emits_burned_event() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
-        tenant_cap::burn(cap, scenario.ctx());
+        usufruct_cap::burn(cap, scenario.ctx());
 
-        let minted = event::events_by_type<TenantCapMinted>();
-        let burned  = event::events_by_type<TenantCapBurned>();
+        let minted = event::events_by_type<UsufructCapMinted>();
+        let burned  = event::events_by_type<UsufructCapBurned>();
         assert_eq!(minted.length(), 1);
         assert_eq!(burned.length(), 1);
         assert_burned(&burned[0], id, escrow_id_1(), ALICE);
@@ -247,7 +247,7 @@ fun b2_stale_cap_burn_succeeds() {
     let cap_a_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
         cap_a_id = id;
@@ -255,15 +255,15 @@ fun b2_stale_cap_burn_succeeds() {
     };
     scenario.next_tx(BOB);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
         transfer::public_transfer(cap, BOB);
     };
     scenario.next_tx(ALICE);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = scenario.take_from_sender<UsufructCap>();
+        usufruct_cap::burn(cap, scenario.ctx());
 
-        let burned = event::events_by_type<TenantCapBurned>();
+        let burned = event::events_by_type<UsufructCapBurned>();
         assert_eq!(burned.length(), 1);
         assert_burned(&burned[0], cap_a_id, escrow_id_1(), ALICE);
     };
@@ -274,43 +274,43 @@ fun b2_stale_cap_burn_succeeds() {
 //     Verified at compile time by the successful build of B1/L1.
 
 // B4: burner ≠ mint recipient. tx1: ALICE mints, transfers to BOB. tx2: BOB
-//     burns (sender = BOB). Minted.tenant == ALICE; Burned.tenant == BOB.
+//     burns (sender = BOB). Minted.usufructuary == ALICE; Burned.usufructuary == BOB.
 //     Load-bearing test for the §3 schema: burn-time address is not
-//     PK-recoverable from TenantCapMinted.
+//     PK-recoverable from UsufructCapMinted.
 #[test]
-fun b4_burned_tenant_reflects_burn_time_sender() {
+fun b4_burned_usufructuary_reflects_burn_time_sender() {
     let mut scenario = test_scenario::begin(ALICE);
     let cap_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
         cap_id = id;
-        let minted = event::events_by_type<TenantCapMinted>();
-        assert_eq!(tenant_cap::minted_tenant_address(&minted[0]), ALICE);
+        let minted = event::events_by_type<UsufructCapMinted>();
+        assert_eq!(usufruct_cap::minted_usufructuary_address(&minted[0]), ALICE);
         transfer::public_transfer(cap, BOB);
     };
     scenario.next_tx(BOB);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = scenario.take_from_sender<UsufructCap>();
+        usufruct_cap::burn(cap, scenario.ctx());
 
-        let burned = event::events_by_type<TenantCapBurned>();
+        let burned = event::events_by_type<UsufructCapBurned>();
         assert_burned(&burned[0], cap_id, escrow_id_1(), BOB);
     };
     scenario.end();
 }
 
 // B5: multi-hop custody chain: ALICE → BOB → CAROL → burn by CAROL.
-//     Burned.tenant == CAROL. Intermediate hops are invisible to the protocol.
+//     Burned.usufructuary == CAROL. Intermediate hops are invisible to the protocol.
 #[test]
 fun b5_multi_hop_custody_burn_records_final_sender() {
     let mut scenario = test_scenario::begin(ALICE);
     let cap_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
         cap_id = id;
@@ -318,20 +318,20 @@ fun b5_multi_hop_custody_burn_records_final_sender() {
     };
     scenario.next_tx(ALICE);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
+        let cap = scenario.take_from_sender<UsufructCap>();
         transfer::public_transfer(cap, BOB);
     };
     scenario.next_tx(BOB);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
+        let cap = scenario.take_from_sender<UsufructCap>();
         transfer::public_transfer(cap, CAROL);
     };
     scenario.next_tx(CAROL);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = scenario.take_from_sender<UsufructCap>();
+        usufruct_cap::burn(cap, scenario.ctx());
 
-        let burned = event::events_by_type<TenantCapBurned>();
+        let burned = event::events_by_type<UsufructCapBurned>();
         assert_burned(&burned[0], cap_id, escrow_id_1(), CAROL);
     };
     scenario.end();
@@ -344,12 +344,12 @@ fun b6_burn_zero_escrow_id_cap() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let zero_escrow = object::id_from_address(@0x0);
-        let cap = tenant_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
-        tenant_cap::burn(cap, scenario.ctx());
+        usufruct_cap::burn(cap, scenario.ctx());
 
-        let burned = event::events_by_type<TenantCapBurned>();
+        let burned = event::events_by_type<UsufructCapBurned>();
         assert_burned(&burned[0], id, zero_escrow, ALICE);
     };
     scenario.end();
@@ -362,9 +362,9 @@ fun b6_burn_zero_escrow_id_cap() {
 fun g1_escrow_id_getter_returns_bound_id() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
-        assert_eq!(tenant_cap::proj_escrow_id(&cap), escrow_id_1());
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        assert_eq!(usufruct_cap::proj_escrow_id(&cap), escrow_id_1());
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
@@ -375,13 +375,13 @@ fun g1_escrow_id_getter_returns_bound_id() {
 fun g2_escrow_id_getter_is_pure() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         let mut k: u64 = 0;
         while (k < 5) {
-            assert_eq!(tenant_cap::proj_escrow_id(&cap), escrow_id_1());
+            assert_eq!(usufruct_cap::proj_escrow_id(&cap), escrow_id_1());
             k = k + 1;
         };
-        tenant_cap::burn(cap, scenario.ctx());
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
@@ -392,9 +392,9 @@ fun g3_escrow_id_getter_returns_zero_when_zero() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let zero_escrow = object::id_from_address(@0x0);
-        let cap = tenant_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
-        assert_eq!(tenant_cap::proj_escrow_id(&cap), zero_escrow);
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(zero_escrow), ALICE, scenario.ctx());
+        assert_eq!(usufruct_cap::proj_escrow_id(&cap), zero_escrow);
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     scenario.end();
 }
@@ -402,18 +402,18 @@ fun g3_escrow_id_getter_returns_zero_when_zero() {
 // ─── L — Lifecycle ─────────────────────────────────────────────────────────
 
 // L1: full lifecycle — mint tx emits 1 Minted event, burn tx emits 1 Burned
-//     event. Both share (tenant_cap_id, escrow_id). num_user_events == 1 per tx.
+//     event. Both share (usufruct_cap_id, escrow_id). num_user_events == 1 per tx.
 #[test]
 fun l1_full_lifecycle_mint_then_burn() {
     let mut scenario = test_scenario::begin(ALICE);
     let cap_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
         cap_id = id;
-        let minted = event::events_by_type<TenantCapMinted>();
+        let minted = event::events_by_type<UsufructCapMinted>();
         assert_eq!(minted.length(), 1);
         assert_minted(&minted[0], cap_id, escrow_id_1(), ALICE);
         transfer::public_transfer(cap, ALICE);
@@ -421,9 +421,9 @@ fun l1_full_lifecycle_mint_then_burn() {
     let mint_effects = scenario.next_tx(ALICE);
     assert_eq!(mint_effects.num_user_events(), 1);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
-        tenant_cap::burn(cap, scenario.ctx());
-        let burned = event::events_by_type<TenantCapBurned>();
+        let cap = scenario.take_from_sender<UsufructCap>();
+        usufruct_cap::burn(cap, scenario.ctx());
+        let burned = event::events_by_type<UsufructCapBurned>();
         assert_eq!(burned.length(), 1);
         assert_burned(&burned[0], cap_id, escrow_id_1(), ALICE);
     };
@@ -432,7 +432,7 @@ fun l1_full_lifecycle_mint_then_burn() {
 }
 
 // L2: mint two caps for the same escrow in separate txs (ALICE, BOB).
-//     Distinct tenant_cap_ids; from the indexer's perspective cap A is stale
+//     Distinct usufruct_cap_ids; from the indexer's perspective cap A is stale
 //     once cap B is minted, though neither cap knows it.
 #[test]
 fun l2_two_caps_same_escrow_distinct_ids() {
@@ -441,21 +441,21 @@ fun l2_two_caps_same_escrow_distinct_ids() {
     let cap_b_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
         cap_a_id = id;
-        let minted = event::events_by_type<TenantCapMinted>();
+        let minted = event::events_by_type<UsufructCapMinted>();
         assert_minted(&minted[0], cap_a_id, escrow_id_1(), ALICE);
         transfer::public_transfer(cap, ALICE);
     };
     scenario.next_tx(BOB);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
 
         let id = object::id(&cap);
         cap_b_id = id;
-        let minted = event::events_by_type<TenantCapMinted>();
+        let minted = event::events_by_type<UsufructCapMinted>();
         assert_minted(&minted[0], cap_b_id, escrow_id_1(), BOB);
         transfer::public_transfer(cap, BOB);
     };
@@ -470,7 +470,7 @@ fun l3_burn_stale_cap_leaves_other_untouched() {
     let cap_a_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
         cap_a_id = id;
@@ -478,15 +478,15 @@ fun l3_burn_stale_cap_leaves_other_untouched() {
     };
     scenario.next_tx(BOB);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
         transfer::public_transfer(cap, BOB);
     };
     scenario.next_tx(ALICE);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = scenario.take_from_sender<UsufructCap>();
+        usufruct_cap::burn(cap, scenario.ctx());
 
-        let burned = event::events_by_type<TenantCapBurned>();
+        let burned = event::events_by_type<UsufructCapBurned>();
         assert_burned(&burned[0], cap_a_id, escrow_id_1(), ALICE);
     };
     scenario.end();
@@ -494,99 +494,99 @@ fun l3_burn_stale_cap_leaves_other_untouched() {
 
 // L4: multi-stale cleanup — three caps minted across three txs to (ALICE, BOB,
 //     ALICE); fourth tx ALICE burns both her caps. Two Burned events, each
-//     carrying its cap's (tenant_cap_id, escrow_id, tenant: ALICE).
+//     carrying its cap's (usufruct_cap_id, escrow_id, usufructuary: ALICE).
 #[test]
 fun l4_multi_stale_cleanup() {
     let mut scenario = test_scenario::begin(ALICE);
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         transfer::public_transfer(cap, ALICE);
     };
     scenario.next_tx(BOB);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), BOB, scenario.ctx());
         transfer::public_transfer(cap, BOB);
     };
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
         transfer::public_transfer(cap, ALICE);
     };
     scenario.next_tx(ALICE);
     {
-        let cap1 = scenario.take_from_sender<TenantCap>();
-        let cap2 = scenario.take_from_sender<TenantCap>();
+        let cap1 = scenario.take_from_sender<UsufructCap>();
+        let cap2 = scenario.take_from_sender<UsufructCap>();
         let first_id  = object::id(&cap1);
         let second_id = object::id(&cap2);
-        tenant_cap::burn(cap1, scenario.ctx());
-        tenant_cap::burn(cap2, scenario.ctx());
+        usufruct_cap::burn(cap1, scenario.ctx());
+        usufruct_cap::burn(cap2, scenario.ctx());
 
-        let burned = event::events_by_type<TenantCapBurned>();
+        let burned = event::events_by_type<UsufructCapBurned>();
         assert_eq!(burned.length(), 2);
-        assert_eq!(tenant_cap::burned_tenant_cap_id(&burned[0]), first_id);
-        assert_eq!(tenant_cap::burned_tenant_address(&burned[0]),         ALICE);
-        assert_eq!(tenant_cap::burned_escrow_id(&burned[0]),     escrow_id_1());
-        assert_eq!(tenant_cap::burned_tenant_cap_id(&burned[1]), second_id);
-        assert_eq!(tenant_cap::burned_tenant_address(&burned[1]),         ALICE);
-        assert_eq!(tenant_cap::burned_escrow_id(&burned[1]),     escrow_id_1());
+        assert_eq!(usufruct_cap::burned_usufruct_cap_id(&burned[0]), first_id);
+        assert_eq!(usufruct_cap::burned_usufructuary_address(&burned[0]),         ALICE);
+        assert_eq!(usufruct_cap::burned_escrow_id(&burned[0]),     escrow_id_1());
+        assert_eq!(usufruct_cap::burned_usufruct_cap_id(&burned[1]), second_id);
+        assert_eq!(usufruct_cap::burned_usufructuary_address(&burned[1]),         ALICE);
+        assert_eq!(usufruct_cap::burned_escrow_id(&burned[1]),     escrow_id_1());
     };
     scenario.end();
 }
 
 // L5: caps for two distinct escrows minted in one tx, burned in reverse order
-//     in the next tx. The PK-JOIN path (tenant_cap_id) recovers each lifecycle
+//     in the next tx. The PK-JOIN path (usufruct_cap_id) recovers each lifecycle
 //     pair independently — the two lifecycles do not cross.
 #[test]
 fun l5_caps_for_distinct_escrows_independent_lifecycle() {
     let mut scenario = test_scenario::begin(ALICE);
     scenario.next_tx(ALICE);
     {
-        let cap1 = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
-        let cap2 = tenant_cap::new(escrow_identity::new(escrow_id_2()), ALICE, scenario.ctx());
+        let cap1 = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap2 = usufruct_cap::new(escrow_identity::new(escrow_id_2()), ALICE, scenario.ctx());
         transfer::public_transfer(cap1, ALICE);
         transfer::public_transfer(cap2, ALICE);
     };
     scenario.next_tx(ALICE);
     {
         // take_from_sender returns objects in some order; capture IDs first
-        let cap_a = scenario.take_from_sender<TenantCap>();
-        let cap_b = scenario.take_from_sender<TenantCap>();
+        let cap_a = scenario.take_from_sender<UsufructCap>();
+        let cap_b = scenario.take_from_sender<UsufructCap>();
         let id_a = object::id(&cap_a);
         let id_b = object::id(&cap_b);
         // Burn in reverse: cap_b first, then cap_a
-        tenant_cap::burn(cap_b, scenario.ctx());
-        tenant_cap::burn(cap_a, scenario.ctx());
+        usufruct_cap::burn(cap_b, scenario.ctx());
+        usufruct_cap::burn(cap_a, scenario.ctx());
 
-        let burned = event::events_by_type<TenantCapBurned>();
+        let burned = event::events_by_type<UsufructCapBurned>();
         assert_eq!(burned.length(), 2);
-        assert_eq!(tenant_cap::burned_tenant_cap_id(&burned[0]), id_b);
-        assert_eq!(tenant_cap::burned_tenant_cap_id(&burned[1]), id_a);
+        assert_eq!(usufruct_cap::burned_usufruct_cap_id(&burned[0]), id_b);
+        assert_eq!(usufruct_cap::burned_usufruct_cap_id(&burned[1]), id_a);
         // The two escrow IDs must differ
-        assert!(tenant_cap::burned_escrow_id(&burned[0]) != tenant_cap::burned_escrow_id(&burned[1]));
+        assert!(usufruct_cap::burned_escrow_id(&burned[0]) != usufruct_cap::burned_escrow_id(&burned[1]));
     };
     scenario.end();
 }
 
 // L6: one-shot PTB lifecycle via mint_then_burn_for_testing — cap lives entirely
 //     as a PTB local, never touching a wallet. tx emits 1 Minted + 1 Burned
-//     event; both carry the same tenant_cap_id and tenant == sender.
+//     event; both carry the same usufruct_cap_id and usufructuary == sender.
 #[test]
 fun l6_one_shot_ptb_lifecycle() {
     let mut scenario = test_scenario::begin(ALICE);
     {
-        tenant_cap::mint_then_burn_for_testing(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        usufruct_cap::mint_then_burn_for_testing(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
-        let minted = event::events_by_type<TenantCapMinted>();
-        let burned  = event::events_by_type<TenantCapBurned>();
+        let minted = event::events_by_type<UsufructCapMinted>();
+        let burned  = event::events_by_type<UsufructCapBurned>();
         assert_eq!(minted.length(), 1);
         assert_eq!(burned.length(),  1);
         assert_eq!(
-            tenant_cap::minted_tenant_cap_id(&minted[0]),
-            tenant_cap::burned_tenant_cap_id(&burned[0]),
+            usufruct_cap::minted_usufruct_cap_id(&minted[0]),
+            usufruct_cap::burned_usufruct_cap_id(&burned[0]),
         );
-        assert_eq!(tenant_cap::minted_tenant_address(&minted[0]), ALICE);
-        assert_eq!(tenant_cap::burned_tenant_address(&burned[0]),  ALICE);
+        assert_eq!(usufruct_cap::minted_usufructuary_address(&minted[0]), ALICE);
+        assert_eq!(usufruct_cap::burned_usufructuary_address(&burned[0]),  ALICE);
     };
     let effects = scenario.end();
     assert_eq!(effects.num_user_events(), 2);
@@ -602,7 +602,7 @@ fun p_uid_deleted_on_cross_tx_burn() {
     let cap_id: ID;
     scenario.next_tx(ALICE);
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
         cap_id = id;
@@ -610,8 +610,8 @@ fun p_uid_deleted_on_cross_tx_burn() {
     };
     scenario.next_tx(ALICE);
     {
-        let cap = scenario.take_from_sender<TenantCap>();
-        tenant_cap::burn(cap, scenario.ctx());
+        let cap = scenario.take_from_sender<UsufructCap>();
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     let effects = scenario.end();
     assert!(effects.deleted().contains(&cap_id));
@@ -625,11 +625,11 @@ fun p_uid_not_in_deleted_when_same_tx_mint_and_burn() {
     let mut scenario = test_scenario::begin(ALICE);
     let cap_id: ID;
     {
-        let cap = tenant_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap = usufruct_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
 
         let id = object::id(&cap);
         cap_id = id;
-        tenant_cap::burn(cap, scenario.ctx());
+        usufruct_cap::burn(cap, scenario.ctx());
     };
     let effects = scenario.end();
     assert!(!effects.deleted().contains(&cap_id));

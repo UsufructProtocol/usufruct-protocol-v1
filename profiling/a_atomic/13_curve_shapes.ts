@@ -154,27 +154,27 @@ const VARIANTS: { label: string; slug: string; buildCurve: CurveBuilder }[] = [
 
 async function setupOccupiedEscrow(
   client:     SuiClient,
-  owner:      Ed25519Keypair,
-  tenant1:    Ed25519Keypair,
+  governor:      Ed25519Keypair,
+  usufructuary1:    Ed25519Keypair,
   d:          ReturnType<typeof loadDeployment>,
   buildCurve: CurveBuilder,
-): Promise<{ escrowId: string; tenantCapId: string }> {
+): Promise<{ escrowId: string; usufructCapId: string }> {
   const ta = [`${d.dummyAssetPackageId}::dummy_asset::DummyAsset`, '0x2::sui::SUI'];
 
   // Step 1: integrate with the target curve shape
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
+  tx1.setSender(d.governor.address);
   const asset              = tx1.moveCall({ target: `${d.dummyAssetPackageId}::dummy_asset::mint` });
   const ensemble           = buildCurveEnsemble(tx1, d.usufructPackageId, buildCurve);
   const retireCommitment   = tx1.moveCall({ target: `${d.usufructPackageId}::ensemble::new_retire_commitment_immediate` });
   const ensembleCommitment = tx1.moveCall({ target: `${d.usufructPackageId}::ensemble::new_ensemble_commitment_immediate` });
-  const [ownerCap, inbox] = tx1.moveCall({
+  const [governanceCap, inbox] = tx1.moveCall({
     target:        `${d.usufructPackageId}::escrow::integrate`,
     typeArguments: ta,
     arguments:     [asset, ensemble, retireCommitment, ensembleCommitment, tx1.object(d.protocolFeeRefId), clock(tx1)],
   });
-  tx1.transferObjects([ownerCap, inbox], d.owner.address);
-  const r1 = await execSetup(client, owner, tx1);
+  tx1.transferObjects([governanceCap, inbox], d.governor.address);
+  const r1 = await execSetup(client, governor, tx1);
 
   const escrowObj = r1.objectChanges?.find(
     c => c.type === 'created' && (c as any).objectType?.includes('Escrow'),
@@ -184,26 +184,26 @@ async function setupOccupiedEscrow(
 
   // Step 2: rent (1 tenure)
   const tx2 = new Transaction();
-  tx2.setSender(d.tenant1.address);
+  tx2.setSender(d.usufructuary1.address);
   const [payment] = tx2.splitCoins(tx2.gas, [tx2.pure.u64(FLOOR_PRICE_MIST)]);
   const tenures    = tx2.moveCall({
     target:    `${d.usufructPackageId}::ensemble::tenures`,
     arguments: [tx2.pure.u64(1n)],
   });
-  const tenantCap = tx2.moveCall({
+  const usufructCap = tx2.moveCall({
     target:        `${d.usufructPackageId}::escrow::rent`,
     typeArguments: ta,
     arguments:     [tx2.object(escrowId), payment, tenures, clock(tx2)],
   });
-  tx2.transferObjects([tenantCap], d.tenant1.address);
-  const r2 = await execSetup(client, tenant1, tx2);
+  tx2.transferObjects([usufructCap], d.usufructuary1.address);
+  const r2 = await execSetup(client, usufructuary1, tx2);
 
   const capObj = r2.objectChanges?.find(
-    c => c.type === 'created' && (c as any).objectType?.includes('TenantCap'),
+    c => c.type === 'created' && (c as any).objectType?.includes('UsufructCap'),
   );
-  if (!capObj) throw new Error('setup: TenantCap not found');
+  if (!capObj) throw new Error('setup: UsufructCap not found');
 
-  return { escrowId, tenantCapId: (capObj as any).objectId };
+  return { escrowId, usufructCapId: (capObj as any).objectId };
 }
 
 async function main() {
@@ -234,8 +234,8 @@ async function main() {
     for (let run = 0; run < RUNS; run++) {
       if (run > 0) await new Promise(r => setTimeout(r, 1_000));
       process.stdout.write(`  run ${run + 1}/${RUNS} setup...`);
-      const { escrowId, tenantCapId } = await setupOccupiedEscrow(
-        client, kp.owner, kp.tenant1, d, buildCurve,
+      const { escrowId, usufructCapId } = await setupOccupiedEscrow(
+        client, kp.governor, kp.usufructuary1, d, buildCurve,
       );
 
       // Sleep so the on-chain clock advances to t ≈ t_max/2 before borrow_return.
@@ -244,11 +244,11 @@ async function main() {
 
       process.stdout.write(' measuring...');
       const tx = new Transaction();
-      tx.setSender(d.tenant1.address);
+      tx.setSender(d.usufructuary1.address);
       const [asset, receipt] = tx.moveCall({
         target:        `${d.usufructPackageId}::escrow::borrow_asset`,
         typeArguments: ta,
-        arguments:     [tx.object(escrowId), tx.object(tenantCapId), clock(tx)],
+        arguments:     [tx.object(escrowId), tx.object(usufructCapId), clock(tx)],
       }) as any[];
       tx.moveCall({
         target:        `${d.usufructPackageId}::escrow::return_asset`,
@@ -256,7 +256,7 @@ async function main() {
         arguments:     [tx.object(escrowId), asset, receipt],
       });
 
-      const rec = await measure(client, kp.tenant1, `borrow_return[${label}]`, run, tx);
+      const rec = await measure(client, kp.usufructuary1, `borrow_return[${label}]`, run, tx);
       records.push(rec);
       console.log(` net=${rec.net} MIST`);
     }

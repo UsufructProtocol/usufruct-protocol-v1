@@ -3,7 +3,7 @@
  * Phase B / 04 — Sequential rents scaling
  * Flow: integrate → N × (rent(1) → wait → apply) → retire → apply → claim
  *
- * Measures N consecutive rent cycles from separate tenants, each paying for
+ * Measures N consecutive rent cycles from separate usufructuaries, each paying for
  * 1 tenure. Demonstrates that per-cycle cost is constant (O(N) total).
  * Not to be confused with rent(tenures(N)) — see a_atomic/02b_rent_multi_tenure.ts
  * for the cost of a single rent call locking N tenures at once.
@@ -28,8 +28,8 @@ async function main() {
   const d      = loadDeployment();
   const client = makeClient();
   const kp     = loadKeypairs(d);
-  const tenants    = [kp.tenant1, kp.tenant2];
-  const tenantAddrs = [d.tenant1.address, d.tenant2.address];
+  const usufructuaries    = [kp.usufructuary1, kp.usufructuary2];
+  const usufructuaryAddrs = [d.usufructuary1.address, d.usufructuary2.address];
 
   const typeArgs = [
     `${d.dummyAssetPackageId}::dummy_asset::DummyAsset`,
@@ -41,22 +41,22 @@ async function main() {
 
   // integrate
   const tx1 = new Transaction();
-  tx1.setSender(d.owner.address);
-  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
-  tx1.transferObjects([ownerCap, inbox], d.owner.address);
-  const r1 = await measure(client, kp.owner, 'integrate', 0, tx1);
+  tx1.setSender(d.governor.address);
+  const { governanceCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId, buildFlowEnsemble);
+  tx1.transferObjects([governanceCap, inbox], d.governor.address);
+  const r1 = await measure(client, kp.governor, 'integrate', 0, tx1);
   steps.push(r1);
   console.log(`  integrate: net=${r1.net}`);
 
   const c1 = (await client.getTransactionBlock({ digest: r1.digest, options: { showObjectChanges: true } })).objectChanges ?? [];
   const escrowId   = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('Escrow')) as any).objectId;
-  const ownerCapId = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('OwnerCap')) as any).objectId;
+  const governanceCapId = (c1.find(c => c.type === 'created' && (c as any).objectType?.includes('GovernanceCap')) as any).objectId;
 
   let paymentMultiplier = 1n; // escalation: each tenure costs 1 MIST more
 
   for (let i = 0; i < N; i++) {
-    const kpT = tenants[i % 2];
-    const addrT = tenantAddrs[i % 2];
+    const kpT = usufructuaries[i % 2];
+    const addrT = usufructuaryAddrs[i % 2];
     const payAmt = FLOOR_PRICE_MIST + BigInt(i); // floor + delta*i
 
     const txRent = new Transaction();
@@ -77,37 +77,37 @@ async function main() {
     await new Promise(r => setTimeout(r, 12000));
 
     const txApp = new Transaction();
-    txApp.setSender(d.owner.address);
+    txApp.setSender(d.governor.address);
     txApp.moveCall({
       target: `${d.usufructPackageId}::escrow::apply_pending_transition_states`,
       typeArguments: typeArgs,
       arguments: [txApp.object(escrowId), clock(txApp)],
     });
-    const rApp = await measure(client, kp.owner, `apply_${i}`, 0, txApp);
+    const rApp = await measure(client, kp.governor, `apply_${i}`, 0, txApp);
     steps.push(rApp);
     console.log(`           apply  net=${rApp.net}`);
   }
 
   // retire + apply + claim
   const txRet = new Transaction();
-  txRet.setSender(d.owner.address);
+  txRet.setSender(d.governor.address);
   txRet.moveCall({
     target: `${d.usufructPackageId}::escrow::retire`,
     typeArguments: typeArgs,
-    arguments: [txRet.object(escrowId), txRet.object(ownerCapId), clock(txRet)],
+    arguments: [txRet.object(escrowId), txRet.object(governanceCapId), clock(txRet)],
   });
-  const rRet = await measure(client, kp.owner, 'retire', 0, txRet);
+  const rRet = await measure(client, kp.governor, 'retire', 0, txRet);
   steps.push(rRet);
 
   const txC = new Transaction();
-  txC.setSender(d.owner.address);
+  txC.setSender(d.governor.address);
   const asset = txC.moveCall({
     target: `${d.usufructPackageId}::escrow::claim_asset`,
     typeArguments: typeArgs,
-    arguments: [txC.object(escrowId), txC.object(ownerCapId), clock(txC)],
+    arguments: [txC.object(escrowId), txC.object(governanceCapId), clock(txC)],
   });
-  txC.transferObjects([asset], d.owner.address);
-  const rC = await measure(client, kp.owner, 'claim_asset', 0, txC);
+  txC.transferObjects([asset], d.governor.address);
+  const rC = await measure(client, kp.governor, 'claim_asset', 0, txC);
   steps.push(rC);
 
   const totalNet = steps.reduce((acc, s) => acc + s.net, 0n);

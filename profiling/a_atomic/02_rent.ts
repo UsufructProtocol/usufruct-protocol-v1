@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Phase A / 02 — rent
- * Measures: escrow::rent (idle → occupied, returns TenantCap)
+ * Measures: escrow::rent (idle → occupied, returns UsufructCap)
  * Precondition: escrow in Idle state (created by integrate, not measured)
  */
 
@@ -20,23 +20,23 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 
 async function setupIdleEscrow(
   client: SuiClient,
-  owner: Ed25519Keypair,
+  governor: Ed25519Keypair,
   d: ReturnType<typeof loadDeployment>,
-): Promise<{ escrowId: string; ownerCapId: string }> {
+): Promise<{ escrowId: string; governanceCapId: string }> {
   const tx = new Transaction();
-  tx.setSender(d.owner.address);
+  tx.setSender(d.governor.address);
 
-  const { ownerCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-  tx.transferObjects([ownerCap, inbox], d.owner.address);
+  const { governanceCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  tx.transferObjects([governanceCap, inbox], d.governor.address);
 
-  const result = await execSetup(client, owner, tx);
+  const result = await execSetup(client, governor, tx);
 
   const changes = result.objectChanges ?? [];
   const escrow  = changes.find(c => c.type === 'created' && (c as any).objectType?.includes('Escrow'));
-  const cap     = changes.find(c => c.type === 'created' && (c as any).objectType?.includes('OwnerCap'));
+  const cap     = changes.find(c => c.type === 'created' && (c as any).objectType?.includes('GovernanceCap'));
 
-  if (!escrow || !cap) throw new Error('setup: Escrow or OwnerCap not found in tx output');
-  return { escrowId: (escrow as any).objectId, ownerCapId: (cap as any).objectId };
+  if (!escrow || !cap) throw new Error('setup: Escrow or GovernanceCap not found in tx output');
+  return { escrowId: (escrow as any).objectId, governanceCapId: (cap as any).objectId };
 }
 
 async function main() {
@@ -48,16 +48,16 @@ async function main() {
   for (let run = 0; run < RUNS; run++) {
     if (run > 0) await new Promise(r => setTimeout(r, 1000));
     process.stdout.write(`  run ${run + 1}/${RUNS} setup...`);
-    const { escrowId } = await setupIdleEscrow(client, kp.owner, d);
+    const { escrowId } = await setupIdleEscrow(client, kp.governor, d);
 
     process.stdout.write(' measuring...');
     const tx = new Transaction();
-    tx.setSender(d.tenant1.address);
+    tx.setSender(d.usufructuary1.address);
 
-    const tenantCap = buildRent(tx, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
-    tx.transferObjects([tenantCap], d.tenant1.address);
+    const usufructCap = buildRent(tx, d.usufructPackageId, d.dummyAssetPackageId, escrowId);
+    tx.transferObjects([usufructCap], d.usufructuary1.address);
 
-    const rec = await measure(client, kp.tenant1, 'rent', run, tx);
+    const rec = await measure(client, kp.usufructuary1, 'rent', run, tx);
     records.push(rec);
     console.log(` net=${rec.net} MIST`);
   }

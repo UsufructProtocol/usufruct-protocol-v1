@@ -32,7 +32,7 @@ async function getAllFeeMessageRefs(client: SuiClient, inboxId: string, pkg: str
 
   while (true) {
     const page = await client.getOwnedObjects({
-      owner:   inboxId,
+      governor:   inboxId,
       filter:  { StructType: feeType },
       options: { showType: true },
       cursor,
@@ -54,7 +54,7 @@ async function getAllFeeMessageRefs(client: SuiClient, inboxId: string, pkg: str
 async function collectBatch(
   client:    SuiClient,
   keypair:   Ed25519Keypair,
-  ownerAddr: string,
+  governorAddr: string,
   inboxId:   string,
   pkg:       string,
   refs:      Ref[],
@@ -63,7 +63,7 @@ async function collectBatch(
   const receivingType = `0x2::transfer::Receiving<${feeType}>`;
 
   const tx = new Transaction();
-  tx.setSender(ownerAddr);
+  tx.setSender(governorAddr);
   tx.setGasBudget(200_000_000);
 
   const tickets    = refs.map(r => tx.receivingRef({ objectId: r.objectId, version: r.version, digest: r.digest }));
@@ -73,7 +73,7 @@ async function collectBatch(
     typeArguments: ['0x2::sui::SUI'],
     arguments:     [tx.object(inboxId), ticketVec],
   });
-  tx.transferObjects([coin], ownerAddr);
+  tx.transferObjects([coin], governorAddr);
 
   const bytes = await tx.build({ client });
   const sig   = await keypair.signTransaction(bytes);
@@ -149,7 +149,7 @@ async function main() {
   const sign = totalNet < 0n ? '' : '+';
   console.log(`\nDone — ${totalCollected} messages collected`);
   console.log(`Total net: ${sign}${totalNet} MIST  (${sign}${(Number(totalNet) / 1e9).toFixed(6)} SUI)`);
-  console.log(`Negative = rebate received (SUI recovered to owner wallet)`);
+  console.log(`Negative = rebate received (SUI recovered to governor wallet)`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

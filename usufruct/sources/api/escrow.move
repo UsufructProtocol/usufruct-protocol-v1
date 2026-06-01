@@ -23,7 +23,7 @@ use usufruct::{
     math,
     tenure_duration_policy,
     monetary,
-    owner_cap::OwnerCap,
+    governance_cap::GovernanceCap,
     phases,
     price_escalation_policy::{Self, PriceEscalationPolicy},
     escrow_identity,
@@ -32,7 +32,7 @@ use usufruct::{
     retire_commitment_policy::{Self, RetireCommitmentPolicy},
     ensemble_commitment_policy::{Self, EnsembleCommitmentPolicy},
     refund_address::RefundAddress,
-    tenant_cap::{Self, TenantCap},
+    usufruct_cap::{Self, UsufructCap},
 };
 
 // === Errors ===
@@ -57,7 +57,7 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 
 // === Public Functions ===
 
-/// Open a new portfolio: mint a fresh `OwnerCap` + `EarningsInbox` pair (born
+/// Open a new portfolio: mint a fresh `GovernanceCap` + `EarningsInbox` pair (born
 /// together in the engine) and share the escrow. The caller receives both
 /// instruments, thereafter independent — keep the cap, sell/rent the inbox, or
 /// either, in any combination (§11).
@@ -69,9 +69,9 @@ public fun integrate<Asset: key + store, CoinType>(
     fee_ref:             &ProtocolFeeRef,
     clock:      &Clock,
     ctx:        &mut TxContext,
-): (OwnerCap, EarningsInbox) {
+): (GovernanceCap, EarningsInbox) {
     let uid = object::new(ctx);
-    let (core, state, owner_cap, inbox) = asset_state::execute_integrate<Asset, CoinType>(
+    let (core, state, governance_cap, inbox) = asset_state::execute_integrate<Asset, CoinType>(
         asset, ensemble, retire_commitment, ensemble_commitment,
         protocol_fee_ref::proj_inbox_identity(fee_ref),
         escrow_identity::new(object::uid_to_inner(&uid)),
@@ -83,10 +83,10 @@ public fun integrate<Asset: key + store, CoinType>(
         core:  option::some(core),
         state: option::some(state),
     });
-    (owner_cap, inbox)
+    (governance_cap, inbox)
 }
 
-/// Join an existing portfolio: bind the new escrow to a caller-held `OwnerCap`
+/// Join an existing portfolio: bind the new escrow to a caller-held `GovernanceCap`
 /// and `EarningsInbox`. Governance routes to the existing cap; income to the
 /// existing inbox. Holding both objects by reference is the authorization;
 /// neither is minted.
@@ -96,7 +96,7 @@ public fun integrate_into_portfolio<Asset: key + store, CoinType>(
     retire_commitment:   RetireCommitmentPolicy,
     ensemble_commitment: EnsembleCommitmentPolicy,
     fee_ref:             &ProtocolFeeRef,
-    owner_cap:           &OwnerCap,
+    governance_cap:           &GovernanceCap,
     inbox:               &EarningsInbox,
     clock:      &Clock,
     ctx:        &mut TxContext,
@@ -105,7 +105,7 @@ public fun integrate_into_portfolio<Asset: key + store, CoinType>(
     let (core, state) = asset_state::execute_integrate_into_portfolio<Asset, CoinType>(
         asset, ensemble, retire_commitment, ensemble_commitment,
         protocol_fee_ref::proj_inbox_identity(fee_ref),
-        owner_cap, inbox,
+        governance_cap, inbox,
         escrow_identity::new(object::uid_to_inner(&uid)),
         phases::now(clock),
         ctx,
@@ -117,72 +117,72 @@ public fun integrate_into_portfolio<Asset: key + store, CoinType>(
     });
 }
 
-/// Claim the asset from a retired escrow. Returns only the asset — owner income
+/// Claim the asset from a retired escrow. Returns only the asset — governor income
 /// was settled to the inbox throughout, never accumulated here. Takes
-/// `&OwnerCap`: the cap may govern other escrows, so it is not consumed.
+/// `&GovernanceCap`: the cap may govern other escrows, so it is not consumed.
 public fun claim_asset<Asset: key + store, CoinType>(
     escrow:    Escrow<Asset, CoinType>,
-    owner_cap: &OwnerCap,
+    governance_cap: &GovernanceCap,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ): Asset {
     let Escrow { id, core, state } = escrow;
-    let asset = asset_state::execute_claim(state.destroy_some(), core.destroy_some(), owner_cap, clock, ctx);
+    let asset = asset_state::execute_claim(state.destroy_some(), core.destroy_some(), governance_cap, clock, ctx);
     id.delete();
     asset
 }
 
 public fun retire<Asset: key + store, CoinType>(
     escrow:    &mut Escrow<Asset, CoinType>,
-    owner_cap: &OwnerCap,
+    governance_cap: &GovernanceCap,
     clock:     &Clock,
     ctx:       &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_retire(state, core, owner_cap, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_retire(state, core, governance_cap, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
 
 public fun extend_retire_commitment<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
-    owner_cap:  &OwnerCap,
+    governance_cap:  &GovernanceCap,
     new_policy: RetireCommitmentPolicy,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_extend_retire_commitment<Asset, CoinType>(state, core, owner_cap, new_policy, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_extend_retire_commitment<Asset, CoinType>(state, core, governance_cap, new_policy, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
 
 public fun extend_ensemble_commitment<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
-    owner_cap:  &OwnerCap,
+    governance_cap:  &GovernanceCap,
     new_policy: EnsembleCommitmentPolicy,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_extend_ensemble_commitment<Asset, CoinType>(state, core, owner_cap, new_policy, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_extend_ensemble_commitment<Asset, CoinType>(state, core, governance_cap, new_policy, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
 
 public fun update_ensemble<Asset: key + store, CoinType>(
     escrow:       &mut Escrow<Asset, CoinType>,
-    owner_cap:    &OwnerCap,
+    governance_cap:    &GovernanceCap,
     new_ensemble: PolicyEnsemble,
     clock:        &Clock,
     ctx:          &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_update_ensemble(state, core, owner_cap, new_ensemble, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_update_ensemble(state, core, governance_cap, new_ensemble, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
@@ -193,7 +193,7 @@ public fun rent<Asset: key + store, CoinType>(
     tenures: Tenures,
     clock:   &Clock,
     ctx:     &mut TxContext,
-): TenantCap {
+): UsufructCap {
     let state = take_state(escrow);
     let core  = take_core(escrow);
     let (rs, new_core, cap) = asset_state::execute_rent(state, core, payment, tenures, clock, ctx);
@@ -204,13 +204,13 @@ public fun rent<Asset: key + store, CoinType>(
 
 public fun borrow_asset<Asset: key + store, CoinType>(
     escrow:     &mut Escrow<Asset, CoinType>,
-    tenant_cap: &TenantCap,
+    usufruct_cap: &UsufructCap,
     clock:      &Clock,
     ctx:        &mut TxContext,
 ): (Asset, AssetReceipt<Asset, CoinType>) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (asset, receipt, new_core) = asset_state::execute_borrow(state, core, tenant_cap, clock, ctx);
+    let (asset, receipt, new_core) = asset_state::execute_borrow(state, core, usufruct_cap, clock, ctx);
     put_core(escrow, new_core);
     (asset, receipt)
 }
@@ -225,35 +225,35 @@ public fun return_asset<Asset: key + store, CoinType>(
     put_state(escrow, asset_state::renting_into_state(rs));
 }
 
-public fun soft_burn_tenant_cap<Asset: key + store, CoinType>(
+public fun soft_burn_usufruct_cap<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
-    cap:    TenantCap,
+    cap:    UsufructCap,
     clock:  &Clock,
     ctx:    &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_soft_burn_tenant_cap(state, core, cap, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_soft_burn_usufruct_cap(state, core, cap, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
 
-public fun update_tenant_refund_address<Asset: key + store, CoinType>(
+public fun update_usufructuary_refund_address<Asset: key + store, CoinType>(
     escrow:      &mut Escrow<Asset, CoinType>,
-    cap:         &TenantCap,
+    cap:         &UsufructCap,
     new_address: RefundAddress,
     clock:       &Clock,
     ctx:         &mut TxContext,
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_update_tenant_refund_address(state, core, cap, new_address, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_update_usufructuary_refund_address(state, core, cap, new_address, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
 
-public fun hard_burn_tenant_cap(cap: TenantCap, ctx: &mut TxContext) {
-    tenant_cap::burn(cap, ctx)
+public fun hard_burn_usufruct_cap(cap: UsufructCap, ctx: &mut TxContext) {
+    usufruct_cap::burn(cap, ctx)
 }
 
 public fun apply_pending_transition_states<Asset: key + store, CoinType>(
@@ -378,55 +378,55 @@ public fun coin_type_name<Asset: key + store, CoinType>(
     string::from_ascii(type_name::with_defining_ids<CoinType>().into_string())
 }
 
-public fun owner_cap_id<Asset: key + store, CoinType>(
+public fun governance_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): ID {
-    asset_state::proj_owner_cap_id(read_core(escrow))
+    asset_state::proj_governance_cap_id(read_core(escrow))
 }
 
-public fun active_tenant_addr<Asset: key + store, CoinType>(
+public fun active_usufructuary_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
     asset_state::proj_active_addr(read_state(escrow))
 }
 
-public fun active_tenant_cap_id<Asset: key + store, CoinType>(
+public fun active_usufruct_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
     asset_state::proj_active_cap_id(read_state(escrow))
 }
 
-public fun pending_tenant_addr<Asset: key + store, CoinType>(
+public fun pending_usufructuary_addr<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<address> {
     asset_state::proj_pending_addr(read_state(escrow))
 }
 
-public fun pending_tenant_cap_id<Asset: key + store, CoinType>(
+public fun pending_usufruct_cap_id<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<ID> {
     asset_state::proj_pending_cap_id(read_state(escrow))
 }
 
-public fun active_tenant_stake_mist<Asset: key + store, CoinType>(
+public fun active_stake_balance_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
-public fun pending_tenant_stake_mist<Asset: key + store, CoinType>(
+public fun pending_stake_balance_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_stake(read_state(escrow)).map!(|v| monetary::stake_mist(v))
 }
 
-public fun active_tenant_committed_tenures<Asset: key + store, CoinType>(
+public fun active_usufructuary_committed_tenures<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_active_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
 }
 
-public fun pending_tenant_committed_tenures<Asset: key + store, CoinType>(
+public fun pending_usufructuary_committed_tenures<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_committed_tenures(read_state(escrow)).map!(|v| tenures::tenures_count(v))
@@ -538,7 +538,7 @@ public fun handover_expiry_ms<Asset: key + store, CoinType>(
     asset_state::proj_handover_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
-public fun active_tenant_time_remaining_ms<Asset: key + store, CoinType>(
+public fun active_usufructuary_time_remaining_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     now_ms: u64,
 ): Option<u64> {
@@ -556,7 +556,7 @@ public fun active_tenant_time_remaining_ms<Asset: key + store, CoinType>(
     }
 }
 
-public fun active_tenant_stake_remaining_mist<Asset: key + store, CoinType>(
+public fun active_stake_balance_remaining_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     now_ms: u64,
 ): Option<u64> {
@@ -611,32 +611,32 @@ public fun retire_commitment_remaining_ms<Asset: key + store, CoinType>(
     if (now_ms >= unlocks) 0 else unlocks - now_ms
 }
 
-public fun owner_cap_is_valid<Asset: key + store, CoinType>(
+public fun governance_cap_is_valid<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
 ): bool {
-    asset_state::proj_owner_cap_id(read_core(escrow)) == cap_id
+    asset_state::proj_governance_cap_id(read_core(escrow)) == cap_id
 }
 
-public fun tenant_cap_is_active<Asset: key + store, CoinType>(
+public fun usufruct_cap_is_active<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
 ): bool {
-    asset_state::cap_is_active(read_state(escrow), tenant_cap::from_id(cap_id))
+    asset_state::cap_is_active(read_state(escrow), usufruct_cap::from_id(cap_id))
 }
 
-public fun tenant_cap_is_pending<Asset: key + store, CoinType>(
+public fun usufruct_cap_is_pending<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
 ): bool {
-    asset_state::cap_is_pending(read_state(escrow), tenant_cap::from_id(cap_id))
+    asset_state::cap_is_pending(read_state(escrow), usufruct_cap::from_id(cap_id))
 }
 
-public fun tenant_cap_is_stale<Asset: key + store, CoinType>(
+public fun usufruct_cap_is_stale<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     cap_id: ID,
 ): bool {
-    asset_state::cap_is_stale(read_state(escrow), tenant_cap::from_id(cap_id))
+    asset_state::cap_is_stale(read_state(escrow), usufruct_cap::from_id(cap_id))
 }
 
 
@@ -706,17 +706,17 @@ public fun handover_settlement<Asset: key + store, CoinType>(
     escrow:      &Escrow<Asset, CoinType>,
     boundary_ms: u64,
 ): (u64, u64, u64) {
-    let (remaining, owner, fee) = asset_state::proj_handover_settlement(
+    let (remaining, governor_share, fee) = asset_state::proj_handover_settlement(
         read_state(escrow), read_core(escrow), phases::timestamp(boundary_ms),
     );
-    (monetary::stake_mist(remaining), monetary::stake_mist(owner), monetary::stake_mist(fee))
+    (monetary::stake_mist(remaining), monetary::stake_mist(governor_share), monetary::stake_mist(fee))
 }
 
 public fun tenure_settlement<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): (u64, u64) {
-    let (owner, fee) = asset_state::proj_tenure_settlement(read_state(escrow));
-    (monetary::stake_mist(owner), monetary::stake_mist(fee))
+    let (governor_share, fee) = asset_state::proj_tenure_settlement(read_state(escrow));
+    (monetary::stake_mist(governor_share), monetary::stake_mist(fee))
 }
 
 public fun earnings_inbox_id<Asset: key + store, CoinType>(
@@ -1035,12 +1035,12 @@ public(package) fun split_fee_for_testing(amount: u64): (u64, u64) {
 #[test_only]
 public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
     escrow:         &mut Escrow<Asset, CoinType>,
-    tenant:         usufruct::tenant_seat::TenantSeat<CoinType>,
+    usufructuary:         usufruct::usufructuary_seat::UsufructuarySeat<CoinType>,
     phase_start_ms: u64,
 ) {
     let state = take_state(escrow);
     let new_state = asset_state::drive_to_rented_for_testing(
-        state, escrow.core.borrow(), tenant, phases::timestamp(phase_start_ms),
+        state, escrow.core.borrow(), usufructuary, phases::timestamp(phase_start_ms),
     );
     put_state(escrow, new_state);
 }
@@ -1048,12 +1048,12 @@ public(package) fun drive_to_rented_for_testing<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
     escrow:                    &mut Escrow<Asset, CoinType>,
-    tenant:                    usufruct::tenant_seat::TenantSeat<CoinType>,
+    usufructuary:                    usufruct::usufructuary_seat::UsufructuarySeat<CoinType>,
     handover_countdown_expiry: u64,
 ) {
     let state = take_state(escrow);
     let new_state = asset_state::drive_to_demand_for_testing(
-        state, tenant, phases::timestamp(handover_countdown_expiry),
+        state, usufructuary, phases::timestamp(handover_countdown_expiry),
     );
     put_state(escrow, new_state);
 }
@@ -1061,14 +1061,14 @@ public(package) fun drive_to_demand_for_testing<Asset: key + store, CoinType>(
 #[test_only]
 public(package) fun drive_to_descent_for_testing<Asset: key + store, CoinType>(
     escrow:             &mut Escrow<Asset, CoinType>,
-    owner_amount:       u64,
+    governor_amount:       u64,
     fee_amount:         u64,
     last_acq_price:     u64,
     new_phase_start_ms: u64,
 ) {
     let state = take_state(escrow);
     let new_state = asset_state::drive_to_descent_for_testing(
-        state, escrow.core.borrow(), owner_amount, fee_amount, last_acq_price, phases::timestamp(new_phase_start_ms),
+        state, escrow.core.borrow(), governor_amount, fee_amount, last_acq_price, phases::timestamp(new_phase_start_ms),
     );
     put_state(escrow, new_state);
 }

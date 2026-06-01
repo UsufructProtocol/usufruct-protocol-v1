@@ -6,8 +6,8 @@ module usufruct::cap;
 // === Imports ===
 
 use usufruct::{
-    owner_cap::{Self, OwnerCap},
-    tenant_cap::{Self, TenantCap},
+    governance_cap::{Self, GovernanceCap},
+    usufruct_cap::{Self, UsufructCap},
 };
 
 // === Errors ===
@@ -29,12 +29,12 @@ use usufruct::{
 /// asset can NEVER be reclaimed — it stays in perpetual usufruct at frozen terms.
 /// Income is unaffected: the `EarningsInbox` keeps receiving and remains
 /// collectable. This is the supremum of the commitment ladder. There is no undo.
-public fun renounce_governance(cap: OwnerCap, ctx: &TxContext) {
-    owner_cap::burn(cap, ctx)
+public fun renounce_governance(cap: GovernanceCap, ctx: &TxContext) {
+    governance_cap::burn(cap, ctx)
 }
 
-public fun tenant_cap_escrow_id(cap: &TenantCap): ID {
-    tenant_cap::proj_escrow_id(cap)
+public fun usufruct_cap_escrow_id(cap: &UsufructCap): ID {
+    usufruct_cap::proj_escrow_id(cap)
 }
 
 // === View Functions ===

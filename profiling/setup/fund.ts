@@ -32,7 +32,7 @@ async function main() {
   const d = loadDeployment();
 
   console.log(`Requesting faucet (${FAUCET_URL}) for all wallets...`);
-  for (const wallet of [d.owner, d.tenant1, d.tenant2]) {
+  for (const wallet of [d.governor, d.usufructuary1, d.usufructuary2]) {
     await requestFaucet(wallet.address);
     await new Promise(r => setTimeout(r, 1500));
   }

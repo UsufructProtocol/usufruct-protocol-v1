@@ -830,3 +830,30 @@ scalability question.
 
 **Earning-Message-in-Inbox is unequivocally the more scalable model for the owner
 to claim earnings.**
+
+## Why it scales *where it matters*: pull-aggregation vs push-distribution
+
+The two owner-facing flows have **opposite reducibility**, and that — not raw
+magnitude — is the heart of the verdict:
+
+- **Earnings (collection) is pull-aggregatable.** Many escrows *push* income to
+  **one** inbox (transfer-to-object at settlement); the owner *pulls* the whole
+  pile in a single `Receiving` batch. An aggregation sink exists → collection is
+  reducible to **O(1) PTBs**. The inbox model exploits exactly this.
+- **Governance (retire/update) is push-distributive and irreducibly O(M).** One
+  cap must reach M escrows, and each escrow is a separate object whose state is
+  mutated individually — there is **no aggregation point, no broadcast**. Fleet
+  governance is **O(M) operations no matter the model**. (Finding #4's "O(1)" is
+  *per-escrow* — zero shared-cap overhead — **not** per-fleet; the fleet total is
+  still M pushes.)
+
+This is the precise sense in which inbox "scales where it matters": it makes the
+**aggregatable, high-frequency** axis (claiming cash flow) **O(1)**, and leaves the
+**irreducible, low-frequency** axis (governance) at its push-based **O(M)** floor —
+while still collapsing that floor's *object* cost from **M caps to one**.
+
+Deposit puts **both** flows on the per-escrow push rail: **O(M) withdraws AND O(M)
+caps**. On the one axis that admits aggregation (collection) it fails to take it;
+on the axis that doesn't (governance) it pays the worse constant (M caps). The
+whole game is *optimize the reducible axis, minimize the irreducible one* — and the
+inbox does both, while deposit does neither.

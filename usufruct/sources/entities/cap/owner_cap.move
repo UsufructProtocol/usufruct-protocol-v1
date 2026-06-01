@@ -36,6 +36,14 @@ public struct OwnerCapMinted has copy, drop {
     owner_address: address,
 }
 
+/// The cap was permanently burned (governance renounced). Carries no escrow id —
+/// the cap governs many escrows; the set it sealed is recovered by joining this
+/// `owner_cap_id` against the `AssetIntegrated` star schema.
+public struct OwnerCapBurned has copy, drop {
+    owner_cap_id:  ID,
+    owner_address: address,
+}
+
 // === Method Aliases ===
 
 // === Public Functions ===
@@ -63,6 +71,17 @@ public(package) fun new(
     cap
 }
 
+/// Destroy the cap. Irreversible: no cap can ever again satisfy the seat bind of
+/// the escrows it governed, so `retire`/`update_ensemble`/`claim_asset` become
+/// permanently unreachable for all of them. Mechanism only — the semantic
+/// (governance renunciation) lives in `cap::renounce_governance`.
+public(package) fun burn(cap: OwnerCap, ctx: &TxContext) {
+    let OwnerCap { id } = cap;
+    let owner_cap_id = object::uid_to_inner(&id);
+    id.delete();
+    event::emit(OwnerCapBurned { owner_cap_id, owner_address: ctx.sender() });
+}
+
 // === Private Functions ===
 
 // === Test Functions ===
@@ -73,3 +92,8 @@ public fun minted_owner_cap_id(e: &OwnerCapMinted): ID { e.owner_cap_id }
 public fun minted_escrow_id(e: &OwnerCapMinted): ID { e.escrow_id }
 #[test_only]
 public fun minted_owner_address(e: &OwnerCapMinted): address { e.owner_address }
+
+#[test_only]
+public fun burned_owner_cap_id(e: &OwnerCapBurned): ID { e.owner_cap_id }
+#[test_only]
+public fun burned_owner_address(e: &OwnerCapBurned): address { e.owner_address }

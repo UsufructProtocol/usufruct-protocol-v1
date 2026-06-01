@@ -11,7 +11,7 @@ use sui::{
 };
 use usufruct::{
     escrow_identity,
-    owner_cap::{Self, OwnerCapMinted},
+    owner_cap::{Self, OwnerCapMinted, OwnerCapBurned},
 };
 
 // ─── Actors ────────────────────────────────────────────────────────────────
@@ -138,6 +138,41 @@ fun i2_distinct_caps_distinct_identities() {
         assert!(owner_cap::proj_id(owner_cap::identity(&a)) != owner_cap::proj_id(owner_cap::identity(&b)));
         transfer::public_transfer(a, ALICE);
         transfer::public_transfer(b, ALICE);
+    };
+    scenario.end();
+}
+
+// ─── B — burn ──────────────────────────────────────────────────────────────
+
+// B1: burn consumes the cap and emits one OwnerCapBurned recording the cap's id
+//     and the tx sender. The event is pure — no escrow id (the cap governs many;
+//     the sealed set is recovered via the AssetIntegrated star schema).
+#[test]
+fun b1_burn_emits_burned_event() {
+    let mut scenario = test_scenario::begin(ALICE);
+    {
+        let cap    = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        let cap_id = object::id(&cap);
+        owner_cap::burn(cap, scenario.ctx());
+
+        let events = event::events_by_type<OwnerCapBurned>();
+        assert_eq!(events.length(), 1);
+        assert_eq!(owner_cap::burned_owner_cap_id(&events[0]),  cap_id);
+        assert_eq!(owner_cap::burned_owner_address(&events[0]), ALICE);
+    };
+    scenario.end();
+}
+
+// B2: the burned owner is the tx sender (ctx-derived), not a declarative arg —
+//     a burn sent from BOB records BOB.
+#[test]
+fun b2_burn_owner_is_the_sender() {
+    let mut scenario = test_scenario::begin(BOB);
+    {
+        let cap = owner_cap::new(escrow_identity::new(escrow_id_1()), ALICE, scenario.ctx());
+        owner_cap::burn(cap, scenario.ctx());
+        let events = event::events_by_type<OwnerCapBurned>();
+        assert_eq!(owner_cap::burned_owner_address(&events[0]), BOB);
     };
     scenario.end();
 }

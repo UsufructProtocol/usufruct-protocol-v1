@@ -15,6 +15,7 @@ use sui::{
 };
 use usufruct::{
     asset_state::{Self, AssetIntegrated},
+    cap,
     earnings,
     earnings_message::{Self, EarningsMessage, EarningsPosted, EarningsCollected},
     escrow::{Self, Escrow},
@@ -170,5 +171,54 @@ fun e2_portfolio_two_escrows_one_inbox_collect_both() {
     transfer::public_transfer(coin, OWNER);
     transfer::public_transfer(inbox, OWNER);
     transfer::public_transfer(cap, OWNER);
+    sc.end();
+}
+
+// ─── E3 — income ⊥ governance: coupon survives renounce ───────────────────────
+
+// The owner renounces governance up-front (burns the cap → the asset is sealed in
+// perpetual usufruct, unclaimable forever). The escrow keeps producing: a tenure
+// still settles, still mails the owner share to the inbox, and the inbox still
+// collects it by the exact same value. Renunciation sheds the principal, never the
+// coupon — the EarningsInbox is independent of the OwnerCap by construction.
+#[test]
+fun e3_income_flows_after_governance_renounced() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+    let (owner_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(0),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &clk, sc.ctx(),
+    );
+    let escrow_id = asset_state::asset_integrated_escrow_id(&event::events_by_type<AssetIntegrated>()[0]);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+
+    // Renounce governance before any income — the cap is gone, the asset sealed.
+    sc.next_tx(OWNER);
+    cap::renounce_governance(owner_cap, sc.ctx());
+
+    // The escrow still produces: a tenure settles, owner share mailed to the inbox.
+    sc.next_tx(OWNER);
+    let mut escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
+    let msg_id     = rent_and_expire(&mut escrow, &mut sc);
+    test_scenario::return_shared(escrow);
+
+    // The inbox still collects it — same value as if governance were intact.
+    sc.next_tx(OWNER);
+    let mut inbox = inbox;
+    let ticket = test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(msg_id);
+    let coin   = earnings::collect_earnings_messages<SUI>(&mut inbox, vector[ticket], sc.ctx());
+    assert_eq!(coin::value(&coin), owner_share());
+
+    let collected = event::events_by_type<EarningsCollected<SUI>>();
+    assert_eq!(collected.length(), 1);
+    assert_eq!(earnings_message::collected_amount(&collected[0]),    owner_share());
+    assert_eq!(earnings_message::collected_escrow_id(&collected[0]), escrow_id);
+
+    transfer::public_transfer(coin, OWNER);
+    transfer::public_transfer(inbox, OWNER);
     sc.end();
 }

@@ -9,6 +9,7 @@ use sui::{
     balance,
     clock,
     coin,
+    event,
     sui::SUI,
     test_scenario::{Self, Scenario},
 };
@@ -18,6 +19,7 @@ use usufruct::{
     retire_commitment_policy,
     escrow::{Self, Escrow},
     escrow_corpus,
+    owner_cap::{Self, OwnerCapBurned},
     protocol_fee_inbox,
     protocol_fee_ref::ProtocolFeeRef,
     tenures,
@@ -84,6 +86,39 @@ fun ct1_tenant_cap_escrow_id_matches_escrow() {
     clock::destroy_for_testing(clk2);
     transfer::public_transfer(tenant_cap, TENANT_ADDR);
     transfer::public_transfer(owner_cap, OWNER);
+    sc.end();
+}
+
+// ─── RG — cap::renounce_governance ────────────────────────────────────────────
+
+// RG1: renounce_governance consumes the OwnerCap and emits one OwnerCapBurned
+//      recording the cap's id and the sender (the renouncing owner). After this
+//      tx the cap no longer exists — retire/update_ensemble/claim_asset over its
+//      escrows are forever unreachable (the call cannot even be constructed).
+#[test]
+fun rg1_renounce_governance_burns_cap_and_emits() {
+    let mut sc = setup();
+    sc.next_tx(OWNER);
+
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+    let (owner_cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(0),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &clk, sc.ctx(),
+    );
+    let cap_id = object::id(&owner_cap);
+    transfer::public_transfer(inbox, OWNER);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+
+    sc.next_tx(OWNER);
+    cap::renounce_governance(owner_cap, sc.ctx());
+
+    let events = event::events_by_type<OwnerCapBurned>();
+    assert_eq!(events.length(), 1);
+    assert_eq!(owner_cap::burned_owner_cap_id(&events[0]),  cap_id);
+    assert_eq!(owner_cap::burned_owner_address(&events[0]), OWNER);
     sc.end();
 }
 

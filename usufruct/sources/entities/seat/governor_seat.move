@@ -17,11 +17,6 @@ use usufruct::{
 
 // === Structs ===
 
-/// The governor's record inside an escrow. Holds no balance: governor earnings are
-/// settled directly to the `EarningsInbox` as `EarningsMessage` objects, never
-/// accumulated here. Two immutable identities, both set once at integrate:
-/// `identity` records the governing `GovernanceCap`; `inbox` records the permanent
-/// earnings destination. Coin-agnostic — no phantom CoinType.
 public struct GovernorSeat has store {
     identity: GovernorIdentity,
     inbox:    EarningsInboxIdentity,

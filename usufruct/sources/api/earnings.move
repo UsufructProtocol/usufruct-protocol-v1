@@ -28,11 +28,6 @@ use usufruct::{
 
 // === Public Functions ===
 
-/// Drain `EarningsMessage`s addressed to the inbox, returning their summed
-/// balance as a single `Coin`. Touches only owned objects — no shared escrow —
-/// so collection runs at owned-object speed, exactly like fee collection. The
-/// inbox is born paired with an `GovernanceCap` via `escrow::integrate`; holding it
-/// (bearer) is the sole right to collect.
 public fun collect_earnings_messages<C>(
     inbox:   &mut EarningsInbox,
     tickets: vector<Receiving<EarningsMessage<C>>>,

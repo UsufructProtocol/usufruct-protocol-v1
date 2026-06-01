@@ -571,6 +571,237 @@ fun e2e_rent_with_floor_price_drives_full_lifecycle() {
     sc.end();
 }
 
+/// Builds `Receiving` tickets for a set of EarningsMessage ids (order-independent;
+/// collect sums balances).
+fun tickets_for(mut ids: vector<ID>): vector<sui::transfer::Receiving<EarningsMessage<SUI>>> {
+    let mut v = vector[];
+    while (!ids.is_empty()) {
+        v.push_back(test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(ids.pop_back()));
+    };
+    v
+}
+
+/// Drives a freshly-integrated, Idle escrow through the rental cycle —
+/// Idle → Occupied → Demand → Occupied → Descent — via the real public API
+/// (rent + apply_pending_transition_states across an advancing clock), then
+/// retires it from Descent (a Waiting state with no active tenant → Retired).
+/// Two owner-earnings settlements occur: the displaced tenant's used-credit at
+/// handover, and the active tenant's full stake at tenure expiry — each mailed
+/// to the escrow's inbox. Returns (the two EarningsMessage ids, their summed
+/// owner-share). MUST be the only escrow driven in the current tx so the
+/// EarningsPosted events are unambiguous. Ensemble tag(1,0,0,1,0): c=1 Fixed
+/// handover, h=1 Fixed descent.
+fun cycle_to_retired_collecting_ids(
+    escrow:    &mut Escrow<DemoAsset, SUI>,
+    owner_cap: &OwnerCap,
+    sc:        &mut Scenario,
+): (vector<ID>, u64) {
+    let mut clk = clock::create_for_testing(sc.ctx());
+
+    // Idle → Occupied (T1) → Demand (T2 bids).
+    let cap_t1 = rent_with_floor_price(escrow, &clk, sc);
+    clock::set_for_testing(&mut clk, 1_000);
+    let cap_t2 = rent_with_floor_price(escrow, &clk, sc);
+    assert!(escrow::is_demand(escrow), 90);
+
+    // Demand → Occupied: handover fires (T1 displaced → owner-earnings #1).
+    clock::set_for_testing(&mut clk, escrow::handover_expiry_ms(escrow).destroy_some());
+    escrow::apply_pending_transition_states(escrow, &clk, sc.ctx());
+    assert!(escrow::is_occupied(escrow), 91);
+
+    // Occupied → Descent: tenure expiry (T2 stake settled → owner-earnings #2).
+    clock::set_for_testing(&mut clk, escrow::tenure_expiry_ms(escrow).destroy_some());
+    escrow::apply_pending_transition_states(escrow, &clk, sc.ctx());
+    assert!(escrow::is_descending(escrow), 92);
+
+    // Capture the two owner-earnings posted to the inbox during this cycle.
+    let posted    = event::events_by_type<EarningsPosted<SUI>>();
+    let mut ids   = vector[];
+    let mut total = 0;
+    let mut i     = 0;
+    while (i < posted.length()) {
+        ids.push_back(earnings_message::posted_earnings_message_id(&posted[i]));
+        total = total + earnings_message::posted_amount(&posted[i]);
+        i = i + 1;
+    };
+
+    // Descent → Retired (governance via the cap; retire is valid in Descent).
+    escrow::retire(escrow, owner_cap, &clk, sc.ctx());
+    assert!(escrow::is_retired(escrow), 93);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    clock::destroy_for_testing(clk);
+    (ids, total)
+}
+
+/// Mints a fresh standalone escrow (its own cap + inbox) at tag(1,0,0,1,0) and
+/// returns (escrow_id, cap, inbox).
+fun integrate_lifecycle_escrow(sc: &mut Scenario): (ID, OwnerCap, EarningsInbox) {
+    sc.next_tx(OWNER);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &clk, sc.ctx(),
+    );
+    let evts = event::events_by_type<AssetIntegrated>();
+    let id   = asset_state::asset_integrated_escrow_id(&evts[evts.length() - 1]);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk);
+    (id, cap, inbox)
+}
+
+/// E2E — three INDEPENDENT portfolios. integrate ×3 → three (cap, inbox) pairs.
+/// Each escrow runs the full rental cycle, is governed (retired) by its own cap,
+/// and mails its earnings to its OWN inbox. Verified: each inbox collects EXACTLY
+/// its escrow's two owner shares (income is not commingled), and each asset is
+/// claimed by its own cap.
+#[test]
+fun e2e_three_independent_inboxes_collect_separately_then_claim() {
+    let mut sc = setup();
+
+    let (id_a, cap_a, mut inbox_a) = integrate_lifecycle_escrow(&mut sc);
+    let (id_b, cap_b, mut inbox_b) = integrate_lifecycle_escrow(&mut sc);
+    let (id_c, cap_c, mut inbox_c) = integrate_lifecycle_escrow(&mut sc);
+
+    // Drive each escrow through its own cycle in its own tx (events unambiguous).
+    sc.next_tx(OWNER);
+    let mut ea = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_a);
+    let (ids_a, total_a) = cycle_to_retired_collecting_ids(&mut ea, &cap_a, &mut sc);
+    test_scenario::return_shared(ea);
+
+    sc.next_tx(OWNER);
+    let mut eb = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_b);
+    let (ids_b, total_b) = cycle_to_retired_collecting_ids(&mut eb, &cap_b, &mut sc);
+    test_scenario::return_shared(eb);
+
+    sc.next_tx(OWNER);
+    let mut ec = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_c);
+    let (ids_c, total_c) = cycle_to_retired_collecting_ids(&mut ec, &cap_c, &mut sc);
+    test_scenario::return_shared(ec);
+
+    // Each cycle settled twice; income lands in the matching inbox only.
+    assert_eq!(ids_a.length(), 2);
+    assert_eq!(ids_b.length(), 2);
+    assert_eq!(ids_c.length(), 2);
+
+    // Collect each inbox separately — exact, non-commingled amounts.
+    sc.next_tx(OWNER);
+    let coin_a = earnings::collect_earnings_messages<SUI>(&mut inbox_a, tickets_for(ids_a), sc.ctx());
+    assert_eq!(coin::value(&coin_a), total_a);
+    let coin_b = earnings::collect_earnings_messages<SUI>(&mut inbox_b, tickets_for(ids_b), sc.ctx());
+    assert_eq!(coin::value(&coin_b), total_b);
+    let coin_c = earnings::collect_earnings_messages<SUI>(&mut inbox_c, tickets_for(ids_c), sc.ctx());
+    assert_eq!(coin::value(&coin_c), total_c);
+
+    transfer::public_transfer(coin_a, OWNER);
+    transfer::public_transfer(coin_b, OWNER);
+    transfer::public_transfer(coin_c, OWNER);
+
+    // Claim each asset with its own governing cap.
+    sc.next_tx(OWNER);
+    let clk = clock::create_for_testing(sc.ctx());
+    let asset_a = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_a), &cap_a, &clk, sc.ctx());
+    let asset_b = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_b), &cap_b, &clk, sc.ctx());
+    let asset_c = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_c), &cap_c, &clk, sc.ctx());
+    clock::destroy_for_testing(clk);
+
+    transfer::public_transfer(asset_a, OWNER);
+    transfer::public_transfer(asset_b, OWNER);
+    transfer::public_transfer(asset_c, OWNER);
+    transfer::public_transfer(cap_a, OWNER);
+    transfer::public_transfer(cap_b, OWNER);
+    transfer::public_transfer(cap_c, OWNER);
+    transfer::public_transfer(inbox_a, OWNER);
+    transfer::public_transfer(inbox_b, OWNER);
+    transfer::public_transfer(inbox_c, OWNER);
+    sc.end();
+}
+
+/// E2E — one PORTFOLIO. integrate once (cap, inbox), then integrate_into_portfolio
+/// ×2 reusing the same cap + inbox. All three escrows run the full cycle, are
+/// governed (retired) by the ONE cap, and mail their earnings to the ONE inbox.
+/// Verified: a single collect drains all six messages into one coin equal to the
+/// summed shares across all three escrows, and the one cap claims all three assets.
+#[test]
+fun e2e_one_portfolio_shared_inbox_collects_all_then_one_cap_claims_all() {
+    let mut sc = setup();
+
+    // First escrow mints the pair; two more join the SAME portfolio.
+    sc.next_tx(OWNER);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk0    = clock::create_for_testing(sc.ctx());
+    let (cap, mut inbox) = escrow::integrate<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &clk0, sc.ctx(),
+    );
+    escrow::integrate_into_portfolio<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &cap, &inbox, &clk0, sc.ctx(),
+    );
+    escrow::integrate_into_portfolio<DemoAsset, SUI>(
+        mk_demo_asset(sc.ctx()), escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)),
+        retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
+        &fee_ref, &cap, &inbox, &clk0, sc.ctx(),
+    );
+    let integ = event::events_by_type<AssetIntegrated>();
+    let id_a  = asset_state::asset_integrated_escrow_id(&integ[0]);
+    let id_b  = asset_state::asset_integrated_escrow_id(&integ[1]);
+    let id_c  = asset_state::asset_integrated_escrow_id(&integ[2]);
+    test_scenario::return_immutable(fee_ref);
+    clock::destroy_for_testing(clk0);
+
+    // Drive each through its cycle, governed by the one shared cap. Accumulate
+    // every message id and the grand total across the portfolio.
+    let mut all_ids = vector[];
+    let mut grand   = 0;
+
+    sc.next_tx(OWNER);
+    let mut ea = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_a);
+    let (ids_a, total_a) = cycle_to_retired_collecting_ids(&mut ea, &cap, &mut sc);
+    test_scenario::return_shared(ea);
+    all_ids.append(ids_a); grand = grand + total_a;
+
+    sc.next_tx(OWNER);
+    let mut eb = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_b);
+    let (ids_b, total_b) = cycle_to_retired_collecting_ids(&mut eb, &cap, &mut sc);
+    test_scenario::return_shared(eb);
+    all_ids.append(ids_b); grand = grand + total_b;
+
+    sc.next_tx(OWNER);
+    let mut ec = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_c);
+    let (ids_c, total_c) = cycle_to_retired_collecting_ids(&mut ec, &cap, &mut sc);
+    test_scenario::return_shared(ec);
+    all_ids.append(ids_c); grand = grand + total_c;
+
+    // Six messages (3 escrows × 2 settlements) in the ONE inbox; one collect
+    // drains them all into a coin equal to the portfolio's total owner income.
+    assert_eq!(all_ids.length(), 6);
+    sc.next_tx(OWNER);
+    let coin = earnings::collect_earnings_messages<SUI>(&mut inbox, tickets_for(all_ids), sc.ctx());
+    assert_eq!(coin::value(&coin), grand);
+    transfer::public_transfer(coin, OWNER);
+
+    // The one cap claims all three assets.
+    sc.next_tx(OWNER);
+    let clk = clock::create_for_testing(sc.ctx());
+    let asset_a = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_a), &cap, &clk, sc.ctx());
+    let asset_b = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_b), &cap, &clk, sc.ctx());
+    let asset_c = escrow::claim_asset(sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id_c), &cap, &clk, sc.ctx());
+    clock::destroy_for_testing(clk);
+
+    transfer::public_transfer(asset_a, OWNER);
+    transfer::public_transfer(asset_b, OWNER);
+    transfer::public_transfer(asset_c, OWNER);
+    transfer::public_transfer(cap, OWNER);
+    transfer::public_transfer(inbox, OWNER);
+    sc.end();
+}
+
 /// Multi-tenure twin of e2e_rent_with_floor_price_drives_full_lifecycle.
 /// Every tenant rents N tenures paying floor_price_mist * N. The state
 /// machine and the floor invariant are identical; only the tenure count

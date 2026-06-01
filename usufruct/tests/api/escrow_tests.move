@@ -802,6 +802,142 @@ fun e2e_one_portfolio_shared_inbox_collects_all_then_one_cap_claims_all() {
     sc.end();
 }
 
+/// E2E financial invariant — Nothing path. A single tenant rents (pays X); at
+/// tenure expiry the full stake is consumed (refund::Nothing — no tenant refund).
+/// The owner's EarningsMessage and the protocol's FeeMessage are collected and
+/// must reconstitute X exactly, split 90/10. The oracle is X (the rent the test
+/// paid) — derived from the input, NOT from any event the protocol emitted, so
+/// a wrong split would be caught here, not rubber-stamped.
+#[test]
+fun e2e_invariant_nothing_collected_fee_plus_earnings_equals_rent() {
+    let mut sc = setup();
+    let (id, cap, mut inbox) = integrate_lifecycle_escrow(&mut sc);
+
+    sc.next_tx(OWNER);
+    let mut e   = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id);
+    let clk     = clock::create_for_testing(sc.ctx());
+    let rent    = escrow::floor_price_mist(&e, clock::timestamp_ms(&clk));
+    let cap_t1  = escrow::rent(&mut e, mk_payment(rent, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+
+    // Occupied → Descent at tenure expiry: full stake settles (Nothing).
+    let mut clk2 = clk;
+    clock::set_for_testing(&mut clk2, escrow::tenure_expiry_ms(&e).destroy_some());
+    escrow::apply_pending_transition_states(&mut e, &clk2, sc.ctx());
+
+    let earn_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsPosted<SUI>>()[0]);
+    let fee_id  = fee_message::sent_fee_message_id(&event::events_by_type<FeeMessageSent<SUI>>()[0]);
+
+    transfer::public_transfer(cap_t1, OWNER);
+    test_scenario::return_shared(e);
+    clock::destroy_for_testing(clk2);
+
+    // No tenant refund was issued (Nothing path).
+    sc.next_tx(TENANT_ADDR_1);
+    assert!(!sc.has_most_recent_for_sender<Coin<SUI>>(), 0);
+
+    sc.next_tx(OWNER);
+    let earn_coin = earnings::collect_earnings_messages<SUI>(
+        &mut inbox, vector[test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(earn_id)], sc.ctx(),
+    );
+    let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
+    let fee_coin = fee_inbox::collect_fee_messages<SUI>(
+        &mut fee_box, vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_id)], sc.ctx(),
+    );
+
+    // Oracle = rent paid (independent of the protocol's reported figures).
+    assert_eq!(coin::value(&fee_coin),  rent / 10);          // 10%
+    assert_eq!(coin::value(&earn_coin), rent - rent / 10);   // 90%
+    assert_eq!(coin::value(&earn_coin) + coin::value(&fee_coin), rent);  // conservation
+
+    transfer::public_transfer(earn_coin, OWNER);
+    transfer::public_transfer(fee_coin, OWNER);
+    sc.return_to_sender(fee_box);
+    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(cap, OWNER);
+    sc.end();
+}
+
+/// E2E financial invariant — Parcial + Nothing across a handover. T1 pays rent1,
+/// T2 bids rent2. At handover T1 is displaced (refund::Parcial): its unused
+/// credit is refunded, its used credit splits owner+fee. At T2's tenure expiry
+/// the full stake settles (Nothing). Conservation across the two rentals:
+///   refund(T1) + Σ collected fees + Σ collected earnings == rent1 + rent2
+/// Every mist paid in comes back out — to the displaced tenant, the protocol,
+/// or the owner — with no mist created or destroyed. Oracle = rent1 + rent2.
+#[test]
+fun e2e_invariant_parcial_then_nothing_conserves_both_rents() {
+    let mut sc = setup();
+    let (id, cap, mut inbox) = integrate_lifecycle_escrow(&mut sc);
+
+    sc.next_tx(OWNER);
+    let mut e    = sc.take_shared_by_id<Escrow<DemoAsset, SUI>>(id);
+    let mut clk  = clock::create_for_testing(sc.ctx());
+
+    // Idle → Occupied (T1) → Demand (T2 bids).
+    let rent1  = escrow::floor_price_mist(&e, clock::timestamp_ms(&clk));
+    let cap_t1 = escrow::rent(&mut e, mk_payment(rent1, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+    clock::set_for_testing(&mut clk, 5_000);
+    let rent2  = escrow::floor_price_mist(&e, clock::timestamp_ms(&clk));
+    let cap_t2 = escrow::rent(&mut e, mk_payment(rent2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
+    assert!(escrow::is_demand(&e), 1);
+
+    // Demand → Occupied: handover displaces T1 (Parcial — partial credit used).
+    clock::set_for_testing(&mut clk, escrow::handover_expiry_ms(&e).destroy_some());
+    escrow::apply_pending_transition_states(&mut e, &clk, sc.ctx());
+    assert!(escrow::is_occupied(&e), 2);
+
+    // Occupied → Descent: T2's tenure expires, full stake settles (Nothing).
+    clock::set_for_testing(&mut clk, escrow::tenure_expiry_ms(&e).destroy_some());
+    escrow::apply_pending_transition_states(&mut e, &clk, sc.ctx());
+
+    // Two settlements → two EarningsMessages + two FeeMessages.
+    let posted = event::events_by_type<EarningsPosted<SUI>>();
+    let sent   = event::events_by_type<FeeMessageSent<SUI>>();
+    assert_eq!(posted.length(), 2);
+    assert_eq!(sent.length(),   2);
+    let earn_ids = vector[
+        earnings_message::posted_earnings_message_id(&posted[0]),
+        earnings_message::posted_earnings_message_id(&posted[1]),
+    ];
+    let fee_ids = vector[
+        fee_message::sent_fee_message_id(&sent[0]),
+        fee_message::sent_fee_message_id(&sent[1]),
+    ];
+
+    transfer::public_transfer(cap_t1, OWNER);
+    transfer::public_transfer(cap_t2, OWNER);
+    test_scenario::return_shared(e);
+    clock::destroy_for_testing(clk);
+
+    // T1's Parcial refund is the only loose Coin at OWNER (rents were consumed).
+    sc.next_tx(OWNER);
+    let refund   = sc.take_from_sender<Coin<SUI>>();
+    let refund_v = coin::value(&refund);
+    assert!(refund_v > 0, 3);  // Parcial really refunded unused credit
+
+    let earn_coin = earnings::collect_earnings_messages<SUI>(&mut inbox, tickets_for(earn_ids), sc.ctx());
+    let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
+    let fee_coin = fee_inbox::collect_fee_messages<SUI>(
+        &mut fee_box,
+        vector[
+            test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_ids[0]),
+            test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_ids[1]),
+        ],
+        sc.ctx(),
+    );
+
+    // Conservation across both rentals — oracle = rent1 + rent2, an independent input.
+    assert_eq!(refund_v + coin::value(&earn_coin) + coin::value(&fee_coin), rent1 + rent2);
+
+    transfer::public_transfer(refund, OWNER);
+    transfer::public_transfer(earn_coin, OWNER);
+    transfer::public_transfer(fee_coin, OWNER);
+    sc.return_to_sender(fee_box);
+    transfer::public_transfer(inbox, OWNER);
+    transfer::public_transfer(cap, OWNER);
+    sc.end();
+}
+
 /// Multi-tenure twin of e2e_rent_with_floor_price_drives_full_lifecycle.
 /// Every tenant rents N tenures paying floor_price_mist * N. The state
 /// machine and the floor invariant are identical; only the tenure count

@@ -2,7 +2,7 @@
 
 ## § OVERVIEW
 
-Controls whether a tenant can purchase multiple consecutive tenures in a single `rent` call. A tenure is the time window during which a tenant holds the right to borrow the asset — it begins when they enter `Occupied` and expires at the tenure ceiling. A `Single` policy means each `rent` purchases exactly one such window — tenants must return and re-rent to extend their right, giving the owner and market a natural repricing opportunity at every expiry. A `Multi` policy allows bulk purchase of `N` tenures upfront: the tenant pays total stake immediately and receives an uninterrupted borrow right spanning `N × tenure ceiling`. This is the owner's lever for controlling how often the asset returns to market: high-frequency repricing (Single) vs. stable long-term tenancy (Multi).
+Controls whether a usufructuary can purchase multiple consecutive tenures in a single `rent` call. A tenure is the time window during which a usufructuary holds the right to borrow the asset — it begins when they enter `Occupied` and expires at the tenure ceiling. A `Single` policy means each `rent` purchases exactly one such window — usufructuaries must return and re-rent to extend their right, giving the governor and market a natural repricing opportunity at every expiry. A `Multi` policy allows bulk purchase of `N` tenures upfront: the usufructuary pays total stake immediately and receives an uninterrupted borrow right spanning `N × tenure ceiling`. This is the governor's lever for controlling how often the asset returns to market: high-frequency repricing (Single) vs. stable long-term tenancy (Multi).
 
 ## § TYPES
 

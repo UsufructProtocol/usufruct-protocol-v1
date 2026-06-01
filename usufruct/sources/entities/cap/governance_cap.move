@@ -14,12 +14,6 @@ use usufruct::escrow_identity::{Self, EscrowIdentity};
 
 // === Structs ===
 
-/// Pure governance token (the principal strip). Authorizes `retire`,
-/// `claim_asset`, `update_ensemble` over the escrow(s) whose `GovernorSeat` records
-/// its identity. Carries no escrow binding of its own — a single cap may govern
-/// many escrows (one-pair-to-many via `escrow::integrate_into_portfolio`).
-/// Born paired with an `EarningsInbox` via `escrow::integrate`; after birth the
-/// two are independent objects.
 public struct GovernanceCap has key, store {
     id: UID,
 }
@@ -28,17 +22,12 @@ public struct GovernanceCapIdentity has copy, drop, store { id: ID }
 
 // === Events ===
 
-/// The cap does not store its birth escrow, but the mint event records it —
-/// star-schema provenance: "this governance cap was born from escrow X".
 public struct GovernanceCapMinted has copy, drop {
     governance_cap_id:  ID,
     escrow_id:     ID,
     governor_address: address,
 }
 
-/// The cap was permanently burned (governance renounced). Carries no escrow id —
-/// the cap governs many escrows; the set it sealed is recovered by joining this
-/// `governance_cap_id` against the `AssetIntegrated` star schema.
 public struct GovernanceCapBurned has copy, drop {
     governance_cap_id:  ID,
     governor_address: address,
@@ -71,10 +60,6 @@ public(package) fun new(
     cap
 }
 
-/// Destroy the cap. Irreversible: no cap can ever again satisfy the seat bind of
-/// the escrows it governed, so `retire`/`update_ensemble`/`claim_asset` become
-/// permanently unreachable for all of them. Mechanism only — the semantic
-/// (governance renunciation) lives in `cap::renounce_governance`.
 public(package) fun burn(cap: GovernanceCap, ctx: &TxContext) {
     let GovernanceCap { id } = cap;
     let governance_cap_id = object::uid_to_inner(&id);

@@ -57,10 +57,6 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 
 // === Public Functions ===
 
-/// Open a new portfolio: mint a fresh `GovernanceCap` + `EarningsInbox` pair (born
-/// together in the engine) and share the escrow. The caller receives both
-/// instruments, thereafter independent — keep the cap, sell/rent the inbox, or
-/// either, in any combination (§11).
 public fun integrate<Asset: key + store, CoinType>(
     asset:               Asset,
     ensemble:            PolicyEnsemble,
@@ -86,10 +82,6 @@ public fun integrate<Asset: key + store, CoinType>(
     (governance_cap, inbox)
 }
 
-/// Join an existing portfolio: bind the new escrow to a caller-held `GovernanceCap`
-/// and `EarningsInbox`. Governance routes to the existing cap; income to the
-/// existing inbox. Holding both objects by reference is the authorization;
-/// neither is minted.
 public fun integrate_into_portfolio<Asset: key + store, CoinType>(
     asset:               Asset,
     ensemble:            PolicyEnsemble,
@@ -117,9 +109,6 @@ public fun integrate_into_portfolio<Asset: key + store, CoinType>(
     });
 }
 
-/// Claim the asset from a retired escrow. Returns only the asset — governor income
-/// was settled to the inbox throughout, never accumulated here. Takes
-/// `&GovernanceCap`: the cap may govern other escrows, so it is not consumed.
 public fun claim_asset<Asset: key + store, CoinType>(
     escrow:    Escrow<Asset, CoinType>,
     governance_cap: &GovernanceCap,

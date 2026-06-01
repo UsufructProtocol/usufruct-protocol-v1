@@ -25,10 +25,6 @@ use usufruct::{
 
 // === Structs ===
 
-/// Governor earnings settled to an inbox, wrapped as a Sui object and mailed to the
-/// inbox address via transfer-to-object. Mirrors `FeeMessage`: `key` only (no
-/// `store`) — it lives at the inbox's address until `collect` drains it. The
-/// `escrow_identity` makes it self-describing for the star schema.
 public struct EarningsMessage<phantom CoinType> has key {
     id:              UID,
     escrow_identity: EscrowIdentity,

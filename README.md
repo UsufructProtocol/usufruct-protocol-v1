@@ -12,11 +12,11 @@ An apartment listed for rent disappears from results the moment a guest checks i
 
 **What if the rental right were always liquid — even while someone was using it?**
 
-If someone is willing to pay more than the current tenant, why should the market stop them? If the asset has value, that value should be continuously discoverable. At the same time, displacing someone mid-use without guarantee is predatory — a tenant who entered in good faith needs to know what they signed up for.
+If someone is willing to pay more than the current usufructuary, why should the market stop them? If the asset has value, that value should be continuously discoverable. At the same time, displacing someone mid-use without guarantee is predatory — a usufructuary who entered in good faith needs to know what they signed up for.
 
-**usufruct** is a rental protocol for Sui that answers that question. It makes the right of use continuously liquid while guaranteeing the current tenant's economics.
+**usufruct** is a rental protocol for Sui that answers that question. It makes the right of use continuously liquid while guaranteeing the current usufructuary's economics.
 
-The asset never leaves the market. There is always a price at which the usus is acquirable. A challenger can bid at any moment, but the current tenant is guaranteed a window — the handover — before displacement executes. When no one wants the asset, the price descends automatically through a Dutch auction until someone does. The market never closes.
+The asset never leaves the market. There is always a price at which the usus is acquirable. A challenger can bid at any moment, but the current usufructuary is guaranteed a window — the handover — before displacement executes. When no one wants the asset, the price descends automatically through a Dutch auction until someone does. The market never closes.
 
 ---
 
@@ -32,13 +32,13 @@ Most rental markets close when someone checks in. usufruct doesn't.
 
 **Always a price.** In every state there is a price at which the right of use can be acquired: the rest price at idle, a descending price during the Dutch auction, an escalated price while occupied.
 
-**Always liquid.** A challenger can bid at any time. The current tenant keeps access for the handover window before the new tenant takes over. The window is configured by the owner; the guarantee is enforced by the protocol.
+**Always liquid.** A challenger can bid at any time. The current usufructuary keeps access for the handover window before the new usufructuary takes over. The window is configured by the governor; the guarantee is enforced by the protocol.
 
 **Self-correcting.** Competition drives price up. Absence of demand drives it down through the Dutch auction. Both are governed by configurable curves.
 
-**Tenant economics preserved.** A displaced tenant recovers the unused portion of their stake — the part not yet consumed by the credit curve. They paid for time; they recover what they didn't use.
+**Usufructuary economics preserved.** A displaced usufructuary recovers the unused portion of their stake — the part not yet consumed by the credit curve. They paid for time; they recover what they didn't use.
 
-**Price is discovered by competition.** Tenants bid against each other for the right of use. The current tenant's position is always contestable — anyone willing to pay more can challenge it. The owner earns the market rate, not a fixed floor.
+**Price is discovered by competition.** Usufructuaries bid against each other for the right of use. The current usufructuary's position is always contestable — anyone willing to pay more can challenge it. The governor earns the market rate, not a fixed floor.
 
 **No keeper required.** State transitions execute lazily on the next transaction that touches the escrow. No off-chain coordinator, no cron job, no external dependency on liveness.
 
@@ -52,24 +52,24 @@ Most rental markets close when someone checks in. usufruct doesn't.
 
 ## How it works
 
-An owner wraps any Sui object into an escrow and configures the market — price floor, tenure length, handover rules, auction behavior. From that point, the protocol governs the full lifecycle autonomously.
+An governor wraps any Sui object into an escrow and configures the market — price floor, tenure length, handover rules, auction behavior. From that point, the protocol governs the full lifecycle autonomously.
 
-A tenant pays to acquire the right of use. They receive a `TenantCap` — a capability that proves their current right. With it, they can borrow the asset into any Programmable Transaction Block, use it however the asset's own interface allows, and return it before the transaction closes. The protocol does not inspect what happens in between.
+A usufructuary pays to acquire the right of use. They receive a `UsufructCap` — a capability that proves their current right. With it, they can borrow the asset into any Programmable Transaction Block, use it however the asset's own interface allows, and return it before the transaction closes. The protocol does not inspect what happens in between.
 
-If a challenger bids while the asset is occupied, the current tenant keeps their right for the handover window before displacement executes. When no one wants the asset, the price descends through a Dutch auction until someone does. When the owner is ready to exit, they retire the escrow and claim the asset back along with accumulated earnings.
+If a challenger bids while the asset is occupied, the current usufructuary keeps their right for the handover window before displacement executes. When no one wants the asset, the price descends through a Dutch auction until someone does. When the governor is ready to exit, they retire the escrow and claim the asset back — income having been collected separately, all along, from their `EarningsInbox`.
 
 Every transition executes lazily on the next transaction that touches the escrow.
 
 ---
 
-## The tenant's runtime
+## The usufructuary's runtime
 
 The right of use is exercised through one pair of functions:
 
 ```move
 let (asset, receipt) =
-    usufruct::borrow_asset(&mut escrow, &tenant_cap, &clock, ctx);
-// ── the tenant's execution space ─────────────────────────────────────────────
+    usufruct::borrow_asset(&mut escrow, &usufruct_cap, &clock, ctx);
+// ── the usufructuary's execution space ─────────────────────────────────────────────
 //   call any function on `asset`
 //   compose with other protocols in the same PTB
 //   open and close sub-runtimes using the asset's own hot-potato API
@@ -77,7 +77,7 @@ let (asset, receipt) =
 usufruct::return_asset(&mut escrow, asset, receipt);
 ```
 
-Between the two calls, the tenant holds the asset inside a Programmable Transaction Block. The `AssetReceipt` hot-potato forces return before the transaction closes. What happens in between is entirely up to the tenant and the asset's own interface — the protocol does not know and does not interfere.
+Between the two calls, the usufructuary holds the asset inside a Programmable Transaction Block. The `AssetReceipt` hot-potato forces return before the transaction closes. What happens in between is entirely up to the usufructuary and the asset's own interface — the protocol does not know and does not interfere.
 
 ---
 
@@ -95,16 +95,16 @@ Eight policies configure the market at integration time. They determine the term
 | `auction_shape` | Price descent curve |
 | `credit_shape` | Credit consumption rate |
 | `price_escalation` | Escalation function under demand |
-| `commitment` | Owner exit lock — immediate or deferred with a minimum duration |
+| `commitment` | Governor exit lock — immediate or deferred with a minimum duration |
 
 ### Archetypes
 
 The same asset under different configurations produces different markets:
 
 - **Pay-per-call access** — millisecond tenures, instant handover. No queuing, no protection. Price resets to floor each cycle. Designed for AI agents and rate-limited APIs.
-- **Protected rental** — day-long tenures, countdown handover. The current tenant has a guaranteed window before displacement. Designed for human users who need continuity.
+- **Protected rental** — day-long tenures, countdown handover. The current usufructuary has a guaranteed window before displacement. Designed for human users who need continuity.
 - **Reservation system** — full-tenure handover tied to the tenure ceiling. Displacement is impossible before the tenure ends. Designed for time-slot bookings where partial occupancy has no value.
-- **Yield position** — multi-tenure commitment, back-loaded credit shape, high price escalation. The tenant commits to multiple tenures upfront at a lower per-tenure rate. Displacement is cheap early in the tenure and expensive late — the incumbent's sunk credit grows over time, rewarding those who hold through volatility. Designed for LP positions, staking seats, or any asset where long-term commitment has compounding value.
+- **Yield position** — multi-tenure commitment, back-loaded credit shape, high price escalation. The usufructuary commits to multiple tenures upfront at a lower per-tenure rate. Displacement is cheap early in the tenure and expensive late — the incumbent's sunk credit grows over time, rewarding those who hold through volatility. Designed for LP positions, staking seats, or any asset where long-term commitment has compounding value.
 
 ### One engine, many markets
 
@@ -120,29 +120,31 @@ usufruct is rental market as a primitive — integrate your asset once and get p
 
 ## Economics
 
-**How the owner earns.** When a tenant enters, they lock a stake. As time passes, that stake is consumed by the credit curve — value flows from the tenant's locked position to the owner's accumulated balance. At settlement (displacement, tenure expiry, or handover), the consumed portion is distributed and the unconsumed portion is returned to the tenant. The owner withdraws accumulated earnings at any time via the `OwnerCap` with no action required from anyone else.
+**How the governor earns.** When a usufructuary enters, they lock a stake. As time passes, that stake is consumed by the credit curve — value flows from the usufructuary's locked position to the governor. At settlement (displacement, tenure expiry, or handover), the consumed portion is split off as the governor's share and the unconsumed portion is returned to the usufructuary. The governor's share is not held in the escrow: it is mailed to a standalone `EarningsInbox` as an `EarningsMessage`. The governor (or whoever holds the inbox) drains accumulated messages into a coin with `collect_earnings_messages` — an owned-object operation that never touches the shared escrow, so it batches across a whole portfolio. Income and governance are separate objects: the `EarningsInbox` is born paired with the `GovernanceCap` at `integrate` but can be held, sold, or rented independently.
 
-**The split.** Of the consumed credit, **90% goes to the owner** and **10% is the protocol fee**. The fee is never charged on locked stake or gross payment — only on value that has already been earned.
+**The split.** Of the consumed credit, **90% goes to the governor** and **10% is the protocol fee**. The fee is never charged on locked stake or gross payment — only on value that has already been earned.
 
-**Aligned incentives.** The more tenants compete for the asset, the higher the price, the more credit accrues, and the more both owner and protocol earn. Neither benefits from low activity. The payment coin is chosen by the owner at integration time — it is the coin tenants pay with, the coin the owner earns, and the coin the protocol collects its fee in. There is no protocol token, no wrapping, no conversion.
+**Aligned incentives.** The more usufructuaries compete for the asset, the higher the price, the more credit accrues, and the more both governor and protocol earn. Neither benefits from low activity. The payment coin is chosen by the governor at integration time — it is the coin usufructuaries pay with, the coin the governor earns, and the coin the protocol collects its fee in. There is no protocol token, no wrapping, no conversion.
 
-> **Note for protocols with native tokens.** If you denominate rentals in your own coin, every tenant competing for the asset must acquire it first. Demand for the right of use converts directly into demand for your token — not through speculation, but through participation. The rental market becomes an organic demand circuit for your coin, grounded in the utility of the asset itself.
+> **Note for protocols with native tokens.** If you denominate rentals in your own coin, every usufructuary competing for the asset must acquire it first. Demand for the right of use converts directly into demand for your token — not through speculation, but through participation. The rental market becomes an organic demand circuit for your coin, grounded in the utility of the asset itself.
 
 ---
 
 ## Retiring the asset
 
-The owner reclaims the asset in two steps: `retire()` then `claim_asset()`.
+The governor reclaims the asset in two steps: `retire()` then `claim_asset()`.
 
-**`retire()`** signals the owner's intent to exit. Its effect depends on the current state:
+**`retire()`** signals the governor's intent to exit. Its effect depends on the current state:
 - From `Idle` or `Descent` — the asset transitions to `Retired` immediately.
-- From `Occupied` or `Demand` — a retire flag is set. The current tenant completes their tenure normally; the asset moves to `Retired` when it ends.
+- From `Occupied` or `Demand` — a retire flag is set. The current usufructuary completes their tenure normally; the asset moves to `Retired` when it ends.
 
-In both cases, the current tenant's economics are preserved — there is no forced eviction.
+In both cases, the current usufructuary's economics are preserved — there is no forced eviction.
 
-**`claim_asset()`** is called once the escrow is in `Retired` state. It consumes the escrow, returns the asset and all accumulated earnings, and burns the `OwnerCap`. The escrow object is deleted permanently.
+**`claim_asset()`** is called once the escrow is in `Retired` state. It consumes the escrow and returns the asset — only the asset; income was settled to the `EarningsInbox` throughout, so there is nothing to sweep. It takes the `GovernanceCap` by reference (the cap may govern other escrows, so it is not consumed) and deletes the escrow object permanently.
 
-**The commitment policy** governs when `retire()` becomes callable. Set to `Immediate`, the owner can retire at any time. Set to `Deferred`, retirement is locked until the commitment window has elapsed — an on-chain credibility signal to tenants that the market will remain open for a minimum duration.
+**`renounce_governance()`** is the opposite of claiming: instead of reclaiming the asset, the governor burns the `GovernanceCap` to give up control forever. Every escrow the cap governed is **sealed** — `retire`, `update_config`, and `claim_asset` become permanently unreachable, so the asset can never be pulled back and the terms can never change. The income is untouched: the `EarningsInbox` keeps receiving and stays collectable. It is the strongest commitment a governor can make — a credibly permanent market — and because income is a separate object, making that commitment costs no future earnings.
+
+**The commitment policy** governs when `retire()` becomes callable. Set to `Immediate`, the governor can retire at any time. Set to `Deferred`, retirement is locked until the commitment window has elapsed — an on-chain credibility signal to usufructuaries that the market will remain open for a minimum duration.
 
 ---
 

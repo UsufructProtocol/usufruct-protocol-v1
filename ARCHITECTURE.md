@@ -6,9 +6,9 @@ Internal architecture of the `usufruct` Move package for contributors. Covers mo
 
 ## What the protocol does
 
-**usufruct** is an on-chain rental protocol for any Sui object with `key + store` abilities. An owner integrates their object into an `Escrow`, which manages the full rental lifecycle: listing at rest price, Dutch auction descent, tenant acquisition, handover under demand, and retirement. Tenants pay stake; stake is distributed to the owner and protocol as credit is consumed.
+**usufruct** is an on-chain rental protocol for any Sui object with `key + store` abilities. An governor integrates their object into an `Escrow`, which manages the full rental lifecycle: listing at rest price, Dutch auction descent, usufructuary acquisition, handover under demand, and retirement. Usufructuaries pay stake; stake is distributed to the governor and protocol as credit is consumed.
 
-The protocol is generic over both the asset type and the payment coin: `Escrow<Asset: key + store, CoinType: phantom>`. It enforces custody and economics. What the tenant does with the asset between `borrow_asset` and `return_asset` is outside the protocol's concern.
+The protocol is generic over both the asset type and the payment coin: `Escrow<Asset: key + store, CoinType: phantom>`. It enforces custody and economics. What the usufructuary does with the asset between `borrow_asset` and `return_asset` is outside the protocol's concern.
 
 ---
 
@@ -42,9 +42,9 @@ Dependencies flow strictly downward. A module may only import modules in layers 
        │
 ┌──────▼──────────────────────────────────────────────────┐
 │                   LAYER 2 — ENTITIES                    │
-│  entities/cap/     owner_cap.move  tenant_cap.move      │
-│  entities/seat/    owner_seat.move tenant_seat.move     │
-│  entities/balances/ owner_earning  tenant_stake         │
+│  entities/cap/     governance_cap.move  usufruct_cap.move      │
+│  entities/seat/    governor_seat.move usufructuary_seat.move     │
+│  entities/balances/ earnings_balance  stake_balance         │
 │  entities/identities/ (5 modules)                      │
 │  entities/address/  refund_address.move                 │
 │  policies/ (8 individual policy modules)               │
@@ -65,7 +65,7 @@ Dependencies flow strictly downward. A module may only import modules in layers 
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Layer 5 (api/)** — The exclusive home of every `public fun` in the protocol. `escrow.move` owns the `Escrow` shared object and exposes all mutations, views, and cap operations. `ensemble.move` exposes the PTB construction chain for `PolicyEnsemble` (value type constructors + all policy constructors). `cap.move` exposes `OwnerCap` and `TenantCap` projectors. `fee_inbox.move` exposes fee collection and inbox introspection. No state machine logic lives in this layer — every function delegates to the layer below. Internal modules use `public(package)` visibility exclusively.
+**Layer 5 (api/)** — The exclusive home of every `public fun` in the protocol. `escrow.move` owns the `Escrow` shared object and exposes all mutations, views, and cap operations. `ensemble.move` exposes the PTB construction chain for `PolicyEnsemble` (value type constructors + all policy constructors). `cap.move` exposes `GovernanceCap` and `UsufructCap` projectors. `fee_inbox.move` exposes fee collection and inbox introspection. No state machine logic lives in this layer — every function delegates to the layer below. Internal modules use `public(package)` visibility exclusively.
 
 **Layer 4 (engine/)** — `asset_state.move` is the FSM engine. Every state transition, all credit and pricing arithmetic, and all event emissions originate here. `EscrowCore` and `AssetState` are defined here and never appear in layer 5 except as `Option` fields.
 
@@ -73,7 +73,7 @@ Dependencies flow strictly downward. A module may only import modules in layers 
 
 **Layer 2 (entities/, policies/)** — Protocol entities (caps, seats, balances, identities) and individual policy types. Each policy module owns a single policy enum and its `compute_*` resolution function.
 
-**Layer 1 (domain/, primitives/)** — Domain primitives that wrap raw `u64` or `address` into typed values. No module except the owner operates on the naked primitive.
+**Layer 1 (domain/, primitives/)** — Domain primitives that wrap raw `u64` or `address` into typed values. No module except the owning module operates on the naked primitive.
 
 **Layer 0** — Sui framework and the package OTW (`usufruct.move`), which mints the `Publisher` at deploy time.
 
@@ -110,7 +110,7 @@ The only expected matches are event field projectors in `entities/cap/` and `fee
 
 ## The two objects
 
-`Escrow<Asset, CoinType>` is the only shared object. `OwnerCap` and `TenantCap` are owned objects that authorize operations on the shared escrow.
+`Escrow<Asset, CoinType>` is the only shared object. `GovernanceCap` and `UsufructCap` are owned objects that authorize operations on the shared escrow.
 
 ### Escrow structure
 
@@ -123,23 +123,24 @@ public struct Escrow<Asset: key + store, phantom CoinType> has key {
 }
 ```
 
-Both fields are `Option`. `state` is `None` while the asset is borrowed by a tenant — the `AssetState` is extracted into the `AssetReceipt` hot potato and re-inserted on return. `core` is extracted via `take` for any mutation and re-inserted via `put` after. This is the Option-as-mutual-exclusion pattern: the `None` encodes domain meaning (state is live elsewhere), not nullable convenience.
+Both fields are `Option`. `state` is `None` while the asset is borrowed by a usufructuary — the `AssetState` is extracted into the `AssetReceipt` hot potato and re-inserted on return. `core` is extracted via `take` for any mutation and re-inserted via `put` after. This is the Option-as-mutual-exclusion pattern: the `None` encodes domain meaning (state is live elsewhere), not nullable convenience.
 
 ### EscrowCore structure
 
 ```move
 // engine/asset_state.move
 EscrowCore<CoinType> {
-    owner:              OwnerSeat<CoinType>,
-    ensemble:           EnsembleSlot,
-    fee_inbox_identity: FeeInboxIdentity,
-    integrated_at:      Timestamp,
-    commitment:         CommitmentSlot,
-    escrow_identity:    EscrowIdentity,
+    governor_seat:       GovernorSeat,
+    ensemble:            EnsembleSlot,
+    fee_inbox_identity:  FeeInboxIdentity,
+    integrated_at:       Timestamp,
+    retire_commitment:   RetireCommitmentSlot,
+    ensemble_commitment: EnsembleCommitmentSlot,
+    escrow_identity:     EscrowIdentity,
 }
 ```
 
-`EscrowCore` carries the financial and configuration context that persists across the full escrow lifetime. `EnsembleSlot` holds the active `PolicyEnsemble` and an optional staged pending update. `CommitmentSlot` holds the owner's commitment policy and its anchor timestamp.
+`EscrowCore` carries the financial and configuration context that persists across the full escrow lifetime. `EnsembleSlot` holds the active `PolicyEnsemble` and an optional staged pending update. The two commitment slots each hold a policy plus its anchor timestamp — `retire_commitment` gates how soon the governor may retire, `ensemble_commitment` how soon the policy ensemble may change. The `governor_seat` carries **no balance and no coin type**: it records the governing cap identity and the `EarningsInbox` destination; governor income is settled to that inbox, never accumulated in the core.
 
 ---
 
@@ -151,40 +152,40 @@ EscrowCore<CoinType> {
 AssetState<Asset, CoinType>
 ├── Waiting(WaitingState<Asset>)                    // no CoinType
 │     ├── Idle    { asset: AssetCustodyLocked, cycle: CycleParams }
-│     ├── AtDutch { asset: AssetCustodyLocked, auction: AuctionTerms, cycle: CycleParams }
+│     ├── Descent { asset: AssetCustodyLocked, auction: AuctionTerms, cycle: CycleParams }
 │     └── Retired { asset: AssetCustodyLocked }
 └── Renting(RentingState<Asset, CoinType>)          // carries CoinType
       ├── Occupied { asset: AssetCustodyOpen, terms: OccupiedTerms<C>, cycle: CycleParams }
       └── Demand   { asset: AssetCustodyOpen, terms: OccupiedTerms<C>, bid: DemandTerms<C>, cycle: CycleParams }
 ```
 
-**WaitingState** — no tenant, no financial state. Asset is held in `AssetCustodyLocked`, which does not expose a borrow interface.
+**WaitingState** — no usufructuary, no financial state. Asset is held in `AssetCustodyLocked`, which does not expose a borrow interface.
 
-**RentingState** — active tenancy. Asset is held in `AssetCustodyOpen`, which exposes `take`/`put` and the `AssetReceipt` borrow protocol. `CoinType` is present because the tenant's stake and the owner's earnings live here.
+**RentingState** — active tenancy. Asset is held in `AssetCustodyOpen`, which exposes `take`/`put` and the `AssetReceipt` borrow protocol. `CoinType` is present because the usufructuary's staked collateral lives here. The governor's earnings do **not** accumulate in state: each settlement splits the governor's share off the stake and mails it to the `EarningsInbox` as an `EarningsMessage`, so the only coin-typed balance held in `RentingState` is the active usufructuary's stake.
 
 **CycleParams** — resolved policy parameters for the current rental cycle: `floor: Price`, `ceiling: Duration`, `handover: Duration`, `descent: Duration`. Sampled once at cycle entry from the `PolicyEnsemble`. The engine never reads policy variants after this point.
 
-**OccupiedTerms** — current tenant's full context: `TenancySchedule` (phase start, total ceiling, total handover, committed tenures), `TenantSeat<C>` (identity + stake), and `RetireCondition` (flag set by owner to retire after this tenure).
+**OccupiedTerms** — current usufructuary's full context: `TenancySchedule` (phase start, total ceiling, total handover, committed tenures), `UsufructuarySeat<C>` (identity + stake), and `RetireCondition` (flag set by governor to retire after this tenure).
 
-**DemandTerms** — pending tenant's bid: `TenantSeat<C>` + `HandoverTerms` (expiry timestamp, committed tenures).
+**DemandTerms** — pending usufructuary's bid: `UsufructuarySeat<C>` + `HandoverTerms` (expiry timestamp, committed tenures).
 
 ### State transitions
 
 ```
              rent (do_install)          rent (do_install)
-   Idle ─────────────────────► Occupied ◄──────────────── AtDutch
+   Idle ─────────────────────► Occupied ◄──────────────── Descent
     ▲                              │  │
     │ step_auction_expiry          │  │ rent (do_place_bid)
     │ (do_auction_expiry)          │  ▼
-    └──────────────────────── AtDutch   Demand ──────────────────► Occupied
+    └──────────────────────── Descent   Demand ──────────────────► Occupied
                                     ▲   │  ▲                    (do_handover)
                                     │   │  └── rent (do_supersede_bid, self-loop)
                               tenure│   │
                               expiry│   │ tenure expiry [retire flag]
                                     │   ▼
-                                 AtDutch  Retired
+                                 Descent  Retired
 
-   Idle, AtDutch ──► Retired     execute_retire (immediate)
+   Idle, Descent ──► Retired     execute_retire (immediate)
    Occupied, Demand ──► Retired  tenure expiry with RetireCondition::Retiring
 
    Retired ──► (consumed)        execute_claim
@@ -199,7 +200,7 @@ Transitions are **lazy**: `execute_apply_pending_transition_states` evaluates al
 `asset_state.move` is the largest module and the protocol's core. It owns:
 
 - The `AssetState`, `WaitingState`, `RentingState` enum hierarchy
-- `EscrowCore` and all its sub-types (`EnsembleSlot`, `CommitmentSlot`, `CycleParams`, `OccupiedTerms`, `DemandTerms`, `AuctionTerms`, `TenancySchedule`, `HandoverTerms`)
+- `EscrowCore` and all its sub-types (`EnsembleSlot`, `RetireCommitmentSlot`, `EnsembleCommitmentSlot`, `CycleParams`, `OccupiedTerms`, `DemandTerms`, `AuctionTerms`, `TenancySchedule`, `HandoverTerms`)
 - `AssetReceipt` — the hot-potato receipt that carries `RentingState` during borrow
 - `RetireCondition` — one-way transition flag as an enum variant, not a boolean
 - All `execute_*` transition functions
@@ -212,7 +213,7 @@ Every other module in the protocol is a building block that `asset_state` compos
 
 ## Policy layer
 
-Eight policies parameterize the escrow at integration time. Seven are bundled in `PolicyEnsemble`; one (`CommitmentPolicy`) is stored separately in `EscrowCore` because it governs the owner, not the rental market.
+Eight policies parameterize the escrow at integration time. Seven are bundled in `PolicyEnsemble`; one (`CommitmentPolicy`) is stored separately in `EscrowCore` because it governs the governor, not the rental market.
 
 ```
 PolicyEnsemble {
@@ -226,12 +227,12 @@ PolicyEnsemble {
     price_escalation:   PriceEscalationPolicy   // price escalation under demand
 }
 
-CommitmentPolicy    // Immediate | Deferred — owner's exit lock
+CommitmentPolicy    // Immediate | Deferred — governor's exit lock
 ```
 
 Each policy module owns a single enum and a `compute_*` function that resolves the policy to a domain primitive (`Price`, `Duration`). After resolution, the engine sees only domain primitives. Policy variants are an extension point; the engine is invariant over them.
 
-`EnsembleSlot` holds the active ensemble and an optional pending update. Pending updates are staged when the escrow is occupied and applied only at the `AtDutch → Idle` transition — never mid-tenure.
+`EnsembleSlot` holds the active ensemble and an optional pending update. Pending updates are staged when the escrow is occupied and applied only at the `Descent → Idle` transition — never mid-tenure.
 
 ---
 
@@ -241,24 +242,24 @@ Every protocol entity follows the **Identity + Material** split:
 
 ```
 Cap (key + store)          — owned object; authorizes escrow operations
-  OwnerCap  { id, escrow_identity }
-  TenantCap { id, escrow_identity, refund_address, cap_identity }
+  GovernanceCap  { id }                    — no binding; governs every escrow whose seat records it
+  UsufructCap    { id, escrow_identity }   — bound to one escrow
 
 Identity (copy + drop + store)  — who the entity is
-  OwnerIdentity   { cap_identity: OwnerCapIdentity }
-  TenantIdentity  { cap_identity: TenantCapIdentity, refund_address: RefundAddress }
+  GovernorIdentity      { cap_identity: GovernanceCapIdentity }
+  UsufructuaryIdentity  { cap_identity: UsufructCapIdentity, address: RefundAddress }
 
-Seat (store, CoinType)     — entity in flight: identity + material together
-  OwnerSeat<C>   { identity: OwnerIdentity,  earnings: OwnerEarnings<C> }
-  TenantSeat<C>  { identity: TenantIdentity, stake:    TenantStake<C>   }
+Seat (store)               — entity in flight: identity + material together
+  GovernorSeat       { identity: GovernorIdentity,     inbox: EarningsInboxIdentity }   — no coin type, no balance
+  UsufructuarySeat<C> { identity: UsufructuaryIdentity, stake: StakeBalance<C> }
 
 Balance (store, CoinType)  — typed wrapper over sui::Balance
-  OwnerEarnings<C>  { balance: Balance<C> }    → owner_seat::deposit
-  TenantStake<C>    { balance: Balance<C> }    → refund or split
-  FeeShare<C>       { balance, escrow_identity } → fee_message::post
+  EarningsBalance<C> { balance: Balance<C> }            → earnings_message::post (to the inbox)
+  StakeBalance<C>    { balance: Balance<C> }            → refund or split
+  FeeShare<C>        { balance, escrow_identity }       → fee_message::post
 ```
 
-`OwnerCap` and `TenantCap` are `key + store` — they are transferable owned objects. Whoever holds the cap holds the rights it represents. The protocol validates only `cap.escrow_identity == escrow.escrow_identity`; it does not validate the holder's address.
+`GovernanceCap` and `UsufructCap` are `key + store` — transferable owned objects; whoever holds the cap holds the rights it represents. They authorize differently: a `UsufructCap` is bound to one escrow and validated by `cap.escrow_identity == escrow.escrow_identity`; a `GovernanceCap` carries no escrow binding and is validated by matching `governance_cap::identity(cap)` against the identity its `GovernorSeat` recorded — which is why one cap can govern a whole portfolio. Neither validates the holder's address.
 
 ---
 
@@ -290,7 +291,7 @@ ProtocolFeeInbox (key+store)   — owned object; collects FeeMessages via transf
 ```
 
 **Phase 1 — bootstrap (once at deploy).**
-`ProtocolFeeInbox` is created and transferred to the protocol owner's address.
+`ProtocolFeeInbox` is created and transferred to the protocol governor's address.
 `ProtocolFeeRef` is created as a frozen (immutable) object holding only the inbox's
 object ID. Because it is immutable, it can be passed as `&ProtocolFeeRef` in any PTB
 regardless of what other objects are present — including the shared `Escrow`.
@@ -309,8 +310,8 @@ The `FeeMessage` becomes an owned object at the inbox's address. The user's PTB 
 complete — it touched only the shared `Escrow` and created one new owned object. The
 inbox itself was never an input. Zero write contention on any accumulator.
 
-**Phase 3 — collection (protocol owner, any time).**
-The protocol owner constructs a PTB passing `&mut ProtocolFeeInbox` and one or more
+**Phase 3 — collection (protocol governor, any time).**
+The protocol governor constructs a PTB passing `&mut ProtocolFeeInbox` and one or more
 `Receiving<FeeMessage<C>>` tickets. `fee_message::collect` calls
 `transfer::receive(&mut inbox.id, ticket)` for each ticket, draining the balance into
 the inbox. The `FeeMessage` objects are destroyed; their storage rebate exceeds the
@@ -340,8 +341,8 @@ AssetReceipt<Asset, CoinType>   — no abilities (hot potato)
   escrow.state = None while active.
 
 RefundState<CoinType>           — no abilities (hot potato)
-  Nothing  { fee_share, owner_earnings }
-  Parcial  { seat, fee_share, owner_earnings }
+  Nothing  { fee_share, earnings }
+  Parcial  { seat, fee_share, earnings }
   Total    { seat }
   Encodes the settlement shape for each transition context.
   Must be consumed by distribute() in the same transaction.

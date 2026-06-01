@@ -6,7 +6,7 @@ Manages physical possession of the integrated asset at the boundary between the 
 
 `AssetCustodyLocked` wraps the asset directly as a plain field. There is no `Option`, no extraction path, no way to reach the asset without consuming the entire `Locked` value and converting it to something else. This makes the asset structurally irremovable during the waiting phase: `Locked` custody is a sealed container.
 
-`AssetCustodyOpen` wraps the asset in an `Option<Asset>`. The `Option` is the protocol's model for the borrow/return cycle: `Some` means the asset is inside the escrow, `None` means the tenant currently holds it. The asset can enter and exit, but only through the typed `take` and `put` operations — and only one at a time. The compiler guarantees that an `Open` custody value always accounts for the asset, whether it is inside or outside.
+`AssetCustodyOpen` wraps the asset in an `Option<Asset>`. The `Option` is the protocol's model for the borrow/return cycle: `Some` means the asset is inside the escrow, `None` means the usufructuary currently holds it. The asset can enter and exit, but only through the typed `take` and `put` operations — and only one at a time. The compiler guarantees that an `Open` custody value always accounts for the asset, whether it is inside or outside.
 
 ## § TYPES
 
@@ -16,12 +16,12 @@ AssetCustodyOpen<U: key+store> {
     available: Option<U>,
 }   has store
 ```
-Asset in the renting phase. `identity` carries the paired asset+escrow IDs for return validation. `available` is `Some` when the asset is inside the escrow and `None` while the tenant holds it via `borrow_asset`.
+Asset in the renting phase. `identity` carries the paired asset+escrow IDs for return validation. `available` is `Some` when the asset is inside the escrow and `None` while the usufructuary holds it via `borrow_asset`.
 
 ```
 AssetCustodyLocked<U: key+store> { asset: U }   has store
 ```
-Asset in the waiting phase (Idle, AtDutch, or Retired). No identity field — there is no active tenant to validate against.
+Asset in the waiting phase (Idle, Descent, or Retired). No identity field — there is no active usufructuary to validate against.
 
 ## § API
 
@@ -47,7 +47,7 @@ Asset in the waiting phase (Idle, AtDutch, or Retired). No identity field — th
 ## § INVARIANTS
 
 - `take` and `put` are mutually exclusive on the same custody value; the `Option` enforces single-holder discipline at runtime.
-- `close_tenancy` aborts if the asset is currently borrowed (option is None); the tenant must return the asset before the tenure can end.
+- `close_tenancy` aborts if the asset is currently borrowed (option is None); the usufructuary must return the asset before the tenure can end.
 - The asset's `AssetIdentity` is captured once at `new` and never updated; it is the ground truth for return validation.
 
 ## § EVENTS

@@ -2,13 +2,13 @@
 
 ## § OVERVIEW
 
-Manages how tenant stake is routed across the three state transitions that produce a financial settlement. Each transition has a different economic meaning, and `RefundState` encodes exactly which funds go where in each case.
+Manages how usufructuary stake is routed across the three state transitions that produce a financial settlement. Each transition has a different economic meaning, and `RefundState` encodes exactly which funds go where in each case.
 
-**Tenure expiry** (`do_tenure_expiry`) — the tenure ceiling is crossed and the tenant's occupancy ends naturally. The full principal is consumed as credit: 90% goes to the owner, 10% to the protocol fee. Nothing remains for the tenant. This always produces `Nothing`.
+**Tenure expiry** (`do_tenure_expiry`) — the tenure ceiling is crossed and the usufructuary's occupancy ends naturally. The full principal is consumed as credit: 90% goes to the governor, 10% to the protocol fee. Nothing remains for the usufructuary. This always produces `Nothing`.
 
-**Handover** (`do_handover`) — the handover countdown fires while the asset is in `Demand`. Credit is computed only up to the handover boundary — the current tenant may not have consumed their full stake. The used portion is split 90/10; any remaining stake is liquidated to the tenant's refund address. This produces `Parcial` if stake remains, `Nothing` if it is fully consumed.
+**Handover** (`do_handover`) — the handover countdown fires while the asset is in `Demand`. Credit is computed only up to the handover boundary — the current usufructuary may not have consumed their full stake. The used portion is split 90/10; any remaining stake is liquidated to the usufructuary's refund address. This produces `Parcial` if stake remains, `Nothing` if it is fully consumed.
 
-**Bid superseded** (`do_supersede_bid`) — a pending tenant is displaced by a newer bid before the handover fires and before any credit accrual begins. The full stake is returned to the superseded tenant with no protocol fee and no owner earnings. This always produces `Total`.
+**Bid superseded** (`do_supersede_bid`) — a pending usufructuary is displaced by a newer bid before the handover fires and before any credit accrual begins. The full stake is returned to the superseded usufructuary with no protocol fee and no governor earnings. This always produces `Total`.
 
 The `distribute` function consumes the `RefundState` and routes every balance to its correct destination atomically, making it impossible to partially settle a transition.
 
@@ -16,29 +16,27 @@ The `distribute` function consumes the `RefundState` and routes every balance to
 
 ```
 RefundState<CoinType: phantom>   (no abilities — hot potato)
-  Nothing { fee_share: FeeShare<CoinType>, owner_earnings: OwnerEarnings<CoinType> }
-  Parcial { seat: TenantSeat<CoinType>, fee_share: FeeShare<CoinType>, owner_earnings: OwnerEarnings<CoinType> }
-  Total   { seat: TenantSeat<CoinType> }
+  Nothing { fee_share: FeeShare<CoinType>, earnings: EarningsBalance<CoinType> }
+  Parcial { usufructuary_seat: UsufructuarySeat<CoinType>, fee_share: FeeShare<CoinType>, earnings: EarningsBalance<CoinType> }
+  Total   { usufructuary_seat: UsufructuarySeat<CoinType> }
 ```
 
-- `Nothing` — full credit consumed; fee and owner earnings are distributed, tenant receives nothing.
-- `Parcial` — partial credit consumed; remaining stake in `seat` is liquidated to the tenant's refund address after fee and earnings are routed.
-- `Total` — tenant is superseded before any credit; full stake returned, no protocol fee, no owner earnings.
+- `Nothing` — full credit consumed; fee and governor earnings are distributed, usufructuary receives nothing.
+- `Parcial` — partial credit consumed; remaining stake in `usufructuary_seat` is liquidated to the usufructuary's refund address after fee and earnings are routed.
+- `Total` — usufructuary is superseded before any credit; full stake returned, no protocol fee, no governor earnings.
 
 ## § API
 
 **Constructors** (package)
-- `refund_state::nothing<C>(fee_share, owner_earnings): RefundState<C>`
-- `refund_state::parcial<C>(seat, fee_share, owner_earnings): RefundState<C>`
-- `refund_state::total<C>(seat): RefundState<C>`
-- `refund_state::from_superseded<C>(pending: TenantSeat<C>): RefundState<C>` — always produces `Total`; used when a pending bid is replaced by a newer bid via `do_supersede_bid`.
-- `refund_state::from_departing<C>(departing: TenantSeat<C>, fee_share, owner_earnings): RefundState<C>` — produces `Parcial` if the seat has remaining stake, `Nothing` otherwise; used when a current tenant's tenure ends normally.
+- `refund_state::nothing<C>(fee_share, earnings): RefundState<C>` — full credit consumed; no usufructuary seat.
+- `refund_state::parcial<C>(usufructuary_seat, fee_share, earnings): RefundState<C>` — partial credit; the seat's remaining stake will be refunded.
+- `refund_state::total<C>(usufructuary_seat): RefundState<C>` — superseded before any credit; full stake refunded.
 
 **Consumption** (package)
-- `refund_state::distribute<C>(RefundState<C>, owner: &mut OwnerSeat<C>, fee_inbox_identity: FeeInboxIdentity, ctx: &mut TxContext)` — routes all funds to their destinations:
-  - Deposits `owner_earnings` into `owner` via `owner_seat::deposit`.
-  - Posts `fee_share` to the fee inbox via `fee_message::post`.
-  - Liquidates remaining `seat` stake to the tenant's refund address via `tenant_stake::liquidate`.
+- `refund_state::distribute<C>(RefundState<C>, governor_seat: &GovernorSeat, fee_inbox_identity: FeeInboxIdentity, escrow_identity: EscrowIdentity, ctx: &mut TxContext)` — routes all funds to their destinations:
+  - Posts `earnings` to the governor's `EarningsInbox` via `earnings_message::post` (using `governor_seat::proj_inbox`) — **not** accumulated in the seat.
+  - Posts `fee_share` to the protocol fee inbox via `fee_message::post`.
+  - Liquidates remaining `usufructuary_seat` stake to the usufructuary's refund address via `stake_balance::liquidate`.
 
 ## § INVARIANTS
 

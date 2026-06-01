@@ -1,7 +1,8 @@
 #!/usr/bin/env tsx
 /**
  * Phase A / 01 — integrate
- * Measures: escrow::integrate (creates escrow + OwnerCap from a fresh DummyAsset)
+ * Measures: escrow::integrate (creates Escrow + OwnerCap + EarningsInbox from a
+ *           fresh DummyAsset — inbox-first model mints the cap+inbox pair, +3 obj).
  * Precondition: none
  */
 
@@ -29,8 +30,8 @@ async function main() {
     const tx = new Transaction();
     tx.setSender(d.owner.address);
 
-    const ownerCap = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-    tx.transferObjects([ownerCap], d.owner.address);
+    const { ownerCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+    tx.transferObjects([ownerCap, inbox], d.owner.address);
 
     const rec = await measure(client, kp.owner, 'integrate', run, tx);
     records.push(rec);

@@ -26,8 +26,8 @@ async function setupIdleEscrow(
   const tx = new Transaction();
   tx.setSender(d.owner.address);
 
-  const ownerCap = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-  tx.transferObjects([ownerCap], d.owner.address);
+  const { ownerCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  tx.transferObjects([ownerCap, inbox], d.owner.address);
 
   const result = await execSetup(client, owner, tx);
 

@@ -1,7 +1,10 @@
 #!/usr/bin/env tsx
 /**
  * Phase A / 08 — claim_asset
- * Measures: escrow::claim_asset (destroys escrow, returns asset + earnings).
+ * Measures: escrow::claim_asset (destroys escrow, returns the Asset only — owner
+ *           income was settled to the inbox throughout, never accumulated here).
+ *           Cap is passed by reference and SURVIVES (it may govern other escrows),
+ *           so claim deletes only the Escrow now (−1 obj, was −2 with cap burn).
  * Precondition: escrow in Retired state (idle → retire → apply transitions).
  *
  * Note: claim requires the escrow to have fully transitioned to Retired.
@@ -35,8 +38,8 @@ async function setupRetiredEscrow(
   // integrate
   const tx1 = new Transaction();
   tx1.setSender(d.owner.address);
-  const ownerCap = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-  tx1.transferObjects([ownerCap], d.owner.address);
+  const { ownerCap, inbox } = buildIntegrate(tx1, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  tx1.transferObjects([ownerCap, inbox], d.owner.address);
 
   const r1 = await execSetup(client, owner, tx1);
   const escrowObj = (r1.objectChanges ?? []).find(
@@ -79,13 +82,13 @@ async function main() {
     const tx = new Transaction();
     tx.setSender(d.owner.address);
 
-    const [asset, earnings] = tx.moveCall({
+    const asset = tx.moveCall({
       target: `${d.usufructPackageId}::escrow::claim_asset`,
       typeArguments: typeArgs,
       arguments: [tx.object(escrowId), tx.object(ownerCapId), clock(tx)],
-    }) as any[];
+    });
 
-    tx.transferObjects([asset, earnings], d.owner.address);
+    tx.transferObjects([asset], d.owner.address);
 
     const rec = await measure(client, kp.owner, 'claim_asset', run, tx);
     records.push(rec);

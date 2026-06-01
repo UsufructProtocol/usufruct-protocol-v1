@@ -168,12 +168,12 @@ async function setupOccupiedEscrow(
   const ensemble           = buildCurveEnsemble(tx1, d.usufructPackageId, buildCurve);
   const retireCommitment   = tx1.moveCall({ target: `${d.usufructPackageId}::ensemble::new_retire_commitment_immediate` });
   const ensembleCommitment = tx1.moveCall({ target: `${d.usufructPackageId}::ensemble::new_ensemble_commitment_immediate` });
-  const ownerCap   = tx1.moveCall({
+  const [ownerCap, inbox] = tx1.moveCall({
     target:        `${d.usufructPackageId}::escrow::integrate`,
     typeArguments: ta,
     arguments:     [asset, ensemble, retireCommitment, ensembleCommitment, tx1.object(d.protocolFeeRefId), clock(tx1)],
   });
-  tx1.transferObjects([ownerCap], d.owner.address);
+  tx1.transferObjects([ownerCap, inbox], d.owner.address);
   const r1 = await execSetup(client, owner, tx1);
 
   const escrowObj = r1.objectChanges?.find(

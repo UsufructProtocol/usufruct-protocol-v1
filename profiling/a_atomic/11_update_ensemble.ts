@@ -24,8 +24,8 @@ async function setupIdleEscrow(
 ): Promise<{ escrowId: string; ownerCapId: string }> {
   const tx = new Transaction();
   tx.setSender(d.owner.address);
-  const ownerCap = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
-  tx.transferObjects([ownerCap], d.owner.address);
+  const { ownerCap, inbox } = buildIntegrate(tx, d.usufructPackageId, d.dummyAssetPackageId, d.protocolFeeRefId);
+  tx.transferObjects([ownerCap, inbox], d.owner.address);
 
   const r = await execSetup(client, owner, tx);
   const escrowObj = (r.objectChanges ?? []).find(

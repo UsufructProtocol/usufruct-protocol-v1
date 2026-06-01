@@ -14,6 +14,8 @@
     "run:testnet":        "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx run_all.ts",
     "run:testnet:resume": "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx run_all.ts --resume",
     "curves":             "tsx a_atomic/13_curve_shapes.ts",
+    "collect:earnings":   "tsx a_atomic/16_collect_earnings_messages.ts",
+    "govern:fleet":       "tsx a_atomic/18_governance_fleet_retire.ts",
     "report":             "tsx report.ts",
     "cleanup:testnet":       "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx setup/cleanup.ts",
     "collect:fees:testnet":  "SUI_RPC=https://fullnode.testnet.sui.io:443 tsx setup/collect_fees.ts"

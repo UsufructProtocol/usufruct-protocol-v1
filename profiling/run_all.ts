@@ -31,13 +31,15 @@ const SENTINEL: Record<string, string> = {
   'a_atomic/06_apply_transitions.ts':       'results/a_06_apply_transitions.json',
   'a_atomic/07_retire.ts':                  'results/a_07_retire.json',
   'a_atomic/08_claim_asset.ts':             'results/a_08_claim_asset.json',
-  'a_atomic/09_withdraw_earnings.ts':       'results/a_09_withdraw_earnings.json',
   'a_atomic/10_extend_retire_commitment.ts': 'results/a_10_extend_retire_commitment.json',
   'a_atomic/11_update_ensemble.ts':         'results/a_11_update_ensemble.json',
   'a_atomic/12_collect_fee_messages.ts':    'results/a_12_collect_fee_messages.json',
   'a_atomic/13_curve_shapes.ts':            'results/a_13_logistic.json',
   'a_atomic/14_update_tenant_refund_address.ts': 'results/a_14_update_tenant_refund_address.json',
   'a_atomic/15_extend_ensemble_commitment.ts': 'results/a_15_extend_ensemble_commitment.json',
+  'a_atomic/16_collect_earnings_messages.ts': 'results/a_16_collect_earnings_messages.json',
+  'a_atomic/17_integrate_into_portfolio.ts': 'results/a_17_integrate_into_portfolio.json',
+  'a_atomic/18_governance_fleet_retire.ts': 'results/a_18_governance_fleet_retire.json',
   'b_flows/01_minimal.ts':                  'results/b_01_minimal.json',
   'b_flows/02_asset_lifecycle.ts':          'results/b_02_asset_lifecycle.json',
   'b_flows/03_handover.ts':                 'results/b_03_handover.json',
@@ -46,6 +48,7 @@ const SENTINEL: Record<string, string> = {
   'b_flows/04_sequential_rents.ts 10':      'results/b_04_multi_tenure_N10.json',
   'b_flows/05_earnings.ts':                 'results/b_05_earnings.json',
   'b_flows/06_refund_redirect_then_handover.ts': 'results/b_06_refund_redirect_then_handover.json',
+  'b_flows/07_fleet_portfolio_collect.ts':  'results/b_07_fleet_portfolio_collect_N3.json',
 };
 
 const A_SCRIPTS = [
@@ -60,13 +63,15 @@ const A_SCRIPTS = [
   'a_atomic/06_apply_transitions.ts',
   'a_atomic/07_retire.ts',
   'a_atomic/08_claim_asset.ts',
-  'a_atomic/09_withdraw_earnings.ts',
   'a_atomic/10_extend_retire_commitment.ts',
   'a_atomic/11_update_ensemble.ts',
   'a_atomic/12_collect_fee_messages.ts',
   'a_atomic/13_curve_shapes.ts',
   'a_atomic/14_update_tenant_refund_address.ts',
   'a_atomic/15_extend_ensemble_commitment.ts',
+  'a_atomic/16_collect_earnings_messages.ts',
+  'a_atomic/17_integrate_into_portfolio.ts',
+  'a_atomic/18_governance_fleet_retire.ts',
 ];
 
 const B_SCRIPTS = [
@@ -78,6 +83,7 @@ const B_SCRIPTS = [
   'b_flows/04_sequential_rents.ts 10',
   'b_flows/05_earnings.ts',
   'b_flows/06_refund_redirect_then_handover.ts',
+  'b_flows/07_fleet_portfolio_collect.ts',
 ];
 
 const toRun = [

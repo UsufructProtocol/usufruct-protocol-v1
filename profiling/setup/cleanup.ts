@@ -164,13 +164,12 @@ async function tryClaimEscrow(
     const txClaim = new Transaction();
     txClaim.setSender(ownerAddr);
     txClaim.setGasBudget(20_000_000);
-    const [asset, earnings] = txClaim.moveCall({
+    const asset = txClaim.moveCall({
       target:        `${pkg}::escrow::claim_asset`,
       typeArguments: typeArgs,
       arguments:     [txClaim.object(escrowId), txClaim.object(capId), txClaim.object(CLOCK_ID)],
-    }) as [any, any];
+    });
     txClaim.moveCall({ target: `${dummyPkg}::dummy_asset::burn`, arguments: [asset] });
-    txClaim.transferObjects([earnings], ownerAddr);
 
     const claimResult = await signAndExecute(txClaim, keypair);
     if ((claimResult.effects as any)?.status?.status !== 'success') {

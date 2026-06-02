@@ -324,3 +324,47 @@ fun e7_auction_window_policies_accepted() {
     test_scenario::return_immutable(fee_ref);
     sc.end();
 }
+
+// E8: ensemble::new_ensemble_commitment_immediate API wrapper is accepted by integrate.
+#[test]
+fun e8_ensemble_commitment_immediate_api_wrapper_accepted() {
+    let mut sc = setup();
+    sc.next_tx(GOVERNOR);
+
+    let ens     = escrow_corpus::by_tag(0);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+    let asset   = mk_demo_asset(sc.ctx());
+
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+        asset, ens, ensemble::new_retire_commitment_immediate(),
+        ensemble::new_ensemble_commitment_immediate(), &fee_ref, &clk, sc.ctx(),
+    );
+    transfer::public_transfer(inbox, GOVERNOR);
+    clock::destroy_for_testing(clk);
+    transfer::public_transfer(cap, GOVERNOR);
+    test_scenario::return_immutable(fee_ref);
+    sc.end();
+}
+
+// E9: ensemble::new_ensemble_commitment_deferred API wrapper is accepted by integrate.
+#[test]
+fun e9_ensemble_commitment_deferred_api_wrapper_accepted() {
+    let mut sc = setup();
+    sc.next_tx(GOVERNOR);
+
+    let ens     = escrow_corpus::by_tag(0);
+    let fee_ref = sc.take_immutable<ProtocolFeeRef>();
+    let clk     = clock::create_for_testing(sc.ctx());
+    let asset   = mk_demo_asset(sc.ctx());
+
+    let (cap, inbox) = escrow::integrate<DemoAsset, SUI>(
+        asset, ens, ensemble::new_retire_commitment_immediate(),
+        ensemble::new_ensemble_commitment_deferred(ensemble::duration(10_000_000)), &fee_ref, &clk, sc.ctx(),
+    );
+    transfer::public_transfer(inbox, GOVERNOR);
+    clock::destroy_for_testing(clk);
+    transfer::public_transfer(cap, GOVERNOR);
+    test_scenario::return_immutable(fee_ref);
+    sc.end();
+}

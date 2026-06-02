@@ -6920,6 +6920,38 @@ fun extend_retire_commitment_in_descent_succeeds() {
     sc.end();
 }
 
+// Covers the `RentingState::Demand => {}` arm of assert_not_retired.
+// c=1 (Fixed handover, 25 000 ms) keeps the pending bid in Demand until countdown fires.
+#[test]
+fun extend_retire_commitment_in_demand_succeeds() {
+    let mut sc = setup();
+    // c=1 → handover Fixed: T2's bid stays as pending (Demand) until countdown fires.
+    let (mut escrow, governance_cap) = integrate_and_take(escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0)), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    // Idle → Occupied: T1 rents at floor.
+    let cap_t1 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_occupied(&escrow), 0);
+
+    // Occupied → Demand: T2 bids at floor; handover countdown (25 000 ms) hasn't fired.
+    let cap_t2 = rent_with_floor_price(&mut escrow, &clk, &mut sc);
+    assert!(escrow::is_demand(&escrow), 1);
+
+    // Extending the commitment in Demand must succeed (not retired) and leave
+    // the escrow in Demand — the pending bid is untouched.
+    escrow::extend_retire_commitment(
+        &mut escrow, &governance_cap,
+        retire_commitment_policy::new_deferred(phases::duration(1_000)), &clk, sc.ctx());
+    assert!(escrow::is_demand(&escrow), 2);
+
+    transfer::public_transfer(cap_t1, GOVERNOR);
+    transfer::public_transfer(cap_t2, GOVERNOR);
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // Test 10: update_ensemble on retiring (flag set) aborts ────────────────────────
 #[test, expected_failure(abort_code = asset_state::ERetireAlreadyScheduled, location = usufruct::asset_state)]
 fun update_ensemble_on_retiring_aborts() {

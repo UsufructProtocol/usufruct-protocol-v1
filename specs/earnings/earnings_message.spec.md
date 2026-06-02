@@ -18,10 +18,10 @@ A Sui object mailed to the `EarningsInbox`. `key` only (no `store`) — it lives
 ## § API
 
 **Posting** (package)
-- `earnings_message::post<C>(earnings: EarningsBalance<C>, inbox_identity: EarningsInboxIdentity, escrow_identity: EscrowIdentity, ctx)` — wraps the earnings into an `EarningsMessage`, transfers it to the inbox address, emits `EarningsPosted`.
+- `earnings_message::post<C>(earnings: EarningsBalance<C>, inbox_identity: EarningsInboxIdentity, escrow_identity: EscrowIdentity, ctx)` — wraps the earnings into an `EarningsMessage`, transfers it to the inbox address, emits `EarningsMessagePosted`.
 
 **Collection** (package)
-- `earnings_message::collect_earnings_messages<C>(&mut EarningsInbox, tickets: vector<Receiving<EarningsMessage<C>>>, ctx): Coin<C>` — drains all messages in `tickets`, sums balances, emits `EarningsCollected` per message, returns combined `Coin<C>`. Re-exported by the public facade `api/earnings`.
+- `earnings_message::collect_earnings_messages<C>(&mut EarningsInbox, tickets: vector<Receiving<EarningsMessage<C>>>, ctx): Coin<C>` — drains all messages in `tickets`, sums balances, emits `EarningsMessageCollected` per message, returns combined `Coin<C>`. Re-exported by the public facade `api/earnings`.
 
 **Accessors** (package)
 - `earnings_message::proj_escrow_id<C>(&EarningsMessage<C>): ID` — originating escrow.
@@ -36,7 +36,7 @@ A Sui object mailed to the `EarningsInbox`. `key` only (no `store`) — it lives
 ## § EVENTS
 
 ```
-EarningsPosted<CoinType> {
+EarningsMessagePosted {
     earnings_message_id: ID,
     earnings_inbox_id:   ID,
     escrow_id:           ID,
@@ -44,10 +44,10 @@ EarningsPosted<CoinType> {
     coin_type:           String,
 }
 ```
-Emitted when an `EarningsBalance` is posted to the inbox as an `EarningsMessage`. `coin_type` is the fully-qualified type string of `CoinType`, redundant with the generic event type but kept so the event is self-describing by field.
+Emitted when an `EarningsBalance` is posted to the inbox as an `EarningsMessage`. `coin_type` is the fully-qualified type string of the coin. The event is non-generic (matching the `asset_state` events), so this field is the sole carrier of the coin type — self-describing without a type parameter.
 
 ```
-EarningsCollected<CoinType> {
+EarningsMessageCollected {
     earnings_message_id: ID,
     earnings_inbox_id:   ID,
     escrow_id:           ID,
@@ -56,4 +56,4 @@ EarningsCollected<CoinType> {
     coin_type:           String,
 }
 ```
-Emitted once per message when `collect_earnings_messages` drains it. `collector` is the transaction sender; `coin_type` mirrors `EarningsPosted`.
+Emitted once per message when `collect_earnings_messages` drains it. `collector` is the transaction sender; `coin_type` mirrors `EarningsMessagePosted`.

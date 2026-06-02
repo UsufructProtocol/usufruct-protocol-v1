@@ -39,7 +39,7 @@ public struct FeeMessage<phantom CoinType> has key {
 
 // === Events ===
 
-public struct FeeMessageSent<phantom CoinType> has copy, drop {
+public struct FeeMessagePosted has copy, drop {
     fee_message_id: ID,
     fee_inbox_id:   ID,
     escrow_id:      ID,
@@ -47,7 +47,7 @@ public struct FeeMessageSent<phantom CoinType> has copy, drop {
     coin_type:      String,
 }
 
-public struct FeeMessageCollected<phantom CoinType> has copy, drop {
+public struct FeeMessageCollected has copy, drop {
     fee_message_id: ID,
     fee_inbox_id:   ID,
     escrow_id:      ID,
@@ -105,7 +105,7 @@ public(package) fun post<C>(
     };
     let fee_message_id = object::uid_to_inner(&msg.id);
     transfer::transfer(msg, fee_inbox_id.to_address());
-    event::emit(FeeMessageSent<C> { fee_message_id, fee_inbox_id, escrow_id, amount, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
+    event::emit(FeeMessagePosted { fee_message_id, fee_inbox_id, escrow_id, amount, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
 }
 
 // === Private Functions ===
@@ -128,7 +128,7 @@ fun consume_message<C>(
     let fee_inbox_id   = protocol_fee_ref::proj_id(fee_inbox_identity);
     let escrow_id      = escrow_identity::escrow_id(escrow_identity);
     id.delete();
-    event::emit(FeeMessageCollected<C> { fee_message_id, fee_inbox_id, escrow_id, amount, collector, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
+    event::emit(FeeMessageCollected { fee_message_id, fee_inbox_id, escrow_id, amount, collector, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
     balance
 }
 
@@ -160,26 +160,26 @@ public fun destroy_share_for_testing<C>(s: FeeShare<C>) {
 }
 
 #[test_only]
-public fun sent_fee_message_id<C>(e: &FeeMessageSent<C>): ID { e.fee_message_id }
+public fun posted_fee_message_id(e: &FeeMessagePosted): ID { e.fee_message_id }
 #[test_only]
-public fun sent_fee_inbox_id<C>(e: &FeeMessageSent<C>): ID { e.fee_inbox_id }
+public fun posted_fee_inbox_id(e: &FeeMessagePosted): ID { e.fee_inbox_id }
 #[test_only]
-public fun sent_escrow_id<C>(e: &FeeMessageSent<C>): ID { e.escrow_id }
+public fun posted_escrow_id(e: &FeeMessagePosted): ID { e.escrow_id }
 #[test_only]
-public fun sent_amount<C>(e: &FeeMessageSent<C>): u64 { e.amount }
+public fun posted_amount(e: &FeeMessagePosted): u64 { e.amount }
 #[test_only]
-public fun sent_coin_type<C>(e: &FeeMessageSent<C>): String { e.coin_type }
+public fun posted_coin_type(e: &FeeMessagePosted): String { e.coin_type }
 
 #[test_only]
-public fun collected_fee_message_id<C>(e: &FeeMessageCollected<C>): ID { e.fee_message_id }
+public fun collected_fee_message_id(e: &FeeMessageCollected): ID { e.fee_message_id }
 #[test_only]
-public fun collected_fee_inbox_id<C>(e: &FeeMessageCollected<C>): ID { e.fee_inbox_id }
+public fun collected_fee_inbox_id(e: &FeeMessageCollected): ID { e.fee_inbox_id }
 #[test_only]
-public fun collected_escrow_id<C>(e: &FeeMessageCollected<C>): ID { e.escrow_id }
+public fun collected_escrow_id(e: &FeeMessageCollected): ID { e.escrow_id }
 #[test_only]
-public fun collected_amount<C>(e: &FeeMessageCollected<C>): u64 { e.amount }
+public fun collected_amount(e: &FeeMessageCollected): u64 { e.amount }
 #[test_only]
-public fun collected_collector<C>(e: &FeeMessageCollected<C>): address { e.collector }
+public fun collected_collector(e: &FeeMessageCollected): address { e.collector }
 #[test_only]
-public fun collected_coin_type<C>(e: &FeeMessageCollected<C>): String { e.coin_type }
+public fun collected_coin_type(e: &FeeMessageCollected): String { e.coin_type }
 

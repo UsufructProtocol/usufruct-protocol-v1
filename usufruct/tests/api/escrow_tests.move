@@ -54,10 +54,10 @@ use usufruct::{
     escrow_corpus,
     escrow_identity,
     fee_inbox,
-    fee_message::{Self, FeeMessage, FeeMessageSent},
+    fee_message::{Self, FeeMessage, FeeMessagePosted},
     earnings,
     earnings_inbox::EarningsInbox,
-    earnings_message::{Self, EarningsMessage, EarningsPosted},
+    earnings_message::{Self, EarningsMessage, EarningsMessagePosted},
     governance_cap::{Self, GovernanceCap},
     phases,
     protocol_fee_inbox::{Self, ProtocolFeeInbox},
@@ -590,7 +590,7 @@ fun tickets_for(mut ids: vector<ID>): vector<sui::transfer::Receiving<EarningsMe
 /// handover, and the active usufructuary's full stake at tenure expiry — each mailed
 /// to the escrow's inbox. Returns (the two EarningsMessage ids, their summed
 /// governor-share). MUST be the only escrow driven in the current tx so the
-/// EarningsPosted events are unambiguous. Ensemble tag(1,0,0,1,0): c=1 Fixed
+/// EarningsMessagePosted events are unambiguous. Ensemble tag(1,0,0,1,0): c=1 Fixed
 /// handover, h=1 Fixed descent.
 fun cycle_to_retired_collecting_ids(
     escrow:    &mut Escrow<DemoAsset, SUI>,
@@ -616,7 +616,7 @@ fun cycle_to_retired_collecting_ids(
     assert!(escrow::is_descending(escrow), 92);
 
     // Capture the two governor-earnings posted to the inbox during this cycle.
-    let posted    = event::events_by_type<EarningsPosted<SUI>>();
+    let posted    = event::events_by_type<EarningsMessagePosted>();
     let mut ids   = vector[];
     let mut total = 0;
     let mut i     = 0;
@@ -825,8 +825,8 @@ fun e2e_invariant_nothing_collected_fee_plus_earnings_equals_rent() {
     clock::set_for_testing(&mut clk2, escrow::tenure_expiry_ms(&e).destroy_some());
     escrow::apply_pending_transition_states(&mut e, &clk2, sc.ctx());
 
-    let earn_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsPosted<SUI>>()[0]);
-    let fee_id  = fee_message::sent_fee_message_id(&event::events_by_type<FeeMessageSent<SUI>>()[0]);
+    let earn_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsMessagePosted>()[0]);
+    let fee_id  = fee_message::posted_fee_message_id(&event::events_by_type<FeeMessagePosted>()[0]);
 
     transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(e);
@@ -892,8 +892,8 @@ fun e2e_invariant_parcial_then_nothing_conserves_both_rents() {
     escrow::apply_pending_transition_states(&mut e, &clk, sc.ctx());
 
     // Two settlements → two EarningsMessages + two FeeMessages.
-    let posted = event::events_by_type<EarningsPosted<SUI>>();
-    let sent   = event::events_by_type<FeeMessageSent<SUI>>();
+    let posted = event::events_by_type<EarningsMessagePosted>();
+    let sent   = event::events_by_type<FeeMessagePosted>();
     assert_eq!(posted.length(), 2);
     assert_eq!(sent.length(),   2);
     let earn_ids = vector[
@@ -901,8 +901,8 @@ fun e2e_invariant_parcial_then_nothing_conserves_both_rents() {
         earnings_message::posted_earnings_message_id(&posted[1]),
     ];
     let fee_ids = vector[
-        fee_message::sent_fee_message_id(&sent[0]),
-        fee_message::sent_fee_message_id(&sent[1]),
+        fee_message::posted_fee_message_id(&sent[0]),
+        fee_message::posted_fee_message_id(&sent[1]),
     ];
 
     transfer::public_transfer(cap_t1, GOVERNOR);
@@ -1740,7 +1740,7 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     // Governor share (90% of used_credit) was mailed to the inbox at handover —
     // assert the event now (per-tx scope) and capture the message id.
     let governor_share_expected = used_credit_expected - used_credit_expected / 10;  // 90%
-    let posted = event::events_by_type<EarningsPosted<SUI>>();
+    let posted = event::events_by_type<EarningsMessagePosted>();
     assert_eq!(posted.length(), 1);
     assert_eq!(earnings_message::posted_amount(&posted[0]), governor_share_expected);
     let earnings_msg_id = earnings_message::posted_earnings_message_id(&posted[0]);
@@ -1757,10 +1757,10 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     assert_eq!(used_credit + remain_credit, principal_t1);
 
     // FeeMessage was posted carrying exactly the protocol fee; capture its id.
-    let sent = event::events_by_type<FeeMessageSent<SUI>>();
+    let sent = event::events_by_type<FeeMessagePosted>();
     assert_eq!(sent.length(), 1);
-    assert_eq!(fee_message::sent_amount(&sent[0]), protocol_fee);
-    let fee_msg_id = fee_message::sent_fee_message_id(&sent[0]);
+    assert_eq!(fee_message::posted_amount(&sent[0]), protocol_fee);
+    let fee_msg_id = fee_message::posted_fee_message_id(&sent[0]);
 
     transfer::public_transfer(cap_t1, GOVERNOR);
     transfer::public_transfer(cap_t2, GOVERNOR);
@@ -1858,7 +1858,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     // Governor share (90% of full principal) was mailed to the inbox at expiry —
     // assert the event now (per-tx scope) and capture the message id.
     let governor_share_expected = principal - principal / 10;
-    let posted = event::events_by_type<EarningsPosted<SUI>>();
+    let posted = event::events_by_type<EarningsMessagePosted>();
     assert_eq!(posted.length(), 1);
     assert_eq!(earnings_message::posted_amount(&posted[0]), governor_share_expected);
     let earnings_msg_id = earnings_message::posted_earnings_message_id(&posted[0]);
@@ -1874,10 +1874,10 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     assert_eq!(event::events_by_type<AssetRetired>().length(), 0);
 
     // FeeMessage was posted carrying exactly the protocol fee; capture its id.
-    let sent = event::events_by_type<FeeMessageSent<SUI>>();
+    let sent = event::events_by_type<FeeMessagePosted>();
     assert_eq!(sent.length(), 1);
-    assert_eq!(fee_message::sent_amount(&sent[0]), protocol_fee);
-    let fee_msg_id = fee_message::sent_fee_message_id(&sent[0]);
+    assert_eq!(fee_message::posted_amount(&sent[0]), protocol_fee);
+    let fee_msg_id = fee_message::posted_fee_message_id(&sent[0]);
 
     transfer::public_transfer(cap_t1, GOVERNOR);
     test_scenario::return_shared(escrow);
@@ -3659,7 +3659,7 @@ fun full_cycle_loop(entries: vector<escrow_corpus::CorpusEntry>, mut sc: Scenari
 
         // Governor income was mailed to the inbox at the boundary settlements
         // in this same tx (no withdraw / no swept coin at claim).
-        assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, tag);
+        assert!(event::events_by_type<EarningsMessagePosted>().length() > 0, tag);
 
         // Retire and return to pool; claim in fresh tx.
         escrow::drive_to_retired_for_testing(&mut escrow);
@@ -3744,7 +3744,7 @@ fun e2e_full_rental_cycle_with_bid_and_handover() {
 
     // Both t1 and t2 contributed used_credit at boundaries; governor income
     // was mailed to the inbox in this tx (> 0 posted).
-    assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, 6);
+    assert!(event::events_by_type<EarningsMessagePosted>().length() > 0, 6);
 
     // Retire and claim — escrow is consumed.
     escrow::drive_to_retired_for_testing(&mut escrow_handle);
@@ -3803,7 +3803,7 @@ fun e2e_tenure_expiry_then_auction_no_winner_across_curves() {
             // was mailed to the inbox at the tenure-expiry settlement.
             let governor_share_expected = principal - principal / 10;
             assert_eq!(
-                earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
+                earnings_message::posted_amount(&event::events_by_type<EarningsMessagePosted>()[0]),
                 governor_share_expected,
             );
 
@@ -3920,7 +3920,7 @@ fun e2e_two_usufructuary_successions_price_escalates() {
 
     // Governor income must be positive — both T1 and T2 accumulated
     // used_credit; the shares were mailed to the inbox in this tx.
-    assert!(event::events_by_type<EarningsPosted<SUI>>().length() > 0, tag);
+    assert!(event::events_by_type<EarningsMessagePosted>().length() > 0, tag);
 
     // Retire from Idle → Retired.
     escrow::retire(&mut escrow, &governance_cap, &clk, sc.ctx());
@@ -4545,7 +4545,7 @@ fun e2e_p2_fixed_delta_gap_is_constant_across_re_prices() {
 
 /// Governor earnings are posted to the inbox twice: once at a handover (T1's
 /// used_credit settled) and once at tenure expiry (T2's full credit settled).
-/// Verifies: each settlement emits an EarningsPosted<SUI> with a positive
+/// Verifies: each settlement emits an EarningsMessagePosted with a positive
 /// posted_amount.
 ///
 /// Config: c=0 (Instant), h=0 (Skipped — tenure → Idle in one APT), f=0.
@@ -4571,7 +4571,7 @@ fun e2e_e1_earnings_posted_twice_across_lifecycle() {
     assert!(escrow::is_occupied(&escrow_handle), tag);
 
     // First posting — T1's used_credit share mailed at the handover (this tx).
-    let posted_1 = event::events_by_type<EarningsPosted<SUI>>();
+    let posted_1 = event::events_by_type<EarningsMessagePosted>();
     assert_eq!(posted_1.length(), 1);
     assert!(earnings_message::posted_amount(&posted_1[0]) > 0, tag);
 
@@ -4586,7 +4586,7 @@ fun e2e_e1_earnings_posted_twice_across_lifecycle() {
     assert!(escrow::is_idle(&escrow_handle), tag);
 
     // Second posting — T2's earnings mailed at tenure expiry (fresh tx → index 0).
-    let posted_2 = event::events_by_type<EarningsPosted<SUI>>();
+    let posted_2 = event::events_by_type<EarningsMessagePosted>();
     assert_eq!(posted_2.length(), 1);
     assert!(earnings_message::posted_amount(&posted_2[0]) > 0, tag);
 
@@ -6107,11 +6107,11 @@ fun e2e_cred1_used_credit_clamped_at_demand_expiry_across_curves() {
 // ─── §CLAIM-1. Governor earnings post per boundary across all usufructuaries ───────────
 
 /// Each boundary event mails the governor's share to the inbox as a separate
-/// EarningsPosted<SUI>. With multiple usufructuaries, the per-boundary postings must
+/// EarningsMessagePosted. With multiple usufructuaries, the per-boundary postings must
 /// match the per-event governor shares:
 ///
-///   EarningsPosted[0].amount == HandoverCompleted.governor_share  (T1's share)
-///   EarningsPosted[1].amount == TenureExpired.governor_share       (T2's share)
+///   EarningsMessagePosted[0].amount == HandoverCompleted.governor_share  (T1's share)
+///   EarningsMessagePosted[1].amount == TenureExpired.governor_share       (T2's share)
 ///
 /// Both shares are read from the events themselves — no curve-specific
 /// constants needed. The identity holds for all 7 curve shapes because the
@@ -6163,9 +6163,9 @@ fun e2e_claim1_earnings_posted_per_boundary_across_usufructuaries_all_curves() {
             asset_state::tenure_expired_governor_share(evs.borrow(0))
         };
 
-        // Both boundary settlements ran in this same tx, so two EarningsPosted
+        // Both boundary settlements ran in this same tx, so two EarningsMessagePosted
         // events accumulated: index 0 = handover (T1), index 1 = tenure (T2).
-        let posted = event::events_by_type<EarningsPosted<SUI>>();
+        let posted = event::events_by_type<EarningsMessagePosted>();
         assert_eq!(posted.length(), 2);
         assert_eq!(earnings_message::posted_amount(&posted[0]), ho_share);
         assert_eq!(earnings_message::posted_amount(&posted[1]), te_share);
@@ -8604,7 +8604,7 @@ fun multi_cycle_handover_earnings_proportional_to_extended_ceiling() {
     // Governor received 90% of used_credit — mailed to the inbox at handover.
     let governor_share = asset_state::handover_completed_governor_share(&completed[0]);
     assert_eq!(
-        earnings_message::posted_amount(&event::events_by_type<EarningsPosted<SUI>>()[0]),
+        earnings_message::posted_amount(&event::events_by_type<EarningsMessagePosted>()[0]),
         governor_share,
     );
 

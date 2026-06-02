@@ -7,7 +7,7 @@ The public facade for collecting governor income. A single entry — `collect_ea
 ## § API
 
 **Public**
-- `earnings::collect_earnings_messages<C>(inbox: &mut EarningsInbox, tickets: vector<Receiving<EarningsMessage<C>>>, ctx): Coin<C>` — drains the addressed `EarningsMessage`s, returns their summed balance as a single `Coin`; emits `EarningsCollected` per message (in `earnings_message`).
+- `earnings::collect_earnings_messages<C>(inbox: &mut EarningsInbox, tickets: vector<Receiving<EarningsMessage<C>>>, ctx): Coin<C>` — drains the addressed `EarningsMessage`s, returns their summed balance as a single `Coin`; emits `EarningsMessageCollected` per message (in `earnings_message`).
 
 ## § INVARIANTS
 
@@ -16,4 +16,4 @@ The public facade for collecting governor income. A single entry — `collect_ea
 
 ## § EVENTS
 
-None directly. *(See `earnings_message`: `EarningsCollected`.)*
+None directly. *(See `earnings_message`: `EarningsMessageCollected`.)*

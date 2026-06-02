@@ -17,7 +17,7 @@ use usufruct::{
     asset_state::{Self, AssetIntegrated},
     cap,
     earnings,
-    earnings_message::{Self, EarningsMessage, EarningsPosted, EarningsCollected},
+    earnings_message::{Self, EarningsMessage, EarningsMessagePosted, EarningsMessageCollected},
     escrow::{Self, Escrow},
     escrow_corpus,
     ensemble_commitment_policy,
@@ -49,7 +49,7 @@ fun setup(): Scenario {
 
 /// Rent one tenure at the rest-price floor, then force tenure expiry — the path
 /// that settles the governor's 90% share to the inbox as an EarningsMessage.
-/// Returns the message id posted (read from the EarningsPosted event).
+/// Returns the message id posted (read from the EarningsMessagePosted event).
 fun rent_and_expire(escrow: &mut Escrow<DemoAsset, SUI>, sc: &mut Scenario): ID {
     let clk       = clock::create_for_testing(sc.ctx());
     let principal = escrow_corpus::min_rent_price_const();
@@ -59,7 +59,7 @@ fun rent_and_expire(escrow: &mut Escrow<DemoAsset, SUI>, sc: &mut Scenario): ID 
     );
     clock::destroy_for_testing(clk);
     transfer::public_transfer(cap_t1, GOVERNOR);
-    let posted = event::events_by_type<EarningsPosted<SUI>>();
+    let posted = event::events_by_type<EarningsMessagePosted>();
     earnings_message::posted_earnings_message_id(&posted[posted.length() - 1])
 }
 
@@ -71,7 +71,7 @@ fun governor_share(): u64 {
 // ─── E1 — single escrow: settle → collect via the api wrapper ─────────────────
 
 // The governor's tenure share is mailed to the inbox; collect_earnings_messages
-// drains it into a coin of exactly that share, and the EarningsCollected event
+// drains it into a coin of exactly that share, and the EarningsMessageCollected event
 // attributes the income to its source escrow (star schema).
 #[test]
 fun e1_collect_drains_governor_share_after_tenure() {
@@ -99,7 +99,7 @@ fun e1_collect_drains_governor_share_after_tenure() {
     let coin   = earnings::collect_earnings_messages<SUI>(&mut inbox, vector[ticket], sc.ctx());
     assert_eq!(coin::value(&coin), governor_share());
 
-    let collected = event::events_by_type<EarningsCollected<SUI>>();
+    let collected = event::events_by_type<EarningsMessageCollected>();
     assert_eq!(collected.length(), 1);
     assert_eq!(earnings_message::collected_amount(&collected[0]),    governor_share());
     assert_eq!(earnings_message::collected_escrow_id(&collected[0]), escrow_id);
@@ -116,7 +116,7 @@ fun e1_collect_drains_governor_share_after_tenure() {
 // Fleet consolidation: a second escrow joins the portfolio via
 // integrate_into_portfolio, routing its income to the same inbox. After both
 // settle, a single collect drains both messages into one coin == 2× share, and
-// the two EarningsCollected events carry distinct source escrow ids.
+// the two EarningsMessageCollected events carry distinct source escrow ids.
 #[test]
 fun e2_portfolio_two_escrows_one_inbox_collect_both() {
     let mut sc = setup();
@@ -163,7 +163,7 @@ fun e2_portfolio_two_escrows_one_inbox_collect_both() {
     let coin = earnings::collect_earnings_messages<SUI>(&mut inbox, tickets, sc.ctx());
     assert_eq!(coin::value(&coin), governor_share() * 2);
 
-    let collected = event::events_by_type<EarningsCollected<SUI>>();
+    let collected = event::events_by_type<EarningsMessageCollected>();
     assert_eq!(collected.length(), 2);
     assert!(earnings_message::collected_escrow_id(&collected[0])
           != earnings_message::collected_escrow_id(&collected[1]));
@@ -213,7 +213,7 @@ fun e3_income_flows_after_governance_renounced() {
     let coin   = earnings::collect_earnings_messages<SUI>(&mut inbox, vector[ticket], sc.ctx());
     assert_eq!(coin::value(&coin), governor_share());
 
-    let collected = event::events_by_type<EarningsCollected<SUI>>();
+    let collected = event::events_by_type<EarningsMessageCollected>();
     assert_eq!(collected.length(), 1);
     assert_eq!(earnings_message::collected_amount(&collected[0]),    governor_share());
     assert_eq!(earnings_message::collected_escrow_id(&collected[0]), escrow_id);

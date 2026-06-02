@@ -36,7 +36,7 @@ A Sui object transferred to the `ProtocolFeeInbox`. One per settlement event; co
 - `fee_message::new_share<C>(balance: Balance<C>, escrow_identity: EscrowIdentity): FeeShare<C>`
 
 **Posting** (package)
-- `fee_message::post<C>(share: FeeShare<C>, fee_inbox_identity: FeeInboxIdentity, ctx: &mut TxContext)` — wraps the share into a `FeeMessage`, transfers it to the inbox address, emits `FeeMessageSent`.
+- `fee_message::post<C>(share: FeeShare<C>, fee_inbox_identity: FeeInboxIdentity, ctx: &mut TxContext)` — wraps the share into a `FeeMessage`, transfers it to the inbox address, emits `FeeMessagePosted`.
 
 ## § INVARIANTS
 
@@ -47,7 +47,7 @@ A Sui object transferred to the `ProtocolFeeInbox`. One per settlement event; co
 ## § EVENTS
 
 ```
-FeeMessageSent<CoinType> {
+FeeMessagePosted {
     fee_message_id: ID,
     fee_inbox_id:   ID,
     escrow_id:      ID,
@@ -55,10 +55,10 @@ FeeMessageSent<CoinType> {
     coin_type:      String,
 }
 ```
-Emitted when a `FeeShare` is posted to the inbox as a `FeeMessage`. `coin_type` is the fully-qualified type string of `CoinType`, redundant with the generic event type but kept so the event is self-describing by field.
+Emitted when a `FeeShare` is posted to the inbox as a `FeeMessage`. `coin_type` is the fully-qualified type string of the coin. The event is non-generic (matching the `asset_state` events), so this field is the sole carrier of the coin type — self-describing without a type parameter.
 
 ```
-FeeMessageCollected<CoinType> {
+FeeMessageCollected {
     fee_message_id: ID,
     fee_inbox_id:   ID,
     escrow_id:      ID,
@@ -67,4 +67,4 @@ FeeMessageCollected<CoinType> {
     coin_type:      String,
 }
 ```
-Emitted once per message when `collect_fee_messages` drains it. `collector` is the transaction sender; `coin_type` mirrors `FeeMessageSent`.
+Emitted once per message when `collect_fee_messages` drains it. `collector` is the transaction sender; `coin_type` mirrors `FeeMessagePosted`.

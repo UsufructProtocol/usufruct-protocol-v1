@@ -4,7 +4,7 @@ Usufruct is fully observable through its event stream. Every state transition em
 
 ## 1. Star Schema on `escrow_id`
 
-Every event in the protocol carries `escrow_id`. For asset, tenancy, auction, and policy events it is the *first* field; the cap events (`*CapMinted`/`*CapBurned`) and fee events (`FeeMessageSent`/`Collected`) lead with their own primary key (`*_cap_id` / `fee_message_id`) and carry `escrow_id` immediately after. Either way `escrow_id` is the root foreign key of a SQL star schema: each event type is a fact table, and `escrow_id` is the join key across all of them.
+Every event in the protocol carries `escrow_id`. For asset, tenancy, auction, and policy events it is the *first* field; the cap events (`*CapMinted`/`*CapBurned`) and fee events (`FeeMessagePosted`/`Collected`) lead with their own primary key (`*_cap_id` / `fee_message_id`) and carry `escrow_id` immediately after. Either way `escrow_id` is the root foreign key of a SQL star schema: each event type is a fact table, and `escrow_id` is the join key across all of them.
 
 ```
                     PolicyEnsembleRegistered ──┐
@@ -16,8 +16,8 @@ Every event in the protocol carries `escrow_id`. For asset, tenancy, auction, an
                          HandoverCompleted ────┤
    Active/PendingUsufructuaryRefundAddressUpdated ───┤
                               TenureExpired ───┤
-            EarningsPosted / EarningsCollected ─┤
-               FeeMessageSent/Collected    ────┤
+            EarningsMessagePosted / EarningsMessageCollected ─┤
+               FeeMessagePosted/Collected    ────┤
                               AssetRetired ────┤
                               AssetClaimed ────┘
 ```
@@ -26,7 +26,7 @@ Two secondary join keys appear in multiple events and act as dimension PKs:
 
 - **`usufruct_cap_id`** — links `UsufructCapMinted → RentStarted → BidPlaced → BidSuperseded → HandoverCompleted → TenureExpired → UsufructCapBurned`, plus `Active/PendingUsufructuaryRefundAddressUpdated` for any seat whose refund address was redirected. The complete history of a single tenancy is reconstructable by filtering on this key.
 - **`governance_cap_id`** — links `GovernanceCapMinted → AssetIntegrated → AssetClaimed → GovernanceCapBurned`. One cap may govern many escrows (portfolio), so this key fans out to every escrow integrated under it.
-- **`earnings_inbox_id`** — links the income stream: `AssetIntegrated → EarningsPosted → EarningsCollected`. Born paired with the cap at `integrate` but independently transferable, so it is its own dimension: filtering on it reconstructs the full post/collect history of one inbox, across whatever fleet of escrows posts to it.
+- **`earnings_inbox_id`** — links the income stream: `AssetIntegrated → EarningsMessagePosted → EarningsMessageCollected`. Born paired with the cap at `integrate` but independently transferable, so it is its own dimension: filtering on it reconstructs the full post/collect history of one inbox, across whatever fleet of escrows posts to it.
 
 All other fields (addresses, amounts, timestamps, policy strings) are attributes of the fact rows — they never require a secondary lookup.
 
@@ -88,12 +88,12 @@ The schedule fields that open a tenancy — emitted on both `RentStarted` and `H
 
 | Event | Trigger | Key fields |
 |-------|---------|------------|
-| `EarningsPosted<CoinType>` | A settlement mails the governor's share to the inbox | `earnings_message_id`, `earnings_inbox_id`, `escrow_id`, `amount`, `coin_type` |
-| `EarningsCollected<CoinType>` | Inbox bearer drains an earnings message | `earnings_message_id`, `earnings_inbox_id`, `escrow_id`, `amount`, `collector`, `coin_type` |
-| `FeeMessageSent<CoinType>` | Protocol fee posted to inbox after a transition | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `coin_type` |
-| `FeeMessageCollected<CoinType>` | Admin collects fee message | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `collector`, `coin_type` |
+| `EarningsMessagePosted` | A settlement mails the governor's share to the inbox | `earnings_message_id`, `earnings_inbox_id`, `escrow_id`, `amount`, `coin_type` |
+| `EarningsMessageCollected` | Inbox bearer drains an earnings message | `earnings_message_id`, `earnings_inbox_id`, `escrow_id`, `amount`, `collector`, `coin_type` |
+| `FeeMessagePosted` | Protocol fee posted to inbox after a transition | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `coin_type` |
+| `FeeMessageCollected` | Admin collects fee message | `fee_message_id`, `fee_inbox_id`, `escrow_id`, `amount`, `collector`, `coin_type` |
 
-Governor income mirrors the fee layer exactly: `EarningsPosted` when a settlement mails an `EarningsMessage` to the `EarningsInbox`, `EarningsCollected` when the bearer drains it. Uncollected income is `SUM(EarningsPosted.amount) − SUM(EarningsCollected.amount)` per `earnings_inbox_id` — fully answerable from events, no on-chain read. `FeeMessageSent` and `FeeMessageCollected` are generic over `CoinType`. The coin type is available two ways: encoded in the Sui event type name (so it can be filtered by event type) and as the explicit `coin_type` field (the fully-qualified type string), which keeps every event self-describing by field without parsing the generic type argument — consistent with `AssetIntegrated.coin_type`.
+Governor income mirrors the fee layer exactly: `EarningsMessagePosted` when a settlement mails an `EarningsMessage` to the `EarningsInbox`, `EarningsMessageCollected` when the bearer drains it. Uncollected income is `SUM(EarningsMessagePosted.amount) − SUM(EarningsMessageCollected.amount)` per `earnings_inbox_id` — fully answerable from events, no on-chain read. `FeeMessagePosted` and `FeeMessageCollected` carry the coin type in the explicit `coin_type` field (the fully-qualified type string). Like every other event in the protocol, they are non-generic — the coin type lives in a field, not in the event's type parameter — so all coin types share one event type, queried uniformly and distinguished by `coin_type`, consistent with `AssetIntegrated.coin_type`.
 
 ### Cap lifecycle
 
@@ -112,7 +112,7 @@ The event stream is sufficient to build any of the following without touching on
 
 **Marketplace listing page** — active escrows, their current policy (floor price, tenure duration), and last activity timestamp. Filter by coin type via the `AssetIntegrated` event type parameter.
 
-**Governor dashboard** — all escrows a governor has ever integrated (via `governor_address` field on `AssetIntegrated`), total lifetime income earned (`SUM(EarningsPosted.amount)` per `earnings_inbox_id`) and uncollected income (`SUM(EarningsPosted.amount) − SUM(EarningsCollected.amount)`), current active usufructuaries, and pending fee messages not yet collected.
+**Governor dashboard** — all escrows a governor has ever integrated (via `governor_address` field on `AssetIntegrated`), total lifetime income earned (`SUM(EarningsMessagePosted.amount)` per `earnings_inbox_id`) and uncollected income (`SUM(EarningsMessagePosted.amount) − SUM(EarningsMessageCollected.amount)`), current active usufructuaries, and pending fee messages not yet collected.
 
 **Usufructuary portfolio** — all tenancies a wallet has held cross-escrow, filtering on `usufructuary_address` in `RentStarted`. Includes completed tenancies, active ones, and bids currently in Demand state via `BidPlaced`.
 
@@ -120,7 +120,7 @@ The event stream is sufficient to build any of the following without touching on
 
 **Bid competition tracker** — live view of escrows currently in Demand state, showing `BidPlaced.bid_amount`, `handover_countdown_expiry`, and whether a `BidSuperseded` has already fired in this cycle.
 
-**Protocol fee dashboard** — `FeeMessageSent` vs `FeeMessageCollected` per `fee_inbox_id`, showing collected vs. pending fees by coin type.
+**Protocol fee dashboard** — `FeeMessagePosted` vs `FeeMessageCollected` per `fee_inbox_id`, showing collected vs. pending fees by coin type.
 
 **Policy change audit log** — sequence of `PolicyEnsembleRegistered → EnsembleUpdateScheduled → EnsembleUpdated` events for any escrow, showing exactly what changed and when it took effect.
 
@@ -174,7 +174,7 @@ SELECT timestamp_ms, 'TenureExpired'     AS event, usufructuary_address  AS acto
 UNION ALL
 SELECT timestamp_ms, 'HandoverCompleted' AS event, new_usufructuary_address AS actor, new_rent_price AS amount FROM handover_completed WHERE escrow_id = $id
 UNION ALL
-SELECT timestamp_ms, 'EarningsCollected' AS event, collector          AS actor, amount      AS amount FROM earnings_collected WHERE escrow_id = $id
+SELECT timestamp_ms, 'EarningsMessageCollected' AS event, collector          AS actor, amount      AS amount FROM earnings_collected WHERE escrow_id = $id
 UNION ALL
 SELECT timestamp_ms, 'BidPlaced'         AS event, pending_usufructuary_address AS actor, bid_amount  AS amount FROM bid_placed         WHERE escrow_id = $id
 UNION ALL

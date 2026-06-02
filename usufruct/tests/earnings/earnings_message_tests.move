@@ -15,7 +15,7 @@ use sui::{
 };
 use usufruct::{
     earnings_inbox::{Self, EarningsInbox},
-    earnings_message::{Self, EarningsMessage, EarningsPosted, EarningsCollected},
+    earnings_message::{Self, EarningsMessage, EarningsMessagePosted, EarningsMessageCollected},
     escrow_identity,
     earnings_balance,
 };
@@ -59,7 +59,7 @@ fun s1_post_forwards_fields_to_event() {
         earnings_message::post<sui::sui::SUI>(
             earnings(99), earnings_inbox::identity(&inbox), fake_escrow_identity(), scenario.ctx(),
         );
-        let posted = event::events_by_type<EarningsPosted<sui::sui::SUI>>();
+        let posted = event::events_by_type<EarningsMessagePosted>();
         assert_eq!(posted.length(), 1);
         assert_eq!(earnings_message::posted_escrow_id(&posted[0]),        fake_escrow_id());
         assert_eq!(earnings_message::posted_earnings_inbox_id(&posted[0]), inbox_id);
@@ -80,7 +80,7 @@ fun s2_post_zero_balance_ok() {
         earnings_message::post<sui::sui::SUI>(
             earnings(0), earnings_inbox::identity(&inbox), fake_escrow_identity(), scenario.ctx(),
         );
-        assert_eq!(earnings_message::posted_amount(&event::events_by_type<EarningsPosted<sui::sui::SUI>>()[0]), 0);
+        assert_eq!(earnings_message::posted_amount(&event::events_by_type<EarningsMessagePosted>()[0]), 0);
         scenario.return_to_sender(inbox);
     };
     scenario.end();
@@ -95,7 +95,7 @@ fun s3_two_posts_distinct_ids() {
         let identity = earnings_inbox::identity(&inbox);
         earnings_message::post<sui::sui::SUI>(earnings(500), identity, fake_escrow_identity(), scenario.ctx());
         earnings_message::post<sui::sui::SUI>(earnings(300), identity, fake_escrow_identity(), scenario.ctx());
-        let posted = event::events_by_type<EarningsPosted<sui::sui::SUI>>();
+        let posted = event::events_by_type<EarningsMessagePosted>();
         assert_eq!(posted.length(), 2);
         assert!(earnings_message::posted_earnings_message_id(&posted[0])
               != earnings_message::posted_earnings_message_id(&posted[1]));
@@ -104,7 +104,8 @@ fun s3_two_posts_distinct_ids() {
     scenario.end();
 }
 
-// S4: SUI and FAKE_USDC posts coexist — each type its own event.
+// S4: SUI and FAKE_USDC posts coexist — distinguished by the coin_type field
+//     (the event is non-generic; both share the EarningsMessagePosted type).
 #[test]
 fun s4_post_sui_and_usdc_coexist() {
     let mut scenario = setup();
@@ -113,8 +114,14 @@ fun s4_post_sui_and_usdc_coexist() {
         let identity = earnings_inbox::identity(&inbox);
         earnings_message::post<sui::sui::SUI>(earnings(100), identity, fake_escrow_identity(), scenario.ctx());
         earnings_message::post<FAKE_USDC>(earnings(200),     identity, fake_escrow_identity(), scenario.ctx());
-        assert_eq!(event::events_by_type<EarningsPosted<sui::sui::SUI>>().length(), 1);
-        assert_eq!(event::events_by_type<EarningsPosted<FAKE_USDC>>().length(),     1);
+        let posted = event::events_by_type<EarningsMessagePosted>();
+        assert_eq!(posted.length(), 2);
+        assert_eq!(earnings_message::posted_coin_type(&posted[0]),
+            string::from_ascii(type_name::into_string(type_name::with_defining_ids<sui::sui::SUI>())));
+        assert_eq!(earnings_message::posted_coin_type(&posted[1]),
+            string::from_ascii(type_name::into_string(type_name::with_defining_ids<FAKE_USDC>())));
+        assert_eq!(earnings_message::posted_amount(&posted[0]), 100);
+        assert_eq!(earnings_message::posted_amount(&posted[1]), 200);
         scenario.return_to_sender(inbox);
     };
     scenario.end();
@@ -129,7 +136,7 @@ fun s5_post_max_u64() {
         earnings_message::post<sui::sui::SUI>(
             earnings(18_446_744_073_709_551_615), earnings_inbox::identity(&inbox), fake_escrow_identity(), scenario.ctx(),
         );
-        assert_eq!(earnings_message::posted_amount(&event::events_by_type<EarningsPosted<sui::sui::SUI>>()[0]),
+        assert_eq!(earnings_message::posted_amount(&event::events_by_type<EarningsMessagePosted>()[0]),
             18_446_744_073_709_551_615);
         scenario.return_to_sender(inbox);
     };
@@ -148,7 +155,7 @@ fun r1_receive_consume_returns_balance_and_event() {
         earnings_message::post<sui::sui::SUI>(
             earnings(777), earnings_inbox::identity(&inbox), fake_escrow_identity(), scenario.ctx(),
         );
-        msg_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsPosted<sui::sui::SUI>>()[0]);
+        msg_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsMessagePosted>()[0]);
         scenario.return_to_sender(inbox);
     };
     scenario.next_tx(ADMIN);
@@ -162,7 +169,7 @@ fun r1_receive_consume_returns_balance_and_event() {
         assert_eq!(balance::value(&bal), 777);
         balance::destroy_for_testing(bal);
 
-        let coll = event::events_by_type<EarningsCollected<sui::sui::SUI>>();
+        let coll = event::events_by_type<EarningsMessageCollected>();
         assert_eq!(earnings_message::collected_earnings_message_id(&coll[0]), msg_id);
         assert_eq!(earnings_message::collected_earnings_inbox_id(&coll[0]),   inbox_id);
         assert_eq!(earnings_message::collected_escrow_id(&coll[0]),           fake_escrow_id());
@@ -183,7 +190,7 @@ fun d1_collect_empty_returns_zero() {
         let mut inbox = scenario.take_from_sender<EarningsInbox>();
         let coin = earnings_message::collect_earnings_messages<sui::sui::SUI>(&mut inbox, vector[], scenario.ctx());
         assert_eq!(coin::value(&coin), 0);
-        assert_eq!(event::events_by_type<EarningsCollected<sui::sui::SUI>>().length(), 0);
+        assert_eq!(event::events_by_type<EarningsMessageCollected>().length(), 0);
         transfer::public_transfer(coin, ADMIN);
         scenario.return_to_sender(inbox);
     };
@@ -201,7 +208,7 @@ fun d2_collect_n_sums_balances() {
         earnings_message::post<sui::sui::SUI>(earnings(100), identity, fake_escrow_identity(), scenario.ctx());
         earnings_message::post<sui::sui::SUI>(earnings(200), identity, fake_escrow_identity(), scenario.ctx());
         earnings_message::post<sui::sui::SUI>(earnings(300), identity, fake_escrow_identity(), scenario.ctx());
-        let posted = event::events_by_type<EarningsPosted<sui::sui::SUI>>();
+        let posted = event::events_by_type<EarningsMessagePosted>();
         id1 = earnings_message::posted_earnings_message_id(&posted[0]);
         id2 = earnings_message::posted_earnings_message_id(&posted[1]);
         id3 = earnings_message::posted_earnings_message_id(&posted[2]);
@@ -217,7 +224,7 @@ fun d2_collect_n_sums_balances() {
         ];
         let coin = earnings_message::collect_earnings_messages<sui::sui::SUI>(&mut inbox, tickets, scenario.ctx());
         assert_eq!(coin::value(&coin), 600);
-        assert_eq!(event::events_by_type<EarningsCollected<sui::sui::SUI>>().length(), 3);
+        assert_eq!(event::events_by_type<EarningsMessageCollected>().length(), 3);
         transfer::public_transfer(coin, ADMIN);
         scenario.return_to_sender(inbox);
     };
@@ -234,7 +241,7 @@ fun d3_collector_follows_custody() {
         earnings_message::post<sui::sui::SUI>(
             earnings(50), earnings_inbox::identity(&inbox), fake_escrow_identity(), scenario.ctx(),
         );
-        msg_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsPosted<sui::sui::SUI>>()[0]);
+        msg_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsMessagePosted>()[0]);
         transfer::public_transfer(inbox, ALICE);
     };
     scenario.next_tx(ALICE);
@@ -243,7 +250,7 @@ fun d3_collector_follows_custody() {
         let ticket    = test_scenario::receiving_ticket_by_id<EarningsMessage<sui::sui::SUI>>(msg_id);
         let coin      = earnings_message::collect_earnings_messages<sui::sui::SUI>(&mut inbox, vector[ticket], scenario.ctx());
         assert_eq!(coin::value(&coin), 50);
-        assert_eq!(earnings_message::collected_collector(&event::events_by_type<EarningsCollected<sui::sui::SUI>>()[0]), ALICE);
+        assert_eq!(earnings_message::collected_collector(&event::events_by_type<EarningsMessageCollected>()[0]), ALICE);
         transfer::public_transfer(coin, ALICE);
         scenario.return_to_sender(inbox);
     };
@@ -262,7 +269,7 @@ fun d4_distinct_escrow_ids_preserved() {
         let identity = earnings_inbox::identity(&inbox);
         earnings_message::post<sui::sui::SUI>(earnings(10), identity, escrow_identity::new(esc1), scenario.ctx());
         earnings_message::post<sui::sui::SUI>(earnings(20), identity, escrow_identity::new(esc2), scenario.ctx());
-        let posted = event::events_by_type<EarningsPosted<sui::sui::SUI>>();
+        let posted = event::events_by_type<EarningsMessagePosted>();
         id1 = earnings_message::posted_earnings_message_id(&posted[0]);
         id2 = earnings_message::posted_earnings_message_id(&posted[1]);
         scenario.return_to_sender(inbox);
@@ -276,7 +283,7 @@ fun d4_distinct_escrow_ids_preserved() {
         ];
         let coin = earnings_message::collect_earnings_messages<sui::sui::SUI>(&mut inbox, tickets, scenario.ctx());
         assert_eq!(coin::value(&coin), 30);
-        let coll = event::events_by_type<EarningsCollected<sui::sui::SUI>>();
+        let coll = event::events_by_type<EarningsMessageCollected>();
         assert!(earnings_message::collected_escrow_id(&coll[0]) != earnings_message::collected_escrow_id(&coll[1]));
         transfer::public_transfer(coin, ADMIN);
         scenario.return_to_sender(inbox);
@@ -306,7 +313,7 @@ fun p1_cross_inbox_ticket_rejected() {
         earnings_message::post<sui::sui::SUI>(
             earnings(1), earnings_inbox::identity(&inbox_a), fake_escrow_identity(), scenario.ctx(),
         );
-        msg_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsPosted<sui::sui::SUI>>()[0]);
+        msg_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsMessagePosted>()[0]);
         scenario.return_to_sender(inbox_a);
     };
     scenario.next_tx(ALICE);
@@ -330,7 +337,7 @@ fun p2_uid_deleted_on_drain() {
         earnings_message::post<sui::sui::SUI>(
             earnings(1), earnings_inbox::identity(&inbox), fake_escrow_identity(), scenario.ctx(),
         );
-        msg_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsPosted<sui::sui::SUI>>()[0]);
+        msg_id = earnings_message::posted_earnings_message_id(&event::events_by_type<EarningsMessagePosted>()[0]);
         scenario.return_to_sender(inbox);
     };
     scenario.next_tx(ADMIN);
@@ -359,7 +366,7 @@ fun i1_total_drained_equals_posted() {
         earnings_message::post<sui::sui::SUI>(earnings(250), identity, fake_escrow_identity(), scenario.ctx());
         earnings_message::post<sui::sui::SUI>(earnings(50),  identity, fake_escrow_identity(), scenario.ctx());
         earnings_message::post<sui::sui::SUI>(earnings(700), identity, fake_escrow_identity(), scenario.ctx());
-        let posted = event::events_by_type<EarningsPosted<sui::sui::SUI>>();
+        let posted = event::events_by_type<EarningsMessagePosted>();
         id0 = earnings_message::posted_earnings_message_id(&posted[0]);
         id1 = earnings_message::posted_earnings_message_id(&posted[1]);
         id2 = earnings_message::posted_earnings_message_id(&posted[2]);

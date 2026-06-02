@@ -23,7 +23,7 @@ use usufruct::{
     escrow::{Self, Escrow},
     escrow_corpus,
     fee_inbox,
-    fee_message::{Self, FeeMessage, FeeMessageSent},
+    fee_message::{Self, FeeMessage, FeeMessagePosted},
     phases,
     protocol_fee_inbox::{Self, ProtocolFeeInbox},
     protocol_fee_ref::ProtocolFeeRef,
@@ -126,10 +126,10 @@ fun fc2_collect_protocol_fees_from_real_tenure_expiry() {
         let boundary = phases::timestamp(CEILING);
         escrow::fire_do_tenure_expiry_for_testing(&mut escrow, boundary, sc.ctx());
 
-        // FeeMessageSent is emitted in this tx; capture msg_id for receipt in next block.
-        let sent = event::events_by_type<FeeMessageSent<SUI>>();
+        // FeeMessagePosted is emitted in this tx; capture msg_id for receipt in next block.
+        let sent = event::events_by_type<FeeMessagePosted>();
         assert!(sent.length() > 0, 0);
-        msg_id = fee_message::sent_fee_message_id(&sent[0]);
+        msg_id = fee_message::posted_fee_message_id(&sent[0]);
 
         test_scenario::return_shared(escrow);
     };
@@ -151,7 +151,7 @@ fun fc2_collect_protocol_fees_from_real_tenure_expiry() {
     sc.end();
 }
 
-// FC3: coin value from collect equals the fee from the FeeMessageSent event.
+// FC3: coin value from collect equals the fee from the FeeMessagePosted event.
 #[test]
 fun fc3_collected_coin_value_matches_sent_amount() {
     let mut sc = setup();
@@ -176,9 +176,9 @@ fun fc3_collected_coin_value_matches_sent_amount() {
         escrow::drive_to_rented_for_testing(&mut escrow, mk_usufructuary_seat(STAKE), 0);
         escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(CEILING), sc.ctx());
 
-        let sent  = event::events_by_type<FeeMessageSent<SUI>>();
-        msg_id    = fee_message::sent_fee_message_id(&sent[0]);
-        fee_amount = fee_message::sent_amount(&sent[0]);
+        let sent  = event::events_by_type<FeeMessagePosted>();
+        msg_id    = fee_message::posted_fee_message_id(&sent[0]);
+        fee_amount = fee_message::posted_amount(&sent[0]);
 
         test_scenario::return_shared(escrow);
     };

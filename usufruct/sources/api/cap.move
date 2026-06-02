@@ -28,6 +28,10 @@ public fun renounce_governance(cap: GovernanceCap, ctx: &TxContext) {
     governance_cap::burn(cap, ctx)
 }
 
+public fun burn_usufruct_cap(cap: UsufructCap, ctx: &mut TxContext) {
+    usufruct_cap::burn(cap, ctx)
+}
+
 public fun usufruct_cap_escrow_id(cap: &UsufructCap): ID {
     usufruct_cap::proj_escrow_id(cap)
 }

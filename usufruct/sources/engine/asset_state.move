@@ -1085,7 +1085,7 @@ public(package) fun execute_return<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun execute_soft_burn_usufruct_cap<Asset: key + store, CoinType>(
+public(package) fun execute_burn_stale_usufruct_cap<Asset: key + store, CoinType>(
     s:    AssetState<Asset, CoinType>,
     core: EscrowCore<CoinType>,
     cap:  UsufructCap,

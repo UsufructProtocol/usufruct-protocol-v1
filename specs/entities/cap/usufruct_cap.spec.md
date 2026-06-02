@@ -2,7 +2,7 @@
 
 ## § OVERVIEW
 
-The usufructuary's bearer credential. Holding a `UsufructCap` is the proof of tenancy for a specific escrow; it authorises `borrow_asset`, `return_asset`, and cap-related operations. Like `GovernanceCap`, it is a Sui object and transfers by object transfer. A usufructuary can hold at most one active cap per escrow; a superseded usufructuary's cap becomes stale and can be burned via `soft_burn_usufruct_cap` once they are no longer current or pending. `UsufructCapIdentity` is the copy-safe handle stored in `UsufructuaryIdentity`.
+The usufructuary's bearer credential. Holding a `UsufructCap` is the proof of tenancy for a specific escrow; it authorises `borrow_asset`, `return_asset`, and cap-related operations. Like `GovernanceCap`, it is a Sui object and transfers by object transfer. A usufructuary can hold at most one active cap per escrow; a superseded usufructuary's cap becomes stale and can be burned via `burn_stale_usufruct_cap` once they are no longer current or pending. `UsufructCapIdentity` is the copy-safe handle stored in `UsufructuaryIdentity`.
 
 ## § TYPES
 
@@ -35,7 +35,7 @@ Copy-safe reference to a `UsufructCap`. Stored in `UsufructuaryIdentity` and com
 
 - A new `UsufructCap` is minted on every successful `rent` call; each usufructuary in the system holds exactly one cap.
 - Binding is validated by comparing `cap.escrow_identity == escrow.escrow_identity`; a mismatch aborts.
-- A cap is stale if its identity matches neither the current nor the pending usufructuary slot; stale caps can be burned without governor or usufructuary cooperation via `soft_burn_usufruct_cap`.
+- A cap is stale if its identity matches neither the current nor the pending usufructuary slot; stale caps can be burned without governor or usufructuary cooperation via `burn_stale_usufruct_cap` (or unconditionally via `cap::burn_usufruct_cap`).
 
 ## § EVENTS
 

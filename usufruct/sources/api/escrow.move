@@ -214,7 +214,7 @@ public fun return_asset<Asset: key + store, CoinType>(
     put_state(escrow, asset_state::renting_into_state(rs));
 }
 
-public fun soft_burn_usufruct_cap<Asset: key + store, CoinType>(
+public fun burn_stale_usufruct_cap<Asset: key + store, CoinType>(
     escrow: &mut Escrow<Asset, CoinType>,
     cap:    UsufructCap,
     clock:  &Clock,
@@ -222,7 +222,7 @@ public fun soft_burn_usufruct_cap<Asset: key + store, CoinType>(
 ) {
     let state = take_state(escrow);
     let core  = take_core(escrow);
-    let (new_state, new_core) = asset_state::execute_soft_burn_usufruct_cap(state, core, cap, clock, ctx);
+    let (new_state, new_core) = asset_state::execute_burn_stale_usufruct_cap(state, core, cap, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
 }
@@ -239,10 +239,6 @@ public fun update_usufructuary_refund_address<Asset: key + store, CoinType>(
     let (new_state, new_core) = asset_state::execute_update_usufructuary_refund_address(state, core, cap, new_address, clock, ctx);
     put_core(escrow, new_core);
     put_state(escrow, new_state);
-}
-
-public fun hard_burn_usufruct_cap(cap: UsufructCap, ctx: &mut TxContext) {
-    usufruct_cap::burn(cap, ctx)
 }
 
 public fun apply_pending_transition_states<Asset: key + store, CoinType>(

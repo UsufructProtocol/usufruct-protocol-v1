@@ -53,8 +53,8 @@ Results in SUI (1 SUI = 10⁹ MIST).
 | `update_config` | +0.001183 | |
 | `withdraw_earnings` | +0.002171 | |
 | `retire` | +0.000940 | |
-| `soft_burn_usufruct_cap` | −0.000398 | −1 object |
-| `hard_burn_usufruct_cap` | −0.000455 | −1 object |
+| `burn_stale_usufruct_cap` | −0.000398 | −1 object |
+| `burn_usufruct_cap` | −0.000455 | −1 object |
 | `claim_asset` | −0.001525 | −2 objects (Escrow + GovernanceCap) |
 
 ### borrow_return — curve shape variants
@@ -225,8 +225,8 @@ Same scripts, same parameters — independent run on public testnet.
 | `update_config` | 1,182,776 | +0.001183 |
 | `withdraw_earnings` | 2,170,776 | +0.002171 |
 | `retire` | 939,576 | +0.000940 |
-| `soft_burn_usufruct_cap` | −397,872 | −0.000398 |
-| `hard_burn_usufruct_cap` | −455,112 | −0.000455 |
+| `burn_stale_usufruct_cap` | −397,872 | −0.000398 |
+| `burn_usufruct_cap` | −455,112 | −0.000455 |
 | `claim_asset` | −1,525,256 | −0.001525 |
 
 ### borrow_return — curve shape variants (testnet)
@@ -418,7 +418,7 @@ Step breakdown:
 | **update_refund_address** | **1,265,848** |
 | rent_t2 | 3,499,640 |
 | apply_handover | 2,563,928 |
-| soft_burn | 379,048 |
+| burn_stale | 379,048 |
 | retire | 999,576 |
 | apply_transitions | 1,214,688 |
 | claim_asset | −1,465,256 |
@@ -439,8 +439,8 @@ v1.2.0: localnet measurement (2026-05-28), code state `2f604b5`.
 | `rent(tenures(10))` | 4,039,920 | 4,099,920 | +60,000 |
 | `rent(tenures(100))` | 4,039,920 | 4,099,920 | +60,000 |
 | `borrow_return` | 1,205,848 | 1,265,848 | +60,000 |
-| `soft_burn_usufruct_cap` | −397,872 | −337,872 | +60,000 |
-| `hard_burn_usufruct_cap` | −455,112 | −395,112 | +60,000 |
+| `burn_stale_usufruct_cap` | −397,872 | −337,872 | +60,000 |
+| `burn_usufruct_cap` | −455,112 | −395,112 | +60,000 |
 | `apply_transitions` (no-op) | 1,180,040 | 1,240,040 | +60,000 |
 | `retire` | 939,576 | 999,576 | +60,000 |
 | `claim_asset` | −1,525,256 | −1,465,256 | +60,000 |
@@ -514,8 +514,8 @@ See finding #8.
 | `borrow_return` | 1,336,532 | +0.001337 |
 | `apply_transitions` (no-op) | 1,300,724 | +0.001301 |
 | `retire` | 1,070,260 | +0.001070 |
-| `soft_burn_usufruct_cap` | −277,188 | −0.000277 |
-| `hard_burn_usufruct_cap` | −335,112 | −0.000335 |
+| `burn_stale_usufruct_cap` | −277,188 | −0.000277 |
+| `burn_usufruct_cap` | −335,112 | −0.000335 |
 | `claim_asset` | −1,462,972 | −0.001463 |
 | `withdraw_earnings` | 2,301,460 | +0.002301 |
 | `extend_retire_commitment` | 1,374,260 | +0.001374 |
@@ -538,8 +538,8 @@ v1.3.0: localnet measurement (2026-05-31), code state `51f9d31`.
 | `borrow_return` | 1,265,848 | 1,336,532 | +70,684 |
 | `apply_transitions` (no-op) | 1,240,040 | 1,300,724 | +60,684 |
 | `retire` | 999,576 | 1,070,260 | +70,684 |
-| `soft_burn_usufruct_cap` | −337,872 | −277,188 | +60,684 |
-| `hard_burn_usufruct_cap` | −395,112 | −335,112 | +60,000 |
+| `burn_stale_usufruct_cap` | −337,872 | −277,188 | +60,684 |
+| `burn_usufruct_cap` | −395,112 | −335,112 | +60,000 |
 | `withdraw_earnings` | 2,230,776 | 2,301,460 | +70,684 |
 | `extend_commitment` → `extend_retire_commitment` | 1,303,576 | 1,374,260 | +70,684 |
 | `update_config` → `update_ensemble` | 1,252,776 | 1,313,460 | +60,684 |

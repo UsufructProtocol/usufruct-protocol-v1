@@ -12,7 +12,7 @@
  *   3. usufructuary1 redirects refund via refund::refund_address(new_addr)
  *   4. usufructuary2 rents → bid → Demand
  *   5. wait 12s → apply_pending fires handover; refund coin routed to new_addr
- *   6. soft_burn stale cap_t1
+ *   6. burn_stale stale cap_t1
  *   7. retire
  *   8. wait 12s → apply_pending fires tenure expiry on t2
  *   9. claim_asset
@@ -131,16 +131,16 @@ async function main() {
   steps.push(r5);
   console.log(` net=${r5.net}`);
 
-  // 6. soft_burn the stale cap_t1.
-  process.stdout.write('Step 6 soft_burn(stale t1)...');
+  // 6. burn_stale the stale cap_t1.
+  process.stdout.write('Step 6 burn_stale(stale t1)...');
   const tx6 = new Transaction();
   tx6.setSender(d.usufructuary1.address);
   tx6.moveCall({
-    target:        `${d.usufructPackageId}::escrow::soft_burn_usufruct_cap`,
+    target:        `${d.usufructPackageId}::escrow::burn_stale_usufruct_cap`,
     typeArguments: typeArgs,
     arguments:     [tx6.object(escrowId), tx6.object(cap1Id), clock(tx6)],
   });
-  const r6 = await measure(client, kp.usufructuary1, 'soft_burn', 0, tx6);
+  const r6 = await measure(client, kp.usufructuary1, 'burn_stale', 0, tx6);
   steps.push(r6);
   console.log(` net=${r6.net}`);
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Phase A / 05 — hard_burn_usufruct_cap
+ * Phase A / 05 — burn_usufruct_cap
  * Measures: directly destroying a UsufructCap without handover protocol.
  * Precondition: occupied escrow with a valid UsufructCap.
  * Note: the escrow stays occupied but the cap is gone (stale usufructuary).
@@ -65,18 +65,18 @@ async function main() {
     tx.setSender(d.usufructuary1.address);
 
     tx.moveCall({
-      target: `${d.usufructPackageId}::escrow::hard_burn_usufruct_cap`,
+      target: `${d.usufructPackageId}::cap::burn_usufruct_cap`,
       arguments: [tx.object(usufructCapId)],
     });
 
-    const rec = await measure(client, kp.usufructuary1, 'hard_burn', run, tx);
+    const rec = await measure(client, kp.usufructuary1, 'burn', run, tx);
     records.push(rec);
     console.log(` net=${rec.net} MIST  -${rec.objectsDeleted}obj`);
   }
 
   const med = median(records);
   console.log(`\nMedian net: ${med.net} MIST`);
-  saveRecords(resolve(DIR, '../results/a_05_hard_burn.json'), records);
+  saveRecords(resolve(DIR, '../results/a_05_burn.json'), records);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

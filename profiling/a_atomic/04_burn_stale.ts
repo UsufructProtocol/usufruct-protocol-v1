@@ -1,13 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * Phase A / 04 — soft_burn_usufruct_cap
+ * Phase A / 04 — burn_stale_usufruct_cap
  * Measures: burning a STALE UsufructCap (previous usufructuary's cap after new usufructuary bid).
  *
  * Correct precondition:
  *   1. Escrow created with HandoverPolicy::FullTenure (bidding open from start)
  *   2. Usufructuary1 rents → Occupied, cap_t1 = current
  *   3. Usufructuary2 bids (rent) → Demand, cap_t1 becomes STALE, cap_t2 = pending
- *   4. soft_burn_usufruct_cap(escrow, cap_t1) — burns the stale cap
+ *   4. burn_stale_usufruct_cap(escrow, cap_t1) — burns the stale cap
  */
 
 import { resolve, dirname } from 'path';
@@ -25,7 +25,7 @@ import type { TransactionArgument } from '@mysten/sui/transactions';
 const DIR = dirname(fileURLToPath(import.meta.url));
 
 // Very short tenure (2s) + FullTenure handover so the countdown expires quickly.
-// This allows the soft_burn precondition (stale cap) without a long wait.
+// This allows the burn_stale precondition (stale cap) without a long wait.
 const SHORT_TENURE_MS = 2_000n;
 
 function buildShortTenureEnsemble(tx: Transaction, pkg: string): TransactionArgument {
@@ -142,19 +142,19 @@ async function main() {
 
     // Burns the stale cap_t1 (usufructuary1's cap, now stale after usufructuary2 bid)
     tx.moveCall({
-      target: `${d.usufructPackageId}::escrow::soft_burn_usufruct_cap`,
+      target: `${d.usufructPackageId}::escrow::burn_stale_usufruct_cap`,
       typeArguments: typeArgs,
       arguments: [tx.object(escrowId), tx.object(staleCapId), clock(tx)],
     });
 
-    const rec = await measure(client, kp.usufructuary1, 'soft_burn', run, tx);
+    const rec = await measure(client, kp.usufructuary1, 'burn_stale', run, tx);
     records.push(rec);
     console.log(` net=${rec.net} MIST  -${rec.objectsDeleted}obj`);
   }
 
   const med = median(records);
   console.log(`\nMedian net: ${med.net} MIST`);
-  saveRecords(resolve(DIR, '../results/a_04_soft_burn.json'), records);
+  saveRecords(resolve(DIR, '../results/a_04_burn_stale.json'), records);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

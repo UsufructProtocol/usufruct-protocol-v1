@@ -46,7 +46,7 @@ export function buildMinimalEnsemble(tx: Transaction, pkg: string): TransactionA
   });
 }
 
-// Builds a PolicyEnsemble with HandoverPolicy::Fixed (needed for soft_burn tests).
+// Builds a PolicyEnsemble with HandoverPolicy::Fixed (needed for burn_stale tests).
 export function buildHandoverEnsemble(tx: Transaction, pkg: string): TransactionArgument {
   const restPrice = tx.moveCall({
     target: `${pkg}::ensemble::new_rest_price_fixed`,

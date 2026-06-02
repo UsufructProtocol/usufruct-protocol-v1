@@ -79,7 +79,7 @@ async function main() {
   steps.push(r3);
   console.log(` net=${r3.net}`);
 
-  // 4. soft_burn stale cap1
+  // 4. burn_stale stale cap1
   process.stdout.write('  waiting for tenure expiry + apply...');
   await new Promise(r => setTimeout(r, 12000));
   const txApp = new Transaction();
@@ -94,15 +94,15 @@ async function main() {
   console.log(` net=${rApp.net}`);
 
   // Burn stale cap1
-  process.stdout.write('Step 4 soft_burn(stale t1)...');
+  process.stdout.write('Step 4 burn_stale(stale t1)...');
   const tx4 = new Transaction();
   tx4.setSender(d.usufructuary1.address);
   tx4.moveCall({
-    target: `${d.usufructPackageId}::escrow::soft_burn_usufruct_cap`,
+    target: `${d.usufructPackageId}::escrow::burn_stale_usufruct_cap`,
     typeArguments: typeArgs,
     arguments: [tx4.object(escrowId), tx4.object(cap1Id), clock(tx4)],
   });
-  const r4 = await measure(client, kp.usufructuary1, 'soft_burn', 0, tx4);
+  const r4 = await measure(client, kp.usufructuary1, 'burn_stale', 0, tx4);
   steps.push(r4);
   console.log(` net=${r4.net}`);
 

@@ -50,6 +50,7 @@ use usufruct::{
     tenure_extend_policy,
     tenure_duration_policy,
     escrow::{Self, Escrow},
+    cap,
     escrow_corpus,
     escrow_identity,
     fee_inbox,
@@ -2564,11 +2565,11 @@ fun borrow_asset_with_pending_cap_aborts() {
     sc.end();
 }
 
-// ─── §15.2 soft_burn_usufruct_cap ───────────────────────────────────────────────────
+// ─── §15.2 burn_stale_usufruct_cap ───────────────────────────────────────────────────
 
 /// Stale cap (from a superseded bid) burns cleanly. Live caps abort.
 #[test]
-fun soft_burn_usufruct_cap_burns_displaced_bidder_cap() {
+fun burn_stale_usufruct_cap_burns_displaced_bidder_cap() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
@@ -2587,7 +2588,7 @@ fun soft_burn_usufruct_cap_burns_displaced_bidder_cap() {
     let cap_t3 = escrow::rent(&mut escrow, p3, tenures::tenures(1), &clk, sc.ctx());
 
     // Burn the stale cap_t2.
-    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
+    escrow::burn_stale_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, GOVERNOR);
     transfer::public_transfer(cap_t3, GOVERNOR);
@@ -2598,7 +2599,7 @@ fun soft_burn_usufruct_cap_burns_displaced_bidder_cap() {
 }
 
 #[test, expected_failure(abort_code = asset_state::EUsufructCapNotStale, location = usufruct::asset_state)]
-fun soft_burn_usufruct_cap_on_live_active_cap_aborts() {
+fun burn_stale_usufruct_cap_on_live_active_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 0, 0));
     let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
@@ -2607,7 +2608,7 @@ fun soft_burn_usufruct_cap_on_live_active_cap_aborts() {
     let p1 = mk_payment(escrow_corpus::min_rent_price_const(), sc.ctx());
     let cap_t1 = escrow::rent(&mut escrow, p1, tenures::tenures(1), &clk, sc.ctx());
     // cap_t1 is the live current — burn must abort.
-    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
+    escrow::burn_stale_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     transfer::public_transfer(governance_cap, GOVERNOR);
@@ -2616,14 +2617,14 @@ fun soft_burn_usufruct_cap_on_live_active_cap_aborts() {
 }
 
 #[test, expected_failure(abort_code = asset_state::EWrongEscrowUsufructCap, location = usufruct::asset_state)]
-fun soft_burn_usufruct_cap_with_foreign_escrow_cap_aborts() {
+fun burn_stale_usufruct_cap_with_foreign_escrow_cap_aborts() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let foreign = usufruct_cap::new(escrow_identity::new(object::id_from_address(@0xDEAD)), USUFRUCTUARY_ADDR_1, sc.ctx());
 
-    escrow::soft_burn_usufruct_cap(&mut escrow, foreign, &clk, sc.ctx());
+    escrow::burn_stale_usufruct_cap(&mut escrow, foreign, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     transfer::public_transfer(governance_cap, GOVERNOR);
@@ -2631,18 +2632,18 @@ fun soft_burn_usufruct_cap_with_foreign_escrow_cap_aborts() {
     sc.end();
 }
 
-// ─── §15.2b hard_burn_usufruct_cap ─────────────────────────────────────────────
+// ─── §15.2b cap::burn_usufruct_cap ─────────────────────────────────────────────
 
-/// `hard_burn_usufruct_cap` destroys a UsufructCap unconditionally with no escrow
+/// `cap::burn_usufruct_cap` destroys a UsufructCap unconditionally with no escrow
 /// reference. Canonical use: the escrow has been claimed and deleted, leaving
-/// the former usufructuary's cap orphaned. `soft_burn_usufruct_cap` would be
+/// the former usufructuary's cap orphaned. `burn_stale_usufruct_cap` would be
 /// impossible at that point — the shared object no longer exists.
 ///
 /// A cap bound to the escrow identity is created, then the escrow is driven
-/// to Retired and claimed (object consumed). `hard_burn_usufruct_cap` burns the
+/// to Retired and claimed (object consumed). `cap::burn_usufruct_cap` burns the
 /// now-orphaned cap — verified by `UsufructCapBurned` event and `sc.end()`.
 #[test]
-fun hard_burn_usufruct_cap_destroys_orphaned_cap_post_claim() {
+fun burn_usufruct_cap_destroys_orphaned_cap_post_claim() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(0);
     let (mut escrow_handle, governance_cap) = integrate_and_take(ensemble, &mut sc);
@@ -2660,8 +2661,8 @@ fun hard_burn_usufruct_cap_destroys_orphaned_cap_post_claim() {
     let escrow = sc.take_shared<Escrow<DemoAsset, SUI>>();
     let asset = escrow::claim_asset(escrow, &governance_cap, &clk, sc.ctx());
 
-    // The escrow is gone — hard_burn_usufruct_cap needs no escrow reference.
-    escrow::hard_burn_usufruct_cap(orphaned_cap, sc.ctx());
+    // The escrow is gone — cap::burn_usufruct_cap needs no escrow reference.
+    cap::burn_usufruct_cap(orphaned_cap, sc.ctx());
 
     let burned = event::events_by_type<usufruct_cap::UsufructCapBurned>();
     assert_eq!(burned.length(), 1);
@@ -4114,7 +4115,7 @@ fun e2e_supersede_T3_displaces_T2_APT_fires_to_T3() {
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
     // T2's cap is stale — burn it.
-    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
+    escrow::burn_stale_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, GOVERNOR);
     transfer::public_transfer(cap_t3, GOVERNOR);
@@ -4755,7 +4756,7 @@ fun e2e_f2_full_tenure_T3_supersedes_T2_wins_at_tenure_boundary() {
     assert_eq!(event::events_by_type<HandoverCompleted>().length(), 1);
 
     // T2's cap is stale — T3 won, T2 was superseded.
-    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
+    escrow::burn_stale_usufruct_cap(&mut escrow, cap_t2, &clk, sc.ctx());
 
     transfer::public_transfer(cap_t1, GOVERNOR);
     transfer::public_transfer(cap_t3, GOVERNOR);
@@ -9999,14 +10000,14 @@ fun update_ensemble_demand_retiring_aborts() {
 // Targeted tests for abort paths and state/cap combinations that were not
 // covered by prior sections.
 
-// ── execute_soft_burn_usufruct_cap: non-renting happy path ───────────────────────────
+// ── execute_burn_stale_usufruct_cap: non-renting happy path ───────────────────────────
 //
 // In Idle/Descent/Retired, any cap belonging to this escrow is stale by
 // construction (no active tenancy). The match `_ => {}` passes through and
 // the cap is burned unconditionally.
 
 /// Burn a stale UsufructCap in Idle state after the tenancy has ended.
-/// Covers the Idle arm (`_ => {}`) of execute_soft_burn_usufruct_cap.
+/// Covers the Idle arm (`_ => {}`) of execute_burn_stale_usufruct_cap.
 #[test]
 fun burn_stale_cap_in_idle_succeeds() {
     let mut sc = setup();
@@ -10024,7 +10025,7 @@ fun burn_stale_cap_in_idle_succeeds() {
     assert!(escrow::is_idle(&escrow), 0);
 
     // cap_t1 is now stale — burn it from Idle state.
-    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
+    escrow::burn_stale_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     transfer::public_transfer(governance_cap, GOVERNOR);
@@ -10283,7 +10284,7 @@ fun borrow_asset_aborts_in_descent_with_window_descent() {
     sc.end();
 }
 
-/// execute_soft_burn_usufruct_cap in Descent: _ => {} passthrough (any cap is stale).
+/// execute_burn_stale_usufruct_cap in Descent: _ => {} passthrough (any cap is stale).
 #[test]
 fun burn_stale_cap_in_descent_succeeds() {
     let mut sc = setup();
@@ -10297,7 +10298,7 @@ fun burn_stale_cap_in_descent_succeeds() {
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());
     assert!(escrow::is_descending(&escrow), 0);
 
-    escrow::soft_burn_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
+    escrow::burn_stale_usufruct_cap(&mut escrow, cap_t1, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     transfer::public_transfer(governance_cap, GOVERNOR);
@@ -10305,7 +10306,7 @@ fun burn_stale_cap_in_descent_succeeds() {
     sc.end();
 }
 
-/// execute_soft_burn_usufruct_cap in Retired: _ => {} passthrough.
+/// execute_burn_stale_usufruct_cap in Retired: _ => {} passthrough.
 /// Drive Idle → Retired directly; burn a synthetic cap for this escrow —
 /// any cap is stale in Retired (no active tenancy).
 #[test]
@@ -10319,7 +10320,7 @@ fun burn_stale_cap_in_retired_succeeds() {
     let stale_cap = usufruct_cap::new(
         escrow_identity::new(object::id(&escrow)), USUFRUCTUARY_ADDR_1, sc.ctx(),
     );
-    escrow::soft_burn_usufruct_cap(&mut escrow, stale_cap, &clk, sc.ctx());
+    escrow::burn_stale_usufruct_cap(&mut escrow, stale_cap, &clk, sc.ctx());
 
     test_scenario::return_shared(escrow);
     transfer::public_transfer(governance_cap, GOVERNOR);

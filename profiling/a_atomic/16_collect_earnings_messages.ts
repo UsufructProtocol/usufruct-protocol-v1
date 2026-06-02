@@ -74,7 +74,7 @@ function build1msEnsemble(tx: Transaction, pkg: string): TransactionArgument {
 async function applyPending(
   client: SuiClient, governor: Ed25519Keypair, d: D, escrowId: string,
 ): Promise<boolean> {
-  const coins = await client.getCoins({ governor: d.governor.address, limit: 3 });
+  const coins = await client.getCoins({ owner: d.governor.address, limit: 3 });
   const tx = new Transaction();
   tx.setSender(d.governor.address);
   if (coins.data.length > 0) {
@@ -161,7 +161,7 @@ async function getEarningsMessageRefs(
   let cursor: string | null | undefined = undefined;
   while (refs.length < limit) {
     const page = await client.getOwnedObjects({
-      governor: inboxId, cursor, options: { showType: true },
+      owner: inboxId, cursor, options: { showType: true },
       limit: Math.min(limit - refs.length, 50),
     });
     for (const obj of page.data) {

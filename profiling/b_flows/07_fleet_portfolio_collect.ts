@@ -36,7 +36,7 @@ async function getEarningsMessageRefs(client: SuiClient, inboxId: string): Promi
   const refs: Ref[] = [];
   let cursor: string | null | undefined = undefined;
   do {
-    const page = await client.getOwnedObjects({ governor: inboxId, cursor, options: { showType: true }, limit: 50 });
+    const page = await client.getOwnedObjects({ owner: inboxId, cursor, options: { showType: true }, limit: 50 });
     for (const obj of page.data) {
       if ((obj.data?.type ?? '').includes('earnings_message::EarningsMessage')) {
         refs.push({ objectId: obj.data!.objectId, version: obj.data!.version, digest: obj.data!.digest });

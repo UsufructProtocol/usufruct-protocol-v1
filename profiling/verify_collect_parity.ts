@@ -62,7 +62,7 @@ async function rentAndApply(client: SuiClient, kp: any, d: D, escrowId: string):
   const r1 = await client.signAndExecuteTransaction({ transaction: txR, signer: kp.usufructuary1, options: { showEffects: true } });
   await client.waitForTransaction({ digest: r1.digest });
 
-  const coins = await client.getCoins({ governor: d.governor.address, limit: 3 });
+  const coins = await client.getCoins({ owner: d.governor.address, limit: 3 });
   const txA = new Transaction();
   txA.setSender(d.governor.address);
   if (coins.data.length) txA.setGasPayment(coins.data.map(c => ({ objectId: c.coinObjectId, version: c.version, digest: c.digest })));
@@ -76,7 +76,7 @@ async function refsAt(client: SuiClient, addr: string, typeFrag: string, limit: 
   const out: Ref[] = [];
   let cursor: string | null | undefined = undefined;
   while (out.length < limit) {
-    const page = await client.getOwnedObjects({ governor: addr, cursor, options: { showType: true }, limit: 50 });
+    const page = await client.getOwnedObjects({ owner: addr, cursor, options: { showType: true }, limit: 50 });
     for (const o of page.data) {
       if ((o.data?.type ?? '').includes(typeFrag)) {
         out.push({ objectId: o.data!.objectId, version: o.data!.version, digest: o.data!.digest });

@@ -32,7 +32,7 @@ async function getAllFeeMessageRefs(client: SuiClient, inboxId: string, pkg: str
 
   while (true) {
     const page = await client.getOwnedObjects({
-      governor:   inboxId,
+      owner:   inboxId,
       filter:  { StructType: feeType },
       options: { showType: true },
       cursor,

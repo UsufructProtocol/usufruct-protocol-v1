@@ -57,7 +57,7 @@ async function getGovernanceCaps(address: string, pkg: string): Promise<{ id: st
 
   while (true) {
     const page = await client.getOwnedObjects({
-      governor:   address,
+      owner:   address,
       filter:  { StructType: `${pkg}::governance_cap::GovernanceCap` },
       options: { showContent: true },
       cursor,

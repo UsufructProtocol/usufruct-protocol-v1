@@ -158,7 +158,7 @@ async function cmdDeploy() {
   const governorAddr = d.governor.address;
 
   // Check governor balance
-  const coins = await client.getCoins({ governor: governorAddr, coinType: '0x2::sui::SUI' });
+  const coins = await client.getCoins({ owner: governorAddr, coinType: '0x2::sui::SUI' });
   const totalMist = coins.data.reduce((s: bigint, c: any) => s + BigInt(c.balance), 0n);
   if (totalMist < 500_000_000n) {
     console.error(`Governor balance too low: ${totalMist} MIST (need ≥ 500M for gas)`);

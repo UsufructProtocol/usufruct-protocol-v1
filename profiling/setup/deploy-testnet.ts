@@ -3,18 +3,14 @@
  * Testnet setup for profiling — two-step workflow:
  *
  *   Step 1 — generate wallets:
- *     npm run setup:testnet:init
- *     → writes deployment.json with wallet keys + testnet usufruct IDs
+ *     USUFRUCT_PACKAGE_ID=0x… PROTOCOL_FEE_INBOX_ID=0x… PROTOCOL_FEE_REF_ID=0x… \
+ *       npm run setup:testnet:init
+ *     → writes deployment.json with wallet keys + the target usufruct IDs (from env)
  *     → prints governor address; fund it at https://faucet.sui.io (1–2 SUI)
  *
  *   Step 2 — deploy dummy_asset:
  *     npm run setup:testnet:deploy
  *     → reads deployment.json, publishes dummy_asset, fills in the package ID
- *
- * usufruct v1.0.0 is already deployed and immutable on testnet:
- *   Package:  0xe4662b44e47ce58beabdd6d45a541346636fbbffec0c7d4feb18d3f30bd95aaf
- *   FeeInbox: 0x0fcaa718a4166f33eef48e9ec3984bc39b10d9e5e1864354a61ef3c341b52962
- *   FeeRef:   0x20efbe0a6eff8fb62d0af9813adcb8b8a514bb0e0954e7df91d1a10927503d63
  */
 
 import { execSync }                                            from 'child_process';
@@ -28,14 +24,25 @@ import { RPC_URL }                                             from '../env.ts';
 const DIR  = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(DIR, '..');
 
-const TESTNET_USUFRUCT_PACKAGE_ID = '0xe4662b44e47ce58beabdd6d45a541346636fbbffec0c7d4feb18d3f30bd95aaf';
-const TESTNET_FEE_INBOX_ID        = '0x0fcaa718a4166f33eef48e9ec3984bc39b10d9e5e1864354a61ef3c341b52962';
-const TESTNET_FEE_REF_ID          = '0x20efbe0a6eff8fb62d0af9813adcb8b8a514bb0e0954e7df91d1a10927503d63';
-
 const client = new SuiClient({ url: RPC_URL });
 
 function run(cmd: string): string {
   return execSync(cmd, { encoding: 'utf8' }).trim();
+}
+
+// The target usufruct deployment is version-specific, so it is supplied via env
+// rather than hardcoded here (which would go stale every release). See the
+// deployment record in ../../TESTNET_DEPLOY.md / verify.sh for the current IDs.
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) {
+    console.error(`Missing required env var: ${name}`);
+    console.error('Point the harness at a deployed usufruct version, e.g.:');
+    console.error('  USUFRUCT_PACKAGE_ID=0x… PROTOCOL_FEE_INBOX_ID=0x… PROTOCOL_FEE_REF_ID=0x… \\');
+    console.error('    npm run setup:testnet:init');
+    process.exit(1);
+  }
+  return v;
 }
 
 function withPatchedToml<T>(
@@ -109,15 +116,19 @@ async function cmdInit() {
     console.log(`Usufructuary1: ${d.usufructuary1.address}`);
     console.log(`Usufructuary2: ${d.usufructuary2.address}`);
   } else {
+    const usufructPackageId  = requireEnv('USUFRUCT_PACKAGE_ID');
+    const protocolFeeInboxId = requireEnv('PROTOCOL_FEE_INBOX_ID');
+    const protocolFeeRefId   = requireEnv('PROTOCOL_FEE_REF_ID');
+
     const governor   = new Ed25519Keypair();
     const usufructuary1 = new Ed25519Keypair();
     const usufructuary2 = new Ed25519Keypair();
 
     const deployment = {
-      usufructPackageId:   TESTNET_USUFRUCT_PACKAGE_ID,
+      usufructPackageId,
       dummyAssetPackageId: '',   // filled in by setup:testnet:deploy
-      protocolFeeInboxId:  TESTNET_FEE_INBOX_ID,
-      protocolFeeRefId:    TESTNET_FEE_REF_ID,
+      protocolFeeInboxId,
+      protocolFeeRefId,
       governor:   { address: governor.getPublicKey().toSuiAddress(),   secretKey: governor.getSecretKey()   },
       usufructuary1: { address: usufructuary1.getPublicKey().toSuiAddress(), secretKey: usufructuary1.getSecretKey() },
       usufructuary2: { address: usufructuary2.getPublicKey().toSuiAddress(), secretKey: usufructuary2.getSecretKey() },

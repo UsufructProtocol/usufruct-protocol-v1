@@ -11083,6 +11083,7 @@ fun event_pin_handover_completed_all_fields() {
     assert_eq!(asset_state::handover_completed_used_credit(e),             used_credit);
     assert_eq!(asset_state::handover_completed_governor_share(e),             governor_share_val);
     assert_eq!(asset_state::handover_completed_protocol_fee(e),            protocol_fee_val);
+    assert_eq!(asset_state::handover_completed_departing_refund_amount(e), remain_val);
     assert_eq!(asset_state::handover_completed_remain_credit(e),           remain_val);
     assert_eq!(asset_state::handover_completed_committed_tenures(e),       1);
     assert_eq!(asset_state::handover_completed_ceiling_total_ms(e),        escrow_corpus::tenure_ceiling_const());

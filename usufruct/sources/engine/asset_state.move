@@ -295,6 +295,7 @@ public struct HandoverCompleted has copy, drop {
     remain_credit:                u64,
     governor_share:                  u64,
     protocol_fee:                 u64,
+    departing_refund_amount:      u64,
     new_rent_price:               u64,
     committed_tenures:            u64,
     ceiling_total_ms:             u64,
@@ -1478,6 +1479,7 @@ fun do_handover<Asset: key + store, CoinType>(
         remain_credit:               monetary::stake_mist(remain_credit),
         governor_share:                 used_mist - fee_mist,
         protocol_fee:                fee_mist,
+        departing_refund_amount:     monetary::stake_mist(remain_credit),
         new_rent_price,
         committed_tenures:           tenures::tenures_count(incoming_tenures),
         ceiling_total_ms:            phases::duration_ms(new_ceiling_total),
@@ -2007,6 +2009,8 @@ public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64
 public(package) fun handover_completed_governor_share(e: &HandoverCompleted): u64               { e.governor_share }
 #[test_only]
 public(package) fun handover_completed_protocol_fee(e: &HandoverCompleted): u64              { e.protocol_fee }
+#[test_only]
+public(package) fun handover_completed_departing_refund_amount(e: &HandoverCompleted): u64   { e.departing_refund_amount }
 #[test_only]
 public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u64            { e.new_rent_price }
 #[test_only]

@@ -30,6 +30,12 @@ Two secondary join keys appear in multiple events and act as dimension PKs:
 
 All other fields (addresses, amounts, timestamps, policy strings) are attributes of the fact rows — they never require a secondary lookup.
 
+### The chain holds no registry — the event graph *is* the index
+
+These join keys are not redundant with on-chain state — they are the *only* complete index of the protocol's cross-object relationships. By design the chain stores no registry: a `GovernanceCap` does not list the escrows it governs (it is a pure governance token, validated seat-side), escrows are independent shared objects, and nothing iterates a fleet. That omission is precisely what gives the protocol O(1) operations and zero gas debt — there is no growing list to update or contend on. The relationships did not disappear; they live in the event log. Replaying `AssetIntegrated` — which carries `governance_cap_id`, `earnings_inbox_id`, and `escrow_id` in one row — reconstructs the entire governance topology (which cap governs which fleet, which inbox each escrow feeds) without a single on-chain read.
+
+This is not theoretical. A v1.4.1 testnet teardown reconstructed all 516 escrows a single governor had ever integrated — each paired with its governing cap — purely by replaying the `AssetIntegrated` stream, precisely *because* the cap cannot point back to them on-chain. The reconstruction is a working reference for the pattern: `getIntegratedEscrows` in [`profiling/setup/cleanup.ts`](profiling/setup/cleanup.ts) pages the `AssetIntegrated` events (`queryEvents` on `MoveEventType`), filters by `governor_address`, and emits `(escrow_id, governance_cap_id)` pairs — exactly the indexing step a marketplace or governor dashboard would run, here used to drive teardown. Minimal execution state (which scales) and a complete relational graph (which is observable) are not a trade-off here: the chain runs the machine, the events are the database.
+
 ## 2. Event Catalogue
 
 Events are grouped by lifecycle phase. All amounts are in MIST (u64). All timestamps are epoch milliseconds (u64). Every financial event carries `asset_type` and `coin_type` as fully-qualified type strings (the same format as `AssetIntegrated`). Policy and cap events carry neither — they are not financial and predate the escrow's type binding. This makes every financial event self-describing without a join to `AssetIntegrated`.

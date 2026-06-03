@@ -1118,6 +1118,19 @@ governor's inbox, 10% to the protocol's — both claimed by pull-aggregation, bo
 rebate-positive. The busier the protocol, the more it earns, and the revenue never
 becomes a point of contention.
 
+### The flip side of no-registry: events are the index
+
+The same choice that makes governance O(1) — the chain keeps no cap→escrow registry
+(the cap is a pure token; finding #4) — means the *relationships* live entirely in the
+event log, not on-chain. This session's teardown proved it concretely: the cleanup that
+recovered the profiling escrows reconstructed all **516 escrows** a governor had ever
+integrated, each paired with its governing cap, purely by replaying `AssetIntegrated`
+(`getIntegratedEscrows` in `setup/cleanup.ts` — the same event-indexing step a
+marketplace or governor dashboard runs) — the chain literally cannot answer "what does
+this cap govern," because by design it does not store it. Minimal on-chain state (which scales) and a complete event graph (which is
+observable) are two faces of one architecture; the relational view lives in the events,
+not the objects. See `EVENTS.md`.
+
 **There is no growth regime where the recurring cost explodes.** A 10,000-escrow fleet
 is governed by one cap and its entire cash flow is swept in ~20 PTBs, rebate-positive.
 The only term that grows with N is the floor cost of *existing* on-chain — and that is

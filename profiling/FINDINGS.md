@@ -1007,3 +1007,118 @@ A separate operational note: scripts 12/16/17 leave their setup escrows standing
 (they measure `collect`, not teardown), so the governor's SUI accrues in locked
 object storage across a full Phase-A run — budget the deployer/actor wallets
 accordingly for a clean single-session run.
+
+---
+
+## Scalability conclusion — the cost of a fleet of N escrows
+
+The v1.4.1 testnet numbers let us project the lifetime cost of a fleet across five
+orders of magnitude (1 → 10,000 escrows), onboarded via `integrate_into_portfolio`
+(one `integrate` opens the cap + inbox; each further escrow joins for +1 object) and
+operated through the two governor-facing axes — **governing** them (retire under the
+one shared cap) and **collecting** their income (drain the shared inbox). Figures
+N ≤ 50 are measured; N ≥ 100 project the per-unit rate, which is constant at scale and
+capped only by the ~500-object PTB batch limit.
+
+### Onboarding — you pay, irreducibly O(N)
+
+`8,081,480 + (N−1) × 5,312,648` MIST
+
+| N | onboard cost |
+|---|---|
+| 1 | +0.0081 SUI |
+| 10 | +0.0559 SUI |
+| 100 | +0.534 SUI |
+| 1,000 | +5.315 SUI |
+| 10,000 | +53.13 SUI |
+
+Linear and unavoidable: each escrow is a distinct on-chain object that must be created
+(~5.31M MIST/join). This is the **only** axis that costs the operator at scale. The
+shared cap + inbox are paid once (the +2.77M premium inside the first `integrate`),
+then amortized across the whole fleet.
+
+### Governing the fleet — the shared cap is free
+
+Retire all N under one `GovernanceCap` (finding #4: per-retire constant, zero
+shared-cap overhead):
+
+| N | separate PTBs | batched (⌈N/500⌉ PTBs) |
+|---|---|---|
+| 1 | +0.0011 SUI | +0.0011 SUI |
+| 10 | +0.0112 | **−0.0015** (rebate) |
+| 100 | +0.112 | **−0.0155** |
+| 1,000 | +1.120 | **−0.155** |
+| 10,000 | +11.20 | **−1.548** |
+
+Governing 10,000 escrows with **one cap** costs the same per-escrow as governing one
+with one cap — the M-caps → 1-cap collapse is free. Batched, teardown is
+rebate-positive: at scale the protocol **pays the governor to retire the fleet**.
+
+### Collecting the income — aggregates to O(1) PTBs, rebate-positive
+
+Drain all N escrows' fee/earnings messages from the one shared inbox (finding #6:
+collect cost ∝ message count, independent of fleet topology):
+
+| N (msgs) | collect (≈ N × −1.92M) |
+|---|---|
+| 1 | +0.0003 SUI (pays) |
+| 10 | **−0.0192 SUI** (gain) |
+| 100 | **−0.192** |
+| 1,000 | **−1.925** |
+| 10,000 | **−19.25** |
+
+Break-even at N≈2, then rebate-positive — **and** the governor receives the actual
+fee/earnings coins on top of the storage rebate. The whole fleet drains in
+O(⌈N/500⌉) PTBs against one owned inbox (no shared-object contention).
+
+### The shape of fleet economics
+
+| Axis | Complexity | Economics at scale |
+|---|---|---|
+| **Onboard** | O(N) PTBs | **pay** ~5.31M/escrow — irreducible object creation |
+| **Govern** | O(N) ops, **1 cap** | batched **rebate** (~−0.15M/escrow); the cap is free |
+| **Collect** | **O(⌈N/500⌉) PTBs** | **rebate** ~−1.92M/msg + you receive the coins |
+
+The protocol pushes its entire cost onto the one axis that cannot be avoided —
+creating N objects — and leaves both recurring operational axes either **free**
+(governance: the shared cap collapses M keys to one) or **profitable** (collection:
+pull-aggregation to one inbox collapses O(N) PTBs to O(1)). Per escrow over its full
+life the net is **+5,312,648 − 154,774 − 1,924,754 ≈ +3,233,120 MIST (≈ 0.0032 SUI)**:
+you pay once to mint the escrow and recover most of it through teardown and collection
+rebates — before counting the rent income itself.
+
+### The protocol's own treasury scales the same way
+
+The `ProtocolFeeInbox` is this exact pattern at **global** scale. Every settlement of
+*every* escrow — across all governors and all fleets — mails its 10% `FeeMessage` to
+the **one** protocol inbox, so its message count grows with **total protocol activity**
+(T = all escrows × all tenures), not with any single fleet.
+
+The property that makes this scale is **contention-free posting**: a settlement does
+not increment a shared fee balance — it `transfer`s an owned `FeeMessage` to the
+inbox's address. Each post is independent and parallelizable; a thousand simultaneous
+settlements never serialize on one hot object. The inbox is touched mutably only at
+**collect** time (rare, by the operator). A naïve "add to the global fee balance"
+design would make that object a throughput ceiling; here, settlements never touch it.
+
+Collecting the treasury is then the same O(⌈T/500⌉)-PTB, rebate-positive drain — the
+operator nets ~−1.92M MIST/msg in storage rebate **and** receives the fee coins (the
+revenue itself). Protocol revenue collection is **self-financing in gas and grows
+precisely where activity grows**:
+
+| | Governor (one fleet) | Protocol (everything) |
+|---|---|---|
+| sink | 1 `EarningsInbox` per cap | 1 global `ProtocolFeeInbox` |
+| posting | contention-free (transfer-to-object) | contention-free, parallel |
+| collection | O(⌈T/500⌉) PTBs, rebate-positive | O(⌈T/500⌉) PTBs, rebate-positive |
+| grows with | that fleet's M·K tenures | the protocol's total T |
+
+The 90/10 split mounts **two coupon-strips on a single settlement** — 90% to the
+governor's inbox, 10% to the protocol's — both claimed by pull-aggregation, both
+rebate-positive. The busier the protocol, the more it earns, and the revenue never
+becomes a point of contention.
+
+**There is no growth regime where the recurring cost explodes.** A 10,000-escrow fleet
+is governed by one cap and its entire cash flow is swept in ~20 PTBs, rebate-positive.
+The only term that grows with N is the floor cost of *existing* on-chain — and that is
+Sui's price for an object, not the protocol's.

@@ -134,13 +134,18 @@ run, it skips the exit and does everything in one pass.)
 
 **Setup** (do this first): in a fresh folder, `npm i @mysten/sui @scure/bip39`. The SDK is
 **ESM-only**, so set `"type": "module"` in `package.json`, then run with
-`npx tsx quickstart.ts` (Node ≥ 20). One v2 gotcha: the JSON-RPC client is
-`SuiJsonRpcClient` from `@mysten/sui/jsonRpc` (it was `SuiClient` from `@mysten/sui/client`
-in v1) — everything else below is identical.
+`npx tsx quickstart.ts` (Node ≥ 20).
+
+> ⚠️ **Do not "correct" the client import from memory.** In SDK v2 the JSON-RPC client is
+> `SuiJsonRpcClient` from `@mysten/sui/jsonRpc`. The v1 name `SuiClient` from
+> `@mysten/sui/client` is **gone** — in 2.17.0 `@mysten/sui/client` exports
+> `BaseClient`/`CoreClient` (no `SuiClient`), so the old import throws
+> *"does not provide an export named 'SuiClient'"*. Transcribe the import below **verbatim**;
+> it is verified against `@mysten/sui@2.17.0`. Everything else is identical to v1.
 
 ```ts
 // npm i @mysten/sui @scure/bip39   ← SDK v2. package.json needs "type": "module".
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';   // v2 JSON-RPC client (was SuiClient in v1)
+import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';   // v2 client — DO NOT change to SuiClient/'@mysten/sui/client' (v1, removed)
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';

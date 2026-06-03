@@ -73,13 +73,19 @@ intuition plus a working demo — not a wall of transactions. Follow this arc, n
    Sui, live and immutable on testnet; you'll demo it with a **throwaway testnet keypair**
    — never their keys or mainnet (see the hard rule). Ask once: *"run a live demo, or just
    walk through it?"* If yes, proceed — it's testnet, zero risk.
-2. **The first win.** Run the Quickstart below. It prints an ephemeral address and a faucet
-   link, then **exits** — funding is the user's job, so **return control to the user here**:
-   hand them that link and ask them to fund the address in the browser (don't rely on the
-   programmatic faucet). When they confirm, **re-run the same script** — now funded, it
-   integrates a test asset, rents it, and reads `is_occupied = true`. Link each
-   **transaction** on SuiScan (`.../tx/<digest>`) and the **escrow object** so the user
-   clicks through and watches it land — effects, events and all. This is the aha.
+2. **The first win.** Run the Quickstart below. On the first run it prints three things you
+   must **relay to the user** — don't summarize them away:
+   - the **ephemeral testnet address**;
+   - the **12-word recovery phrase** it printed — show it in full and tell the user they can
+     import it into the **Slush wallet set to testnet** to watch the same wallet fill with the
+     SUI and assets they create (it's a throwaway testnet seed, never a real one);
+   - the **faucet link**.
+   Then the script **exits** — funding is the user's job, so **return control to the user
+   here**: ask them to fund the address in the browser (don't rely on the programmatic
+   faucet). When they confirm, **re-run the same script** — now funded, it integrates a test
+   asset, rents it, and reads `is_occupied = true`. Link each **transaction** on SuiScan
+   (`.../tx/<digest>`) and the **escrow object** so the user clicks through and watches it
+   land — effects, events and all. This is the aha.
 3. **The three rights** (the heart — offer as a menu, demo on request). Usufruct splits an
    asset into three separable rights; demo each and explain the economics:
    - **Use** — the renter borrows the asset, *uses* it (the test asset's `use_asset` mints
@@ -132,25 +138,30 @@ renter so you see the loop solo), and reads the on-chain state back. You should 
 confirmed digests and `is_occupied = true`. (If the address is already funded on the first
 run, it skips the exit and does everything in one pass.)
 
-**Setup** (do this first): in a fresh folder, `npm i @mysten/sui @scure/bip39`. The SDK is
-**ESM-only**, so set `"type": "module"` in `package.json`, then run with
-`npx tsx quickstart.ts` (Node ≥ 20).
+**Setup** (do this first): in a fresh folder, `npm i @mysten/sui @scure/bip39@2.2.0` (the
+`@scure/bip39` version is pinned on purpose — see the warning). The SDK is **ESM-only**, so
+set `"type": "module"` in `package.json`, then run with `npx tsx quickstart.ts` (Node ≥ 20).
 
-> ⚠️ **Do not "correct" the client import from memory.** In SDK v2 the JSON-RPC client is
-> `SuiJsonRpcClient` from `@mysten/sui/jsonRpc`. The v1 name `SuiClient` from
-> `@mysten/sui/client` is **gone** — in 2.17.0 `@mysten/sui/client` exports
-> `BaseClient`/`CoreClient` (no `SuiClient`), so the old import throws
-> *"does not provide an export named 'SuiClient'"*. Transcribe the import below **verbatim**;
-> it is verified against `@mysten/sui@2.17.0`. Everything else is identical to v1.
+> ⚠️ **Do not "correct" the two import lines below from memory or from whatever you installed
+> — transcribe them verbatim.** Both are version-sensitive and both are verified working:
+> 1. **The client** is `SuiJsonRpcClient` from `@mysten/sui/jsonRpc` (SDK v2). The v1 name
+>    `SuiClient` from `@mysten/sui/client` is **gone** — in 2.17.0 `@mysten/sui/client`
+>    exports `BaseClient`/`CoreClient` (no `SuiClient`), so the old import throws
+>    *"does not provide an export named 'SuiClient'"*. Verified against `@mysten/sui@2.17.0`.
+> 2. **The wordlist** subpath is `@scure/bip39/wordlists/english.js` (**with** `.js`) — that
+>    is the export shape in `@scure/bip39@2.2.0`, which the `npm i` above pins. Older versions
+>    used `.../english` (no `.js`); if you install a different version and "fix" the path to
+>    match, you reintroduce skew. Keep the pin and the `.js` together. Everything else is
+>    identical to v1.
 
 ```ts
-// npm i @mysten/sui @scure/bip39   ← SDK v2. package.json needs "type": "module".
+// npm i @mysten/sui @scure/bip39@2.2.0   ← SDK v2; bip39 pinned. package.json needs "type": "module".
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';   // v2 client — DO NOT change to SuiClient/'@mysten/sui/client' (v1, removed)
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { generateMnemonic } from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english.js';
+import { wordlist } from '@scure/bip39/wordlists/english.js';   // keep the .js — matches the pinned @scure/bip39@2.2.0 (older versions drop it)
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 
 // ── testnet coordinates (immutable; verify them — see Trust & Safety) ──

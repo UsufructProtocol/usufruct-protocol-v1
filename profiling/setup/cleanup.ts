@@ -2,20 +2,22 @@
 /**
  * Retires + claims all abandoned profiling escrows on testnet.
  *
- * State machine for each GovernanceCap:
+ * Inbox-first discovery: a `GovernanceCap` no longer points at an escrow (it is a
+ * pure governance token that may govern N escrows, validated seat-side). Escrows
+ * are *shared* objects, so they cannot be listed by owner either. Instead we
+ * replay the `AssetIntegrated` event stream — each event carries `escrow_id`,
+ * `governance_cap_id`, and `governor_address` — and filter to this governor. That
+ * yields every (escrow, governing cap) pair, one-to-one and portfolio alike.
  *
- *   is_retired  → claim_asset
- *   is_retiring → tenure_expiry_ms < now
- *                   yes → claim_asset  (internal apply_pending fires
- *                          Occupied{Retiring} → Waiting::Retired)
- *                   no  → skip (rented, wait for expiry)
- *   neither     → retire (calls apply_pending internally: if tenure expired
- *                  it goes directly to Waiting::Retired; otherwise sets the
- *                  Retiring flag) → if now retired: claim_asset, else skip
+ * State machine for each escrow:
+ *   does not exist  → skip (already claimed / torn down)
+ *   is_retired      → claim_asset
+ *   is_retiring     → tenure expired? claim_asset : skip (rented)
+ *   neither         → retire (apply_pending fires internally) → claim if retired
  *
- * Two separate transactions are required for retire → claim_asset because
- * claim_asset receives the escrow by value at its chain-committed state.
- * Chaining them in one PTB passes the pre-retire state, causing ENotRetired.
+ * retire → claim_asset are two separate transactions: claim_asset receives the
+ * escrow by value at its chain-committed state; chaining them in one PTB passes the
+ * pre-retire state and aborts with ENotRetired.
  *
  * Usage:
  *   SUI_RPC=https://fullnode.testnet.sui.io:443 npm run cleanup:testnet
@@ -50,31 +52,39 @@ async function signAndExecute(tx: Transaction, keypair: Ed25519Keypair) {
   return result;
 }
 
-// Fetch all GovernanceCap objects for an address
-async function getGovernanceCaps(address: string, pkg: string): Promise<{ id: string; escrowId: string }[]> {
-  const caps: { id: string; escrowId: string }[] = [];
-  let cursor: string | null | undefined = undefined;
+// Replay AssetIntegrated events to recover every (escrow, governing cap) pair for
+// this governor. The cap no longer links to its escrows on-chain (inbox-first), so
+// the event log is the only complete index.
+async function getIntegratedEscrows(governorAddr: string, pkg: string): Promise<{ capId: string; escrowId: string }[]> {
+  const pairs: { capId: string; escrowId: string }[] = [];
+  const seen = new Set<string>();
+  let cursor: any = null;
 
   while (true) {
-    const page = await client.getOwnedObjects({
-      owner:   address,
-      filter:  { StructType: `${pkg}::governance_cap::GovernanceCap` },
-      options: { showContent: true },
+    const page = await client.queryEvents({
+      query:  { MoveEventType: `${pkg}::asset_state::AssetIntegrated` },
       cursor,
+      limit:  50,
     });
 
-    for (const obj of page.data) {
-      const content = (obj.data?.content as any);
-      if (!content?.fields) continue;
-      const escrowId = content.fields.escrow_identity?.fields?.id;
-      if (escrowId) caps.push({ id: obj.data!.objectId, escrowId });
+    for (const e of page.data) {
+      const j = e.parsedJson as any;
+      if (!j || j.governor_address !== governorAddr) continue;
+      if (seen.has(j.escrow_id)) continue;
+      seen.add(j.escrow_id);
+      pairs.push({ capId: j.governance_cap_id, escrowId: j.escrow_id });
     }
 
-    if (!page.hasNextPage) break;
-    cursor = page.nextCursor ?? undefined;
+    if (!page.hasNextPage || !page.nextCursor) break;
+    cursor = page.nextCursor;
   }
 
-  return caps;
+  return pairs;
+}
+
+async function escrowExists(escrowId: string): Promise<boolean> {
+  const obj = await client.getObject({ id: escrowId, options: {} });
+  return !!obj.data && !obj.error;
 }
 
 // Calls a pure bool view function via devInspect.
@@ -114,36 +124,33 @@ async function getTenureExpiryMs(
   return Number(Buffer.from(bytes.slice(1, 9)).readBigUInt64LE(0));
 }
 
+type Outcome = 'claimed' | 'rented' | 'gone' | 'error';
+
 async function tryClaimEscrow(
   escrowId:  string,
   capId:     string,
   d:         ReturnType<typeof loadDeployment>,
   keypair:   Ed25519Keypair,
   governorAddr: string,
-): Promise<'claimed' | 'rented' | 'error'> {
+): Promise<Outcome> {
   const pkg      = d.usufructPackageId;
   const dummyPkg = d.dummyAssetPackageId;
   const typeArgs = [`${dummyPkg}::dummy_asset::DummyAsset`, '0x2::sui::SUI'];
+
+  if (!await escrowExists(escrowId)) return 'gone';
 
   const view = makeViewers(governorAddr, pkg, typeArgs);
 
   try {
     if (!await view.isRetired(escrowId)) {
       if (await view.isRetiring(escrowId)) {
-        // Retiring flag already set. Check if tenure has expired:
-        // claim_asset calls apply_pending internally, which fires
-        // Occupied{Retiring} → Waiting::Retired when tenure is past.
-        // If tenure is still active, skip — nothing to do yet.
         const expiry = await getTenureExpiryMs(governorAddr, pkg, typeArgs, escrowId);
         if (expiry === null || expiry > Date.now()) return 'rented';
         // Tenure expired — fall through to claim_asset.
       } else {
-        // First time: call retire. Internally calls apply_pending — if tenure
-        // has expired the escrow goes directly to Waiting::Retired; otherwise
-        // the Retiring flag is set and the escrow auto-retires on expiry.
         const txRet = new Transaction();
         txRet.setSender(governorAddr);
-        txRet.setGasBudget(20_000_000);
+        txRet.setGasBudget(30_000_000);
         txRet.moveCall({
           target:        `${pkg}::escrow::retire`,
           typeArguments: typeArgs,
@@ -151,19 +158,16 @@ async function tryClaimEscrow(
         });
         const retResult = await signAndExecute(txRet, keypair);
         if ((retResult.effects as any)?.status?.status !== 'success') {
-          const err = (retResult.effects as any)?.status?.error ?? 'unknown';
-          console.error(`  retire failed: ${err}`);
+          console.error(`  retire failed: ${(retResult.effects as any)?.status?.error ?? 'unknown'}`);
           return 'error';
         }
         if (!await view.isRetired(escrowId)) return 'rented';
-        // Tenure expired and retire fired immediately — fall through to claim.
       }
     }
 
-    // 3. claim_asset — sees committed Waiting::Retired state.
     const txClaim = new Transaction();
     txClaim.setSender(governorAddr);
-    txClaim.setGasBudget(20_000_000);
+    txClaim.setGasBudget(30_000_000);
     const asset = txClaim.moveCall({
       target:        `${pkg}::escrow::claim_asset`,
       typeArguments: typeArgs,
@@ -173,11 +177,9 @@ async function tryClaimEscrow(
 
     const claimResult = await signAndExecute(txClaim, keypair);
     if ((claimResult.effects as any)?.status?.status !== 'success') {
-      const err = (claimResult.effects as any)?.status?.error ?? 'unknown';
-      console.error(`  claim failed: ${err}`);
+      console.error(`  claim failed: ${(claimResult.effects as any)?.status?.error ?? 'unknown'}`);
       return 'error';
     }
-
     return 'claimed';
 
   } catch (e: any) {
@@ -201,30 +203,30 @@ async function main() {
   console.log(`Governor: ${governorAddr}`);
   console.log(`Package: ${d.usufructPackageId}\n`);
 
-  const caps = await getGovernanceCaps(governorAddr, d.usufructPackageId);
-  console.log(`Found ${caps.length} GovernanceCap(s)\n`);
+  process.stdout.write('Replaying AssetIntegrated events...');
+  const escrows = await getIntegratedEscrows(governorAddr, d.usufructPackageId);
+  console.log(` ${escrows.length} escrows ever integrated by this governor\n`);
 
-  if (caps.length === 0) {
+  if (escrows.length === 0) {
     console.log('Nothing to clean up.');
     return;
   }
 
-  let claimed = 0, rented = 0, errors = 0;
+  let claimed = 0, rented = 0, gone = 0, errors = 0;
 
-  for (const { id: capId, escrowId } of caps) {
-    process.stdout.write(`  escrow ${escrowId.slice(0, 10)}…  cap ${capId.slice(0, 10)}… → `);
+  for (const { capId, escrowId } of escrows) {
     const result = await tryClaimEscrow(escrowId, capId, d, keypair, governorAddr);
-    if (result !== 'claimed') process.stdout.write(result === 'rented' ? 'rented\n' : '');
-    else console.log('claimed');
-    if (result === 'claimed') claimed++;
-    else if (result === 'rented') rented++;
+    if (result === 'claimed') { claimed++; process.stdout.write(`  ${escrowId.slice(0, 10)}… claimed\n`); }
+    else if (result === 'rented') { rented++; }
+    else if (result === 'gone')   { gone++; }
     else errors++;
+    if ((claimed + rented + gone + errors) % 25 === 0) {
+      console.log(`  … ${claimed + rented + gone + errors}/${escrows.length} (claimed ${claimed}, gone ${gone}, rented ${rented}, err ${errors})`);
+    }
   }
 
-  console.log(`\nDone — claimed: ${claimed}  rented (skipped): ${rented}  errors: ${errors}`);
-  if (rented > 0) {
-    console.log(`\nRented escrows still within their tenure window. Run again after they expire.`);
-  }
+  console.log(`\nDone — claimed: ${claimed}  already-gone: ${gone}  rented (skipped): ${rented}  errors: ${errors}`);
+  if (rented > 0) console.log(`\nRented escrows still within tenure. Run again after they expire.`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

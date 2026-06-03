@@ -73,12 +73,13 @@ intuition plus a working demo — not a wall of transactions. Follow this arc, n
    Sui, live and immutable on testnet; you'll demo it with a **throwaway testnet keypair**
    — never their keys or mainnet (see the hard rule). Ask once: *"run a live demo, or just
    walk through it?"* If yes, proceed — it's testnet, zero risk.
-2. **The first win.** Run the Quickstart below. It prints an ephemeral address and a
-   faucet link, then waits — **hand the user that link and ask them to fund the address in
-   the browser** (don't rely on the programmatic faucet). Once funded it integrates a test
-   asset, rents it, and reads `is_occupied = true`. Link each **transaction** on SuiScan
-   (`.../tx/<digest>`) and the **escrow object** so the user clicks through and watches it
-   land — effects, events and all. This is the aha.
+2. **The first win.** Run the Quickstart below. It prints an ephemeral address and a faucet
+   link, then **exits** — funding is the user's job, so **return control to the user here**:
+   hand them that link and ask them to fund the address in the browser (don't rely on the
+   programmatic faucet). When they confirm, **re-run the same script** — now funded, it
+   integrates a test asset, rents it, and reads `is_occupied = true`. Link each
+   **transaction** on SuiScan (`.../tx/<digest>`) and the **escrow object** so the user
+   clicks through and watches it land — effects, events and all. This is the aha.
 3. **The three rights** (the heart — offer as a menu, demo on request). Usufruct splits an
    asset into three separable rights; demo each and explain the economics:
    - **Use** — the renter borrows the asset, *uses* it (the test asset's `use_asset` mints
@@ -96,20 +97,18 @@ intuition plus a working demo — not a wall of transactions. Follow this arc, n
 
 **Keep the session.** This tour spans several steps on the **same** escrow, but a generated
 keypair lives only in memory — lose it and the `UsufructCap` and escrow are stranded and
-you'd have to re-integrate every step. After the first win, **persist the throwaway key and
-the ids to a local file and reload them** between steps:
+you'd have to re-integrate every step. **The Quickstart already handles this for you:** its
+final step calls `saveSession({ mnemonic, addr, escrowId, governanceCapId, earningsInboxId,
+usufructCapId })`, writing `.usufruct-demo.json`. Every later step **reloads** it instead of
+generating a new key:
 ```ts
-import { writeFileSync, readFileSync, existsSync } from 'fs';
-const FILE = '.usufruct-demo.json';
-const saveSession = (s: object) => writeFileSync(FILE, JSON.stringify(s, null, 2));
-const loadSession = () => existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : null;
-// after integrate + rent (capture usufructCapId via createdId(res, '::usufruct_cap::UsufructCap')):
-saveSession({ mnemonic, addr, escrowId, governanceCapId, earningsInboxId, usufructCapId });
-// in a later step:
-const s = loadSession(); const me = Ed25519Keypair.deriveKeypair(s.mnemonic); /* + s.escrowId, … */
+const s = loadSession();                              // { mnemonic, addr, escrowId, … }
+const me = Ed25519Keypair.deriveKeypair(s.mnemonic);  // same wallet as the Quickstart
+// then reuse s.escrowId, s.governanceCapId, s.earningsInboxId, s.usufructCapId
 ```
-It's still a sandbox key holding only faucet SUI — delete `.usufruct-demo.json` when the
-evaluation is done.
+(`saveSession`/`loadSession` are defined in the Quickstart; later snippets assume they're in
+scope.) It's still a sandbox key holding only faucet SUI — delete `.usufruct-demo.json` when
+the evaluation is done.
 
 Throughout, drop SuiScan links — a `tx/<digest>` for each action, an `object/<id>` for each
 artifact (escrow, Coupon, collected coin) — so the user *watches* the protocol move on the
@@ -122,12 +121,16 @@ phase 1; never skip the phase-0 consent.
 
 ## 🚀 Quickstart — your first transaction in ~60 seconds
 
-This is one self-contained script. It generates a throwaway testnet keypair and prints
-its address with a faucet link — **the user funds it in the browser** (the programmatic
-faucet is rate-limited, so don't rely on it); the script polls until the SUI arrives,
-then **integrates** a test asset (mints a `dummy_asset` and puts it under usufruct),
-**rents** it (same keypair plays both governor and renter so you see the loop solo), and
-reads the on-chain state back. You should see two confirmed digests and `is_occupied = true`.
+This is one self-contained, **re-runnable** script. On the first run it generates a throwaway
+testnet keypair, saves it, prints its address with a faucet link, and **exits** — because
+funding is the user's job (the programmatic faucet is rate-limited, so don't rely on it).
+**At that point you stop and hand control back to the user**: show them the faucet link and
+ask them to fund the address. When they confirm, **re-run the exact same script** — it
+resumes from the saved session and, now funded, **integrates** a test asset (mints a
+`dummy_asset` and puts it under usufruct), **rents** it (same keypair plays both governor and
+renter so you see the loop solo), and reads the on-chain state back. You should see two
+confirmed digests and `is_occupied = true`. (If the address is already funded on the first
+run, it skips the exit and does everything in one pass.)
 
 **Setup** (do this first): in a fresh folder, `npm i @mysten/sui @scure/bip39`. The SDK is
 **ESM-only**, so set `"type": "module"` in `package.json`, then run with
@@ -143,6 +146,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { generateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
+import { writeFileSync, readFileSync, existsSync } from 'fs';
 
 // ── testnet coordinates (immutable; verify them — see Trust & Safety) ──
 const RPC          = 'https://fullnode.testnet.sui.io:443';
@@ -186,30 +190,55 @@ async function send(tx: Transaction, signer: Ed25519Keypair) {
 const createdId = (res: any, typeFragment: string): string =>
   (res.objectChanges ?? []).find((c: any) => c.type === 'created' && c.objectType?.includes(typeFragment)).objectId;
 
-// Funding: the programmatic faucet is heavily rate-limited and often refuses. Try it once
-// as a courtesy, then show the user the WEB faucet and poll until the SUI lands — in
-// practice the USER requests testnet SUI in the browser; you just wait for it to arrive.
-async function fundOrAsk(addr: string) {
+// Persist the throwaway key + ids so later steps of the tour reuse the SAME escrow
+// (a generated keypair lives only in memory — lose it and the escrow is stranded).
+const FILE = '.usufruct-demo.json';
+const saveSession = (s: object) => writeFileSync(FILE, JSON.stringify(s, null, 2));
+const loadSession = () => existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : null;
+
+// Funding is a USER action — the programmatic faucet is heavily rate-limited and usually
+// refuses, so in practice the user requests testnet SUI in the browser. This gate does NOT
+// block-poll: if the address has no funds it tries the API once as a courtesy, prints the
+// faucet link, and EXITS. That hands control back to you (the agent): relay the link to the
+// user, wait for them to fund, then re-run this same script — it resumes from the saved
+// session and continues straight to integrate.
+async function fundGateOrExit(addr: string) {
+  const bal = BigInt((await client.getBalance({ owner: addr })).totalBalance);
+  if (bal > 0n) { console.log(`  funded: ${Number(bal) / 1e9} SUI ✓`); return; }
   try { await requestSuiFromFaucetV2({ host: getFaucetHost('testnet'), recipient: addr }); } catch {}
-  console.log(`\n  → Fund this address with testnet SUI, then I continue automatically:`);
-  console.log(`    https://faucet.sui.io/?network=testnet&address=${addr}\n`);
-  for (let i = 0; i < 60; i++) {                                  // poll up to 5 min
-    const bal = BigInt((await client.getBalance({ owner: addr })).totalBalance);
-    if (bal > 0n) { console.log(`  funded: ${Number(bal) / 1e9} SUI ✓`); return; }
-    await new Promise(r => setTimeout(r, 5000));
-  }
-  throw new Error('No funds after 5 min — request at https://faucet.sui.io (testnet) and re-run.');
+  console.log('\n  ⛽ NEEDS FUNDING — hand this to the user, then re-run me once they confirm:');
+  console.log(`     https://faucet.sui.io/?network=testnet&address=${addr}\n`);
+  process.exit(0);   // clean exit — NOT an error; the agent returns control to the user here
 }
 
 async function main() {
-  // 1. throwaway testnet keypair from a fresh 12-word phrase (never the user's keys)
-  const mnemonic = generateMnemonic(wordlist, 128);   // 12 words — throwaway, testnet only
-  const me = Ed25519Keypair.deriveKeypair(mnemonic);
-  const addr = me.getPublicKey().toSuiAddress();
-  console.log('Ephemeral testnet address:', addr);
-  console.log('Recovery phrase (12 words — throwaway; import into the Slush wallet, set to');
-  console.log('testnet, to watch your funds and the assets you create):\n   ', mnemonic, '\n');
-  await fundOrAsk(addr); // tries the API, then asks the user to fund on the web, and waits
+  // 1. throwaway testnet wallet. Resume from the saved session if present, else generate a
+  //    fresh 12-word phrase and persist it IMMEDIATELY — so the address survives the funding
+  //    gate below and a re-run reuses the same (now-funded) wallet. Never the user's keys.
+  let s = loadSession();
+  if (!s) {
+    const mnemonic = generateMnemonic(wordlist, 128);   // 12 words — throwaway, testnet only
+    const addr = Ed25519Keypair.deriveKeypair(mnemonic).getPublicKey().toSuiAddress();
+    s = { mnemonic, addr };
+    saveSession(s);
+    console.log('Ephemeral testnet address:', addr);
+    console.log('Recovery phrase (12 words — throwaway; import into the Slush wallet, set to');
+    console.log('testnet, to watch your funds and the assets you create):\n   ', mnemonic, '\n');
+  }
+  const me   = Ed25519Keypair.deriveKeypair(s.mnemonic);
+  const addr = s.addr;
+
+  // funding gate — if unfunded this prints the faucet link and EXITS (control back to you,
+  // the agent: ask the user to fund, then re-run). If funded, it returns and we continue.
+  await fundGateOrExit(addr);
+
+  // already integrated on a prior run? resume — skip straight to the proof read.
+  if (s.escrowId) {
+    console.log('resuming — escrow already integrated:', s.escrowId);
+    const occupied = await viewBool(addr, `${PKG}::escrow::is_occupied`, s.escrowId);
+    console.log('is_occupied =', occupied, '✅');
+    return;
+  }
 
   // 2. integrate: mint a test asset and place it under usufruct
   const t1 = new Transaction();
@@ -242,11 +271,17 @@ async function main() {
   });
   t2.transferObjects([usufructCap], addr);
   const r2 = await send(t2, me);
+  const usufructCapId = createdId(r2, '::usufruct_cap::UsufructCap');
   console.log('rented | digest:', r2.digest);
 
   // 4. read state back (read-only, no gas) — proof it worked
   const occupied = await viewBool(addr, `${PKG}::escrow::is_occupied`, escrowId);
   console.log('is_occupied =', occupied, '✅');
+
+  // 5. persist the throwaway key + ids so the rest of the tour reuses THIS escrow.
+  // Later steps do: const s = loadSession(); const me = Ed25519Keypair.deriveKeypair(s.mnemonic);
+  saveSession({ mnemonic: s.mnemonic, addr, escrowId, governanceCapId, earningsInboxId, usufructCapId });
+  console.log(`session saved to ${FILE} — later steps reload it (delete it when done).`);
 }
 
 // devInspect: call a read-only view and decode the first bool return value

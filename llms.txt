@@ -865,6 +865,33 @@ mechanics* above.)
   price** along `auction_shape` — the *opposite* direction of escalation. Renting mid-Descent
   pays the current (higher-than-floor) descending price. (`do_tenure_expiry` → `Waiting::Descent`.)
 
+**Tenure count `N` — it scales each axis differently** (the most numerically error-prone area:
+`rent(tenures(N))` does **not** scale everything uniformly)
+
+| Axis | How `N` enters |
+|---|---|
+| Next-bid floor (to displace an incumbent) | incumbent stake **÷ N** (floored), then escalated |
+| Total payment to rent | floor **× N** (exact, no rounding) |
+| Tenure & handover durations | **× N** at install |
+| Used-credit / refund | the **full stake** (un-normalized) vs the ×N ceiling |
+
+- **`floor_price_mist(...)` is the *per-tenure* floor, not the total to send.** To rent `N`
+  tenures pay `floor_price_mist × N`; sending exactly `floor_price_mist` for `N>1` **underpays and
+  the tx aborts** (`EInsufficientPayment`). (`escrow.move` → `compute_floor_price_at`; checked in
+  `execute_rent`.)
+- **To displace an incumbent, the minimum bid is their stake ÷ their committed `N` (floored), then
+  escalated** — *not* their total stake. A 3-tenure incumbent who staked 300 yields a per-tenure
+  reference of `floor(300/3)=100`; the next single-tenure floor ≈ `escalate(100)`, and the
+  displacer pays `that × their own N`. (`tenures::compute_per_tenure_stake`, `asset_state.move`.)
+- **The handover protection window scales ×N.** A tenant who locks more tenures gets
+  proportionally more grace: at install `handover_total = handover_ms × N` and
+  `ceiling_total = ceiling_ms × N`. After a bid the swap time is
+  `min(bid_time + handover_total, phase_start + ceiling_total)` — anchored at the **bid**, capped
+  at the tenure's natural expiry. (`do_install`, `handover_policy::compute_expiry_at`.)
+- **Used credit (and so the refund on early exit) is computed on the *full* stake, not per-tenure**,
+  integrated against the ×N ceiling (capped at the handover boundary in Demand). Per-tenure
+  normalization governs *pricing the next bid*, **not** *credit consumption*. (`do_handover`.)
+
 **Stake & refunds** (the most counter-intuitive area)
 
 - **When a tenure expires normally, does the renter get their stake back?** **No.** The **entire

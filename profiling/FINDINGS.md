@@ -22,6 +22,7 @@ the code that generated it; this table is the bridge.
 | v1.2.0 | 2026-05-28 | `2f604b5` | `update_usufructuary_refund_address` + `active_*` view rename |
 | v1.3.0 | 2026-05-31 | `51f9d31` | `ensemble_commitment` twin + blanket terms-freeze |
 | v1.4.0 | 2026-05-31 | `7397e62` (branch `feature/governor-earnings-inbox-first`) | inbox-first governor income: `EarningsInbox`/`EarningsMessage`, `integrate_into_portfolio`, fleet governance |
+| v1.4.1 | 2026-06-02 | `a2aeeb9` (testnet pkg `0x61723e72…`) | non-generic message events (phantom `CoinType` → `coin_type` field); first full testnet run of inbox-first |
 
 The code-state commit is the **parent of the commit that wrote each section** (the doc
 commit adds only prose on top of the already-deployed source) — except v1.3.0, whose
@@ -857,3 +858,152 @@ caps**. On the one axis that admits aggregation (collection) it fails to take it
 on the axis that doesn't (governance) it pays the worse constant (M caps). The
 whole game is *optimize the reducible axis, minimize the irreducible one* — and the
 inbox does both, while deposit does neither.
+
+---
+
+# Testnet Validation — v1.4.1 (2026-06-02)
+
+Network: Sui testnet  
+Package: `0x61723e7205f9841ebb4e6f73096f34840a78bcfae73f631d44370e75f1acc0f5`  
+Code state: `a2aeeb9` (**v1.4.1**) — `sui client verify-source` passes against the on-chain bytecode  
+Toolchain: sui CLI `1.73.0`, live testnet protocol; `@mysten/sui` driving every PTB.
+
+The first **full testnet run of the inbox-first model** — all 18 atomic scripts (+3
+scalability sweeps) and 9 end-to-end flows executed as real PTBs over JSON-RPC
+against a public fullnode (the earlier 2026-05-27 testnet section validated the
+*pre-inbox* v1.1.0 deposit model). v1.4.1 differs from the localnet v1.4.0
+(`7397e62`) numbers two ways: (1) the **non-generic message-event fix** —
+`EarningsMessagePosted`/`FeeMessagePosted`/`…Collected` drop the phantom `CoinType`,
+carrying it in the `coin_type` field — a schema/correctness change with no
+measurable gas impact; (2) the **live testnet protocol** vs localnet protocol-114,
+which shifts absolute MIST. **Every structural finding reproduces; no finding
+inverts.**
+
+## Phase A — atomic operations (testnet v1.4.1)
+
+| Operation | Net MIST | +Obj | −Obj |
+|---|---|---|---|
+| `integrate` | +8,081,480 | 3 | 0 |
+| `rent(tenures(N))` N=1/10/100 | **+4,252,828** | 1 | 0 |
+| `integrate_into_portfolio` | +5,312,648 | 1 | 0 |
+| `borrow_return` | +1,388,660 | 0 | 0 |
+| `apply_transitions` (no-op) | +1,352,548 | 0 | 0 |
+| `update_ensemble` | +1,363,612 | 0 | 0 |
+| `update_usufructuary_refund_address` | +1,378,660 | 0 | 0 |
+| `extend_retire_commitment` | +1,424,412 | 0 | 0 |
+| `extend_ensemble_commitment` | +1,424,412 | 0 | 0 |
+| `retire` | +1,120,412 | 0 | 0 |
+| `burn_stale_usufruct_cap` | −255,460 | 0 | 1 |
+| `burn_usufruct_cap` | −315,208 | 0 | 1 |
+| `claim_asset` | −1,027,620 | 0 | 1 |
+
+`rent(tenures(N))` is **bit-identical for N=1/10/100** → O(1) in N holds (finding #1).
+`extend_retire_commitment` and `extend_ensemble_commitment` are bit-identical
+(1,424,412 each) → the commitment twin is gas-symmetric (finding #8). Both hold on a
+real node.
+
+### Curve shapes (finding #7 — gas-neutral, holds)
+
+All 10 `CurveShapePolicy` variants within **152 MIST**: unit variants (linear,
+smoothstep, logistic) = 1,388,660; field-carrying variants (power_law, exp) =
+1,388,812 (+152, the enum-destructuring delta, not the arithmetic). Re-confirmed
+on-chain.
+
+## Scalability sweeps (testnet v1.4.1)
+
+`collect_fee_messages` (protocol cut, deployer-owned inbox):
+
+| N | total net (MIST) | per msg (MIST) |
+|---|---|---|
+| 1 | +326,156 | +326,156 |
+| 10 | −18,208,124 | −1,820,812 |
+| 50 | −96,237,724 | −1,924,754 |
+
+`collect_earnings_messages` (governor income, owned inbox):
+
+| N | total net (MIST) | per msg (MIST) |
+|---|---|---|
+| 1 | +250,384 | +250,384 |
+| 10 | −17,982,936 | −1,798,293 |
+| 50 | −99,022,136 | −1,980,442 |
+
+Both break even at N≈2 and converge to ≈ **−1.9M MIST/msg** — rebate-positive at
+scale (inbox findings #2/#4). The earnings curve mirrors the fee curve to within the
+documented gas-coin rebate noise.
+
+`governance_fleet_retire` (one `GovernanceCap` over N escrows):
+
+| N | per-retire (separate PTBs) | per-retire (batched 1 PTB) |
+|---|---|---|
+| 1 | 1,120,412 | 1,120,412 |
+| 10 | **1,120,412** | −53,065 |
+| 50 | **1,120,412** | −154,774 |
+
+Per-retire under one shared cap is **constant to the bit at every N**, and identical
+to the one-to-one `retire` baseline (1,120,412) — zero shared-cap overhead. Fleet
+governance is O(1) per escrow; batching turns rebate-positive at scale (inbox
+finding #4).
+
+## Phase B — end-to-end flows (testnet v1.4.1)
+
+| Flow | Net MIST | Steps |
+|---|---|---|
+| Minimal (integrate→rent→retire→apply→claim) | 16,548,568 | 5 |
+| Lifecycle + borrow/return | 17,937,228 | 6 |
+| Handover (2 usufructuaries) | 24,668,740 | 8 |
+| Sequential rents N=3 | 33,258,400 | 9 |
+| Sequential rents N=5 | 49,981,152 | 13 |
+| Sequential rents N=10 | 91,788,032 | 23 |
+| Earnings collect (N=3) | 29,824,900 | 11 |
+| Refund redirect → handover | 26,034,480 | 9 |
+| Fleet portfolio collect (3 escrows, 1 cap + 1 inbox) | 43,310,172 | 19 |
+
+**Per sequential rent cycle (rent + apply):** 4,252,828 + 4,108,548 = **8,361,376
+MIST** — constant across N (the N=10 flow runs ten identical 4,108,548-MIST
+settlements). Each `apply` that fires a settlement creates **+2 objects**
+(`FeeMessage` + `EarningsMessage`) at a bit-stable cost → O(1) per settlement, no
+accumulation (inbox finding #1).
+
+The **fleet flow** — `integrate` + 2× `integrate_into_portfolio` → 3 escrows under
+one cap + one inbox, each rented & settled, then a single
+`collect_earnings_messages` — drains all three escrows' income in one PTB at
+**−3,792,576 MIST**, identical to the single-escrow N=3 collect in `b_05_earnings`:
+**collect cost is a function of message count, independent of fleet topology** (inbox
+finding #6), now measured end-to-end on a real node.
+
+## Cross-version consistency — localnet v1.4.0 → testnet v1.4.1
+
+| Operation | localnet v1.4.0 `7397e62` | testnet v1.4.1 `a2aeeb9` | Δ |
+|---|---|---|---|
+| `integrate` | 7,995,480 | 8,081,480 | +86,000 |
+| `integrate_into_portfolio` | 5,301,888 | 5,312,648 | +10,760 |
+| `apply` (fires settlement) | 4,098,548 | 4,108,548 | +10,000 |
+| `retire` / fleet per-retire | 1,099,652 | 1,120,412 | +20,760 |
+| `collect_earnings` N=50 /msg | −1,980,042 | −1,980,442 | ≈0 |
+
+Sub-1% deltas, attributable to live-protocol pricing vs localnet protocol-114 — the
+**object counts are identical** across both. **No finding inverts.** The non-generic
+event change is gas-invisible at this resolution, as expected: the `coin_type:
+String` payload is unchanged; only the event's *type tag* (off-chain metadata)
+shrank.
+
+## Methodology — harness fixes for the real-node run
+
+Two harness bugs surfaced *only* against a real fullnode — invisible to both the
+`test_scenario` suite and the type-checker — and were fixed in this run:
+
+1. **SDK `owner:` param corruption.** The owner→governor vocabulary sweep had
+   renamed the Sui SDK's `getCoins`/`getOwnedObjects` `owner:` argument to
+   `governor:` in 11 call sites, aborting fee/earnings collection with "Invalid Sui
+   address."
+2. **Auto-budget underestimate on time-dependent `apply`.** `measure()` relied on the
+   SDK dry-run gas estimate, taken *before* a tenure-expiry wait; the post-expiry
+   `apply` then fires a settlement costing ~3× the no-op estimate, aborting with
+   `InsufficientGas`. Fixed with an explicit, generous gas budget — gas *used*
+   (computation/storage/rebate) is independent of the budget, so the measured numbers
+   are unaffected.
+
+A separate operational note: scripts 12/16/17 leave their setup escrows standing
+(they measure `collect`, not teardown), so the governor's SUI accrues in locked
+object storage across a full Phase-A run — budget the deployer/actor wallets
+accordingly for a clean single-session run.

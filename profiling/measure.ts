@@ -9,6 +9,7 @@ export async function execSetup(
   signer: Ed25519Keypair,
   tx:     Transaction,
 ): Promise<{ objectChanges: any[] }> {
+  tx.setGasBudget(200_000_000n);
   const result = await client.signAndExecuteTransaction({
     transaction: tx,
     signer,
@@ -31,6 +32,14 @@ export interface GasRecord {
   digest:         string;
 }
 
+// Time-dependent ops (apply firing a settlement after a tenure expiry) build
+// their gas estimate from a dry-run taken BEFORE the boundary is crossed, so the
+// SDK auto-budget can underestimate the post-expiry cost and abort with
+// InsufficientGas. An explicit, generous budget removes that dependency without
+// affecting the measured numbers — gas *used* (computation/storage/rebate) is
+// independent of the budget as long as budget ≥ cost.
+const GAS_BUDGET = 200_000_000n;
+
 export async function measure(
   client: SuiClient,
   signer: Ed25519Keypair,
@@ -38,6 +47,7 @@ export async function measure(
   run:    number,
   tx:     Transaction,
 ): Promise<GasRecord> {
+  tx.setGasBudget(GAS_BUDGET);
   const result = await client.signAndExecuteTransaction({
     transaction: tx,
     signer,

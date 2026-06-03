@@ -29,9 +29,11 @@ per-module specs (`specs/`), the event catalogue (`EVENTS.md`), gas + scaling fi
 repo is the whole story. `git clone` it to read or verify anything below.
 
 > 📖 **When in doubt, read the source — do not guess.** This file is a summary, not the full
-> surface. If the user asks something it doesn't cover, or you're unsure of a function
-> signature, type argument, error condition, or runtime behavior, **clone the repo and read
-> the Move source / `specs/` / `EVENTS.md` — that is ground truth.** Do **not** fill the gap
+> surface. For the mechanics agents most often get wrong (price escalation, stake refunds,
+> handover, income timing), check the **FAQ** near the end first. If the user asks something
+> neither covers, or you're unsure of a function signature, type argument, error condition, or
+> runtime behavior, **clone the repo and read the Move source / `specs/` / `EVENTS.md` — that is
+> ground truth.** Do **not** fill the gap
 > from prior knowledge of other Sui SDKs or protocols; this protocol is functional-style and
 > uncommon, and a confident-sounding guess is how you produce a wrong answer or a failing
 > transaction. Cite what you read (file + module) so the user can check you.
@@ -835,6 +837,95 @@ rented by different parties, income consolidated in one PTB. New vs the solo flo
 6. **G** tears down each escrow with the **one** shared cap: `retire → apply → claim_asset`.
 
 Faithful source: `profiling/b_flows/07_fleet_portfolio_collect.ts` (takes your own `N`).
+
+---
+
+## FAQ — the mechanics agents guess wrong
+
+These are the questions where intuition (or other DeFi protocols) leads to a **wrong answer or a
+failing tx**. If a user asks something here, give the grounded answer — don't improvise. Each
+points at the Move source (`usufruct/sources/`) so you can verify. (For the lazy-eval gotchas —
+"floats to the first mutator", retire→claim as two txs, stale views — see *The one rule of
+mechanics* above.)
+
+**Pricing**
+
+- **When does the price escalate, and what does it change?** The rest price is **immutable** —
+  it never escalates and is never mutated. Escalation is a **pure function applied only when a
+  bidder displaces a sitting tenant** (the Occupied/Demand branches of `execute_rent`), computed
+  against the **incumbent's per-tenure stake**, not the rest price. It's *the price to take the
+  seat from someone*. A tenure that simply **expires with no bid** resets the floor to the fixed
+  rest price — escalation does not persist. (`engine/asset_state.move`, `price_escalation_policy`.)
+- **So renting an idle escrow pays the escalated price?** No. Escalation is per-**displacement**,
+  not per-cycle. Renting an Idle (or Descent) escrow pays the floor (or the descending price) with
+  **no** escalation. Escalation only gates a bid that displaces an active/pending tenant.
+- **What is the descending-price (Descent) window, and which way does it move?** Descent is
+  entered **only after a tenure expires with no pending bid** (and only if `auction_window` is
+  `Fixed`). It descends **from the previous tenant's full stake price *down* to the fixed rest
+  price** along `auction_shape` — the *opposite* direction of escalation. Renting mid-Descent
+  pays the current (higher-than-floor) descending price. (`do_tenure_expiry` → `Waiting::Descent`.)
+
+**Stake & refunds** (the most counter-intuitive area)
+
+- **When a tenure expires normally, does the renter get their stake back?** **No.** The **entire
+  stake becomes governor income** (minus the 10% protocol fee) at expiry. The stake is **rent
+  paid in full, not a refundable deposit.** (`do_tenure_expiry` splits the whole principal into
+  governor share + fee and posts both.)
+- **On a handover, how is the departing tenant's stake split?** By **used credit**: the
+  `credit_shape` curve traces the **rate of stake consumption over time** (think of the curve as
+  the consumption velocity — linear is steady, the non-linear shapes accelerate/decelerate it);
+  used credit is the area under it up to the handover boundary. Used credit → governor (−10% fee);
+  the **unconsumed remainder → refunded** to the departing tenant. Exact per-curve math:
+  `policies/curve_shape_policy.move`. (`do_handover`.)
+- **If someone outbids my pending bid, do I lose my stake?** No — a superseded **pending** bidder
+  is **fully refunded** (they never used the asset). Only the **active** tenant forfeits consumed
+  credit. (`do_supersede_bid`.)
+- **Where does a refund go?** To the seat's stored **refund address** (captured as the sender at
+  rent/bid time), which is **decoupled from cap ownership** — transferring the `UsufructCap` does
+  not move the refund destination. Redirect it with `update_usufructuary_refund_address`.
+
+**Handover & bidding**
+
+- **Does a higher bid make me the active tenant immediately?** No. A bid moves the escrow to
+  **Demand** with a *pending* seat; the sitting tenant stays active until the **handover countdown**
+  elapses. The swap then settles **lazily — the next mutating call on the escrow rotates the
+  challenger in** (every mutator self-applies; you don't need an explicit
+  `apply_pending_transition_states`). A *pending* cap that tries to `borrow_asset` aborts
+  (`EPendingUsufructCap`). (`do_place_bid` / `do_handover`.)
+- **`handover_off` — does that disable bidding?** No. "Off" means the countdown is **zero**, so a
+  bid settles on the very next touch (instant-on-apply), not that bids are forbidden. `fixed` adds
+  a countdown; `full_tenure` waits out the current tenure. The countdown never extends past the
+  tenure's natural expiry. (`policies/handover_policy.move`.)
+- **After a handover, is the old cap auto-destroyed?** No — it becomes **stale** (neither active
+  nor pending) but still exists; call `burn_stale_usufruct_cap` to clean it up. A stale cap can't
+  borrow.
+
+**Income**
+
+- **When are `EarningsMessage`s created?** **Only at a settlement** — a tenure expiry, handover,
+  or supersede processed by a mutating call. `rent` itself posts nothing; the stake just sits in
+  the active seat. A freshly-rented, unexpired escrow has an **empty inbox** — that means "nothing
+  has settled yet", not "no income". (`refund_state::distribute` → `earnings_message::post`.)
+- **Do I need the `GovernanceCap` to collect income?** No. `collect_earnings_messages` only needs
+  the `EarningsInbox` you own. Governance (cap) and income (inbox) are **separate owned objects** —
+  the income can be sold/held independently of governance.
+
+**Tenures & governance**
+
+- **What does `rent(tenures(N))` do?** Locks **one continuous tenure of N× the duration**, paid as
+  a single stake (price = floor × N), in one seat. It is **not** N renewals or N renters, and it's
+  **O(1)** in N (same gas as N=1). (`tenures.move`.)
+- **Does the `GovernanceCap` list the escrows it governs?** No — it's a bare bearer token
+  (`{ id }`) with no list. The cap→escrow→inbox topology lives **only in events** (replay
+  `AssetIntegrated`; see *Events*). (`governance_cap.move`.)
+- **Can the governor evict a renter or rewrite live terms?** No. `claim_asset` works only on a
+  **Retired** escrow; `retire` on an occupied escrow only sets a flag and waits out the tenure;
+  `update_ensemble` on an occupied escrow only **schedules** a pending ensemble that applies at the
+  next Idle. The governor cannot seize a live tenancy. (`execute_retire` / `execute_update_ensemble`.)
+- **Is `renounce_governance` reversible?** No. It **burns the `GovernanceCap`**, making the
+  escrow's asset **permanently unclaimable** — the governor forfeits the asset forever but keeps
+  income already settled and the inbox keeps receiving. It does not destroy the escrow or eject the
+  asset. A maximum-commitment signal, not a withdrawal. (`cap::renounce_governance`.)
 
 ---
 

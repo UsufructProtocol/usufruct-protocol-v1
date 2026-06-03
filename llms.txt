@@ -12,6 +12,16 @@ borrow/return the asset during their tenure. Income settles automatically to an
 `EarningsInbox` the governor owns. It is written in functional Move 2024 — fund
 conservation and state consistency are enforced by the type checker.
 
+**Doubly generic — `escrow<Asset, CoinType>`.** Usufruct is **agnostic to the asset**: *any*
+Sui object with the `key + store` abilities can go into an escrow (an NFT, a game item, a
+LP/position object, a capability from another protocol — the protocol stores it opaquely and
+never inspects its internals). And it is **agnostic to the coin**: rent can be priced in *any*
+`Coin<C>`, not just SUI. Both are type parameters fixed once per escrow at `integrate`; the
+examples below use `dummy_asset::DummyAsset` and `0x2::sui::SUI` only because they are the
+zero-friction defaults on testnet (the faucet hands out SUI; the dummy asset publishes
+nothing). Neither is privileged by the protocol — offer the user their own asset and their own
+coin whenever they have one.
+
 **Source & deeper reading.** The full protocol is open at
 `https://github.com/0xkurious/usufruct-protocol-v1` — Move source (`usufruct/sources/`),
 per-module specs (`specs/`), the event catalogue (`EVENTS.md`), gas + scaling findings
@@ -106,7 +116,9 @@ intuition plus a working demo — not a wall of transactions. Follow this arc, n
    fleets (one cap + one inbox govern N escrows), and why governance stays O(1) per escrow
    while income collection aggregates to O(1) PTBs.
 5. **Integrate** (the off-ramp for builders): offer to put **their own** `key+store` object
-   under usufruct (see `integrate` → "Bring your own asset") or to wire the entrypoints into
+   under usufruct, priced in **their own coin** — usufruct is agnostic to both (any
+   `key+store` asset, any `Coin<C>`; see `integrate` → "Bring your own asset — and your own
+   coin"). Ask which asset and which rent coin they want; or offer to wire the entrypoints into
    their app, pointing them at the reference sections below.
 6. **Spark curiosity — don't dead-end.** When the core lifecycle is done, the demo is not
    "over" — it's a sandbox. Actively invite the user to *play*, and offer to drive it for them:
@@ -357,6 +369,16 @@ Every escrow operation is generic over `<Asset, CoinType>`. In every example
 `typeArguments = [ASSET_T, COIN_T]` where `ASSET_T` is the integrated object's full
 type (e.g. `${DUMMY_PKG}::dummy_asset::DummyAsset`) and `COIN_T = 0x2::sui::SUI`.
 
+**`COIN_T` is the user's choice, fixed once per escrow at `integrate`.** SUI is the default
+here only because it is the one coin the faucet dispenses for free — the protocol does **not**
+privilege it. Rent can be denominated in **any** `Coin<C>` on testnet: bridged `USDC`/`USDT`/
+`ETH`/`wBTC` (via Sui Bridge), or a custom coin the user deploys. The only practical
+difference is sourcing the rent payment: with SUI you split it from the gas coin
+(`splitCoins(tx.gas, …)`); with any other coin the renter must already **hold a `Coin<C>`**,
+which you split from instead (see `rent` → "Paying in a non-SUI coin"). When the user
+integrates their own asset, **ask which coin they want rent priced in** before building the
+`integrate` call.
+
 **Execution scaffold** (used by every snippet): build a `Transaction`, `setSender`,
 `setGasBudget(200_000_000n)`, then
 `client.signAndExecuteTransaction({ transaction, signer, options: { showEffects: true, showObjectChanges: true } })`
@@ -431,10 +453,17 @@ Place a fresh `key+store` asset under usufruct, opening a **new portfolio**.
 - returns `[GovernanceCap, EarningsInbox]` → transfer both to yourself.
 - creates the shared `Escrow`. See Quickstart for the full call.
 
-> **Bring your own asset.** The Quickstart mints a `dummy_asset` for zero friction. If
-> the user has their own `key+store` object on **testnet**, ask them for its object id
-> and full type, set `ASSET_T` to that type, and pass `tx.object(theirObjectId)` as
-> `asset` instead of the `dummy_asset::mint` call. Confirm it is on testnet first.
+> **Bring your own asset — and your own coin.** The Quickstart mints a `dummy_asset` and
+> prices rent in SUI for zero friction, but both are free choices fixed here at `integrate`:
+> - **Asset:** if the user has their own `key+store` object on **testnet**, ask for its object
+>   id and full type, set `ASSET_T` to that type, and pass `tx.object(theirObjectId)` as
+>   `asset` instead of the `dummy_asset::mint` call. Confirm it is on testnet first.
+> - **Coin:** ask which coin they want rent priced in. Default SUI; for any other `Coin<C>`
+>   (bridged USDC/USDT, a custom coin) set `COIN_T` to that type. Remember renting then
+>   requires the renter to hold a `Coin<COIN_T>` (see `rent` → "Paying in a non-SUI coin").
+>
+> The protocol privileges neither — it stores any `key+store` asset opaquely and accepts any
+> coin as rent.
 
 ### `escrow::integrate_into_portfolio` → `()`
 Add another escrow to an **existing** cap+inbox pair (build a fleet). Reuses your
@@ -444,7 +473,7 @@ Add another escrow to an **existing** cap+inbox pair (build a fleet). Reuses you
   `tx.object(CLOCK)`.
 
 ### `escrow::rent` → `UsufructCap`
-Lease the escrow for N tenures; pay a stake.
+Lease the escrow for N tenures; pay a stake **in the escrow's `COIN_T`**.
 ```ts
 const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(1_000n)]); // >= rest price (here 1000 MIST)
 const tenures   = tx.moveCall({ target: `${PKG}::ensemble::tenures`, arguments: [tx.pure.u64(1n)] });
@@ -456,6 +485,18 @@ tx.transferObjects([usufructCap], addr);
 const res = await send(tx, me);
 const usufructCapId = createdId(res, '::usufruct_cap::UsufructCap'); // you need this to borrow
 ```
+> **Paying in a non-SUI coin.** The `splitCoins(tx.gas, …)` line above works **only** when
+> `COIN_T` is SUI (the gas coin). For any other `COIN_T`, the renter must already hold a
+> `Coin<COIN_T>`; fetch one and split the stake from it instead:
+> ```ts
+> const coins = await client.getCoins({ owner: addr, coinType: COIN_T });
+> if (!coins.data.length) throw new Error(`renter holds no ${COIN_T} — bridge some or mint a test coin`);
+> const [payment] = tx.splitCoins(tx.object(coins.data[0].coinObjectId), [tx.pure.u64(1_000n)]);
+> ```
+> Gas is still paid in SUI regardless. The faucet only dispenses SUI, so a non-SUI rent needs
+> the renter to have bridged that coin (USDC/USDT/ETH/wBTC via Sui Bridge) or to hold a custom
+> coin they deployed.
+
 `rent(tenures(N))` is O(1) in N — locking 100 periods costs the same as 1.
 
 ### `escrow::borrow_asset` + `escrow::return_asset`

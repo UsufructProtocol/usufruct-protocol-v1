@@ -108,6 +108,21 @@ intuition plus a working demo — not a wall of transactions. Follow this arc, n
 5. **Integrate** (the off-ramp for builders): offer to put **their own** `key+store` object
    under usufruct (see `integrate` → "Bring your own asset") or to wire the entrypoints into
    their app, pointing them at the reference sections below.
+6. **Spark curiosity — don't dead-end.** When the core lifecycle is done, the demo is not
+   "over" — it's a sandbox. Actively invite the user to *play*, and offer to drive it for them:
+   - **Design a different ensemble.** The economics are just a `PolicyEnsemble` — change the
+     numbers and re-`integrate` to feel it: a steep linear price curve vs a flat fixed rest
+     price, longer/shorter tenures, handover **on** so a second renter can outbid and rotate
+     in, a descending auction window, a per-tenure escalation delta. See "Building a
+     PolicyEnsemble" for every knob; propose one or two concrete variations and run them.
+   - **Spin up a fleet.** Integrate several escrows under **one** `GovernanceCap` + one
+     `EarningsInbox`, then collect all their income in a single PTB — the scaling story made
+     tangible (`profiling/FINDINGS.md` has the numbers; offer to reproduce them live).
+   - **Bring a real asset.** If they own any `key+store` object on testnet, offer to integrate
+     *that* instead of the dummy — usufruct is asset-agnostic.
+   Frame these as open invitations ("want to see what happens if rent doubles each tenure?"),
+   not a checklist. Curiosity is the conversion: the user who tweaks an ensemble and watches
+   the price move on-chain has already understood the protocol.
 
 **Keep the session.** This tour spans several steps on the **same** escrow, but a generated
 keypair lives only in memory — lose it and the `UsufructCap` and escrow are stranded and

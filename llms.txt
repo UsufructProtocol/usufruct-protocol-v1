@@ -112,9 +112,11 @@ intuition plus a working demo — not a wall of transactions. Follow this arc, n
      expire (use a short `duration`), then `collect_earnings_messages` to pull the coin.
    - **Ownership** — the owner holds the `GovernanceCap`: they can `claim_asset` the asset
      back, or `renounce_governance` to seal it forever (forfeit the asset, keep the income).
-4. **Scale** (offer if they want depth): handover (a new renter outbids and rotates in),
-   fleets (one cap + one inbox govern N escrows), and why governance stays O(1) per escrow
-   while income collection aggregates to O(1) PTBs.
+4. **Scale — run it across real wallets** (offer if they want depth): the **Scenarios** section
+   has two runnable multi-actor demos — *Handover* (a second renter outbids and rotates in) and
+   *Fleet* (one cap + one inbox govern N escrows, income collected in one PTB) — driven by a
+   governor + two usufructuaries on **distinct** addresses, so the rights are split across real
+   parties, not simulated. Funding stays one faucet step (fund the governor, distribute gas).
 5. **Integrate** (the off-ramp for builders): offer to put **their own** `key+store` object
    under usufruct, priced in **their own coin** — usufruct is agnostic to both (any
    `key+store` asset, any `Coin<C>`; see `integrate` → "Bring your own asset — and your own
@@ -758,16 +760,81 @@ answerable purely from events. Full catalogue + the star-schema diagram: see
 - **Solo lifecycle** (the Quickstart, continued): `integrate → rent → borrow_asset +
   return_asset (one PTB) → retire → wait for tenure expiry → apply_pending_transition_states
   → claim_asset`. See `profiling/b_flows/02_asset_lifecycle.ts`.
-- **Handover** (two renters rotate): `integrate` with `new_handover_full_tenure()` →
-  renter A `rent` → renter B `rent` (places a bid → Demand) → wait handover countdown →
-  `apply_pending_transition_states` (B becomes active, A's cap goes stale) →
-  `burn_stale_usufruct_cap(A_cap)`. See `profiling/b_flows/03_handover.ts`.
-- **Fleet** (one cap + one inbox over N escrows): `integrate` once, then
-  `integrate_into_portfolio` N−1 times reusing `governanceCapId` + `earningsInboxId`;
-  collect all income in one `collect_earnings_messages`. See
-  `profiling/b_flows/07_fleet_portfolio_collect.ts`.
 - **Collect governor income**: after settlements, drain the inbox (see
   `earnings::collect_earnings_messages` above).
+- **Handover** and **Fleet** run the lifecycle across **multiple wallets** — see
+  **Scenarios** below for the runnable, role-separated versions.
+
+---
+
+## Scenarios — the three rights across real wallets (act 2)
+
+The Quickstart runs the whole lifecycle with **one** keypair playing every role — perfect for a
+first win, but it can only *simulate* the split of rights. These scenarios run it across **three
+distinct wallets** — a governor `G` and two usufructuaries `U1`, `U2` — so the separation is
+real: one address earns the income, another uses the asset, a third owns the governance. Offer
+them after the first win, when the user asks *"what is this actually for?"*.
+
+**Funding stays one faucet step.** Generate three keypairs, but fund only `G` through the faucet
+hand-back (exactly as the Quickstart does); then `G` distributes gas to `U1` and `U2`. One human
+action, not three. (Reuses `fundGateOrExit` / `send` from the Quickstart.)
+
+```ts
+// ── 3-actor setup (shared by both scenarios) ──
+const mk = () => Ed25519Keypair.deriveKeypair(generateMnemonic(wordlist, 128));
+const G = mk(), U1 = mk(), U2 = mk();
+const addrOf = (k: Ed25519Keypair) => k.getPublicKey().toSuiAddress();
+console.log('G :', addrOf(G), '\nU1:', addrOf(U1), '\nU2:', addrOf(U2));
+
+await fundGateOrExit(addrOf(G));      // prints the faucet link and EXITS if unfunded — hand it to the user, re-run when funded
+const tx = new Transaction();
+tx.setSender(addrOf(G));
+const [g1, g2] = tx.splitCoins(tx.gas, [tx.pure.u64(100_000_000n), tx.pure.u64(100_000_000n)]); // 0.1 SUI each
+tx.transferObjects([g1], addrOf(U1));
+tx.transferObjects([g2], addrOf(U2));
+await send(tx, G);
+// G, U1, U2 now each hold gas; each splits its own rent stake from its own gas coin.
+// (Scenarios use SUI rent for simplicity; they compose with any COIN_T — see "Paying in a non-SUI coin".)
+```
+
+### Scenario A — Handover: U2 outbids U1 mid-tenure
+Demonstrates **use** (U1, then U2), **income** (G collects from both), **ownership** (G reclaims),
+and the rotation mechanic — each in a different address. New vs the solo flow:
+`new_handover_full_tenure` and `burn_stale_usufruct_cap`.
+
+1. **G** `integrate` — same call as the Quickstart but swap `new_handover_off` for
+   `new_handover_full_tenure` in `buildEnsemble` (see "Building a PolicyEnsemble"). Keep
+   `escrowId`, `governanceCapId`, `earningsInboxId`.
+2. **U1** `rent` (stake = rest price) → holds `cap1`; may `borrow_asset`/`use_asset`/`return_asset`.
+3. **U2** `rent` paying **≈2× rest price** — a bid must beat the sitting tenant by the escalation
+   delta. This pushes the escrow into Demand; `cap1` is now destined to go stale.
+4. wait the tenure window → **G** `apply_pending_transition_states` → U2 becomes the active
+   tenant, `cap1` is stale.
+5. **U1** `burn_stale_usufruct_cap(cap1)` — clean up the displaced cap (U1 signs; it's U1's object).
+6. **G** `retire → wait → apply_pending_transition_states → claim_asset`. Income from *both* U1
+   and U2 now sits in G's inbox → **G** `collect_earnings_messages` drains it.
+
+Faithful source: `profiling/b_flows/03_handover.ts`.
+
+### Scenario B — Fleet: one governor, N escrows, one collect
+Demonstrates **scale**: a single `GovernanceCap` + `EarningsInbox` govern a whole portfolio,
+rented by different parties, income consolidated in one PTB. New vs the solo flow:
+`integrate_into_portfolio` and the multi-element `collect_earnings_messages`.
+
+1. **G** `integrate` (escrow #1 — mints the cap+inbox pair) → keep `governanceCapId`,
+   `earningsInboxId`.
+2. **G** `integrate_into_portfolio` ×(N−1), reusing that cap+inbox → escrows #2…#N (mints no new
+   pair; passes the cap and inbox by `tx.object`).
+3. **U1** and **U2** `rent` different escrows — alternate them so the fleet has distinct renters.
+4. wait → **G** `apply_pending_transition_states` on each → each posts one `EarningsMessage` to the
+   **one** shared inbox.
+5. **G** `collect_earnings_messages` — **ONE** PTB drains all N: gather the inbox's
+   `EarningsMessage` refs via `getOwnedObjects({ owner: earningsInboxId })`, build the `Receiving`
+   vec (see the `collect_earnings_messages` entrypoint). O(N) income, O(1) collection,
+   rebate-positive — the headline.
+6. **G** tears down each escrow with the **one** shared cap: `retire → apply → claim_asset`.
+
+Faithful source: `profiling/b_flows/07_fleet_portfolio_collect.ts` (takes your own `N`).
 
 ---
 

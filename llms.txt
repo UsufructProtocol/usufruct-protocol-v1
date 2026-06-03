@@ -364,6 +364,9 @@ below is the full surface to go further (borrow, reclaim, collect income, fleets
 | `dummy_asset` package (test `key+store`) | `0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a` |
 | `Clock` | `0x6` |
 | Coin type used in examples | `0x2::sui::SUI` |
+| `dummy_coin` package (free-mint test coin) | `0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96` |
+| `dummy_coin` `TreasuryCap` (shared; `mint` arg) | `0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc` |
+| Native USDC on testnet | `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` |
 
 Every escrow operation is generic over `<Asset, CoinType>`. In every example
 `typeArguments = [ASSET_T, COIN_T]` where `ASSET_T` is the integrated object's full
@@ -486,16 +489,33 @@ const res = await send(tx, me);
 const usufructCapId = createdId(res, '::usufruct_cap::UsufructCap'); // you need this to borrow
 ```
 > **Paying in a non-SUI coin.** The `splitCoins(tx.gas, …)` line above works **only** when
-> `COIN_T` is SUI (the gas coin). For any other `COIN_T`, the renter must already hold a
-> `Coin<COIN_T>`; fetch one and split the stake from it instead:
+> `COIN_T` is SUI (the gas coin). For any other `COIN_T` the renter must hold a `Coin<COIN_T>`
+> — and since **the Sui faucet only dispenses SUI**, getting one of these *is* the question.
+> Three ways, by friction (gas is always paid in SUI regardless):
+>
+> **a) `dummy_coin` — free permissionless mint (zero friction, fully autonomous).** A test coin
+> we deployed whose `TreasuryCap` is shared, so anyone can mint any amount with no faucet, rate
+> limit, or human. Set `COIN_T = ${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN` at `integrate`, then
+> mint the stake **inline in the rent PTB**:
+> ```ts
+> const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';
+> const DUMMY_COIN_TREASURY = '0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc'; // shared
+> const payment = tx.moveCall({ target: `${DUMMY_COIN_PKG}::dummy_coin::mint`,
+>   arguments: [tx.object(DUMMY_COIN_TREASURY), tx.pure.u64(1_000n)] });   // Coin<DUMMY_COIN>
+> ```
+> **b) USDC — Circle testnet faucet (a recognizable real stablecoin).** Permissionless web
+> faucet at `https://faucet.circle.com/` (~20 USDC / 2h per address); same hand-back as SUI —
+> show the user the link, then poll `getBalance({ owner: addr, coinType: COIN_T })` until it
+> arrives. `COIN_T = 0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC`.
+> Then source the stake from the owned coin:
 > ```ts
 > const coins = await client.getCoins({ owner: addr, coinType: COIN_T });
-> if (!coins.data.length) throw new Error(`renter holds no ${COIN_T} — bridge some or mint a test coin`);
+> if (!coins.data.length) throw new Error(`renter holds no ${COIN_T} — claim at faucet.circle.com`);
 > const [payment] = tx.splitCoins(tx.object(coins.data[0].coinObjectId), [tx.pure.u64(1_000n)]);
 > ```
-> Gas is still paid in SUI regardless. The faucet only dispenses SUI, so a non-SUI rent needs
-> the renter to have bridged that coin (USDC/USDT/ETH/wBTC via Sui Bridge) or to hold a custom
-> coin they deployed.
+> **c) Bridged ETH/wBTC/USDT (advanced).** Bring them from Ethereum Sepolia via Sui Bridge —
+> needs Sepolia funds and a bridge tx; overkill for a demo, listed for completeness. Sourced
+> like (b) once held.
 
 `rent(tenures(N))` is O(1) in N — locking 100 periods costs the same as 1.
 

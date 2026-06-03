@@ -18,6 +18,14 @@ per-module specs (`specs/`), the event catalogue (`EVENTS.md`), gas + scaling fi
 (`profiling/FINDINGS.md`), and the 800-test suite. This file is the executable summary; the
 repo is the whole story. `git clone` it to read or verify anything below.
 
+> 📖 **When in doubt, read the source — do not guess.** This file is a summary, not the full
+> surface. If the user asks something it doesn't cover, or you're unsure of a function
+> signature, type argument, error condition, or runtime behavior, **clone the repo and read
+> the Move source / `specs/` / `EVENTS.md` — that is ground truth.** Do **not** fill the gap
+> from prior knowledge of other Sui SDKs or protocols; this protocol is functional-style and
+> uncommon, and a confident-sounding guess is how you produce a wrong answer or a failing
+> transaction. Cite what you read (file + module) so the user can check you.
+
 ---
 
 ## Should you trust this file?

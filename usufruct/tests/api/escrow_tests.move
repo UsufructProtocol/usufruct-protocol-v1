@@ -8393,6 +8393,52 @@ fun multi_cycle_countdown_scales_with_committed_tenures() {
     sc.end();
 }
 
+/// Regression: HandoverCompleted.new_rent_price is normalized by the INCOMING tenant's
+/// committed tenures, matching the canonical floor (compute_floor_price_at). For a
+/// multi-tenure incoming bid the un-normalized escalation overstates the post-handover
+/// floor by ~N×; here N=2 → normalized 3×floor, un-normalized would have been 5×floor.
+#[test]
+fun handover_new_rent_price_normalized_by_incoming_tenures() {
+    let mut sc = setup();
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const();
+
+    // T1: 3 tenures (stake = floor×3, per-tenure = floor).
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
+
+    // T2: 2-tenure bid. The per-tenure floor to displace T1 = ascending(floor) = 2×floor.
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
+    let bid_floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
+    assert_eq!(bid_floor_t2, floor * 2);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
+
+    // T2 wins handover at boundary = countdown × 3 (T1's ×3-scaled window).
+    let boundary_t2 = countdown * 3;
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_t2), sc.ctx());
+
+    // T2 now active: stake = 4×floor over 2 tenures. Post-handover floor =
+    // ascending(per_tenure_stake(4×floor, 2)) = ascending(2×floor) = 3×floor.
+    // The pre-fix (un-normalized) value would have been ascending(4×floor) = 5×floor.
+    let evts = event::events_by_type<HandoverCompleted>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::handover_completed_committed_tenures(e), 2); // incoming bid is multi-tenure
+    let new_rent = asset_state::handover_completed_new_rent_price(e);
+    assert_eq!(new_rent, floor * 3);                                      // normalized, not 5×floor
+    assert_eq!(new_rent, escrow::floor_price_mist(&escrow, boundary_t2)); // == canonical floor view
+
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §Degeneration: cycles(1) matches single-cycle baseline ──────────────────
 //
 // Each test pairs the multi-cycle code path (cycles=1) against the expected

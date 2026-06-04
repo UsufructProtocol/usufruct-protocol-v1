@@ -1460,7 +1460,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let active_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&pending));
     let active_addr         = usufructuary_addr(&pending);
     let active_stake        = usufructuary_seat::proj_stake_value(&pending);
-    let new_rent_price = monetary::price_mist(ascending_floor_price(active_stake, config));
+    let new_rent_price = monetary::price_mist(ascending_floor_price(tenures::compute_per_tenure_stake(active_stake, incoming_tenures), config));
     let boundary_ms = phases::timestamp_ms(boundary);
     let new_ceiling_total  = tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures);
     let new_handover_total = tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures);

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Antonio Jiménez
 // SPDX-License-Identifier: Apache-2.0
 
-module usufruct::fee_inbox;
+module usufruct::fees;
 
 // === Imports ===
 

@@ -53,7 +53,7 @@ use usufruct::{
     cap,
     escrow_corpus,
     escrow_identity,
-    fee_inbox,
+    fees,
     fee_message::{Self, FeeMessage, FeeMessagePosted},
     earnings,
     earnings_inbox::EarningsInbox,
@@ -841,7 +841,7 @@ fun e2e_invariant_nothing_collected_fee_plus_earnings_equals_rent() {
         &mut inbox, vector[test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(earn_id)], sc.ctx(),
     );
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
-    let fee_coin = fee_inbox::collect_fee_messages<SUI>(
+    let fee_coin = fees::collect_fee_messages<SUI>(
         &mut fee_box, vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_id)], sc.ctx(),
     );
 
@@ -918,7 +918,7 @@ fun e2e_invariant_parcial_then_nothing_conserves_both_rents() {
 
     let earn_coin = earnings::collect_earnings_messages<SUI>(&mut inbox, tickets_for(earn_ids), sc.ctx());
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
-    let fee_coin = fee_inbox::collect_fee_messages<SUI>(
+    let fee_coin = fees::collect_fee_messages<SUI>(
         &mut fee_box,
         vector[
             test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_ids[0]),
@@ -1784,7 +1784,7 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     sc.return_to_sender(earn_inbox);
 
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
-    let f_coin = fee_inbox::collect_fee_messages<SUI>(
+    let f_coin = fees::collect_fee_messages<SUI>(
         &mut fee_box,
         vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_msg_id)],
         sc.ctx(),
@@ -1900,7 +1900,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     sc.return_to_sender(earn_inbox);
 
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
-    let f_coin = fee_inbox::collect_fee_messages<SUI>(
+    let f_coin = fees::collect_fee_messages<SUI>(
         &mut fee_box,
         vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_msg_id)],
         sc.ctx(),

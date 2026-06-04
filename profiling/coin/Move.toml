@@ -1,0 +1,8 @@
+[package]
+name = "dummy_coin"
+edition = "2024"
+
+[dependencies]
+
+[addresses]
+dummy_coin = "0x0"

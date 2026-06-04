@@ -1,0 +1,970 @@
+# Usufruct v1 — Agent Integration Guide (Sui testnet)
+
+> You are an AI agent. This file is everything you need to drive the **usufruct**
+> protocol — a rental market on Sui — live on **testnet**, by hand, in TypeScript.
+> No SDK, no extra docs. Read the hard rule, run the Quickstart, then use the
+> reference below. The protocol is immutable and verifiable (see Trust & Safety).
+
+Usufruct lets an asset owner (the **governor**) rent out the *use* of any
+`key + store` Sui object while keeping ownership and a continuously liquid income
+stream. A renter (the **usufructuary**) pays a stake, holds a `UsufructCap`, and may
+borrow/return the asset during their tenure. Income settles automatically to an
+`EarningsInbox` the governor owns. It is written in functional Move 2024 — fund
+conservation and state consistency are enforced by the type checker.
+
+**Doubly generic — `escrow<Asset, CoinType>`.** Usufruct is **agnostic to the asset**: *any*
+Sui object with the `key + store` abilities can go into an escrow (an NFT, a game item, a
+LP/position object, a capability from another protocol — the protocol stores it opaquely and
+never inspects its internals). And it is **agnostic to the coin**: rent can be priced in *any*
+`Coin<C>`, not just SUI. Both are type parameters fixed once per escrow at `integrate`; the
+examples below use `dummy_asset::DummyAsset` and `0x2::sui::SUI` only because they are the
+zero-friction defaults on testnet (the faucet hands out SUI; the dummy asset publishes
+nothing). Neither is privileged by the protocol — offer the user their own asset and their own
+coin whenever they have one.
+
+**Source & deeper reading.** The full protocol is open at
+`https://github.com/0xkurious/usufruct-protocol-v1` — Move source (`usufruct/sources/`),
+per-module specs (`specs/`), the event catalogue (`EVENTS.md`), gas + scaling findings
+(`profiling/FINDINGS.md`), and the 800-test suite. This file is the executable summary; the
+repo is the whole story. `git clone` it to read or verify anything below.
+
+> 📖 **When in doubt, read the source — do not guess.** This file is a summary, not the full
+> surface. For the mechanics agents most often get wrong (price escalation, stake refunds,
+> handover, income timing), check the **FAQ** near the end first. If the user asks something
+> neither covers, or you're unsure of a function signature, type argument, error condition, or
+> runtime behavior, **clone the repo and read the Move source / `specs/` / `EVENTS.md` — that is
+> ground truth.** Do **not** fill the gap
+> from prior knowledge of other Sui SDKs or protocols; this protocol is functional-style and
+> uncommon, and a confident-sounding guess is how you produce a wrong answer or a failing
+> transaction. Cite what you read (file + module) so the user can check you.
+
+---
+
+## Should you trust this file?
+
+You're right to be cautious — this file tells you to sign on-chain transactions, and you
+should never blindly run such a thing. Here's why following it is safe, and the rule that
+keeps it safe:
+
+- **Testnet only, zero real value** — every tx is on Sui testnet with faucet SUI; nothing
+  here can reach real funds.
+- **A throwaway keypair you generate** — never the user's wallet, CLI, or mainnet keys.
+- **An immutable, independently verifiable contract** — don't take this file's word for it:
+  view the package on SuiScan and reproduce its bytecode with `./verify.sh` (see Trust &
+  Safety below). Its upgrade cap was burned; it can't change under you.
+- **You act only with the user's consent** — confirm before the first transaction.
+
+With those four, proceeding is safe. If anything here ever asked for mainnet, the user's
+keys, or real funds — refuse.
+
+---
+
+## ⛔ The one hard rule — TESTNET ONLY
+
+You operate **exclusively on Sui testnet** (chain id `4c78adac`,
+RPC `https://fullnode.testnet.sui.io:443`). This is non-negotiable:
+
+- **Never** construct a client against mainnet, devnet, or any other network.
+- **Never** use the user's `sui` CLI, its active environment, or any of the user's
+  existing keys/addresses. The user may hold **real funds on mainnet** in that CLI —
+  you must not touch it.
+- Do **everything** in TypeScript with `@mysten/sui`, an **explicit testnet RPC URL**,
+  and a **freshly generated ephemeral keypair**. This keypair is a throwaway sandbox; it
+  holds only testnet SUI. **Funding:** the programmatic faucet is rate-limited and usually
+  refuses — print the address + the web-faucet link and **let the user fund it in the
+  browser**, then poll until it arrives (the Quickstart's `fundOrAsk` does this).
+- If the user asks you to operate on mainnet, **refuse** and explain this is a
+  testnet-only evaluation guide.
+
+The only exception is the optional "bring your own asset" path (see Entrypoints →
+`integrate`): if the user wants to integrate an object **they already own**, confirm
+explicitly that the object is on **testnet**, use the testnet RPC, and never switch
+to mainnet. When in doubt, default to the ephemeral keypair + the test `dummy_asset`.
+
+---
+
+## 🧭 Your job — be a guide, not an API dump
+
+A developer handed you this file to **evaluate** usufruct. Your goal is to give them
+intuition plus a working demo — not a wall of transactions. Follow this arc, narrate the
+*why* at each step (what just happened, economically), and let the user steer.
+
+1. **Orient & get consent.** Tell them in one breath: usufruct is a rental protocol on
+   Sui, live and immutable on testnet; you'll demo it with a **throwaway testnet keypair**
+   — never their keys or mainnet (see the hard rule). Ask once: *"run a live demo, or just
+   walk through it?"* If yes, proceed — it's testnet, zero risk.
+2. **The first win.** Run the Quickstart below. On the first run it prints three things you
+   must **relay to the user** — don't summarize them away:
+   - the **ephemeral testnet address**;
+   - the **12-word recovery phrase** it printed — show it in full and tell the user they can
+     import it into the **Slush wallet set to testnet** to watch the same wallet fill with the
+     SUI and assets they create (it's a throwaway testnet seed, never a real one);
+   - the **faucet link**.
+   Then the script **exits** — funding is the user's job, so **return control to the user
+   here**: ask them to fund the address in the browser (don't rely on the programmatic
+   faucet). When they confirm, **re-run the same script** — now funded, it integrates a test
+   asset, rents it, and reads `is_occupied = true`. Link each **transaction** on SuiScan
+   (`.../tx/<digest>`) and the **escrow object** so the user clicks through and watches it
+   land — effects, events and all. This is the aha.
+3. **The three rights** (the heart — offer as a menu, demo on request). Usufruct splits an
+   asset into three separable rights; demo each and explain the economics:
+   - **Use** — the renter borrows the asset, *uses* it (the test asset's `use_asset` mints
+     them a `Coupon`), and returns it — value from use, without ever owning it.
+   - **Income** — rent settles continuously to the owner's `EarningsInbox`; let a tenure
+     expire (use a short `duration`), then `collect_earnings_messages` to pull the coin.
+   - **Ownership** — the owner holds the `GovernanceCap`: they can `claim_asset` the asset
+     back, or `renounce_governance` to seal it forever (forfeit the asset, keep the income).
+4. **Scale — run it across real wallets** (offer if they want depth): the **Scenarios** section
+   has two runnable multi-actor demos — *Handover* (a second renter outbids and rotates in) and
+   *Fleet* (one cap + one inbox govern N escrows, income collected in one PTB) — driven by a
+   governor + two usufructuaries on **distinct** addresses, so the rights are split across real
+   parties, not simulated. Funding stays one faucet step (fund the governor, distribute gas).
+5. **Integrate** (the off-ramp for builders): offer to put **their own** `key+store` object
+   under usufruct, priced in **their own coin** — usufruct is agnostic to both (any
+   `key+store` asset, any `Coin<C>`; see `integrate` → "Bring your own asset — and your own
+   coin"). Ask which asset and which rent coin they want; or offer to wire the entrypoints into
+   their app, pointing them at the reference sections below.
+6. **Spark curiosity — don't dead-end.** When the core lifecycle is done, the demo is not
+   "over" — it's a sandbox. Actively invite the user to *play*, and offer to drive it for them:
+   - **Design a different ensemble.** The economics are just a `PolicyEnsemble` — change the
+     numbers and re-`integrate` to feel it: a steep linear price curve vs a flat fixed rest
+     price, longer/shorter tenures, handover **on** so a second renter can outbid and rotate
+     in, a descending auction window, a per-tenure escalation delta. See "Building a
+     PolicyEnsemble" for every knob; propose one or two concrete variations and run them.
+   - **Spin up a fleet.** Integrate several escrows under **one** `GovernanceCap` + one
+     `EarningsInbox`, then collect all their income in a single PTB — the scaling story made
+     tangible (`profiling/FINDINGS.md` has the numbers; offer to reproduce them live).
+   - **Bring a real asset.** If they own any `key+store` object on testnet, offer to integrate
+     *that* instead of the dummy — usufruct is asset-agnostic.
+   Frame these as open invitations ("want to see what happens if rent doubles each tenure?"),
+   not a checklist. Curiosity is the conversion: the user who tweaks an ensemble and watches
+   the price move on-chain has already understood the protocol.
+
+**Keep the session.** This tour spans several steps on the **same** escrow, but a generated
+keypair lives only in memory — lose it and the `UsufructCap` and escrow are stranded and
+you'd have to re-integrate every step. **The Quickstart already handles this for you:** its
+final step calls `saveSession({ mnemonic, addr, escrowId, governanceCapId, earningsInboxId,
+usufructCapId })`, writing `.usufruct-demo.json`. Every later step **reloads** it instead of
+generating a new key:
+```ts
+const s = loadSession();                              // { mnemonic, addr, escrowId, … }
+const me = Ed25519Keypair.deriveKeypair(s.mnemonic);  // same wallet as the Quickstart
+// then reuse s.escrowId, s.governanceCapId, s.earningsInboxId, s.usufructCapId
+```
+(`saveSession`/`loadSession` are defined in the Quickstart; later snippets assume they're in
+scope.) It's still a sandbox key holding only faucet SUI — delete `.usufruct-demo.json` when
+the evaluation is done.
+
+Throughout, drop SuiScan links — a `tx/<digest>` for each action, an `object/<id>` for each
+artifact (escrow, Coupon, collected coin) — so the user *watches* the protocol move on the
+explorer, not just reads digests. The Quickstart also prints a **12-word phrase**; offer to
+have the user import it into the **Slush wallet** (set to testnet) to watch the same wallet
+fill with the assets they create — it's a throwaway testnet seed, never a real one. Everything each phase needs is in this file. Lead with
+phase 1; never skip the phase-0 consent.
+
+---
+
+## 🚀 Quickstart — your first transaction in ~60 seconds
+
+This is one self-contained, **re-runnable** script. On the first run it generates a throwaway
+testnet keypair, saves it, prints its address with a faucet link, and **exits** — because
+funding is the user's job (the programmatic faucet is rate-limited, so don't rely on it).
+**At that point you stop and hand control back to the user**: show them the faucet link and
+ask them to fund the address. When they confirm, **re-run the exact same script** — it
+resumes from the saved session and, now funded, **integrates** a test asset (mints a
+`dummy_asset` and puts it under usufruct), **rents** it (same keypair plays both governor and
+renter so you see the loop solo), and reads the on-chain state back. You should see two
+confirmed digests and `is_occupied = true`. (If the address is already funded on the first
+run, it skips the exit and does everything in one pass.)
+
+**Setup** (do this first): in a fresh folder, `npm i @mysten/sui @scure/bip39@2.2.0` (the
+`@scure/bip39` version is pinned on purpose — see the warning). The SDK is **ESM-only**, so
+set `"type": "module"` in `package.json`, then run with `npx tsx quickstart.ts` (Node ≥ 20).
+
+> ⚠️ **Do not "correct" the two import lines below from memory or from whatever you installed
+> — transcribe them verbatim.** Both are version-sensitive and both are verified working:
+> 1. **The client** is `SuiJsonRpcClient` from `@mysten/sui/jsonRpc` (SDK v2). The v1 name
+>    `SuiClient` from `@mysten/sui/client` is **gone** — in 2.17.0 `@mysten/sui/client`
+>    exports `BaseClient`/`CoreClient` (no `SuiClient`), so the old import throws
+>    *"does not provide an export named 'SuiClient'"*. Verified against `@mysten/sui@2.17.0`.
+> 2. **The wordlist** subpath is `@scure/bip39/wordlists/english.js` (**with** `.js`) — that
+>    is the export shape in `@scure/bip39@2.2.0`, which the `npm i` above pins. Older versions
+>    used `.../english` (no `.js`); if you install a different version and "fix" the path to
+>    match, you reintroduce skew. Keep the pin and the `.js` together. Everything else is
+>    identical to v1.
+
+```ts
+// npm i @mysten/sui @scure/bip39@2.2.0   ← SDK v2; bip39 pinned. package.json needs "type": "module".
+import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';   // v2 client — DO NOT change to SuiClient/'@mysten/sui/client' (v1, removed)
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Transaction } from '@mysten/sui/transactions';
+import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
+import { generateMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english.js';   // keep the .js — matches the pinned @scure/bip39@2.2.0 (older versions drop it)
+import { writeFileSync, readFileSync, existsSync } from 'fs';
+
+// ── testnet coordinates (immutable; verify them — see Trust & Safety) ──
+const RPC          = 'https://fullnode.testnet.sui.io:443';
+const PKG          = '0x61723e7205f9841ebb4e6f73096f34840a78bcfae73f631d44370e75f1acc0f5'; // usufruct v1.4.1
+const FEE_REF      = '0xef2556a80dbaed3e2ee9dbf20181f18b5e668193ee9a0a73d883e40b1928fc70'; // ProtocolFeeRef (immutable)
+const DUMMY_PKG    = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a'; // test asset
+const CLOCK        = '0x6';
+const ASSET_T      = `${DUMMY_PKG}::dummy_asset::DummyAsset`;
+const COIN_T       = '0x2::sui::SUI';
+const TYPE_ARGS    = [ASSET_T, COIN_T];
+
+const client = new SuiJsonRpcClient({ url: RPC });
+
+// Build a sane default PolicyEnsemble inline (see "Building a PolicyEnsemble").
+function buildEnsemble(tx: Transaction) {
+  const price    = (mist: bigint) => tx.moveCall({ target: `${PKG}::ensemble::price`,    arguments: [tx.pure.u64(mist)] });
+  const duration = (ms:   bigint) => tx.moveCall({ target: `${PKG}::ensemble::duration`, arguments: [tx.pure.u64(ms)]   });
+  const restPrice      = tx.moveCall({ target: `${PKG}::ensemble::new_rest_price_fixed`,      arguments: [price(1_000n)]    });
+  const tenureDuration = tx.moveCall({ target: `${PKG}::ensemble::new_tenure_duration_fixed`, arguments: [duration(60_000n)] });
+  const tenureExtend   = tx.moveCall({ target: `${PKG}::ensemble::new_tenure_multi` });
+  const handover       = tx.moveCall({ target: `${PKG}::ensemble::new_handover_off` });
+  const auctionWindow  = tx.moveCall({ target: `${PKG}::ensemble::new_descent_off` });
+  const creditShape    = tx.moveCall({ target: `${PKG}::ensemble::new_linear` });
+  const auctionShape   = tx.moveCall({ target: `${PKG}::ensemble::new_linear` });
+  const escalation     = tx.moveCall({ target: `${PKG}::ensemble::new_price_fixed_delta`,     arguments: [price(1n)]        });
+  return tx.moveCall({
+    target: `${PKG}::ensemble::new_ensemble`,
+    arguments: [restPrice, tenureDuration, tenureExtend, handover, auctionWindow, creditShape, auctionShape, escalation],
+  });
+}
+
+async function send(tx: Transaction, signer: Ed25519Keypair) {
+  tx.setGasBudget(200_000_000n);
+  const res = await client.signAndExecuteTransaction({
+    transaction: tx, signer, options: { showEffects: true, showObjectChanges: true },
+  });
+  await client.waitForTransaction({ digest: res.digest });
+  if (res.effects?.status.status !== 'success') throw new Error(`tx failed: ${res.effects?.status.error}`);
+  return res;
+}
+const createdId = (res: any, typeFragment: string): string =>
+  (res.objectChanges ?? []).find((c: any) => c.type === 'created' && c.objectType?.includes(typeFragment)).objectId;
+
+// Persist the throwaway key + ids so later steps of the tour reuse the SAME escrow
+// (a generated keypair lives only in memory — lose it and the escrow is stranded).
+const FILE = '.usufruct-demo.json';
+const saveSession = (s: object) => writeFileSync(FILE, JSON.stringify(s, null, 2));
+const loadSession = () => existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : null;
+
+// Funding is a USER action — the programmatic faucet is heavily rate-limited and usually
+// refuses, so in practice the user requests testnet SUI in the browser. This gate does NOT
+// block-poll: if the address has no funds it tries the API once as a courtesy, prints the
+// faucet link, and EXITS. That hands control back to you (the agent): relay the link to the
+// user, wait for them to fund, then re-run this same script — it resumes from the saved
+// session and continues straight to integrate.
+async function fundGateOrExit(addr: string) {
+  const bal = BigInt((await client.getBalance({ owner: addr })).totalBalance);
+  if (bal > 0n) { console.log(`  funded: ${Number(bal) / 1e9} SUI ✓`); return; }
+  try { await requestSuiFromFaucetV2({ host: getFaucetHost('testnet'), recipient: addr }); } catch {}
+  console.log('\n  ⛽ NEEDS FUNDING — hand this to the user, then re-run me once they confirm:');
+  console.log(`     https://faucet.sui.io/?network=testnet&address=${addr}\n`);
+  process.exit(0);   // clean exit — NOT an error; the agent returns control to the user here
+}
+
+async function main() {
+  // 1. throwaway testnet wallet. Resume from the saved session if present, else generate a
+  //    fresh 12-word phrase and persist it IMMEDIATELY — so the address survives the funding
+  //    gate below and a re-run reuses the same (now-funded) wallet. Never the user's keys.
+  let s = loadSession();
+  if (!s) {
+    const mnemonic = generateMnemonic(wordlist, 128);   // 12 words — throwaway, testnet only
+    const addr = Ed25519Keypair.deriveKeypair(mnemonic).getPublicKey().toSuiAddress();
+    s = { mnemonic, addr };
+    saveSession(s);
+    console.log('Ephemeral testnet address:', addr);
+    console.log('Recovery phrase (12 words — throwaway; import into the Slush wallet, set to');
+    console.log('testnet, to watch your funds and the assets you create):\n   ', mnemonic, '\n');
+  }
+  const me   = Ed25519Keypair.deriveKeypair(s.mnemonic);
+  const addr = s.addr;
+
+  // funding gate — if unfunded this prints the faucet link and EXITS (control back to you,
+  // the agent: ask the user to fund, then re-run). If funded, it returns and we continue.
+  await fundGateOrExit(addr);
+
+  // already integrated on a prior run? resume — skip straight to the proof read.
+  if (s.escrowId) {
+    console.log('resuming — escrow already integrated:', s.escrowId);
+    const occupied = await viewBool(addr, `${PKG}::escrow::is_occupied`, s.escrowId);
+    console.log('is_occupied =', occupied, '✅');
+    return;
+  }
+
+  // 2. integrate: mint a test asset and place it under usufruct
+  const t1 = new Transaction();
+  t1.setSender(addr);
+  const asset    = t1.moveCall({ target: `${DUMMY_PKG}::dummy_asset::mint` });
+  const ensemble = buildEnsemble(t1);
+  const retireC  = t1.moveCall({ target: `${PKG}::ensemble::new_retire_commitment_immediate` });
+  const ensembleC= t1.moveCall({ target: `${PKG}::ensemble::new_ensemble_commitment_immediate` });
+  const [govCap, inbox] = t1.moveCall({
+    target: `${PKG}::escrow::integrate`,
+    typeArguments: TYPE_ARGS,
+    arguments: [asset, ensemble, retireC, ensembleC, t1.object(FEE_REF), t1.object(CLOCK)],
+  });
+  t1.transferObjects([govCap, inbox], addr); // the returned cap+inbox are yours — keep them
+  const r1 = await send(t1, me);
+  const escrowId         = createdId(r1, '::escrow::Escrow');
+  const governanceCapId  = createdId(r1, '::governance_cap::GovernanceCap');
+  const earningsInboxId  = createdId(r1, '::earnings_inbox::EarningsInbox');
+  console.log('integrated escrow:', escrowId, '| digest:', r1.digest);
+
+  // 3. rent it (you play the usufructuary too)
+  const t2 = new Transaction();
+  t2.setSender(addr);
+  const [payment] = t2.splitCoins(t2.gas, [t2.pure.u64(1_000n)]); // stake = rest price
+  const tenures   = t2.moveCall({ target: `${PKG}::ensemble::tenures`, arguments: [t2.pure.u64(1n)] });
+  const usufructCap = t2.moveCall({
+    target: `${PKG}::escrow::rent`,
+    typeArguments: TYPE_ARGS,
+    arguments: [t2.object(escrowId), payment, tenures, t2.object(CLOCK)],
+  });
+  t2.transferObjects([usufructCap], addr);
+  const r2 = await send(t2, me);
+  const usufructCapId = createdId(r2, '::usufruct_cap::UsufructCap');
+  console.log('rented | digest:', r2.digest);
+
+  // 4. read state back (read-only, no gas) — proof it worked
+  const occupied = await viewBool(addr, `${PKG}::escrow::is_occupied`, escrowId);
+  console.log('is_occupied =', occupied, '✅');
+
+  // 5. persist the throwaway key + ids so the rest of the tour reuses THIS escrow.
+  // Later steps do: const s = loadSession(); const me = Ed25519Keypair.deriveKeypair(s.mnemonic);
+  saveSession({ mnemonic: s.mnemonic, addr, escrowId, governanceCapId, earningsInboxId, usufructCapId });
+  console.log(`session saved to ${FILE} — later steps reload it (delete it when done).`);
+}
+
+// devInspect: call a read-only view and decode the first bool return value
+async function viewBool(sender: string, target: string, escrowId: string): Promise<boolean> {
+  const tx = new Transaction();
+  tx.moveCall({ target, typeArguments: TYPE_ARGS, arguments: [tx.object(escrowId)] });
+  const res = await client.devInspectTransactionBlock({ transactionBlock: tx, sender });
+  const bytes = res.results?.[0]?.returnValues?.[0]?.[0];
+  return Array.isArray(bytes) ? bytes[0] === 1 : false;
+}
+
+main().catch(console.error);
+```
+
+Once that prints `is_occupied = true ✅` you have driven the live protocol. Everything
+below is the full surface to go further (borrow, reclaim, collect income, fleets).
+
+---
+
+## Coordinates (testnet)
+
+| Thing | Value |
+|---|---|
+| Network / chain id | Sui **testnet** / `4c78adac` |
+| RPC | `https://fullnode.testnet.sui.io:443` |
+| Faucet | `getFaucetHost('testnet')` (or `https://faucet.testnet.sui.io/v2/gas`) |
+| usufruct package (`PKG`) | `0x61723e7205f9841ebb4e6f73096f34840a78bcfae73f631d44370e75f1acc0f5` |
+| `ProtocolFeeRef` (immutable; `integrate` arg) | `0xef2556a80dbaed3e2ee9dbf20181f18b5e668193ee9a0a73d883e40b1928fc70` |
+| `dummy_asset` package (test `key+store`) | `0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a` |
+| `Clock` | `0x6` |
+| Coin type used in examples | `0x2::sui::SUI` |
+| `dummy_coin` package (free-mint test coin) | `0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96` |
+| `dummy_coin` `TreasuryCap` (shared; `mint` arg) | `0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc` |
+| Native USDC on testnet | `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` |
+
+Every escrow operation is generic over `<Asset, CoinType>`. In every example
+`typeArguments = [ASSET_T, COIN_T]` where `ASSET_T` is the integrated object's full
+type (e.g. `${DUMMY_PKG}::dummy_asset::DummyAsset`) and `COIN_T = 0x2::sui::SUI`.
+
+**`COIN_T` is the user's choice, fixed once per escrow at `integrate`.** SUI is the default
+here only because it is the one coin the faucet dispenses for free — the protocol does **not**
+privilege it. Rent can be denominated in **any** `Coin<C>` on testnet: bridged `USDC`/`USDT`/
+`ETH`/`wBTC` (via Sui Bridge), or a custom coin the user deploys. The only practical
+difference is sourcing the rent payment: with SUI you split it from the gas coin
+(`splitCoins(tx.gas, …)`); with any other coin the renter must already **hold a `Coin<C>`**,
+which you split from instead (see `rent` → "Paying in a non-SUI coin"). When the user
+integrates their own asset, **ask which coin they want rent priced in** before building the
+`integrate` call.
+
+**Execution scaffold** (used by every snippet): build a `Transaction`, `setSender`,
+`setGasBudget(200_000_000n)`, then
+`client.signAndExecuteTransaction({ transaction, signer, options: { showEffects: true, showObjectChanges: true } })`
+followed by `client.waitForTransaction({ digest })`. Read created object ids from
+`res.objectChanges` (filter `type === 'created'` and match the `objectType`).
+
+**SuiScan (testnet explorer).** Share these as you demo so the user can *watch* every step
+land on-chain — the **transaction** view shows effects, events, and created objects:
+- transaction: `https://suiscan.xyz/testnet/tx/<digest>`
+- object:      `https://suiscan.xyz/testnet/object/<id>`   (escrow, caps, inbox, Coupon, …)
+- account:     `https://suiscan.xyz/testnet/account/<address>`
+
+---
+
+## Object model
+
+| Object | Ownership | Where it comes from |
+|---|---|---|
+| `Escrow<Asset, CoinType>` | **shared** | created by `integrate`; the rental's state machine |
+| `GovernanceCap` | **owned** (governor) | returned by `integrate`; governs N escrows (a portfolio). Pure governance token — it does **not** list its escrows on-chain |
+| `EarningsInbox` | **owned** (governor) | returned by `integrate`; the sink the governor's income settles into |
+| `UsufructCap` | **owned** (renter) | returned by `rent`; proves the active tenancy |
+| `EarningsMessage` / `FeeMessage` | **owned by the inbox object** (transfer-to-object) | minted at settlement; drained by collect |
+| `AssetReceipt` | **hot potato** (no abilities) | returned by `borrow_asset`; must be consumed by `return_asset` in the same PTB |
+
+`integrate` returns a **tuple `(GovernanceCap, EarningsInbox)`** — destructure and
+`transferObjects([govCap, inbox], you)`. Keep both: the cap governs, the inbox earns.
+
+**Capturing object ids from a result.** After `send`, read created ids from
+`res.objectChanges` by matching the on-chain `objectType` fragment (note: lower-snake
+module name, not the CamelCase struct name). The `createdId(res, fragment)` helper in
+the Quickstart does exactly this. The fragments you need:
+
+| Created by | `objectType` fragment to match |
+|---|---|
+| `integrate` → the shared escrow | `::escrow::Escrow` |
+| `integrate` → governance cap | `::governance_cap::GovernanceCap` |
+| `integrate` → earnings inbox | `::earnings_inbox::EarningsInbox` |
+| `rent` → renter cap | `::usufruct_cap::UsufructCap` |
+
+---
+
+## The one rule of mechanics — lazy evaluation
+
+Almost every state-changing call runs `apply_pending_transition_states` **internally
+first** (rent, borrow, retire, update, extend, claim, …). Settlement of an expired
+tenure or handover "floats" to whoever first touches the escrow after the boundary.
+
+Consequences for you:
+- A **view read can lag the truth.** Before trusting a stale view, call
+  `apply_pending_transition_states(escrow, clock)` (or any mutator) to settle first.
+- `retire` then `claim_asset` must be **two separate transactions** — `claim` receives
+  the escrow by value at its chain-committed state; chaining them in one PTB passes the
+  pre-retire state and aborts with `ENotRetired`. (`claim`'s internal apply finalizes
+  `Retiring → Retired`.)
+- Only exceptions that do **not** self-apply: `integrate` (fresh escrow), `return_asset`
+  (gated by the linear receipt), and pure views.
+
+---
+
+## Entrypoints
+
+Each is `tx.moveCall({ target, typeArguments: TYPE_ARGS, arguments: [...] })`. Object
+roles: **shared** = the `Escrow`; **owned** = a cap/inbox you hold; **immutable** =
+`FEE_REF`/`CLOCK`. All signatures are transcribed verbatim from the verified profiling
+harness (`profiling/builders.ts`, `profiling/a_atomic/*`, `profiling/b_flows/*`).
+
+### `escrow::integrate` → `(GovernanceCap, EarningsInbox)`
+Place a fresh `key+store` asset under usufruct, opening a **new portfolio**.
+- args: `asset` (the object, by value), `ensemble` (PolicyEnsemble), `retire_commitment`,
+  `ensemble_commitment`, `fee_ref` = `tx.object(FEE_REF)`, `clock` = `tx.object(CLOCK)`.
+- returns `[GovernanceCap, EarningsInbox]` → transfer both to yourself.
+- creates the shared `Escrow`. See Quickstart for the full call.
+
+> **Bring your own asset — and your own coin.** The Quickstart mints a `dummy_asset` and
+> prices rent in SUI for zero friction, but both are free choices fixed here at `integrate`:
+> - **Asset:** if the user has their own `key+store` object on **testnet**, ask for its object
+>   id and full type, set `ASSET_T` to that type, and pass `tx.object(theirObjectId)` as
+>   `asset` instead of the `dummy_asset::mint` call. Confirm it is on testnet first.
+> - **Coin:** ask which coin they want rent priced in. Default SUI; for any other `Coin<C>`
+>   (bridged USDC/USDT, a custom coin) set `COIN_T` to that type. Remember renting then
+>   requires the renter to hold a `Coin<COIN_T>` (see `rent` → "Paying in a non-SUI coin").
+>
+> The protocol privileges neither — it stores any `key+store` asset opaquely and accepts any
+> coin as rent.
+
+### `escrow::integrate_into_portfolio` → `()`
+Add another escrow to an **existing** cap+inbox pair (build a fleet). Reuses your
+`GovernanceCap` and `EarningsInbox` (passed by reference) — mints no new pair.
+- args: `asset`, `ensemble`, `retire_commitment`, `ensemble_commitment`,
+  `tx.object(FEE_REF)`, `tx.object(governanceCapId)`, `tx.object(earningsInboxId)`,
+  `tx.object(CLOCK)`.
+
+### `escrow::rent` → `UsufructCap`
+Lease the escrow for N tenures; pay a stake **in the escrow's `COIN_T`**.
+```ts
+const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(1_000n)]); // >= rest price (here 1000 MIST)
+const tenures   = tx.moveCall({ target: `${PKG}::ensemble::tenures`, arguments: [tx.pure.u64(1n)] });
+const usufructCap = tx.moveCall({
+  target: `${PKG}::escrow::rent`, typeArguments: TYPE_ARGS,
+  arguments: [tx.object(escrowId), payment, tenures, tx.object(CLOCK)],
+});
+tx.transferObjects([usufructCap], addr);
+const res = await send(tx, me);
+const usufructCapId = createdId(res, '::usufruct_cap::UsufructCap'); // you need this to borrow
+```
+> **Paying in a non-SUI coin.** The `splitCoins(tx.gas, …)` line above works **only** when
+> `COIN_T` is SUI (the gas coin). For any other `COIN_T` the renter must hold a `Coin<COIN_T>`
+> — and since **the Sui faucet only dispenses SUI**, getting one of these *is* the question.
+> Three ways, by friction (gas is always paid in SUI regardless):
+>
+> **a) `dummy_coin` — free permissionless mint (zero friction, fully autonomous).** A test coin
+> we deployed whose `TreasuryCap` is shared, so anyone can mint any amount with no faucet, rate
+> limit, or human. Set `COIN_T = ${DUMMY_COIN_PKG}::dummy_coin::DUMMY_COIN` at `integrate`, then
+> mint the stake **inline in the rent PTB**:
+> ```ts
+> const DUMMY_COIN_PKG = '0x97fb7c77162e3edf6a44815ec9eb29b69f9a43747dfb1c1019a7fc5501e2ad96';
+> const DUMMY_COIN_TREASURY = '0xccee2bc2227913f441c7544892cf5d220880cbc0c55be8733b4b6777def976bc'; // shared
+> const payment = tx.moveCall({ target: `${DUMMY_COIN_PKG}::dummy_coin::mint`,
+>   arguments: [tx.object(DUMMY_COIN_TREASURY), tx.pure.u64(1_000n)] });   // Coin<DUMMY_COIN>
+> ```
+> **b) USDC — Circle testnet faucet (a recognizable real stablecoin).** Permissionless web
+> faucet at `https://faucet.circle.com/` (~20 USDC / 2h per address); same hand-back as SUI —
+> show the user the link, then poll `getBalance({ owner: addr, coinType: COIN_T })` until it
+> arrives. `COIN_T = 0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC`.
+> Then source the stake from the owned coin:
+> ```ts
+> const coins = await client.getCoins({ owner: addr, coinType: COIN_T });
+> if (!coins.data.length) throw new Error(`renter holds no ${COIN_T} — claim at faucet.circle.com`);
+> const [payment] = tx.splitCoins(tx.object(coins.data[0].coinObjectId), [tx.pure.u64(1_000n)]);
+> ```
+> **c) Bridged ETH/wBTC/USDT (advanced).** Bring them from Ethereum Sepolia via Sui Bridge —
+> needs Sepolia funds and a bridge tx; overkill for a demo, listed for completeness. Sourced
+> like (b) once held.
+
+`rent(tenures(N))` is O(1) in N — locking 100 periods costs the same as 1.
+
+### `escrow::borrow_asset` + `escrow::return_asset`
+Borrow the rented asset, **use it**, and give it back — all **in one PTB** (hot-potato
+pair). Needs the `usufructCapId` captured from `rent` above. Between borrow and return
+you may pass the asset to any function that accepts it; the test asset ships a tiny
+"ecosystem" — `dummy_asset::use_asset` bumps its usage counter and mints you a `Coupon`,
+i.e. **value extracted from *using* the asset, without owning it** (the essence of the
+"use" right). The asset is returned intact, with its `uses` incremented.
+```ts
+const [borrowed, receipt] = tx.moveCall({
+  target: `${PKG}::escrow::borrow_asset`, typeArguments: TYPE_ARGS,
+  arguments: [tx.object(escrowId), tx.object(usufructCapId), tx.object(CLOCK)],
+});
+// use it while you hold it → mint a Coupon (ctx is auto-injected by the SDK)
+const coupon = tx.moveCall({
+  target: `${DUMMY_PKG}::dummy_asset::use_asset`,
+  arguments: [borrowed],          // passed &mut here, moved into return_asset below
+});
+tx.transferObjects([coupon], addr); // the renter keeps the Coupon
+tx.moveCall({
+  target: `${PKG}::escrow::return_asset`, typeArguments: TYPE_ARGS,
+  arguments: [tx.object(escrowId), borrowed, receipt],
+});
+```
+`borrow_asset` returns `[Asset, AssetReceipt]`; `return_asset` consumes both. The
+receipt has no abilities, so it cannot escape the transaction — you **must** return the
+asset. (Skip the `use_asset` line for a bare borrow/return; with your own integrated
+asset, call whatever functions *its* protocol exposes.)
+
+### `escrow::apply_pending_transition_states` → `()`
+Settle any due transition (tenure expiry, handover, auction). Signer: anyone.
+- args: `tx.object(escrowId)`, `tx.object(CLOCK)`.
+
+### `escrow::retire` → `()`  *(governor)*
+Signal/begin retirement. Needs the `GovernanceCap`.
+- args: `tx.object(escrowId)`, `tx.object(governanceCapId)`, `tx.object(CLOCK)`.
+
+### `escrow::claim_asset` → `Asset`  *(governor; separate tx after retire)*
+Destroy a retired escrow and get the asset back.
+- args: `tx.object(escrowId)`, `tx.object(governanceCapId)`, `tx.object(CLOCK)`.
+- returns the `Asset` → `tx.transferObjects([asset], addr)`. Escrow must be Retired
+  (retire first, in a prior tx; claim's internal apply finalizes it).
+
+### `escrow::update_ensemble` → `()`  *(governor)*
+Replace the policy on an Idle escrow.
+- args: `tx.object(escrowId)`, `tx.object(governanceCapId)`, `new_ensemble` (PolicyEnsemble), `tx.object(CLOCK)`.
+
+### `escrow::extend_retire_commitment` / `escrow::extend_ensemble_commitment` → `()`  *(governor)*
+Extend a permanence/terms-freeze floor.
+- args: `tx.object(escrowId)`, `tx.object(governanceCapId)`, `new_policy`
+  (`ensemble::new_retire_commitment_deferred(duration(ms))` or
+  `ensemble::new_ensemble_commitment_deferred(duration(ms))`), `tx.object(CLOCK)`.
+
+### `escrow::update_usufructuary_refund_address` → `()`  *(renter)*
+Redirect where the active seat's stake refund goes.
+- args: `tx.object(escrowId)`, `tx.object(usufructCapId)`, `new_address`
+  (`tx.moveCall({ target: `${PKG}::refund::refund_address`, arguments: [tx.pure.address(addr)] })`),
+  `tx.object(CLOCK)`.
+
+### `escrow::burn_stale_usufruct_cap` → `()`
+Burn a `UsufructCap` that was superseded by a handover. Signer: anyone.
+- args: `tx.object(escrowId)`, `tx.object(staleCapId)`, `tx.object(CLOCK)`.
+
+### `cap::renounce_governance` → `()`  *(governor, irreversible)*
+Burn the `GovernanceCap` → the escrow(s) become **ungovernable forever** (the governor
+forfeits the asset but keeps the income already settled). Maximum commitment signal.
+- args: `tx.object(governanceCapId)`.
+
+### `cap::burn_usufruct_cap` → `()`
+Destroy a `UsufructCap` (no escrow validation). args: `tx.object(usufructCapId)`.
+
+### `earnings::collect_earnings_messages<CoinType>` → `Coin<CoinType>`  *(governor income)*
+Drain the governor's income from the `EarningsInbox`. Income arrives as owned
+`EarningsMessage` objects transferred **to the inbox object**; you collect by passing
+`Receiving` tickets. **Messages only exist after a settlement** — a tenure expiry or
+handover processed by `apply_pending_transition_states`. A freshly-rented escrow's
+inbox is empty until its tenure expires (use a short tenure, e.g. `duration(10_000n)`,
+to produce one quickly). Query the inbox's owned messages, then batch (≤500 per PTB):
+```ts
+// 1. find the messages sitting in the inbox
+async function inboxMessageRefs(inboxId: string, typeFragment: string, limit: number) {
+  const refs: { objectId: string; version: string; digest: string }[] = [];
+  let cursor: string | null | undefined;
+  while (refs.length < limit) {
+    const page = await client.getOwnedObjects({ owner: inboxId, cursor, options: { showType: true }, limit: 50 });
+    for (const o of page.data) {
+      if ((o.data?.type ?? '').includes(typeFragment))
+        refs.push({ objectId: o.data!.objectId, version: o.data!.version, digest: o.data!.digest });
+    }
+    if (!page.hasNextPage || !page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  return refs;
+}
+// 2. collect
+const refs = await inboxMessageRefs(earningsInboxId, 'earnings_message::EarningsMessage', 500);
+const tx = new Transaction();
+tx.setSender(addr);
+const tickets = refs.map(r => tx.receivingRef(r));
+const vec = tx.makeMoveVec({ type: `0x2::transfer::Receiving<${PKG}::earnings_message::EarningsMessage<${COIN_T}>>`, elements: tickets });
+const coin = tx.moveCall({
+  target: `${PKG}::earnings::collect_earnings_messages`, typeArguments: [COIN_T],
+  arguments: [tx.object(earningsInboxId), vec],
+});
+tx.transferObjects([coin], addr);
+```
+**Reading the amount.** `collect` returns one merged `Coin`; to quote the income figure,
+request events on the tx (`options: { showEvents: true }`) and read the
+`${PKG}::earnings_message::EarningsMessageCollected` events — each carries `amount` (MIST),
+`escrow_id`, `collector`. The settlement that produced each message emits
+`${PKG}::earnings_message::EarningsMessagePosted` (same `amount`); the protocol's 10% cut
+emits `${PKG}::fee_message::FeeMessagePosted`. So a 1000-MIST tenure settles to
+`EarningsMessagePosted.amount = 900` for the governor and `FeeMessagePosted.amount = 100`
+to the protocol.
+
+Collection is rebate-positive at scale (≈ −1.9M MIST/msg) **and** returns the income
+coin. Same shape works for `fee_inbox::collect_fee_messages` (protocol operator only;
+the `ProtocolFeeInbox` is deployer-owned).
+
+---
+
+## Building a `PolicyEnsemble`
+
+`integrate` needs an `ensemble` plus a `retire_commitment` and an `ensemble_commitment`.
+Build the ensemble by composing eight policy constructors into `new_ensemble(...)`.
+Value helpers: `ensemble::price(u64) → Price`, `ensemble::duration(u64) → Duration`,
+`ensemble::tenures(u64) → Tenures`. The Quickstart's `buildEnsemble` is a sane default;
+swap any policy below.
+
+| Slot | Controls | Constructors |
+|---|---|---|
+| rest price | the resting (floor) rent — the stake to start a tenure | `new_rest_price_fixed(price)` |
+| tenure duration | length of one tenure (rental period) | `new_tenure_duration_fixed(duration)` |
+| tenure extend | may a renter lock several tenures in one `rent`? | `new_tenure_single()` (one) · `new_tenure_multi()` (N) |
+| handover | how a new bidder displaces the active renter | `new_handover_off()` (none) · `new_handover_fixed(duration)` (countdown) · `new_handover_full_tenure()` (waits out the tenure) |
+| auction window | the descending-price (Dutch) window once in demand | `new_descent_off()` (none) · `new_descent_fixed(duration)` |
+| credit shape | the curve the renter's usage credit accrues along | `new_linear()` · `new_smoothstep()` · `new_logistic()` · `new_power_law(num: u8, den: u8)` · `new_exponential(abs: u8, neg: bool)` |
+| auction shape | the curve the price descends along in the window | (same set as credit shape) |
+| price escalation | how the rest price grows each cycle | `new_price_fixed_delta(price)` (+constant) · `new_price_compound_delta(bps, price)` (+%) |
+
+`new_ensemble(rest_price, tenure_duration, tenure_extend, handover, auction_window,
+credit_shape, auction_shape, price_escalation)` — exactly that order.
+
+Commitments (passed to `integrate` alongside the ensemble):
+- `new_retire_commitment_immediate()` / `new_retire_commitment_deferred(duration)`
+- `new_ensemble_commitment_immediate()` / `new_ensemble_commitment_deferred(duration)`
+
+> Tip: if you want to run the full lifecycle (rent → wait → reclaim) quickly, set the
+> tenure duration short (e.g. `duration(10_000n)` = 10s) so the tenure expires fast.
+
+---
+
+## Views (read-only, via `devInspect` — no gas, no signing)
+
+Call any getter with `client.devInspectTransactionBlock` and decode the first
+`returnValue` (raw BCS bytes). **Decoding depends on the return type — get this right
+or you read garbage:**
+
+```ts
+async function viewBytes(sender: string, fn: string, escrowId: string, extra: any[] = []) {
+  const tx = new Transaction();
+  tx.moveCall({ target: `${PKG}::escrow::${fn}`, typeArguments: TYPE_ARGS, arguments: [tx.object(escrowId), ...extra] });
+  const res = await client.devInspectTransactionBlock({ transactionBlock: tx, sender });
+  return res.results?.[0]?.returnValues?.[0]?.[0] as number[] | undefined; // raw BCS bytes
+}
+const decodeBool   = (b?: number[]) => Array.isArray(b) && b[0] === 1;
+const decodeU64    = (b?: number[]) => Array.isArray(b) ? Buffer.from(b.slice(0, 8)).readBigUInt64LE(0) : null;
+// Option<T>: byte 0 is the Some-tag (0 = None). The payload starts at byte 1.
+const decodeOptU64 = (b?: number[]) => (!Array.isArray(b) || b[0] === 0) ? null : Buffer.from(b.slice(1, 9)).readBigUInt64LE(0);
+const decodeOptAddr= (b?: number[]) => (!Array.isArray(b) || b[0] === 0) ? null : '0x' + Buffer.from(b.slice(1, 33)).toString('hex');
+```
+
+**Which decoder for which getter** (the trap is the leading Option tag byte):
+- **Plain `bool`** → `decodeBool`: every `is_*` predicate and every `*_is_*` policy predicate.
+- **Plain `u64`** → `decodeU64` (no tag byte): `integrated_at_ms`, `tenure_ceiling_ms`,
+  `retire_commitment_unlocks_at_ms`.
+- **`Option<u64>`** → `decodeOptU64` (strip byte 0): all `active_*`/`pending_*`/`next_ensemble_*`
+  numeric getters, plus `tenure_expiry_ms`, `handover_expiry_ms`. `None` when not applicable
+  (e.g. an Idle escrow has no active seat).
+- **`Option<address>`** → `decodeOptAddr`: `active_usufructuary_addr`, `pending_usufructuary_addr`.
+- **`ID`/`String`** → decode with `@mysten/sui/bcs` (`bcs.Address` / `bcs.string()`).
+
+- **State**: `is_idle`, `is_occupied`, `is_demand`, `is_live`, `is_rented`, `is_retired`,
+  `is_retiring`, `is_descending`.
+- **Identity / type**: `governance_cap_id`, `asset_id`, `asset_type_name`, `coin_type_name`.
+- **Active seat**: `active_usufructuary_addr`, `active_usufruct_cap_id`,
+  `active_stake_balance_mist`, `active_usufructuary_committed_tenures`,
+  `active_ensemble_floor_price_mist`, `active_ensemble_ceiling_ms`,
+  `active_usufructuary_time_remaining_ms(escrow, now_ms)` (pass `tx.pure.u64(now)` as extra).
+- **Pending seat** (after a handover bid): `pending_usufructuary_addr`,
+  `pending_usufruct_cap_id`, `pending_stake_balance_mist`, …
+- **Timeline**: `tenure_expiry_ms`, `handover_expiry_ms`, `integrated_at_ms`,
+  `retire_commitment_unlocks_at_ms`, `tenure_ceiling_ms`.
+- **Policy predicates**: `handover_is_off/_fixed/_full_tenure`, `auction_window_is_off/_fixed`,
+  `retire_commitment_is_immediate/_deferred`.
+
+Many return `Option<...>` (e.g. `active_*` is `None` when the escrow is Idle).
+
+---
+
+## Events — the protocol's index
+
+The chain stores **no registry**: a `GovernanceCap` does not list its escrows, and
+escrows are independent shared objects. The relationships live in the **event log**.
+Replay `AssetIntegrated` to reconstruct the full governance topology (which cap governs
+which fleet, which inbox each escrow feeds) — no on-chain read needed.
+
+```ts
+async function integratedEscrows(governorAddr: string) {
+  const pairs: { escrowId: string; capId: string; inboxId: string }[] = [];
+  let cursor: any = null;
+  do {
+    const page = await client.queryEvents({
+      query: { MoveEventType: `${PKG}::asset_state::AssetIntegrated` }, cursor, limit: 50,
+    });
+    for (const e of page.data) {
+      const j = e.parsedJson as any;
+      if (j?.governor_address !== governorAddr) continue;
+      pairs.push({ escrowId: j.escrow_id, capId: j.governance_cap_id, inboxId: j.earnings_inbox_id });
+    }
+    cursor = page.hasNextPage ? page.nextCursor : null;
+  } while (cursor);
+  return pairs;
+}
+```
+
+Every event carries `escrow_id` (root key). Dimension keys: `governance_cap_id`
+(cap → its fleet), `usufruct_cap_id` (one tenancy's full history), `earnings_inbox_id`
+(post/collect history). Uncollected income =
+`SUM(EarningsMessagePosted.amount) − SUM(EarningsMessageCollected.amount)` per inbox —
+answerable purely from events. Full catalogue + the star-schema diagram: see
+`EVENTS.md` in the repo.
+
+---
+
+## Canonical flows
+
+- **Solo lifecycle** (the Quickstart, continued): `integrate → rent → borrow_asset +
+  return_asset (one PTB) → retire → wait for tenure expiry → apply_pending_transition_states
+  → claim_asset`. See `profiling/b_flows/02_asset_lifecycle.ts`.
+- **Collect governor income**: after settlements, drain the inbox (see
+  `earnings::collect_earnings_messages` above).
+- **Handover** and **Fleet** run the lifecycle across **multiple wallets** — see
+  **Scenarios** below for the runnable, role-separated versions.
+
+---
+
+## Scenarios — the three rights across real wallets (act 2)
+
+The Quickstart runs the whole lifecycle with **one** keypair playing every role — perfect for a
+first win, but it can only *simulate* the split of rights. These scenarios run it across **three
+distinct wallets** — a governor `G` and two usufructuaries `U1`, `U2` — so the separation is
+real: one address earns the income, another uses the asset, a third owns the governance. Offer
+them after the first win, when the user asks *"what is this actually for?"*.
+
+**Funding stays one faucet step.** Generate three keypairs, but fund only `G` through the faucet
+hand-back (exactly as the Quickstart does); then `G` distributes gas to `U1` and `U2`. One human
+action, not three. (Reuses `fundGateOrExit` / `send` from the Quickstart.)
+
+```ts
+// ── 3-actor setup (shared by both scenarios) ──
+const mk = () => Ed25519Keypair.deriveKeypair(generateMnemonic(wordlist, 128));
+const G = mk(), U1 = mk(), U2 = mk();
+const addrOf = (k: Ed25519Keypair) => k.getPublicKey().toSuiAddress();
+console.log('G :', addrOf(G), '\nU1:', addrOf(U1), '\nU2:', addrOf(U2));
+
+await fundGateOrExit(addrOf(G));      // prints the faucet link and EXITS if unfunded — hand it to the user, re-run when funded
+const tx = new Transaction();
+tx.setSender(addrOf(G));
+const [g1, g2] = tx.splitCoins(tx.gas, [tx.pure.u64(100_000_000n), tx.pure.u64(100_000_000n)]); // 0.1 SUI each
+tx.transferObjects([g1], addrOf(U1));
+tx.transferObjects([g2], addrOf(U2));
+await send(tx, G);
+// G, U1, U2 now each hold gas; each splits its own rent stake from its own gas coin.
+// (Scenarios use SUI rent for simplicity; they compose with any COIN_T — see "Paying in a non-SUI coin".)
+```
+
+### Scenario A — Handover: U2 outbids U1 mid-tenure
+Demonstrates **use** (U1, then U2), **income** (G collects from both), **ownership** (G reclaims),
+and the rotation mechanic — each in a different address. New vs the solo flow:
+`new_handover_full_tenure` and `burn_stale_usufruct_cap`.
+
+1. **G** `integrate` — same call as the Quickstart but swap `new_handover_off` for
+   `new_handover_full_tenure` in `buildEnsemble` (see "Building a PolicyEnsemble"). Keep
+   `escrowId`, `governanceCapId`, `earningsInboxId`.
+2. **U1** `rent` (stake = rest price) → holds `cap1`; may `borrow_asset`/`use_asset`/`return_asset`.
+3. **U2** `rent` paying **≈2× rest price** — a bid must beat the sitting tenant by the escalation
+   delta. This pushes the escrow into Demand; `cap1` is now destined to go stale.
+4. wait the tenure window → **G** `apply_pending_transition_states` → U2 becomes the active
+   tenant, `cap1` is stale.
+5. **U1** `burn_stale_usufruct_cap(cap1)` — clean up the displaced cap (U1 signs; it's U1's object).
+6. **G** `retire → wait → apply_pending_transition_states → claim_asset`. Income from *both* U1
+   and U2 now sits in G's inbox → **G** `collect_earnings_messages` drains it.
+
+Faithful source: `profiling/b_flows/03_handover.ts`.
+
+### Scenario B — Fleet: one governor, N escrows, one collect
+Demonstrates **scale**: a single `GovernanceCap` + `EarningsInbox` govern a whole portfolio,
+rented by different parties, income consolidated in one PTB. New vs the solo flow:
+`integrate_into_portfolio` and the multi-element `collect_earnings_messages`.
+
+1. **G** `integrate` (escrow #1 — mints the cap+inbox pair) → keep `governanceCapId`,
+   `earningsInboxId`.
+2. **G** `integrate_into_portfolio` ×(N−1), reusing that cap+inbox → escrows #2…#N (mints no new
+   pair; passes the cap and inbox by `tx.object`).
+3. **U1** and **U2** `rent` different escrows — alternate them so the fleet has distinct renters.
+4. wait → **G** `apply_pending_transition_states` on each → each posts one `EarningsMessage` to the
+   **one** shared inbox.
+5. **G** `collect_earnings_messages` — **ONE** PTB drains all N: gather the inbox's
+   `EarningsMessage` refs via `getOwnedObjects({ owner: earningsInboxId })`, build the `Receiving`
+   vec (see the `collect_earnings_messages` entrypoint). O(N) income, O(1) collection,
+   rebate-positive — the headline.
+6. **G** tears down each escrow with the **one** shared cap: `retire → apply → claim_asset`.
+
+Faithful source: `profiling/b_flows/07_fleet_portfolio_collect.ts` (takes your own `N`).
+
+---
+
+## FAQ — the mechanics agents guess wrong
+
+These are the questions where intuition (or other DeFi protocols) leads to a **wrong answer or a
+failing tx**. If a user asks something here, give the grounded answer — don't improvise. Each
+points at the Move source (`usufruct/sources/`) so you can verify. (For the lazy-eval gotchas —
+"floats to the first mutator", retire→claim as two txs, stale views — see *The one rule of
+mechanics* above.)
+
+**Pricing**
+
+- **When does the price escalate, and what does it change?** The rest price is **immutable** —
+  it never escalates and is never mutated. Escalation is a **pure function applied only when a
+  bidder displaces a sitting tenant** (the Occupied/Demand branches of `execute_rent`), computed
+  against the **incumbent's per-tenure stake**, not the rest price. It's *the price to take the
+  seat from someone*. A tenure that simply **expires with no bid** resets the floor to the fixed
+  rest price — escalation does not persist. (`engine/asset_state.move`, `price_escalation_policy`.)
+- **So renting an idle escrow pays the escalated price?** No. Escalation is per-**displacement**,
+  not per-cycle. Renting an Idle (or Descent) escrow pays the floor (or the descending price) with
+  **no** escalation. Escalation only gates a bid that displaces an active/pending tenant.
+- **What is the descending-price (Descent) window, and which way does it move?** Descent is
+  entered **only after a tenure expires with no pending bid** (and only if `auction_window` is
+  `Fixed`). It descends **from the previous tenant's full stake price *down* to the fixed rest
+  price** along `auction_shape` — the *opposite* direction of escalation. Renting mid-Descent
+  pays the current (higher-than-floor) descending price. (`do_tenure_expiry` → `Waiting::Descent`.)
+
+**Tenure count `N` — it scales each axis differently** (the most numerically error-prone area:
+`rent(tenures(N))` does **not** scale everything uniformly)
+
+| Axis | How `N` enters |
+|---|---|
+| Next-bid floor (to displace an incumbent) | incumbent stake **÷ N** (floored), then escalated |
+| Total payment to rent | floor **× N** (exact, no rounding) |
+| Tenure & handover durations | **× N** at install |
+| Used-credit / refund | the **full stake** (un-normalized) vs the ×N ceiling |
+
+- **`floor_price_mist(...)` is the *per-tenure* floor, not the total to send.** To rent `N`
+  tenures pay `floor_price_mist × N`; sending exactly `floor_price_mist` for `N>1` **underpays and
+  the tx aborts** (`EInsufficientPayment`). (`escrow.move` → `compute_floor_price_at`; checked in
+  `execute_rent`.)
+- **To displace an incumbent, the minimum bid is their stake ÷ their committed `N` (floored), then
+  escalated** — *not* their total stake. A 3-tenure incumbent who staked 300 yields a per-tenure
+  reference of `floor(300/3)=100`; the next single-tenure floor ≈ `escalate(100)`, and the
+  displacer pays `that × their own N`. (`tenures::compute_per_tenure_stake`, `asset_state.move`.)
+- **The handover protection window scales ×N.** A tenant who locks more tenures gets
+  proportionally more grace: at install `handover_total = handover_ms × N` and
+  `ceiling_total = ceiling_ms × N`. After a bid the swap time is
+  `min(bid_time + handover_total, phase_start + ceiling_total)` — anchored at the **bid**, capped
+  at the tenure's natural expiry. (`do_install`, `handover_policy::compute_expiry_at`.)
+- **Used credit (and so the refund on early exit) is computed on the *full* stake, not per-tenure**,
+  integrated against the ×N ceiling (capped at the handover boundary in Demand). Per-tenure
+  normalization governs *pricing the next bid*, **not** *credit consumption*. (`do_handover`.)
+
+**Stake & refunds** (the most counter-intuitive area)
+
+- **When a tenure expires normally, does the renter get their stake back?** **No.** The **entire
+  stake becomes governor income** (minus the 10% protocol fee) at expiry. The stake is **rent
+  paid in full, not a refundable deposit.** (`do_tenure_expiry` splits the whole principal into
+  governor share + fee and posts both.)
+- **On a handover, how is the departing tenant's stake split?** By **used credit**: the
+  `credit_shape` curve traces the **rate of stake consumption over time** (think of the curve as
+  the consumption velocity — linear is steady, the non-linear shapes accelerate/decelerate it);
+  used credit is the area under it up to the handover boundary. Used credit → governor (−10% fee);
+  the **unconsumed remainder → refunded** to the departing tenant. Exact per-curve math:
+  `policies/curve_shape_policy.move`. (`do_handover`.)
+- **If someone outbids my pending bid, do I lose my stake?** No — a superseded **pending** bidder
+  is **fully refunded** (they never used the asset). Only the **active** tenant forfeits consumed
+  credit. (`do_supersede_bid`.)
+- **Where does a refund go?** To the seat's stored **refund address** (captured as the sender at
+  rent/bid time), which is **decoupled from cap ownership** — transferring the `UsufructCap` does
+  not move the refund destination. Redirect it with `update_usufructuary_refund_address`.
+
+**Handover & bidding**
+
+- **Does a higher bid make me the active tenant immediately?** No. A bid moves the escrow to
+  **Demand** with a *pending* seat; the sitting tenant stays active until the **handover countdown**
+  elapses. The swap then settles **lazily — the next mutating call on the escrow rotates the
+  challenger in** (every mutator self-applies; you don't need an explicit
+  `apply_pending_transition_states`). A *pending* cap that tries to `borrow_asset` aborts
+  (`EPendingUsufructCap`). (`do_place_bid` / `do_handover`.)
+- **`handover_off` — does that disable bidding?** No. "Off" means the countdown is **zero**, so a
+  bid settles on the very next touch (instant-on-apply), not that bids are forbidden. `fixed` adds
+  a countdown; `full_tenure` waits out the current tenure. The countdown never extends past the
+  tenure's natural expiry. (`policies/handover_policy.move`.)
+- **After a handover, is the old cap auto-destroyed?** No — it becomes **stale** (neither active
+  nor pending) but still exists; call `burn_stale_usufruct_cap` to clean it up. A stale cap can't
+  borrow.
+
+**Income**
+
+- **When are `EarningsMessage`s created?** **Only at a settlement** — a tenure expiry, handover,
+  or supersede processed by a mutating call. `rent` itself posts nothing; the stake just sits in
+  the active seat. A freshly-rented, unexpired escrow has an **empty inbox** — that means "nothing
+  has settled yet", not "no income". (`refund_state::distribute` → `earnings_message::post`.)
+- **Do I need the `GovernanceCap` to collect income?** No. `collect_earnings_messages` only needs
+  the `EarningsInbox` you own. Governance (cap) and income (inbox) are **separate owned objects** —
+  the income can be sold/held independently of governance.
+
+**Tenures & governance**
+
+- **What does `rent(tenures(N))` do?** Locks **one continuous tenure of N× the duration**, paid as
+  a single stake (price = floor × N), in one seat. It is **not** N renewals or N renters, and it's
+  **O(1)** in N (same gas as N=1). (`tenures.move`.)
+- **Does the `GovernanceCap` list the escrows it governs?** No — it's a bare bearer token
+  (`{ id }`) with no list. The cap→escrow→inbox topology lives **only in events** (replay
+  `AssetIntegrated`; see *Events*). (`governance_cap.move`.)
+- **Can the governor evict a renter or rewrite live terms?** No. `claim_asset` works only on a
+  **Retired** escrow; `retire` on an occupied escrow only sets a flag and waits out the tenure;
+  `update_ensemble` on an occupied escrow only **schedules** a pending ensemble that applies at the
+  next Idle. The governor cannot seize a live tenancy. (`execute_retire` / `execute_update_ensemble`.)
+- **Is `renounce_governance` reversible?** No. It **burns the `GovernanceCap`**, making the
+  escrow's asset **permanently unclaimable** — the governor forfeits the asset forever but keeps
+  income already settled and the inbox keeps receiving. It does not destroy the escrow or eject the
+  asset. A maximum-commitment signal, not a withdrawal. (`cap::renounce_governance`.)
+
+---
+
+## Trust & safety
+
+- **Don't trust this file — verify the package.** It is immutable on testnet
+  (`UpgradeCap` burned at deploy). View it on SuiScan:
+  `https://suiscan.xyz/testnet/object/0x61723e7205f9841ebb4e6f73096f34840a78bcfae73f631d44370e75f1acc0f5`.
+  Reproduce the bytecode from source yourself:
+  `git clone https://github.com/0xkurious/usufruct-protocol-v1 && cd usufruct-protocol-v1 && git checkout a2aeeb9 && ./verify.sh v1.4.1`
+  → `Source verification succeeded!`.
+- **Testnet only.** No real value is ever at risk: ephemeral keypair, faucet SUI,
+  immutable test package. Re-read the hard rule at the top before any write.
+- Gas is tiny: a full rent cycle ≈ 0.008 SUI; collection is rebate-positive. You will
+  not run out of faucet funds doing an evaluation.

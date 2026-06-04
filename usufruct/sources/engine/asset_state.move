@@ -234,7 +234,7 @@ public struct AssetIntegrated has copy, drop {
     earnings_inbox_id:                ID,
     retire_commitment_unlock_at_ms:   u64,
     ensemble_commitment_unlock_at_ms: u64,
-    integrated_at_ms:                 u64,
+    timestamp_ms:                     u64,
 }
 
 public struct AssetClaimed has copy, drop {
@@ -1333,7 +1333,7 @@ fun build_idle_core_and_state<Asset: key + store, CoinType>(
         ensemble_commitment_unlock_at_ms,
         asset_type:                       string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
         coin_type:                        string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
-        integrated_at_ms:                 phases::timestamp_ms(integrated_at),
+        timestamp_ms:                     phases::timestamp_ms(integrated_at),
     });
     (core, state)
 }
@@ -2395,7 +2395,7 @@ public(package) fun asset_integrated_asset_type(e: &AssetIntegrated): String    
 #[test_only]
 public(package) fun asset_integrated_coin_type(e: &AssetIntegrated): String      { e.coin_type }
 #[test_only]
-public(package) fun asset_integrated_integrated_at_ms(e: &AssetIntegrated): u64  { e.integrated_at_ms }
+public(package) fun asset_integrated_timestamp_ms(e: &AssetIntegrated): u64      { e.timestamp_ms }
 
 #[test_only]
 public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(

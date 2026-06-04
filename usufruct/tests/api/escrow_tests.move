@@ -10538,7 +10538,7 @@ fun event_pin_asset_integrated_all_fields() {
     assert_eq!(asset_state::asset_integrated_asset_id(e),          asset_id);
     assert_eq!(asset_state::asset_integrated_fee_inbox_id(e),      protocol_fee_ref::proj_inbox_id(&fee_ref));
     assert_eq!(asset_state::asset_integrated_earnings_inbox_id(e), inbox_id);
-    assert_eq!(asset_state::asset_integrated_integrated_at_ms(e),  42_000);
+    assert_eq!(asset_state::asset_integrated_timestamp_ms(e),  42_000);
     assert_eq!(asset_state::asset_integrated_asset_type(e),        string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::asset_integrated_coin_type(e),         string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 

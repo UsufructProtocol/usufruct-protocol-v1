@@ -5010,7 +5010,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     let price_t2 = 2 * floor_ho;
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let bp       = event::events_by_type<BidPlaced>();
-    assert_eq!(asset_state::bid_placed_bid_amount(bp.borrow(0)), price_t2);
+    assert_eq!(asset_state::bid_placed_pending_bid_amount(bp.borrow(0)), price_t2);
     assert!(price_t2 >= asset_state::bid_placed_floor_price(bp.borrow(0)), tag);
     assert_eq!(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk)), price_t2 + delta);
 
@@ -10868,7 +10868,7 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(asset_state::bid_placed_active_phase_start_ms(e),    0);
     assert_eq!(asset_state::bid_placed_pending_usufruct_cap_id(e),             object::id(&cap_t2));
     assert_eq!(asset_state::bid_placed_pending_usufructuary_address(e),            GOVERNOR);
-    assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
+    assert_eq!(asset_state::bid_placed_pending_bid_amount(e),                floor2);
     assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);
     assert_eq!(asset_state::bid_placed_handover_countdown_expiry(e), expected_expiry);
     assert_eq!(asset_state::bid_placed_committed_tenures(e),         1);

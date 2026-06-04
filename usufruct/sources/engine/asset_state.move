@@ -166,6 +166,8 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 
 public struct RentStarted has copy, drop {
     escrow_id:            ID,
+    asset_type:           String,
+    coin_type:            String,
     usufruct_cap_id:      ID,
     usufructuary_address: address,
     price_paid:           u64,
@@ -174,16 +176,14 @@ public struct RentStarted has copy, drop {
     phase_start_ms:       u64,
     ceiling_total_ms:     u64,
     handover_total_ms:    u64,
-    asset_type:           String,
-    coin_type:            String,
 }
 
 public struct AuctionExpired has copy, drop {
     escrow_id:      ID,
-    phase_start_ms: u64,
-    last_acq_price: u64,
     asset_type:     String,
     coin_type:      String,
+    phase_start_ms: u64,
+    last_acq_price: u64,
     timestamp_ms:   u64,
 }
 
@@ -205,26 +205,28 @@ public struct AssetRetired has copy, drop {
 
 public struct RetireCommitmentExtended has copy, drop {
     escrow_id:           ID,
-    commitment_policy:   String,
-    commitment_floor_ms: Option<u64>,
-    new_unlock_at_ms:       u64,
     asset_type:          String,
     coin_type:           String,
+    commitment_policy:   String,
+    commitment_floor_ms: Option<u64>,
+    new_unlock_at_ms:    u64,
     timestamp_ms:        u64,
 }
 
 public struct EnsembleCommitmentExtended has copy, drop {
     escrow_id:           ID,
+    asset_type:          String,
+    coin_type:           String,
     commitment_policy:   String,
     commitment_floor_ms: Option<u64>,
     new_unlock_at_ms:    u64,
-    asset_type:          String,
-    coin_type:           String,
     timestamp_ms:        u64,
 }
 
 public struct AssetIntegrated has copy, drop {
     escrow_id:                        ID,
+    asset_type:                       String,
+    coin_type:                        String,
     governance_cap_id:                ID,
     governor_address:                 address,
     asset_id:                         ID,
@@ -232,22 +234,22 @@ public struct AssetIntegrated has copy, drop {
     earnings_inbox_id:                ID,
     retire_commitment_unlock_at_ms:   u64,
     ensemble_commitment_unlock_at_ms: u64,
-    asset_type:                       String,
-    coin_type:                        String,
     integrated_at_ms:                 u64,
 }
 
 public struct AssetClaimed has copy, drop {
-    escrow_id:     ID,
-    governance_cap_id:  ID,
-    governor_address: address,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
+    escrow_id:         ID,
+    asset_type:        String,
+    coin_type:         String,
+    governance_cap_id: ID,
+    governor_address:  address,
+    timestamp_ms:      u64,
 }
 
 public struct BidPlaced has copy, drop {
     escrow_id:                    ID,
+    asset_type:                   String,
+    coin_type:                    String,
     active_usufruct_cap_id:       ID,
     active_usufructuary_address:  address,
     active_stake_balance:         u64,
@@ -260,20 +262,20 @@ public struct BidPlaced has copy, drop {
     floor_price:                  u64,
     handover_countdown_expiry:    u64,
     committed_tenures:            u64,
-    asset_type:                   String,
-    coin_type:                    String,
     timestamp_ms:                 u64,
 }
 
 public struct BidSuperseded has copy, drop {
-    escrow_id:                 ID,
-    active_usufruct_cap_id:   ID,
+    escrow_id:                    ID,
+    asset_type:                   String,
+    coin_type:                    String,
+    active_usufruct_cap_id:       ID,
     active_usufructuary_address:  address,
-    active_stake_balance:    u64,
-    active_phase_start_ms:  u64,
-    displaced_usufruct_cap_id:   ID,
-    displaced_bidder_address:  address,
-    refunded_amount:           u64,
+    active_stake_balance:         u64,
+    active_phase_start_ms:        u64,
+    displaced_usufruct_cap_id:    ID,
+    displaced_bidder_address:     address,
+    refunded_amount:              u64,
     pending_usufruct_cap_id:      ID,
     pending_bidder_address:       address,
     pending_bid_amount:           u64,
@@ -282,92 +284,90 @@ public struct BidSuperseded has copy, drop {
     floor_price:                  u64,
     handover_countdown_expiry:    u64,
     committed_tenures:            u64,
-    asset_type:                   String,
-    coin_type:                    String,
     timestamp_ms:                 u64,
 }
 
 public struct HandoverCompleted has copy, drop {
-    escrow_id:                    ID,
-    departing_usufruct_cap_id:      ID,
-    departing_usufructuary_address:     address,
-    departing_phase_start_ms:     u64,
-    departing_ceiling_total_ms:   u64,
-    departing_handover_total_ms:  u64,
-    active_usufruct_cap_id:            ID,
-    active_usufructuary_address:           address,
-    active_stake_balance:             u64,
-    used_credit:                  u64,
-    remain_credit:                u64,
+    escrow_id:                       ID,
+    asset_type:                      String,
+    coin_type:                       String,
+    departing_usufruct_cap_id:       ID,
+    departing_usufructuary_address:  address,
+    departing_phase_start_ms:        u64,
+    departing_ceiling_total_ms:      u64,
+    departing_handover_total_ms:     u64,
+    active_usufruct_cap_id:          ID,
+    active_usufructuary_address:     address,
+    active_stake_balance:            u64,
+    used_credit:                     u64,
+    remain_credit:                   u64,
     governor_share:                  u64,
-    protocol_fee:                 u64,
-    departing_refund_amount:      u64,
-    new_rent_price:               u64,
-    committed_tenures:            u64,
-    ceiling_total_ms:             u64,
-    handover_total_ms:            u64,
-    asset_type:                   String,
-    coin_type:                    String,
-    timestamp_ms:                 u64,
+    protocol_fee:                    u64,
+    departing_refund_amount:         u64,
+    new_rent_price:                  u64,
+    committed_tenures:               u64,
+    ceiling_total_ms:                u64,
+    handover_total_ms:               u64,
+    timestamp_ms:                    u64,
 }
 
 public struct TenureExpired has copy, drop {
     escrow_id:              ID,
-    usufruct_cap_id:          ID,
-    usufructuary_address:         address,
-    phase_start_ms:         u64,
-    governor_share:            u64,
-    protocol_fee:           u64,
-    last_acquisition_price: u64,
     asset_type:             String,
     coin_type:              String,
+    usufruct_cap_id:        ID,
+    usufructuary_address:   address,
+    phase_start_ms:         u64,
+    governor_share:         u64,
+    protocol_fee:           u64,
+    last_acquisition_price: u64,
     timestamp_ms:           u64,
 }
 
 public struct RetireFlagSet has copy, drop {
-    escrow_id:     ID,
-    governance_cap_id:  ID,
-    governor_address: address,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
+    escrow_id:         ID,
+    asset_type:        String,
+    coin_type:         String,
+    governance_cap_id: ID,
+    governor_address:  address,
+    timestamp_ms:      u64,
 }
 
 public struct AssetBorrowed has copy, drop {
-    escrow_id:      ID,
-    usufruct_cap_id:  ID,
+    escrow_id:            ID,
+    asset_type:           String,
+    coin_type:            String,
+    usufruct_cap_id:      ID,
     usufructuary_address: address,
-    asset_type:     String,
-    coin_type:      String,
-    timestamp_ms:   u64,
+    timestamp_ms:         u64,
 }
 
 public struct AssetReturned has copy, drop {
-    escrow_id:      ID,
-    usufruct_cap_id:  ID,
+    escrow_id:            ID,
+    asset_type:           String,
+    coin_type:            String,
+    usufruct_cap_id:      ID,
     usufructuary_address: address,
-    asset_type:     String,
-    coin_type:      String,
 }
 
 public struct ActiveUsufructuaryRefundAddressUpdated has copy, drop {
-    escrow_id:     ID,
+    escrow_id:       ID,
+    asset_type:      String,
+    coin_type:       String,
     usufruct_cap_id: ID,
-    old_address:   address,
-    active_address:   address,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
+    old_address:     address,
+    active_address:  address,
+    timestamp_ms:    u64,
 }
 
 public struct PendingUsufructuaryRefundAddressUpdated has copy, drop {
-    escrow_id:     ID,
+    escrow_id:       ID,
+    asset_type:      String,
+    coin_type:       String,
     usufruct_cap_id: ID,
-    old_address:   address,
-    active_address:   address,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
+    old_address:     address,
+    active_address:  address,
+    timestamp_ms:    u64,
 }
 
 // === Method Aliases ===

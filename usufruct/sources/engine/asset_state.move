@@ -165,17 +165,17 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 // === Events ===
 
 public struct RentStarted has copy, drop {
-    escrow_id:         ID,
-    usufruct_cap_id:     ID,
-    usufructuary_address:    address,
-    phase_start_ms:    u64,
-    price_paid:        u64,
-    floor_price:       u64,
-    committed_tenures: u64,
-    ceiling_total_ms:  u64,
-    handover_total_ms: u64,
-    asset_type:        String,
-    coin_type:         String,
+    escrow_id:            ID,
+    usufruct_cap_id:      ID,
+    usufructuary_address: address,
+    price_paid:           u64,
+    floor_price:          u64,
+    committed_tenures:    u64,
+    phase_start_ms:       u64,
+    ceiling_total_ms:     u64,
+    handover_total_ms:    u64,
+    asset_type:           String,
+    coin_type:            String,
 }
 
 public struct AuctionExpired has copy, drop {

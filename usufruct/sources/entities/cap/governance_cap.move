@@ -23,9 +23,9 @@ public struct GovernanceCapIdentity has copy, drop, store { id: ID }
 // === Events ===
 
 public struct GovernanceCapMinted has copy, drop {
+    escrow_id:          ID,
     governance_cap_id:  ID,
-    escrow_id:     ID,
-    governor_address: address,
+    governor_address:   address,
 }
 
 public struct GovernanceCapBurned has copy, drop {

@@ -17,7 +17,7 @@ use usufruct::{
     asset_identity,
     escrowed_asset_identity::{Self, EscrowedAssetIdentity},
     policy_ensemble::{Self, PolicyEnsemble},
-    tenures::{Self, Tenures},
+    tenures::{Self, Tenures, StakePerTenure},
     curve_shape_policy,
     auction_window_policy,
     rest_price_policy,
@@ -165,25 +165,25 @@ public enum AssetState<Asset: key + store, phantom CoinType> has store {
 // === Events ===
 
 public struct RentStarted has copy, drop {
-    escrow_id:         ID,
-    usufruct_cap_id:     ID,
-    usufructuary_address:    address,
-    phase_start_ms:    u64,
-    price_paid:        u64,
-    floor_price:       u64,
-    committed_tenures: u64,
-    ceiling_total_ms:  u64,
-    handover_total_ms: u64,
-    asset_type:        String,
-    coin_type:         String,
+    escrow_id:            ID,
+    asset_type:           String,
+    coin_type:            String,
+    usufruct_cap_id:      ID,
+    usufructuary_address: address,
+    price_paid:           u64,
+    floor_price:          u64,
+    committed_tenures:    u64,
+    timestamp_ms:         u64,
+    ceiling_total_ms:     u64,
+    handover_total_ms:    u64,
 }
 
 public struct AuctionExpired has copy, drop {
     escrow_id:      ID,
-    phase_start_ms: u64,
-    last_acq_price: u64,
     asset_type:     String,
     coin_type:      String,
+    phase_start_ms: u64,
+    last_acq_price: u64,
     timestamp_ms:   u64,
 }
 
@@ -205,162 +205,169 @@ public struct AssetRetired has copy, drop {
 
 public struct RetireCommitmentExtended has copy, drop {
     escrow_id:           ID,
-    commitment_policy:   String,
-    commitment_floor_ms: Option<u64>,
-    new_unlock_at_ms:       u64,
     asset_type:          String,
     coin_type:           String,
+    commitment_policy:   String,
+    commitment_floor_ms: Option<u64>,
+    new_unlock_at_ms:    u64,
     timestamp_ms:        u64,
 }
 
 public struct EnsembleCommitmentExtended has copy, drop {
     escrow_id:           ID,
+    asset_type:          String,
+    coin_type:           String,
     commitment_policy:   String,
     commitment_floor_ms: Option<u64>,
     new_unlock_at_ms:    u64,
-    asset_type:          String,
-    coin_type:           String,
     timestamp_ms:        u64,
 }
 
 public struct AssetIntegrated has copy, drop {
-    escrow_id:         ID,
-    governance_cap_id:      ID,
-    governor_address:     address,
-    asset_id:          ID,
-    fee_inbox_id:      ID,
-    earnings_inbox_id: ID,
-    asset_type:        String,
-    coin_type:         String,
-    integrated_at_ms:  u64,
+    escrow_id:                        ID,
+    asset_type:                       String,
+    coin_type:                        String,
+    governance_cap_id:                ID,
+    governor_address:                 address,
+    asset_id:                         ID,
+    fee_inbox_id:                     ID,
+    earnings_inbox_id:                ID,
+    retire_commitment_unlock_at_ms:   u64,
+    ensemble_commitment_unlock_at_ms: u64,
+    timestamp_ms:                     u64,
 }
 
 public struct AssetClaimed has copy, drop {
-    escrow_id:     ID,
-    governance_cap_id:  ID,
-    governor_address: address,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
+    escrow_id:         ID,
+    asset_type:        String,
+    coin_type:         String,
+    governance_cap_id: ID,
+    governor_address:  address,
+    timestamp_ms:      u64,
 }
 
 public struct BidPlaced has copy, drop {
-    escrow_id:                 ID,
-    active_usufruct_cap_id:     ID,
-    active_usufructuary_address:    address,
-    active_stake_balance:      u64,
-    active_phase_start_ms:    u64,
-    pending_usufruct_cap_id:     ID,
-    pending_usufructuary_address:    address,
-    bid_amount:                u64,
-    floor_price:               u64,
-    handover_countdown_expiry: u64,
-    committed_tenures:         u64,
-    asset_type:                String,
-    coin_type:                 String,
-    timestamp_ms:              u64,
+    escrow_id:                    ID,
+    asset_type:                   String,
+    coin_type:                    String,
+    active_usufruct_cap_id:       ID,
+    active_usufructuary_address:  address,
+    active_stake_balance:         u64,
+    active_phase_start_ms:        u64,
+    pending_usufruct_cap_id:      ID,
+    pending_usufructuary_address: address,
+    pending_bid_amount:           u64,
+    pending_ceiling_total_ms:     u64,
+    pending_handover_total_ms:    u64,
+    floor_price:                  u64,
+    handover_countdown_expiry:    u64,
+    committed_tenures:            u64,
+    timestamp_ms:                 u64,
 }
 
 public struct BidSuperseded has copy, drop {
-    escrow_id:                 ID,
-    active_usufruct_cap_id:   ID,
+    escrow_id:                    ID,
+    asset_type:                   String,
+    coin_type:                    String,
+    active_usufruct_cap_id:       ID,
     active_usufructuary_address:  address,
-    active_stake_balance:    u64,
-    active_phase_start_ms:  u64,
-    displaced_usufruct_cap_id:   ID,
-    displaced_bidder_address:  address,
-    refunded_amount:           u64,
-    pending_usufruct_cap_id:         ID,
-    pending_bidder_address:        address,
-    pending_bid_amount:            u64,
-    floor_price:               u64,
-    handover_countdown_expiry: u64,
-    committed_tenures:         u64,
-    asset_type:                String,
-    coin_type:                 String,
-    timestamp_ms:              u64,
+    active_stake_balance:         u64,
+    active_phase_start_ms:        u64,
+    displaced_usufruct_cap_id:    ID,
+    displaced_bidder_address:     address,
+    refunded_amount:              u64,
+    pending_usufruct_cap_id:      ID,
+    pending_bidder_address:       address,
+    pending_bid_amount:           u64,
+    pending_ceiling_total_ms:     u64,
+    pending_handover_total_ms:    u64,
+    floor_price:                  u64,
+    handover_countdown_expiry:    u64,
+    committed_tenures:            u64,
+    timestamp_ms:                 u64,
 }
 
 public struct HandoverCompleted has copy, drop {
-    escrow_id:                    ID,
-    departing_usufruct_cap_id:      ID,
-    departing_usufructuary_address:     address,
-    departing_phase_start_ms:     u64,
-    departing_ceiling_total_ms:   u64,
-    departing_handover_total_ms:  u64,
-    active_usufruct_cap_id:            ID,
-    active_usufructuary_address:           address,
-    active_stake_balance:             u64,
-    used_credit:                  u64,
-    remain_credit:                u64,
+    escrow_id:                       ID,
+    asset_type:                      String,
+    coin_type:                       String,
+    departing_usufruct_cap_id:       ID,
+    departing_usufructuary_address:  address,
+    departing_phase_start_ms:        u64,
+    departing_ceiling_total_ms:      u64,
+    departing_handover_total_ms:     u64,
+    active_usufruct_cap_id:          ID,
+    active_usufructuary_address:     address,
+    active_stake_balance:            u64,
+    used_credit:                     u64,
+    remain_credit:                   u64,
     governor_share:                  u64,
-    protocol_fee:                 u64,
-    new_rent_price:               u64,
-    committed_tenures:            u64,
-    ceiling_total_ms:             u64,
-    handover_total_ms:            u64,
-    asset_type:                   String,
-    coin_type:                    String,
-    timestamp_ms:                 u64,
+    protocol_fee:                    u64,
+    departing_refund_amount:         u64,
+    new_rent_price:                  u64,
+    committed_tenures:               u64,
+    ceiling_total_ms:                u64,
+    handover_total_ms:               u64,
+    timestamp_ms:                    u64,
 }
 
 public struct TenureExpired has copy, drop {
     escrow_id:              ID,
-    usufruct_cap_id:          ID,
-    usufructuary_address:         address,
-    phase_start_ms:         u64,
-    governor_share:            u64,
-    protocol_fee:           u64,
-    last_acquisition_price: u64,
     asset_type:             String,
     coin_type:              String,
+    usufruct_cap_id:        ID,
+    usufructuary_address:   address,
+    phase_start_ms:         u64,
+    governor_share:         u64,
+    protocol_fee:           u64,
+    last_acquisition_price: u64,
     timestamp_ms:           u64,
 }
 
 public struct RetireFlagSet has copy, drop {
-    escrow_id:     ID,
-    governance_cap_id:  ID,
-    governor_address: address,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
+    escrow_id:         ID,
+    asset_type:        String,
+    coin_type:         String,
+    governance_cap_id: ID,
+    governor_address:  address,
+    timestamp_ms:      u64,
 }
 
 public struct AssetBorrowed has copy, drop {
-    escrow_id:      ID,
-    usufruct_cap_id:  ID,
+    escrow_id:            ID,
+    asset_type:           String,
+    coin_type:            String,
+    usufruct_cap_id:      ID,
     usufructuary_address: address,
-    asset_type:     String,
-    coin_type:      String,
-    timestamp_ms:   u64,
+    timestamp_ms:         u64,
 }
 
 public struct AssetReturned has copy, drop {
-    escrow_id:      ID,
-    usufruct_cap_id:  ID,
+    escrow_id:            ID,
+    asset_type:           String,
+    coin_type:            String,
+    usufruct_cap_id:      ID,
     usufructuary_address: address,
-    asset_type:     String,
-    coin_type:      String,
 }
 
 public struct ActiveUsufructuaryRefundAddressUpdated has copy, drop {
-    escrow_id:     ID,
+    escrow_id:       ID,
+    asset_type:      String,
+    coin_type:       String,
     usufruct_cap_id: ID,
-    old_address:   address,
-    active_address:   address,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
+    old_address:     address,
+    active_address:  address,
+    timestamp_ms:    u64,
 }
 
 public struct PendingUsufructuaryRefundAddressUpdated has copy, drop {
-    escrow_id:     ID,
+    escrow_id:       ID,
+    asset_type:      String,
+    coin_type:       String,
     usufruct_cap_id: ID,
-    old_address:   address,
-    active_address:   address,
-    asset_type:    String,
-    coin_type:     String,
-    timestamp_ms:  u64,
+    old_address:     address,
+    active_address:  address,
+    timestamp_ms:    u64,
 }
 
 // === Method Aliases ===
@@ -716,10 +723,10 @@ public(package) fun compute_floor_price_at<Asset: key + store, CoinType>(
         },
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            ascending_floor_price(tenures::compute_per_tenure_stake(usufructuary_seat::proj_stake_value(&terms.active), terms.schedule.committed_tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::stake_per_tenure(usufructuary_seat::proj_stake_value(&terms.active), terms.schedule.committed_tenures), &core.ensemble.active)
         },
         AssetState::Renting(RentingState::Demand { bid, .. }) => {
-            ascending_floor_price(tenures::compute_per_tenure_stake(usufructuary_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::stake_per_tenure(usufructuary_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
         },
     }
 }
@@ -908,13 +915,13 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = usufructuary_seat::proj_stake_value(&terms.active);
-            let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
+            let floor = ascending_floor_price(tenures::stake_per_tenure(stake, terms.schedule.committed_tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             let stake = usufructuary_seat::proj_stake_value(&bid.pending);
-            let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, bid.handover.tenures), &core.ensemble.active);
+            let floor = ascending_floor_price(tenures::stake_per_tenure(stake, bid.handover.tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_supersede_bid(
                 asset, terms, bid, cycle, tenures,
@@ -1313,16 +1320,20 @@ fun build_idle_core_and_state<Asset: key + store, CoinType>(
         asset: asset_custody::lock(asset),
         cycle,
     });
+    let retire_commitment_unlock_at_ms   = phases::timestamp_ms(retire_commitment_policy::compute_unlock_at(retire_commitment_policy::compute_duration(&retire_commitment), integrated_at));
+    let ensemble_commitment_unlock_at_ms = phases::timestamp_ms(ensemble_commitment_policy::compute_unlock_at(ensemble_commitment_policy::compute_duration(&ensemble_commitment), integrated_at));
     event::emit(AssetIntegrated {
-        escrow_id:         raw_escrow_id,
-        governance_cap_id:      governance_cap::proj_id(cap_identity),
-        governor_address:     governor_addr,
+        escrow_id:                        raw_escrow_id,
+        governance_cap_id:                governance_cap::proj_id(cap_identity),
+        governor_address:                 governor_addr,
         asset_id,
-        fee_inbox_id:      protocol_fee_ref::proj_id(fee_inbox_identity),
-        earnings_inbox_id: earnings_inbox::proj_id(inbox_identity),
-        asset_type:        string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
-        coin_type:         string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
-        integrated_at_ms:  phases::timestamp_ms(integrated_at),
+        fee_inbox_id:                     protocol_fee_ref::proj_id(fee_inbox_identity),
+        earnings_inbox_id:                earnings_inbox::proj_id(inbox_identity),
+        retire_commitment_unlock_at_ms,
+        ensemble_commitment_unlock_at_ms,
+        asset_type:                       string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:                        string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
+        timestamp_ms:                     phases::timestamp_ms(integrated_at),
     });
     (core, state)
 }
@@ -1459,7 +1470,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let active_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&pending));
     let active_addr         = usufructuary_addr(&pending);
     let active_stake        = usufructuary_seat::proj_stake_value(&pending);
-    let new_rent_price = monetary::price_mist(ascending_floor_price(active_stake, config));
+    let new_rent_price = monetary::price_mist(ascending_floor_price(tenures::stake_per_tenure(active_stake, incoming_tenures), config));
     let boundary_ms = phases::timestamp_ms(boundary);
     let new_ceiling_total  = tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures);
     let new_handover_total = tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures);
@@ -1478,6 +1489,7 @@ fun do_handover<Asset: key + store, CoinType>(
         remain_credit:               monetary::stake_mist(remain_credit),
         governor_share:                 used_mist - fee_mist,
         protocol_fee:                fee_mist,
+        departing_refund_amount:     monetary::stake_mist(remain_credit),
         new_rent_price,
         committed_tenures:           tenures::tenures_count(incoming_tenures),
         ceiling_total_ms:            phases::duration_ms(new_ceiling_total),
@@ -1535,7 +1547,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         phase_start_ms:         phases::timestamp_ms(schedule.phase_start),
         governor_share:            principal_mist - fee_mist,
         protocol_fee:           fee_mist,
-        last_acquisition_price: principal_mist,
+        last_acquisition_price: tenures::stake_per_tenure_mist(tenures::stake_per_tenure(principal, schedule.committed_tenures)),
         asset_type,
         coin_type,
         timestamp_ms:           phases::timestamp_ms(boundary),
@@ -1549,7 +1561,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     } else {
         WaitingState::Descent {
             asset:   locked,
-            auction: AuctionTerms { last_acq_price: monetary::as_reference_price(principal), phase_start: boundary },
+            auction: AuctionTerms { last_acq_price: tenures::stake_per_tenure_as_price(tenures::stake_per_tenure(principal, schedule.committed_tenures)), phase_start: boundary },
             cycle,
         }
     }
@@ -1566,9 +1578,11 @@ fun do_place_bid<Asset: key + store, CoinType>(
     now:             Timestamp,
     ctx:             &mut TxContext,
 ): (RentingState<Asset, CoinType>, UsufructCap) {
-    let expiry       = handover_policy::compute_expiry_at(terms.schedule.handover_total, terms.schedule.ceiling_total, now, terms.schedule.phase_start);
-    let pending_addr = ctx.sender();
-    let bid_amount   = coin::value(&payment);
+    let expiry                = handover_policy::compute_expiry_at(terms.schedule.handover_total, terms.schedule.ceiling_total, now, terms.schedule.phase_start);
+    let pending_addr          = ctx.sender();
+    let pending_bid_amount    = coin::value(&payment);
+    let pending_ceiling_total_ms  = phases::duration_ms(tenures::compute_total_duration(cycle.ceiling, tenures));
+    let pending_handover_total_ms = phases::duration_ms(tenures::compute_total_duration(cycle.handover, tenures));
     let cap          = usufruct_cap::new(escrow_identity, pending_addr, ctx);
     let cap_identity = usufruct_cap::identity(&cap);
     let t = usufructuary_seat::new<CoinType>(cap_identity, refund_address::new(pending_addr), coin::into_balance(payment));
@@ -1576,20 +1590,22 @@ fun do_place_bid<Asset: key + store, CoinType>(
     let active_addr  = usufructuary_addr(&terms.active);
     let active_stake = usufructuary_seat::proj_stake_value(&terms.active);
     event::emit(BidPlaced {
-        escrow_id:                 escrow_identity::escrow_id(escrow_identity),
-        active_usufruct_cap_id:      usufruct_cap::proj_id(active_cap_identity),
-        active_usufructuary_address:     active_addr,
-        active_stake_balance:       monetary::stake_mist(active_stake),
-        active_phase_start_ms:     phases::timestamp_ms(terms.schedule.phase_start),
-        pending_usufruct_cap_id:     usufruct_cap::proj_id(cap_identity),
-        pending_usufructuary_address:    pending_addr,
-        bid_amount,
-        floor_price:               monetary::price_mist(floor),
-        handover_countdown_expiry: phases::timestamp_ms(expiry),
-        committed_tenures:         tenures::tenures_count(tenures),
-        asset_type:                string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
-        coin_type:                 string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
-        timestamp_ms:              phases::timestamp_ms(now),
+        escrow_id:                    escrow_identity::escrow_id(escrow_identity),
+        active_usufruct_cap_id:       usufruct_cap::proj_id(active_cap_identity),
+        active_usufructuary_address:  active_addr,
+        active_stake_balance:         monetary::stake_mist(active_stake),
+        active_phase_start_ms:        phases::timestamp_ms(terms.schedule.phase_start),
+        pending_usufruct_cap_id:      usufruct_cap::proj_id(cap_identity),
+        pending_usufructuary_address: pending_addr,
+        pending_bid_amount,
+        pending_ceiling_total_ms,
+        pending_handover_total_ms,
+        floor_price:                  monetary::price_mist(floor),
+        handover_countdown_expiry:    phases::timestamp_ms(expiry),
+        committed_tenures:            tenures::tenures_count(tenures),
+        asset_type:                   string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:                    string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
+        timestamp_ms:                 phases::timestamp_ms(now),
     });
     (
         RentingState::Demand {
@@ -1633,27 +1649,31 @@ fun do_supersede_bid<Asset: key + store, CoinType>(
     let refund = refund_state::total(pending);
     refund_state::distribute(refund, governor_seat, fee_inbox_identity, escrow_identity, ctx);
 
-    let active_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
-    let active_addr  = usufructuary_addr(&terms.active);
-    let active_stake = usufructuary_seat::proj_stake_value(&terms.active);
+    let active_cap_identity       = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&terms.active));
+    let active_addr               = usufructuary_addr(&terms.active);
+    let active_stake              = usufructuary_seat::proj_stake_value(&terms.active);
+    let pending_ceiling_total_ms  = phases::duration_ms(tenures::compute_total_duration(cycle.ceiling, incoming_tenures));
+    let pending_handover_total_ms = phases::duration_ms(tenures::compute_total_duration(cycle.handover, incoming_tenures));
     event::emit(BidSuperseded {
-        escrow_id:                 escrow_identity::escrow_id(escrow_identity),
-        active_usufruct_cap_id:   usufruct_cap::proj_id(active_cap_identity),
+        escrow_id:                    escrow_identity::escrow_id(escrow_identity),
+        active_usufruct_cap_id:       usufruct_cap::proj_id(active_cap_identity),
         active_usufructuary_address:  active_addr,
-        active_stake_balance:    monetary::stake_mist(active_stake),
-        active_phase_start_ms:  phases::timestamp_ms(terms.schedule.phase_start),
-        displaced_usufruct_cap_id:   usufruct_cap::proj_id(displaced_cap_identity),
-        displaced_bidder_address:  displaced_addr,
-        refunded_amount:           monetary::stake_mist(refunded_amount),
-        pending_usufruct_cap_id:         usufruct_cap::proj_id(cap_identity),
-        pending_bidder_address:        pending_bidder,
+        active_stake_balance:         monetary::stake_mist(active_stake),
+        active_phase_start_ms:        phases::timestamp_ms(terms.schedule.phase_start),
+        displaced_usufruct_cap_id:    usufruct_cap::proj_id(displaced_cap_identity),
+        displaced_bidder_address:     displaced_addr,
+        refunded_amount:              monetary::stake_mist(refunded_amount),
+        pending_usufruct_cap_id:      usufruct_cap::proj_id(cap_identity),
+        pending_bidder_address:       pending_bidder,
         pending_bid_amount,
-        floor_price:               monetary::price_mist(floor),
-        handover_countdown_expiry: phases::timestamp_ms(handover_expiry),
-        committed_tenures:         tenures::tenures_count(incoming_tenures),
-        asset_type:                string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
-        coin_type:                 string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
-        timestamp_ms:              phases::timestamp_ms(now),
+        pending_ceiling_total_ms,
+        pending_handover_total_ms,
+        floor_price:                  monetary::price_mist(floor),
+        handover_countdown_expiry:    phases::timestamp_ms(handover_expiry),
+        committed_tenures:            tenures::tenures_count(incoming_tenures),
+        asset_type:                   string::from_ascii(type_name::into_string(type_name::with_defining_ids<Asset>())),
+        coin_type:                    string::from_ascii(type_name::into_string(type_name::with_defining_ids<CoinType>())),
+        timestamp_ms:                 phases::timestamp_ms(now),
     });
     (
         RentingState::Demand {
@@ -1772,7 +1792,7 @@ fun do_install<Asset: key + store, CoinType>(
         escrow_id:         escrow_identity::escrow_id(escrow_identity),
         usufruct_cap_id:     usufruct_cap::proj_id(cap_identity),
         usufructuary_address:    usufructuary_addr,
-        phase_start_ms:    phases::timestamp_ms(now),
+        timestamp_ms:      phases::timestamp_ms(now),
         price_paid,
         floor_price:       monetary::price_mist(floor),
         committed_tenures: tenures::tenures_count(tenures),
@@ -1854,8 +1874,7 @@ fun accruing_used_credit(
     let elapsed = phases::compute_elapsed(phase_start, now);
     let g = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_credit_shape(ensemble),
-        phases::duration_ms(elapsed),
-        phases::duration_ms(resolved_ceiling),
+        curve_shape_policy::progress(elapsed, resolved_ceiling),
     );
     monetary::stake(curve_shape_policy::compute_scaled_value(monetary::stake_mist(stake), g))
 }
@@ -1872,17 +1891,20 @@ fun capped_used_credit(
     let elapsed   = phases::compute_elapsed(phase_start, effective);
     let g = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_credit_shape(ensemble),
-        phases::duration_ms(elapsed),
-        phases::duration_ms(resolved_ceiling),
+        curve_shape_policy::progress(elapsed, resolved_ceiling),
     );
     monetary::stake(curve_shape_policy::compute_scaled_value(monetary::stake_mist(stake), g))
 }
 
-fun ascending_floor_price(stake: Stake, ensemble: &PolicyEnsemble): Price {
+fun ascending_floor_price(stake: StakePerTenure, ensemble: &PolicyEnsemble): Price {
     price_escalation_policy::compute_next_price(
         policy_ensemble::proj_price_escalation(ensemble),
-        monetary::as_reference_price(stake),
+        tenures::stake_per_tenure_as_price(stake),
     )
+}
+
+public(package) fun compute_next_floor_price(stake: Stake, c: Tenures, ensemble: &PolicyEnsemble): Price {
+    ascending_floor_price(tenures::stake_per_tenure(stake, c), ensemble)
 }
 
 fun descending_floor_price(
@@ -1896,8 +1918,7 @@ fun descending_floor_price(
     let elapsed  = phases::compute_elapsed(phase_start, now);
     let h        = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_auction_shape(ensemble),
-        phases::duration_ms(elapsed),
-        phases::duration_ms(resolved_descent),
+        curve_shape_policy::progress(elapsed, resolved_descent),
     );
     let spread   = monetary::price_mist(monetary::compute_price_sub(last_acq_price, resolved_floor));
     let consumed = curve_shape_policy::compute_scaled_value(spread, h);
@@ -1932,15 +1953,19 @@ public(package) fun bid_placed_pending_usufruct_cap_id(e: &BidPlaced): ID       
 #[test_only]
 public(package) fun bid_placed_pending_usufructuary_address(e: &BidPlaced): address        { e.pending_usufructuary_address }
 #[test_only]
-public(package) fun bid_placed_bid_amount(e: &BidPlaced): u64                    { e.bid_amount }
+public(package) fun bid_placed_pending_bid_amount(e: &BidPlaced): u64                    { e.pending_bid_amount }
 #[test_only]
-public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                   { e.floor_price }
+public(package) fun bid_placed_pending_ceiling_total_ms(e: &BidPlaced): u64             { e.pending_ceiling_total_ms }
 #[test_only]
-public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64     { e.handover_countdown_expiry }
+public(package) fun bid_placed_pending_handover_total_ms(e: &BidPlaced): u64            { e.pending_handover_total_ms }
 #[test_only]
-public(package) fun bid_placed_timestamp_ms(e: &BidPlaced): u64                      { e.timestamp_ms }
+public(package) fun bid_placed_floor_price(e: &BidPlaced): u64                          { e.floor_price }
 #[test_only]
-public(package) fun bid_placed_committed_tenures(e: &BidPlaced): u64             { e.committed_tenures }
+public(package) fun bid_placed_handover_countdown_expiry(e: &BidPlaced): u64            { e.handover_countdown_expiry }
+#[test_only]
+public(package) fun bid_placed_timestamp_ms(e: &BidPlaced): u64                         { e.timestamp_ms }
+#[test_only]
+public(package) fun bid_placed_committed_tenures(e: &BidPlaced): u64                    { e.committed_tenures }
 #[test_only]
 public(package) fun bid_placed_asset_type(e: &BidPlaced): String                 { e.asset_type }
 #[test_only]
@@ -1968,6 +1993,10 @@ public(package) fun bid_superseded_pending_cap_id(e: &BidSuperseded): ID        
 public(package) fun bid_superseded_pending_bidder_address(e: &BidSuperseded): address    { e.pending_bidder_address }
 #[test_only]
 public(package) fun bid_superseded_pending_bid_amount(e: &BidSuperseded): u64            { e.pending_bid_amount }
+#[test_only]
+public(package) fun bid_superseded_pending_ceiling_total_ms(e: &BidSuperseded): u64     { e.pending_ceiling_total_ms }
+#[test_only]
+public(package) fun bid_superseded_pending_handover_total_ms(e: &BidSuperseded): u64    { e.pending_handover_total_ms }
 #[test_only]
 public(package) fun bid_superseded_floor_price(e: &BidSuperseded): u64               { e.floor_price }
 #[test_only]
@@ -2007,6 +2036,8 @@ public(package) fun handover_completed_remain_credit(e: &HandoverCompleted): u64
 public(package) fun handover_completed_governor_share(e: &HandoverCompleted): u64               { e.governor_share }
 #[test_only]
 public(package) fun handover_completed_protocol_fee(e: &HandoverCompleted): u64              { e.protocol_fee }
+#[test_only]
+public(package) fun handover_completed_departing_refund_amount(e: &HandoverCompleted): u64   { e.departing_refund_amount }
 #[test_only]
 public(package) fun handover_completed_new_rent_price(e: &HandoverCompleted): u64            { e.new_rent_price }
 #[test_only]
@@ -2250,7 +2281,7 @@ public(package) fun rent_started_usufruct_cap_id(e: &RentStarted): ID           
 #[test_only]
 public(package) fun rent_started_usufructuary_address(e: &RentStarted): address       { e.usufructuary_address }
 #[test_only]
-public(package) fun rent_started_phase_start_ms(e: &RentStarted): u64           { e.phase_start_ms }
+public(package) fun rent_started_timestamp_ms(e: &RentStarted): u64              { e.timestamp_ms }
 #[test_only]
 public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
 #[test_only]
@@ -2357,11 +2388,15 @@ public(package) fun asset_integrated_fee_inbox_id(e: &AssetIntegrated): ID      
 #[test_only]
 public(package) fun asset_integrated_earnings_inbox_id(e: &AssetIntegrated): ID  { e.earnings_inbox_id }
 #[test_only]
+public(package) fun asset_integrated_retire_commitment_unlock_at_ms(e: &AssetIntegrated): u64   { e.retire_commitment_unlock_at_ms }
+#[test_only]
+public(package) fun asset_integrated_ensemble_commitment_unlock_at_ms(e: &AssetIntegrated): u64 { e.ensemble_commitment_unlock_at_ms }
+#[test_only]
 public(package) fun asset_integrated_asset_type(e: &AssetIntegrated): String     { e.asset_type }
 #[test_only]
 public(package) fun asset_integrated_coin_type(e: &AssetIntegrated): String      { e.coin_type }
 #[test_only]
-public(package) fun asset_integrated_integrated_at_ms(e: &AssetIntegrated): u64  { e.integrated_at_ms }
+public(package) fun asset_integrated_timestamp_ms(e: &AssetIntegrated): u64      { e.timestamp_ms }
 
 #[test_only]
 public(package) fun destroy_receipt_for_testing<Asset: key + store, CoinType>(
@@ -2394,7 +2429,7 @@ public(package) fun capped_used_credit_for_testing(
 }
 
 #[test_only]
-public(package) fun ascending_floor_price_for_testing(stake: Stake, ensemble: &PolicyEnsemble): Price {
+public(package) fun ascending_floor_price_for_testing(stake: StakePerTenure, ensemble: &PolicyEnsemble): Price {
     ascending_floor_price(stake, ensemble)
 }
 

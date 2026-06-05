@@ -272,7 +272,7 @@ async function measureCollect(
     const tickets   = chunk.map(r => tx.receivingRef({ objectId: r.objectId, version: r.version, digest: r.digest }));
     const ticketVec = tx.makeMoveVec({ type: receivingType, elements: tickets });
     const coin = tx.moveCall({
-      target: `${d.usufructPackageId}::fee_inbox::collect_fee_messages`,
+      target: `${d.usufructPackageId}::fees::collect_fee_messages`,
       typeArguments: [SUI],
       arguments: [tx.object(d.protocolFeeInboxId), ticketVec],
     });

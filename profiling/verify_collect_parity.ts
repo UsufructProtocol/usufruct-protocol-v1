@@ -95,7 +95,7 @@ async function collectFee(client: SuiClient, kp: any, d: D, ref: Ref, label: str
   tx.setSender(d.governor.address);
   const ticket = tx.receivingRef(ref);
   const vec    = tx.makeMoveVec({ type: recvType, elements: [ticket] });
-  const coin   = tx.moveCall({ target: `${d.usufructPackageId}::fee_inbox::collect_fee_messages`, typeArguments: [SUI],
+  const coin   = tx.moveCall({ target: `${d.usufructPackageId}::fees::collect_fee_messages`, typeArguments: [SUI],
     arguments: [tx.object(d.protocolFeeInboxId), vec] });
   tx.transferObjects([coin], d.governor.address);
   return measure(client, kp.governor, label, 0, tx);

@@ -271,7 +271,7 @@ HandoverCompleted {
     departing_phase_start_ms: u64, departing_ceiling_total_ms: u64, departing_handover_total_ms: u64,
     active_usufruct_cap_id: ID, active_usufructuary_address: address, active_stake_balance: u64,
     used_credit: u64, remain_credit: u64,
-    governor_share: u64, protocol_fee: u64, new_rent_price: u64,
+    governor_share: u64, protocol_fee: u64, departing_refund_amount: u64, new_rent_price: u64,
     committed_tenures: u64, ceiling_total_ms: u64, handover_total_ms: u64,
     asset_type: String, coin_type: String, timestamp_ms: u64
 }

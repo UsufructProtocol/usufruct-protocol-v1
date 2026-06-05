@@ -7,6 +7,7 @@ module usufruct::curve_shape_policy;
 
 use std::string::String;
 use usufruct::math;
+use usufruct::phases::{Self, Duration, Elapsed};
 
 // === Errors ===
 
@@ -63,6 +64,12 @@ public enum CurveShapePolicy has copy, drop, store {
         alpha_neg: bool,
     },
     Logistic,
+}
+
+public enum Progress has copy, drop {
+    Zero,
+    Complete,
+    Partial { numerator: u64, denominator: u64 },
 }
 
 // === Events ===
@@ -130,16 +137,26 @@ public(package) fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapeP
 
 public(package) fun proj_value(h: CurveHeight): u64 { h.h }
 
-public(package) fun compute_curve_height(shape: &CurveShapePolicy, t: u64, t_max: u64): CurveHeight {
-    let h = if (t == 0)     { 0 }
-            else if (t >= t_max) { SCALE }
-            else match (shape) {
-                CurveShapePolicy::Linear                               => eval_linear(t, t_max),
-                CurveShapePolicy::Smoothstep                           => eval_smoothstep(t, t_max),
-                CurveShapePolicy::PowerLaw { alpha_num, alpha_den }    => eval_power_law(t, t_max, *alpha_num, *alpha_den),
-                CurveShapePolicy::Exponential { alpha_abs, alpha_neg } => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
-                CurveShapePolicy::Logistic                             => eval_logistic(t, t_max),
-            };
+public(package) fun progress(numerator: Elapsed, denominator: Duration): Progress {
+    let n = phases::elapsed_ms(numerator);
+    let d = phases::duration_ms(denominator);
+    if (n == 0)      Progress::Zero
+    else if (n >= d) Progress::Complete
+    else Progress::Partial { numerator: n, denominator: d }
+}
+
+public(package) fun compute_curve_height(shape: &CurveShapePolicy, p: Progress): CurveHeight {
+    let h = match (p) {
+        Progress::Zero     => 0,
+        Progress::Complete => SCALE,
+        Progress::Partial { numerator: t, denominator: t_max } => match (shape) {
+            CurveShapePolicy::Linear                               => eval_linear(t, t_max),
+            CurveShapePolicy::Smoothstep                           => eval_smoothstep(t, t_max),
+            CurveShapePolicy::PowerLaw { alpha_num, alpha_den }    => eval_power_law(t, t_max, *alpha_num, *alpha_den),
+            CurveShapePolicy::Exponential { alpha_abs, alpha_neg } => eval_exponential(t, t_max, *alpha_abs, *alpha_neg),
+            CurveShapePolicy::Logistic                             => eval_logistic(t, t_max),
+        },
+    };
     CurveHeight { h }
 }
 

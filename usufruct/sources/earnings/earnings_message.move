@@ -34,17 +34,17 @@ public struct EarningsMessage<phantom CoinType> has key {
 // === Events ===
 
 public struct EarningsMessagePosted has copy, drop {
+    escrow_id:           ID,
     earnings_message_id: ID,
     earnings_inbox_id:   ID,
-    escrow_id:           ID,
     amount:              u64,
     coin_type:           String,
 }
 
 public struct EarningsMessageCollected has copy, drop {
+    escrow_id:           ID,
     earnings_message_id: ID,
     earnings_inbox_id:   ID,
-    escrow_id:           ID,
     amount:              u64,
     collector:           address,
     coin_type:           String,

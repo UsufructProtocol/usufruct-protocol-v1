@@ -24,14 +24,14 @@ public struct UsufructCapIdentity has copy, drop, store { id: ID }
 // === Events ===
 
 public struct UsufructCapMinted has copy, drop {
-    usufruct_cap_id:  ID,
-    escrow_id:      ID,
+    escrow_id:            ID,
+    usufruct_cap_id:      ID,
     usufructuary_address: address,
 }
 
 public struct UsufructCapBurned has copy, drop {
-    usufruct_cap_id:  ID,
-    escrow_id:      ID,
+    escrow_id:            ID,
+    usufruct_cap_id:      ID,
     usufructuary_address: address,
 }
 

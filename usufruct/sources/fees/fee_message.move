@@ -40,17 +40,17 @@ public struct FeeMessage<phantom CoinType> has key {
 // === Events ===
 
 public struct FeeMessagePosted has copy, drop {
+    escrow_id:      ID,
     fee_message_id: ID,
     fee_inbox_id:   ID,
-    escrow_id:      ID,
     amount:         u64,
     coin_type:      String,
 }
 
 public struct FeeMessageCollected has copy, drop {
+    escrow_id:      ID,
     fee_message_id: ID,
     fee_inbox_id:   ID,
-    escrow_id:      ID,
     amount:         u64,
     collector:      address,
     coin_type:      String,

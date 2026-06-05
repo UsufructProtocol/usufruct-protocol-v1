@@ -19,6 +19,8 @@ const ETenuresZero: u64 = 0;
 
 public struct Tenures has copy, drop, store { count: u64 }
 
+public struct StakePerTenure has copy, drop, store { mist: u64 }
+
 // === Events ===
 
 // === Method Aliases ===
@@ -44,9 +46,13 @@ public(package) fun compute_total_price(floor: Price, c: Tenures): Price {
     monetary::price(math::compute_mul_div(monetary::price_mist(floor), c.count, 1))
 }
 
-public(package) fun compute_per_tenure_stake(stake: Stake, c: Tenures): Stake {
-    monetary::stake(math::compute_mul_div(monetary::stake_mist(stake), 1, c.count))
+public(package) fun stake_per_tenure(stake: Stake, c: Tenures): StakePerTenure {
+    StakePerTenure { mist: math::compute_mul_div(monetary::stake_mist(stake), 1, c.count) }
 }
+
+public(package) fun stake_per_tenure_mist(s: StakePerTenure): u64 { s.mist }
+
+public(package) fun stake_per_tenure_as_price(s: StakePerTenure): Price { monetary::price(s.mist) }
 
 public(package) fun compute_total_duration(d: Duration, c: Tenures): Duration {
     phases::duration(math::compute_mul_div(phases::duration_ms(d), c.count, 1))

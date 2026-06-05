@@ -69,7 +69,7 @@ async function collectBatch(
   const tickets    = refs.map(r => tx.receivingRef({ objectId: r.objectId, version: r.version, digest: r.digest }));
   const ticketVec  = tx.makeMoveVec({ type: receivingType, elements: tickets });
   const coin = tx.moveCall({
-    target:        `${pkg}::fee_inbox::collect_fee_messages`,
+    target:        `${pkg}::fees::collect_fee_messages`,
     typeArguments: ['0x2::sui::SUI'],
     arguments:     [tx.object(inboxId), ticketVec],
   });

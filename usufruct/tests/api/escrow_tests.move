@@ -53,7 +53,7 @@ use usufruct::{
     cap,
     escrow_corpus,
     escrow_identity,
-    fee_inbox,
+    fees,
     fee_message::{Self, FeeMessage, FeeMessagePosted},
     earnings,
     earnings_inbox::EarningsInbox,
@@ -841,7 +841,7 @@ fun e2e_invariant_nothing_collected_fee_plus_earnings_equals_rent() {
         &mut inbox, vector[test_scenario::receiving_ticket_by_id<EarningsMessage<SUI>>(earn_id)], sc.ctx(),
     );
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
-    let fee_coin = fee_inbox::collect_fee_messages<SUI>(
+    let fee_coin = fees::collect_fee_messages<SUI>(
         &mut fee_box, vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_id)], sc.ctx(),
     );
 
@@ -918,7 +918,7 @@ fun e2e_invariant_parcial_then_nothing_conserves_both_rents() {
 
     let earn_coin = earnings::collect_earnings_messages<SUI>(&mut inbox, tickets_for(earn_ids), sc.ctx());
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
-    let fee_coin = fee_inbox::collect_fee_messages<SUI>(
+    let fee_coin = fees::collect_fee_messages<SUI>(
         &mut fee_box,
         vector[
             test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_ids[0]),
@@ -1784,7 +1784,7 @@ fun do_handover_routes_funds_and_emits_event_parcial() {
     sc.return_to_sender(earn_inbox);
 
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
-    let f_coin = fee_inbox::collect_fee_messages<SUI>(
+    let f_coin = fees::collect_fee_messages<SUI>(
         &mut fee_box,
         vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_msg_id)],
         sc.ctx(),
@@ -1900,7 +1900,7 @@ fun do_tenure_expiry_routes_full_stake_and_anchors_descent() {
     sc.return_to_sender(earn_inbox);
 
     let mut fee_box = sc.take_from_sender<ProtocolFeeInbox>();
-    let f_coin = fee_inbox::collect_fee_messages<SUI>(
+    let f_coin = fees::collect_fee_messages<SUI>(
         &mut fee_box,
         vector[test_scenario::receiving_ticket_by_id<FeeMessage<SUI>>(fee_msg_id)],
         sc.ctx(),
@@ -5010,7 +5010,7 @@ fun e2e_overpay_accepted_elevates_next_floor() {
     let price_t2 = 2 * floor_ho;
     let cap_t2   = escrow::rent(&mut escrow, mk_payment(price_t2, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
     let bp       = event::events_by_type<BidPlaced>();
-    assert_eq!(asset_state::bid_placed_bid_amount(bp.borrow(0)), price_t2);
+    assert_eq!(asset_state::bid_placed_pending_bid_amount(bp.borrow(0)), price_t2);
     assert!(price_t2 >= asset_state::bid_placed_floor_price(bp.borrow(0)), tag);
     assert_eq!(escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk)), price_t2 + delta);
 
@@ -8393,6 +8393,52 @@ fun multi_cycle_countdown_scales_with_committed_tenures() {
     sc.end();
 }
 
+/// Regression: HandoverCompleted.new_rent_price is normalized by the INCOMING tenant's
+/// committed tenures, matching the canonical floor (compute_floor_price_at). For a
+/// multi-tenure incoming bid the un-normalized escalation overstates the post-handover
+/// floor by ~N×; here N=2 → normalized 3×floor, un-normalized would have been 5×floor.
+#[test]
+fun handover_new_rent_price_normalized_by_incoming_tenures() {
+    let mut sc = setup();
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let floor     = escrow_corpus::min_rent_price_const();
+    let countdown = escrow_corpus::handover_countdown_c1_const();
+
+    // T1: 3 tenures (stake = floor×3, per-tenure = floor).
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(floor * 3, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
+
+    // T2: 2-tenure bid. The per-tenure floor to displace T1 = ascending(floor) = 2×floor.
+    sc.next_tx(USUFRUCTUARY_ADDR_2);
+    let bid_floor_t2 = escrow::floor_price_mist(&escrow, clock::timestamp_ms(&clk));
+    assert_eq!(bid_floor_t2, floor * 2);
+    let cap2 = escrow::rent(&mut escrow, mk_payment(bid_floor_t2 * 2, sc.ctx()), tenures::tenures(2), &clk, sc.ctx());
+
+    // T2 wins handover at boundary = countdown × 3 (T1's ×3-scaled window).
+    let boundary_t2 = countdown * 3;
+    escrow::fire_do_handover_for_testing(&mut escrow, phases::timestamp(boundary_t2), sc.ctx());
+
+    // T2 now active: stake = 4×floor over 2 tenures. Post-handover floor =
+    // ascending(per_tenure_stake(4×floor, 2)) = ascending(2×floor) = 3×floor.
+    // The pre-fix (un-normalized) value would have been ascending(4×floor) = 5×floor.
+    let evts = event::events_by_type<HandoverCompleted>();
+    assert_eq!(evts.length(), 1);
+    let e = &evts[0];
+    assert_eq!(asset_state::handover_completed_committed_tenures(e), 2); // incoming bid is multi-tenure
+    let new_rent = asset_state::handover_completed_new_rent_price(e);
+    assert_eq!(new_rent, floor * 3);                                      // normalized, not 5×floor
+    assert_eq!(new_rent, escrow::floor_price_mist(&escrow, boundary_t2)); // == canonical floor view
+
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    transfer::public_transfer(cap2, USUFRUCTUARY_ADDR_2);
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
 // ─── §Degeneration: cycles(1) matches single-cycle baseline ──────────────────
 //
 // Each test pairs the multi-cycle code path (cycles=1) against the expected
@@ -8637,13 +8683,59 @@ fun multi_cycle_tenure_expiry_fires_at_extended_ceiling() {
     let boundary = tenure * 3;
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
 
-    // Post-condition: Descent with last_acq_price = principal.
+    // Post-condition: Descent with last_acq_price = per-tenure stake (principal / 3 = floor).
     assert!(escrow::is_descending(&escrow), 0);
 
     let expired = event::events_by_type<TenureExpired>();
     assert_eq!(expired.length(), 1);
-    assert_eq!(asset_state::tenure_expired_last_acq_price(&expired[0]), principal);
+    assert_eq!(asset_state::tenure_expired_last_acq_price(&expired[0]), floor);
     // Conservation: full principal consumed.
+    assert_eq!(
+        asset_state::tenure_expired_governor_share(&expired[0]) +
+        asset_state::tenure_expired_protocol_fee(&expired[0]),
+        principal,
+    );
+
+    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
+    test_scenario::return_shared(escrow);
+    transfer::public_transfer(governance_cap, GOVERNOR);
+    clock::destroy_for_testing(clk);
+    sc.end();
+}
+
+/// Regression: multi-tenure last_acq_price is normalized per-tenure, not the raw total stake.
+/// tenures(3), principal = floor×6 → per_tenure = floor×2.
+/// TenureExpired.last_acquisition_price and Descent starting price must both equal floor×2.
+/// Without the fix both would equal floor×6 (3× too high).
+#[test]
+fun multi_cycle_tenure_expiry_last_acq_price_normalized_per_tenure() {
+    let mut sc = setup();
+    let (mut escrow, governance_cap) = integrate_and_take(multi_cycle_cfg_countdown(), &mut sc);
+    let clk = clock::create_for_testing(sc.ctx());
+
+    let tenure    = escrow_corpus::tenure_ceiling_const();
+    let floor     = escrow_corpus::min_rent_price_const();
+    let n_tenures = 3;
+    let principal = floor * 6;
+    let per_tenure = floor * 2;
+
+    sc.next_tx(USUFRUCTUARY_ADDR_1);
+    let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), tenures::tenures(n_tenures), &clk, sc.ctx());
+
+    let boundary = tenure * (n_tenures as u64);
+    escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(boundary), sc.ctx());
+    assert!(escrow::is_descending(&escrow), 0);
+
+    // Event: last_acquisition_price = per-tenure stake, not total stake.
+    let expired = event::events_by_type<TenureExpired>();
+    assert_eq!(expired.length(), 1);
+    assert_eq!(asset_state::tenure_expired_last_acq_price(&expired[0]), per_tenure);
+
+    // Descent starting price matches the event value.
+    let price_at_start = escrow::floor_price_mist(&escrow, boundary);
+    assert_eq!(price_at_start, per_tenure);
+
+    // Conservation: total principal is fully distributed regardless of normalization.
     assert_eq!(
         asset_state::tenure_expired_governor_share(&expired[0]) +
         asset_state::tenure_expired_protocol_fee(&expired[0]),
@@ -9383,9 +9475,11 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk    = clock::create_for_testing(sc.ctx());
 
-    // T1: 3 cycles → extended_ceiling = tenure×3 = 300k. Stake = floor×3.
+    // T1: 3 cycles → extended_ceiling = tenure×3 = 300k.
+    // Stake = floor×6 (2× minimum) so per-tenure stake = floor×2 > floor — meaningful descent spread.
     sc.next_tx(USUFRUCTUARY_ADDR_1);
-    let principal = floor * 3;
+    let principal = floor * 6;
+    let per_tenure = floor * 2;
     let cap1 = escrow::rent(&mut escrow, mk_payment(principal, sc.ctx()), tenures::tenures(3), &clk, sc.ctx());
 
     // T1 tenure expires at t = tenure×3 = 300k → Descent.
@@ -9394,16 +9488,16 @@ fun descent_descent_driven_by_resolved_descent_not_resolved_ceiling() {
     escrow::fire_do_tenure_expiry_for_testing(&mut escrow, phases::timestamp(t_expiry), sc.ctx());
     assert!(escrow::is_descending(&escrow), 0);
 
-    // At t_expiry (elapsed=0): price = last_acq_price = T1's stake = floor×3.
+    // At t_expiry (elapsed=0): price = last_acq_price = per-tenure stake = floor×2.
     let price_at_start = escrow::floor_price_mist(&escrow, t_expiry);
-    assert_eq!(price_at_start, principal);
+    assert_eq!(price_at_start, per_tenure);
 
     // At t_expiry + descent (elapsed=window): price = min_rent_price = floor.
     // If resolved_ceiling (300k) were used instead, descent would end at t=600k, not t=400k.
     let price_at_end = escrow::floor_price_mist(&escrow, t_expiry + descent);
     assert_eq!(price_at_end, floor);
 
-    // Mid-descent: price is strictly between start and end.
+    // Mid-descent: price is strictly between per-tenure start and floor.
     let price_at_mid = escrow::floor_price_mist(&escrow, t_expiry + descent / 2);
     assert!(price_at_mid < price_at_start, 1);
     assert!(price_at_mid > price_at_end,   2);
@@ -10492,7 +10586,7 @@ fun event_pin_asset_integrated_all_fields() {
     assert_eq!(asset_state::asset_integrated_asset_id(e),          asset_id);
     assert_eq!(asset_state::asset_integrated_fee_inbox_id(e),      protocol_fee_ref::proj_inbox_id(&fee_ref));
     assert_eq!(asset_state::asset_integrated_earnings_inbox_id(e), inbox_id);
-    assert_eq!(asset_state::asset_integrated_integrated_at_ms(e),  42_000);
+    assert_eq!(asset_state::asset_integrated_timestamp_ms(e),  42_000);
     assert_eq!(asset_state::asset_integrated_asset_type(e),        string::from_ascii(type_name::into_string(type_name::with_defining_ids<DemoAsset>())));
     assert_eq!(asset_state::asset_integrated_coin_type(e),         string::from_ascii(type_name::into_string(type_name::with_defining_ids<SUI>())));
 
@@ -10528,7 +10622,7 @@ fun event_pin_rent_started_all_fields() {
     assert_eq!(asset_state::rent_started_escrow_id(e),        escrow_id);
     assert_eq!(asset_state::rent_started_usufruct_cap_id(e),    object::id(&cap_t1));
     assert_eq!(asset_state::rent_started_usufructuary_address(e),           GOVERNOR);
-    assert_eq!(asset_state::rent_started_phase_start_ms(e),   7_000);
+    assert_eq!(asset_state::rent_started_timestamp_ms(e),   7_000);
     assert_eq!(asset_state::rent_started_price_paid(e),       floor);
     assert_eq!(asset_state::rent_started_floor_price(e),      floor);
     assert_eq!(asset_state::rent_started_committed_tenures(e), 1);
@@ -10822,7 +10916,7 @@ fun event_pin_bid_placed_all_fields() {
     assert_eq!(asset_state::bid_placed_active_phase_start_ms(e),    0);
     assert_eq!(asset_state::bid_placed_pending_usufruct_cap_id(e),             object::id(&cap_t2));
     assert_eq!(asset_state::bid_placed_pending_usufructuary_address(e),            GOVERNOR);
-    assert_eq!(asset_state::bid_placed_bid_amount(e),                floor2);
+    assert_eq!(asset_state::bid_placed_pending_bid_amount(e),                floor2);
     assert_eq!(asset_state::bid_placed_floor_price(e),               floor2);
     assert_eq!(asset_state::bid_placed_handover_countdown_expiry(e), expected_expiry);
     assert_eq!(asset_state::bid_placed_committed_tenures(e),         1);
@@ -11083,6 +11177,7 @@ fun event_pin_handover_completed_all_fields() {
     assert_eq!(asset_state::handover_completed_used_credit(e),             used_credit);
     assert_eq!(asset_state::handover_completed_governor_share(e),             governor_share_val);
     assert_eq!(asset_state::handover_completed_protocol_fee(e),            protocol_fee_val);
+    assert_eq!(asset_state::handover_completed_departing_refund_amount(e), remain_val);
     assert_eq!(asset_state::handover_completed_remain_credit(e),           remain_val);
     assert_eq!(asset_state::handover_completed_committed_tenures(e),       1);
     assert_eq!(asset_state::handover_completed_ceiling_total_ms(e),        escrow_corpus::tenure_ceiling_const());

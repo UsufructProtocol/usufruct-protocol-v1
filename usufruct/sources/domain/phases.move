@@ -18,6 +18,8 @@ public struct Timestamp has copy, drop, store { ms: u64 }
 
 public struct Duration has copy, drop, store { ms: u64 }
 
+public struct Elapsed has copy, drop { ms: u64 }
+
 // === Enums ===
 
 public enum Boundary has copy, drop {
@@ -64,9 +66,11 @@ public(package) fun compute_boundary(anchor: Timestamp, d: Duration, now: Timest
     }
 }
 
-public(package) fun compute_elapsed(start: Timestamp, now: Timestamp): Duration {
-    if (now.ms >= start.ms) Duration { ms: now.ms - start.ms } else Duration { ms: 0 }
+public(package) fun compute_elapsed(start: Timestamp, now: Timestamp): Elapsed {
+    if (now.ms >= start.ms) Elapsed { ms: now.ms - start.ms } else Elapsed { ms: 0 }
 }
+
+public(package) fun elapsed_ms(e: Elapsed): u64 { e.ms }
 
 public(package) fun compute_boundary_at(anchor: Timestamp, d: Duration): Timestamp {
     Timestamp { ms: anchor.ms + d.ms }
@@ -79,4 +83,7 @@ public(package) fun compute_earliest(a: Timestamp, b: Timestamp): Timestamp {
 // === Private Functions ===
 
 // === Test Functions ===
+
+#[test_only]
+public fun elapsed_for_testing(ms: u64): Elapsed { Elapsed { ms } }
 

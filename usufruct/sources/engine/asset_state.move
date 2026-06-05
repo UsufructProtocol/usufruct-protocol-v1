@@ -904,25 +904,25 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
         AssetState::Waiting(WaitingState::Idle { asset, cycle }) => {
             let floor = cycle.floor;
-            assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
+            assert!(payment_covers(&payment, tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Waiting(WaitingState::Descent { asset, auction, cycle }) => {
             let floor = descending_floor_price(auction.last_acq_price, auction.phase_start, cycle.floor, cycle.descent, &core.ensemble.active, now);
-            assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
+            assert!(payment_covers(&payment, tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_install(asset, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = usufructuary_seat::proj_stake_value(&terms.active);
             let floor = ascending_floor_price(tenures::stake_per_tenure(stake, terms.schedule.committed_tenures), &core.ensemble.active);
-            assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
+            assert!(payment_covers(&payment, tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             let stake = usufructuary_seat::proj_stake_value(&bid.pending);
             let floor = ascending_floor_price(tenures::stake_per_tenure(stake, bid.handover.tenures), &core.ensemble.active);
-            assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
+            assert!(payment_covers(&payment, tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_supersede_bid(
                 asset, terms, bid, cycle, tenures,
                 &core.governor_seat, escrow_identity, fee_inbox_identity, payment, floor, now, ctx,
@@ -930,6 +930,10 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         },
     };
     (rs, core, cap)
+}
+
+fun payment_covers<CoinType>(payment: &Coin<CoinType>, due: tenures::TotalDue): bool {
+    coin::value(payment) >= tenures::total_due_mist(due)
 }
 
 public(package) fun execute_retire<Asset: key + store, CoinType>(

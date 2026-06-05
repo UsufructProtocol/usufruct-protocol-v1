@@ -21,6 +21,8 @@ public struct Tenures has copy, drop, store { count: u64 }
 
 public struct StakePerTenure has copy, drop, store { mist: u64 }
 
+public struct TotalDue has copy, drop, store { mist: u64 }
+
 // === Events ===
 
 // === Method Aliases ===
@@ -42,9 +44,11 @@ public(package) fun tenures_count(c: Tenures): u64 { c.count }
 
 public(package) fun proj_is_single(c: Tenures): bool { c.count == 1 }
 
-public(package) fun compute_total_price(floor: Price, c: Tenures): Price {
-    monetary::price(math::compute_mul_div(monetary::price_mist(floor), c.count, 1))
+public(package) fun compute_total_price(floor: Price, c: Tenures): TotalDue {
+    TotalDue { mist: math::compute_mul_div(monetary::price_mist(floor), c.count, 1) }
 }
+
+public(package) fun total_due_mist(t: TotalDue): u64 { t.mist }
 
 public(package) fun stake_per_tenure(stake: Stake, c: Tenures): StakePerTenure {
     StakePerTenure { mist: math::compute_mul_div(monetary::stake_mist(stake), 1, c.count) }

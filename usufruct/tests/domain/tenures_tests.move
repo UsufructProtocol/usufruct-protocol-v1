@@ -56,7 +56,7 @@ fun total_price_table() {
         TotalPriceCase { floor_mist: 1, n: 7, expected: 7 },
     ];
     cases.do_ref!(|c| {
-        let result = monetary::price_mist(tenures::compute_total_price(monetary::price(c.floor_mist), tenures::tenures(c.n)));
+        let result = tenures::total_due_mist(tenures::compute_total_price(monetary::price(c.floor_mist), tenures::tenures(c.n)));
         assert_eq!(result, c.expected);
     });
 }

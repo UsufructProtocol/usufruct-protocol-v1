@@ -638,7 +638,7 @@ emits `${PKG}::fee_message::FeeMessagePosted`. So a 1000-MIST tenure settles to
 to the protocol.
 
 Collection is rebate-positive at scale (≈ −1.9M MIST/msg) **and** returns the income
-coin. Same shape works for `fee_inbox::collect_fee_messages` (protocol operator only;
+coin. Same shape works for `fees::collect_fee_messages` (protocol operator only;
 the `ProtocolFeeInbox` is deployer-owned).
 
 ---
@@ -861,9 +861,10 @@ mechanics* above.)
   **no** escalation. Escalation only gates a bid that displaces an active/pending tenant.
 - **What is the descending-price (Descent) window, and which way does it move?** Descent is
   entered **only after a tenure expires with no pending bid** (and only if `auction_window` is
-  `Fixed`). It descends **from the previous tenant's full stake price *down* to the fixed rest
-  price** along `auction_shape` — the *opposite* direction of escalation. Renting mid-Descent
-  pays the current (higher-than-floor) descending price. (`do_tenure_expiry` → `Waiting::Descent`.)
+  `Fixed`). It descends **from the previous tenant's *per-tenure* acquisition price (their stake
+  ÷ N) *down* to the fixed rest price** along `auction_shape` — the *opposite* direction of
+  escalation. Renting mid-Descent pays the current (higher-than-floor) descending price, itself
+  per-tenure (it is `× N`'d at payment). (`do_tenure_expiry` → `Waiting::Descent`.)
 
 **Tenure count `N` — it scales each axis differently** (the most numerically error-prone area:
 `rent(tenures(N))` does **not** scale everything uniformly)
@@ -882,7 +883,7 @@ mechanics* above.)
 - **To displace an incumbent, the minimum bid is their stake ÷ their committed `N` (floored), then
   escalated** — *not* their total stake. A 3-tenure incumbent who staked 300 yields a per-tenure
   reference of `floor(300/3)=100`; the next single-tenure floor ≈ `escalate(100)`, and the
-  displacer pays `that × their own N`. (`tenures::compute_per_tenure_stake`, `asset_state.move`.)
+  displacer pays `that × their own N`. (`tenures::stake_per_tenure`, `asset_state.move`.)
 - **The handover protection window scales ×N.** A tenant who locks more tenures gets
   proportionally more grace: at install `handover_total = handover_ms × N` and
   `ceiling_total = ceiling_ms × N`. After a bid the swap time is
@@ -891,6 +892,46 @@ mechanics* above.)
 - **Used credit (and so the refund on early exit) is computed on the *full* stake, not per-tenure**,
   integrated against the ×N ceiling (capped at the handover boundary in Demand). Per-tenure
   normalization governs *pricing the next bid*, **not** *credit consumption*. (`do_handover`.)
+
+**The price unit — the one model that generates every row above**
+
+If you understand one thing about usufruct pricing, make it this: it tells you which way to
+normalize in *any* situation, without memorizing the table.
+
+- **One intensive rate; three extensive axes that scale together.** The **price** is a *rate* —
+  always **per single tenure** (MIST per tenure), independent of how many tenures you buy, like a
+  density that doesn't change with volume. The per-tenure price itself **never** scales with `N`.
+  What scales are **three extensive quantities, each multiplied by `N` in lockstep** when you commit
+  to `N` tenures: **stake** (you pay `price × N`), the **tenure ceiling** (you occupy `ceiling × N`),
+  and the **handover grace** (you get `handover × N`). Each is its own per-tenure quantity, and
+  multiplying a per-tenure quantity by `N` is literally integrating a rate over the commitment.
+  **Derive in per-tenure, settle and occupy in `× N`** — that one split is every row of the table
+  above. (`compute_total_price` for stake, `compute_total_duration` for ceiling and handover.)
+- **Per-tenure is enforced, not a convention — a shared consumer fixes the unit.** All four `rent`
+  paths (Idle, Occupied, Demand, Descent) end in the *same* check, `compute_total_price(floor, N)`
+  = `floor × N`. Multiplying by `N` *defines* `floor`'s unit as per-tenure, so every producer must
+  supply that unit: Idle → `cycle.floor`; Occupied/Demand → `ascending_floor_price(stake_per_tenure(…))`;
+  Descent → `descending_floor_price(…)`, descending from `stake ÷ N`. Feed a *total* into that slot
+  and an `N`-tenure history double-scales the next payment (the bug that single-tenure hides, since
+  for `N=1` per-tenure ≡ total). (`execute_rent`.)
+- **Escalation is a monotone ladder — over the *standing top*, not always the active tenant.**
+  Bidding into **Occupied** escalates over the **active tenant's** per-tenure price → you become the
+  *pending* seat. Superseding in **Demand** escalates over the **pending bid's** per-tenure price
+  (which already beat the active tenant), *not* the active tenant's. So `active < pending <
+  superseder`, each rung over the current frontrunner, each reference normalized by **its own**
+  committed `N`. (`execute_rent` Occupied/Demand → `stake_per_tenure`.)
+- **Descent inherits the price unit but not the `× N` scaling — and that asymmetry is deliberate.**
+  The auction descends from the departing tenant's **per-tenure** price (`stake ÷ N`), same unit as
+  escalation, opposite direction. But the descent **window** (its *duration*) does **not** scale
+  with `N`: it is the price-decay clock of the auction — a market parameter, not a property of the
+  previous tenant's commitment. The test: the *price* meets `compute_total_price(·, N)`, so it is
+  bound to per-tenure; the *window* never meets any `× N` operator, so it is genuinely free. Same
+  reason, two outcomes. (`do_tenure_expiry` → `Waiting::Descent`.)
+- **Overpaying the stake raises the next auction's ceiling.** The *whole* payment coin becomes the
+  seat's stake (`coin::into_balance(payment)` — no surplus is split off), so `stake ≥ floor × N`. At
+  expiry the descent ceiling is `stake ÷ N` (gross, before the 10% fee), so any overpay ≥ `N` MIST
+  lifts the per-tenure price the next renter descends from. The extra is a real bid for a higher
+  starting price, not a refundable deposit. (`do_install`, `do_tenure_expiry`.)
 
 **Stake & refunds** (the most counter-intuitive area)
 

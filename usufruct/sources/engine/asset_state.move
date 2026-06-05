@@ -1547,7 +1547,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         phase_start_ms:         phases::timestamp_ms(schedule.phase_start),
         governor_share:            principal_mist - fee_mist,
         protocol_fee:           fee_mist,
-        last_acquisition_price: principal_mist,
+        last_acquisition_price: monetary::stake_mist(tenures::compute_per_tenure_stake(principal, schedule.committed_tenures)),
         asset_type,
         coin_type,
         timestamp_ms:           phases::timestamp_ms(boundary),
@@ -1561,7 +1561,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     } else {
         WaitingState::Descent {
             asset:   locked,
-            auction: AuctionTerms { last_acq_price: monetary::as_reference_price(principal), phase_start: boundary },
+            auction: AuctionTerms { last_acq_price: monetary::as_reference_price(tenures::compute_per_tenure_stake(principal, schedule.committed_tenures)), phase_start: boundary },
             cycle,
         }
     }

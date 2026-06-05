@@ -1903,6 +1903,10 @@ fun ascending_floor_price(stake: StakePerTenure, ensemble: &PolicyEnsemble): Pri
     )
 }
 
+public(package) fun compute_next_floor_price(stake: Stake, c: Tenures, ensemble: &PolicyEnsemble): Price {
+    ascending_floor_price(tenures::stake_per_tenure(stake, c), ensemble)
+}
+
 fun descending_floor_price(
     last_acq_price:   Price,
     phase_start:      Timestamp,

@@ -17,6 +17,7 @@ use usufruct::{
     phases,
     price_escalation_policy,
     tenure_duration_policy,
+    tenures,
 };
 
 const MIN:    u64 = 10_000_000_000;
@@ -41,8 +42,8 @@ fun base_ensemble(descent: bool): policy_ensemble::PolicyEnsemble {
 #[test]
 fun ascending_is_time_independent() {
     let ensemble = base_ensemble(false);
-    let p0 = monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &ensemble));
-    let p1 = monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &ensemble));
+    let p0 = monetary::price_mist(asset_state::ascending_floor_price_for_testing(tenures::stake_per_tenure(monetary::stake(STAKE), tenures::tenures(1)), &ensemble));
+    let p1 = monetary::price_mist(asset_state::ascending_floor_price_for_testing(tenures::stake_per_tenure(monetary::stake(STAKE), tenures::tenures(1)), &ensemble));
     assert!(p0 == p1, 0);
 }
 
@@ -50,7 +51,7 @@ fun ascending_is_time_independent() {
 fun ascending_agrees_with_price_function_state() {
     let ensemble      = base_ensemble(false);
     let expected = monetary::price_mist(price_escalation_policy::compute_next_price(policy_ensemble::proj_price_escalation(&ensemble), monetary::price(STAKE)));
-    assert!(monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &ensemble)) == expected, 0);
+    assert!(monetary::price_mist(asset_state::ascending_floor_price_for_testing(tenures::stake_per_tenure(monetary::stake(STAKE), tenures::tenures(1)), &ensemble)) == expected, 0);
 }
 
 #[test]
@@ -65,7 +66,7 @@ fun ascending_fixed_delta_adds_delta() {
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_fixed_delta(monetary::price(delta)),
     );
-    let floor = monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &ensemble));
+    let floor = monetary::price_mist(asset_state::ascending_floor_price_for_testing(tenures::stake_per_tenure(monetary::stake(STAKE), tenures::tenures(1)), &ensemble));
     assert!(floor > STAKE, 0);
     assert!(floor == STAKE + delta, 1);
 }
@@ -81,7 +82,7 @@ fun ascending_compound_delta_raises_price() {
         curve_shape_policy::new_linear(),
         price_escalation_policy::new_compound_delta(math::bps(1_000), monetary::price(1)),
     );
-    let floor = monetary::price_mist(asset_state::ascending_floor_price_for_testing(monetary::stake(STAKE), &ensemble));
+    let floor = monetary::price_mist(asset_state::ascending_floor_price_for_testing(tenures::stake_per_tenure(monetary::stake(STAKE), tenures::tenures(1)), &ensemble));
     assert!(floor > STAKE, 0);
 }
 

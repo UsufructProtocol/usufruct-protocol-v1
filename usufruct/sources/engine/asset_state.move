@@ -17,7 +17,7 @@ use usufruct::{
     asset_identity,
     escrowed_asset_identity::{Self, EscrowedAssetIdentity},
     policy_ensemble::{Self, PolicyEnsemble},
-    tenures::{Self, Tenures},
+    tenures::{Self, Tenures, StakePerTenure},
     curve_shape_policy,
     auction_window_policy,
     rest_price_policy,
@@ -723,10 +723,10 @@ public(package) fun compute_floor_price_at<Asset: key + store, CoinType>(
         },
         AssetState::Waiting(WaitingState::Retired { asset: _a }) => abort ERetiredNoBid,
         AssetState::Renting(RentingState::Occupied { terms, .. }) => {
-            ascending_floor_price(tenures::compute_per_tenure_stake(usufructuary_seat::proj_stake_value(&terms.active), terms.schedule.committed_tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::stake_per_tenure(usufructuary_seat::proj_stake_value(&terms.active), terms.schedule.committed_tenures), &core.ensemble.active)
         },
         AssetState::Renting(RentingState::Demand { bid, .. }) => {
-            ascending_floor_price(tenures::compute_per_tenure_stake(usufructuary_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
+            ascending_floor_price(tenures::stake_per_tenure(usufructuary_seat::proj_stake_value(&bid.pending), bid.handover.tenures), &core.ensemble.active)
         },
     }
 }
@@ -915,13 +915,13 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
         AssetState::Renting(RentingState::Occupied { asset, terms, cycle }) => {
             if (retire_condition_is_retiring(&terms.retire)) abort ERetireFlagBlocksBid;
             let stake = usufructuary_seat::proj_stake_value(&terms.active);
-            let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, terms.schedule.committed_tenures), &core.ensemble.active);
+            let floor = ascending_floor_price(tenures::stake_per_tenure(stake, terms.schedule.committed_tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_place_bid(asset, terms, cycle, tenures, escrow_identity, payment, floor, now, ctx)
         },
         AssetState::Renting(RentingState::Demand { asset, terms, bid, cycle }) => {
             let stake = usufructuary_seat::proj_stake_value(&bid.pending);
-            let floor = ascending_floor_price(tenures::compute_per_tenure_stake(stake, bid.handover.tenures), &core.ensemble.active);
+            let floor = ascending_floor_price(tenures::stake_per_tenure(stake, bid.handover.tenures), &core.ensemble.active);
             assert!(coin::value(&payment) >= monetary::price_mist(tenures::compute_total_price(floor, tenures)), EInsufficientPayment);
             do_supersede_bid(
                 asset, terms, bid, cycle, tenures,
@@ -1470,7 +1470,7 @@ fun do_handover<Asset: key + store, CoinType>(
     let active_cap_identity = usufructuary_identity::proj_cap_identity(usufructuary_seat::proj_identity(&pending));
     let active_addr         = usufructuary_addr(&pending);
     let active_stake        = usufructuary_seat::proj_stake_value(&pending);
-    let new_rent_price = monetary::price_mist(ascending_floor_price(tenures::compute_per_tenure_stake(active_stake, incoming_tenures), config));
+    let new_rent_price = monetary::price_mist(ascending_floor_price(tenures::stake_per_tenure(active_stake, incoming_tenures), config));
     let boundary_ms = phases::timestamp_ms(boundary);
     let new_ceiling_total  = tenures::compute_rescaled_duration(schedule.ceiling_total, schedule.committed_tenures, incoming_tenures);
     let new_handover_total = tenures::compute_rescaled_duration(schedule.handover_total, schedule.committed_tenures, incoming_tenures);
@@ -1547,7 +1547,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
         phase_start_ms:         phases::timestamp_ms(schedule.phase_start),
         governor_share:            principal_mist - fee_mist,
         protocol_fee:           fee_mist,
-        last_acquisition_price: monetary::stake_mist(tenures::compute_per_tenure_stake(principal, schedule.committed_tenures)),
+        last_acquisition_price: tenures::stake_per_tenure_mist(tenures::stake_per_tenure(principal, schedule.committed_tenures)),
         asset_type,
         coin_type,
         timestamp_ms:           phases::timestamp_ms(boundary),
@@ -1561,7 +1561,7 @@ fun do_tenure_expiry<Asset: key + store, CoinType>(
     } else {
         WaitingState::Descent {
             asset:   locked,
-            auction: AuctionTerms { last_acq_price: monetary::as_reference_price(tenures::compute_per_tenure_stake(principal, schedule.committed_tenures)), phase_start: boundary },
+            auction: AuctionTerms { last_acq_price: tenures::stake_per_tenure_as_price(tenures::stake_per_tenure(principal, schedule.committed_tenures)), phase_start: boundary },
             cycle,
         }
     }
@@ -1898,10 +1898,10 @@ fun capped_used_credit(
     monetary::stake(curve_shape_policy::compute_scaled_value(monetary::stake_mist(stake), g))
 }
 
-fun ascending_floor_price(stake: Stake, ensemble: &PolicyEnsemble): Price {
+fun ascending_floor_price(stake: StakePerTenure, ensemble: &PolicyEnsemble): Price {
     price_escalation_policy::compute_next_price(
         policy_ensemble::proj_price_escalation(ensemble),
-        monetary::as_reference_price(stake),
+        tenures::stake_per_tenure_as_price(stake),
     )
 }
 
@@ -2428,7 +2428,7 @@ public(package) fun capped_used_credit_for_testing(
 }
 
 #[test_only]
-public(package) fun ascending_floor_price_for_testing(stake: Stake, ensemble: &PolicyEnsemble): Price {
+public(package) fun ascending_floor_price_for_testing(stake: StakePerTenure, ensemble: &PolicyEnsemble): Price {
     ascending_floor_price(stake, ensemble)
 }
 

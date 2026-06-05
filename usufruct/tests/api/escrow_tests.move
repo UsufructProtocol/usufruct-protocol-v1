@@ -10574,7 +10574,7 @@ fun event_pin_rent_started_all_fields() {
     assert_eq!(asset_state::rent_started_escrow_id(e),        escrow_id);
     assert_eq!(asset_state::rent_started_usufruct_cap_id(e),    object::id(&cap_t1));
     assert_eq!(asset_state::rent_started_usufructuary_address(e),           GOVERNOR);
-    assert_eq!(asset_state::rent_started_phase_start_ms(e),   7_000);
+    assert_eq!(asset_state::rent_started_timestamp_ms(e),   7_000);
     assert_eq!(asset_state::rent_started_price_paid(e),       floor);
     assert_eq!(asset_state::rent_started_floor_price(e),      floor);
     assert_eq!(asset_state::rent_started_committed_tenures(e), 1);

@@ -173,7 +173,7 @@ public struct RentStarted has copy, drop {
     price_paid:           u64,
     floor_price:          u64,
     committed_tenures:    u64,
-    phase_start_ms:       u64,
+    timestamp_ms:         u64,
     ceiling_total_ms:     u64,
     handover_total_ms:    u64,
 }
@@ -1792,7 +1792,7 @@ fun do_install<Asset: key + store, CoinType>(
         escrow_id:         escrow_identity::escrow_id(escrow_identity),
         usufruct_cap_id:     usufruct_cap::proj_id(cap_identity),
         usufructuary_address:    usufructuary_addr,
-        phase_start_ms:    phases::timestamp_ms(now),
+        timestamp_ms:      phases::timestamp_ms(now),
         price_paid,
         floor_price:       monetary::price_mist(floor),
         committed_tenures: tenures::tenures_count(tenures),
@@ -2280,7 +2280,7 @@ public(package) fun rent_started_usufruct_cap_id(e: &RentStarted): ID           
 #[test_only]
 public(package) fun rent_started_usufructuary_address(e: &RentStarted): address       { e.usufructuary_address }
 #[test_only]
-public(package) fun rent_started_phase_start_ms(e: &RentStarted): u64           { e.phase_start_ms }
+public(package) fun rent_started_timestamp_ms(e: &RentStarted): u64              { e.timestamp_ms }
 #[test_only]
 public(package) fun rent_started_price_paid(e: &RentStarted): u64                { e.price_paid }
 #[test_only]

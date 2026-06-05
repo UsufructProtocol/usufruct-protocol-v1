@@ -1874,8 +1874,7 @@ fun accruing_used_credit(
     let elapsed = phases::compute_elapsed(phase_start, now);
     let g = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_credit_shape(ensemble),
-        phases::duration_ms(elapsed),
-        phases::duration_ms(resolved_ceiling),
+        curve_shape_policy::progress(elapsed, resolved_ceiling),
     );
     monetary::stake(curve_shape_policy::compute_scaled_value(monetary::stake_mist(stake), g))
 }
@@ -1892,8 +1891,7 @@ fun capped_used_credit(
     let elapsed   = phases::compute_elapsed(phase_start, effective);
     let g = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_credit_shape(ensemble),
-        phases::duration_ms(elapsed),
-        phases::duration_ms(resolved_ceiling),
+        curve_shape_policy::progress(elapsed, resolved_ceiling),
     );
     monetary::stake(curve_shape_policy::compute_scaled_value(monetary::stake_mist(stake), g))
 }
@@ -1916,8 +1914,7 @@ fun descending_floor_price(
     let elapsed  = phases::compute_elapsed(phase_start, now);
     let h        = curve_shape_policy::compute_curve_height(
         policy_ensemble::proj_auction_shape(ensemble),
-        phases::duration_ms(elapsed),
-        phases::duration_ms(resolved_descent),
+        curve_shape_policy::progress(elapsed, resolved_descent),
     );
     let spread   = monetary::price_mist(monetary::compute_price_sub(last_acq_price, resolved_floor));
     let consumed = curve_shape_policy::compute_scaled_value(spread, h);

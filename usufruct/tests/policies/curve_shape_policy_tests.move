@@ -6,6 +6,7 @@ module usufruct::curve_shape_policy_tests;
 
 use std::unit_test::assert_eq;
 use usufruct::curve_shape_policy;
+use usufruct::phases;
 
 // ─── Constructors — success ────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ fun evaluate_curve_edge_cases_apply_to_every_variant() {
         let shape = &seeds[s];
         cases.do_ref!(|case| {
             assert_eq!(
-                curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(shape, case.t, case.t_max)),
+                curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(shape, curve_shape_policy::progress(phases::duration(case.t), phases::duration(case.t_max)))),
                 case.expected,
             );
         });
@@ -165,7 +166,7 @@ fun evaluate_curve_dispatch_equivalence_linear() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, curve_shape_policy::progress(phases::duration(p.t), phases::duration(p.t_max)))),
             curve_shape_policy::eval_linear_for_testing(p.t, p.t_max),
         );
     });
@@ -177,7 +178,7 @@ fun evaluate_curve_dispatch_equivalence_smoothstep() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, curve_shape_policy::progress(phases::duration(p.t), phases::duration(p.t_max)))),
             curve_shape_policy::eval_smoothstep_for_testing(p.t, p.t_max),
         );
     });
@@ -189,7 +190,7 @@ fun evaluate_curve_dispatch_equivalence_logistic() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, curve_shape_policy::progress(phases::duration(p.t), phases::duration(p.t_max)))),
             curve_shape_policy::eval_logistic_for_testing(p.t, p.t_max),
         );
     });
@@ -201,7 +202,7 @@ fun evaluate_curve_dispatch_equivalence_power_law() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, curve_shape_policy::progress(phases::duration(p.t), phases::duration(p.t_max)))),
             curve_shape_policy::eval_power_law_for_testing(p.t, p.t_max, 2, 1),
         );
     });
@@ -213,7 +214,7 @@ fun evaluate_curve_dispatch_equivalence_exponential() {
     let pairs = pd1_interior_pairs();
     pairs.do_ref!(|p| {
         assert_eq!(
-            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, p.t, p.t_max)),
+            curve_shape_policy::proj_value(curve_shape_policy::compute_curve_height(&shape, curve_shape_policy::progress(phases::duration(p.t), phases::duration(p.t_max)))),
             curve_shape_policy::eval_exponential_for_testing(p.t, p.t_max, 2, false),
         );
     });

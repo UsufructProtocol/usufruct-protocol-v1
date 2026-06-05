@@ -26,6 +26,27 @@ Before reading specs or code, build intuition interactively. The [usufruct playg
 
 ---
 
+## Test the Protocol with an AI Agent — `llms.txt`
+
+[`llms.txt`](./llms.txt) is a self-contained guide for LLM agents. Load it and the agent will build real PTBs against the testnet deployment — wallet, funding, integrate, rent, collect, handover — without reading any Move source.
+
+### With Claude Code
+
+```bash
+claude   # from the repo root
+```
+
+```
+@llms.txt  Set up a wallet, integrate the dummy asset, and rent it for one tenure.
+           Show the escrow ID once the asset is occupied.
+```
+
+Session state persists to `.usufruct-demo.json` — every follow-up prompt resumes where the last one left off.
+
+**Be curious.** Let the agent walk you through the built-in scenarios, then push further. Ask it to swap ensembles, change the credit shape, reshape the auction curve, crank up the price escalation until a challenger is forced out, or spin up a fleet of escrows under a single cap. Ask what a usufructuary can actually do with the asset once they hold the cap — what PTBs are legal inside a borrow, what other protocols compose. Ask it to pay rent in a different coin, or integrate your own asset instead of the dummy. The guide is the map; the agent drives; the protocol surprises.
+
+---
+
 ## Why usufruct is different
 
 Most rental markets close when someone checks in. usufruct doesn't.

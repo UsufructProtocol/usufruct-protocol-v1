@@ -104,7 +104,7 @@ fun elapsed_since_table_and_reciprocal_when_after_start() {
         ElapsedSinceCase { start: max, now: 0,   expected: 0   },
     ];
     cases.do_ref!(|c| {
-        let r = phases::duration_ms(phases::compute_elapsed(
+        let r = phases::elapsed_ms(phases::compute_elapsed(
             phases::timestamp(c.start),
             phases::timestamp(c.now),
         ));

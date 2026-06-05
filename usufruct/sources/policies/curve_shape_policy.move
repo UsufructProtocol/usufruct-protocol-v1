@@ -7,7 +7,7 @@ module usufruct::curve_shape_policy;
 
 use std::string::String;
 use usufruct::math;
-use usufruct::phases::{Self, Duration};
+use usufruct::phases::{Self, Duration, Elapsed};
 
 // === Errors ===
 
@@ -137,8 +137,8 @@ public(package) fun new_exponential(alpha_abs: u8, alpha_neg: bool): CurveShapeP
 
 public(package) fun proj_value(h: CurveHeight): u64 { h.h }
 
-public(package) fun progress(numerator: Duration, denominator: Duration): Progress {
-    let n = phases::duration_ms(numerator);
+public(package) fun progress(numerator: Elapsed, denominator: Duration): Progress {
+    let n = phases::elapsed_ms(numerator);
     let d = phases::duration_ms(denominator);
     if (n == 0)      Progress::Zero
     else if (n >= d) Progress::Complete

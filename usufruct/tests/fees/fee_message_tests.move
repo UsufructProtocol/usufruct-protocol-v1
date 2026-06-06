@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Antonio Jiménez
+// Copyright (c) UsufructProtocol
 // SPDX-License-Identifier: Apache-2.0
 
 // Cross-block deferred initialization requires `mut` even for single-assignment

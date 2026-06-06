@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Antonio Jiménez
+// Copyright (c) UsufructProtocol
 // SPDX-License-Identifier: Apache-2.0
 
 /// A minimal `key + store` asset for demonstrating usufruct. It carries its own

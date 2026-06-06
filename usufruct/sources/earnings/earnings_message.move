@@ -26,9 +26,8 @@ use usufruct::{
 // === Structs ===
 
 public struct EarningsMessage<phantom CoinType> has key {
-    id:              UID,
-    escrow_identity: EscrowIdentity,
-    balance:         Balance<CoinType>,
+    id:      UID,
+    balance: Balance<CoinType>,
 }
 
 // === Events ===
@@ -42,7 +41,6 @@ public struct EarningsMessagePosted has copy, drop {
 }
 
 public struct EarningsMessageCollected has copy, drop {
-    escrow_id:           ID,
     earnings_message_id: ID,
     earnings_inbox_id:   ID,
     amount:              u64,
@@ -55,10 +53,6 @@ public struct EarningsMessageCollected has copy, drop {
 // === Public Functions ===
 
 // === View Functions ===
-
-public(package) fun proj_escrow_id<C>(msg: &EarningsMessage<C>): ID {
-    escrow_identity::escrow_id(msg.escrow_identity)
-}
 
 // === Admin Functions ===
 
@@ -91,7 +85,6 @@ public(package) fun post<C>(
     let escrow_id         = escrow_identity::escrow_id(escrow_identity);
     let msg = EarningsMessage<C> {
         id: object::new(ctx),
-        escrow_identity,
         balance,
     };
     let earnings_message_id = object::uid_to_inner(&msg.id);
@@ -113,13 +106,12 @@ fun consume_message<C>(
     inbox_identity: EarningsInboxIdentity,
     collector:      address,
 ): Balance<C> {
-    let EarningsMessage { id, escrow_identity, balance } = msg;
+    let EarningsMessage { id, balance } = msg;
     let earnings_message_id = object::uid_to_inner(&id);
     let amount              = balance::value(&balance);
     let earnings_inbox_id   = earnings_inbox::proj_id(inbox_identity);
-    let escrow_id           = escrow_identity::escrow_id(escrow_identity);
     id.delete();
-    event::emit(EarningsMessageCollected { earnings_message_id, earnings_inbox_id, escrow_id, amount, collector, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
+    event::emit(EarningsMessageCollected { earnings_message_id, earnings_inbox_id, amount, collector, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
     balance
 }
 
@@ -157,8 +149,6 @@ public fun posted_coin_type(e: &EarningsMessagePosted): String { e.coin_type }
 public fun collected_earnings_message_id(e: &EarningsMessageCollected): ID { e.earnings_message_id }
 #[test_only]
 public fun collected_earnings_inbox_id(e: &EarningsMessageCollected): ID { e.earnings_inbox_id }
-#[test_only]
-public fun collected_escrow_id(e: &EarningsMessageCollected): ID { e.escrow_id }
 #[test_only]
 public fun collected_amount(e: &EarningsMessageCollected): u64 { e.amount }
 #[test_only]

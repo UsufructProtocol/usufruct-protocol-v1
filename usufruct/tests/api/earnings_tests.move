@@ -84,7 +84,6 @@ fun e1_collect_drains_governor_share_after_tenure() {
         retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
         &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = asset_state::asset_integrated_escrow_id(&event::events_by_type<AssetIntegrated>()[0]);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
@@ -102,7 +101,6 @@ fun e1_collect_drains_governor_share_after_tenure() {
     let collected = event::events_by_type<EarningsMessageCollected>();
     assert_eq!(collected.length(), 1);
     assert_eq!(earnings_message::collected_amount(&collected[0]),    governor_share());
-    assert_eq!(earnings_message::collected_escrow_id(&collected[0]), escrow_id);
     assert_eq!(earnings_message::collected_collector(&collected[0]), GOVERNOR);
 
     transfer::public_transfer(coin, GOVERNOR);
@@ -165,8 +163,9 @@ fun e2_portfolio_two_escrows_one_inbox_collect_both() {
 
     let collected = event::events_by_type<EarningsMessageCollected>();
     assert_eq!(collected.length(), 2);
-    assert!(earnings_message::collected_escrow_id(&collected[0])
-          != earnings_message::collected_escrow_id(&collected[1]));
+    // Distinct join keys → each collected event joins back to its distinct escrow via Posted.
+    assert!(earnings_message::collected_earnings_message_id(&collected[0])
+          != earnings_message::collected_earnings_message_id(&collected[1]));
 
     transfer::public_transfer(coin, GOVERNOR);
     transfer::public_transfer(inbox, GOVERNOR);
@@ -192,7 +191,6 @@ fun e3_income_flows_after_governance_renounced() {
         retire_commitment_policy::new_immediate(), ensemble_commitment_policy::new_immediate(),
         &fee_ref, &clk, sc.ctx(),
     );
-    let escrow_id = asset_state::asset_integrated_escrow_id(&event::events_by_type<AssetIntegrated>()[0]);
     test_scenario::return_immutable(fee_ref);
     clock::destroy_for_testing(clk);
 
@@ -216,7 +214,6 @@ fun e3_income_flows_after_governance_renounced() {
     let collected = event::events_by_type<EarningsMessageCollected>();
     assert_eq!(collected.length(), 1);
     assert_eq!(earnings_message::collected_amount(&collected[0]),    governor_share());
-    assert_eq!(earnings_message::collected_escrow_id(&collected[0]), escrow_id);
 
     transfer::public_transfer(coin, GOVERNOR);
     transfer::public_transfer(inbox, GOVERNOR);

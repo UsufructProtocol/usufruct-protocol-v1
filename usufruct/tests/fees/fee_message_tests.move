@@ -263,7 +263,6 @@ fun r1_receive_message_returns_correct_balance() {
         let mut inbox = scenario.take_from_sender<ProtocolFeeInbox>();
         let ticket    = test_scenario::receiving_ticket_by_id<FeeMessage<sui::sui::SUI>>(msg_id);
         let msg       = fee_message::receive_message_for_testing(&mut inbox, ticket);
-        assert_eq!(fee_message::proj_escrow_id(&msg), fake_escrow_id());
         let bal       = fee_message::consume_message_for_testing(msg, object::id(&inbox), ADMIN);
         assert_eq!(balance::value(&bal), 777);
         balance::destroy_for_testing(bal);
@@ -309,7 +308,6 @@ fun c1_consume_message_returns_balance_and_emits_collected_event() {
         assert_eq!(coll.length(), 1);
         assert_eq!(fee_message::collected_fee_message_id(&coll[0]), msg_id);
         assert_eq!(fee_message::collected_fee_inbox_id(&coll[0]),   fee_inbox_id);
-        assert_eq!(fee_message::collected_escrow_id(&coll[0]),      fake_escrow_id());
         assert_eq!(fee_message::collected_amount(&coll[0]),          500);
         assert_eq!(fee_message::collected_collector(&coll[0]),       ADMIN);
         assert_eq!(fee_message::collected_coin_type(&coll[0]),       string::from_ascii(type_name::into_string(type_name::with_defining_ids<sui::sui::SUI>())));
@@ -524,9 +522,11 @@ fun d4_collect_sui_and_fake_usdc_same_inbox() {
     scenario.end();
 }
 
-// D6: distinct escrow_ids are preserved per FeeMessageCollected event (P8).
+// D6: distinct escrow_ids are bound to distinct message_ids at post (FeeMessagePosted),
+//     and the collected events preserve those distinct message_ids — so escrow attribution
+//     survives the lifecycle by joining Collected.fee_message_id → Posted.escrow_id (P8).
 #[test]
-fun d6_distinct_escrow_ids_preserved_per_collected_event() {
+fun d6_distinct_escrow_ids_preserved_via_posted_join_key() {
     let mut scenario = setup();
     let esc1 = object::id_from_address(@0xEC1);
     let esc2 = object::id_from_address(@0xEC2);
@@ -542,6 +542,10 @@ fun d6_distinct_escrow_ids_preserved_per_collected_event() {
         let sent = event::events_by_type<FeeMessagePosted>();
         id1 = fee_message::posted_fee_message_id(&sent[0]);
         id2 = fee_message::posted_fee_message_id(&sent[1]);
+        // Source of truth: distinct escrow_ids are bound to distinct message_ids at post.
+        assert_eq!(fee_message::posted_escrow_id(&sent[0]), esc1);
+        assert_eq!(fee_message::posted_escrow_id(&sent[1]), esc2);
+        assert!(fee_message::posted_escrow_id(&sent[0]) != fee_message::posted_escrow_id(&sent[1]));
         scenario.return_to_sender(inbox);
     };
     scenario.next_tx(ADMIN);
@@ -563,7 +567,8 @@ fun d6_distinct_escrow_ids_preserved_per_collected_event() {
         assert_eq!(fee_message::collected_fee_inbox_id(&coll[1]), fee_inbox_id);
         assert_eq!(fee_message::collected_collector(&coll[0]),    ADMIN);
         assert_eq!(fee_message::collected_collector(&coll[1]),    ADMIN);
-        assert!(fee_message::collected_escrow_id(&coll[0]) != fee_message::collected_escrow_id(&coll[1]));
+        // The distinct join keys are preserved → each joins back to its distinct posted escrow_id.
+        assert!(fee_message::collected_fee_message_id(&coll[0]) != fee_message::collected_fee_message_id(&coll[1]));
 
         scenario.return_to_sender(inbox);
     };
@@ -779,7 +784,6 @@ fun e6_sent_collected_join_on_fee_message_id() {
         assert_eq!(fee_message::collected_fee_message_id(&coll[0]), msg_id);
         // Shared identity fields
         assert_eq!(fee_message::collected_fee_inbox_id(&coll[0]), fee_inbox_id);
-        assert_eq!(fee_message::collected_escrow_id(&coll[0]),    escrow_id);
         assert_eq!(fee_message::collected_amount(&coll[0]),       77);
         // Collector field
         assert_eq!(fee_message::collected_collector(&coll[0]),    ADMIN);
@@ -1018,10 +1022,8 @@ fun drain_order_independence() {
         assert_eq!(coll.length(), 2);
         // First collected event corresponds to B (drained first)
         assert_eq!(fee_message::collected_fee_message_id(&coll[0]), id_b);
-        assert_eq!(fee_message::collected_escrow_id(&coll[0]),      esc_b);
         // Second collected event corresponds to A (drained second)
         assert_eq!(fee_message::collected_fee_message_id(&coll[1]), id_a);
-        assert_eq!(fee_message::collected_escrow_id(&coll[1]),      esc_a);
 
         scenario.return_to_sender(inbox);
     };

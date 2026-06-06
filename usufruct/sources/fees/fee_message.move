@@ -32,9 +32,8 @@ public struct FeeShare<phantom CoinType> has store {
 }
 
 public struct FeeMessage<phantom CoinType> has key {
-    id:              UID,
-    escrow_identity: EscrowIdentity,
-    balance:         Balance<CoinType>,
+    id:      UID,
+    balance: Balance<CoinType>,
 }
 
 // === Events ===
@@ -48,7 +47,6 @@ public struct FeeMessagePosted has copy, drop {
 }
 
 public struct FeeMessageCollected has copy, drop {
-    escrow_id:      ID,
     fee_message_id: ID,
     fee_inbox_id:   ID,
     amount:         u64,
@@ -63,8 +61,6 @@ public struct FeeMessageCollected has copy, drop {
 // === View Functions ===
 
 public(package) fun proj_share_value<C>(s: &FeeShare<C>): Stake { monetary::stake(balance::value(&s.balance)) }
-
-public(package) fun proj_escrow_id<C>(msg: &FeeMessage<C>): ID    { escrow_identity::escrow_id(msg.escrow_identity) }
 
 // === Admin Functions ===
 
@@ -100,7 +96,6 @@ public(package) fun post<C>(
     let escrow_id      = escrow_identity::escrow_id(escrow_identity);
     let msg = FeeMessage<C> {
         id: object::new(ctx),
-        escrow_identity,
         balance,
     };
     let fee_message_id = object::uid_to_inner(&msg.id);
@@ -122,13 +117,12 @@ fun consume_message<C>(
     fee_inbox_identity: FeeInboxIdentity,
     collector:          address,
 ): Balance<C> {
-    let FeeMessage { id, escrow_identity, balance } = msg;
+    let FeeMessage { id, balance } = msg;
     let fee_message_id = object::uid_to_inner(&id);
     let amount         = balance::value(&balance);
     let fee_inbox_id   = protocol_fee_ref::proj_id(fee_inbox_identity);
-    let escrow_id      = escrow_identity::escrow_id(escrow_identity);
     id.delete();
-    event::emit(FeeMessageCollected { fee_message_id, fee_inbox_id, escrow_id, amount, collector, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
+    event::emit(FeeMessageCollected { fee_message_id, fee_inbox_id, amount, collector, coin_type: string::from_ascii(type_name::into_string(type_name::with_defining_ids<C>())) });
     balance
 }
 
@@ -174,8 +168,6 @@ public fun posted_coin_type(e: &FeeMessagePosted): String { e.coin_type }
 public fun collected_fee_message_id(e: &FeeMessageCollected): ID { e.fee_message_id }
 #[test_only]
 public fun collected_fee_inbox_id(e: &FeeMessageCollected): ID { e.fee_inbox_id }
-#[test_only]
-public fun collected_escrow_id(e: &FeeMessageCollected): ID { e.escrow_id }
 #[test_only]
 public fun collected_amount(e: &FeeMessageCollected): u64 { e.amount }
 #[test_only]

@@ -164,7 +164,6 @@ fun r1_receive_consume_returns_balance_and_event() {
         let inbox_id  = object::id(&inbox);
         let ticket    = test_scenario::receiving_ticket_by_id<EarningsMessage<sui::sui::SUI>>(msg_id);
         let msg       = earnings_message::receive_message_for_testing(&mut inbox, ticket);
-        assert_eq!(earnings_message::proj_escrow_id(&msg), fake_escrow_id());
         let bal       = earnings_message::consume_message_for_testing(msg, inbox_id, ADMIN);
         assert_eq!(balance::value(&bal), 777);
         balance::destroy_for_testing(bal);
@@ -172,7 +171,6 @@ fun r1_receive_consume_returns_balance_and_event() {
         let coll = event::events_by_type<EarningsMessageCollected>();
         assert_eq!(earnings_message::collected_earnings_message_id(&coll[0]), msg_id);
         assert_eq!(earnings_message::collected_earnings_inbox_id(&coll[0]),   inbox_id);
-        assert_eq!(earnings_message::collected_escrow_id(&coll[0]),           fake_escrow_id());
         assert_eq!(earnings_message::collected_amount(&coll[0]),              777);
         assert_eq!(earnings_message::collected_collector(&coll[0]),           ADMIN);
         scenario.return_to_sender(inbox);
@@ -257,9 +255,11 @@ fun d3_collector_follows_custody() {
     scenario.end();
 }
 
-// D4: distinct escrow_ids preserved per Collected event (star schema).
+// D4: distinct escrow_ids are bound to distinct message_ids at post (EarningsMessagePosted),
+//     and Collected preserves those distinct message_ids — escrow attribution survives by
+//     joining Collected.earnings_message_id → Posted.escrow_id (star schema).
 #[test]
-fun d4_distinct_escrow_ids_preserved() {
+fun d4_distinct_escrow_ids_preserved_via_posted_join_key() {
     let mut scenario = setup();
     let esc1 = object::id_from_address(@0xEC1);
     let esc2 = object::id_from_address(@0xEC2);
@@ -272,6 +272,10 @@ fun d4_distinct_escrow_ids_preserved() {
         let posted = event::events_by_type<EarningsMessagePosted>();
         id1 = earnings_message::posted_earnings_message_id(&posted[0]);
         id2 = earnings_message::posted_earnings_message_id(&posted[1]);
+        // Source of truth: distinct escrow_ids bound to distinct message_ids at post.
+        assert_eq!(earnings_message::posted_escrow_id(&posted[0]), esc1);
+        assert_eq!(earnings_message::posted_escrow_id(&posted[1]), esc2);
+        assert!(earnings_message::posted_escrow_id(&posted[0]) != earnings_message::posted_escrow_id(&posted[1]));
         scenario.return_to_sender(inbox);
     };
     scenario.next_tx(ADMIN);
@@ -284,7 +288,8 @@ fun d4_distinct_escrow_ids_preserved() {
         let coin = earnings_message::collect_earnings_messages<sui::sui::SUI>(&mut inbox, tickets, scenario.ctx());
         assert_eq!(coin::value(&coin), 30);
         let coll = event::events_by_type<EarningsMessageCollected>();
-        assert!(earnings_message::collected_escrow_id(&coll[0]) != earnings_message::collected_escrow_id(&coll[1]));
+        // Distinct join keys preserved → each joins back to its distinct posted escrow_id.
+        assert!(earnings_message::collected_earnings_message_id(&coll[0]) != earnings_message::collected_earnings_message_id(&coll[1]));
         transfer::public_transfer(coin, ADMIN);
         scenario.return_to_sender(inbox);
     };

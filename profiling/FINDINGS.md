@@ -23,6 +23,7 @@ the code that generated it; this table is the bridge.
 | v1.3.0 | 2026-05-31 | `51f9d31` | `ensemble_commitment` twin + blanket terms-freeze |
 | v1.4.0 | 2026-05-31 | `7397e62` (branch `feature/governor-earnings-inbox-first`) | inbox-first governor income: `EarningsInbox`/`EarningsMessage`, `integrate_into_portfolio`, fleet governance |
 | v1.4.1 | 2026-06-02 | `a2aeeb9` (testnet pkg `0x61723e72…`) | non-generic message events (phantom `CoinType` → `coin_type` field); first full testnet run of inbox-first |
+| v1.4.2 | 2026-06-06 | `0bd8e53` (testnet pkg `0x415c43…`) | event-layer overhaul (escrow_id-first star schema, `timestamp_ms` unification, new fields) + `StakePerTenure`/`Progress`/`Elapsed` type invariants + `escrow_id` dropped from `Fee`/`EarningsMessage` (−240k MIST/msg) |
 
 The code-state commit is the **parent of the commit that wrote each section** (the doc
 commit adds only prose on top of the already-deployed source) — except v1.3.0, whose
@@ -1135,3 +1136,66 @@ not the objects. See `EVENTS.md`.
 is governed by one cap and its entire cash flow is swept in ~20 PTBs, rebate-positive.
 The only term that grows with N is the floor cost of *existing* on-chain — and that is
 Sui's price for an object, not the protocol's.
+
+---
+
+# Testnet Validation — v1.4.2 (2026-06-06)
+
+Network: Sui testnet · Package: `0x415c4372bb9db5affe2ab2bf6d72a6a667ed3178a61d6201e9ff26dc76380e5d`
+Code state: `0bd8e53` — `sui client verify-source` passes. Full run (29 atomics + 3 sweeps,
+9 flows) as real PTBs. Compared head-to-head with v1.4.1 testnet (`a2aeeb9`) — **same
+network, apples-to-apples**.
+
+## The optimization: `escrow_id` dropped from `Fee`/`EarningsMessage`
+
+The message objects no longer store `escrow_id` (it lived only to re-emit on `*Collected`;
+nothing on-chain read it — collect drains by aggregation, never validates against an origin
+escrow, unlike `UsufructCap` which boomerangs back). Attribution now joins
+`Collected.message_id → Posted.escrow_id`. Each message is 32 bytes smaller.
+
+| collect /msg | v1.4.1 | v1.4.2 | Δ |
+|---|---|---|---|
+| `collect_fee` N=50 | −1,924,754 | −1,683,986 | **+240,768** |
+| `collect_earnings` N=50 | −1,980,442 | −1,739,674 | **+240,768** |
+
+~240,768 MIST/msg less rebate — identical to the localnet measurement (+240,168), the exact
+storage value of the removed field. Both **stay rebate-positive** (less, not extractive). The
+mirror payoff is on the *post* side: `apply_*` firing a fee+earnings settlement drops ~486k
+MIST (localnet), and chaining `do_handover` + `do_tenure_expiry` in one `apply` ~983k (4
+messages × ~245k). It rides every mutating op that lazily applies a pending settlement.
+
+## End-to-end flows are net cheaper
+
+| Flow | v1.4.1 | v1.4.2 | Δ |
+|---|---|---|---|
+| Minimal | 16,548,568 | 15,347,280 | −1,201,288 |
+| Handover | 24,668,740 | 23,121,148 | −1,547,592 |
+| Refund→handover | 26,034,480 | 25,490,264 | −544,216 |
+| Earnings (N=3) | 29,824,900 | 29,574,276 | −250,624 |
+| Lifecycle | 17,937,228 | 17,744,668 | −192,560 |
+
+**All five flows drop.** Flows post (cheaper now) without collecting, so the post-side saving
+nets out positive. Per-flow magnitude is within the single-run gas-coin rebate noise (±978k),
+but the sign is consistent across all five.
+
+## Two confounds, isolated
+
+1. **Testnet protocol shift, +40,608 base.** Uniform across ops whose code did **not** change
+   in v1.4.2 (`apply_transitions` no-op, `retire`, `burn`, `claim`) → a testnet protocol/gas
+   bump between 2026-06-02 and 2026-06-06, **not** v1.4.2. Discount it from any atomic delta.
+2. **`integrate` +100,800 = +40,608 base + ~60,192 code** — the only code-attributable atomic
+   cost, from the new commitment-unlock-timestamp fields on `AssetIntegrated`. Object counts
+   identical (+3). Same for `integrate_into_portfolio`.
+
+## Invariants — all hold, re-confirmed on testnet
+
+`rent(tenures(N))` O(1) bit-identical N=1/10/100; curve shapes gas-neutral (10 within 152
+MIST); `governance_fleet_retire` O(1) per escrow (batched −153,166/retire at N=50); the
+retire/ensemble commitment twin gas-symmetric. **No prior finding inverts.**
+
+## Verdict
+
+v1.4.2 **reallocates and reduces**: atomics tick up slightly (protocol shift + the two
+`AssetIntegrated` fields), but the recurring high-frequency axis — posting at settlement +
+inbox collection — drops ~240k/msg, making every end-to-end flow cheaper than v1.4.1 while
+collection stays rebate-positive.

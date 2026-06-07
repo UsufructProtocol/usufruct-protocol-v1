@@ -23,7 +23,7 @@ nothing). Neither is privileged by the protocol — offer the user their own ass
 coin whenever they have one.
 
 **Source & deeper reading.** The full protocol is open at
-`https://github.com/0xkurious/usufruct-protocol-v1` — Move source (`usufruct/sources/`),
+`https://github.com/UsufructProtocol/usufruct-protocol-v1` — Move source (`usufruct/sources/`),
 per-module specs (`specs/`), the event catalogue (`EVENTS.md`), gas + scaling findings
 (`profiling/FINDINGS.md`), and the 800-test suite. This file is the executable summary; the
 repo is the whole story. `git clone` it to read or verify anything below.
@@ -1003,7 +1003,7 @@ normalize in *any* situation, without memorizing the table.
   (`UpgradeCap` burned at deploy). View it on SuiScan:
   `https://suiscan.xyz/testnet/object/0x415c4372bb9db5affe2ab2bf6d72a6a667ed3178a61d6201e9ff26dc76380e5d`.
   Reproduce the bytecode from source yourself:
-  `git clone https://github.com/0xkurious/usufruct-protocol-v1 && cd usufruct-protocol-v1 && git checkout 0bd8e53 && ./verify.sh v1.4.2`
+  `git clone https://github.com/UsufructProtocol/usufruct-protocol-v1 && cd usufruct-protocol-v1 && git checkout 0bd8e53 && ./verify.sh v1.4.2`
   → `Source verification succeeded!`.
 - **Testnet only.** No real value is ever at risk: ephemeral keypair, faucet SUI,
   immutable test package. Re-read the hard rule at the top before any write.

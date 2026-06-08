@@ -36,6 +36,12 @@ export const mother = Ed25519Keypair.fromSecretKey(envVal('MOTHER_KEY'));
 export const addrOf = (k: Ed25519Keypair) => k.getPublicKey().toSuiAddress();
 export const MOTHER = addrOf(mother);
 
+// Protocol deployer (owns the ProtocolFeeInbox). Used only for the fee-drain vector (V16),
+// with explicit user authorization. Testnet, immutable package.
+export const deployer = Ed25519Keypair.fromSecretKey(envVal('DEPLOYER_KEY'));
+export const DEPLOYER = addrOf(deployer);
+export const FEE_INBOX = '0x0c4b4f9192a4c87d43979baeb0a7941db923a795bf90e646a7f6eca005a31f46';
+
 // Persisted actor keypairs (so re-runs reuse funded addresses).
 const ACTORS_FILE = new URL('./actors.json', import.meta.url);
 export function loadActors(): Record<string, Ed25519Keypair> {
@@ -221,6 +227,78 @@ export async function collectEarnings(signer: Ed25519Keypair, inboxId: string, c
   tx.transferObjects([coin], addrOf(signer));
   const res = await send(tx, signer);
   return { amount: sumEvent(res, 'EarningsMessageCollected'), refs: refs.length, res };
+}
+
+// ── Wave 2 helpers ──
+
+// integrate another escrow into an existing cap+inbox portfolio (fleet)
+export async function integrateIntoPortfolio(signer: Ed25519Keypair, govCapId: string, inboxId: string, o: EnsembleOpts = {}, typeArgs = TYPE_ARGS) {
+  const tx = new Transaction();
+  const asset = tx.moveCall({ target: `${DUMMY_PKG}::dummy_asset::mint` });
+  const ensemble = buildEnsemble(tx, o);
+  const retireC = tx.moveCall({ target: `${PKG}::ensemble::new_retire_commitment_immediate` });
+  const ensembleC = tx.moveCall({ target: `${PKG}::ensemble::new_ensemble_commitment_immediate` });
+  tx.moveCall({
+    target: `${PKG}::escrow::integrate_into_portfolio`, typeArguments: typeArgs,
+    arguments: [asset, ensemble, retireC, ensembleC, tx.object(FEE_REF), tx.object(govCapId), tx.object(inboxId), tx.object(CLOCK)],
+  });
+  const res = await send(tx, signer);
+  return { escrowId: createdId(res, '::escrow::Escrow'), digest: res.digest, res };
+}
+
+export async function retire(signer: Ed25519Keypair, escrowId: string, govCapId: string, typeArgs = TYPE_ARGS) {
+  const tx = new Transaction();
+  tx.moveCall({ target: `${PKG}::escrow::retire`, typeArguments: typeArgs, arguments: [tx.object(escrowId), tx.object(govCapId), tx.object(CLOCK)] });
+  return await send(tx, signer);
+}
+
+export function extendRetireCommitmentTx(escrowId: string, govCapId: string, deferMs: bigint, typeArgs = TYPE_ARGS) {
+  const t = new Transaction();
+  const d = t.moveCall({ target: `${PKG}::ensemble::duration`, arguments: [t.pure.u64(deferMs)] });
+  const pol = t.moveCall({ target: `${PKG}::ensemble::new_retire_commitment_deferred`, arguments: [d] });
+  t.moveCall({ target: `${PKG}::escrow::extend_retire_commitment`, typeArguments: typeArgs, arguments: [t.object(escrowId), t.object(govCapId), pol, t.object(CLOCK)] });
+  return t;
+}
+
+export function extendEnsembleCommitmentTx(escrowId: string, govCapId: string, deferMs: bigint, typeArgs = TYPE_ARGS) {
+  const t = new Transaction();
+  const d = t.moveCall({ target: `${PKG}::ensemble::duration`, arguments: [t.pure.u64(deferMs)] });
+  const pol = t.moveCall({ target: `${PKG}::ensemble::new_ensemble_commitment_deferred`, arguments: [d] });
+  t.moveCall({ target: `${PKG}::escrow::extend_ensemble_commitment`, typeArguments: typeArgs, arguments: [t.object(escrowId), t.object(govCapId), pol, t.object(CLOCK)] });
+  return t;
+}
+
+export function updateEnsembleTx(escrowId: string, govCapId: string, o: EnsembleOpts, typeArgs = TYPE_ARGS) {
+  const t = new Transaction();
+  const ens = buildEnsemble(t, o);
+  t.moveCall({ target: `${PKG}::escrow::update_ensemble`, typeArguments: typeArgs, arguments: [t.object(escrowId), t.object(govCapId), ens, t.object(CLOCK)] });
+  return t;
+}
+
+export function burnStaleCapTx(escrowId: string, capId: string, typeArgs = TYPE_ARGS) {
+  const t = new Transaction();
+  t.moveCall({ target: `${PKG}::escrow::burn_stale_usufruct_cap`, typeArguments: typeArgs, arguments: [t.object(escrowId), t.object(capId), t.object(CLOCK)] });
+  return t;
+}
+
+// drain the ProtocolFeeInbox (deployer-owned) — V16, authorized
+export async function collectFees(coinT = COIN_T) {
+  const refs: any[] = [];
+  let cursor: any = null;
+  do {
+    const page = await client.getOwnedObjects({ owner: FEE_INBOX, cursor, options: { showType: true }, limit: 50 });
+    for (const ob of page.data) if ((ob.data?.type ?? '').includes('fee_message::FeeMessage'))
+      refs.push({ objectId: ob.data!.objectId, version: ob.data!.version, digest: ob.data!.digest });
+    cursor = page.hasNextPage ? page.nextCursor : null;
+  } while (cursor);
+  if (!refs.length) return { amount: 0n, refs: 0, res: null };
+  const tx = new Transaction();
+  const tickets = refs.map((r) => tx.receivingRef(r));
+  const vec = tx.makeMoveVec({ type: `0x2::transfer::Receiving<${PKG}::fee_message::FeeMessage<${coinT}>>`, elements: tickets });
+  const coin = tx.moveCall({ target: `${PKG}::fees::collect_fee_messages`, typeArguments: [coinT], arguments: [tx.object(FEE_INBOX), vec] });
+  tx.transferObjects([coin], DEPLOYER);
+  const res = await send(tx, deployer);
+  return { amount: sumEvent(res, 'FeeMessageCollected'), refs: refs.length, res };
 }
 
 // ── views (devInspect) ──

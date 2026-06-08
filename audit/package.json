@@ -1,0 +1,11 @@
+{
+  "name": "usufruct-audit",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Adversarial live audit harness for usufruct v1.4.2 on Sui testnet",
+  "dependencies": {
+    "@mysten/sui": "^2.17.0",
+    "@scure/bip39": "2.2.0"
+  }
+}

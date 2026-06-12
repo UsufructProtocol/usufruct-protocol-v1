@@ -12,7 +12,7 @@ testnet (chain `4c78adac`)
 > any mainnet deployment with real value at stake.
 >
 > **What this delivers — and where a firm picks up.** This is a substantive security baseline, not
-> a formality: 18 adversarial vectors run live against verified bytecode, fund conservation proven
+> a formality: 19 adversarial vectors run live against verified bytecode, fund conservation proven
 > to the mist, capability and governance binding exercised on every entrypoint, 0 findings — each
 > backed by a reproducible script and a real transaction. For a mainnet deployment with real value,
 > it should be *complemented* by a professional firm's depth — formal reasoning and the untested
@@ -83,9 +83,10 @@ itself).
 | **V16** | Curve sweep + real fee drain | Medium | ✅ bounded; fees drained |
 | **V17** | Refund-address authorization | High | ✅ no cross-seat reroute |
 | **V18** | Governance-cap binding (full surface) | High | ✅ no cross-escrow governance |
+| **V19** | Cross-escrow borrow/return swap | High | ✅ both crossing axes abort |
 
-~125 adversarial assertions across **18 vectors (two waves)**, **0 findings**. Wave 1 (V1–V10)
-covered the core surface; Wave 2 (V11–V16) closed the gaps stated below, led by the **multi-tenure
+~128 adversarial assertions across **19 vectors (two waves)**, **0 findings**. Wave 1 (V1–V10)
+covered the core surface; Wave 2 (V11–V19) closed the gaps stated below, led by the **multi-tenure
 (N>1) arithmetic** — the area the protocol's own docs flag as most error-prone. Total gas spent
 across both waves stayed well within budget; the 20 USDC was untouched (stakes paid in free-mint
 `DUMMY_COIN`); the protocol-fee inbox was drained once with the deployer key (authorized) to prove
@@ -258,7 +259,7 @@ dust-skimming vector.
 
 ---
 
-## Wave 2 — gap coverage (V11–V16) ✅
+## Wave 2 — gap coverage (V11–V19) ✅
 
 Wave 2 attacks the areas Wave 1 left untested, same verified bytecode, same harness.
 
@@ -343,6 +344,34 @@ checks the caller's cap against it on every entrypoint. Proven live with two ind
   governor's cap reaches **none** of them, and the fleet cap cannot govern an outsider's escrow.
   The cap→escrow binding is per-escrow and exact; portfolio membership does not blur it.
 
+### V19 — Cross-escrow borrow/return swap *(HIGH)*
+The sharpest variant of the borrow/return surface: in **one PTB**, borrow from two escrows A and B
+(both rented by the attacker, identical `<Asset, CoinType>`) and try to **cross the returns**. The
+`AssetReceipt` records `EscrowedAssetIdentity { asset_id, escrow_identity }` at borrow — both are
+globally-unique Sui object IDs (`escrow.move:73`, `execute_borrow` `asset_state.move:1037-1040`) —
+and `assert_return_valid` (`asset_state.move:1423-1430`) enforces **two orthogonal locks** against
+the escrow you return to:
+- **lock 1** `receipt.escrow_identity == escrow.escrow_identity` → `EReceiptEscrowMismatch` (10)
+- **lock 2** `object::id(asset) == receipt.asset_id` → `EReturnedDifferentAsset` (15)
+
+Every crossing trips one lock; only the genuine pairing satisfies both. Proven live:
+
+| Pairing | Result |
+|---|---|
+| full cross `return(A, assetB, receiptB)` + `return(B, assetA, receiptA)` | abort `EReceiptEscrowMismatch` (10) |
+| asset swap `return(A, assetB, receiptA)` + `return(B, assetA, receiptB)` | abort `EReturnedDifferentAsset` (15) |
+| genuine `return(A, assetA, receiptA)` + `return(B, assetB, receiptB)` | ✅ succeeds |
+
+The prize lock 1 protects is not the asset but the **`RentingState` the receipt carries** (the
+origin escrow's active seat + stake, moved out by `take_state` at borrow): returning `receipt_A` to
+escrow B would inject A's seat/stake into B. The `escrow_identity` in the receipt pins that state to
+its origin escrow, so the carried state can never land in a foreign escrow. Defense in depth: the
+**type system** rejects the cross outright when A and B have different `<Asset, CoinType>` (the
+receipt types don't match `return_asset`'s), the **two runtime locks** catch it when they share
+types, and **receipt linearity** (no abilities, minted only by `execute_borrow`, one-PTB,
+one-open-borrow-per-escrow) blocks forgery, walk-off (V5), and replay. Any failing lock reverts the
+whole PTB atomically — both escrows restored, no partial corruption.
+
 ### Concurrency note
 Sui consensus **serializes** mutations of a shared object, and the protocol has no callbacks (PTB
 linearity), so classic reentrancy/same-checkpoint races do not apply; competing bids resolve to a
@@ -397,7 +426,7 @@ npx tsx 01_setup_actors.ts            # create/fund GOV, UA, UB (idempotent)
 npx tsx 00_smoke.ts                   # pipeline + V1(a)
 npx tsx v1_conservation.ts            # V1(b),(c)
 npx tsx v2_cross_escrow.ts            # Wave 1: … through v10_composition.ts
-npx tsx v11_multitenure.ts            # Wave 2: … through v18_governance_cap_binding.ts
+npx tsx v11_multitenure.ts            # Wave 2: … through v19_cross_borrow_swap.ts
 npx tsx balances.ts                   # remaining budget
 ```
 Wave 2 (`v16_curves_fees.ts`) also drains the deployer-owned fee inbox; `DEPLOYER_KEY` lives in

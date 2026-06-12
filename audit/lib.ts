@@ -119,6 +119,46 @@ export function mintDummy(tx: Transaction, amount: bigint) {
   });
 }
 
+// ── type-string helpers (coin-type discipline for collection over poly-coin inboxes) ──
+// extract the top-level generic args of a fully-qualified type, e.g.
+//   "PKG::escrow::Escrow<A::dummy_asset::DummyAsset, 0x2::sui::SUI>" → [A…::DummyAsset, 0x2::sui::SUI]
+export function typeArgsOf(fullType: string): string[] {
+  const lt = fullType.indexOf('<');
+  if (lt < 0) return [];
+  const inner = fullType.slice(lt + 1, fullType.lastIndexOf('>'));
+  const out: string[] = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '<') depth++;
+    else if (ch === '>') depth--;
+    else if (ch === ',' && depth === 0) { out.push(inner.slice(start, i).trim()); start = i + 1; }
+  }
+  if (inner.trim()) out.push(inner.slice(start).trim());
+  return out;
+}
+// canonicalize Sui addresses inside a type string (strip leading zeros, lowercase hex) so
+// "0x000…02::sui::SUI" and "0x2::sui::SUI" compare equal.
+export const normType = (t: string) => t.replace(/0x0*([0-9a-fA-F]+)/g, (_m, h) => '0x' + h.toLowerCase());
+export const sameType = (a: string, b: string) => normType(a) === normType(b);
+
+// distinct coin types present among messages of a module fragment held by an inbox object
+export async function coinTypesInInbox(inboxId: string, frag: string): Promise<string[]> {
+  const seen: string[] = [];
+  let cursor: any = null;
+  do {
+    const page = await client.getOwnedObjects({ owner: inboxId, cursor, options: { showType: true }, limit: 50 });
+    for (const o of page.data) {
+      const t = o.data?.type ?? '';
+      if (!t.includes(frag)) continue;
+      const c = typeArgsOf(t)[0];
+      if (c && !seen.some((s) => sameType(s, c))) seen.push(c);
+    }
+    cursor = page.hasNextPage ? page.nextCursor : null;
+  } while (cursor);
+  return seen;
+}
+
 // ── PolicyEnsemble builder (configurable) ──
 export interface EnsembleOpts {
   restPrice?: bigint;        // per-tenure rest price (mist)
@@ -215,8 +255,13 @@ export async function collectEarnings(signer: Ed25519Keypair, inboxId: string, c
   let cursor: any = null;
   do {
     const page = await client.getOwnedObjects({ owner: inboxId, cursor, options: { showType: true }, limit: 50 });
-    for (const ob of page.data) if ((ob.data?.type ?? '').includes('earnings_message::EarningsMessage'))
-      refs.push({ objectId: ob.data!.objectId, version: ob.data!.version, digest: ob.data!.digest });
+    for (const ob of page.data) {
+      const t = ob.data?.type ?? '';
+      // match the FULLY-QUALIFIED EarningsMessage<coinT> — a poly-coin inbox holds several coins;
+      // mixing them into one Receiving<…<coinT>> vec aborts in 0x2::transfer::receive_impl.
+      if (t.includes('earnings_message::EarningsMessage') && sameType(typeArgsOf(t)[0] ?? '', coinT))
+        refs.push({ objectId: ob.data!.objectId, version: ob.data!.version, digest: ob.data!.digest });
+    }
     cursor = page.hasNextPage ? page.nextCursor : null;
   } while (cursor);
   if (!refs.length) return { amount: 0n, refs: 0, res: null };
@@ -287,8 +332,11 @@ export async function collectFees(coinT = COIN_T) {
   let cursor: any = null;
   do {
     const page = await client.getOwnedObjects({ owner: FEE_INBOX, cursor, options: { showType: true }, limit: 50 });
-    for (const ob of page.data) if ((ob.data?.type ?? '').includes('fee_message::FeeMessage'))
-      refs.push({ objectId: ob.data!.objectId, version: ob.data!.version, digest: ob.data!.digest });
+    for (const ob of page.data) {
+      const t = ob.data?.type ?? '';
+      if (t.includes('fee_message::FeeMessage') && sameType(typeArgsOf(t)[0] ?? '', coinT))
+        refs.push({ objectId: ob.data!.objectId, version: ob.data!.version, digest: ob.data!.digest });
+    }
     cursor = page.hasNextPage ? page.nextCursor : null;
   } while (cursor);
   if (!refs.length) return { amount: 0n, refs: 0, res: null };
@@ -300,6 +348,56 @@ export async function collectFees(coinT = COIN_T) {
   const res = await send(tx, deployer);
   return { amount: sumEvent(res, 'FeeMessageCollected'), refs: refs.length, res };
 }
+
+// ── coin-agnostic collection: discover every coin in an inbox, drain all in ONE PTB ──
+// gather Receiving refs grouped by coin type for messages of a module fragment
+async function refsByCoin(inboxId: string, frag: string): Promise<Map<string, any[]>> {
+  const m = new Map<string, any[]>();
+  let cursor: any = null;
+  do {
+    const page = await client.getOwnedObjects({ owner: inboxId, cursor, options: { showType: true }, limit: 50 });
+    for (const o of page.data) {
+      const t = o.data?.type ?? '';
+      if (!t.includes(frag)) continue;
+      const c = typeArgsOf(t)[0]; if (!c) continue;
+      const key = [...m.keys()].find((k) => sameType(k, c)) ?? c;
+      const arr = m.get(key) ?? []; arr.push({ objectId: o.data!.objectId, version: o.data!.version, digest: o.data!.digest }); m.set(key, arr);
+    }
+    cursor = page.hasNextPage ? page.nextCursor : null;
+  } while (cursor);
+  return m;
+}
+const coinTail = (t: string) => t.split('::').slice(-2).join('::').toLowerCase();
+type CollectResult = { total: bigint; byCoin: { coin: string; refs: number; amount: bigint }[]; res: any };
+
+// one moveCall per discovered coin type, all in a single PTB → O(1) txs per inbox
+async function collectAll(inboxId: string, frag: string, collectTarget: string, collectModuleEvent: string, recipient: string, signer: Ed25519Keypair): Promise<CollectResult> {
+  const groups = await refsByCoin(inboxId, frag);
+  if (!groups.size) return { total: 0n, byCoin: [], res: null };
+  const tx = new Transaction();
+  const msgType = frag.endsWith('FeeMessage') ? `${PKG}::fee_message::FeeMessage` : `${PKG}::earnings_message::EarningsMessage`;
+  for (const [coinT, refs] of groups) {
+    const tickets = refs.map((r) => tx.receivingRef(r));
+    const vec = tx.makeMoveVec({ type: `0x2::transfer::Receiving<${msgType}<${coinT}>>`, elements: tickets });
+    const coin = tx.moveCall({ target: collectTarget, typeArguments: [coinT], arguments: [tx.object(inboxId), vec] });
+    tx.transferObjects([coin], recipient);
+  }
+  const res = await send(tx, signer);
+  const evs = events(res, collectModuleEvent);
+  const byCoin = [...groups].map(([coin, refs]) => ({
+    coin, refs: refs.length,
+    amount: evs.filter((e: any) => e.coin_type && coinTail(e.coin_type) === coinTail(coin)).reduce((a: bigint, e: any) => a + BigInt(e.amount), 0n),
+  }));
+  return { total: evs.reduce((a: bigint, e: any) => a + BigInt(e.amount), 0n), byCoin, res };
+}
+
+// drain ALL coin types of one EarningsInbox in a single PTB
+export const collectAllEarnings = (signer: Ed25519Keypair, inboxId: string) =>
+  collectAll(inboxId, 'earnings_message::EarningsMessage', `${PKG}::earnings::collect_earnings_messages`, 'EarningsMessageCollected', addrOf(signer), signer);
+
+// drain ALL coin types of the deployer ProtocolFeeInbox in a single PTB
+export const collectAllFees = () =>
+  collectAll(FEE_INBOX, 'fee_message::FeeMessage', `${PKG}::fees::collect_fee_messages`, 'FeeMessageCollected', DEPLOYER, deployer);
 
 // ── views (devInspect) ──
 export async function view(fn: string, escrowId: string, extra: any[] = [], typeArgs = TYPE_ARGS, sender = MOTHER): Promise<number[] | undefined> {

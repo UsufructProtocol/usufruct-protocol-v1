@@ -6,7 +6,7 @@ module usufruct::ensemble;
 // === Imports ===
 
 use usufruct::{
-    math::BasisPoints,
+    math::{Self, BasisPoints},
     monetary::{Self, Price},
     phases::{Self, Duration},
     tenures::{Self, Tenures},
@@ -43,6 +43,8 @@ public fun price(mist: u64): Price { monetary::price(mist) }
 public fun duration(ms: u64): Duration { phases::duration(ms) }
 
 public fun tenures(n: u64): Tenures { tenures::tenures(n) }
+
+public fun basis_points(bps: u64): BasisPoints { math::bps(bps) }
 
 // --- AuctionWindowPolicy ---
 

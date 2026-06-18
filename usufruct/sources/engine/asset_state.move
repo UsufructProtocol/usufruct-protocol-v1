@@ -957,10 +957,6 @@ public(package) fun execute_rent<Asset: key + store, CoinType>(
     (rs, core, cap)
 }
 
-fun payment_covers<CoinType>(payment: &Coin<CoinType>, due: tenures::TotalDue): bool {
-    coin::value(payment) >= tenures::total_due_mist(due)
-}
-
 public(package) fun execute_retire<Asset: key + store, CoinType>(
     s:         AssetState<Asset, CoinType>,
     core:      EscrowCore<CoinType>,
@@ -1319,6 +1315,10 @@ public(package) fun execute_claim<Asset: key + store, CoinType>(
 }
 
 // === Private Functions ===
+
+fun payment_covers<CoinType>(payment: &Coin<CoinType>, due: tenures::TotalDue): bool {
+    coin::value(payment) >= tenures::total_due_mist(due)
+}
 
 fun build_idle_core_and_state<Asset: key + store, CoinType>(
     asset:               Asset,

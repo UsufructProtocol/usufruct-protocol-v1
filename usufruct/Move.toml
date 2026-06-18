@@ -1,6 +1,6 @@
 [package]
 name = "usufruct"
-version = "1.4.3"
+version = "1.4.4"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Antonio Jiménez <build@0xkurious.xyz>"]

@@ -523,6 +523,12 @@ public fun handover_expiry_ms<Asset: key + store, CoinType>(
     asset_state::proj_handover_expiry(read_state(escrow)).map!(|v| phases::timestamp_ms(v))
 }
 
+public fun descent_expiry_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    asset_state::proj_descent_expiry(read_state(escrow)).map!(|t| phases::timestamp_ms(t))
+}
+
 public fun active_usufructuary_time_remaining_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
     now_ms: u64,
@@ -637,6 +643,13 @@ public fun next_transition_ms<Asset: key + store, CoinType>(
     now_ms: u64,
 ): Option<u64> {
     asset_state::compute_next_pending(read_state(escrow), phases::timestamp(now_ms))
+        .map!(|t| phases::timestamp_ms(t))
+}
+
+public fun next_boundary_ms<Asset: key + store, CoinType>(
+    escrow: &Escrow<Asset, CoinType>,
+): Option<u64> {
+    asset_state::compute_next_boundary(read_state(escrow))
         .map!(|t| phases::timestamp_ms(t))
 }
 

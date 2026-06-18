@@ -143,9 +143,14 @@ fun assert_projector_pattern(escrow: &Escrow<DemoAsset, SUI>, state_id: u8) {
     assert_eq!(escrow::next_ensemble_descent_ms(escrow).is_some(), in_waiting_with_resolved);
     // — Descent-only field —
     assert_eq!(escrow::last_rent_price_mist(escrow).is_some(),              in_descent);
+    assert_eq!(escrow::descent_expiry_ms(escrow).is_some(),                 in_descent);
 
     // — Demand-only fields (handover countdown active) —
     assert_eq!(escrow::handover_expiry_ms(escrow).is_some(), in_demand);
+
+    // — next_boundary: the scheduling oracle — the next phase boundary is present
+    //   whenever a transition is scheduled (Renting or Descent), absent in Idle/Retired.
+    assert_eq!(escrow::next_boundary_ms(escrow).is_some(), in_renting || in_descent);
 
     // — Credit context: Accruing in Occupied, Capped in Demand —
     assert_eq!(escrow::credit_is_accruing(escrow), state_id == STATE_OCCUPIED);
@@ -367,14 +372,22 @@ fun descent_views_after_tenure_expiry() {
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!(!escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
 
-    // Advance clock to tenure_expiry boundary.
+    // next_boundary vs next_transition, the keeper distinction: BEFORE the boundary
+    // nothing is *due* (next_transition_ms = none), yet the future boundary is
+    // already exposed and equals tenure_expiry — what a keeper schedules on.
     let expiry = escrow::tenure_expiry_ms(&escrow).destroy_some();
+    assert!(escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).is_none());
+    assert_eq!(escrow::next_boundary_ms(&escrow).destroy_some(), expiry);
+
+    // Advance clock to tenure_expiry boundary.
     clock::set_for_testing(&mut clk, expiry);
 
-    // Now a Tenure transition is pending.
+    // Now a Tenure transition is pending — and next_boundary is unchanged (it is the
+    // boundary, not its due-ness): both views agree once the boundary is crossed.
     assert!(escrow::transition_is_ready(&escrow, clock::timestamp_ms(&clk)));
     assert!(escrow::is_occupied(&escrow));
     assert_eq!(escrow::next_transition_ms(&escrow, clock::timestamp_ms(&clk)).destroy_some(), expiry);
+    assert_eq!(escrow::next_boundary_ms(&escrow).destroy_some(), expiry);
 
     // Fire the transition → state advances to Descent (descent=Fixed).
     escrow::apply_pending_transition_states(&mut escrow, &clk, sc.ctx());

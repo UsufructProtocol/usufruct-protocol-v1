@@ -821,6 +821,31 @@ public(package) fun compute_next_pending<Asset: key + store, CoinType>(
     }
 }
 
+public(package) fun compute_next_boundary<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): Option<Timestamp> {
+    match (s) {
+        AssetState::Waiting(WaitingState::Idle { .. } | WaitingState::Retired { .. }) =>
+            option::none(),
+        AssetState::Waiting(WaitingState::Descent { auction, cycle, .. }) =>
+            option::some(auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start)),
+        AssetState::Renting(RentingState::Occupied { terms, .. }) =>
+            option::some(phases::compute_boundary_at(terms.schedule.phase_start, terms.schedule.ceiling_total)),
+        AssetState::Renting(RentingState::Demand { bid, .. }) =>
+            option::some(bid.handover.expiry),
+    }
+}
+
+public(package) fun proj_descent_expiry<Asset: key + store, CoinType>(
+    s: &AssetState<Asset, CoinType>,
+): Option<Timestamp> {
+    match (s) {
+        AssetState::Waiting(WaitingState::Descent { auction, cycle, .. }) =>
+            option::some(auction_window_policy::compute_expiry_at(cycle.descent, auction.phase_start)),
+        _ => option::none(),
+    }
+}
+
 public(package) fun protocol_fee_bps(): u64 { PROTOCOL_FEE_BPS }
 public(package) fun bps_denominator():  u64 { math::bps_denominator() }
 

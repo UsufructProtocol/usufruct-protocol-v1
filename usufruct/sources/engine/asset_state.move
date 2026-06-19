@@ -188,15 +188,12 @@ public struct AuctionExpired has copy, drop {
 }
 
 public struct CycleParamsResolved has copy, drop {
-    escrow_id:     ID,
-    floor_mist:    u64,
-    ceiling_ms:    u64,
-    handover_ms:   u64,
-    descent_ms:    u64,
-    auction_shape: curve_shape_policy::CurveShapePolicy,
-    credit_shape:  curve_shape_policy::CurveShapePolicy,
-    escalation:    price_escalation_policy::PriceEscalationPolicy,
-    timestamp_ms:  u64,
+    escrow_id:    ID,
+    floor_mist:   u64,
+    ceiling_ms:   u64,
+    handover_ms:  u64,
+    descent_ms:   u64,
+    timestamp_ms: u64,
 }
 
 public struct AssetRetired has copy, drop {
@@ -1382,13 +1379,10 @@ fun resolve_and_emit_cycle_params(ensemble: &PolicyEnsemble, escrow_id: ID, time
     let cycle = resolve_cycle_params(ensemble);
     event::emit(CycleParamsResolved {
         escrow_id,
-        floor_mist:    monetary::price_mist(cycle.floor),
-        ceiling_ms:    phases::duration_ms(cycle.ceiling),
-        handover_ms:   phases::duration_ms(cycle.handover),
-        descent_ms:    phases::duration_ms(cycle.descent),
-        auction_shape: *policy_ensemble::proj_auction_shape(ensemble),
-        credit_shape:  *policy_ensemble::proj_credit_shape(ensemble),
-        escalation:    *policy_ensemble::proj_price_escalation(ensemble),
+        floor_mist:   monetary::price_mist(cycle.floor),
+        ceiling_ms:   phases::duration_ms(cycle.ceiling),
+        handover_ms:  phases::duration_ms(cycle.handover),
+        descent_ms:   phases::duration_ms(cycle.descent),
         timestamp_ms,
     });
     cycle

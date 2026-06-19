@@ -6,6 +6,7 @@ module usufruct::asset_state_price_tests;
 
 use usufruct::{
     asset_state,
+    escrow,
     policy_ensemble,
     curve_shape_policy,
     auction_window_policy,
@@ -180,4 +181,97 @@ fun descending_various_curves_respect_bounds() {
         assert!(p <= LAST, (i as u64) + 100);
         i = i + 1;
     };
+}
+
+// The parameterized public views (escrow::descent_floor_at / used_credit_at /
+// ascending_floor_with) must reproduce the canonical engine math EXACTLY for every shape
+// and escalation — the drift-zero guarantee for historical curve reconstruction. The view
+// is fed the policy enum by reference (the SDK constructs it on-chain via the existing
+// public ensemble::new_* facade), not a primitive descriptor.
+
+fun ensemble_with_shapes(
+    credit_shape:  curve_shape_policy::CurveShapePolicy,
+    auction_shape: curve_shape_policy::CurveShapePolicy,
+): policy_ensemble::PolicyEnsemble {
+    policy_ensemble::new_ensemble(
+        rest_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+        tenure_extend_policy::new_single(),
+        handover_policy::new_handover_off(),
+        auction_window_policy::new_descent_fixed(phases::duration(TENURE)),
+        credit_shape,
+        auction_shape,
+        price_escalation_policy::new_fixed_delta(monetary::price(MIN)),
+    )
+}
+
+fun check_descent_at(shape: &curve_shape_policy::CurveShapePolicy, ensemble: &policy_ensemble::PolicyEnsemble, now: u64) {
+    let via_view  = escrow::descent_floor_at(LAST, T0, MIN, TENURE, shape, now);
+    let canonical = monetary::price_mist(asset_state::descending_floor_price_for_testing(
+        monetary::price(LAST), phases::timestamp(T0), monetary::price(MIN), phases::duration(TENURE),
+        ensemble, phases::timestamp(now),
+    ));
+    assert!(via_view == canonical, 0);
+}
+
+fun assert_descent_view_matches(auction_shape: curve_shape_policy::CurveShapePolicy) {
+    let ensemble = ensemble_with_shapes(curve_shape_policy::new_linear(), auction_shape);
+    check_descent_at(&auction_shape, &ensemble, T0);
+    check_descent_at(&auction_shape, &ensemble, T0 + TENURE / 2);
+    check_descent_at(&auction_shape, &ensemble, T0 + TENURE);
+}
+
+#[test]
+fun descent_floor_at_view_matches_canonical_across_shapes() {
+    assert_descent_view_matches(curve_shape_policy::new_linear());
+    assert_descent_view_matches(curve_shape_policy::new_smoothstep());
+    assert_descent_view_matches(curve_shape_policy::new_logistic());
+    assert_descent_view_matches(curve_shape_policy::new_power_law(2, 1));
+    assert_descent_view_matches(curve_shape_policy::new_exponential(4, false));
+}
+
+fun check_credit_at(shape: &curve_shape_policy::CurveShapePolicy, ensemble: &policy_ensemble::PolicyEnsemble, now: u64) {
+    let via_view  = escrow::used_credit_at(STAKE, T0, TENURE, shape, now);
+    let canonical = monetary::stake_mist(asset_state::accruing_used_credit_for_testing(
+        monetary::stake(STAKE), phases::timestamp(T0), ensemble, phases::duration(TENURE), phases::timestamp(now),
+    ));
+    assert!(via_view == canonical, 0);
+}
+
+fun assert_credit_view_matches(credit_shape: curve_shape_policy::CurveShapePolicy) {
+    let ensemble = ensemble_with_shapes(credit_shape, curve_shape_policy::new_linear());
+    check_credit_at(&credit_shape, &ensemble, T0);
+    check_credit_at(&credit_shape, &ensemble, T0 + TENURE / 2);
+    check_credit_at(&credit_shape, &ensemble, T0 + TENURE);
+}
+
+#[test]
+fun used_credit_at_view_matches_canonical_across_shapes() {
+    assert_credit_view_matches(curve_shape_policy::new_linear());
+    assert_credit_view_matches(curve_shape_policy::new_smoothstep());
+    assert_credit_view_matches(curve_shape_policy::new_logistic());
+    assert_credit_view_matches(curve_shape_policy::new_power_law(2, 1));
+    assert_credit_view_matches(curve_shape_policy::new_exponential(4, false));
+}
+
+fun assert_ascending_view_matches(escalation: price_escalation_policy::PriceEscalationPolicy) {
+    let ensemble = policy_ensemble::new_ensemble(
+        rest_price_policy::new_fixed(monetary::price(MIN)), tenure_duration_policy::new_fixed(phases::duration(TENURE)),
+        tenure_extend_policy::new_single(),
+        handover_policy::new_handover_off(),
+        auction_window_policy::new_descent_off(),
+        curve_shape_policy::new_linear(),
+        curve_shape_policy::new_linear(),
+        escalation,
+    );
+    let via_view  = escrow::ascending_floor_with(STAKE, 1, &escalation);
+    let canonical = monetary::price_mist(asset_state::ascending_floor_price_for_testing(
+        tenures::stake_per_tenure(monetary::stake(STAKE), tenures::tenures(1)), &ensemble,
+    ));
+    assert!(via_view == canonical, 0);
+}
+
+#[test]
+fun ascending_floor_with_view_matches_canonical() {
+    assert_ascending_view_matches(price_escalation_policy::new_fixed_delta(monetary::price(MIN)));
+    assert_ascending_view_matches(price_escalation_policy::new_compound_delta(math::bps(1_000), monetary::price(1)));
 }

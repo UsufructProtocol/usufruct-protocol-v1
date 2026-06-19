@@ -188,12 +188,15 @@ public struct AuctionExpired has copy, drop {
 }
 
 public struct CycleParamsResolved has copy, drop {
-    escrow_id:    ID,
-    floor_mist:   u64,
-    ceiling_ms:   u64,
-    handover_ms:  u64,
-    descent_ms:   u64,
-    timestamp_ms: u64,
+    escrow_id:     ID,
+    floor_mist:    u64,
+    ceiling_ms:    u64,
+    handover_ms:   u64,
+    descent_ms:    u64,
+    auction_shape: curve_shape_policy::CurveShapePolicy,
+    credit_shape:  curve_shape_policy::CurveShapePolicy,
+    escalation:    price_escalation_policy::PriceEscalationPolicy,
+    timestamp_ms:  u64,
 }
 
 public struct AssetRetired has copy, drop {
@@ -1379,10 +1382,13 @@ fun resolve_and_emit_cycle_params(ensemble: &PolicyEnsemble, escrow_id: ID, time
     let cycle = resolve_cycle_params(ensemble);
     event::emit(CycleParamsResolved {
         escrow_id,
-        floor_mist:   monetary::price_mist(cycle.floor),
-        ceiling_ms:   phases::duration_ms(cycle.ceiling),
-        handover_ms:  phases::duration_ms(cycle.handover),
-        descent_ms:   phases::duration_ms(cycle.descent),
+        floor_mist:    monetary::price_mist(cycle.floor),
+        ceiling_ms:    phases::duration_ms(cycle.ceiling),
+        handover_ms:   phases::duration_ms(cycle.handover),
+        descent_ms:    phases::duration_ms(cycle.descent),
+        auction_shape: *policy_ensemble::proj_auction_shape(ensemble),
+        credit_shape:  *policy_ensemble::proj_credit_shape(ensemble),
+        escalation:    *policy_ensemble::proj_price_escalation(ensemble),
         timestamp_ms,
     });
     cycle
@@ -1896,13 +1902,26 @@ fun retire_condition_set(r: RetireCondition): RetireCondition {
 fun accruing_used_credit(
     stake:            Stake,
     phase_start:      Timestamp,
-    ensemble:              &PolicyEnsemble,
+    ensemble:         &PolicyEnsemble,
     resolved_ceiling: Duration,
+    now:              Timestamp,
+): Stake {
+    compute_used_credit_params(
+        stake, phase_start, resolved_ceiling,
+        policy_ensemble::proj_credit_shape(ensemble), now,
+    )
+}
+
+public(package) fun compute_used_credit_params(
+    stake:            Stake,
+    phase_start:      Timestamp,
+    resolved_ceiling: Duration,
+    shape:            &curve_shape_policy::CurveShapePolicy,
     now:              Timestamp,
 ): Stake {
     let elapsed = phases::compute_elapsed(phase_start, now);
     let g = curve_shape_policy::compute_curve_height(
-        policy_ensemble::proj_credit_shape(ensemble),
+        shape,
         curve_shape_policy::progress(elapsed, resolved_ceiling),
     );
     monetary::stake(curve_shape_policy::compute_scaled_value(monetary::stake_mist(stake), g))
@@ -1936,17 +1955,42 @@ public(package) fun compute_next_floor_price(stake: Stake, c: Tenures, ensemble:
     ascending_floor_price(tenures::stake_per_tenure(stake, c), ensemble)
 }
 
+public(package) fun compute_ascending_floor_with(
+    stake:      Stake,
+    c:          Tenures,
+    escalation: &price_escalation_policy::PriceEscalationPolicy,
+): Price {
+    price_escalation_policy::compute_next_price(
+        escalation,
+        tenures::stake_per_tenure_as_price(tenures::stake_per_tenure(stake, c)),
+    )
+}
+
 fun descending_floor_price(
     last_acq_price:   Price,
     phase_start:      Timestamp,
     resolved_floor:   Price,
     resolved_descent: Duration,
-    ensemble:              &PolicyEnsemble,
+    ensemble:         &PolicyEnsemble,
+    now:              Timestamp,
+): Price {
+    compute_descent_floor_at(
+        last_acq_price, phase_start, resolved_floor, resolved_descent,
+        policy_ensemble::proj_auction_shape(ensemble), now,
+    )
+}
+
+public(package) fun compute_descent_floor_at(
+    last_acq_price:   Price,
+    phase_start:      Timestamp,
+    resolved_floor:   Price,
+    resolved_descent: Duration,
+    shape:            &curve_shape_policy::CurveShapePolicy,
     now:              Timestamp,
 ): Price {
     let elapsed  = phases::compute_elapsed(phase_start, now);
     let h        = curve_shape_policy::compute_curve_height(
-        policy_ensemble::proj_auction_shape(ensemble),
+        shape,
         curve_shape_policy::progress(elapsed, resolved_descent),
     );
     let spread   = monetary::price_mist(monetary::compute_price_sub(last_acq_price, resolved_floor));

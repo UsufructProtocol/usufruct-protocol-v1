@@ -676,6 +676,49 @@ public fun next_floor_price_mist<Asset: key + store, CoinType>(
         monetary::stake(total_bid_mist), tenures::tenures(tenures), read_ensemble(escrow)))
 }
 
+public fun descent_floor_at(
+    last_acq_price_mist: u64,
+    phase_start_ms:      u64,
+    resolved_floor_mist: u64,
+    resolved_descent_ms: u64,
+    shape:               &CurveShapePolicy,
+    now_ms:              u64,
+): u64 {
+    monetary::price_mist(asset_state::compute_descent_floor_at(
+        monetary::price(last_acq_price_mist),
+        phases::timestamp(phase_start_ms),
+        monetary::price(resolved_floor_mist),
+        phases::duration(resolved_descent_ms),
+        shape,
+        phases::timestamp(now_ms),
+    ))
+}
+
+public fun used_credit_at(
+    stake_mist:          u64,
+    phase_start_ms:      u64,
+    resolved_ceiling_ms: u64,
+    shape:               &CurveShapePolicy,
+    now_ms:              u64,
+): u64 {
+    monetary::stake_mist(asset_state::compute_used_credit_params(
+        monetary::stake(stake_mist),
+        phases::timestamp(phase_start_ms),
+        phases::duration(resolved_ceiling_ms),
+        shape,
+        phases::timestamp(now_ms),
+    ))
+}
+
+public fun ascending_floor_with(
+    total_bid_mist: u64,
+    tenures:        u64,
+    escalation:     &PriceEscalationPolicy,
+): u64 {
+    monetary::price_mist(asset_state::compute_ascending_floor_with(
+        monetary::stake(total_bid_mist), tenures::tenures(tenures), escalation))
+}
+
 public fun last_rent_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {

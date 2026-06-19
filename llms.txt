@@ -205,8 +205,8 @@ import { writeFileSync, readFileSync, existsSync } from 'fs';
 
 // ── testnet coordinates (immutable; verify them — see Trust & Safety) ──
 const RPC          = 'https://fullnode.testnet.sui.io:443';
-const PKG          = '0xec8588cfbce2fef4341feeff218a1e324f12ae45a0c19e9d0d338a9c3b0802b3'; // usufruct v1.4.4
-const FEE_REF      = '0x1d15c4dc987d638b0da1200857a9911f9f74c028fdc8967e0e8be94b41dd2aea'; // ProtocolFeeRef (immutable)
+const PKG          = '0x4e00103fc85bdf54876a1d14e1957fef5e18def81dab3917d249b06c5d2e6ebf'; // usufruct v1.4.5
+const FEE_REF      = '0x6a00b57cd75d0bf86984faf84c7a514353e0a1dbee26a75eaf66b128c829bd3b'; // ProtocolFeeRef (immutable)
 const DUMMY_PKG    = '0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a'; // test asset
 const CLOCK        = '0x6';
 const ASSET_T      = `${DUMMY_PKG}::dummy_asset::DummyAsset`;
@@ -363,8 +363,8 @@ below is the full surface to go further (borrow, reclaim, collect income, fleets
 | Network / chain id | Sui **testnet** / `4c78adac` |
 | RPC | `https://fullnode.testnet.sui.io:443` |
 | Faucet | `getFaucetHost('testnet')` (or `https://faucet.testnet.sui.io/v2/gas`) |
-| usufruct package (`PKG`) | `0xec8588cfbce2fef4341feeff218a1e324f12ae45a0c19e9d0d338a9c3b0802b3` |
-| `ProtocolFeeRef` (immutable; `integrate` arg) | `0x1d15c4dc987d638b0da1200857a9911f9f74c028fdc8967e0e8be94b41dd2aea` |
+| usufruct package (`PKG`) | `0x4e00103fc85bdf54876a1d14e1957fef5e18def81dab3917d249b06c5d2e6ebf` |
+| `ProtocolFeeRef` (immutable; `integrate` arg) | `0x6a00b57cd75d0bf86984faf84c7a514353e0a1dbee26a75eaf66b128c829bd3b` |
 | `dummy_asset` package (test `key+store`) | `0xa72e830fcb3e688ab3c20ff3cbd0a149cd1b58715709905585e75eb18317a52a` |
 | `Clock` | `0x6` |
 | Coin type used in examples | `0x2::sui::SUI` |
@@ -1001,9 +1001,9 @@ normalize in *any* situation, without memorizing the table.
 
 - **Don't trust this file — verify the package.** It is immutable on testnet
   (`UpgradeCap` burned at deploy). View it on SuiScan:
-  `https://suiscan.xyz/testnet/object/0xec8588cfbce2fef4341feeff218a1e324f12ae45a0c19e9d0d338a9c3b0802b3`.
+  `https://suiscan.xyz/testnet/object/0x4e00103fc85bdf54876a1d14e1957fef5e18def81dab3917d249b06c5d2e6ebf`.
   Reproduce the bytecode from source yourself:
-  `git clone https://github.com/UsufructProtocol/usufruct-protocol-v1 && cd usufruct-protocol-v1 && git checkout 934c064 && ./verify.sh v1.4.4`
+  `git clone https://github.com/UsufructProtocol/usufruct-protocol-v1 && cd usufruct-protocol-v1 && git checkout 8b3037c && ./verify.sh v1.4.5`
   → `Source verification succeeded!`.
 - **Testnet only.** No real value is ever at risk: ephemeral keypair, faucet SUI,
   immutable test package. Re-read the hard rule at the top before any write.

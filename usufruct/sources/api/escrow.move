@@ -433,28 +433,28 @@ public fun tenure_expiry_ms<Asset: key + store, CoinType>(
     option::some(phases::timestamp_ms(phases::compute_boundary_at(ps, ceiling)))
 }
 
-public fun active_ensemble_floor_price_mist<Asset: key + store, CoinType>(
+public fun cycle_floor_price_mist<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_floor_mist(&c))
+    asset_state::proj_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_floor_mist(&c))
 }
 
-public fun active_ensemble_ceiling_ms<Asset: key + store, CoinType>(
+public fun cycle_ceiling_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_ceiling_ms(&c))
+    asset_state::proj_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_ceiling_ms(&c))
 }
 
-public fun active_ensemble_handover_ms<Asset: key + store, CoinType>(
+public fun cycle_handover_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_handover_ms(&c))
+    asset_state::proj_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_handover_ms(&c))
 }
 
-public fun active_ensemble_descent_ms<Asset: key + store, CoinType>(
+public fun cycle_descent_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
-    asset_state::proj_active_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
+    asset_state::proj_cycle_params(read_state(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
 }
 
 public fun active_ceiling_total_ms<Asset: key + store, CoinType>(
@@ -491,30 +491,6 @@ public fun pending_ensemble_descent_ms<Asset: key + store, CoinType>(
     escrow: &Escrow<Asset, CoinType>,
 ): Option<u64> {
     asset_state::proj_pending_cycle_params(read_core(escrow)).map!(|c| asset_state::cycle_params_descent_ms(&c))
-}
-
-public fun next_ensemble_floor_price_mist<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_waiting_resolved_floor(read_state(escrow)).map!(|v| monetary::price_mist(v))
-}
-
-public fun next_ensemble_ceiling_ms<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_waiting_resolved_ceiling(read_state(escrow)).map!(|v| phases::duration_ms(v))
-}
-
-public fun next_ensemble_handover_ms<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_waiting_resolved_handover(read_state(escrow)).map!(|v| phases::duration_ms(v))
-}
-
-public fun next_ensemble_descent_ms<Asset: key + store, CoinType>(
-    escrow: &Escrow<Asset, CoinType>,
-): Option<u64> {
-    asset_state::proj_waiting_resolved_descent(read_state(escrow)).map!(|v| phases::duration_ms(v))
 }
 
 public fun handover_expiry_ms<Asset: key + store, CoinType>(

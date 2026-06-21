@@ -631,53 +631,15 @@ public(package) fun proj_resolved_handover<Asset: key + store, CoinType>(
     }
 }
 
-public(package) fun proj_active_cycle_params<Asset: key + store, CoinType>(
+public(package) fun proj_cycle_params<Asset: key + store, CoinType>(
     s: &AssetState<Asset, CoinType>,
 ): Option<CycleParams> {
     match (s) {
         AssetState::Renting(RentingState::Occupied { cycle, .. } | RentingState::Demand { cycle, .. }) =>
             option::some(*cycle),
-        _ => option::none(),
-    }
-}
-
-public(package) fun proj_waiting_resolved_floor<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Option<Price> {
-    match (s) {
         AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) =>
-            option::some(cycle.floor),
-        _ => option::none(),
-    }
-}
-
-public(package) fun proj_waiting_resolved_ceiling<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Option<Duration> {
-    match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) =>
-            option::some(cycle.ceiling),
-        _ => option::none(),
-    }
-}
-
-public(package) fun proj_waiting_resolved_handover<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Option<Duration> {
-    match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) =>
-            option::some(cycle.handover),
-        _ => option::none(),
-    }
-}
-
-public(package) fun proj_waiting_resolved_descent<Asset: key + store, CoinType>(
-    s: &AssetState<Asset, CoinType>,
-): Option<Duration> {
-    match (s) {
-        AssetState::Waiting(WaitingState::Idle { cycle, .. } | WaitingState::Descent { cycle, .. }) =>
-            option::some(cycle.descent),
-        _ => option::none(),
+            option::some(*cycle),
+        AssetState::Waiting(WaitingState::Retired { .. }) => option::none(),
     }
 }
 

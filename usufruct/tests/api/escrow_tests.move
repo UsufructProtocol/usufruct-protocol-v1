@@ -11341,61 +11341,32 @@ fun pending_config_view_exposes_scheduled_ensemble() {
     sc.end();
 }
 
-/// next_ensemble_* expose the resolved cycle params the NEXT rent would use,
-/// read from the Waiting state. Inverse of active_ensemble_*: resolved while
-/// waiting, cleared once rented (the params move into the tenancy envelope).
+/// cycle_* expose the resolved cycle params (floor / ceiling / handover / descent) of
+/// the active ensemble in EVERY non-retired state. The resolved cycle no longer "moves"
+/// between a waiting view and a renting view — it is the same value across the seam, read
+/// from whichever state's stored snapshot.
 #[test]
-fun next_cycle_views_resolve_waiting_ensemble() {
+fun cycle_views_resolve_across_states() {
     let mut sc = setup();
     let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // c=1 handover, h=1 descent
     let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
     let clk = clock::create_for_testing(sc.ctx());
     let floor = escrow_corpus::min_rent_price_const();
 
-    // Idle: the next rent resolves against the ensemble base.
-    assert_eq!(*escrow::next_ensemble_floor_price_mist(&escrow).borrow(), floor);
-    assert_eq!(*escrow::next_ensemble_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
-    assert_eq!(*escrow::next_ensemble_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
-    assert_eq!(*escrow::next_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
+    // Idle: resolved against the ensemble base.
+    assert_eq!(*escrow::cycle_floor_price_mist(&escrow).borrow(), floor);
+    assert_eq!(*escrow::cycle_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(*escrow::cycle_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(*escrow::cycle_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
-    // Rented: cycle params move into the tenancy envelope → next_* clears.
+    // Rented: the SAME resolved cycle — cross-state, not cleared.
     sc.next_tx(USUFRUCTUARY_ADDR_1);
     let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
 
-    assert!(escrow::next_ensemble_floor_price_mist(&escrow).is_none(), 0);
-    assert!(escrow::next_ensemble_ceiling_ms(&escrow).is_none(), 1);
-    assert!(escrow::next_ensemble_handover_ms(&escrow).is_none(), 2);
-    assert!(escrow::next_ensemble_descent_ms(&escrow).is_none(), 3);
-
-    transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
-    test_scenario::return_shared(escrow);
-    transfer::public_transfer(governance_cap, GOVERNOR);
-    clock::destroy_for_testing(clk);
-    sc.end();
-}
-
-/// active_cycle_* expose the resolved cycle params of the active ensemble while rented.
-#[test]
-fun active_cycle_views_resolve_active_ensemble() {
-    let mut sc = setup();
-    let ensemble = escrow_corpus::by_tag(escrow_corpus::tag(1, 0, 0, 1, 0)); // c=1 handover, h=1 descent
-    let (mut escrow, governance_cap) = integrate_and_take(ensemble, &mut sc);
-    let clk = clock::create_for_testing(sc.ctx());
-    let floor = escrow_corpus::min_rent_price_const();
-
-    // Idle: cycle params live in the tenancy envelope → none until rented.
-    assert!(escrow::active_ensemble_floor_price_mist(&escrow).is_none(), 0);
-    assert!(escrow::active_ensemble_ceiling_ms(&escrow).is_none(), 1);
-    assert!(escrow::active_ensemble_handover_ms(&escrow).is_none(), 2);
-    assert!(escrow::active_ensemble_descent_ms(&escrow).is_none(), 3);
-
-    sc.next_tx(USUFRUCTUARY_ADDR_1);
-    let cap1 = escrow::rent(&mut escrow, mk_payment(floor, sc.ctx()), tenures::tenures(1), &clk, sc.ctx());
-
-    assert_eq!(*escrow::active_ensemble_floor_price_mist(&escrow).borrow(),  floor);
-    assert_eq!(*escrow::active_ensemble_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
-    assert_eq!(*escrow::active_ensemble_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
-    assert_eq!(*escrow::active_ensemble_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
+    assert_eq!(*escrow::cycle_floor_price_mist(&escrow).borrow(), floor);
+    assert_eq!(*escrow::cycle_ceiling_ms(&escrow).borrow(),  escrow_corpus::tenure_ceiling_const());
+    assert_eq!(*escrow::cycle_handover_ms(&escrow).borrow(), escrow_corpus::handover_countdown_c1_const());
+    assert_eq!(*escrow::cycle_descent_ms(&escrow).borrow(),  escrow_corpus::descent_window_h1_const());
 
     transfer::public_transfer(cap1, USUFRUCTUARY_ADDR_1);
     test_scenario::return_shared(escrow);

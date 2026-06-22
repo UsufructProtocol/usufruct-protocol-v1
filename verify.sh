@@ -30,9 +30,10 @@ declare -A DEPLOYS=(
   [v1.4.4]="934c064 0xec8588cfbce2fef4341feeff218a1e324f12ae45a0c19e9d0d338a9c3b0802b3"
   [v1.4.5]="8b3037c 0x4e00103fc85bdf54876a1d14e1957fef5e18def81dab3917d249b06c5d2e6ebf"
   [v1.4.6]="09a1cb1 0x49231e492e638892c80a301138d55e2275477d407b3b2b1092b0209081bb56cf"
+  [v1.4.7]="4124cac 0x1045b0984ff9eab840abfd8a02f7c938a99334da7668e24e16737deb9979f2ee"
 )
 
-VERSION="${1:-v1.4.6}"
+VERSION="${1:-v1.4.7}"
 ENTRY="${DEPLOYS[$VERSION]:-}"
 if [ -z "$ENTRY" ]; then
   echo "Unknown version: $VERSION"

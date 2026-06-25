@@ -2,6 +2,14 @@
   <img src="media/github/usufruct-banner.png" alt="usufruct" width="100%" />
 </p>
 
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0" /></a>
+  <a href="https://sui.io"><img src="https://img.shields.io/badge/Built_for-Sui-6fbcf0" alt="Built for Sui" /></a>
+  <a href="https://www.npmjs.com/package/@usufruct-protocol/sdk"><img src="https://img.shields.io/npm/v/@usufruct-protocol/sdk/next?color=cb3837&logo=npm&label=TypeScript%20SDK" alt="TypeScript SDK" /></a>
+  <a href="https://discord.com/invite/aQpBtnE6v"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
+</p>
+
+
 # usufruct
 
 *A rental protocol for Sui objects — a new market layer for the right of use.*
@@ -184,3 +192,14 @@ The result is a state machine where illegal states have no type representation a
 - [`CODE_PRINCIPLES.md`](./CODE_PRINCIPLES.md) — design principles applied across the codebase
 - [`UPGRADE_STRATEGY.md`](./UPGRADE_STRATEGY.md) — why usufruct versions instead of upgrading, and what that means for integrators
 - [`specs/`](./specs/) — full technical specification per module
+
+---
+
+## Community
+
+Building on usufruct, or just curious? Join the
+[**Discord**](https://discord.com/invite/aQpBtnE6v).
+
+The fastest way to integrate without touching Move is the
+[**TypeScript SDK**](https://github.com/UsufructProtocol/usufruct-protocol-v1-sdk)
+(`@usufruct-protocol/sdk`) — `npm i @usufruct-protocol/sdk@next`.
